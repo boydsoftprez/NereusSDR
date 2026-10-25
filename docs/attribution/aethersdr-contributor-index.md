@@ -260,6 +260,7 @@ per-file NereusSDR-side diff).
 | `src/gui/ConnectionPanel.{h,cpp}` | `src/gui/ConnectionPanel.{h,cpp}` | Connect-to-radio UI pattern. AetherSDR version has flexradio-account email field (SmartLink login); NereusSDR version is OpenHPSDR discovery-only. |
 | `src/gui/AppletPanel.{h,cpp}` | `src/gui/applets/AppletPanelWidget.{h,cpp}` | Fixed header + scrollable body layout pattern. |
 | `src/gui/RxApplet.{h,cpp}` | `src/gui/applets/RxApplet.{h,cpp}` | Receiver controls applet. NereusSDR RX controls are largely Thetis-feature-mapped but styled from AetherSDR. |
+| `src/gui/RxApplet.{h,cpp}` | `src/gui/applets/RxControlSections.{h,cpp}` | Container copies of the RX applet jobs. Layout follows AetherSDR RxApplet; the workspace face is Nereus-original. |
 | `src/gui/TxApplet.{h,cpp}` | `src/gui/applets/TxApplet.{h,cpp}` | TX controls applet. Pending 3M for full TX logic. |
 | `src/gui/PhoneApplet.{h,cpp}` / `PhoneCwApplet.{h,cpp}` | `src/gui/applets/PhoneCwApplet.cpp` | |
 | `src/gui/EqApplet.{h,cpp}` | `src/gui/applets/EqApplet.{h,cpp}` | |

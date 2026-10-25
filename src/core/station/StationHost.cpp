@@ -107,6 +107,11 @@ void StationHost::stop()
     m_hostSampler.reset();
     m_mediaHub.reset();
     m_stationServer.reset();
+    // The window no longer hosts the Core: the model stages the paired
+    // devices' layout one last time and stops keeping their letters.
+    if (m_options.hostingDevice && m_radioModel) {
+        m_radioModel->setHostsStationDevice(false);
+    }
     m_started = false;
     m_stopPending = false;
     m_stopping = false;
@@ -165,6 +170,11 @@ bool StationHost::start()
         if (!server || !model) { return false; }
         server->setStationDeviceWords(cfg.hostingDevice->name,
                                       cfg.hostingDevice->shortName);
+        if (!server || !model) { return false; }
+        // The Core inside a desktop window: paired devices get their slice
+        // letters back across restarts, as on a headless Core (JJ
+        // 2026-10-23).
+        model->setHostsStationDevice(true);
         if (!server || !model) { return false; }
         const QPointer<StationHost> self(this);
         StationSliceOwnershipPolicy::activate(model, server, [self, server, generation] {

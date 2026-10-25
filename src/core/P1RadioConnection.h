@@ -133,6 +133,10 @@
 //   2026-10-15 - wireMox(): the MOX state the wire carries, unkeyed while
 //                the transmit is cut. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-23 - m_lastGapSignalMs, the iqSequenceGap throttle, ported from
+//                Longpath src/core/P1RadioConnection.h:830 [@383f058] (PR 62).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 // =================================================================
 
 /*
@@ -1053,6 +1057,8 @@ private:
     // R-R3-32 (parity Task 6): an ep6 frame has arrived since connect, so
     // the next one has a number to follow (RadioLinkStats packet loss).
     bool m_ep6SeqPrimed{false};
+    // From Longpath src/core/P1RadioConnection.h:830 [@383f058] (PR 62).
+    qint64  m_lastGapSignalMs{0};   // Drossel fuer iqSequenceGap()
     int     m_ccRoundRobinIdx{0};
 
     // 3M-1a E.3: force the next sendCommandFrame() to start with bank 0 so

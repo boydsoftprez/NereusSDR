@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original receive-layout hydration regression tests.
+// 2026-10-22 - The layout restore's filter constraint and its zero-width
+// fallback. J.J. Boyd (KG4VCF), with AI-assisted transformation via Claude
+// Code.
 
 #include <QtTest/QtTest>
 
@@ -154,6 +157,42 @@ private slots:
         QVERIFY(slice.restoreReceiveState(kManifestFrequencyHz, DSPMode::AM));
 
         const auto expected = SliceModel::defaultFilterForMode(DSPMode::AM);
+        QCOMPARE(slice.filterLow(), expected.first);
+        QCOMPARE(slice.filterHigh(), expected.second);
+    }
+
+    // The manifest mode's saved filter gets the minimum width and the
+    // constraint, as every filter change does (Thetis console.cs:7544-7582
+    // [v2.10.3.15]).
+    void constrainsTheManifestModeFilter()
+    {
+        auto& settings = AppSettings::instance();
+        const Band band = bandFromFrequency(kManifestFrequencyHz);
+        settings.setValue(modePrefix(band, DSPMode::USB) + QStringLiteral("FilterLow"), 700);
+        settings.setValue(modePrefix(band, DSPMode::USB) + QStringLiteral("FilterHigh"), 25000);
+
+        RadioModel radio;
+        SliceModel slice(0, &radio);
+        QVERIFY(slice.restoreReceiveState(kManifestFrequencyHz, DSPMode::USB));
+        QCOMPARE(slice.filterLow(), 700);
+        QCOMPARE(slice.filterHigh(), 10000);
+    }
+
+    // A saved filter wholly past the cap has no width left once
+    // constrained. Thetis refuses a zero-width filter (console.cs:7582
+    // [v2.10.3.15]); the layout restore has no earlier filter for the mode,
+    // so it takes the mode's default rather than storing (10000, 10000).
+    void zeroWidthManifestModeFilterFallsBackToTheModeDefault()
+    {
+        auto& settings = AppSettings::instance();
+        const Band band = bandFromFrequency(kManifestFrequencyHz);
+        settings.setValue(modePrefix(band, DSPMode::USB) + QStringLiteral("FilterLow"), 12000);
+        settings.setValue(modePrefix(band, DSPMode::USB) + QStringLiteral("FilterHigh"), 15000);
+
+        RadioModel radio;
+        SliceModel slice(0, &radio);
+        QVERIFY(slice.restoreReceiveState(kManifestFrequencyHz, DSPMode::USB));
+        const auto expected = SliceModel::defaultFilterForMode(DSPMode::USB);
         QCOMPARE(slice.filterLow(), expected.first);
         QCOMPARE(slice.filterHigh(), expected.second);
     }

@@ -30,6 +30,34 @@
 //               stamps; minimumGapSkips(), the 5 ms rule's skips counted
 //               and logged instead of silent. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22: requestWindowReset() and windowResets(), ported from
+//               Longpath src/core/FFTEngine.h:196-211 [@383f058]
+//               (Longpath PR 62, caddf95b): a lost I/Q packet discards
+//               the window in progress instead of painting a line across
+//               the spectrum. Longpath's banner on this file is
+//               NereusSDR's own header renamed, with no Longpath author
+//               entry, so it is not copied; the project-level LICENSE
+//               applies. Ported by J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
+//   2026-10-23: NereusSDR-original bound on the stall those resets can
+//               cause: a reset is skipped once the engine has produced no
+//               frame for kGapResetStallFrameIntervals frame intervals
+//               (windowResetsSkipped(), applyPendingWindowReset()). JJ's
+//               ruling (option a) after the frozen waterfall on lossy
+//               Wi-Fi and HL2 links. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
+//   2026-10-24: The bound holds once a gap has been let through (JJ's
+//               ruling, option i): later gaps are let through too, until a
+//               whole window of samples passes with no gap. A lossy link
+//               keeps its full frame rate with a slight smear; a single gap
+//               on a healthy link still drops the window. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Claude Code.
+//   2026-10-24: JJ's ruling (option c) replaces that one-window rule: a
+//               gap less than kGapLossyLinkWindows windows after the last
+//               gap of any kind is let through, once a frame has come since
+//               the last reset. Gaps one to four windows apart keep the
+//               full frame rate too. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -84,6 +112,7 @@
 #include <QElapsedTimer>
 
 #include <atomic>
+#include <limits>
 
 #ifdef HAVE_FFTW3
 #include <fftw3.h>
@@ -246,6 +275,46 @@ public slots:
     // Accumulates until fftSize samples are collected, then runs FFT.
     void feedIQ(const QVector<float>& interleavedIQ);
 
+    // From Longpath src/core/FFTEngine.h:196-211 [@383f058] (PR 62).
+    /// Das angefangene Fenster verwerfen — nach einem Loch im Datenstrom.
+    ///
+    /// Der Panadapter schiebt seine Abtastwerte in ein gleitendes Fenster
+    /// und rechnet erst, wenn es voll ist. Fehlen mittendrin Pakete (WLAN,
+    /// ausgelastete Gegenstelle), steht im Fenster ein Sprung — und ein
+    /// Sprung ist breitbandig: er malt einen Schmierer ueber das ganze
+    /// Bild, der aussieht wie ein Signal. Diese Methode wirft das
+    /// angefangene Fenster weg, sodass das naechste Bild nur aus Werten
+    /// nach dem Loch entsteht.
+    ///
+    /// Darf von JEDEM Faden gerufen werden: sie setzt nur eine Fahne, die
+    /// feedIQ() auf seinem eigenen Faden abholt.
+    ///
+    /// NereusSDR: in English, a lost I/Q packet leaves a jump in the
+    /// window, and a jump is broadband, so the next frame shows a line
+    /// across the whole width. The window in progress (and the overlap
+    /// tail) is dropped at the next feedIQ(). The callers deliver it on
+    /// this engine's thread, queued in order with the samples, so the
+    /// flag is always taken by the first batch after the gap.
+    ///
+    /// NereusSDR-original (2026-10-23, option c 2026-10-24): the reset is
+    /// bounded. On a healthy link a single gap still drops the window, as
+    /// above. A gap is let through instead (the window keeps its samples
+    /// and windowResetsSkipped() counts it) when either holds:
+    ///   - the link is lossy: the last gap, let through or reset, came less
+    ///     than kGapLossyLinkWindows windows of samples (the FFT size, in
+    ///     input pairs) before, and a frame has come since the last reset;
+    ///   - the engine has produced no frame for
+    ///     kGapResetStallFrameIntervals frame intervals (while the window
+    ///     refills after a reset, this alone decides).
+    /// So a link that loses packets up to kGapLossyLinkWindows windows
+    /// apart keeps its normal frame rate with a slight smear instead of a
+    /// frozen or crawling display, and a gap after that many clean windows
+    /// drops the window again.
+    void requestWindowReset() { m_windowResetPending.store(true); }
+
+    /// Wie oft ein Fenster deshalb verworfen wurde (Diagnose).
+    quint64 windowResets() const { return m_windowResets.load(); }
+
     /// Drops every accumulated and overlap sample on this engine's worker
     /// thread. Call at an RF-source context boundary before accepting input
     /// for the new context; configuration setters alone do not clear the
@@ -260,6 +329,43 @@ public slots:
     void purgeInputForGeneration(quint64 generation);
 
 public:
+    /// NereusSDR-original (2026-10-23): requested resets let through
+    /// without dropping the window: the engine had produced no frame for
+    /// kGapResetStallFrameIntervals frame intervals, or (2026-10-24) the
+    /// link was lossy (requestWindowReset() says when).
+    quint64 windowResetsSkipped() const { return m_windowResetsSkipped.load(); }
+
+    /// NereusSDR-original (2026-10-23). This engine's worker thread only.
+    /// Takes a pending requestWindowReset() now rather than at the next
+    /// feedIQ(), which takes it the same way. Returns true when the window
+    /// was dropped, false when no reset was pending or the bound let the
+    /// gap through (requestWindowReset() says when). The daemon's spectrum
+    /// source uses the answer to restart its sample clock only when the
+    /// samples really restart.
+    bool applyPendingWindowReset();
+
+    /// NereusSDR-original (2026-10-23): the gap-reset stall bound, in frame
+    /// intervals: with no frame for this long, the next gap is the first
+    /// one let through (requestWindowReset()). NereusSDR's own value:
+    /// neither Longpath (which resets on every throttled gap) nor AetherSDR
+    /// (which resets on every gap) bounds the stall. A frame interval is
+    /// what paces this engine's output: the window advance processFrame()
+    /// takes, sampleRate / outputFps samples, no more than the FFT size
+    /// unless transforms follow the frame rate.
+    static constexpr int kGapResetStallFrameIntervals = 3;
+
+    /// NereusSDR-original (2026-10-24, JJ's ruling, option c): how recent
+    /// a gap makes a link lossy, in windows of samples (the FFT size, in
+    /// input pairs), counted from the last gap, let through or reset. A
+    /// gap within this many windows of the one before is let through once
+    /// a frame has come since the last reset (requestWindowReset()). Why
+    /// 4: gaps up to 4 windows apart all smear, so the waterfall keeps its
+    /// full rate where a reset each time would cost a window of frames per
+    /// gap, and a healthy link that drops one packet now and then, more
+    /// than 4 windows apart, still drops the window. NereusSDR's own value:
+    /// neither Longpath nor AetherSDR has one.
+    static constexpr int kGapLossyLinkWindows = 4;
+
     /// The generation frames are stamped with now. 0 until the first
     /// purgeInputForGeneration() or setInputGeneration().
     quint64 inputGeneration() const { return m_inputGeneration.load(); }
@@ -408,6 +514,24 @@ private:
     // I/Q accumulation buffer (interleaved pairs)
     QVector<float> m_iqBuffer;
     int m_iqWritePos{0};  // write position in sample pairs
+    // From Longpath src/core/FFTEngine.h:343-344 [@383f058] (PR 62).
+    std::atomic<bool>    m_windowResetPending{false};  // von requestWindowReset()
+    std::atomic<quint64> m_windowResets{0};            // nur Diagnose
+    // NereusSDR-original (2026-10-23): the stall bound. Resets the bound
+    // let through, and the decimated input pairs (written to the window or
+    // skipped between windows) since the last frame (worker thread only).
+    std::atomic<quint64> m_windowResetsSkipped{0};
+    qint64 m_pairsSinceFrame{0};
+    // NereusSDR-original (2026-10-24), JJ's ruling (option c): decimated
+    // input pairs since the last gap, let through or reset (counted like
+    // m_pairsSinceFrame), and whether the window is refilling after a
+    // reset, with no frame since (worker thread only). Before the first
+    // gap the count stands further back than any kGapLossyLinkWindows
+    // windows, and adding a pair at a time cannot overflow it.
+    qint64 m_pairsSinceGap{std::numeric_limits<qint64>::max() / 2};
+    bool m_refillingAfterReset{false};
+    // The input pairs one frame interval spans (kGapResetStallFrameIntervals).
+    qint64 frameIntervalPairs() const;
 
     // Output rate limiting
     QElapsedTimer m_frameTimer;

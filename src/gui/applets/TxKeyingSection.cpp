@@ -24,6 +24,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - A container copy can hide the slice-letter row.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -145,10 +147,14 @@ vbox->addLayout(row);
 
 // Slice control plan Task 11 (U8): which slice transmits, one letter
 // per slice this window controls; the checked one is the transmit
-// slice (refreshTransmitSliceChoices fills it).
-m_txSliceRow = new QHBoxLayout;
+// slice (refreshTransmitSliceChoices fills it). The row is its own
+// widget so a container copy can hide every letter at once.
+m_sliceIndicatorRow = new QWidget(this);
+m_sliceIndicatorRow->setObjectName(QStringLiteral("TxSliceIndicatorRow"));
+m_txSliceRow = new QHBoxLayout(m_sliceIndicatorRow);
+m_txSliceRow->setContentsMargins(0, 0, 0, 0);
 m_txSliceRow->setSpacing(2);
-vbox->addLayout(m_txSliceRow);
+vbox->addWidget(m_sliceIndicatorRow);
 
 // Fix wave I4: who holds transmit on the Core, in a remote window
 // (setTransmitHolderText). Empty, and so not shown, otherwise.
@@ -210,6 +216,15 @@ QPushButton* TxKeyingSection::addTransmitSliceButton(const QString& letter,
     m_txSliceRow->addWidget(button, 1);
     m_txSliceButtons.append(button);
     return button;
+}
+
+void TxKeyingSection::setSliceIndicatorsHidden(bool hidden)
+{
+    m_hideSliceIndicators = hidden;
+    if (m_sliceIndicatorRow) { m_sliceIndicatorRow->setVisible(!hidden); }
+    if (!hidden) { return; }
+    if (m_holderLabel) { m_holderLabel->setVisible(false); }
+    if (m_takeTransmitBtn) { m_takeTransmitBtn->setVisible(false); }
 }
 
 } // namespace NereusSDR

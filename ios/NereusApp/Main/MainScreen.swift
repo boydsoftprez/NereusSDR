@@ -530,6 +530,8 @@ struct MainScreen: View {
                              trailingInset: trailingInset, leadingInset: leadingInset, display: controls.display,
                              spots: app.spots,
                              readout: main.meterReadout,
+                             flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0) },
+                             meterRxMode: main.meterRxMode,
                              firstKeyRefused: BandSlicesModel.refusedForTransmitChoice(transmit.ptt),
                              flagControls: controls.flagControls,
                              transmitReason: BandGestureLayer.transmitReason(transmit, take: main.take),

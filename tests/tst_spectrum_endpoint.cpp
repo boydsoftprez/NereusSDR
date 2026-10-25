@@ -123,6 +123,20 @@ WidebandSpectrumFrame widebandAtDisplayLevel(const SpectrumEndpointSourceContext
     return widebandFrame(source, levelDbm - reference);
 }
 
+bool allNearRow(const QVector<float>& values, const QVector<float>& expected,
+                float tolerance = 0.01f)
+{
+    if (values.size() != expected.size()) { return false; }
+    for (int i = 0; i < values.size(); ++i) {
+        if (!(std::abs(values.at(i) - expected.at(i)) <= tolerance)) {
+            qWarning("pixel %d: %g, expected %g", i, double(values.at(i)),
+                     double(expected.at(i)));
+            return false;
+        }
+    }
+    return true;
+}
+
 bool allNear(const QVector<float>& values, float expected, float tolerance = 0.01f)
 {
     return std::all_of(values.cbegin(), values.cend(), [expected, tolerance](float value) {
@@ -771,6 +785,152 @@ private slots:
             QVERIFY(actual.has_value());
             QCOMPARE(actual->traceDbm, expectedTraceRow);
             QCOMPARE(actual->waterfallDbm, expectedWaterfallRow);
+        }
+    }
+
+    // PR 628 review: the frame carries the row the noise floor measures
+    // while the trace's Log Recursive average warms up from -160 dBm: the
+    // average with that starting value taken out, which is the trace with
+    // no averaging on the first frame and the frames' own average after
+    // (re-review: a switch from the unaveraged row to the average dipped
+    // on a noisy band). Once warm it is empty (the trace itself), and a
+    // new picture warms up again.
+    void theMeasurementRowIsTheAverageWithItsStartTakenOutWhileItWarmsUp()
+    {
+        SpectrumEndpointSourceContext source = sourceContext();
+        SpectrumEndpointRequest req = request();
+        req.framesPerLine = 1;
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        SpectrumEndpointRequest plain = req;
+        plain.trace.averageMode = 0;
+        SpectrumEndpoint unaveraged;
+        QVERIFY(unaveraged.configure(plain, source));
+
+        qint64 at = 0;
+        const auto next = [&](SpectrumEndpoint& ep, qint64 when) {
+            return ep.consume(frame(source, when), 0.0);
+        };
+        at += 40'000'000;
+        auto first = next(endpoint, at);
+        auto reference = next(unaveraged, at);
+        QVERIFY(first.has_value() && reference.has_value());
+        QVERIFY(reference->measurementDbm.isEmpty());
+        QCOMPARE(first->measurementDbm.size(), reference->traceDbm.size());
+        QVERIFY(allNearRow(first->measurementDbm, reference->traceDbm));
+        QVERIFY(first->traceDbm != reference->traceDbm);
+        // The second frame is 6 dB hotter. At alpha 0.5 the frames' own
+        // average is a third the first and two thirds the second: 4 dB up,
+        // where the unaveraged row would be 6 dB up.
+        at += 40'000'000;
+        DaemonSpectrumFrame hotter = frame(source, at);
+        hotter.dbmOffset = 6.0;
+        const auto second = endpoint.consume(hotter, 0.0);
+        QVERIFY(second.has_value());
+        QCOMPARE(second->measurementDbm.size(), reference->traceDbm.size());
+        QVector<float> fourUp = reference->traceDbm;
+        for (float& value : fourUp) { value += 4.0f; }
+        QVERIFY(allNearRow(second->measurementDbm, fourUp));
+        // 0.5^6 = 0.016 is under e^-4: warm on the sixth frame.
+        int warmFrames = 2;
+        for (; warmFrames < 20; ++warmFrames) {
+            at += 40'000'000;
+            const auto out = next(endpoint, at);
+            QVERIFY(out.has_value());
+            if (out->measurementDbm.isEmpty()) { break; }
+        }
+        QCOMPARE(warmFrames, 5);
+
+        source.sourceGeneration += 1;
+        source.contextGeneration += 1;
+        QVERIFY(endpoint.configure(req, source));
+        QVERIFY(endpoint.tracePicture() == SpectrumPictureKind::New);
+        at += 40'000'000;
+        const auto restarted = next(endpoint, at);
+        QVERIFY(restarted.has_value());
+        QCOMPARE(restarted->measurementDbm.size(), restarted->traceDbm.size());
+    }
+
+    // PR 628 review: an extended view's wing pixels with no wideband data
+    // hold the request's minimum in the trace and no data (NaN) in the row
+    // the noise floor measures.
+    void anExtendedViewMarksItsPlaceholderWingsAsNoData()
+    {
+        const SpectrumEndpointSourceContext source = extendedSourceContext();
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(extendedRequest(), source));
+        const auto out = endpoint.consume(frame(source, 1'000'000'000), 0.0);
+        QVERIFY(out.has_value());
+        QCOMPARE(out->measurementDbm.size(), out->traceDbm.size());
+        int placeholders = 0;
+        for (int x = 0; x < out->traceDbm.size(); ++x) {
+            if (std::isnan(out->measurementDbm.at(x))) {
+                ++placeholders;
+                QCOMPARE(out->traceDbm.at(x), extendedRequest().minDbm);
+            } else {
+                QCOMPARE(out->measurementDbm.at(x), out->traceDbm.at(x));
+            }
+        }
+        QVERIFY2(placeholders > out->traceDbm.size() / 2, qPrintable(QString::number(placeholders)));
+    }
+
+    // PR 628 re-review: a wing pixel whose wideband data arrives after the
+    // average has warmed up holds the placeholder in its average until
+    // enough frames with data have gone in after it, by the same e^-4 rule;
+    // until then it is no data (NaN) in the row the noise floor measures.
+    void aWingPixelIsNoDataUntilItsAverageHoldsNoPlaceholder()
+    {
+        const SpectrumEndpointSourceContext source = extendedSourceContext();
+        SpectrumEndpointRequest req = extendedRequest();
+        req.framesPerLine = 1;
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 0;
+        QVector<int> wing;
+        for (int i = 0; i < 10; ++i) {
+            at += 40'000'000;
+            const auto out = endpoint.consume(frame(source, at), 0.0);
+            QVERIFY(out.has_value());
+            if (i == 0) {
+                for (int x = 0; x < out->measurementDbm.size(); ++x) {
+                    if (std::isnan(out->measurementDbm.at(x))) { wing.append(x); }
+                }
+            }
+        }
+        QVERIFY2(wing.size() > req.pixels / 2, qPrintable(QString::number(wing.size())));
+        const WidebandSpectrumFrame adc = widebandAtDisplayLevel(source, -120.0f);
+        // 0.5^6 = 0.016 is under e^-4: the sixth frame with data is warm.
+        for (int withData = 1; withData <= 6; ++withData) {
+            at += 40'000'000;
+            const auto out = endpoint.consume(frame(source, at), 0.0, adc);
+            QVERIFY(out.has_value());
+            if (withData < 6) {
+                QCOMPARE(out->measurementDbm.size(), out->traceDbm.size());
+                for (int x : wing) {
+                    QVERIFY2(std::isnan(out->measurementDbm.at(x)),
+                             qPrintable(QStringLiteral("frame %1 pixel %2: %3")
+                                            .arg(withData).arg(x)
+                                            .arg(out->measurementDbm.at(x))));
+                }
+            } else {
+                // Warm: a wing pixel with data is measured. The pixels below
+                // 0 Hz have none and stay no data.
+                QCOMPARE(out->measurementDbm.size(), out->traceDbm.size());
+                int measured = 0;
+                for (int x : wing) {
+                    if (std::isnan(out->measurementDbm.at(x))) {
+                        QCOMPARE(out->traceDbm.at(x), req.minDbm);
+                    } else {
+                        QCOMPARE(out->measurementDbm.at(x), out->traceDbm.at(x));
+                        ++measured;
+                    }
+                }
+                QVERIFY2(measured >= wing.size() / 2, qPrintable(QString::number(measured)));
+            }
         }
     }
 

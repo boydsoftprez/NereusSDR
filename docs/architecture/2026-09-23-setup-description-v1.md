@@ -1,4 +1,4 @@
-# Setup description versions 1–28
+# Setup description versions 1–30
 
 The Core sends the desktop's built Setup pages as JSON strings on the read-only
 `setup` mirror object (`SetupDescription`). It has one string property per
@@ -165,7 +165,8 @@ command or result binding. The actual peer must separately declare
 nothing. A V3 peer still receives the older controls with their existing
 semantics. The Core filters every control above the peer's negotiated
 description version, drops empty sections and pages, and caps an unknown
-future declaration at version 28. PA has a version-20 ceiling (version 14
+future declaration at version 30 (version 29, Display's and Appearance's
+rebuild, is in `2026-10-12-display-rebuild-plan.md`). PA has a version-20 ceiling (version 14
 for V14–V19, version 13 for V13, version 5 for V5–V12) and Hardware a version-23 ceiling
 (version 18 for V18–V22, version 17
 for V17, version 16 for V16, version 13
@@ -183,7 +184,8 @@ Diagnostics are version 15 to a V15 or later peer (see Version 15); CAT & Networ
 peer; Transmit is version 13 to a V13 or V14 peer and version 3 to
 a V3 to V12 peer (with the Power page's earlier coverage text), and DSP,
 Audio, Diagnostics and CAT & Network are version 3 to a V3 to V14 peer.
-General and Test retain version 3.
+General is version 30 to a V30 or later peer (see Version 30) and version 3
+to a V3 to V29 peer; Test retains version 3.
 No mirror field or ordinal changes.
 
 Version 6 adds exactly two closed `kind: "table"` controls to the partial
@@ -1389,6 +1391,31 @@ works: a write of `DisplayHzPerBinTarget` moves the mode on the Core (design
 D41). The other 96 Display rows and every other category are unchanged.
 This version adds no mirror field, ordinal, verb or capability; the Core
 caps a declaration at 28.
+
+Version 30 gives General a Filters page after Options, `general.filters`
+(`where: "station"`), with one section titled `Filters` and one row,
+`general.filters.limitFilterEdgesToSidebands`: the desktop Setup > General >
+Filters checkbox "Limit filter edges to sidebands", tooltip "Prevents
+crossing the 0 point with certain filters". It is closed as the version 23
+row is: `kind:"toggle"`, `binding:{"setting":"LimitFiltersToSidebands"}`,
+`applies:"live"`, the setting toggle's
+`"valueEncoding":{"true":"True","false":"False"}` and
+`requiresDescriptionVersion:30`, no gate. The key is a Station setting; the
+Core applies it to every slice when a window's write lands in its settings,
+the same path the desktop box uses. A Core that refuses the write hands back
+its own value and reason as for any setting row. The Core sends only the
+settings it has stored, with one exception for this key: a Core that never
+stored `LimitFiltersToSidebands` still applies RadioModel's default, off, to
+its slices, so it adds `LimitFiltersToSidebands` `"False"` to its settings
+snapshot, but only to a snapshot that already has other content. Every
+headless Core writes its `DaemonProfileSeeded` marker on start
+(server_main.cpp:603), so its snapshot is never empty and the phone's row is
+live and off. A Core with nothing stored and no marker sends an empty
+snapshot, as before: a remote window's Core pages wait, and a phone shows
+the row greyed with the missing-value reason. A stored value is sent as
+stored; no other unstored setting is added to the snapshot. A V3 to V29 peer receives General at version 3
+exactly as before, without the page. This version adds no mirror field,
+ordinal, verb or capability; the Core caps a declaration at 30.
 
 V4 adds `default` metadata to these exact Display and Appearance controls.
 Display toggles use JSON booleans; its numeric controls use JSON numbers,

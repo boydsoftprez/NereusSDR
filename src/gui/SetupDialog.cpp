@@ -8,6 +8,10 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - General > Filters (GeneralFiltersPage, Core scope), Thetis's
+//                tpFilters tab with its "Limit filter edges to sidebands"
+//                box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 //   2026-10-12 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Assemble the eight approved Display pages from retained
 //                 bound controls and provide scoped values and Clarity status.
@@ -227,6 +231,7 @@
 // General
 #include "setup/GeneralSetupPages.h"
 #include "setup/GeneralOptionsPage.h"
+#include "setup/GeneralFiltersPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
 #include "setup/ThisCorePage.h"
@@ -1788,6 +1793,12 @@ void SetupDialog::buildTree()
                 this, &SetupDialog::invertRedBluePsaChanged);
         return genOpts;
     });
+    // Thetis's tpFilters tab, after Options (tcGeneral, setup.designer.cs:
+    // 8048-8051 [v2.10.3.15]). Core: its one box is the Core's
+    // LimitFiltersToSidebands, as a slice's filter is constrained where
+    // the slice lives.
+    registerPage(general, "Filters", SetupScope::Core,
+                 [this] { return new GeneralFiltersPage(m_model); });
 
     // Parity Task 21 (R-IOS-18; the operator's "Option A"): a remote
     // window's Core, its radio first (Change radio). A window running its

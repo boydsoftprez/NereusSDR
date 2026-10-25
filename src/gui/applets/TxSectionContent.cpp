@@ -12,6 +12,8 @@
 //                 container can hold the monitor controls (or any other row)
 //                 on their own.  The applet stays the wiring authority.
 //                 Brian Sutton, AI-assisted via OpenCode.
+//   2026-10-23 - TX Keying can hide its slice indicators. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 //   2026-10-21 - A preview of a row (ContentRenderMode::Preview) is inert.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -40,6 +42,17 @@ inline constexpr auto kChainType = "tx.chain";
 inline constexpr auto kVoxType = "tx.vox";
 inline constexpr auto kProcessingType = "tx.processing";
 inline constexpr auto kKeyingType = "tx.keying";
+inline constexpr auto kHideSliceIndicators = "hideSliceIndicators";
+
+QVector<ContentProperty> keyingProperties()
+{
+    ContentProperty hide;
+    hide.key = QLatin1String(kHideSliceIndicators);
+    hide.label = QStringLiteral("Hide slice indicators");
+    hide.kind = ContentProperty::Kind::Toggle;
+    hide.defaultValue = false;
+    return {hide};
+}
 
 // Any mode but Live builds an inert row (ContainerContentRegistry.h:
 // "In ContentRenderMode::Preview the widget is inert"): it is not wired to
@@ -118,9 +131,15 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kKeyingType),
         {QLatin1String(kKeyingType), QStringLiteral("TX Keying"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createKeyingSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            auto* section = txApplet->createKeyingSection(parent, isPreview(mode));
+            if (section) {
+                section->setSliceIndicatorsHidden(
+                    entry.config.value(QLatin1String(kHideSliceIndicators)).toBool(false));
+            }
+            return static_cast<QWidget*>(section);
+        },
+        keyingProperties());
 }
 
 } // namespace NereusSDR

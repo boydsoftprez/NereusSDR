@@ -30,6 +30,12 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Frequency (Custom) font, colour, centering and slice lines.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-22 - filterPaneCentreDragKeepsTheWidthAtTheCap. J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Claude Code.
+//   2026-10-23 - frequencyShowsAfterTheStationAdoptsTheSlice. Brian Sutton,
+//                 AI-assisted via xAI Grok.
+//   2026-10-24 - frequencyShowsWhenRemoteSliceAccessArrives. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -54,7 +60,9 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include "core/AppSettings.h"
+#include "core/SliceOwnership.h"
 #include "core/antenna/AmateurBands.h"
+#include "core/session/SliceAccessPolicy.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
@@ -336,6 +344,36 @@ private slots:
         QCOMPARE(pane.sizeHint(), QSize(360, 140));
     }
 
+    // The pane's centre drag moves the whole passband through
+    // SliceModel::shiftFilter: at the 10 kHz cap the width is kept, as
+    // Thetis's whole-filter drag does (console.cs:50630-50636 [v2.10.3.15]).
+    void filterPaneCentreDragKeepsTheWidthAtTheCap()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFilter(100, 3100);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFilterType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* pane = qobject_cast<BandwidthFilterPane*>(widget.get());
+        QVERIFY(pane);
+
+        // Centre 9500 for a 3000 Hz passband asks for 8000..11000.
+        emit pane->filterCentreChanged(9500);
+        QCOMPARE(slice->filterLow(), 7000);
+        QCOMPARE(slice->filterHigh(), 10000);
+    }
+
     void needleWithoutReadingIsOffline()
     {
         ContainerContentRegistry registry;
@@ -566,6 +604,101 @@ private slots:
         // The own slice's binding survives the refreshes.
         sliceA->setFrequency(7190000.0);
         QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
+    void frequencyShowsAfterTheStationAdoptsTheSlice()
+    {
+        // Direct connect, desktop hosting. The instrument is built before
+        // the radio connects, so its sliceAdded slot is connected first.
+        // The slice is published while nobody owns it. The station adopts
+        // it from a later sliceAdded slot (StationSliceOwnershipPolicy).
+        // That adoption does not emit activeSliceChanged: the slice is
+        // already the active one. windowRxSlice only returns a slice the
+        // station may change, so the first look finds nothing and the
+        // digits stay on the empty reading unless ownership is followed.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        const QByteArray station = SliceOwnership::stationDevice();
+        auto stationSlice = [&model, station](const QJsonObject&) -> SliceModel* {
+            SliceOwnership* ownership = model.sliceOwnership();
+            if (!ownership) { return nullptr; }
+            const auto controlled = [&](int id) {
+                return id >= 0
+                    && SliceAccessPolicy::mayChange(*ownership, station, id)
+                    && !ownership->mark(id).isHeld();
+            };
+            const int rx = ownership->activeRxFor(station);
+            if (controlled(rx)) { return model.sliceById(rx); }
+            const int chosen = ownership->activeFor(station);
+            if (controlled(chosen)) { return model.sliceById(chosen); }
+            for (SliceModel* slice : model.slices()) {
+                if (slice && controlled(slice->sliceIndex())) { return slice; }
+            }
+            return nullptr;
+        };
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = stationSlice;
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        QCOMPARE(freq->frequency(), 0.0);
+
+        // Connected after the instrument, as the station policy is.
+        connect(&model, &RadioModel::sliceAdded, &model, [&model, station](int) {
+            model.sliceOwnership()->adoptUnowned(station);
+        });
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 1);
+        SliceModel* slice = model.slices().at(0);
+        QCOMPARE(model.sliceOwnership()->mark(slice->sliceIndex()).owner, station);
+        QCOMPARE(freq->frequency(), 14225000.0);
+
+        slice->setFrequency(7240000.0);
+        QCOMPARE(freq->frequency(), 7240000.0);
+    }
+
+    void frequencyShowsWhenRemoteSliceAccessArrives()
+    {
+        // A remote window: the snapshot's slice arrives first, and the
+        // window finds its slice only once the Core's slice access entry
+        // for it is in (SliceAccessMirror::changed). No RadioModel or
+        // SliceOwnership signal fires then, so the instrument follows the
+        // access change through Sources::watchSliceAccess.
+        RadioModel model;
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 1);
+        SliceModel* slice = model.slices().at(0);
+        bool accessIn = false;
+        QObject access;  // objectNameChanged stands in for SliceAccessMirror::changed
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [&accessIn, slice](const QJsonObject&) -> SliceModel* {
+            return accessIn ? slice : nullptr;
+        };
+        sources.watchSliceAccess = [&access](QObject* context, std::function<void()> changed) {
+            QObject::connect(&access, &QObject::objectNameChanged, context,
+                             [changed = std::move(changed)](const QString&) { changed(); });
+        };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        QCOMPARE(freq->frequency(), 0.0);
+
+        accessIn = true;
+        access.setObjectName(QStringLiteral("entry for slice 0"));
+        QCOMPARE(freq->frequency(), 14225000.0);
+        slice->setFrequency(7240000.0);
+        QCOMPARE(freq->frequency(), 7240000.0);
     }
 
     void barDefaultsAndReadings()

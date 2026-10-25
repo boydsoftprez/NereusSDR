@@ -33,6 +33,9 @@
 //   2026-10-20 - longpath.frequencyCustom: a second frequency object with
 //                 font size, colour, centering, and each slice line.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - Sources::watchSliceAccess: a remote window's slice
+//                 followers rebind when the Core's slice access changes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -42,6 +45,8 @@
 #include <QVector>
 
 #include <functional>
+
+class QObject;
 
 namespace NereusSDR {
 
@@ -88,6 +93,12 @@ struct Sources {
     std::function<SliceModel*(const QJsonObject& context)> sliceForContext;
     // The pan that shows a slice; nullptr leaves the trace empty.
     std::function<SpectrumWidget*(SliceModel*)> spectrumForSlice;
+    // Calls `changed` (with `context` as the receiver) whenever the
+    // window's slice access changes (a remote window's
+    // SliceAccessMirror::changed). A remote window finds its slice through
+    // that access, which arrives after the snapshot's slices. Empty in a
+    // window that has no such access.
+    std::function<void(QObject* context, std::function<void()> changed)> watchSliceAccess;
 };
 
 // Registers the types. Call only with the workspace preview on.

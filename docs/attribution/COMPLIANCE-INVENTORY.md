@@ -39,7 +39,7 @@ inventory and per-component provenance docs.
 
 # Compliance Inventory
 
-Total tracked files: **7392**
+Total tracked files: **7395**
 
 ## aethersdr-port (86)
 
@@ -790,7 +790,7 @@ Total tracked files: **7392**
 - `third_party/fftw3/lib/libfftw3f-3.a`
 - `third_party/fftw3/lib/libfftw3f-3.def`
 
-## nereussdr-original (4109)
+## nereussdr-original (4111)
 
 - `.claude/commands/triage.md`
 - `.gitattributes`
@@ -832,6 +832,7 @@ Total tracked files: **7392**
 - `cmake/patches/libjuice-0002-bounded-turn-release-lifecycle.patch`
 - `cmake/patches/libjuice-0003-keep-poll-worker-with-retained-agents.patch`
 - `cmake/patches/libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch`
+- `cmake/patches/libjuice-0005-offer-kernel-source-per-ipv6-prefix.patch`
 - `cmake/patches/portaudio-0001-check-setup-representation.patch`
 - `cmake/patches/portaudio-bounds.h`
 - `cty.dat`
@@ -3024,6 +3025,7 @@ Total tracked files: **7392**
 - `ios/patches/libjuice/0001-give-turn-allocations-back.patch`
 - `ios/patches/libjuice/0002-bounded-turn-release-lifecycle.patch`
 - `ios/patches/libjuice/0003-keep-poll-worker-with-retained-agents.patch`
+- `ios/patches/libjuice/0004-offer-kernel-source-per-ipv6-prefix.patch`
 - `ios/project.yml`
 - `ios/scripts/archive.sh`
 - `ios/scripts/build-number.sh`
@@ -5096,7 +5098,7 @@ Total tracked files: **7392**
 - `resources/shaders/waterfall.frag`
 - `resources/shaders/waterfall.vert`
 
-## test (1763)
+## test (1764)
 
 - `tests/CMakeLists.txt`
 - `tests/CatFixtureHarness.h`
@@ -5935,6 +5937,7 @@ Total tracked files: **7392**
 - `tests/tst_io_board_hl2.cpp`
 - `tests/tst_item_view_model_reset.cpp`
 - `tests/tst_juice_dual_stack_port.cpp`
+- `tests/tst_juice_ipv6_source_address.cpp`
 - `tests/tst_juice_poll_liveness.cpp`
 - `tests/tst_keying_gate.cpp`
 - `tests/tst_lan_discovery_regex.cpp`

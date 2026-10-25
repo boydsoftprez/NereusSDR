@@ -202,6 +202,39 @@ mw0lge@grange-lane.co.uk
 //                Thetis's MoxChange and TuneChange do: an app on receiver 1
 //                was told trx:1,false; with its own accepted key. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Ported from Longpath src/core/TciServer.cpp [@383f058]
+//                (cf756d8b, Martin Fischer OE5SOS) by J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Claude Code: receive
+//                audio and I/Q frames to an app with 256 KiB or more
+//                already waiting are dropped, not queued without limit
+//                (binaryBackpressureClear). The agc_gain broadcast follows
+//                rfGainChanged, the AGC-T, as Thetis's ptbRF_Scroll raises
+//                AGCGainChangedHandlers with ptbRF.Value (console.cs:28797
+//                [v2.10.3.15]), after Longpath f1d0c181.
+
+// --- From TciServer.cpp ---
+// no-port-check: AetherSDR-derived Longpath file.  Transport lifecycle
+// (start/stop/onNewConnection/onClientDisconnected) is adapted from
+// AetherSDR src/core/TciServer.{h,cpp} [@0cd4559]; Longpath diverges in
+// bind address, double-start contract, signal set, and client table type.
+// Registered in docs/attribution/aethersdr-reconciliation.md.
+
+// src/core/TciServer.cpp  (Longpath)
+// Longpath-original — TCI WebSocket server implementation.
+//
+// Transport pattern ported from AetherSDR src/core/TciServer.{h,cpp} [@0cd4559].
+// Per-client field set condensed from Thetis TCIServer.cs:684-790 [v2.10.3.13].
+//
+// Modification history (Longpath):
+//   2026-05-10 — Phase 3J-1 Task 2.1 by J.J. Boyd (KG4VCF);
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-17 — MOX release on client loss: m_moxOwner is set on
+//                trx:N,true, cleared on trx:N,false / moxStateChanged(false),
+//                and onClientDisconnected() unkeys the radio if the owner
+//                vanished while MOX was on; a keyed-client watchdog pings
+//                the owner every second and releases MOX after three
+//                unanswered pings (hung client, socket still open).
+//                NereusSDR-original; see TciServer.h.
 
 #ifdef HAVE_WEBSOCKETS
 
@@ -270,6 +303,46 @@ void  destroy_resampleFV(void* ptr);
 #include <QDateTime>
 
 namespace NereusSDR {
+
+namespace {
+
+// ── binaryBackpressureClear() ────────────────────────────────────────────────
+//
+// From Longpath src/core/TciServer.cpp:90-108, 154-158 [@383f058], where it
+// is rueckstauFrei(). Its comment, verbatim:
+//
+// ── rueckstauFrei() (2026-10-01) ─────────────────────────────────────────────
+//
+// Darf an diesen Socket noch ein Binaerrahmen? Qt puffert, was der Client
+// nicht abholt, und der Puffer waechst ohne Grenze.
+//
+// Das trifft genau den Fall, fuer den die Handfunke gebaut ist: ein Telefon,
+// das iOS einfriert, wenn es in die Tasche wandert. Die Verbindung bleibt
+// formal offen, der Client holt aber nichts mehr ab — und der Server
+// schaufelt bei 12 kHz mu-law gut 13 kB in jede Sekunde hinein. Nach einer
+// Viertelstunde in der Tasche waeren das zwölf Megabyte je Strom.
+//
+// Ab der Schwelle wird verworfen statt gepuffert. Das ist die richtige Wahl
+// fuer Ton und Bild: beide sind nur im Augenblick etwas wert. Was der Client
+// verpasst hat, will er beim Zurueckkommen nicht nachgereicht bekommen — er
+// will das JETZT hoeren und sehen, nicht die Viertelstunde von vorhin.
+//
+// 256 kB sind bei 13 kB/s rund zwanzig Sekunden Rueckstand. Wer so weit
+// hinterherhaengt, hat kein Puffer-, sondern ein Leitungsproblem.
+//
+// In English: Qt buffers every binary frame an app does not collect. An app
+// that stops reading (a phone the OS froze, a hung program) keeps its
+// connection open, so the buffer grows without limit. At 256 KiB or more
+// pending, receive audio and I/Q frames are dropped: both are only worth
+// something now, and an app that comes back wants the present, not the backlog.
+bool binaryBackpressureClear(QWebSocket* ws)
+{
+    // From Longpath src/core/TciServer.cpp:156 [@383f058]
+    static constexpr qint64 kMaxAusstehend = 256 * 1024;
+    return ws && ws->bytesToWrite() < kMaxAusstehend;
+}
+
+} // namespace
 
 // ── Constructor / destructor ─────────────────────────────────────────────────
 //
@@ -1016,13 +1089,18 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
                         .arg(TciProtocol::tciAgcModeForWire(modeStr)));
             });
 
-    // ── AGC gain / threshold (agc_gain: line) ───────────────────────────────
+    // ── AGC gain (agc_gain: line) ───────────────────────────────────────────
     // Source: Thetis AGCGainChangedHandlers at TCIServer.cs:6752 [v2.10.3.15]
-    // routed to OnAGCGainChanged.
-    connect(slice, &SliceModel::agcThresholdChanged, this,
-            [this, sliceId](int dBu) {
+    // routed to OnAGCGainChanged. ptbRF_Scroll raises it with ptbRF.Value,
+    // the AGC-T (console.cs:28797 [v2.10.3.15]:
+    // AGCGainChangedHandlers?.Invoke(1, _old_rx1_agc_gain, ptbRF.Value)),
+    // which is SliceModel::rfGain here. Until 2026-10-22 this followed
+    // agcThresholdChanged and sent the -160..+2 threshold point as
+    // agc_gain; see RadioModel::setAgcGain. After Longpath f1d0c181.
+    connect(slice, &SliceModel::rfGainChanged, this,
+            [this, sliceId](int gain) {
                 m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("agc_gain:%1,%2;").arg(sliceId).arg(dBu));
+                    QStringLiteral("agc_gain:%1,%2;").arg(sliceId).arg(gain));
             });
 
     // ── Squelch enable / level ─────────────────────────────────────────────
@@ -3361,6 +3439,14 @@ void TciServer::sendRxAudioBlock(QWebSocket* ws,
                     || !live->audioStreamEnabled.contains(rx)) {
                     return;
                 }
+                // From Longpath src/core/TciServer.cpp:597-604 [@383f058]
+                // Nur senden, wenn der Client hinterherkommt. Begruendung
+                // an rueckstauFrei(): ein eingefrorenes Telefon haelt die
+                // Verbindung offen und holt nichts ab.
+                if (!binaryBackpressureClear(socket.data())) {
+                    ++m_localBinaryBackpressureDrops;
+                    return;
+                }
                 socket->sendBinaryMessage(frame);
             });
         return;
@@ -3386,6 +3472,14 @@ void TciServer::sendRxAudioBlock(QWebSocket* ws,
         static_cast<int>(TciStreamType::RxAudioStream),
         channels,
         samples);
+    // From Longpath src/core/TciServer.cpp:597-604 [@383f058]
+    // Nur senden, wenn der Client hinterherkommt. Begruendung
+    // an rueckstauFrei(): ein eingefrorenes Telefon haelt die
+    // Verbindung offen und holt nichts ab.
+    if (!binaryBackpressureClear(ws)) {
+        ++m_localBinaryBackpressureDrops;
+        return;
+    }
     ws->sendBinaryMessage(frame);
 }
 
@@ -5315,6 +5409,14 @@ void TciServer::sendIqToSubscribers(int receiver, int sampleRate,
             2,             // always 2 channels for IQ (I + Q)
             outBuf.constData());
 
+        // From Longpath src/core/TciServer.cpp:4597-4600 [@383f058]
+        // Begruendung an rueckstauFrei(): roher I/Q ist der teuerste Strom,
+        // und was der Client verpasst hat, will er nicht nachgereicht
+        // bekommen — er will das Jetzt sehen.
+        if (!binaryBackpressureClear(ws)) {
+            ++m_localBinaryBackpressureDrops;
+            continue;
+        }
         ws->sendBinaryMessage(frame);
     }
 }

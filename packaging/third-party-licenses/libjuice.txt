@@ -10,7 +10,7 @@ libjuice is licensed under the Mozilla Public License 2.0. The complete
 license is supplied in MPLv2.txt. This backend does not supply the R5 TURN
 TCP/TLS fallback; that deployment acceptance remains separate.
 
-Modifications (MPL-2.0 section 3.1): the desktop/Core build applies four
+Modifications (MPL-2.0 section 3.1): the desktop/Core build applies five
 numbered patches to build-owned copies of the pinned source in
 cmake/NereusRemoteMedia.cmake:
 
@@ -18,6 +18,7 @@ cmake/NereusRemoteMedia.cmake:
   cmake/patches/libjuice-0002-bounded-turn-release-lifecycle.patch
   cmake/patches/libjuice-0003-keep-poll-worker-with-retained-agents.patch
   cmake/patches/libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch
+  cmake/patches/libjuice-0005-offer-kernel-source-per-ipv6-prefix.patch
 
 The first changes src/agent.c to give TURN allocations back with an
 authenticated Refresh of LIFETIME 0 when an agent is destroyed. The second
@@ -32,24 +33,28 @@ finished agents still own the registry, allowing a new agent to wake it. It
 adds no worker or timeout change. The fourth changes src/udp.c so that, on
 macOS only, a dual-stack (IPv6 wildcard) socket holds its IPv4 port before it
 binds, and so never shares a port with another program's IPv4-only socket.
+The fifth changes src/udp.c so that, on macOS only, each IPv6 /64 is offered
+with the address the system sends from rather than the first one listed.
 
 These changes are licensed under the Mozilla Public License 2.0, like
 the covered files they modify, which retain their upstream notices. The
 exact patches are supplied with NereusSDR's source and its written source
 offer (SOURCE-OFFER.txt).
 
-The NereusSDR for iPhone and iPad app applies its three numbered patches to
+The NereusSDR for iPhone and iPad app applies its four numbered patches to
 the same pinned revision under ios/NereusKit/Sources/CJuice/ through
 ios/scripts/vendor-sources.sh libjuice:
 
   ios/patches/libjuice/0001-give-turn-allocations-back.patch
   ios/patches/libjuice/0002-bounded-turn-release-lifecycle.patch
   ios/patches/libjuice/0003-keep-poll-worker-with-retained-agents.patch
+  ios/patches/libjuice/0004-offer-kernel-source-per-ipv6-prefix.patch
 
 The first two provide allocation release and the bounded closing lifecycle
 described above. The third changes src/conn_poll.c to retain the poll worker
 while finished agents still own the registry, allowing a new agent to wake
-it. It adds no worker or timeout change. Together they modify
-include/juice/juice.h, src/agent.c, src/agent.h, src/juice.c and
-src/conn_poll.c. The patches and modified covered files remain licensed under
+it. It adds no worker or timeout change. The fourth is the desktop's fifth:
+each IPv6 /64 is offered with the address the system sends from. Together
+they modify include/juice/juice.h, src/agent.c, src/agent.h, src/juice.c,
+src/conn_poll.c and src/udp.c. The patches and modified covered files remain licensed under
 the Mozilla Public License 2.0 and are published with NereusSDR's source.
