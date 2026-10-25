@@ -156,8 +156,8 @@ struct RoundtableFirstRunSheet: View {
                 .accessibilityIdentifier("roundtableHideSwitch")
         }
         .padding(10)
-        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(RoundtableColours.rule, lineWidth: 1))
+        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(RoundtableColours.rule, lineWidth: 1))
     }
 
     private func answer(live: Bool) {
@@ -207,8 +207,8 @@ struct RoundtableFirstRunNote: View {
                 .accessibilityIdentifier("roundtableFirstRunNoteOk")
         }
         .padding(10)
-        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(RoundtableColours.rule, lineWidth: 1))
+        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(RoundtableColours.rule, lineWidth: 1))
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
         .accessibilityElement(children: .contain)
@@ -226,8 +226,8 @@ private struct FirstRunButtonStyle: ButtonStyle {
             .foregroundStyle(main ? Color.white : RoundtableColours.text)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(main ? RoundtableColours.mainButton : RoundtableColours.field,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(
                 main ? RoundtableColours.accent : RoundtableColours.fieldEdge, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Rectangle())

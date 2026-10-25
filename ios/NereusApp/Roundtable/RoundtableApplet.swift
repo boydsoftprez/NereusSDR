@@ -123,7 +123,7 @@ struct RoundtableAppletTitle: View {
                     .foregroundStyle(ChromeColours.icon)
                     .padding(.horizontal, 8)
                     .frame(height: 18)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .frame(minWidth: 44, minHeight: AnalogSMeter.titleHeight)
                     .contentShape(Rectangle())
             }

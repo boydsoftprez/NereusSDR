@@ -145,7 +145,11 @@ enum RoundtableColours {
     static let bright = Color(red: 0xE7 / 255, green: 0xE7 / 255, blue: 0xEB / 255)
     static let dim = Color(red: 0xA6 / 255, green: 0xA6 / 255, blue: 0xAC / 255)
     static let dim2 = Color(red: 0x84 / 255, green: 0x84 / 255, blue: 0x8B / 255)
-    static let accent = Color(red: 0x00 / 255, green: 0xB4 / 255, blue: 0xD8 / 255)
+    /// The accent for fills and marks; the board maps the old #00B4D8 here
+    /// (make_board.py MAP), as the desktop panel uses its accent role.
+    static let accent = WorkspacePalette.accentFill
+    /// The accent for words (WorkspacePalette.accentText).
+    static let accentText = WorkspacePalette.accentText
     static let you = Color(red: 0x00 / 255, green: 0xD4 / 255, blue: 0xFF / 255)
     static let talking = Color(red: 0x4C / 255, green: 0xAF / 255, blue: 0x6A / 255)
     static let unknown = Color(red: 0xD8 / 255, green: 0xA5 / 255, blue: 0x5F / 255)

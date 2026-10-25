@@ -552,13 +552,13 @@ struct RoundtableTagLayer: View {
             .padding(.leading, placement.folded ? 5 : RoundtableTagLayout.padLeft)
             .padding(.trailing, RoundtableTagLayout.padRight)
             .frame(width: CGFloat(placement.width), height: RoundtableTagLayout.height)
-            .background(RoundedRectangle(cornerRadius: 4)
+            .background(RoundedRectangle(cornerRadius: 4) // kept-radius: roundtable-tag
                 .fill(open ? Self.openFill : Self.fill))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+            .overlay(RoundedRectangle(cornerRadius: 4) // kept-radius: roundtable-tag
                 .strokeBorder(open ? Self.openBorder : border, lineWidth: 1))
             .overlay {
                 if !placement.folded, first?.mine == true, !stale {
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: 5) // kept-radius: roundtable-tag
                         .strokeBorder(dimmed ? Self.mineRing.opacity(RoundtableColours.dimmedOpacity)
                                              : Self.mineRing, lineWidth: 1)
                         .padding(-1)
@@ -659,8 +659,8 @@ struct RoundtableTagLayer: View {
         }
         .padding(.vertical, 4)
         .frame(width: RoundtableTagLayout.foldListWidth, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Self.listFill))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Self.listBorder, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).fill(Self.listFill))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(Self.listBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.6), radius: 12, y: 10)
         .offset(x: x, y: y)
         .accessibilityElement(children: .contain)

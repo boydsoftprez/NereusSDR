@@ -408,7 +408,7 @@ Every screen uses the 2026.10.1 workspace look (desktop and web) or the app's wo
 - Only a message naming your callsign counts as unread: @1, @2 on the flag line and in room lists, as a cyan badge. Opening the room does not clear it; a pill above the box ("@1 A message names you ↓") jumps to it; it clears once that message has been on screen for 2 seconds; the message keeps its cyan mark. Read on one device is read on all (U6). Other new messages show only inside the room ("4, 2 new").
 - Each room panel is one scroll with the message box pinned. While you read further up, arrivals wait below and an "N new" pill above the box counts them; a mention pill comes first. At the newest message the view follows. A draft stays while messages arrive. New messages carry a blue edge and "new" until on screen for 2 seconds (U11).
 - While you transmit, readings of you take the room: one TX line ("You · 9 hear you"), then every station's reading of you; earlier turns and messages wait below (U3).
-- An empty room: "Nobody else here yet. Your readings of the next talker will appear here."
+- An empty room: "Nobody else is here. Your readings of the next talker will appear here."
 - Messages: 500 characters (Unicode code points), with a counter from 400; a failed send keeps the text with "Not sent · Try again"; ⋯ on your own message offers Delete ("Deleted by sender" shows in its place); ⋯ on others' offers Mute, Report, Copy. A draft belongs to its room and is still there when you come back.
 - Formatting: bold, italic, and links (http and https only, shown with their full address). Text is cleaned when stored and again when shown (12.4).
 - AWAY stations show AWAY on readings, members and the room header, with "can't post or name turns".

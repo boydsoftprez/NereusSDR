@@ -598,8 +598,8 @@ struct RoundtableRoomView: View {
             .accessibilityIdentifier("roundtableGoLive")
         }
         .padding(10)
-        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(RoundtableColours.rule, lineWidth: 1))
+        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(RoundtableColours.rule, lineWidth: 1))
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }
@@ -624,7 +624,7 @@ struct RoundtableRoomView: View {
             .accessibilityIdentifier("roundtableBackToSlice")
         }
         .padding(10)
-        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 6))
+        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }
@@ -653,7 +653,7 @@ struct RoundtableRoomView: View {
                         Spacer(minLength: 4)
                         Text("DOUBLED").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.bright)
                             .padding(.horizontal, 4)
-                            .background(RoundtableColours.doubled.opacity(0.35), in: RoundedRectangle(cornerRadius: 2))
+                            .background(RoundtableColours.doubled.opacity(0.35), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     }
                     small("for \(clock) \u{00B7} each reading is both signals together")
                 } else if turn.kind == "unknown" {
@@ -718,7 +718,7 @@ struct RoundtableRoomView: View {
         return HStack(spacing: 8) {
             Text("TX").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
                 .padding(.horizontal, 4)
-                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 2))
+                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
             Text("You \u{00B7} \(hearing) hear you").font(.system(size: 12, weight: .bold))
                 .foregroundStyle(RoundtableColours.you)
             Text(PttButton.clock(seconds: PttButton.keyedSeconds(since: keyedSince, fallback: keyedForSeconds)))
@@ -759,7 +759,7 @@ struct RoundtableRoomView: View {
                 Text(room.members.contains { !$0.you }
                      ? room.members.filter { !$0.you }.map { RoundtableText.withNth($0.callsign, $0.nth) }
                         .joined(separator: ", ")
-                     : "Nobody else here yet. Your readings of the next talker will appear here.")
+                     : "Nobody else is here. Your readings of the next talker will appear here.")
                     .font(.system(size: 12))
                     .foregroundStyle(RoundtableColours.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1028,8 +1028,8 @@ struct RoundtableRoomView: View {
                     .foregroundStyle(RoundtableColours.text)
                     .padding(.horizontal, 6)
                     .frame(height: 30)
-                    .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
+                    .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
                     .onChange(of: nameText) { _, text in
                         if text.count > 16 { nameText = String(text.prefix(16)) }
                     }
@@ -1113,7 +1113,7 @@ struct RoundtableRoomView: View {
                     tag(RoundtableText.sText(dbm))
                 }
                 if fresh {
-                    Text("new").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.accent)
+                    Text("new").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.accentText)
                 }
                 Spacer(minLength: 4)
                 Text(RoundtableText.utcText(message.t)).font(.system(size: 11).monospacedDigit())
@@ -1260,7 +1260,7 @@ struct RoundtableRoomView: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(RoundtableColours.dim)
             .padding(.horizontal, 3)
-            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
             .lineLimit(1)
             .fixedSize()
     }
@@ -1278,8 +1278,8 @@ struct RoundtableButtonStyle: ButtonStyle {
             .padding(.horizontal, 12)
             .frame(minHeight: 30)
             .background(main && enabled ? RoundtableColours.mainButton : RoundtableColours.field,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(
                 main && enabled ? RoundtableColours.accent : RoundtableColours.fieldEdge, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Rectangle())

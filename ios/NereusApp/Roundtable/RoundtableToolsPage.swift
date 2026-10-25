@@ -332,7 +332,7 @@ struct RoundtableRoomRow: View {
                             .foregroundStyle(Self.badgeText)
                             .padding(.horizontal, 4)
                             .frame(minWidth: 16)
-                            .background(RoundtableColours.you, in: RoundedRectangle(cornerRadius: 3))
+                            .background(RoundtableColours.you, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     }
                     if row.mentions > 0 {
                         Text("@\(row.mentions)")

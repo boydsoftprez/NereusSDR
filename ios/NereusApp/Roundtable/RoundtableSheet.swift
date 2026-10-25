@@ -122,9 +122,9 @@ struct RoundtableSheet: View {
             }
         }
         .background(RoundtableColours.ground)
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay {
-            UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius)
                 .strokeBorder(RoundtableColours.rule, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.5), radius: 12, y: -2)
@@ -428,7 +428,7 @@ struct RoundtableComposer<Leading: View>: View {
                         .foregroundStyle(RoundtableColours.dim)
                         .padding(.horizontal, 12)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 22))
+                        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .accessibilityIdentifier("roundtableHiddenBox")
                 } else {
                     box
@@ -441,7 +441,7 @@ struct RoundtableComposer<Leading: View>: View {
                     Text(failed).font(.system(size: 11)).foregroundStyle(RoundtableColours.dim).lineLimit(2)
                     Button("Try again") { send() }
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(RoundtableColours.accent)
+                        .foregroundStyle(RoundtableColours.accentText)
                         .accessibilityIdentifier("roundtableTryAgain")
                 }
                 .padding(.leading, leadingWidth)
@@ -487,8 +487,8 @@ struct RoundtableComposer<Leading: View>: View {
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .frame(minHeight: 44)
-        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: 22))
-        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
+        .background(RoundtableColours.field, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(RoundtableColours.fieldEdge, lineWidth: 1))
     }
 
     private func send() {
