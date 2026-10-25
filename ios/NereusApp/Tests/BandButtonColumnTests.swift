@@ -173,8 +173,20 @@ struct BandButtonColumnTests {
         let before = try #require(await attFrame())
         // ATT is in the second column's last row, below what shows.
         #expect(before.minY > shown.upperBound)
-        // The column's scroll view, scrolled to its top.
-        let column = try #require(Self.scrollViews(in: window).first { $0.contentSize.height > $0.bounds.height + 1 })
+        // The column's scroll view, scrolled to its top. ATT's accessibility
+        // element can be there before the scroll view has its content laid
+        // out (a busy simulator), so it is waited for as ATT is.
+        func overflowingColumn() async -> UIScrollView? {
+            for _ in 0..<100 {
+                window.layoutIfNeeded()
+                if let scroll = Self.scrollViews(in: window).first(where: { $0.contentSize.height > $0.bounds.height + 1 }) {
+                    return scroll
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return nil
+        }
+        let column = try #require(await overflowingColumn())
         #expect(column.contentOffset.y == 0)
         let columnTop = column.convert(column.bounds, to: nil).minY + window.frame.minY
         let att = (before.minY - columnTop)...(before.maxY - columnTop)

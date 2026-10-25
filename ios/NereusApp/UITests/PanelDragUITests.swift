@@ -74,11 +74,14 @@ final class PanelDragUITests: XCTestCase {
         }
     }
 
-    /// JJ 2026-09-30, sideways: the toolbar's Display and Pan 1 sheets sit
-    /// over the flag, its round buttons and the band's zoom, and none of
-    /// those takes a touch through the sheet. With `NEREUS_CONNECT_SHOTS`
-    /// set (through `TEST_RUNNER_NEREUS_CONNECT_SHOTS`), the Display sheet
-    /// is written there sideways as a PNG.
+    /// JJ 2026-09-30, sideways: the toolbar's Display pill and Pan 1 sheet
+    /// sit over the flag, its round buttons and the band's zoom, and none of
+    /// those takes a touch through them. Sideways (and on the iPad) the
+    /// toolbar's Display opens the pill beside the band's button column, not
+    /// the drop sheet (spec DC7, DC8), and the column's Display closes it.
+    /// With `NEREUS_CONNECT_SHOTS` set (through
+    /// `TEST_RUNNER_NEREUS_CONNECT_SHOTS`), the pill is written there
+    /// sideways as a PNG.
     @MainActor
     func testToolbarSheetsSitOverTheFlagAndZoomSideways() throws {
         addTeardownBlock { @MainActor in
@@ -89,14 +92,14 @@ final class PanelDragUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let toolbar = app.otherElements[UIDevice.current.userInterfaceIdiom == .pad ? "toolbarIPad" : "toolbarSideways"]
         XCTAssertTrue(toolbar.waitForExistence(timeout: 20))
-        // The band moved so A's flag straddles the Display sheet's right
-        // edge, as JJ saw it: part under the sheet, part beside it.
+        // The band moved so A's flag straddles the Display pill's right
+        // edge, as JJ saw it: part under the pill, part beside it.
         let flagA = app.descendants(matching: .any)["flagA"]
         toolbar.buttons["display"].tap()
-        let display = app.descendants(matching: .any)["displaySheet"]
+        let display = app.descendants(matching: .any)["bandColumnMenu.display"]
         XCTAssertTrue(display.waitForExistence(timeout: 10))
         let edge = display.frame.maxX
-        toolbar.buttons["display"].tap()
+        app.buttons["bandColumn.display"].tap()
         XCTAssertTrue(display.waitForNonExistence(timeout: 10))
         let move = edge - 40 - flagA.frame.minX
         let from = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: edge + 60, dy: flagA.frame.maxY + 90))
@@ -105,12 +108,12 @@ final class PanelDragUITests: XCTestCase {
         let band = [app.buttons["flagCloseA"], app.buttons["flagLockA"], app.buttons["flagMoreA"],
                     app.buttons["Zoom in"], app.buttons["Zoom out"], app.buttons["flagTabAudioA"],
                     app.buttons["flagFrequencyA"]]
-        for (button, sheetId) in [("display", "displaySheet"), ("pan", "panSheet")] {
+        for (button, sheetId) in [("display", "bandColumnMenu.display"), ("pan", "panSheet")] {
             toolbar.buttons[button].tap()
             let sheet = app.descendants(matching: .any)[sheetId]
             XCTAssertTrue(sheet.waitForExistence(timeout: 10), sheetId)
             Thread.sleep(forTimeInterval: 0.6)
-            if sheetId == "displaySheet" {
+            if button == "display" {
                 try save("display-sheet-sideways")
             }
             // A tap where each covered button lies lands on the sheet: no
@@ -137,7 +140,11 @@ final class PanelDragUITests: XCTestCase {
                 XCTAssertEqual(flag.frame, before, "\(what) moved or zoomed the band")
             }
             XCTAssertGreaterThan(covered, 0, "nothing of the band's lies under \(sheetId)")
-            toolbar.buttons[button].tap()
+            if button == "display" {
+                app.buttons["bandColumn.display"].tap()
+            } else {
+                toolbar.buttons[button].tap()
+            }
             XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), sheetId)
         }
     }

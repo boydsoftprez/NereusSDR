@@ -261,7 +261,7 @@ struct KeyedMeterOverlayShotTests {
             let frame = element.accessibilityFrame
             #expect(!frame.isEmpty, "empty \(id)")
             #expect(band.insetBy(dx: -1, dy: -1).contains(frame), "\(id) outside band: \(frame), band \(band)")
-            #expect(!frame.intersects(ptt), "\(id) covers PTT")
+            #expect(!frame.intersects(ptt), "\(id) covers PTT: \(frame), PTT \(ptt)")
             #expect(!frame.intersects(tabs), "\(id) covers tab bar")
             if id.hasPrefix("keyedTab-") || id.hasPrefix("keyedMeterSlot-") || id == "keyedMeterDone" {
                 #expect(frame.height >= 44 && frame.width >= 44, "\(id) below minimum touch size")

@@ -264,8 +264,15 @@ struct MainScreen: View {
                     .environment(\.displayPeek, $displayPeek)
             }
             PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes) { placed in
+                // Moved by an offset, not by its leading padding: padding
+                // past the safe area's width made the band wider than it was
+                // offered, which narrowed the band, moved the flags and so
+                // moved the PTT back, without end (DialShotTests on a Pro Max
+                // sideways with the thumbwheel). An offset leaves the band's
+                // size alone.
                 PttButton(transmit: transmit, linkUp: app.connection == .connected)
-                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0) + (placed.minX - pttHome.minX))
+                    .offset(x: placed.minX - pttHome.minX)
+                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
                     .padding(.bottom, PttButton.bottomInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
