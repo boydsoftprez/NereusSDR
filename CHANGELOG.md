@@ -191,6 +191,23 @@ still connect to each other as before.
   filter. Below a CW pitch of 500 Hz, a CW preset slides so it no longer
   crosses the carrier. FM is unchanged.
   ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
+- A receive filter is now kept within limits, however it is set: by a drag, a
+  preset, CAT, TCI, Hamlib rigctld or a saved layout. It is at least 10 Hz
+  wide, at most 10 kHz wide, and no edge is more than 10 kHz from the carrier.
+  A filter that runs past a limit snaps back to it, and the pan, the flag and
+  the filter controls show the filter that was kept. A request for a 0 Hz
+  filter now gives a 10 Hz one. Dragging the whole passband keeps its width at
+  a limit. FM is not limited this way. Thanks to Martin Fischer (OE5SOS),
+  whose Longpath fix this builds on.
+  ([#615](https://github.com/boydsoftprez/NereusSDR/pull/615))
+- New **Limit filter edges to sidebands** checkbox in **Setup > General >
+  Filters**, off by default. When it is on, a filter you set can no longer
+  cross the carrier: LSB, USB, the CW and digital modes and RADE stay on their
+  own side, and AM, SAM and DSB keep the carrier inside. Filters already set
+  stay as they are until you change them. It is a Core setting, so a remote
+  window and the phone (**Setup > General > Filters** there too) change it for
+  every slice on that Core. An older Core grays the phone's page and says so.
+  ([#615](https://github.com/boydsoftprez/NereusSDR/pull/615))
 - The band's AGC and the RF gain slider come back as you left them after a
   restart. Moving the AGC-T or RF gain slider just before quitting could save
   one of the pair out of step with the other.

@@ -60,6 +60,11 @@ Older Cores, windows and phone apps still connect to each other.
   Presets you edited keep what you saved. If you once reordered a mode's
   presets, it keeps the old values until you use **Reset All Rows for This
   Mode** in **Setup > DSP > Filter Presets**.
+- **Filter limits.** A receive filter now stays between 10 Hz and 10 kHz wide,
+  with no edge more than 10 kHz from the carrier, however it is set; FM is not
+  limited. A new **Limit filter edges to sidebands** checkbox in **Setup >
+  General > Filters** (off by default) also keeps filters from crossing the
+  carrier.
 - **Radio search.** The window stays usable while it searches for radios. The
   search pauses while a connection starts, so the Connection panel fills in
   about 3 seconds after you connect.
