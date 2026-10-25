@@ -1882,6 +1882,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
@@ -2077,6 +2078,7 @@ set(GUI_SOURCES
     src/gui/containers/meter_property_editors/DataOutItemEditor.cpp
     src/gui/containers/meter_property_editors/ButtonBoxItemEditor.cpp
     src/gui/containers/meter_property_editors/BandButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/NereusBandButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/ModeButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/FilterButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/AntennaButtonItemEditor.cpp
@@ -2129,6 +2131,7 @@ set(GUI_SOURCES
     src/gui/meters/RotatorItem.cpp
     src/gui/meters/ButtonBoxItem.cpp
     src/gui/meters/BandButtonItem.cpp
+    src/gui/meters/NereusBandButtonItem.cpp
     src/gui/meters/ModeButtonItem.cpp
     src/gui/meters/FilterButtonItem.cpp
     src/gui/meters/AntennaButtonItem.cpp
@@ -2148,6 +2151,7 @@ set(GUI_SOURCES
     src/gui/SetupPage.cpp
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
+    src/gui/setup/GeneralFiltersPage.cpp
     src/gui/setup/HardwarePage.cpp
     src/gui/setup/HardwareDdcRoutingPage.cpp
     src/gui/setup/PaSetupPages.cpp
@@ -2214,6 +2218,8 @@ set(GUI_SOURCES
     src/gui/applets/AppletPanelWidget.cpp
     src/gui/applets/AppletVisibilityController.cpp
     src/gui/applets/RxApplet.cpp
+    src/gui/applets/RxControlSections.cpp
+    src/gui/applets/RxSectionContent.cpp
     src/gui/applets/TxApplet.cpp
     src/gui/applets/TxFilterSection.cpp
     src/gui/applets/TxProcessingSection.cpp

@@ -206,6 +206,8 @@
 //   2026-10-24 - Roundtable plan Task 13: Roundtable/WindowGeometry (the
 //                pop-out window's size and screen) stays each computer's.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - LimitFiltersToSidebands is Station scope. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -663,6 +665,12 @@ const Rule kWholeKeys[] = {
     // RadioModel applies it at connect and on change. Until R-R3-49 it was
     // pinned OperatorLocal below as a write-only setting with no consumer.
     { "NetworkWatchdogEnabled", SettingsScope::Station },
+
+    // Setup > General > Filters' "Limit filter edges to sidebands": a
+    // slice's filter is constrained where the slice lives, so one value
+    // for the Core and every window on it. RadioModel applies it to every
+    // slice (StationServer when a window's change lands).
+    { "LimitFiltersToSidebands", SettingsScope::Station },
 
     // iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out stops
     // the radio where it is, so every limit is the Core's: Thetis's MOX and

@@ -17,6 +17,11 @@
 //                Claude Code; attribution remediation via OpenAI Codex.
 //   2026-10-16 - Include QTimer for the inline timer accessors by J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - localBinaryBackpressureDrops(): receive audio and I/Q
+//                frames dropped to an app that has stopped reading.
+//                NereusSDR-original, for the bound ported from Longpath
+//                cf756d8b. J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 // --- From TCIServer.cs ---
@@ -334,6 +339,9 @@ public:
     bool remoteReceiverRequested(int rx) const;
     std::optional<RemoteTciAudioStage::Diagnostics> remoteAudioDiagnostics(int rx) const;
     quint64 remoteAudioSocketBackpressureDrops() const { return m_socketBackpressureDrops; }
+    // Receive audio and I/Q frames this computer's own receivers did not
+    // send to an app because 256 KiB or more already waited for it.
+    quint64 localBinaryBackpressureDrops() const { return m_localBinaryBackpressureDrops; }
 
     // IReceiverPcmSink (remote window). The receive worker signals arrival
     // here; its own stage holds PCM and performs TCI conversion.
@@ -984,6 +992,7 @@ private:
     quint64 m_nextRemoteAudioToken{0};
     int m_nextRemoteDrainReceiver{0};
     quint64 m_socketBackpressureDrops{0};
+    quint64 m_localBinaryBackpressureDrops{0};
     std::array<quint64, kMaxTciRxSlices> m_lastRemoteMailboxEvictions{};
     std::array<quint64, kMaxTciRxSlices> m_lastRemoteHistorySkips{};
     quint64 m_remoteSaturationDrops{0};

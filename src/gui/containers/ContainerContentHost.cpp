@@ -68,7 +68,12 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-22  J.J. Boyd (KG4VCF): the arrange drag's QDrag is built
+//               through ScopedChildWidget instead of on the stack, so a
+//               host that dies during the drag no longer frees it twice.
+//               With AI-assisted transformation via Claude Code.
 #include "ContainerContentHost.h"
+#include "gui/ScopedChildWidget.h"
 #include "ContainerControlCatalog.h"
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
@@ -1356,11 +1361,15 @@ bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
                     QApplication::startDragDistance()) {
                 const QString entry = m_pressedEntry;
                 m_pressedEntry.clear();
-                QDrag drag(this);
+                // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+                ScopedChildWidget<QDrag> dragOwner(this);
+                QDrag& drag = *dragOwner.get();
                 auto *mime = new QMimeData;
                 mime->setData(ContainerArrangeController::kMimeType, m_arrange->mimeData(entry));
                 drag.setMimeData(mime);
                 drag.exec(Qt::MoveAction);
+                // The parent may have died in exec() and taken the drag with it.
+                if (!dragOwner) { return true; }
                 // IgnoreAction includes Escape, invalid/blocked targets and outside
                 // drops: cancellation never creates a pop-out or writes geometry.
                 m_indicator->hide();

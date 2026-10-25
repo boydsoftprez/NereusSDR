@@ -1,5 +1,44 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-24  J.J. Boyd / KG4VCF  Every model the cases build is an
+//                                    IsolatedRadioModel, so none starts a
+//                                    capture helper found beside the test
+//                                    binary. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the run level starts at the seed's
+//                                    target, -155.5 and -154.3, and the
+//                                    local pan runs on the rows' clock.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the seed starts the floor's fast
+//                                    attack, so NF-AGC's low is the AGC's
+//                                    run level, -152.2 and -152.32.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  coreWaterfallAgcWindowContainsAcceptedLevels
+//                                    also widens the window for an NF-AGC
+//                                    low under it. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the noise floor reads the first row, so
+//                                    NF-AGC's low is -155.5 and -155.476 (the
+//                                    seed is where the estimate settles, not
+//                                    the median), the local pan asks for no
+//                                    averaging, and its window needs no
+//                                    second request.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  displayTelemetry().rowsBlanked is the
+//                                    sum of every bound pan's NB Blank
+//                                    count. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2: displayCodecV2StartSkips-
+//                                    ContextKeyframes (the start field, no
+//                                    context keyframe, held parts, two
+//                                    frames a release, lost counts) and
+//                                    miniDisplayTakesARowOnlyPartialFrame;
+//                                    the tests counting v1 context
+//                                    keyframes withhold displayCodec.
+//                                    AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  The stall test also checks the pan's
 //                                    own keyframe waits and blended and
 //                                    repeated rows. AI-assisted via
@@ -369,6 +408,7 @@
 #include "fakes/FakeCaptureChild.h"
 #include <atomic>
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 
 using namespace NereusSDR;
 
@@ -487,6 +527,21 @@ void captureRemoteMediaMessages(QtMsgType, const QMessageLogContext& context,
         g_remoteMediaMessages.append(message);
     }
 }
+
+namespace {
+// Every model this file builds is one of these: its capture supervisor
+// points at a program that cannot exist (NoCaptureHelper.h), so no case
+// starts a real nereus-audio-capture found beside this test binary.  A
+// case that wants a helper still installs the scripted fake afterwards.
+class IsolatedRadioModel final : public RadioModel {
+public:
+    explicit IsolatedRadioModel(RadioModel::Role role = RadioModel::Role::Local)
+        : RadioModel(role)
+    {
+        Test::useNoCaptureHelper(*this);
+    }
+};
+} // namespace
 
 namespace {
 // I/Q blocks a display test hands the Core per poll of a QTRY wait. One
@@ -1226,7 +1281,7 @@ private slots:
     void waveformRemoteDemandClockAndIdentity()
     {
         QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings"));
-        RadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
+        IsolatedRadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5,5,192000); station.setConnectionStateForTest(ConnectionState::Connected);
         const int slice=station.addSlice(); QVERIFY(slice>=0);
         StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
@@ -1236,7 +1291,7 @@ private slots:
         DaemonMediaController core(&server,&station,nullptr,[&](QObject* parent)->IMediaTransport* {
             coreMedia=new DisplayTransport(parent); return coreMedia;
         },[] { return waveformNowNs()+offset; });
-        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy; StationClient client(&remote,&proxy);
         client.withholdFeatureForTest("remoteTx"); // This observer fixture opens no microphone line/capture.
         RemoteMediaController gui(&client,&remote,nullptr,nullptr,[&](QObject* parent)->IMediaTransport* {
@@ -1282,10 +1337,10 @@ private slots:
 
     void waveformOlderCoreIsUnsupported()
     {
-        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); RadioModel station;
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); IsolatedRadioModel station;
         StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path())); server.setMediaEnabled(true);
         DaemonMediaController core(&server,&station,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
-        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy; StationClient client(&remote,&proxy); client.withholdFeatureForTest("waveform");
         RemoteMediaController gui(&client,&remote,nullptr,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
         auto* stationLink=new Test::LoopbackTransport("station", &server);
@@ -1301,7 +1356,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath("station.settings"));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
         QPointer<DisplayTransport> coreMedia;
@@ -1310,7 +1365,7 @@ private slots:
                 coreMedia = new DisplayTransport(owner);
                 return coreMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1397,10 +1452,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1446,10 +1501,10 @@ private slots:
         QFETCH(bool, recovers);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1499,10 +1554,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1536,11 +1591,11 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1582,10 +1637,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1655,10 +1710,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1715,13 +1770,13 @@ private slots:
         constexpr int kConnectMs = 1500;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
         // Core answers media only when a test case wants its description.
         bool coreOffers = false;
         std::unique_ptr<DaemonMediaController> core;
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1804,10 +1859,10 @@ private slots:
         constexpr int kDeadlineMs = 150;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1883,10 +1938,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2144,7 +2199,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2163,7 +2218,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2272,7 +2327,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2290,7 +2345,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2453,7 +2508,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2471,7 +2526,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2576,7 +2631,7 @@ private slots:
         QFETCH(bool, olderCore);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2601,7 +2656,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2821,7 +2876,7 @@ private slots:
         QFETCH(bool, scale);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2845,7 +2900,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2941,7 +2996,7 @@ private slots:
         QCOMPARE(station.sliceOwnership()->anchorOf(stream), identity->fingerprint());
         QTRY_VERIFY(remote.sliceById(hiddenId));
         QCOMPARE(remote.slicesOnStream(stream).size(), 2);
-        RadioModel remoteB(RadioModel::Role::Remote);
+        IsolatedRadioModel remoteB(RadioModel::Role::Remote);
         remoteB.audioEngine()->setMasterMuted(true);
         SettingsProxy proxyB;
         StationClient clientB(&remoteB, &proxyB);
@@ -3171,7 +3226,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3189,7 +3244,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3387,7 +3442,7 @@ private slots:
         // The rejoin rows need a codec: a rejoin compares the ADC each
         // receiver's DDC reads, which only the codec's assignment says.
         P2CodecSaturn codec;
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         if (rejoined) {
@@ -3432,7 +3487,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3589,7 +3644,7 @@ private slots:
         // A Protocol 2 Core with a wideband ADC path: a view outside the
         // receiver is one this Core accepts and switches the filters for.
         P2RadioConnection p2;
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3631,7 +3686,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3821,7 +3876,7 @@ private slots:
         QFETCH(bool, budget);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3852,7 +3907,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3971,7 +4026,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3988,7 +4043,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4057,7 +4112,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4080,7 +4135,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4166,7 +4221,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4184,7 +4239,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4279,7 +4334,7 @@ private slots:
             if (hadFft) { appSettings.setValue(QStringLiteral("DisplayFftSize"), savedFft); }
             else { appSettings.remove(QStringLiteral("DisplayFftSize")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         StepAttenuatorController stationAttenuator(&station);
         stationAttenuator.setStepAttEnabled(true);
@@ -4304,7 +4359,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
@@ -4478,7 +4533,7 @@ private slots:
         QFETCH(QString, trigger);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4492,7 +4547,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4543,11 +4598,84 @@ private slots:
         QTRY_COMPARE(daemon.activeSourceCount(), 0);
     }
 
-    void logicalPanLifecycleKeepsMediaAcrossReparentAndRetiresItOnRemoval()
+    // NB Blank's replaced rows reach the diagnostics line as the sum over
+    // every bound pan (displayRowsBlanked): one pan blanks one row, the
+    // other two, and the window reports three.
+    void displayTelemetrySumsEveryPansBlankedRows()
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        QVERIFY(station.sliceById(sliceId));
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        stack.resize(800, 800);
+        stack.applyLayout(QStringLiteral("2v"), {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        for (PanadapterApplet* applet : stack.allApplets()) {
+            applet->setActiveSliceIndex(sliceId);
+            applet->spectrumWidget()->setDisplayWindowPreservingHistory(
+                station.streamCentreHz(station.sliceById(sliceId)->streamIndex()), 48000);
+        }
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.isHandshakeComplete());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(controller.activeEndpointCount(), 2);
+        QCOMPARE(controller.displayTelemetry().rowsBlanked, quint64(0));
+
+        // Each pan: 10 quiet rows of history, then `pulses` rows 10 dB up
+        // across the whole row, each followed by a quiet row.
+        const auto blankRows = [](SpectrumWidget* widget, int pulses) {
+            const int n = widget->liveWaterfallForTest().width();
+            QVERIFY(n > 0);
+            widget->setWaterfallBlankingEnabled(true);
+            for (int i = 0; i < 10; ++i) {
+                widget->pushWaterfallRowForTest(QVector<float>(n, -110.0f));
+            }
+            for (int i = 0; i < pulses; ++i) {
+                widget->pushWaterfallRowForTest(QVector<float>(n, -100.0f));
+                widget->pushWaterfallRowForTest(QVector<float>(n, -110.0f));
+            }
+            QCOMPARE(widget->waterfallRowsBlanked(), quint64(pulses));
+        };
+        blankRows(stack.spectrum(QStringLiteral("pan-0")), 1);
+        blankRows(stack.spectrum(QStringLiteral("pan-1")), 2);
+        QCOMPARE(controller.displayTelemetry().rowsBlanked, quint64(3));
+    }
+
+    void logicalPanLifecycleKeepsMediaAcrossReparentAndRetiresItOnRemoval()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4565,7 +4693,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4801,7 +4929,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4832,7 +4960,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4905,7 +5033,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4936,7 +5064,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5006,7 +5134,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -5022,7 +5150,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5098,13 +5226,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5242,13 +5370,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5384,13 +5512,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5553,13 +5681,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5646,13 +5774,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5820,13 +5948,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6067,7 +6195,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6098,7 +6226,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6174,7 +6302,7 @@ private slots:
         });
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6194,7 +6322,7 @@ private slots:
                 sourcePeers.append(transport);
                 return transport;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6352,7 +6480,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6367,7 +6495,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6435,7 +6563,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6466,7 +6594,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6546,7 +6674,7 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6572,7 +6700,7 @@ private slots:
             return false;
         });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6675,7 +6803,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5,5,192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6688,7 +6816,7 @@ private slots:
         }
         StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         remote.setClarityEnabled(true);
         PanClarityRegistry registry(&remote);
@@ -6816,7 +6944,7 @@ private slots:
         QFETCH(qint64, holdMs);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6827,7 +6955,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         NereusSDR::FFTEngine windowEngine(-1); // Rendering > Decimation keeps its value here.
         windowEngine.setDecimation(decimation);
@@ -7021,7 +7149,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7031,11 +7159,14 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
         // as an older Core's do, so the window is one that was told none.
         client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
@@ -7368,7 +7499,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7377,10 +7508,13 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -7602,7 +7736,7 @@ private slots:
         QFETCH(QString, rule);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7616,10 +7750,13 @@ private slots:
         const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -7800,7 +7937,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7809,10 +7946,13 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
         // as an older Core's do, so the window is one that was told none.
         client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
@@ -8085,7 +8225,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8094,10 +8234,13 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
         client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
@@ -8330,7 +8473,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8343,10 +8486,13 @@ private slots:
         const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
         // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
         // as an older Core's do, so the window is one that was told none.
@@ -8566,6 +8712,248 @@ private slots:
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // NSDC v2 (display codec v2 document, sections 7 and 9.3): a window
+    // whose Core offers displayCodecVersion 2 asks for it in its start and
+    // then asks no keyframe for a receive context, a re-grant or a transmit
+    // context; a window that withholds the feature asks one for each, as
+    // before. Either way a binding that has decoded a v2 frame asks none for
+    // its next context, and a v1 frame's NeedKeyframe still asks. A held part
+    // presents nothing; a decode that releases two frames presents both, in
+    // order, to the receive presenter or the transmit display; the decoders'
+    // lost frames and parts reach the display telemetry, and no loss waits
+    // for a keyframe.
+    void displayCodecV2StartSkipsContextKeyframes_data()
+    {
+        QTest::addColumn<bool>("agreed");
+        QTest::newRow("Core offers v2") << true;
+        QTest::newRow("window withholds displayCodec") << false;
+    }
+
+    void displayCodecV2StartSkipsContextKeyframes()
+    {
+        QFETCH(bool, agreed);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        IsolatedRadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        // A TX analyzer: this Core offers the transmit display.
+        TxAnalyzer txAnalyzer(TxAnalyzer::kTxDispId);
+        station.setTxAnalyzer(&txAnalyzer);
+        const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        // The contexts this test sends by hand state no picture.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
+        if (!agreed) { client.withholdFeatureForTest(QByteArrayLiteral("displayCodec")); }
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setWfAgcEnabled(false);
+        widget->setWaterfallNFAGCEnabled(false);
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setWaterfallTickerPausedForTest(true);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        QSignalSpy receivedControls(&client, &StationClient::mediaControlReceived);
+        QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy transmitFrames(&controller, &RemoteMediaController::transmitFrameReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QVERIFY(controller.txDisplayNegotiated());
+
+        // The start asks for v2 exactly when the Core offers it.
+        QCOMPARE(client.capabilities().displayCodecVersion, agreed ? 2 : 0);
+        QCOMPARE(countControl(controls, QStringLiteral("start")), 1);
+        const QJsonObject start = lastControl(controls, QStringLiteral("start"));
+        QCOMPARE(start.contains(QStringLiteral("displayCodecVersion")), agreed);
+        if (agreed) {
+            QCOMPARE(start.value(QStringLiteral("displayCodecVersion")).toInt(), 2);
+        }
+
+        const QJsonObject subscription = lastControl(controls, QStringLiteral("subscribe"));
+        const quint32 id = quint32(subscription.value(QStringLiteral("endpointId")).toDouble());
+        // 512 pixels of noise do not fit one SCTP DATA chunk: v2 splits them.
+        constexpr int kPixels = 512;
+        WidebandDisplayContext wideband;
+        wideband.available = true;
+        wideband.physicalAdcIndex = 0;
+        wideband.filterChainIndex = 0;
+        wideband.adcRateHz = 4000000;
+        const auto contextFor = [&](int generation, bool transmit) {
+            return QJsonObject{
+                {QStringLiteral("op"), QStringLiteral("context")},
+                {QStringLiteral("connectionId"), subscription.value(QStringLiteral("connectionId"))},
+                {QStringLiteral("endpointId"), double(id)},
+                {QStringLiteral("revision"), subscription.value(QStringLiteral("revision"))},
+                {QStringLiteral("contextGeneration"), generation}, {QStringLiteral("sourceStream"), 0},
+                {QStringLiteral("sourceCentreHz"), 14225000}, {QStringLiteral("sampleRateHz"), 192000},
+                {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
+                {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
+                {QStringLiteral("traceSamples"), kPixels}, {QStringLiteral("waterfallSamples"), kPixels},
+                {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
+                {QStringLiteral("maxDbm"), 0}, {QStringLiteral("fps"), 30},
+                {QStringLiteral("framesPerLine"), 1},
+                {QStringLiteral("wideband"), wideband.toJson()},
+                {QStringLiteral("grantedFftSize"), 8192}, {QStringLiteral("grantedTier"), QStringLiteral("wide")},
+                {QStringLiteral("requestedPixels"), kPixels}, {QStringLiteral("grantedPixels"), kPixels},
+                {QStringLiteral("limit"), QStringLiteral("none")},
+                {QStringLiteral("transmit"), transmit}};
+        };
+        // Sent, and read by the window.
+        const auto deliverContext = [&](const QJsonObject& context) {
+            const int before = countControl(receivedControls, QStringLiteral("context"));
+            return server.sendMediaControl(context, server.mediaSessionEpoch())
+                && QTest::qWaitFor([&] {
+                       return countControl(receivedControls, QStringLiteral("context")) > before;
+                   }, 5'000);
+        };
+        const auto keyframes = [&] { return countControl(controls, QStringLiteral("keyframe")); };
+        quint32 noiseState = 1;
+        const auto noise = [&noiseState] {
+            QVector<float> values(kPixels);
+            for (float& value : values) {
+                noiseState = noiseState * 1664525U + 1013904223U;
+                value = -180.0f + 180.0f * float(noiseState >> 8) / float(1U << 24);
+            }
+            return values;
+        };
+        constexpr qint64 kPeriodNs = 1'000'000'000 / 30;
+        const qint64 base = 1'000'000'000;
+        const auto frameOf = [&](quint32 generation, quint32 sequence, bool advance) {
+            DisplayCodecFrame frame;
+            frame.context = {id, generation, -180, 0, kPixels, kPixels, 0};
+            frame.encoderSequence = sequence;
+            frame.producerTimestamp = quint64(base + qint64(sequence) * kPeriodNs);
+            frame.waterfallAdvance = advance;
+            frame.traceDbm = noise();
+            frame.waterfallDbm = noise();
+            return frame;
+        };
+        const auto v2 = [](const DisplayCodecFrame& frame) {
+            return encodeDisplayCodecV2(frame, DisplayCodecEncoder::kMaxEncodedBytes).messages;
+        };
+
+        // A receive context, a re-grant (a newer context for the same
+        // request) and a transmit context. Each wait is also past the
+        // window's 200 ms keyframe request spacing.
+        QVERIFY(deliverContext(contextFor(1, false)));
+        QTRY_COMPARE(keyframes(), agreed ? 0 : 1);
+        QTest::qWait(250);
+        QCOMPARE(keyframes(), agreed ? 0 : 1);
+        QVERIFY(deliverContext(contextFor(2, false)));
+        QTRY_COMPARE(keyframes(), agreed ? 0 : 2);
+        QTest::qWait(250);
+        QCOMPARE(keyframes(), agreed ? 0 : 2);
+        QVERIFY(deliverContext(contextFor(3, true)));
+        QTRY_COMPARE(keyframes(), agreed ? 0 : 3);
+        QTest::qWait(250);
+        QCOMPARE(keyframes(), agreed ? 0 : 3);
+        const int contextKeyframes = keyframes();
+
+        // The transmit display: a held part hands on nothing; each frame a
+        // decode releases is handed on, in order.
+        const std::vector<QByteArray> t1 = v2(frameOf(3, 1, true));
+        const std::vector<QByteArray> t2 = v2(frameOf(3, 2, true));
+        const std::vector<QByteArray> t3 = v2(frameOf(3, 3, true));
+        const std::vector<QByteArray> t4 = v2(frameOf(3, 4, false));
+        QCOMPARE(t1.size(), size_t(2));
+        QCOMPARE(t4.size(), size_t(1));
+        media->deliver(t1.front()); // its trace part is lost
+        QCOMPARE(transmitFrames.count(), 0);
+        media->deliver(t2.front()); // releases t1 without its trace; t2 held
+        QCOMPARE(transmitFrames.count(), 1);
+        media->deliver(t2.back());
+        QCOMPARE(transmitFrames.count(), 2);
+        media->deliver(t3.front()); // its trace part is lost; held
+        QCOMPARE(transmitFrames.count(), 2);
+        media->deliver(t4.front()); // releases t3 and t4 at once
+        QCOMPARE(transmitFrames.count(), 4);
+        const QList<quint32> handedOn{
+            transmitFrames.at(0).at(1).value<DisplayCodecFrame>().encoderSequence,
+            transmitFrames.at(1).at(1).value<DisplayCodecFrame>().encoderSequence,
+            transmitFrames.at(2).at(1).value<DisplayCodecFrame>().encoderSequence,
+            transmitFrames.at(3).at(1).value<DisplayCodecFrame>().encoderSequence};
+        QCOMPARE(handedOn, (QList<quint32>{1, 2, 3, 4}));
+        QVERIFY(transmitFrames.at(0).at(1).value<DisplayCodecFrame>().traceCarried);
+        QVERIFY(transmitFrames.at(2).at(1).value<DisplayCodecFrame>().traceCarried);
+        QVERIFY(!transmitFrames.at(3).at(1).value<DisplayCodecFrame>().traceCarried);
+        RemoteDisplayTelemetry display = controller.displayTelemetry();
+        QCOMPARE(display.partsLost, quint64(2));
+        QCOMPARE(display.messagesLost, quint64(0));
+        QCOMPARE(keyframes(), contextKeyframes);
+
+        // Back to receive: this binding has decoded v2, so no keyframe is
+        // asked for its context, agreed or not.
+        QVERIFY(deliverContext(contextFor(4, false)));
+        QTest::qWait(250);
+        QCOMPARE(keyframes(), contextKeyframes);
+
+        // Receive frames: held parts present nothing; a lost trace part, a
+        // lost frame and a release of two frames present every frame
+        // released, and nothing waits for a keyframe.
+        const std::vector<QByteArray> r1 = v2(frameOf(4, 1, true));
+        const std::vector<QByteArray> r2 = v2(frameOf(4, 2, true));
+        const std::vector<QByteArray> r3 = v2(frameOf(4, 3, true));
+        const std::vector<QByteArray> r5 = v2(frameOf(4, 5, true)); // frame 4 is lost
+        QCOMPARE(r1.size(), size_t(2));
+        const qsizetype shownBefore = frames.count();
+        media->deliver(r1.front());
+        QTest::qWait(50);
+        QCOMPARE(frames.count(), shownBefore);
+        media->deliver(r1.back());
+        QTRY_COMPARE(frames.count(), shownBefore + 1);
+        media->deliver(r2.front()); // its trace part is lost
+        media->deliver(r3.front()); // releases r2 without its trace; r3 held
+        QTRY_COMPARE(frames.count(), shownBefore + 2);
+        media->deliver(r3.back());
+        QTRY_COMPARE(frames.count(), shownBefore + 3);
+        media->deliver(r5.front());
+        media->deliver(r5.back());
+        QTRY_COMPARE(frames.count(), shownBefore + 4);
+        display = controller.displayTelemetry();
+        QCOMPARE(display.partsLost, quint64(3));
+        QCOMPARE(display.messagesLost, quint64(1));
+        QCOMPARE(display.keyframeWaits, quint64(0));
+        QCOMPARE(keyframes(), contextKeyframes);
+
+        // A v1 frame this binding cannot decode still asks for a keyframe.
+        DisplayCodecEncoder encoder;
+        QVERIFY(!encoder.encode(frameOf(4, 10, true)).isEmpty());
+        const QByteArray delta = encoder.encode(frameOf(4, 11, true));
+        QVERIFY(!delta.isEmpty());
+        QVERIFY(!encoder.lastEncodedKeyframe());
+        media->deliver(delta);
+        QTRY_COMPARE(keyframes(), contextKeyframes + 1);
+        QCOMPARE(controller.displayTelemetry().keyframeWaits, quint64(1));
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // R-R3-21 / R-R3-08: a Core that omits displayClockVersion (an older
     // one): each frame is drawn on arrival, and the waterfall's row queue
     // and gap filling still apply, so a late burst still plays out row by
@@ -8574,7 +8962,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8583,10 +8971,13 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // NSDC v2: this test's frames are v1 and it counts the keyframes a
+        // context asks for, which a window that agreed v2 does not ask.
+        client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
         // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
         // as an older Core's do, so the window is one that was told none.
         client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
@@ -8686,7 +9077,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8696,7 +9087,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -8840,7 +9231,7 @@ private slots:
             if (hadSizingMode) { appSettings.setValue(sizingModeKey, savedSizingMode); }
             else { appSettings.remove(sizingModeKey); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8850,7 +9241,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         NereusSDR::FFTEngine windowEngine(-1); // Rendering > Decimation keeps its value here.
         windowEngine.setDecimation(4);
@@ -9070,7 +9461,7 @@ private slots:
             appSettings.remove(hzPerBinKey);
             appSettings.remove(modeKey);
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9080,7 +9471,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9166,7 +9557,7 @@ private slots:
             appSettings.remove(sizeKey);
             appSettings.remove(modeKey);
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9176,7 +9567,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9253,7 +9644,7 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9263,7 +9654,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9391,11 +9782,19 @@ private slots:
         // S7: NF-AGC is an option under AGC. Alone it leaves the stored
         // levels and asks the Core for none.
         QTest::newRow("nf-only") << false << true << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
-        // With AGC: the low is the pan's settled noise floor plus the
-        // offset of -5. The floor starts at -200 and its line follows over
-        // 41 frames at 20 a second: -200 + 1/41, then + 1.9756/41 more.
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
+        // With AGC: the low is the pan's settled noise floor plus the offset
+        // of -5, and the AGC's run level until the floor settles. The first
+        // row seeds the floor where the estimate settles on it, the pixel
+        // with 3 in 20 of the 128 below it: pixel 19 of -160 + 0.5 i,
+        // -150.5, and starts its fast attack (as Thetis starts a display,
+        // display.cs:3698-3700 [v2.10.3.15]). The run level starts at the
+        // seed's target, -155.5, not at Thetis's restart floor of -150
+        // (PR 628). The second row is 20 dB up, with no pixel under -150.5,
+        // so in fast attack the estimate climbs 3 dB and the line follows at
+        // once, and the run level moves 0.4 of the way from -155.5 to
+        // -147.5 - 5: -154.3.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }
@@ -9424,7 +9823,7 @@ private slots:
         });
         appSettings.clear();
         appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9434,7 +9833,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9551,6 +9950,14 @@ private slots:
         localContext.exactCentreHz = 14225023.4375;
         localContext.exactSpanHz = 24046.875;
         local.setDisplayFps(20);
+        // The local pan's display clock is the Core's: the noise floor's
+        // fast attack, which the first row starts, runs on the same time.
+        qint64 localNowMs = 1000;
+        local.setDisplayClockForTest([&localNowMs] { return localNowMs; });
+        // These rows are the Core's trace as sent, and nothing averages them
+        // here: the pan asks for no averaging, so it takes no starting value
+        // out of them (at Log Recursive it would, as for a new picture).
+        local.setSpectrumAveraging(SpectrumAveraging::None);
         local.setRemoteSpectrumContext(localContext, 14225023.4375, 192000);
         for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
             QVector<float> row(128);
@@ -9561,10 +9968,11 @@ private slots:
             frame.waterfallAdvance = true;
             frame.traceDbm = row;
             frame.waterfallDbm = row;
+            inputs.nowMs = 1000 + rowIndex * 50;
+            localNowMs = inputs.nowMs;
             QVERIFY(local.updateRemoteSpectrum(frame));
             local.composeWaterfallActiveThresholds(row);
             localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
-            inputs.nowMs = 1000 + rowIndex * 50;
             computed.append(processor.process(frame, inputs));
             qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
                     << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second
@@ -9611,21 +10019,20 @@ private slots:
         // (the pan's and the stored levels' -180 to 0 dBm with the headroom).
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -190.0);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 10.0);
-        // NF-AGC's accepted low (-204.9 dBm) is under the -190 dBm asked
-        // first, so the window is asked again with 10 dB of headroom below
-        // it. AGC's accepted pair (-171 and the stored High, 0) fits the
-        // window asked first now that AGC leaves the high level alone, so it
-        // asks nothing more; the request it used to make followed its high
-        // level (-83.5), not its low. Manual and Clarity fit theirs too.
+        // NF-AGC's accepted low (-155.5 dBm, the floor read from the first
+        // row) fits the -190 dBm window asked first, so it asks nothing more;
+        // it asked again for -215 only while the floor started at -200
+        // (coreWaterfallAgcWindowContainsAcceptedLevels covers a low under
+        // the window). AGC's accepted pair (-171 and the stored High, 0)
+        // fits the window asked first now that AGC leaves the high level
+        // alone, so it asks nothing more; the request it used to make
+        // followed its high level (-83.5), not its low. Manual and Clarity
+        // fit theirs too.
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
-        const int expectedRequests = mode == QStringLiteral("noiseFloorAgc") ? 2 : 1;
+        const int expectedRequests = 1;
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
-        if (mode == QStringLiteral("noiseFloorAgc")) {
-            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
-                         .value(QStringLiteral("minDbm")).toDouble(), -215.0);
-        }
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
@@ -9648,7 +10055,7 @@ private slots:
             }
         });
         appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9658,7 +10065,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9920,6 +10327,40 @@ private slots:
         widget->composeWaterfallActiveThresholds(line);
         QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
 
+        // NF-AGC's accepted low under the window (PR 628 re-review: this
+        // test said it covered NF-AGC and turned it off): the Core's pair
+        // for the new context, its low under the -120 dBm window asked,
+        // takes over the waterfall and widens the window to contain it,
+        // once, as the AGC's did.
+        const int beforeNfAgcPair = countControl(controls, QStringLiteral("subscribe"));
+        context.insert(QStringLiteral("revision"),
+                       lastControl(controls, QStringLiteral("subscribe"))
+                           .value(QStringLiteral("revision")));
+        context.insert(QStringLiteral("contextGeneration"), 3);
+        context.insert(QStringLiteral("minDbm"), -120.0);
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext nfAgcCodec{id, 3, -120.0f, -50.0f, 128, 128, 0};
+        DisplayExtrasFrame nfAgcPair;
+        nfAgcPair.endpointId = id;
+        nfAgcPair.contextGeneration = 3;
+        nfAgcPair.encoderSequence = 6;
+        nfAgcPair.waterfallLevelsDbm = std::make_pair(-131.742f, -70.0f);
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            media->deliver(encodeDisplayExtras(nfAgcPair, nfAgcCodec));
+            return widget->wfActiveLowThreshold() == -131.742f;
+        }(), 5000);
+        QCOMPARE(widget->wfActiveHighThreshold(), -70.0f);
+        settle();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), beforeNfAgcPair + 1);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject()
+                     .value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("noiseFloorAgc"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -142.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), beforeNfAgcPair + 1);
+
         // NF-AGC without AGC is manual levels, and manual levels ask for
         // none.
         widget->setWfAgcEnabled(false);
@@ -9944,7 +10385,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9954,7 +10395,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10056,7 +10497,7 @@ private slots:
         const bool grantAgreed = minor >= kRemoteSpectrumGrantSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10074,7 +10515,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10174,7 +10615,7 @@ private slots:
         QFETCH(bool, txState);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10208,7 +10649,7 @@ private slots:
                 coreMedia = new DisplayTransport(owner);
                 return coreMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         auto microphone = std::make_unique<FakeAudioBus>();
         QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
@@ -10488,7 +10929,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10512,7 +10953,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10689,6 +11130,196 @@ private slots:
     // transmit context and its frames are handed on, and the pan keeps its
     // receive context; the fall brings receive frames back. A Core without
     // one sees today's start and subscribe.
+    // NSDC v2 (sections 9.2 and 9.3): a mini display on a window whose start
+    // agreed v2 asks no keyframe for its context and is sent v2 by its Core
+    // (v1 and a keyframe as before when the window withholds the feature).
+    // A released frame whose trace part was lost has full-length planes, so
+    // the mini display's check takes it like any other: its row with the
+    // trace carried, then the next frame.
+    void miniDisplayTakesARowOnlyPartialFrame_data()
+    {
+        QTest::addColumn<bool>("agreed");
+        QTest::newRow("Core offers v2") << true;
+        QTest::newRow("window withholds displayCodec") << false;
+    }
+
+    void miniDisplayTakesARowOnlyPartialFrame()
+    {
+        QFETCH(bool, agreed);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        IsolatedRadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* slice = station.sliceById(sliceId);
+        QVERIFY(slice);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+        const double sourceHz = station.streamCentreHz(stream);
+        slice->setFrequency(sourceHz - 12'000.0);
+        StationServer server(&station, settings,
+            NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        if (!agreed) { client.withholdFeatureForTest(QByteArrayLiteral("displayCodec")); }
+        PanadapterStack stack; // No main pan: only the mini display subscribes.
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy miniFrames(&gui, &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        QTRY_COMPARE(client.capabilities().miniDisplayVersion, 1);
+        QCOMPARE(client.capabilities().displayCodecVersion, agreed ? 2 : 0);
+        const QJsonObject start = lastControl(outbound, QStringLiteral("start"));
+        QVERIFY(!start.isEmpty());
+        QCOMPARE(start.contains(QStringLiteral("displayCodecVersion")), agreed);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        gui.setMiniDisplaySlices({sliceId});
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QVector<float> iq(4096);
+        for (int n = 0; n < iq.size() / 2; ++n) {
+            const double phase = 2.0 * std::numbers::pi * (-10'000.0 / 192'000.0) * n;
+            iq[2 * n] = float(0.02 * std::cos(phase));
+            iq[2 * n + 1] = float(0.02 * std::sin(phase));
+        }
+        const auto feed = [&] {
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            }
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            feed();
+            return miniFrames.size() >= 3;
+        }()), 5'000);
+        // Feeding stops; whatever the Core still sends arrives.
+        QTest::qWait(300);
+        const qsizetype sent = sourceMedia->displayPackets.size();
+        QTest::qWait(150);
+        QCOMPARE(sourceMedia->displayPackets.size(), sent);
+
+        // The Core sends the version the start agreed, and the mini
+        // display's context asked for a keyframe only without v2.
+        DisplayCodecDecoder reader;
+        std::optional<DisplayCodecFrame> last;
+        int displays = 0;
+        for (const QByteArray& packet : sourceMedia->displayPackets) {
+            if (!packet.startsWith("NSDC")) { continue; }
+            ++displays;
+            QCOMPARE(int(quint8(packet.at(4))), agreed ? 2 : 1);
+            const DisplayCodecDecodeResult decoded = reader.decode(packet);
+            if (decoded.frameCount >= 1) {
+                last = decoded.frameCount == 2 ? decoded.secondFrame : decoded.frame;
+            }
+        }
+        QVERIFY(displays > 0);
+        QVERIFY(last);
+        if (agreed) {
+            QCOMPARE(countControl(outbound, QStringLiteral("keyframe")), 0);
+        } else {
+            QTRY_VERIFY(countControl(outbound, QStringLiteral("keyframe")) >= 1);
+        }
+        const DisplayCodecContext context = last->context;
+        QVERIFY(context.traceSamples > 0);
+        QCOMPARE(context.waterfallSamples, context.traceSamples);
+        QCOMPARE(context.wideSamples, quint16(0));
+        const QVector<float> shownTrace = miniFrames.last().at(1).value<QVector<float>>();
+        QCOMPARE(shownTrace.size(), int(context.traceSamples));
+        const RemoteDisplayTelemetry before = gui.displayTelemetry();
+
+        // The next two frames as the Core would send them, one row period
+        // apart: the first loses its trace part.
+        quint32 noiseState = 7;
+        const float stepDbm = (context.maxDbm - context.minDbm) / 255.0f;
+        const auto noise = [&] {
+            QVector<float> values(context.traceSamples);
+            for (float& value : values) {
+                noiseState = noiseState * 1664525U + 1013904223U;
+                value = context.minDbm
+                    + (context.maxDbm - context.minDbm) * float(noiseState >> 8) / float(1U << 24);
+            }
+            return values;
+        };
+        const auto frameAfter = [&](quint32 step) {
+            DisplayCodecFrame frame;
+            frame.context = context;
+            frame.encoderSequence = last->encoderSequence + step;
+            frame.producerTimestamp = last->producerTimestamp + quint64(step) * 33'333'333ULL;
+            frame.waterfallAdvance = true;
+            frame.traceDbm = noise();
+            frame.waterfallDbm = noise();
+            return frame;
+        };
+        const DisplayCodecFrame rowOnly = frameAfter(1);
+        const DisplayCodecFrame whole = frameAfter(2);
+        const std::vector<QByteArray> rowOnlyMessages =
+            encodeDisplayCodecV2(rowOnly, DisplayCodecEncoder::kMaxEncodedBytes).messages;
+        const std::vector<QByteArray> wholeMessages =
+            encodeDisplayCodecV2(whole, DisplayCodecEncoder::kMaxEncodedBytes).messages;
+        QCOMPARE(rowOnlyMessages.size(), size_t(2));
+        const auto near = [stepDbm](const QVector<float>& got, const QVector<float>& sent) {
+            if (got.size() != sent.size()) { return false; }
+            for (int i = 0; i < got.size(); ++i) {
+                if (std::abs(got.at(i) - sent.at(i)) > stepDbm) { return false; }
+            }
+            return true;
+        };
+        const auto shownIndex = [&](const QVector<float>& row, qsizetype from) {
+            for (qsizetype i = from; i < miniFrames.size(); ++i) {
+                if (near(miniFrames.at(i).at(2).value<QVector<float>>(), row)) { return i; }
+            }
+            return qsizetype(-1);
+        };
+        const qsizetype from = miniFrames.size();
+        sinkMedia->deliver(rowOnlyMessages.front()); // the trace part is lost
+        for (const QByteArray& message : wholeMessages) {
+            sinkMedia->deliver(message);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(shownIndex(whole.waterfallDbm, from) >= 0, 5'000);
+        const qsizetype rowAt = shownIndex(rowOnly.waterfallDbm, from);
+        const qsizetype wholeAt = shownIndex(whole.waterfallDbm, from);
+        QVERIFY(rowAt >= 0);
+        QVERIFY(rowAt < wholeAt);
+        const QList<QVariant>& rowShown = miniFrames.at(rowAt);
+        QCOMPARE(rowShown.at(0).toInt(), sliceId);
+        QVERIFY(rowShown.at(6).toBool()); // the waterfall advances
+        const QVector<float> carried = rowShown.at(1).value<QVector<float>>();
+        QCOMPARE(carried.size(), int(context.traceSamples));
+        if (agreed) {
+            // The trace carried is the last one the Core sent.
+            QCOMPARE(carried, shownTrace);
+        }
+        QVERIFY(near(miniFrames.at(wholeAt).at(1).value<QVector<float>>(), whole.traceDbm));
+        const RemoteDisplayTelemetry after = gui.displayTelemetry();
+        QCOMPARE(after.partsLost - before.partsLost, quint64(1));
+        QCOMPARE(after.messagesLost, before.messagesLost);
+        QCOMPARE(after.keyframeWaits, before.keyframeWaits);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void transmitDisplayIsDeclaredAndHandedOn_data()
     {
         QTest::addColumn<bool>("analyzer");
@@ -10701,7 +11332,7 @@ private slots:
         QFETCH(bool, analyzer);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10724,7 +11355,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10866,7 +11497,7 @@ private slots:
         const bool budgetMode = minor >= kDisplayBudgetReasonSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10887,7 +11518,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -11009,7 +11640,7 @@ private slots:
             if (hadTarget) { appSettings.setValue(targetKey, savedTarget); }
             else { appSettings.remove(targetKey); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -11043,7 +11674,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);

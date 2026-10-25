@@ -42,6 +42,10 @@
 //   HGauge bars; the line under them keeps volts and amps only. Forward,
 //   reflected and SWR show dashes at 0 W forward.
 //   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
+//               it is still there after exec(), since a parent that dies
+//               while it is open takes it along. With AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 #include "Rf2ksApplet.h"
@@ -62,6 +66,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPointer>
 #include <QStyle>
 #include <QVBoxLayout>
 
@@ -859,8 +864,13 @@ QMenu* Rf2ksApplet::buildContextMenu(QObject* menuParent)
 void Rf2ksApplet::contextMenuEvent(QContextMenuEvent* ev)
 {
     auto* menu = buildContextMenu(this);
+    // The menu's parent can die in exec() and take the menu with it; free it
+    // only if it is still there (see ScopedChildWidget.h).
+    const QPointer<QMenu> guard(menu);
     menu->exec(ev->globalPos());
-    delete menu;
+    if (guard) {
+        delete guard.data();
+    }
 }
 
 } // namespace NereusSDR

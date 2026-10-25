@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
+//                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
 //                 container manager, so a placement chosen here records or
 //                 clears the container's home as Pop Out and Return do.
@@ -63,6 +65,13 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -151,6 +160,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "ContainerControlCatalog.h"
@@ -186,6 +196,7 @@ mw0lge@grange-lane.co.uk
 #include "meter_property_editors/ClickBoxItemEditor.h"
 #include "meter_property_editors/DataOutItemEditor.h"
 #include "meter_property_editors/BandButtonItemEditor.h"
+#include "meter_property_editors/NereusBandButtonItemEditor.h"
 #include "meter_property_editors/ModeButtonItemEditor.h"
 #include "meter_property_editors/FilterButtonItemEditor.h"
 #include "meter_property_editors/AntennaButtonItemEditor.h"
@@ -1446,6 +1457,7 @@ void ContainerSettingsDialog::onAddItem()
     QMenu* controlsMenu = menu->addMenu(QStringLiteral("Controls"));
     controlsMenu->setStyleSheet(menu->styleSheet());
     controlsMenu->addAction(QStringLiteral("Band Buttons"),      this, [this]{ addNewItem(QStringLiteral("BANDBTNS")); });
+    controlsMenu->addAction(QStringLiteral("Nereus Band Buttons"), this, [this]{ addNewItem(QStringLiteral("NEREUSBAND")); });
     controlsMenu->addAction(QStringLiteral("Mode Buttons"),      this, [this]{ addNewItem(QStringLiteral("MODEBTNS")); });
     controlsMenu->addAction(QStringLiteral("Filter Buttons"),    this, [this]{ addNewItem(QStringLiteral("FILTERBTNS")); });
     controlsMenu->addAction(QStringLiteral("Antenna Buttons"),   this, [this]{ addNewItem(QStringLiteral("ANTENNABTNS")); });
@@ -1738,6 +1750,7 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
         { QStringLiteral("ROTATOR"),       QStringLiteral("Rotator") },
         // Phase 3G-5 interactive types
         { QStringLiteral("BANDBTNS"),      QStringLiteral("Band Buttons") },
+        { QStringLiteral("NEREUSBAND"),    QStringLiteral("Nereus Band Buttons") },
         { QStringLiteral("MODEBTNS"),      QStringLiteral("Mode Buttons") },
         { QStringLiteral("FILTERBTNS"),    QStringLiteral("Filter Buttons") },
         { QStringLiteral("ANTENNABTNS"),   QStringLiteral("Antenna Buttons") },
@@ -1940,7 +1953,9 @@ void ContainerSettingsDialog::onOpenMmioDialog()
     // block 3 commit 18 stub is gone — this now opens the endpoint
     // manager with live add/edit/remove backed by
     // ExternalVariableEngine.
-    MmioEndpointsDialog dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<MmioEndpointsDialog> dlgOwner(this);
+    MmioEndpointsDialog& dlg = *dlgOwner.get();
     dlg.exec();
 }
 
@@ -2293,7 +2308,9 @@ void ContainerSettingsDialog::onLoadPreset()
         "QMenu::item:selected { background: #00b4d8; color: #0f0f1a; }"
         "QMenu::separator { background: #203040; height: 1px; }";
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QLatin1String(kMenuStyle));
 
     // S-Meter sub-menu
@@ -2696,6 +2713,7 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item, QWidg
     else if (typeTag == QLatin1String("CLICKBOX"))       ed = new ClickBoxItemEditor(parent);
     else if (typeTag == QLatin1String("DATAOUT"))        ed = new DataOutItemEditor(parent);
     else if (typeTag == QLatin1String("BANDBTNS"))       ed = new BandButtonItemEditor(parent);
+    else if (typeTag == QLatin1String("NEREUSBAND"))     ed = new NereusBandButtonItemEditor(parent);
     else if (typeTag == QLatin1String("MODEBTNS"))       ed = new ModeButtonItemEditor(parent);
     else if (typeTag == QLatin1String("FILTERBTNS"))     ed = new FilterButtonItemEditor(parent);
     else if (typeTag == QLatin1String("ANTENNABTNS"))    ed = new AntennaButtonItemEditor(parent);

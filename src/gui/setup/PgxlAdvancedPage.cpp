@@ -79,9 +79,14 @@
 //   2026-10-09: "Identity && Status", "Pairing && Band Source" and "Save &&
 //               Reboot Amp" double their ampersand so Qt draws it. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 
 #include "PgxlAdvancedPage.h"
+#include "gui/ScopedChildWidget.h"
 
 #include <QAbstractTableModel>
 #include <QButtonGroup>
@@ -997,14 +1002,20 @@ bool PgxlAdvancedPage::confirmRemote(const QString& title, const QString& text)
         return m_confirmForTesting(title, text);
     }
     if (text == PgxlSaveRebootDialog::message()) {
-        PgxlSaveRebootDialog dlg(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<PgxlSaveRebootDialog> dlgOwner(this);
+        PgxlSaveRebootDialog& dlg = *dlgOwner.get();
         dlg.setWindowTitle(title);
         return dlg.exec() == QDialog::Accepted;
     }
-    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<QMessageBox> boxOwner(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    QMessageBox& box = *boxOwner.get();
     QPushButton* apply = box.addButton(title, QMessageBox::AcceptRole);
     box.setDefaultButton(QMessageBox::Cancel);
     box.exec();
+    // The parent may have died in exec() and taken the dialog with it.
+    if (!boxOwner) { return false; }
     return box.clickedButton() == apply;
 }
 
@@ -1288,7 +1299,9 @@ void PgxlAdvancedPage::onSaveAndReboot()
         return;
     }
 
-    PgxlSaveRebootDialog dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<PgxlSaveRebootDialog> dlgOwner(this);
+    PgxlSaveRebootDialog& dlg = *dlgOwner.get();
     if (dlg.exec() != QDialog::Accepted) {
         return;
     }

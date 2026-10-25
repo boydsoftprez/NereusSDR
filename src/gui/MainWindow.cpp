@@ -31,6 +31,26 @@
 //               source host, and opening the tab asks the first-run
 //               question once (openRoundtableFirstRunIfNeeded).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: A remote window's slice access changes reach the container
+//               instruments (sliceAccessChanged, watchSliceAccess). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23: A slice placed on a pan only as a marker redraws its marker
+//               when its mode or filter changes (refreshSliceFlags), now that
+//               the pan's overlay is rebuilt only on a change. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23: The RX applet's jobs are registered as container content
+//               (registerRxSectionContent). Brian Sutton, AI-assisted via
+//               xAI Grok.
+//   2026-10-23: The window's one-time slice wiring (spectrum first view,
+//               restore push, mode, AGC and NR menus, RADE and Phone/CW
+//               applets) follows the window's own starting slice
+//               (RadioModel::windowSliceId), not Slice A, which a Core
+//               inside the window may keep for a paired device. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: A filter edge drag on a pan takes the slice's pair back
+//               after setFilter, so the pan shows the constrained filter.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -874,12 +894,29 @@
 //                works FT8 through a remote window with VAX. Set up in CAT &
 //                Network > rigctld. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 //   2026-10-22 - Startup auto-connect to a pinned radio waits on the scan
 //                (PinnedRadioWait), not a fixed 3 s: a radio already listed
 //                connects at once, radioUpdated counts too, a joined startup
 //                scan is never stopped, and the "isn't reachable" toast comes
 //                only after the scan ends without the radio. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Each stream's FFT engine drops its window in progress on
+//                RadioModel::iqSequenceGapForStream, queued in order with the
+//                samples (after Longpath
+//                src/gui/MainWindow.cpp:16439-16458 [@383f058], PR 62).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
+//   2026-10-24 - The gap wiring's comment names the engine's bound on that
+//                reset (JJ's ruling, option i), and then option c, a gap
+//                within four windows of the last one let through. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1101,6 +1138,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "gui/ScopedChildWidget.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -1244,6 +1282,7 @@ warren@wpratt.com
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxSectionContent.h"
+#include "applets/RxSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
@@ -4416,6 +4455,10 @@ void MainWindow::ensureRemoteSession()
                 // A marker's owner words come from the access entry.
                 refreshForeignMarkers();
             });
+            // A container instrument that follows the window's slice asks
+            // for it again (LongpathContent::Sources::watchSliceAccess).
+            connect(access, &SliceAccessMirror::changed,
+                    this, &MainWindow::sliceAccessChanged);
         }
         if (RemoteDevicesState* devices = m_stationClient->remoteDevices()) {
             connect(devices, &RemoteDevicesState::markersChanged, this,
@@ -5497,7 +5540,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(newFlag, &VfoWidget::filterPolicyRequested, this,
             [this](int chainIdx) {
         if (!m_radioModel) { return; }
-        FilterPolicyDialog dlg(chainIdx, m_radioModel, this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<FilterPolicyDialog> dlgOwner(chainIdx, m_radioModel, this);
+        FilterPolicyDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
     connect(newFlag, &VfoWidget::removeSliceRequested, this,
@@ -5708,8 +5753,14 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // pan hosting this slice rather than on whichever pan is active.
     hostHooks.modeChanged = [this, slice](DSPMode mode) {
         // The pan's passband and TX mode belong to the pan's VFO, which a
-        // slice placed there only as a marker never takes.
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        // slice placed there only as a marker never takes. Its own marker
+        // (drawn from the flag's filter) still moves.
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             // TX filter overlay maps audio Hz to the right sideband from this.
             host->setTxMode(mode);
@@ -5719,7 +5770,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         }
     };
     hostHooks.filterChanged = [this, slice](int low, int high) {
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             host->setFilterOffset(low, high);
         }
@@ -6099,6 +6155,25 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
             [engine, streamIndex](int idx, const QVector<float>& samples) {
         if (idx != streamIndex) { return; }
         engine->feedIQ(samples);
+    });
+
+    // A lost I/Q packet on this stream (or on every stream, -1): on a
+    // healthy link the engine drops its window in progress, so the jump at
+    // the seam does not paint a line across the spectrum (NereusSDR,
+    // 2026-10-22, after Longpath PR 62, MainWindow::onIqSequenceGap). On a
+    // lossy link the engine lets gaps through instead (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, 2026-10-24, JJ's ruling, option c; or
+    // no frame for FFTEngine::kGapResetStallFrameIntervals frame
+    // intervals), so frames keep their normal rate with a slight smear.
+    // Engine-scoped like the samples above: both are queued from the
+    // Connection thread onto the FFT thread, in the order they were sent,
+    // so the reset lands after the samples before the gap and before the
+    // samples after it.
+    connect(m_radioModel, &RadioModel::iqSequenceGapForStream, engine,
+            [engine, streamIndex](int idx) {
+        if (idx >= 0 && idx != streamIndex) { return; }
+        engine->requestWindowReset();
     });
 
     // One NoiseFloorTracker per stream, fed by that stream's own FFT.
@@ -7354,8 +7429,15 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
 
     // Drag a filter edge on this pan.
     connect(sw, &SpectrumWidget::filterEdgeDragged, this,
-            [this, panId](int low, int high) {
-        if (SliceModel* s = sliceForPan(panId)) { s->setFilter(low, high); }
+            [this, panId, sw](int low, int high) {
+        if (SliceModel* s = sliceForPan(panId)) {
+            s->setFilter(low, high);
+            // The pan drew the dragged edges itself; it shows what the
+            // slice kept (constrained, or refused), as Thetis's display
+            // only takes the constrained values (console.cs:7589-7590
+            // [v2.10.3.15]).
+            sw->setFilterOffset(s->filterLow(), s->filterHigh());
+        }
     });
 
     // Drag the pan. Non-CTUN moves the VFO; CTUN pins the DDC to the pan centre
@@ -7947,7 +8029,9 @@ void MainWindow::onPanChainTagClicked(const QString& panId, int chainIdx)
     if (chain < 0) { chain = chainIdx; }
     if (chain < 0) { return; }
 
-    FilterPolicyDialog dlg(chain, m_radioModel, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<FilterPolicyDialog> dlgOwner(chain, m_radioModel, this);
+    FilterPolicyDialog& dlg = *dlgOwner.get();
     dlg.exec();
 }
 
@@ -9411,8 +9495,12 @@ void MainWindow::buildUI()
     // Wire spectrum display to SliceModel (values come from persisted state,
     // no longer hardcoded). Connection is deferred to wireSliceToSpectrum()
     // which runs after RadioModel creates slice 0.
+    // JJ 2026-10-23: the window's own starting slice (windowSliceId), which
+    // is Slice A unless a Core inside this window kept A for a returning
+    // paired device; that device's slice, made when it signs in, gets the
+    // per-slice flag path below and never this window-wide wiring.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index == 0) {
+        if (index == m_radioModel->windowSliceId()) {
             wireSliceToSpectrum();
         }
     });
@@ -9441,7 +9529,7 @@ void MainWindow::buildUI()
     // display" step on power-on.
     connect(m_radioModel, &RadioModel::sliceStateRestored, this,
             [this](int index) {
-        if (index != 0 || !activeSpectrumWidget()) {
+        if (index != m_radioModel->windowSliceId() || !activeSpectrumWidget()) {
             return;
         }
         SliceModel* slice = m_radioModel->activeSlice();
@@ -9600,7 +9688,7 @@ void MainWindow::buildUI()
         // the active pan and, with no handler, stayed there.
         qCInfo(lcReceiver).noquote()
             << QStringLiteral("Slice %1 added in this window").arg(QChar(u'A' + sliceIndex));
-        if (sliceIndex != 0) {
+        if (sliceIndex != m_radioModel->windowSliceId()) {
             if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
                 return;
             }
@@ -10437,9 +10525,13 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::txBoundReRouteRequested, this,
             [this](const QString& proposed, const QString& existing) {
         if (!m_radioModel) { return; }
-        TxBoundConfirmDialog dlg(proposed, existing,
-                                  m_radioModel->slices(), this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<TxBoundConfirmDialog> dlgOwner(proposed, existing,
+                                                   m_radioModel->slices(), this);
+        TxBoundConfirmDialog& dlg = *dlgOwner.get();
         dlg.exec();
+        // The parent may have died in exec() and taken the dialog with it.
+        if (!dlgOwner) { return; }
         qCInfo(lcContainer) << "TxBoundConfirmDialog: outcome="
                              << int(dlg.outcome())
                              << "(0=Cancelled, 1=UseExistingAntenna, 2=ConfirmReroute)";
@@ -10715,7 +10807,9 @@ void MainWindow::rebuildEditContainerSubmenu()
             if (!m_containerManager) { return; }
             ContainerWidget* target = m_containerManager->container(id);
             if (!target) { return; }
-            ContainerSettingsDialog dialog(target, this, m_containerManager);
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(target, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
             dialog.exec();
         });
     }
@@ -11797,12 +11891,22 @@ void MainWindow::populateDefaultMeter()
                 windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId());
         };
         sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
+        // A remote window finds its slice through the Core's slice access,
+        // which arrives after the snapshot's slices; the instruments rebind
+        // on it. The station client comes later than these instruments.
+        sources.watchSliceAccess = [this](QObject* context, std::function<void()> changed) {
+            connect(this, &MainWindow::sliceAccessChanged, context,
+                    [changed = std::move(changed)](int) { changed(); });
+        };
         LongpathContent::registerAll(*registry, sources);
         SMeterDialContent::registerDial(*registry, sources);
         // The TX applet's rows as independent container content, so a
         // container can hold the monitor controls (or any other row) on
         // their own.  The applet's own panel is unchanged.
         registerTxSectionContent(*registry, m_txApplet);
+        // The RX applet's jobs as independent container content. The
+        // applet's own panel is unchanged.
+        registerRxSectionContent(*registry, m_rxApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
@@ -12556,7 +12660,7 @@ void MainWindow::buildMenuBar()
 
         // Sync AGC checked state when SliceModel changes
         connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-            if (index != 0) { return; }
+            if (index != m_radioModel->windowSliceId()) { return; }
             SliceModel* slice = m_radioModel->activeSlice();
             if (!slice) { return; }
             connect(slice, &SliceModel::agcModeChanged, this, [this](AGCMode mode) {
@@ -12579,7 +12683,7 @@ void MainWindow::buildMenuBar()
     // action's creation above), since it must track whichever slice is
     // active, not just slice 0.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index != 0) { return; }
+        if (index != m_radioModel->windowSliceId()) { return; }
         SliceModel* slice = m_radioModel->activeSlice();
         if (!slice) { return; }
 
@@ -12783,7 +12887,7 @@ void MainWindow::buildMenuBar()
     // Sync checked mode action when SliceModel reports a mode change.
     // Connection is deferred until slice 0 is available (sliceAdded signal).
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index != 0) { return; }
+        if (index != m_radioModel->windowSliceId()) { return; }
         SliceModel* slice = m_radioModel->activeSlice();
         if (!slice) { return; }
         connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
@@ -12845,8 +12949,13 @@ void MainWindow::buildMenuBar()
             }
 
             // Open settings dialog so user can configure it
-            ContainerSettingsDialog dialog(c, this, m_containerManager);
-            if (dialog.exec() == QDialog::Rejected) {
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(c, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
+            const int result = dialog.exec();
+            // The parent may have died in exec() and taken the dialog with it.
+            if (!dialogOwner) { return; }
+            if (result == QDialog::Rejected) {
                 // User cancelled — destroy the container
                 m_containerManager->destroyContainer(c->id());
             }
@@ -13201,7 +13310,9 @@ void MainWindow::buildMenuBar()
 #endif
 
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
-        AboutDialog dlg(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<AboutDialog> dlgOwner(this);
+        AboutDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
 
@@ -15365,11 +15476,16 @@ void MainWindow::onContainerFilterContext(ContainerWidget* c, int index)
             : tr("This mode has no preset on that button."));
         return;
     }
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
     QAction* editAct = menu.addAction(tr("Edit this preset…"));
     QAction* resetAct = menu.addAction(tr("Reset this preset"));
     QAction* chosen = menu.exec(QCursor::pos());
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (chosen == editAct) {
         auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
         dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -15799,7 +15915,9 @@ void MainWindow::wireSliceToSpectrum()
     // and reading activeSlice() here re-wired that slice and gave the new
     // Slice A no flag. The pan is the one hosting Slice A (the active pan
     // when it has no pan key yet), as for every other slice's flag.
-    SliceModel* slice = m_radioModel->sliceById(0);
+    // JJ 2026-10-23: the window's own starting slice (windowSliceId), Slice
+    // A unless a Core inside this window kept A for a paired device.
+    SliceModel* slice = m_radioModel->sliceById(m_radioModel->windowSliceId());
     SpectrumWidget* host = slice ? spectrumForSlice(slice) : nullptr;
     if (!slice || !host) {
         return;
@@ -16287,7 +16405,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
 {
     if (!m_systemTile) { return; }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     QAction* sysAct = menu.addAction(tr("System"));
     sysAct->setCheckable(true);
     sysAct->setChecked(m_cpuShowSystem);
@@ -16315,6 +16435,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     }
 
     QAction* chosen = menu.exec(m_systemTile->mapToGlobal(localPos));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (!chosen) { return; }
 
     if (chosen == cycleAct || chosen == thisAct || chosen == coreAct) {
@@ -18143,7 +18266,9 @@ void MainWindow::showCoreRadioInfo()
 // use "Connect to other radio…" to re-select the same radio.
 void MainWindow::showSegmentContextMenu(const QPoint& globalPos)
 {
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);
@@ -18214,7 +18339,9 @@ void MainWindow::showStationContextMenu(const QPoint& globalPos)
         return;
     }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);
@@ -19025,10 +19152,12 @@ void MainWindow::showPanLayoutDialog()
     // protocol (four on Protocol 1) and, on a remote window, the Core's.
     const int maxPanCount = panLayoutLimitFor(m_radioModel);
     const QString boardName = m_radioModel->name();
-    PanLayoutDialog dlg(maxPanCount,
-                        m_panStack ? m_panStack->currentLayoutId()
-                                   : QStringLiteral("1"),
-                        boardName, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<PanLayoutDialog> dlgOwner(maxPanCount,
+                                         m_panStack ? m_panStack->currentLayoutId()
+                                                    : QStringLiteral("1"),
+                                         boardName, this);
+    PanLayoutDialog& dlg = *dlgOwner.get();
     if (dlg.exec() == QDialog::Accepted && !dlg.selectedLayout().isEmpty()) {
         applyPanLayout(dlg.selectedLayout());
     }

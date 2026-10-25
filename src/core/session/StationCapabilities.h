@@ -59,8 +59,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: merge of main: stationRoundtableVersion moves after main's
+//               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion, after
 //               rxMeterStampsVersion, sent only when it is not 0. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
+//               rxMeterStampsVersion and before coreBuildInfo. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: RX meter stamps: rxMeterStampsVersion, after waveformVersion
 //               and before coreBuildInfo. J.J. Boyd (KG4VCF), AI-assisted
@@ -647,10 +653,18 @@ struct StationCapabilities {
     /// waveformVersion and before coreBuildInfo, only to a peer whose hello
     /// declared `rxMeterStamps` 1; 0 otherwise.
     int rxMeterStampsVersion = 0;
+    /// Display codec v2 (NSDC v2): 2 means the Core can send this peer
+    /// version 2 display frames, and the peer's media `start` may carry
+    /// `displayCodecVersion` 2 to ask for them on that connection. Sent
+    /// after rxMeterStampsVersion and before coreBuildInfo, only to a peer
+    /// at minor 11 with media on whose hello declared `displayCodec` 2, on a
+    /// Core whose RemoteDisplayCodecV2 setting is on; absent reads as 0: an
+    /// older Core, or one that sends version 1 frames only.
+    int displayCodecVersion = 0;
     /// Roundtable plan Task 11: 1 means the Core mirrors its Roundtable
     /// connection as the read-only `roundtable` object, sends the
     /// `roundtableRooms` and `roundtableRoom:<room id>` record streams and
-    /// takes the roundtable.* verbs. Sent after rxMeterStampsVersion and
+    /// takes the roundtable.* verbs. Sent after displayCodecVersion and
     /// before coreBuildInfo, only to a peer whose hello declared `roundtable`
     /// 1; 0 otherwise.
     int stationRoundtableVersion {0};

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 30,
   "category": {
     "id": "general",
     "title": "General",
@@ -472,6 +472,33 @@
         }
       ],
       "coverage": "partial"
+    },
+    {
+      "id": "general.filters",
+      "title": "Filters",
+      "where": "station",
+      "sections": [
+        {
+          "title": "Filters",
+          "controls": [
+            {
+              "id": "general.filters.limitFilterEdgesToSidebands",
+              "label": "Limit filter edges to sidebands",
+              "tooltip": "Prevents crossing the 0 point with certain filters",
+              "kind": "toggle",
+              "binding": {
+                "setting": "LimitFiltersToSidebands"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "requiresDescriptionVersion": 30
+            }
+          ]
+        }
+      ]
     }
   ]
 }

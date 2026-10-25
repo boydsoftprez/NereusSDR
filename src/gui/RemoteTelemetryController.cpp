@@ -1,4 +1,13 @@
 // no-port-check: NereusSDR-original. Observational Core/GUI telemetry adapter.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: the diagnostics line carries displayRowsBlanked, the
+//               waterfall rows NB Blank replaced. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2: the diagnostics line names the display messages
+//               and parts the window's decoders found lost
+//               (displayMessagesLost, displayPartsLost). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include "RemoteTelemetryController.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
@@ -462,8 +471,11 @@ void RemoteTelemetryController::logDiagnostics(qint64 now) const
            // rode through the link.
            << QStringLiteral("displayKeyframeWaits=%1").arg(display.keyframeWaits)
            << QStringLiteral("displayKeyframeRequests=%1").arg(display.keyframeRequests)
+           << QStringLiteral("displayMessagesLost=%1").arg(display.messagesLost)
+           << QStringLiteral("displayPartsLost=%1").arg(display.partsLost)
            << QStringLiteral("displayRowsBlended=%1").arg(display.rowsBlended)
            << QStringLiteral("displayRowsRepeated=%1").arg(display.rowsRepeated)
+           << QStringLiteral("displayRowsBlanked=%1").arg(display.rowsBlanked)
            << QStringLiteral("displayLargestArrivalGapMs=%1").arg(logged(display.largestArrivalGapMs))
            << QStringLiteral("displayDelayMs=%1").arg(logged(display.displayDelayMs))
            << QStringLiteral("displayItemsDropped=%1").arg(display.itemsDropped)

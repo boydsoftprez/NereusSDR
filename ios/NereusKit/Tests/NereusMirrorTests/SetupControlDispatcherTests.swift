@@ -1,5 +1,13 @@
 // NereusSDR for iOS: each described Setup control writes to its owner, and a stale edit sends nothing
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: General V30's Limit filter edges to sidebands row: its value,
+//   an edit's round trip, a refusal and a Core that never stored the key.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: a fresh Core's snapshot (its seed marker and the key's
+//   effective value, as tst_setup_description_live checks the Core sends)
+//   gives the row its effective value, off, and the row is live.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -200,13 +208,14 @@ private final class PhoneKeys: SetupPhoneKeys {
         /// A session `session` with the description, the settings and the
         /// transmit state given.
         func connect(session: Int, general: String = SetupControlDispatcherTests.general(), keyed: Bool = false,
-                     txPermitted: Bool = false, propertyResults: Bool = false) async {
+                     txPermitted: Bool = false, propertyResults: Bool = false, setupDescription: Int64 = 10,
+                     extraSettings: [String: String] = [:]) async {
             route.use(session)
             await event(.stateChanged(.receivingSnapshot))
             let messages: [LinkMessage] = [
                 FixtureReplay.stationHello(minor: 11), FixtureReplay.accepted,
                 .capabilities(.init(properties: [
-                    .init(name: "setupDescriptionVersion", value: .i64(10)),
+                    .init(name: "setupDescriptionVersion", value: .i64(setupDescription)),
                     .init(name: "txPermitted", value: .bool(txPermitted)),
                     .init(name: "txRefusalReason", value: .utf8(txPermitted ? "" : "Another device has transmit.")),
                 ] + (propertyResults ? [.init(name: "propertyResultVersion", value: .i64(1))] : []))),
@@ -236,7 +245,9 @@ private final class PhoneKeys: SetupPhoneKeys {
                 .settingsSnapshot(.init(properties: [
                     .init(name: "SliceSampleOn", value: .utf8("false")), .init(name: "SliceSampleCount", value: .utf8("3")),
                     .init(name: "SliceSampleMode", value: .utf8("1")), .init(name: "SliceSampleName", value: .utf8("shack")),
-                ])),
+                ] + extraSettings.sorted { $0.key < $1.key }.map { entry -> LinkMessage.PropertyEntry in
+                    .init(name: entry.key, value: .utf8(entry.value))
+                })),
                 .snapshotComplete,
             ]
             for message in messages { await event(.message(message)) }
@@ -558,4 +569,117 @@ private final class PhoneKeys: SetupPhoneKeys {
         #expect(late == [.refused(reason)])
     }
 
+    // MARK: General V30: Limit filter edges to sidebands
+
+    /// The Core's General resource, as a version 30 Core sends it.
+    static func liveGeneral() throws -> String {
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../resources/setup/general.json").standardizedFileURL
+        return try String(contentsOf: source, encoding: .utf8)
+    }
+
+    static let limitRowId = "general.filters.limitFilterEdgesToSidebands"
+    static let limitKey = "LimitFiltersToSidebands"
+
+    static func limitRow(_ rig: Rig) throws -> SetupDescription.Control {
+        let description = try #require(rig.feed.description(for: "general"))
+        #expect(description.version == 30)
+        return try #require(description.pages.flatMap(\.sections).flatMap(\.controls).first { $0.id == limitRowId })
+    }
+
+    /// A version 30 Core: the row reads the Core's stored setting, and an
+    /// edit writes the exact string and lands when the Core echoes it.
+    @Test func generalV30LimitFilterEdgesRowReadsAndWritesTheCoresSetting() async throws {
+        let rig = Rig()
+        await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30,
+                          extraSettings: [Self.limitKey: "False"])
+        let row = try Self.limitRow(rig)
+        #expect(row.label == "Limit filter edges to sidebands")
+        #expect(row.tooltip == "Prevents crossing the 0 point with certain filters")
+        #expect(row.binding == .setting(Self.limitKey))
+        #expect(row.metadataIssue == nil)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
+
+        let writing = Task { await rig.dispatcher.edit(row, in: "general", to: .bool(true)) }
+        try #require(await rig.route.waitForCount(1, unless: writing))
+        guard case .settingsWrite(let write) = rig.route.sent[0].message else {
+            Issue.record("no settings write"); return
+        }
+        #expect(write.key == Self.limitKey && write.properties.first?.value == .utf8("True"))
+        rig.settings.apply(.settingsValue(.init(key: write.key, origin: write.origin, properties: write.properties)))
+        #expect(await writing.value == .applied)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(true), editable: true, reason: nil))
+    }
+
+    /// The Core refuses the key: the edit says so in the Core's words and
+    /// the row goes back to the Core's value.
+    @Test func generalV30LimitFilterEdgesRowGoesBackWhenTheCoreRefuses() async throws {
+        let rig = Rig()
+        await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30,
+                          extraSettings: [Self.limitKey: "False"])
+        let row = try Self.limitRow(rig)
+        let reason = "This Core does not take that setting."
+        let writing = Task { await rig.dispatcher.edit(row, in: "general", to: .bool(true)) }
+        try #require(await rig.route.waitForCount(1, unless: writing))
+        guard case .settingsWrite(let write) = rig.route.sent[0].message else {
+            Issue.record("no settings write"); return
+        }
+        rig.settings.apply(.settingsReject(.init(key: write.key, properties: [.init(name: write.key, value: .utf8("False"))],
+                                                 reason: reason)))
+        #expect(await writing.value == .refused(reason))
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
+    }
+
+    /// The settings snapshot a fresh headless Core sends: its seed marker
+    /// (written on every Core start) and the key's effective value, False.
+    /// tst_setup_description_live's freshCoreSendsLimitFilterEdgesEffectiveValue
+    /// checks the Core sends exactly this; an empty, unseeded snapshot gets
+    /// no added value, so a window's Core pages keep waiting for it.
+    static func freshCoreSettings() -> [String: String] {
+        ["DaemonProfileSeeded": "True", limitKey: "False"]
+    }
+
+    /// A Core that never stored the key (a headless Core) still sends its
+    /// effective value, off: the row is live and off, and a toggle writes True.
+    @Test func generalV30LimitFilterEdgesRowOnAFreshCoreIsLiveAndOff() async throws {
+        let fresh = Self.freshCoreSettings()
+        #expect(fresh[Self.limitKey] == "False")
+        let rig = Rig()
+        await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30, extraSettings: fresh)
+        let row = try Self.limitRow(rig)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
+
+        let writing = Task { await rig.dispatcher.edit(row, in: "general", to: .bool(true)) }
+        try #require(await rig.route.waitForCount(1, unless: writing))
+        guard case .settingsWrite(let write) = rig.route.sent[0].message else {
+            Issue.record("no settings write"); return
+        }
+        #expect(write.key == Self.limitKey && write.properties.first?.value == .utf8("True"))
+        rig.settings.apply(.settingsValue(.init(key: write.key, origin: write.origin, properties: write.properties)))
+        #expect(await writing.value == .applied)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(true), editable: true, reason: nil))
+    }
+
+    /// A Core that sends no value for the key (one built before its snapshot
+    /// carried it): the row is shown, disabled with the missing-value
+    /// reason, and sends nothing.
+    @Test func generalV30LimitFilterEdgesRowWithoutAStoredValueIsDisabledWithAReason() async throws {
+        let rig = Rig()
+        await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30)
+        let row = try Self.limitRow(rig)
+        let state = rig.dispatcher.state(of: row, in: "general")
+        #expect(!state.editable && state.reason == SetupControlDispatcher.valueMissingReason)
+        #expect(rig.route.sent.isEmpty)
+    }
+
+    /// A version 29 Core sends General at 3 without the Filters page; the
+    /// phone reads it, and the other General rows keep working.
+    @Test func aVersion29CoreSendsGeneralWithoutTheFiltersPage() async throws {
+        let rig = Rig()
+        await rig.connect(session: 1, setupDescription: 29)
+        let description = try #require(rig.feed.description(for: "general"))
+        #expect(description.version == 3)
+        #expect(!description.pages.contains { $0.id == "general.filters" })
+        #expect(rig.dispatcher.state(of: rig.control("toggle"), in: "general").editable)
+    }
 }

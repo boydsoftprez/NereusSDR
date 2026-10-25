@@ -203,13 +203,38 @@ private slots:
                  QStringLiteral("normal"));
     }
 
-    void agc_gain_routes_to_threshold() {
+    void agc_gain_routes_to_agc_top() {
+        // TCI agc_gain is Thetis's AGC-T, the ptbRF value: handleAgcGain
+        // calls SetAgcT(rx + 1, gain) (TCIServer.cs:5011-5026), which sets
+        // the RF property (console.cs:51816-51833); ptbRF runs -20..120
+        // (console.designer.cs:3708-3709) [v2.10.3.15]. Here that is
+        // SliceModel::rfGain, which RadioModel hands to SetRXAAGCTop. It is
+        // not agcThreshold, the -160..+2 threshold point the shim used to
+        // write. After Longpath f1d0c181 (Martin Fischer, OE5SOS).
         RadioModel m;
         SliceModel* slice = setupOneSlice(m);
         QVERIFY(slice);
+        const int thresholdBefore = slice->agcThreshold();
         QMetaObject::invokeMethod(&m, "setAgcGain",
                                   Q_ARG(int, 0), Q_ARG(int, 42));
-        QCOMPARE(slice->agcThreshold(), 42);
+        QCOMPARE(slice->rfGain(), 42);
+        QCOMPARE(slice->agcThreshold(), thresholdBefore);
+        int back = -1;
+        QMetaObject::invokeMethod(&m, "agcGain",
+                                  Q_RETURN_ARG(int, back), Q_ARG(int, 0));
+        QCOMPARE(back, 42);
+
+        // Both ends of Thetis's range reach the model; the old 0..100
+        // clamp on rfGain folded them.
+        QMetaObject::invokeMethod(&m, "setAgcGain",
+                                  Q_ARG(int, 0), Q_ARG(int, -20));
+        QCOMPARE(slice->rfGain(), -20);
+        QMetaObject::invokeMethod(&m, "setAgcGain",
+                                  Q_ARG(int, 0), Q_ARG(int, 120));
+        QCOMPARE(slice->rfGain(), 120);
+        QMetaObject::invokeMethod(&m, "agcGain",
+                                  Q_RETURN_ARG(int, back), Q_ARG(int, 0));
+        QCOMPARE(back, 120);
     }
 
     void squelch_enable_and_level_route_to_slice() {

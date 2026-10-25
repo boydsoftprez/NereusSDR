@@ -10,6 +10,11 @@
 // repeats.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: frames encoded by encodeDisplayCodecV2, lost and
+//               swapped under the codec's loss model and decoded, draw one
+//               row a slot with one blended row a lost row; push() keeps
+//               the measurementCurrent it is given. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-21: the rows each push() queues, for the early hand-off.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-26: created for R-R3-21 / R-R3-08. J.J. Boyd (KG4VCF),
@@ -18,15 +23,23 @@
 
 #include "gui/RemoteDisplayPresenter.h"
 #include "gui/SpectrumWidget.h"
+#include "core/session/media/DisplayBudget.h"
+#include "core/session/media/IMediaTransport.h"
 #include "core/session/media/SpectrumEndpoint.h"
+
+#include "DisplayCodecV2Vectors.h"
 
 #include <QSignalSpy>
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
+#include <vector>
 
 using namespace NereusSDR;
+namespace Vectors = NereusSDR::Test::DisplayCodecV2Vectors;
 
 namespace {
 
@@ -95,6 +108,47 @@ AudioDelayInputs audioPlaying(int n, qint64 delayNs)
 qint64 audioPlayNs(int n, qint64 delayNs)
 {
     return kAnchorCoreNs + qint64(n) * 40 * kMs - kOffsetNs + delayNs;
+}
+
+// NSDC v2: the display codec's loss model (tst_display_codec_v2's
+// runLoss): each message is dropped by datagram (ceil(bytes / 876)
+// datagrams), by Gilbert-Elliott bursts of mean length 3 or at random, both
+// at 2 percent; then adjacent delivered messages swap with probability 0.1.
+std::vector<QByteArray> deliveredUnderLoss(const std::vector<std::vector<QByteArray>>& messages,
+                                           bool bursts, quint64 seed)
+{
+    constexpr double kLossRate = 0.02;
+    constexpr double kGoodFromBad = 1.0 / 3.0;
+    constexpr double kBadFromGood = kGoodFromBad * kLossRate / (1.0 - kLossRate);
+    constexpr double kSwapProbability = 0.1;
+    constexpr int kDatagramBytes = IMediaTransport::kSctpDataPayloadBytes;
+    Vectors::SplitMix64 rng(seed);
+    bool bad = false;
+    std::vector<QByteArray> delivered;
+    for (const std::vector<QByteArray>& frame : messages) {
+        for (const QByteArray& message : frame) {
+            const int datagrams = int((message.size() + kDatagramBytes - 1) / kDatagramBytes);
+            bool lost = false;
+            for (int d = 0; d < datagrams; ++d) {
+                if (bursts) {
+                    bad = bad ? rng.uniform() >= kGoodFromBad : rng.uniform() < kBadFromGood;
+                    lost = lost || bad;
+                } else if (rng.uniform() < kLossRate) {
+                    lost = true;
+                }
+            }
+            if (!lost) { delivered.push_back(message); }
+        }
+    }
+    for (size_t i = 0; i + 1 < delivered.size();) {
+        if (rng.uniform() < kSwapProbability) {
+            std::swap(delivered[i], delivered[i + 1]);
+            i += 2;
+        } else {
+            ++i;
+        }
+    }
+    return delivered;
 }
 
 } // namespace
@@ -619,6 +673,182 @@ private slots:
 
     // A pan's widget is handed each waterfall row as the presenter queues
     // it, with its due time, so its row clock can slide the row in by then.
+    // NSDC v2 (display codec v2 document, section 11 item 2): v2 frames
+    // from encodeDisplayCodecV2, through a DisplayCodecDecoder, into the
+    // presenter, under the codec's loss model at a 33 ms row period. Every
+    // row the decoder releases is drawn once at its own slot, each lost row
+    // is one blended row at its slot (no burst is longer than kMaxGapRows),
+    // nothing repeats and nothing waits for a keyframe; a frame whose trace
+    // was carried is drawn, as no current measurement.
+    void codecV2LossDrawsOneRowPerSlot_data()
+    {
+        QTest::addColumn<bool>("bursts");
+        QTest::addColumn<quint64>("seed");
+        QTest::newRow("Gilbert-Elliott") << true << quint64(0x5EED0783ULL);
+        QTest::newRow("random") << false << quint64(0x5EED1783ULL);
+    }
+
+    void codecV2LossDrawsOneRowPerSlot()
+    {
+        QFETCH(bool, bursts);
+        QFETCH(quint64, seed);
+        constexpr qint64 kRowNs = 33 * kMs;
+        constexpr int kFrames = 1500;
+        Vectors::SceneRun source(Vectors::Scene::PeakBins167);
+        const int pixels = source.pixels();
+        const std::optional<SpectrumDisplayCost> cost = spectrumDisplayCost(pixels, 30, false);
+        QVERIFY(cost);
+        std::vector<std::vector<QByteArray>> messages;
+        int splitFrames = 0;
+        QVector<float> trace;
+        QVector<float> waterfall;
+        for (int f = 0; f < kFrames; ++f) {
+            source.next(trace, waterfall);
+            DisplayCodecFrame frame;
+            frame.context = {7, 1, Vectors::kMinDbm, Vectors::kMaxDbm, quint16(pixels),
+                             quint16(pixels), 0};
+            frame.encoderSequence = quint32(f + 1);
+            frame.producerTimestamp = quint64(kRowNs * (f + 1));
+            frame.waterfallAdvance = true;
+            frame.traceDbm = trace;
+            frame.waterfallDbm = waterfall;
+            DisplayCodecV2Encoding encoding = encodeDisplayCodecV2(frame, cost->maximumFrameBytes);
+            QVERIFY(!encoding.messages.empty());
+            if (encoding.split()) { ++splitFrames; }
+            messages.push_back(std::move(encoding.messages));
+        }
+        QVERIFY(splitFrames > 0);
+
+        SpectrumEndpointContext endpoint;
+        endpoint.codec = {7, 1, Vectors::kMinDbm, Vectors::kMaxDbm, quint16(pixels),
+                          quint16(pixels), 0};
+        endpoint.exactCentreHz = 14.0e6;
+        endpoint.exactSpanHz = 24000.0;
+        const RemoteSpectrumCapture capture{endpoint, 0.0, 0.0};
+        RemoteDisplayPresenter presenter;
+        presenter.setRowPeriodNs(kRowNs);
+        DisplayCodecDecoder decoder;
+        std::vector<RemoteDisplayPresenter::Item> shown;
+        quint32 firstSequence = 0;
+        quint32 lastSequence = 0;
+        std::optional<quint32> firstRowSequence;
+        quint32 lastRowSequence = 0;
+        quint64 rowsReleased = 0;
+        quint64 traceOnlyFrames = 0;
+        quint64 carriedTraces = 0;
+        for (const QByteArray& message : deliveredUnderLoss(messages, bursts, seed)) {
+            const DisplayCodecDecodeResult decoded = decoder.decode(message);
+            if (decoded.disposition != DisplayCodecDisposition::Accepted) {
+                // Held parts wait for their partner; a swapped message may
+                // come too late. Neither is a keyframe wait in v2.
+                QVERIFY(decoded.disposition == DisplayCodecDisposition::Held
+                        || decoded.reason == DisplayCodecReason::StaleSequence);
+                continue;
+            }
+            for (int k = 0; k < decoded.frameCount; ++k) {
+                const DisplayCodecFrame& frame = k == 0 ? decoded.frame : decoded.secondFrame;
+                if (firstSequence == 0) { firstSequence = frame.encoderSequence; }
+                lastSequence = frame.encoderSequence;
+                if (frame.waterfallAdvance) {
+                    if (!firstRowSequence) { firstRowSequence = frame.encoderSequence; }
+                    lastRowSequence = frame.encoderSequence;
+                    ++rowsReleased;
+                } else {
+                    ++traceOnlyFrames;
+                }
+                if (frame.traceCarried) { ++carriedTraces; }
+                presenter.push(frame, capture, !frame.traceCarried);
+            }
+            // Without a map everything queued is due at once.
+            for (auto& item : presenter.takeDue(0, std::nullopt)) {
+                shown.push_back(std::move(item));
+            }
+        }
+        QVERIFY(firstRowSequence);
+        QVERIFY(carriedTraces > 0);
+        QVERIFY(traceOnlyFrames > 0);
+
+        // Rows sent over the run of released rows, and those lost: the
+        // decoder's lost frames and trace-only partials, less those outside
+        // the first and last released row.
+        const quint64 rowsSent = lastRowSequence - *firstRowSequence + 1;
+        const quint64 rowsLost = rowsSent - rowsReleased;
+        QVERIFY(rowsLost > 0);
+        QCOMPARE(decoder.counters().framesLost + traceOnlyFrames
+                     - (*firstRowSequence - firstSequence) - (lastSequence - lastRowSequence),
+                 rowsLost);
+
+        // One row a slot, from the first released row to the last.
+        quint64 realRows = 0;
+        quint64 blendedRows = 0;
+        qint64 slotNs = qint64(*firstRowSequence) * kRowNs;
+        qint64 lastRealNs = slotNs;
+        int longestGap = 0;
+        for (const RemoteDisplayPresenter::Item& item : shown) {
+            if (item.kind == RemoteDisplayPresenter::Kind::Frame) {
+                QCOMPARE(item.measurementCurrent, !item.frame.traceCarried);
+            }
+            const bool row = item.kind == RemoteDisplayPresenter::Kind::Blended
+                || (item.kind == RemoteDisplayPresenter::Kind::Frame && item.frame.waterfallAdvance);
+            if (!row) { continue; }
+            QVERIFY2(item.producerNs == slotNs,
+                     qPrintable(QStringLiteral("row at %1, slot %2").arg(item.producerNs).arg(slotNs)));
+            slotNs += kRowNs;
+            if (item.kind == RemoteDisplayPresenter::Kind::Frame) {
+                ++realRows;
+                longestGap = std::max(longestGap, int((item.producerNs - lastRealNs) / kRowNs) - 1);
+                lastRealNs = item.producerNs;
+            } else {
+                QCOMPARE(item.kind, RemoteDisplayPresenter::Kind::Blended);
+                ++blendedRows;
+            }
+        }
+        QVERIFY(longestGap <= RemoteDisplayPresenter::kMaxGapRows);
+        QCOMPARE(realRows, rowsReleased);
+        QCOMPARE(realRows, rowsSent - rowsLost);
+        QCOMPARE(blendedRows, rowsLost);
+        QCOMPARE(presenter.counters().rowsBlended, rowsLost);
+        QCOMPARE(presenter.counters().rowsRepeated, quint64(0));
+        QCOMPARE(presenter.counters().keyframeWaits, quint64(0));
+        QCOMPARE(presenter.counters().itemsDropped, quint64(0));
+        QVERIFY(!presenter.waitingForKeyframe());
+        qInfo().noquote() << QStringLiteral(
+            "%1: %2 frames, %3 split, %4 rows sent, %5 lost, %6 carried traces, longest gap %7")
+                                 .arg(bursts ? QStringLiteral("Gilbert-Elliott")
+                                             : QStringLiteral("random"))
+                                 .arg(kFrames).arg(splitFrames).arg(rowsSent).arg(rowsLost)
+                                 .arg(carriedTraces).arg(longestGap);
+    }
+
+    // NSDC v2: push() keeps the measurementCurrent it is given; the drawing
+    // is unchanged.
+    void pushKeepsTheFramesMeasurementCurrent()
+    {
+        RemoteDisplayPresenter presenter;
+        presenter.setRowPeriodNs(kPeriodNs);
+        SpectrumEndpointContext endpoint;
+        endpoint.codec = {1, 1, -180, 0, 8, 8, 0};
+        endpoint.exactCentreHz = 14.0e6;
+        endpoint.exactSpanHz = 24000.0;
+        const RemoteSpectrumCapture capture{endpoint, 0.0, 0.0};
+        DisplayCodecFrame carried = frameAt(0, kPeriodNs, -100.0f);
+        carried.traceCarried = true;
+        presenter.push(carried, capture, false);
+        presenter.push(frameAt(1, 2 * kPeriodNs, -90.0f), capture, true);
+        const std::vector<RemoteDisplayPresenter::Item> due = presenter.takeDue(0, std::nullopt);
+        QCOMPARE(due.size(), size_t(2));
+        QCOMPARE(due.at(0).kind, RemoteDisplayPresenter::Kind::Frame);
+        QVERIFY(!due.at(0).measurementCurrent);
+        QCOMPARE(due.at(0).frame.waterfallDbm.first(), -100.0f);
+        QVERIFY(due.at(0).frame.waterfallAdvance);
+        QCOMPARE(due.at(1).kind, RemoteDisplayPresenter::Kind::Frame);
+        QVERIFY(due.at(1).measurementCurrent);
+        QCOMPARE(presenter.counters().keyframeWaits, quint64(0));
+        // The default is current, as before.
+        presenter.push(frameAt(2, 3 * kPeriodNs, -80.0f), capture);
+        QVERIFY(presenter.takeDue(0, std::nullopt).front().measurementCurrent);
+    }
+
     void pushRecordsTheRowsItQueues()
     {
         RemoteDisplayPresenter presenter;

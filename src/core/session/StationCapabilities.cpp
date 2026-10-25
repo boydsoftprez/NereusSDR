@@ -7,10 +7,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: merge of main: stationRoundtableVersion moves after main's
+//               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion, after
 //               rxMeterStampsVersion, only for a peer that declared
 //               roundtable. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
+//               rxMeterStampsVersion and before coreBuildInfo, for a peer
+//               that declared displayCodec 2. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-22: radioAntennaRowsVersion 2 is read and sent (RX-only
 //               antennas 0..5). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -617,8 +624,15 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (rxMeterStampsVersion > 0) {
         updates.append(intEntry("rxMeterStampsVersion", rxMeterStampsVersion));
     }
+    // Display codec v2: after rxMeterStampsVersion (when sent) and before
+    // coreBuildInfo (which stays last), only for a peer that declared
+    // displayCodec 2; any other peer is sent no entry, so its capabilities
+    // are today's.
+    if (displayCodecVersion > 0) {
+        updates.append(intEntry("displayCodecVersion", displayCodecVersion));
+    }
     // Roundtable plan Task 11: the `roundtable` object, its record streams
-    // and the roundtable.* verbs, after rxMeterStampsVersion (when sent) and
+    // and the roundtable.* verbs, after displayCodecVersion (when sent) and
     // before coreBuildInfo (which stays last), only for a peer that declared
     // roundtable; any other peer is sent no entry, so its capabilities are
     // today's.
@@ -649,6 +663,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int rxFilterLowPassEntries = 0;
     int radeReasonEntries = 0;
     int rxMeterStampsEntries = 0;
+    int displayCodecEntries = 0;
     int stationRoundtableEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
@@ -702,6 +717,15 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.rxMeterStampsVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "displayCodecVersion") {
+            // Display codec v2: one entry, an Int64 of 1 or more.
+            if (++displayCodecEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.displayCodecVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "stationRoundtableVersion") {

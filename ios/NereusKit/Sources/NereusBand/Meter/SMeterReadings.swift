@@ -102,6 +102,9 @@ public struct SMeterReadings: Equatable, Sendable {
 
     /// Max Bin depends on this slice's live pan trace, which this device draws.
     public static let maxBinUnavailableText = "Max Bin reads this slice's panadapter. Open its display to see it."
+    /// The slice's pan is drawn, but its passband is outside the span shown.
+    public static let maxBinOutsideSpanText =
+        "Max Bin reads this slice's passband, which is outside the span its display shows."
     /// A Core that sends this device no transmit readings.
     public static let transmitNotSentText = "This Core does not send its transmit readings to this device."
     /// A Core that does not send the compression reading.

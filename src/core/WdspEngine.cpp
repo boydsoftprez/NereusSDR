@@ -20,6 +20,10 @@
 //                AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - A live rate change records the input block it gave WDSP
+//                 (RxChannel::setWdspInputSize), so processIq keeps a
+//                 shorter chunk out of fexchange2. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-22 - The MaxBin hold falls again after a very strong signal
 //                 (Thetis #2681): maxBinHoldNextDbm, ported from Longpath
 //                 PR 215 (src/core/WdspEngine.cpp:1779-1809 [@383f058]),
@@ -1326,6 +1330,8 @@ void WdspEngine::applyRateOnLane(RxChannel* ch, int rateHz, int bufferSize)
     SetInputSamplerate(ch->channelId(), rateHz);
     SetInputBuffsize(ch->channelId(), bufferSize);
 #endif
+    // 2026-10-23: what processIq holds a chunk against (wdspInputSize).
+    ch->setWdspInputSize(bufferSize);
 
     qCInfo(lcDsp) << "setRxChannelRate: channel" << ch->channelId()
                   << "->" << rateHz << "Hz, in_size=" << bufferSize;

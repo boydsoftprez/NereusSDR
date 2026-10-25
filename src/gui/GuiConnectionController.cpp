@@ -18,6 +18,7 @@
 // identity key. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/GuiConnectionController.h"
+#include "gui/ScopedChildWidget.h"
 #include "core/security/StationLabel.h"
 
 #include "core/AppSettings.h"
@@ -989,7 +990,9 @@ void GuiConnectionController::editCore(const QString& id)
             }
         }
     }
-    CoreTargetEditor editor(initial, m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<CoreTargetEditor> editorOwner(initial, m_selector.get());
+    CoreTargetEditor& editor = *editorOwner.get();
     if (!id.isEmpty()) {
         editor.setCurrentOptionsSource([this, id]() -> std::optional<RemoteStationOptions> {
             observeNetworkGeneration();
@@ -1007,7 +1010,9 @@ void GuiConnectionController::editCore(const QString& id)
 
 void GuiConnectionController::editRadio(const QString& mac)
 {
-    AddCustomRadioDialog editor(m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCustomRadioDialog> editorOwner(m_selector.get());
+    AddCustomRadioDialog& editor = *editorOwner.get();
     const auto saved = AppSettings::instance().savedRadio(mac);
     if (!mac.isEmpty()) {
         const RadioInfo info = m_radios.contains(mac) ? m_radios.value(mac)
@@ -1234,7 +1239,9 @@ void GuiConnectionController::addByCode(const QString& address)
         m_selector->setNotice(tr("The saved Core list could not be loaded. Correct the settings file before pairing."));
         return;
     }
-    AddCoreByCodeDialog dialog(address, m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCoreByCodeDialog> dialogOwner(address, m_selector.get());
+    AddCoreByCodeDialog& dialog = *dialogOwner.get();
     if (dialog.exec() != QDialog::Accepted) { return; }
     // The nested dialog event loop can process application shutdown.
     if (m_shuttingDown) { return; }

@@ -27,6 +27,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2: the window's start sends
+//                                    displayCodecVersion, so the start
+//                                    producer check is exact again.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the Core takes
+//                                    displayCodecVersion in a start before
+//                                    the window sends it; the start
+//                                    producer check names that one field.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  Guard native waveform context reply
 //                                    fields with planted drift controls.
 //                                    AI-assisted via OpenAI Codex.

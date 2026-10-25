@@ -60,6 +60,7 @@
 #include "RendezvousTestHarness.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/P1FakeRadio.h"
+#include "fakes/NoCaptureHelper.h"
 #include "core/session/PathRacer.h"
 #include "core/session/StationDevicesFacade.h"
 
@@ -362,7 +363,10 @@ void TestGuiConnectionController::localRadioSuccessDismissesOnlyItsRequestedConn
     QTRY_VERIFY(controller.selector()->isVisible());
     connect(controller.sessions(), &GuiSessionCoordinator::windowChanged, &controller,
         [](MainWindow* window) {
-            if (window) { window->radioModel()->wdspEngine()->setSynchronousInitForTest(true); }
+            if (window) {
+                window->radioModel()->wdspEngine()->setSynchronousInitForTest(true);
+                Test::useNoCaptureHelper(*window->radioModel());
+            }
         });
     controller.selector()->connectRequested(QStringLiteral("radio:") + radio.macAddress);
     QTRY_VERIFY(controller.sessions()->window()->radioModel()->connectionState() == ConnectionState::Connected);
@@ -421,6 +425,7 @@ void TestGuiConnectionController::automaticLocalStartupDoesNotOpenSelector()
         [&radio, hosted](MainWindow* window) {
             if (!window) { return; }
             window->radioModel()->wdspEngine()->setSynchronousInitForTest(true);
+            Test::useNoCaptureHelper(*window->radioModel());
             if (hosted) {
                 window->radioModel()->discovery()->injectLastSeenForTest(radio.macAddress, radio, 0);
             }

@@ -64,6 +64,7 @@ class TestRadeChannel : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void observerPreservesActualDecoderOutput_data();
     void observerPreservesActualDecoderOutput();
     void initialState();
@@ -533,10 +534,14 @@ void TestRadeChannel::endOfOverWhileInactiveSendsNothing()
     QCOMPARE(modemSpy.count(), 0);
 }
 
-// One channel transmits an over (speech, then the end-of-over frame with
-// KG4VCF); its modem audio, the real leg as a radio's SSB receiver hands it
-// back (I = audio, Q = 0), goes into a second channel, which reports the
-// callsign once with no grid.
+void TestRadeChannel::initTestCase()
+{
+    // The V2 row needs the experimental opt-in, read once per process by
+    // RadeV2Feature; set it before any case asks, so a direct run of the
+    // binary matches ctest (tests/CMakeLists.txt sets it there too).
+    qputenv("NEREUS_ENABLE_RADE_V2", "1");
+}
+
 void TestRadeChannel::observerPreservesActualDecoderOutput_data()
 {
     QTest::addColumn<bool>("v2");
@@ -577,6 +582,10 @@ void TestRadeChannel::observerPreservesActualDecoderOutput()
     QSignalSpy silence(padding.speechWaveformPublisher(),&WaveformPublisher::batchReady);padding.processIq(makeSyntheticIq(4));QCOMPARE(silence.size(),0);
 }
 
+// One channel transmits an over (speech, then the end-of-over frame with
+// KG4VCF); its modem audio, the real leg as a radio's SSB receiver hands it
+// back (I = audio, Q = 0), goes into a second channel, which reports the
+// callsign once with no grid.
 void TestRadeChannel::endOfOverCallsignReachesAnotherChannel()
 {
     RadeChannel tx;

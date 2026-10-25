@@ -576,6 +576,11 @@
         },
         {
             "kind": "i64",
+            "name": "displayCodecVersion",
+            "value": 2
+        },
+        {
+            "kind": "i64",
             "name": "stationRoundtableVersion",
             "value": 1
         },
@@ -4023,6 +4028,9 @@
                 "conditional": {
                     "audioProfileVersion": [
                         "audioProfileVersion"
+                    ],
+                    "displayCodecVersion": [
+                        "displayCodecVersion"
                     ],
                     "headphonesMixVersion": [
                         "headphonesMixVersion"
@@ -9586,6 +9594,7 @@
             "DisableHfPa",
             "MultimeterDelayMs",
             "NetworkWatchdogEnabled",
+            "LimitFiltersToSidebands",
             "MoxTimeOutEnabled",
             "MoxTimeOutSeconds",
             "PingTimeOutEnabled",

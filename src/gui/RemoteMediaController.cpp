@@ -1,5 +1,17 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
+//               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: NSDC v2: a start to a Core that offers displayCodecVersion
+//               2 asks for it (displayCodecV2Negotiated, kept until stop).
+//               receiveDisplay routes version 2 as version 1, returns at
+//               once for a held part, and presents each frame a decode
+//               releases, one whose trace was carried as no current
+//               measurement; the decoders' lost frames and parts are
+//               counted. A context asks for no keyframe on such a
+//               connection, nor for a binding that has decoded a v2 frame.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22: the display counters are also kept per pan
 //               (RemoteDisplayTelemetry::pans) for the diagnostics line.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1182,6 +1194,9 @@ struct RemoteMediaController::Private {
         double viewAnsweredCentreHz = 0;
         double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
+        // NSDC v2: this binding has decoded a v2 frame (held or released),
+        // so its contexts ask for no keyframe. Kept for the binding's life.
+        bool decodedV2 = false;
         QVector<float> lastMiniTrace;
         // R-DISP-RETUNE: the picture the Core says this binding's accepted
         // receive context continues (its pictureGeneration). The next
@@ -1284,6 +1299,10 @@ struct RemoteMediaController::Private {
     // R-DISP-RETUNE: this media start declared spectrumPictureVersion, so
     // each spectrum context states the picture its frames continue.
     bool pictureNegotiated = false;
+    // NSDC v2: this media start declared displayCodecVersion 2, so the Core
+    // sends every display of the connection in v2. Kept across a replace;
+    // cleared only by stop.
+    bool displayCodecV2Negotiated = false;
     // Parity Task 31: this media start declared txDisplayVersion 3, and the
     // window's DUP as MoxDisplayController applies it.
     bool displayDuplexNegotiated = false;
@@ -4224,6 +4243,8 @@ void RemoteMediaController::stop()
     d->headphonesRetryPending = false;
     // Parity Task 32: the monitor route is asked for again on the next one.
     d->txMonitorNegotiated = false;
+    // NSDC v2: the next start asks again.
+    d->displayCodecV2Negotiated = false;
     d->monitorRevision = 0;
     d->monitorContext.reset();
     QList<int> interrupted;
@@ -5470,6 +5491,14 @@ void RemoteMediaController::start()
         && d->client->capabilities().spectrumPictureVersion >= 1;
     if (d->pictureNegotiated) {
         startControl.insert(QStringLiteral("spectrumPictureVersion"), 1);
+    }
+    // NSDC v2: likewise the display codec version 2, only to a Core that
+    // offers it. The Core then sends every display of this connection in
+    // v2, whose frames each decode alone.
+    d->displayCodecV2Negotiated = d->client && spectrumGrantNegotiated()
+        && d->client->capabilities().displayCodecVersion >= 2;
+    if (d->displayCodecV2Negotiated) {
+        startControl.insert(QStringLiteral("displayCodecVersion"), 2);
     }
     // Parity Task 32 (R-IOS-13, R-R3-49): likewise the transmit monitor,
     // only to a Core that sends it.
@@ -8263,7 +8292,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         binding.transmit = wantsTx;
         binding.transmitGeneration = wantsTx ? context.codec.contextGeneration : 0;
         binding.transmitContext = wantsTx ? decoded : std::nullopt;
-        requestKeyframe(endpointId);
+        requestContextKeyframe(endpointId);
         return;
     }
     if (decoded->transmit.value_or(false)) {
@@ -8288,7 +8317,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         const QString connectionId = d->connectionId;
         emit transmitContextReceived(binding.panId, *decoded);
         if (!self || d->connectionId != connectionId) { return; }
-        requestKeyframe(endpointId);
+        requestContextKeyframe(endpointId);
         return;
     }
     binding.transmit = false;
@@ -8406,7 +8435,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         }
     }
     refreshCtunState();
-    requestKeyframe(endpointId);
+    requestContextKeyframe(endpointId);
     if (askAgain) {
         if (!self || d->connectionId != connectionId) { return; }
         refreshSubscriptions();
@@ -8427,6 +8456,17 @@ void RemoteMediaController::requestKeyframe(quint32 endpointId)
     send({{QStringLiteral("op"), QStringLiteral("keyframe")},
           {QStringLiteral("endpointId"), double(endpointId)},
           {QStringLiteral("contextGeneration"), double(binding.drawnGeneration())}});
+}
+
+void RemoteMediaController::requestContextKeyframe(quint32 endpointId)
+{
+    // NSDC v2: the first frame of a context decodes alone, as every v2 frame
+    // does, so a new context needs no keyframe on a connection that agreed
+    // v2, nor for a binding whose Core has sent it v2 frames.
+    if (d->displayCodecV2Negotiated) { return; }
+    const auto it = d->bindings.find(endpointId);
+    if (it != d->bindings.end() && it->second.decodedV2) { return; }
+    requestKeyframe(endpointId);
 }
 
 void RemoteMediaController::receiveDisplay(const QByteArray& packet)
@@ -8455,8 +8495,10 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         receiveDisplayExtras(packet);
         return;
     }
-    // Route only the documented v1 prefix. The decoder validates the complete
-    // envelope and bounds before any plane can reach the renderer.
+    // Route only the documented prefix, which NSDC v1 and v2 share (the
+    // endpoint at offset 8, the generation at 12). The decoder chooses by
+    // the version byte and validates the complete envelope and bounds
+    // before any plane can reach the renderer.
     if (packet.size() < 42 || packet.size() > DisplayCodecEncoder::kMaxEncodedBytes
         || packet.first(4) != QByteArrayLiteral("NSDC")) { return; }
     const quint32 id = qFromBigEndian<quint32>(packet.constData() + 8);
@@ -8493,7 +8535,25 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
            && binding.arrivalGaps.front().first < arrivalNs - kDisplayArrivalWindowNs) {
         binding.arrivalGaps.pop_front();
     }
+    const DisplayCodecDecoderCounters lossBefore = binding.decoder.counters();
     const DisplayCodecDecodeResult decoded = binding.decoder.decode(packet);
+    {
+        // NSDC v2: the frames and parts the decoder found lost, kept for the
+        // media session whatever becomes of the binding.
+        const DisplayCodecDecoderCounters& loss = binding.decoder.counters();
+        d->displayCounters.messagesLost += loss.framesLost - lossBefore.framesLost;
+        d->displayCounters.partsLost += loss.partsLost - lossBefore.partsLost;
+    }
+    if (packet.at(4) == char(2)
+        && (decoded.disposition == DisplayCodecDisposition::Accepted
+            || decoded.disposition == DisplayCodecDisposition::Held)) {
+        binding.decodedV2 = true;
+    }
+    if (decoded.disposition == DisplayCodecDisposition::Held) {
+        // NSDC v2: one part of a split frame, held for its partner. Nothing
+        // is lost, asked for or presented yet.
+        return;
+    }
     if (decoded.disposition == DisplayCodecDisposition::NeedKeyframe) {
         if (binding.transmit && !binding.isMini()) {
             // Merge of parity Task 28 with R-R3-21: the transmit display is
@@ -8519,6 +8579,9 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         requestKeyframe(id);
         scheduleDisplayPresentation(d->displayDelay.mapNs());
     } else if (decoded.disposition == DisplayCodecDisposition::Accepted) {
+        // NSDC v2 may release two frames at once (a held part, then this
+        // message's frame), oldest first; v1 releases one.
+        const int frameCount = std::clamp(decoded.frameCount, 1, 2);
         if (binding.transmit && !binding.isMini()) {
             // Parity Task 28: a transmit display frame, handed on at once.
             // Merge with R-R3-21: it bypasses the presenter (no audio to
@@ -8526,8 +8589,10 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
             const QPointer<RemoteMediaController> self(this);
             const QString connectionId = d->connectionId;
             const QString panId = binding.panId;
-            emit transmitFrameReceived(panId, decoded.frame);
-            if (!self || d->connectionId != connectionId) { return; }
+            for (int k = 0; k < frameCount; ++k) {
+                emit transmitFrameReceived(panId, k == 0 ? decoded.frame : decoded.secondFrame);
+                if (!self || d->connectionId != connectionId) { return; }
+            }
             emit displayFrameReceived(id);
             return;
         }
@@ -8545,9 +8610,15 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
             ? qint64(context.framesPerLine) * 1'000'000'000LL / context.targetFps : 0);
         const quint64 droppedBefore = binding.presenter.counters().itemsDropped;
         // Each frame goes on with where it was captured, so it is drawn
-        // there whatever the pan shows by then (R-R3-21).
-        binding.presenter.push(decoded.frame,
-                               binding.drawing ? binding.drawing->capture : binding.capture);
+        // there whatever the pan shows by then (R-R3-21). A v2 frame whose
+        // trace part was lost carries the last trace: drawn, but no current
+        // receiver measurement.
+        const RemoteSpectrumCapture& capture =
+            binding.drawing ? binding.drawing->capture : binding.capture;
+        for (int k = 0; k < frameCount; ++k) {
+            const DisplayCodecFrame& frame = k == 0 ? decoded.frame : decoded.secondFrame;
+            binding.presenter.push(frame, capture, !frame.traceCarried);
+        }
         d->displayCounters.itemsDropped += binding.presenter.counters().itemsDropped - droppedBefore;
         reconcileClockProbe();
         presentDueDisplay();
@@ -8603,6 +8674,7 @@ RemoteDisplayTelemetry RemoteMediaController::displayTelemetry() const
         }
         if (binding.widget) {
             telemetry.rowsDropped += binding.widget->remoteRowsDropped();
+            telemetry.rowsBlanked += binding.widget->waterfallRowsBlanked();
         }
     }
     if (const std::optional<qint64> map = d->displayDelay.mapNs()) {

@@ -86,6 +86,13 @@
 //                 non-finite samples in fexchange2's output. For the Core
 //                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. NereusSDR-original.
+//   2026-10-23 - wdspInputSize(): the input block WDSP's channel holds, so
+//                 processIq keeps a chunk of another size out of fexchange2,
+//                 counted for the Core log (takeInputSizeMismatch)
+//                 (a slice moved to a slower stream before its rate change
+//                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -344,6 +351,14 @@ public:
     int channelId() const { return m_channelId; }
     int bufferSize() const { return m_bufferSize.load(std::memory_order_acquire); }
     int sampleRate() const { return m_sampleRate.load(std::memory_order_acquire); }
+
+    // The input block WDSP's channel was last built with: OpenChannel's
+    // in_size, then SetInputBuffsize on each rate change. bufferSize() is the
+    // carry, which runs ahead of the lane; this follows WDSP itself.
+    // WdspEngine sets it on the lane, while the DSP worker is quiesced.
+    // processIq hands fexchange2 only a chunk of exactly this size.
+    int wdspInputSize() const { return m_wdspInputSize.load(std::memory_order_acquire); }
+    void setWdspInputSize(int inSize) { m_wdspInputSize.store(inSize, std::memory_order_release); }
 
     // --- R-R3-39: the receive lane ---
     //
@@ -1245,6 +1260,21 @@ public:
     // periodic owner only: RadioModel's load sampler.
     qint64 takeOutputNonFiniteSamples() const;
 
+    // 2026-10-23: chunks processIq silenced since the previous take because
+    // their size did not match wdspInputSize(). A short window while a slice
+    // changes stream is expected; a count that keeps growing means a drain
+    // threshold and the channel's input block have parted for good.
+    // chunkSize and wdspInputSize are the last silenced chunk's pair, as
+    // the guard saw it. False (all 0) when no chunk was silenced.
+    // Diagnostics only. Lock-free; one periodic owner only: RadioModel's
+    // load sampler.
+    struct InputSizeMismatch {
+        qint64 chunks{0};
+        int chunkSize{0};
+        int wdspInputSize{0};
+    };
+    bool takeInputSizeMismatch(InputSizeMismatch& out) const;
+
     // --- Per-mode DSP-Options live-apply (Task 4.2) ---
     //
     // Called when SliceModel emits dspModeChanged. Reads per-mode DSP-Options
@@ -1408,6 +1438,8 @@ private:
     // worker reads bufferSize() for its external-diversity chunk.
     std::atomic<int> m_bufferSize;
     std::atomic<int> m_sampleRate;
+    // wdspInputSize(): written on the lane, read by the DSP worker.
+    std::atomic<int> m_wdspInputSize;
 
     // Atomic flags for lock-free audio thread reads
     std::atomic<int> m_mode{static_cast<int>(DSPMode::LSB)};  // Must match WdspEngine::createRxChannel init
@@ -1506,6 +1538,11 @@ private:
     // 2026-10-22: non-finite samples in fexchange2's output since the last
     // takeOutputNonFiniteSamples (written on the DSP thread, relaxed).
     mutable std::atomic<qint64> m_outputNonFinite{0};
+    // 2026-10-23: chunks the input-size guard silenced since the last
+    // takeInputSizeMismatch, and the last one's chunk size (high 32 bits)
+    // and WDSP input block (low 32) (written on the DSP thread, relaxed).
+    mutable std::atomic<qint64> m_inputSizeMismatchChunks{0};
+    std::atomic<quint64> m_inputSizeMismatchSizes{0};
 
 #ifdef HAVE_DFNR
     // DeepFilterNet3 filter instance (Sub-epic C-1, Task 9).

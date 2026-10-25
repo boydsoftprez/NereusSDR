@@ -31,6 +31,9 @@
 // Modification history (NereusSDR):
 //   2026-10-16  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  AGC-T AUTO and the step on each slice
+//                                    across a Core restart. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -231,6 +234,58 @@ private slots:
         QTRY_VERIFY(window.model.sliceById(1) != nullptr);
         QTRY_COMPARE(window.model.sliceById(1)->stepHz(), kWindowStepHz);
         QCOMPARE(window.model.sliceById(0)->stepHz(), kCoreStepHz);
+    }
+
+    // JJ's report 2026-10-23 (step and AGC auto do not persist between
+    // launches): AGC-T AUTO and the step a window sets on each of the
+    // Core's slices are saved under that slice and come back, on the Core
+    // and in a window that connects to it, after the Core starts again.
+    void windowAutoAndStepOnEachSliceComeBackAfterACoreRestart()
+    {
+        {
+            Core core(m_securityDir.path(), /*restoreSavedState=*/false);
+            SliceModel* a = core.model.sliceById(0);
+            SliceModel* b = core.model.sliceById(1);
+            QVERIFY(a && b);
+            a->setFrequency(kSliceAFreqHz);
+            b->setFrequency(kSliceBFreqHz);
+            core.model.flushPendingSettingsSave();
+
+            Window window;
+            QVERIFY(window.join(core, this));
+            QTRY_VERIFY(window.model.sliceById(1) != nullptr);
+            SliceModel* remoteA = window.model.sliceById(0);
+            SliceModel* remoteB = window.model.sliceById(1);
+            QVERIFY(remoteA && remoteB);
+
+            remoteA->setStepHz(kWindowStepHz);
+            remoteA->setAutoAgcEnabled(true);
+            remoteB->setAutoAgcEnabled(true);
+            QTRY_COMPARE(a->stepHz(), kWindowStepHz);
+            QTRY_VERIFY(a->autoAgcEnabled());
+            QTRY_VERIFY(b->autoAgcEnabled());
+            core.model.flushPendingSettingsSave();
+            auto& s = AppSettings::instance();
+            QCOMPARE(s.value(QStringLiteral("Slice0/AgcAutoEnabled")).toString(),
+                     QStringLiteral("True"));
+            QCOMPARE(s.value(QStringLiteral("Slice1/AgcAutoEnabled")).toString(),
+                     QStringLiteral("True"));
+        }
+
+        Core core(m_securityDir.path(), /*restoreSavedState=*/true);
+        SliceModel* a = core.model.sliceById(0);
+        SliceModel* b = core.model.sliceById(1);
+        QVERIFY(a && b);
+        QCOMPARE(a->stepHz(), kWindowStepHz);
+        QVERIFY(a->autoAgcEnabled());
+        QVERIFY(b->autoAgcEnabled());
+
+        Window window;
+        QVERIFY(window.join(core, this));
+        QTRY_VERIFY(window.model.sliceById(1) != nullptr);
+        QTRY_COMPARE(window.model.sliceById(0)->stepHz(), kWindowStepHz);
+        QTRY_VERIFY(window.model.sliceById(0)->autoAgcEnabled());
+        QTRY_VERIFY(window.model.sliceById(1)->autoAgcEnabled());
     }
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 // no-port-check: NereusSDR-original Setup description transport.
+// 2026-10-24: validateGeneralV30Control, General > Filters' row. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "core/NereusCoreExport.h"
@@ -55,6 +57,9 @@ public:
     static bool validateHardwareV18Control(const QJsonObject& control);
     /// Version 23: Calibration's Rx1 6m LNA row, exactly as published.
     static bool validateHardwareV23Control(const QJsonObject& control);
+    /// Version 30: General > Filters' Limit filter edges to sidebands row,
+    /// exactly as published.
+    static bool validateGeneralV30Control(const QJsonObject& control);
     /// Version 24: TX Input's Line In Gain in 1.5 dB steps and the Saturn
     /// G2's Mic Tip-Ring row, exactly as published.
     static bool validateAudioV24Control(const QJsonObject& control);

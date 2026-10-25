@@ -4,6 +4,13 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: RemoteDisplayTelemetry::rowsBlanked, the waterfall rows the
+//               pans' NB Blank replaced, for the diagnostics line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2: RemoteDisplayTelemetry::messagesLost and
+//               partsLost, and requestContextKeyframe (no keyframe is asked
+//               for a context on a connection that agreed v2). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22: RemoteDisplayTelemetry::pans, the keyframe waits and the
 //               rows blended and repeated of each pan, and
 //               remoteDisplayPanDiagnosticsFields for the diagnostics line.
@@ -194,6 +201,11 @@ struct RemoteDisplayTelemetry {
     quint64 keyframeWaits = 0;
     /// Keyframe requests sent to the Core.
     quint64 keyframeRequests = 0;
+    /// NSDC v2: display frames the decoders found lost (the sum of their
+    /// framesLost), and frames released with one part lost (partsLost),
+    /// over every display of the media session, retired ones included.
+    quint64 messagesLost = 0;
+    quint64 partsLost = 0;
     /// Waterfall rows blended across a gap, and repeated while waiting.
     quint64 rowsBlended = 0;
     quint64 rowsRepeated = 0;
@@ -208,6 +220,9 @@ struct RemoteDisplayTelemetry {
     /// rows the pans' waterfalls dropped for the same reason (never expected).
     quint64 itemsDropped = 0;
     quint64 rowsDropped = 0;
+    /// Waterfall rows the pans' NB Blank replaced with the last accepted
+    /// row (SpectrumWidget::waterfallRowsBlanked, every pan together).
+    quint64 rowsBlanked = 0;
     /// How far behind the Core's capture the display is presented now (the
     /// audio's delay, or the last known one), or nothing while each frame is
     /// drawn on arrival (an older Core, or no clock echo yet).
@@ -770,6 +785,11 @@ private:
     void receiveDisplayExtras(const QByteArray& packet);
     void reportDisplayDrops();
     void requestKeyframe(quint32 endpointId);
+    // NSDC v2: the keyframe a new receive or transmit context asks for, sent
+    // only while it can help: not on a connection whose start carried
+    // displayCodecVersion 2, nor for a binding that has decoded a v2 frame
+    // (every v2 frame decodes alone).
+    void requestContextKeyframe(quint32 endpointId);
     void requestAudio();
     // R-R3-21, 2026-10-16: the next request on the restart backoff, for a
     // restart or a speaker failure; one waits at a time.

@@ -571,6 +571,10 @@ if(TARGET wdsp_static)
     # 2026-10-22: dsplock.c counts noise-reduction calls over 50 ms per
     # channel for the Core log (RadioModel::reportSlowNrCalls).
     nereus_add_test(tst_wdsp_slow_nr_calls EXTRA_LABELS core)
+    # 2026-10-23: a chunk shorter than a channel's WDSP input block (a slice
+    # on a slower stream before its rate change lands) never reaches
+    # fexchange2, and a NaN burst inside WDSP flushes out of the audio.
+    nereus_add_test(tst_rx_rate_change_non_finite EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
         # linking it again here made the linker warn about a duplicate library.
@@ -670,6 +674,13 @@ if(TARGET wdsp_static)
     nereus_add_test(tst_tx_analyzer_skirt EXTRA_LABELS core REALTIME)
     target_include_directories(tst_tx_analyzer_skirt PRIVATE ${FFTW3_INCLUDE_DIRS})
     target_compile_definitions(tst_tx_analyzer_skirt PRIVATE WDSP_STATIC_BUILD)
+    # 2026-10-23 (the iPhone S-meter at 3086.5 dBm): a WDSP meter leaves a
+    # non-finite sample out of its average and peak, so a short NaN burst in
+    # a receiver's output never pegs its S-meter readings (meter.c xmeter).
+    nereus_add_test(tst_wdsp_meter_non_finite WdspMeterProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspMeterProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_meter_non_finite PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_meter_non_finite PRIVATE WDSP_STATIC_BUILD)
 endif()
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
@@ -800,6 +811,12 @@ nereus_add_test(tst_rotator_item_drag)
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.
 nereus_add_test(tst_rotor_applet)
+# Longpath bug-fix ports (2026-10-22): right-click and drop-down menus are
+# no longer built on the stack. ScopedChildWidget (after Longpath's, which
+# came from AetherSDR) frees a menu once whether its scope or its dying
+# parent ends it; two cases close a real widget's window while its menu is
+# open, which freed the stack menu twice before.
+nereus_add_test(tst_scoped_child_widget)
 nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
@@ -1452,6 +1469,13 @@ nereus_add_test(tst_slice_apf)
 # ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
 nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
+# Filter edges constrained as Thetis ConstrainFilter (console.cs:35044 [v2.10.3.15]).
+nereus_add_test(tst_slice_filter_constrain)
+# Setup > General > Filters' "Limit filter edges to sidebands" (Thetis
+# chkLimitFilterEdgesToSidebands): default, gating, persistence, every slice
+# at once, and the Core's setting over the in-process loopback.
+nereus_add_test(tst_limit_filters_to_sidebands
+    fakes/LoopbackTransport.cpp)
 # Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
 # a DSP edit on a slice that is not the active one is saved to that slice.
 nereus_add_test(tst_slice_squelch_channel_seed)
@@ -1510,6 +1534,22 @@ nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 # restart (found reviewing PR 517). A connection that sends nothing, a real
 # StationServer and a remote window over the loopback; no radio, no audio.
 nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
+# JJ's report 2026-10-23: each slice's tuning step and AGC-T AUTO come back
+# from the settings file after a relaunch, on a SliceModel and on a radio
+# connected from this computer. A connection that sends nothing; no radio.
+nereus_add_test(tst_slice_step_agc_auto_persistence EXTRA_LABELS models core)
+# JJ 2026-10-23: a paired device gets its slice letter and settings back
+# after a Core restart, headless or inside the desktop window, either way.
+nereus_add_test(tst_station_hosting_slice_letters
+    fakes/LoopbackTransport.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_station_hosting_slice_letters PRIVATE NEREUS_BUILD_TESTS)
+
+# JJ 2026-10-23: a window that starts on B (a Core inside it kept A for a
+# paired device) wires its spectrum, menus and applets to B, not to A.
+nereus_add_test(tst_window_wiring_follows_starting_slice EXTRA_LABELS gui)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
@@ -3829,6 +3869,8 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 # copy shows and sets the same model state as the applet's own row and follows
 # the same transmit-permission gates.  The applet's own panel is unchanged.
 nereus_add_test(tst_tx_section_content)
+nereus_add_test(tst_rx_section_content)
+target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
@@ -5993,7 +6035,10 @@ nereus_add_test(tst_telemetry_history)
 # R-R3-35: clock offset from probe exchanges and the measured audio delay.
 nereus_add_test(tst_audio_clock_estimator)
 # R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
+# NSDC v2: its loss case reads the codec's scenes (DisplayCodecV2Vectors.h).
 nereus_add_test(tst_remote_display_presenter)
+target_compile_definitions(tst_remote_display_presenter PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 nereus_add_test(tst_remote_waterfall_cadence)
 # NEREUS_TRACE_MAIN_STALLS: slow GUI-thread deliveries log MAIN_STALL; off, nothing.
 nereus_add_test(tst_gui_application_stall_trace)
@@ -6494,6 +6539,13 @@ nereus_add_test(tst_spectrum_tx_overlay)
 # setPresetsForMode reorder persists, presetsChanged fires on every mutator.
 nereus_add_test(tst_filter_preset_store)
 
+# ── Longpath bug-fix port, bug 3: filter presets match Thetis ───────────────
+# Table-driven: every F1..F10 slot of LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+# and DSB against Thetis InitFilterPresets (console.cs:5188-5582
+# [v2.10.3.15]), F5 as the default filter, and the CW slots following the CW
+# pitch with the CWPitch setter's image-limit slide.
+nereus_add_test(tst_filter_presets_thetis)
+
 # ── Issue #175 Task 1: per-SKU PA UI constants for HL2 mi0bot parity ─────────
 # 5 tests asserting the 9 constexpr helpers + 2 attenuator constants added
 # in HpsdrModel.h for HL2 (HERMESLITE) mi0bot-Thetis slider/spinbox parity:
@@ -6750,6 +6802,14 @@ endif()
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_iq_roundtrip)
     target_link_libraries(tst_tci_iq_roundtrip PRIVATE Qt6::WebSockets)
+endif()
+
+# Longpath cf756d8b: receive audio and I/Q to an app that stops reading are
+# dropped once 256 KiB or more waits for it, not queued without limit. A raw
+# socket does the handshake by hand and then reads nothing.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_binary_backpressure)
+    target_link_libraries(tst_tci_binary_backpressure PRIVATE Qt6::WebSockets)
 endif()
 
 # ── Phase 3J-1 Task 17.1: TX audio binary pipeline + single-client mutex ──────
@@ -7045,7 +7105,7 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
-# + band + modeGroup). Five tests:
+# + band + modeGroup). Six tests:
 #   parsesSampleAdif (10 QSO bundled fixture, first/last callsigns
 #   resolve, SSB -> PHONE / CW -> CW group normalisation),
 #   emitsFinishedSignal (QSignalSpy waits parseFileAsync ->
@@ -7053,6 +7113,8 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 #   skipsHeaderSection (no <adif_ver> / <programid> leakage),
 #   handlesCaseInsensitiveTags (mixed-case <CALL> / <Call> /
 #   <call> + <EOR> / <eor> / <Eor> all parse),
+#   handlesTypeIndicatorTags (<CALL:6:S> / <FREQ:6:N> typed tags
+#   parse like plain ones; Longpath tests/tst_adif_parser.cpp [@383f058]),
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
@@ -8131,6 +8193,17 @@ nereus_add_test(tst_spectrum_widget_display_signals)
 # spacing and 10 px text draw what they drew before. Test sandbox.
 nereus_add_test(tst_spectrum_widget_additions)
 
+# -- The GPU spectrum trace and its peak hold sit on their grid line with
+#    the band plan shown and with the 1 Hz normalization on, and a new bin
+#    count redraws the normalized grid. Ported from Longpath PR 100
+#    (tests/tst_spectrum_trace_on_grid.cpp [@383f058]), 2026-10-22 --
+nereus_add_test(tst_spectrum_trace_on_grid)
+
+# NB Blank's decision (WaterfallImpulseBlanker, NereusSDR-original, 2026-10-22):
+# a row's median against the median of accepted rows, at most two rows blanked
+# in a row. Fence pulses blanked, loud stations never, a lasting rise followed.
+nereus_add_test(tst_waterfall_impulse_blanker)
+
 # Display pill plan Task 3: the waterfall level model under Clarity (Black
 # Level and Color Gain against the noise floor, up = blacker), what the
 # renderer colours with in each mode, and the one-time conversion of stored
@@ -8211,6 +8284,10 @@ nereus_add_test(tst_vfo_flag_fold)
 # wheel accumulator); NereusSDR-original (flag drag, grab order).
 nereus_add_test(tst_wheel_step_accumulator)
 nereus_add_test(tst_spectrum_receiver_grab)
+# A dragged filter view shows what the slice kept after the 10 kHz cap,
+# and the RX applet's centre drag keeps the width (Thetis console.cs:7589,
+# 35202 [v2.10.3.15]). NereusSDR-original.
+nereus_add_test(tst_filter_view_resync)
 nereus_add_test(tst_vfo_flag_drag)
 # The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
 # buttons and floating buttons carry the pass's sheets with the look on and
@@ -9117,6 +9194,14 @@ target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
 nereus_add_test(tst_juice_dual_stack_port CORE_ONLY EXTRA_LABELS session)
 target_link_libraries(tst_juice_dual_stack_port PRIVATE datachannel-static)
 target_include_directories(tst_juice_dual_stack_port PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libjuice_SOURCE_DIR}/src")
+# libjuice offers each IPv6 /64 once, and on macOS with the address the
+# system sends from rather than the first one listed
+# (cmake/patches/libjuice-0005).
+nereus_add_test(tst_juice_ipv6_source_address CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_juice_ipv6_source_address PRIVATE datachannel-static)
+target_include_directories(tst_juice_ipv6_source_address PRIVATE
     "${libdatachannel_SOURCE_DIR}/include"
     "${libjuice_SOURCE_DIR}/src")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
@@ -10508,6 +10593,22 @@ nereus_add_test(tst_remote_audio_status)
 
 # Remote Daemon R3, Task 3: bounded native trace, waterfall, and DSS codec.
 nereus_add_test(tst_display_codec)
+# Display codec v2 Task 1: the NSDC v2 encoder, its bound and the golden
+# vectors in tests/data/display_codec_v2/vectors.json, which the regen
+# target writes into NEREUS_DISPLAY_CODEC_V2_REGEN_OUT only.
+nereus_add_test(tst_display_codec_v2)
+target_compile_definitions(tst_display_codec_v2 PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+nereus_add_test(tst_display_codec_v2_regen)
+target_compile_definitions(tst_display_codec_v2_regen PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+# Display codec v2 Task 3: negotiation. displayCodecVersion goes only to a
+# peer that declared displayCodec 2, last before coreBuildInfo; the media
+# start may ask for version 2 only then; RemoteDisplayCodecV2 off withdraws
+# it from every peer.
+nereus_add_test(tst_display_codec_v2_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 nereus_add_test(tst_display_budget)
 # iPhone app Task 76 (R-IOS-31): the Core's display budget shared among
 # the devices signed in to it, holder first.
@@ -10889,6 +10990,11 @@ nereus_add_test(tst_spectrum_dynamic_overlay_rows)
 # Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
 nereus_add_test(tst_dss_dbm_scale)
 
+# The GPU static overlay (grid, scales, band plan, text) is rebuilt only when
+# something it draws changes: steady local, remote and transmit frames leave
+# it clean, and each audited input marks it. NereusSDR-original.
+nereus_add_test(tst_spectrum_overlay_dirty)
+
 # ── 3D stacked-trace spectrum plan, Task 12: slice shadow decals ─────────
 # Pins buildDssShadowBands(): maps each visible slice's passband (and its
 # own carrier frequency, as the shadow's cue position) into the same [0,1]
@@ -11037,6 +11143,13 @@ nereus_add_test(tst_display_settings_model)
 # unit and from fake radios on both protocols.
 nereus_add_test(tst_radio_link_stats fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_radio_link_stats PRIVATE NEREUS_BUILD_TESTS)
+
+# A lost I/Q packet does not paint a line across the spectrum: the display
+# FFT drops its window in progress on a sequence gap, which both protocols
+# send before the samples after it. Ported from Longpath PR 62
+# (tests/tst_fft_window_after_gap.cpp [@383f058]) and extended, 2026-10-22.
+nereus_add_test(tst_fft_window_after_gap fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_fft_window_after_gap PRIVATE NEREUS_BUILD_TESTS)
 
 # RADE threads lane (2026-09-30): one Protocol 2 socket drain's I/Q reaches
 # the DSP worker as one post per stream, with the same samples in order.

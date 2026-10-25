@@ -24,6 +24,10 @@
 //   2026-08-02  J.J. Boyd / KG4VCF  Remote daemon R1, extraction 3 of 9.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
+//                                    noise floor measures while the average
+//                                    warms up. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "core/spectrum/SpectrumReducer.h"
@@ -78,8 +82,10 @@ std::pair<int, int> SpectrumReducer::visibleBinRange(int binCount,
 void SpectrumReducer::reduce(const QVector<float>& binsLinear,
                              double windowEnb,
                              double dbmOffset,
-                             QVector<float>& pixelsOut)
+                             QVector<float>& pixelsOut,
+                             QVector<float>* measurementOut)
 {
+    if (measurementOut) { measurementOut->clear(); }
     // updateSpectrumLinear's first line: no bins, no update. The previously
     // rendered frame stays on screen.
     if (binsLinear.isEmpty()) { return; }
@@ -145,6 +151,9 @@ void SpectrumReducer::reduce(const QVector<float>& binsLinear,
                     false,
                     0.0,
                     pixelsOut);
+    if (measurementOut && m_avenger.warmingUp()) {
+        m_avenger.unseededDb(dbmScale, *measurementOut);
+    }
 }
 
 }  // namespace NereusSDR

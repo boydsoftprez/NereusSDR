@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Button faces can be painted by a subclass. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 //   2026-10-03 — Consume transient interaction dirtiness by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -188,13 +190,19 @@ protected:
     // Subclasses call this to set up their button labels/colors after setButtonCount.
     void setupButton(int index, const QString& text, const QColor& onColour = QColor());
 
+    // Hover and press, so a subclass face can match the button the pointer is on.
+    int hoveredButton() const { return m_hoveredIndex; }
+    int pressedButton() const { return m_clickedIndex; }
+
+    // Thetis face. A subclass may draw its own face without changing hits or clicks.
+    virtual void paintButton(QPainter& p, int index, const QRectF& rect);
+
     int m_buttonCount{0};
     QVector<ButtonState> m_buttons;
 
 private:
     // From Thetis clsButtonBox layout calculation
     QRectF buttonRect(int index, const QRectF& area) const;
-    void paintButton(QPainter& p, int index, const QRectF& rect);
     void paintIndicator(QPainter& p, int index, const QRectF& rect);
 
     int m_columns{4};

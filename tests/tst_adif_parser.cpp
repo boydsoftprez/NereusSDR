@@ -9,6 +9,51 @@
 //
 // Phase 3J-2 Task C2. Pins the contract that AdifParser parses an
 // ADIF (Amateur Data Interchange Format) log file into a vector
+// of QsoRecord (callsign + band + modeGroup). Six tests:
+//   - parsesSampleAdif: synchronous parseFile() against the
+//     bundled 10-QSO sample fixture returns 10 records with the
+//     expected first-record callsign / band / modeGroup values.
+//   - emitsFinishedSignal: parseFileAsync() emits finished()
+//     with the parsed records (QSignalSpy wait).
+//   - skipsHeaderSection: header (<adif_ver>, <created_timestamp>,
+//     <programid>) before <eoh> contributes zero records.
+//   - handlesCaseInsensitiveTags: <CALL:> / <Call:> / <call:> /
+//     <eor> / <EOR> / <Eor> all parse the same.
+//   - rejectsMalformedAdif: arbitrary garbage bytes yield an
+//     empty record vector.
+//   - handlesTypeIndicatorTags: typed field tags such as
+//     <CALL:6:S> and lowercase tags parse, and a typed FREQ
+//     falls back to the band.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: handlesTypeIndicatorTags ported from Longpath by
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation
+//               via Claude Code. Fields carrying an ADIF data type
+//               indicator (<CALL:6:S>, <FREQ:6:N>, lowercase
+//               <call:4:s>) parse the same as plain <FIELD:len> tags.
+//
+// Ported in part from Longpath source:
+//   tests/tst_adif_parser.cpp [@383f058] (commit a927f492, the
+//   handlesTypeIndicatorTags case only); original header from Longpath
+//   source is included below.
+//
+// Longpath (Martin Fischer, OE5SOS, https://github.com/oe5sos/Longpath)
+// is a fork of NereusSDR distributed under the GNU General Public
+// License version 3 (its root LICENSE).
+//
+// --- From tst_adif_parser.cpp ---
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// no-port-check: This test references real DXCC entity callsigns
+// (W1AW, JA1ABC, VK6APH, G3OCA, DL1ABCD) as fixtures in a sample
+// ADIF log. They are well-known callsigns used as test inputs,
+// not ported callsigns. Precedent: B2-B6, C1.
+//
+// Longpath - AdifParser tests
+//
+// Phase 3J-2 Task C2. Pins the contract that AdifParser parses an
+// ADIF (Amateur Data Interchange Format) log file into a vector
 // of QsoRecord (callsign + band + modeGroup). Five tests:
 //   - parsesSampleAdif: synchronous parseFile() against the
 //     bundled 10-QSO sample fixture returns 10 records with the
@@ -21,6 +66,13 @@
 //     <eor> / <EOR> / <Eor> all parse the same.
 //   - rejectsMalformedAdif: arbitrary garbage bytes yield an
 //     empty record vector.
+//
+// 2026-08-10 (KG4VCF, AI tooling: Anthropic Claude Code) — sixth
+// test added alongside the extractField regex fix:
+//   - handlesTypeIndicatorTags: fields carrying an ADIF data type
+//     indicator (<CALL:6:S>, <FREQ:6:N>, lowercase <call:4:s>)
+//     parse identically to plain <FIELD:len> tags. The previous
+//     regex silently dropped every such field.
 
 #include <QtTest>
 #include <QSignalSpy>
@@ -44,6 +96,7 @@ private slots:
     void emitsFinishedSignal();
     void skipsHeaderSection();
     void handlesCaseInsensitiveTags();
+    void handlesTypeIndicatorTags();
     void rejectsMalformedAdif();
 };
 
@@ -133,6 +186,32 @@ void TestAdifParser::handlesCaseInsensitiveTags()
     QCOMPARE(records[1].callsign, QStringLiteral("JA1ABC"));
     QCOMPARE(records[1].band, QStringLiteral("40m"));
     QCOMPARE(records[1].modeGroup, QStringLiteral("CW"));
+}
+
+// From Longpath tests/tst_adif_parser.cpp:150-173 [@383f058]
+void TestAdifParser::handlesTypeIndicatorTags()
+{
+    // ADIF permits an optional single-letter data type indicator after
+    // the length segment: <FIELDNAME:length:T>.  Loggers that emit it
+    // (e.g. <CALL:6:S>, <FREQ:6:N>) must parse identically to the plain
+    // form.  Regression test for the extractField regex fix (2026-08-10):
+    // the old pattern put the optional type group before the length
+    // capture, so typed fields never matched and were silently dropped.
+    const QByteArray adif =
+        "<EOH>\n"
+        "<CALL:6:S>JA1ABC <BAND:3:E>40m <MODE:2:E>CW <EOR>\n"
+        "<call:4:s>W1AW <FREQ:6:N>14.074 <MODE:3>FT8 <eor>\n";
+
+    const QVector<QsoRecord> records =
+        AdifParser::parseBytesForTest(adif);
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records[0].callsign, QStringLiteral("JA1ABC"));
+    QCOMPARE(records[0].band, QStringLiteral("40m"));
+    QCOMPARE(records[0].modeGroup, QStringLiteral("CW"));
+    // Second record has no BAND — falls back to FREQ (typed :N) -> 20m.
+    QCOMPARE(records[1].callsign, QStringLiteral("W1AW"));
+    QCOMPARE(records[1].band, QStringLiteral("20m"));
+    QCOMPARE(records[1].modeGroup, QStringLiteral("DATA"));
 }
 
 void TestAdifParser::rejectsMalformedAdif()

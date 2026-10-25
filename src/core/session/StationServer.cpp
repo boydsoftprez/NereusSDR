@@ -18,6 +18,32 @@
 //               per peer; a post keyed by its connection and a Core
 //               clientId. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
+//               effective value (RadioModel's default, False) when the Core
+//               never stored it, so a headless Core's phone row is live.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: That effective value is added only to a snapshot that has
+//               other content, so an empty snapshot still keeps a window's
+//               Core pages waiting. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: Setup description cap 30, General > Filters' Limit filter
+//               edges to sidebands row. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: "Limit filter edges to sidebands" (LimitFiltersToSidebands)
+//               reaches the Core's slices when a window's change or a
+//               removal lands in its settings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-23: a Core inside a desktop window gives a returning device
+//               the letters it kept for it (placeReservedSlicesFor), and a
+//               device admitted before the radio connects is placed when it
+//               does (m_placementAwaitingRadio); a saved slice never takes a
+//               letter kept for another device. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion 2 for a minor-11
+//               peer that declared displayCodec 2, media on, while the
+//               Core's RemoteDisplayCodecV2 setting is on
+//               (displayCodecV2Available). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: RX-only antennas as Thetis's checkbox sum (0..5):
 //               radioAntennaRowsVersion 2 for a peer that declared
 //               radioAntennaRows 2; any other peer reads and writes a 0..3
@@ -1572,12 +1598,13 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
-// The highest Setup description version the Core sends (29: the accepted
+// The highest Setup description version the Core sends (30: General's
+// Filters page with Limit filter edges to sidebands; 29: the accepted
 // eight Display pages and scoped picture controls; 28: Display's FFT
 // sizing rows and the averaging times from 1 ms; 27: Appearance's Trace
 // Color row beside Fill Color; 26: Display's Waterfall Defaults level gates
 // and the allOf form of enabledWhen).
-constexpr int kSetupDescriptionCap = 29;
+constexpr int kSetupDescriptionCap = 30;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -3694,6 +3721,15 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(value.toString() == QLatin1String("True"));
                 }
+                // "Limit filter edges to sidebands" reaches the Core's
+                // slices at once, whichever path stored it, as Thetis's
+                // checkbox sets console.LimitFiltersToSideBands
+                // (setup.cs:22378-22381 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        value.toString() == QLatin1String("True"));
+                }
             });
     // Task 13: External TX Inhibit gates the Core's own keying, so a
     // window's change reaches the Core's TxInhibitMonitor, whichever path
@@ -3765,6 +3801,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(RadioModel::kNetworkWatchdogDefault);
                 }
+                // Limit filter edges to sidebands defaults off
+                // (console.cs:7516 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        RadioModel::kLimitFiltersToSidebandsDefault);
+                }
                 // Task 13: both External TX Inhibit boxes default off
                 // (console.cs:15336-15337 [v2.10.3.15]).
                 if (key == QLatin1String("TxInhibitMonitorEnabled") && m_radioModel) {
@@ -3780,6 +3823,31 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     m_radioModel->applyDisableHfPaSetting(QVariant());
                 }
             });
+
+    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
+    // before its radio connected are placed once it has (after the other
+    // Connected handlers, so the window's starting slice exists).
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+                [this](ConnectionState state) {
+                    if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
+                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        return;
+                    }
+                    const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
+                    const QList<DeviceSessionRegistry::Entry> entries = m_deviceSessions->entries();
+                    for (const QByteArray& device : waiting) {
+                        const bool admitted = std::any_of(
+                            entries.cbegin(), entries.cend(),
+                            [&device](const DeviceSessionRegistry::Entry& entry) {
+                                return entry.deviceId == device;
+                            });
+                        if (admitted) {
+                            placeSlicesForAdmission(device);
+                        }
+                    }
+                }, Qt::QueuedConnection);
+    }
 
     // A daemon can authenticate a GUI before its configured radio is
     // discoverable.  currentRadioChanged is emitted only after RadioModel's
@@ -7993,8 +8061,25 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
     // radio therefore needs a fresh snapshot even though the mirror objects
     // already exist on the GUI; SettingsProxy merges this authoritative scope
     // into its in-memory cache without touching local GUI storage.
-    const QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
+    QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
         m_radioModel.isNull() ? QString() : m_radioModel->currentRadioMac());
+    // General > Filters' Limit filter edges to sidebands: a Core that never
+    // stored the setting (a headless Core with no desktop window) still
+    // applies RadioModel's default to its slices, so the snapshot carries
+    // that effective value and a phone's row reads it instead of showing
+    // no value. Only this key; every other unstored setting stays absent.
+    // An empty snapshot stays empty: a window reads an empty snapshot with
+    // no seed marker as "the Core has not sent its settings" and keeps its
+    // Core pages waiting (SettingsProxy::setupDialogAllowed()), and an
+    // added default would read as the Core's content. A headless Core
+    // always carries its seed marker (server_main.cpp), so its phone row
+    // still gets the value.
+    const QString limitFiltersKey = QLatin1String(RadioModel::kLimitFiltersToSidebandsKey);
+    if (!snapshot.isEmpty() && !snapshot.contains(limitFiltersKey)) {
+        snapshot.insert(limitFiltersKey, RadioModel::kLimitFiltersToSidebandsDefault
+                                             ? QStringLiteral("True")
+                                             : QStringLiteral("False"));
+    }
     QList<MirrorUpdate> entries;
     entries.reserve(snapshot.size());
     const bool roundtableSettings = peerGetsRoundtable(transport);
@@ -9784,7 +9869,8 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
             // speaker rows; TX Input titled Microphone. 26: Display >
             // Waterfall Defaults' level rows grey out as the desktop page's
-            // do (the allOf form of enabledWhen).
+            // do (the allOf form of enabledWhen). 30: General > Filters'
+            // Limit filter edges to sidebands row.
             const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;
@@ -11090,6 +11176,33 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // 1. Slices the station device held for it are its own again.
     ownership->returnHeld(deviceId);
 
+    // JJ 2026-10-23: a Core inside a desktop window keeps a returning
+    // device's letter from the saved layout, which it reads when the radio
+    // connects (RadioModel::addStartingSlices). A device admitted before
+    // that is placed when the radio connects, so it neither takes a letter
+    // kept for another device nor leaves the window without one. An older
+    // window (no sessionHolder) needs its slice at admission or it is
+    // refused (olderWindowWithoutSliceReason), so it is placed now, as
+    // before.
+    bool holdsSessions = false;
+    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+        if (it.value().sessionDeviceId == deviceId && peerHoldsSessions(it.key())) {
+            holdsSessions = true;
+            break;
+        }
+    }
+    if (holdsSessions && m_radioModel->hostsStationDevice()
+        && m_radioModel->currentRadioMac().isEmpty()) {
+        m_placementAwaitingRadio.insert(deviceId);
+        m_connectedDevices->refresh();
+        return;
+    }
+    m_placementAwaitingRadio.remove(deviceId);
+
+    // 1b. The letters the Core inside the window kept for it, with their
+    //     settings, as a headless Core gives back the slices it held.
+    m_radioModel->placeReservedSlicesFor(deviceId);
+
     // 2. Its saved slices, where they fit: its old letter when free, else
     //    the lowest free, each with its own settings; what does not fit is
     //    kept in its store and recorded for the notice (Task 74). A token
@@ -11099,8 +11212,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
         const QList<SavedSlice> saved = DeviceLayoutStore::load(store, mac, deviceId);
         QList<SavedSlice> notRestored;
         for (const SavedSlice& entry : saved) {
+            // A letter a Core inside the window keeps for another device is
+            // not free (JJ 2026-10-23); lowestFreeSliceId skips those too.
             const int sliceId = m_radioModel->sliceById(entry.id) == nullptr
                     && entry.id < WdspEngine::kMaxSliceChannels
+                    && !m_radioModel->reservedSliceLetters().contains(entry.id)
                 ? entry.id
                 : m_radioModel->lowestFreeSliceId();
             if (sliceId < 0) {
@@ -13311,6 +13427,28 @@ bool StationServer::spectrumPictureAvailable(quint64 epoch) const
         && peerDeclares(session, QByteArrayLiteral("spectrumPicture"), 1);
 }
 
+void StationServer::setDisplayCodecV2Enabled(bool enabled)
+{
+    m_displayCodecV2Enabled = enabled;
+}
+
+bool StationServer::displayCodecV2Enabled() const
+{
+    return m_displayCodecV2Enabled;
+}
+
+bool StationServer::displayCodecV2Available(quint64 epoch) const
+{
+    // The value rides on the media start, which every peer at minor 11 has;
+    // the Core's fallback switch withdraws it from every peer.
+    SessionTransport* session = mediaSessionFor(epoch);
+    const auto it = m_peers.constFind(session);
+    return mediaAvailable(epoch) && it != m_peers.cend()
+        && it->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(session, QByteArrayLiteral("displayCodec"), 2)
+        && displayCodecV2Enabled();
+}
+
 bool StationServer::miniDisplayAvailable(quint64 epoch) const
 {
     SessionTransport* session = mediaSessionFor(epoch);
@@ -13927,7 +14065,7 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // coreBuildInfo on the wire).
             caps.stationCatVersion = peerGetsStationCat(transport) ? 1 : 0;
             // Roundtable plan Task 11: the Core's Roundtable, for a peer
-            // that declared roundtable 1 (after rxMeterStampsVersion and
+            // that declared roundtable 1 (after displayCodecVersion and
             // before coreBuildInfo on the wire).
             caps.stationRoundtableVersion = peerGetsRoundtable(transport) ? 1 : 0;
             // Radio speaker (R-SPK-14): radio's RADIO level, mute,
@@ -13971,6 +14109,14 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // property (fitPeerOnlyProperties).
             caps.rxMeterStampsVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("rxMeterStamps")) ? 1 : 0;
+            // Display codec v2 (NSDC v2): for a minor-11 peer that declared
+            // displayCodec 2, media on, while the Core's RemoteDisplayCodecV2
+            // setting is on (after rxMeterStampsVersion and before
+            // coreBuildInfo on the wire); old peers retain their exact
+            // descriptor.
+            caps.displayCodecVersion = caps.radioIdentityEntries && media
+                && peerDeclares(transport, QByteArrayLiteral("displayCodec"), 2)
+                && displayCodecV2Enabled() ? 2 : 0;
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.

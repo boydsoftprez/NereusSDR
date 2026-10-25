@@ -1,5 +1,8 @@
 // NereusSDR for iOS: tests for the display frame decoder, with the link's NSDC vectors
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: NSDC v2 takes version byte 2; the unsupported version check uses 3.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -284,7 +287,8 @@ import Testing
     }
 
     @Test func anUnknownVersionIsUnsupported() throws {
-        for version: UInt8 in [0, 2, 255] {
+        // Version 2 is NSDC v2 now, read by its own path (DisplayCodecV2VectorTests).
+        for version: UInt8 in [0, 3, 255] {
             var bytes = try Self.vector("full")
             bytes[bytes.startIndex + 4] = version
             try expectRefused(bytes, .unsupportedVersion)

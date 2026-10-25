@@ -1,4 +1,12 @@
 // no-port-check: NereusSDR-original. Remote telemetry lifecycle/presentation.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: the diagnostics line's display counters include
+//               displayRowsBlanked. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: NSDC v2: the diagnostics line's displayMessagesLost and
+//               displayPartsLost follow displayKeyframeRequests. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include <QTest>
 #include <algorithm>
 #include <QRegularExpression>
@@ -1055,10 +1063,12 @@ private slots:
             "deliveryDelayMs=60.0")),
                  qPrintable(g_diagnosticsLines.constLast()));
         // R-R3-21 / R-R3-08: the display counters follow, not measured
-        // until a display has run.
+        // until a display has run. NSDC v2: the decoders' lost messages and
+        // parts come right after the keyframe requests.
         QVERIFY2(g_diagnosticsLines.constLast().contains(QStringLiteral(
             "deliveryDelayMs=60.0 displayKeyframeWaits=0 displayKeyframeRequests=0 "
-            "displayRowsBlended=0 displayRowsRepeated=0 "
+            "displayMessagesLost=0 displayPartsLost=0 "
+            "displayRowsBlended=0 displayRowsRepeated=0 displayRowsBlanked=0 "
             "displayLargestArrivalGapMs=not measured displayDelayMs=not measured "
             "displayItemsDropped=0 displayRowsDropped=0")),
                  qPrintable(g_diagnosticsLines.constLast()));

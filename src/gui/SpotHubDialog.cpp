@@ -197,8 +197,14 @@
 //   2026-10-25  J.J. Boyd (KG4VCF): the Roundtable tab's quiet labels, the
 //               danger hover and the delete confirm take workspace roles
 //               (roleColourName). AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 
 #include "SpotHubDialog.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 
 #include "core/AppSettings.h"
@@ -2600,7 +2606,9 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
             return;
         }
         m_spotTable->selectRow(idx.row());
-        QMenu menu(this);
+        // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+        ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+        QMenu& menu = *menuOwner.get();
         buildSpotListMenu(idx.row(), menu);
         if (!menu.isEmpty()) {
             menu.exec(m_spotTable->viewport()->mapToGlobal(pos));

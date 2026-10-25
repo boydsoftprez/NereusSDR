@@ -17,6 +17,10 @@
 //                byte-for-byte Thetis-compatible per ucLGPicker.cs:
 //                666-738 + 912-930 [v2.10.3.13+501e3f51] for skin
 //                import compatibility (Phase 3H).
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 //
 // --- From ucLGPicker.cs ---
@@ -65,6 +69,7 @@ mw0lge@grange-lane.co.uk
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/widgets/GradientPickerWidget.h"
 
 #include <QByteArray>
@@ -1192,9 +1197,14 @@ void GradientPickerWidget::mouseDoubleClickEvent(QMouseEvent* event)
     m_selectedIndex = idx;
     m_highlightedIndex = idx;
 
-    QColorDialog dlg(m_stops[idx].color, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<QColorDialog> dlgOwner(m_stops[idx].color, this);
+    QColorDialog& dlg = *dlgOwner.get();
     dlg.setOption(QColorDialog::ShowAlphaChannel, true);
-    if (dlg.exec() == QDialog::Accepted) {
+    const int result = dlg.exec();
+    // The parent may have died in exec() and taken the dialog with it.
+    if (!dlgOwner) { return; }
+    if (result == QDialog::Accepted) {
         const QColor newColor = dlg.currentColor();
         if (newColor.isValid()) {
             m_stops[idx].color = newColor;

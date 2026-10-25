@@ -1,5 +1,8 @@
 // NereusSDR for iOS: Setup description V26, Waterfall Defaults' level gates and the allOf dependency, parsed from the Core's own file
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import Testing
@@ -311,13 +314,13 @@ enum DisplayV12Fixture {
 
     @MainActor
     @Test func aDocumentAboveTheHighestIsRefusedAndThePhoneReadsDisplayAtTheCoresVersion() throws {
-        #expect(SetupDescription.highestVersion == 29)
+        #expect(SetupDescription.highestVersion == 30)
         var root = try Self.latest()
-        root["version"] = 30
+        root["version"] = 31
         #expect(throws: SetupDescription.ParseError.self) { try SetupDescriptionV12Tests.parse(root) }
         for (cap, version) in [7: 4, 11: 11, 12: 12, 24: 12, 25: 12, 26: 26, 27: 26, 28: 28] as [Int64: Int] {
             #expect(SetupDescriptionFeed.projectedVersion(maximum: cap, category: "display") == version, "\(cap)")
         }
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 30, category: "display") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 31, category: "display") == nil)
     }
 }

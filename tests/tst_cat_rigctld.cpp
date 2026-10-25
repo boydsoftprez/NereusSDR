@@ -6,6 +6,8 @@
 // 2026-10-07 A level read through rigctl compares as a number, whatever
 //            Hamlib's float format. J.J. Boyd (KG4VCF), AI-assisted via
 //            Anthropic Claude Code.
+// 2026-10-22 A mode and passband past the filter cap succeeds. J.J. Boyd
+//            (KG4VCF), with AI-assisted transformation via Claude Code.
 // 2026-10-22: ports a test hands to a later listener come from
 // unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
 // range, so a parallel test cannot take one between the pick and the listen.
@@ -79,6 +81,11 @@ private slots:
         QCOMPARE(f.model.sliceById(0)->frequency(),14201000.0); QCOMPARE(f.model.sliceById(2)->frequency(),7074000.0);
         QCOMPARE(exchange(socket,"M LSB 2400\nm\n","RPRT 0\nLSB\n2400\n"),QByteArray("RPRT 0\nLSB\n2400\n"));
         QCOMPARE(f.model.sliceById(0)->dspMode(),DSPMode::LSB);
+        // A passband past the 10 kHz edge cap (Thetis console.cs:35044-35131
+        // [v2.10.3.15]) is constrained, and the write still succeeds.
+        QCOMPARE(exchange(socket,"M USB 12000\nm\n","RPRT 0\nUSB\n9900\n"),QByteArray("RPRT 0\nUSB\n9900\n"));
+        QCOMPARE(exchange(socket,"M AM 24000\nm\n","RPRT 0\nAM\n20000\n"),QByteArray("RPRT 0\nAM\n20000\n"));
+        QCOMPARE(exchange(socket,"M LSB 2400\n","RPRT 0\n"),QByteArray("RPRT 0\n"));
         QCOMPARE(exchange(socket,"V VFOB\nf\nV VFOA\n","RPRT 0\n7074000\nRPRT 0\n"),QByteArray("RPRT 0\n7074000\nRPRT 0\n"));
         QCOMPARE(exchange(socket,"I 7101000\nX USB 2200\ni\nx\n","RPRT 0\nRPRT 0\n7101000\nUSB\n2200\n"),QByteArray("RPRT 0\nRPRT 0\n7101000\nUSB\n2200\n"));
         QCOMPARE(exchange(socket,"S 1 VFOB\ns\nS 0 VFOA\ns\n","RPRT 0\n1\nVFOB\nRPRT 0\n0\nVFOA\n"),QByteArray("RPRT 0\n1\nVFOB\nRPRT 0\n0\nVFOA\n"));
@@ -233,6 +240,13 @@ private slots:
         QVERIFY(state.contains("0x81030900\n0x81030900\n0x8\n0x8\n0\n0\n"));
         QVERIFY(state.contains("has_power2mW=0\n")); QVERIFY(!state.contains("FLEX"));
         QCOMPARE(exchange(socket,"F VFOB 7102000\nM VFOB CWR 500\nf VFOB\nm VFOB\n","RPRT 0\nRPRT 0\n7102000\nCWR\n500\n"),QByteArray("RPRT 0\nRPRT 0\n7102000\nCWR\n500\n"));
+        // PKTUSB and PKTLSB advertise and default to 3000 Hz: DIGU/DIGL start on F1 3.0k
+        // (NereusSDR's own default, for FT8), so a passband of 0 gives 0..3000 and -3710..-710.
+        QVERIFY(state.contains("0x800 3000\n")); QVERIFY(state.contains("0x400 3000\n"));
+        QCOMPARE(exchange(socket,"M VFOA PKTUSB 0\nm VFOA\n","RPRT 0\nPKTUSB\n3000\n"),QByteArray("RPRT 0\nPKTUSB\n3000\n"));
+        QCOMPARE(qMakePair(f.model.sliceById(0)->filterLow(),f.model.sliceById(0)->filterHigh()),qMakePair(0,3000));
+        QCOMPARE(exchange(socket,"M VFOA PKTLSB 0\nm VFOA\n","RPRT 0\nPKTLSB\n3000\n"),QByteArray("RPRT 0\nPKTLSB\n3000\n"));
+        QCOMPARE(qMakePair(f.model.sliceById(0)->filterLow(),f.model.sliceById(0)->filterHigh()),qMakePair(-3710,-710));
         QCOMPARE(exchange(socket,"S VFOA 1 VFOB\ns VFOA\nT VFOA 1\nt VFOA\n","RPRT 0\n1\nVFOB\nRPRT 0\n1\n"),QByteArray("RPRT 0\n1\nVFOB\nRPRT 0\n1\n"));
         QCOMPARE(exchange(socket,"T VFOA 0\n","RPRT 0\n"),QByteArray("RPRT 0\n")); QTRY_VERIFY(!f.model.moxController()->isMox());
         QCOMPARE(exchange(socket,"S VFOA 0 VFOA\n","RPRT 0\n"),QByteArray("RPRT 0\n"));

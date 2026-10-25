@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable capability and mirrored properties pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: merge of main: stationRoundtableVersion at 116, after displayCodecVersion; coreBuildInfo 117.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -19,7 +21,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 117)
+        #expect(capabilities.count == 118)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -67,11 +69,14 @@ import Testing
             // phone does not declare) go before the build info as well,
             // which moves to 115.
             (114, "rxMeterStampsVersion", "i64"),
+            // The display codec version (feature `displayCodec` 2, NSDC
+            // v2) goes before the build info as well, which moves to 116.
+            (115, "displayCodecVersion", "i64"),
             // Roundtable (feature `roundtable` 1, which the phone
-            // declares) goes before the build info as well, which moves
-            // to 116.
-            (115, "stationRoundtableVersion", "i64"),
-            (116, "coreBuildInfo", "utf8"),
+            // declares) goes after it, before the build info, which moves
+            // to 117.
+            (116, "stationRoundtableVersion", "i64"),
+            (117, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -80,8 +85,9 @@ import Testing
         #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[115]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 117)
+        #expect((capabilities[115]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 118)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")

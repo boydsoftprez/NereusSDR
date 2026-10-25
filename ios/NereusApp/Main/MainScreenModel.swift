@@ -113,6 +113,9 @@ final class MainScreenModel: ObservableObject {
     /// the Multimeter page's units and decimal point, kept with the S-meter's
     /// settings and followed here so the band redraws when they change.
     @Published private(set) var meterReadout: SMeterReadout = .desktopDefaults
+    /// The S-meter's RX Mode, which every flag's level follows (the flag's
+    /// more menu sets it), followed here so the band redraws when it changes.
+    @Published private(set) var meterRxMode: SMeterRxMode = SMeterSettings.desktopDefaults.rxMode
     /// The Core's name, as its devices list gives it; nil until it says.
     @Published private(set) var coreName: String?
     /// Where the Core says it can be dialled, `devices`' `coreAddresses` as
@@ -225,6 +228,10 @@ final class MainScreenModel: ObservableObject {
         }.store(in: &watches)
         sMeter.$state.map(\.settings.readout).removeDuplicates().sink { [weak self] readout in
             self?.meterReadout = readout
+        }.store(in: &watches)
+        flagControls.sMeter = sMeter
+        sMeter.$state.map(\.settings.rxMode).removeDuplicates().sink { [weak self] mode in
+            self?.meterRxMode = mode
         }.store(in: &watches)
         mirror.$objectKeys.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
         // The 3D view, on a Core that offers it.
