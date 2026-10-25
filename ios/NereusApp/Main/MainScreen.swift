@@ -506,7 +506,8 @@ struct MainScreen: View {
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
             StackNotice(band: band, sideways: sideways)
-            PanDisplayRefusalNotice(stack: panStack, band: band, pan: controls.pan, sideways: sideways)
+            PanDisplayRefusalNotice(stack: panStack, band: band, pan: controls.pan, sideways: sideways,
+                                    leadingInset: leadingInset, trailingInset: trailingInset)
             if first {
                 // Level calibration reads Pan 1's slices.
                 LevelCalBandLine(band: band, levelCal: app.levelCal, sideways: sideways)

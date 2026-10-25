@@ -213,6 +213,10 @@ struct IPadShotTests {
         _ = stack.band(for: second).band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
         #expect(await settle(seconds: 30) { stack.displayRefusals[second] == words })
 
+        // SwiftUI builds its accessibility elements only with accessibility on (SetupTypedEntryTests).
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
         let size = CGSize(width: 1210, height: 834)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -249,12 +253,38 @@ struct IPadShotTests {
     private func settleElement(seconds: Double, _ id: String, in window: UIWindow) async -> NSObject? {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
-            if let found = SetupTypedEntryTests.element(id, in: window) {
+            if let found = Self.element(id, in: window) {
                 return found
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        return SetupTypedEntryTests.element(id, in: window)
+        return Self.element(id, in: window)
+    }
+
+    /// SetupTypedEntryTests' search without its 20,000-node cap: two pans'
+    /// bands hold more elements than one Setup page.
+    private static func element(_ id: String, in root: NSObject) -> NSObject? {
+        var queue: [NSObject] = [root]
+        var next = 0
+        while next < queue.count, next < 500_000 {
+            let node = queue[next]
+            next += 1
+            if SetupTypedEntryTests.identifier(node) == id {
+                return node
+            }
+            if let elements = node.accessibilityElements as? [NSObject] {
+                queue += elements
+            } else {
+                let count = node.accessibilityElementCount()
+                if count != NSNotFound, count > 0 {
+                    queue += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
+                }
+            }
+            if let view = node as? UIView {
+                queue += view.subviews
+            }
+        }
+        return nil
     }
 
     /// Draws the two pans with `touched` the pan last touched, each band fed.
