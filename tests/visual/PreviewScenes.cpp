@@ -11,6 +11,11 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-25 - The roundtable-tags check paints the CPU tags over the
+//                 pan's own frame with its tags off, not over black, so a
+//                 dimmed (translucent) border is compared on the backdrop
+//                 the GPU frame blends it onto. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The roundtable-tags-hidden and roundtable-flag-hidden
 //                 scenes: you are hidden, the tags and flag line dimmed,
 //                 "Hidden" in place of Roundtable. J.J. Boyd (KG4VCF),
@@ -6868,12 +6873,20 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
         ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
         return;
     }
+    // The CPU tags are painted over the pan's own frame with the tags
+    // taken off, so both paths blend onto the same backdrop: a dimmed
+    // (translucent) border shows the spectrum through it, which a black
+    // backdrop would not.
+    const QList<RoundtableTag> shownTags = s->roundtableTags();
+    const RoundtableTagDisplay shown = s->roundtableTagDisplay();
+    s->setRoundtableTags(shownTags, RoundtableTagDisplay::Hidden);
+    const QImage under = grabWidget(s);
+    s->setRoundtableTags(shownTags, shown);
     const QImage gpu = grabWidget(s);
     const qreal dpr = gpu.devicePixelRatio();
     const QList<SpectrumWidget::RoundtableTagHit> drawn = s->roundtableTagHitsForTest();
-    QImage cpu(gpu.size(), QImage::Format_ARGB32_Premultiplied);
+    QImage cpu = under.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     cpu.setDevicePixelRatio(dpr);
-    cpu.fill(Qt::black);
     {
         QPainter painter(&cpu);
         s->drawRoundtableTagsForTest(painter, s->roundtableTagSpectrumRectForTest());

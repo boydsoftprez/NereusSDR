@@ -9,6 +9,12 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 the GPU overlay pipeline composites its premultiplied
+//                 textures with a source factor of One, not SrcAlpha
+//                 (overlayTargetBlend), so translucent overlay drawing
+//                 such as the hidden Roundtable tags matches the CPU path;
+//                 AetherSDR fixed the same at af68d3df.
+//   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 while you are hidden the room tags show dimmed
 //                 (RoundtableTagDisplay::Dimmed), JJ's answer of
 //                 2026-10-25.
@@ -15021,6 +15027,27 @@ void SpectrumWidget::initWaterfallPipeline()
     m_wfPipeline->create();
 }
 
+// Alpha blending for overlay compositing. Every texture this pipeline
+// draws (m_overlayStatic, m_overlayDynamic, m_bgLayer, the 3DSS fallback
+// surface) is a QImage::Format_RGBA8888_Premultiplied image and
+// overlay.frag emits the texel as is, so the source is premultiplied and
+// its color takes a factor of One. SrcAlpha multiplied it by alpha twice
+// (color x alpha^2), so anything translucent drew darker than the CPU
+// path: the hidden Roundtable tags at kRoundtableDimmedAlpha came out at
+// about half the CPU border's brightness. AetherSDR shares the original
+// SrcAlpha and fixed it the same way (its issue #3294):
+// From AetherSDR src/gui/SpectrumWidget.cpp:12409-12415 [@af68d3df]
+QRhiGraphicsPipeline::TargetBlend SpectrumWidget::overlayTargetBlend()
+{
+    QRhiGraphicsPipeline::TargetBlend blend;
+    blend.enable = true;
+    blend.srcColor = QRhiGraphicsPipeline::One;   // premultiplied source
+    blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+    blend.srcAlpha = QRhiGraphicsPipeline::One;
+    blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+    return blend;
+}
+
 void SpectrumWidget::initOverlayPipeline()
 {
     QRhi* r = rhi();
@@ -15068,14 +15095,7 @@ void SpectrumWidget::initOverlayPipeline()
     m_ovPipeline->setShaderResourceBindings(m_ovSrb);
     m_ovPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
 
-    // Alpha blending for overlay compositing
-    QRhiGraphicsPipeline::TargetBlend blend;
-    blend.enable = true;
-    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
-    blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
-    blend.srcAlpha = QRhiGraphicsPipeline::One;
-    blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
-    m_ovPipeline->setTargetBlends({blend});
+    m_ovPipeline->setTargetBlends({overlayTargetBlend()});
     m_ovPipeline->create();
 
     m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);

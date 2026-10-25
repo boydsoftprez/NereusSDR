@@ -29,9 +29,16 @@
 //   2026-10-25: while you are hidden the pan shows its tags dimmed, the
 //               rooms, talkers and counts as when live.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: the hidden tags dim the same through the GPU overlay's
+//               blend as on the CPU path. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 
 #include <QAction>
 #include <QImage>
@@ -685,6 +692,79 @@ private slots:
         QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, doubled.center());
         QCOMPARE(tuned.count(), 1);
     }
+
+#ifdef NEREUS_GPU_SPECTRUM
+    // The GPU path draws the tags into its premultiplied overlay texture
+    // and composites that onto the frame with the overlay pipeline's blend;
+    // the dimmed (translucent) tags come out as the CPU path paints them.
+    void hiddenTagsDimTheSameOnTheGpuPath()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Dimmed);
+        const QRect specRect = pan.widget.roundtableTagSpectrumRectForTest();
+        const QColor frame(0x30, 0x40, 0x50);
+
+        QImage cpu(pan.widget.size(), QImage::Format_ARGB32_Premultiplied);
+        cpu.fill(frame);
+        {
+            QPainter painter(&cpu);
+            pan.widget.drawRoundtableTagsForTest(painter, specRect);
+        }
+        QImage overlay(pan.widget.size(), QImage::Format_RGBA8888_Premultiplied);
+        overlay.fill(Qt::transparent);
+        {
+            QPainter painter(&overlay);
+            pan.widget.drawRoundtableTagsForTest(painter, specRect);
+        }
+        const QList<SpectrumWidget::RoundtableTagHit> hits = pan.widget.roundtableTagHitsForTest();
+        QVERIFY(!hits.isEmpty());
+
+        const QRhiGraphicsPipeline::TargetBlend blend = SpectrumWidget::overlayTargetBlend();
+        QVERIFY(blend.enable);
+        bool known = true;
+        const auto factor = [&known](QRhiGraphicsPipeline::BlendFactor f, double srcAlpha) {
+            switch (f) {
+            case QRhiGraphicsPipeline::Zero:
+                return 0.0;
+            case QRhiGraphicsPipeline::One:
+                return 1.0;
+            case QRhiGraphicsPipeline::SrcAlpha:
+                return srcAlpha;
+            case QRhiGraphicsPipeline::OneMinusSrcAlpha:
+                return 1.0 - srcAlpha;
+            default:
+                known = false;
+                return 0.0;
+            }
+        };
+        // A fold's border stays its opaque grey; the dimmed tags' are translucent.
+        int translucent = 0;
+        for (const SpectrumWidget::RoundtableTagHit& hit : hits) {
+            const QPoint edge(hit.rect.center().x(), hit.rect.top());
+            // The texel as uploaded: premultiplied RGBA bytes.
+            const uchar* texel = overlay.constScanLine(edge.y()) + 4 * edge.x();
+            const double a = texel[3] / 255.0;
+            if (a > 0.0 && a < 1.0) {
+                ++translucent;
+            }
+            const double src[3] = {texel[0] / 255.0, texel[1] / 255.0, texel[2] / 255.0};
+            const double dst[3] = {frame.redF(), frame.greenF(), frame.blueF()};
+            const double fs = factor(blend.srcColor, a);
+            const double fd = factor(blend.dstColor, a);
+            QVERIFY(known);
+            int gpu[3];
+            for (int c = 0; c < 3; ++c) {
+                gpu[c] = static_cast<int>(std::lround(std::clamp(src[c] * fs + dst[c] * fd, 0.0, 1.0) * 255.0));
+            }
+            const QColor want(cpu.pixel(edge));
+            const QColor got(gpu[0], gpu[1], gpu[2]);
+            QVERIFY2(std::abs(got.red() - want.red()) <= 1 && std::abs(got.green() - want.green()) <= 1
+                         && std::abs(got.blue() - want.blue()) <= 1,
+                     qPrintable(QStringLiteral("GPU %1 vs CPU %2").arg(got.name(), want.name())));
+        }
+        QVERIFY(translucent > 0);
+    }
+#endif
 
     void theDimmedMarkingIsTheLooksRole()
     {

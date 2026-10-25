@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//                 overlayTargetBlend(), the GPU overlay's premultiplied
+//                 blend, so a test can composite as the GPU path does.
 //   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the tags
 //                 are drawn again when the pan's toolbar moves, resizes,
 //                 shows or hides (childEvent; Roundtable plan Task 15).
@@ -2747,6 +2750,11 @@ public:
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
+#ifdef NEREUS_GPU_SPECTRUM
+    /// How the GPU path composites its overlay textures onto the frame.
+    /// The textures are premultiplied, so the source color takes One.
+    static QRhiGraphicsPipeline::TargetBlend overlayTargetBlend();
+#endif
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
