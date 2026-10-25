@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -29,15 +30,22 @@ public:
     {
         QVector<float> v(n);
         for (int i = 0; i < n; ++i) {
-            const double u1 = (double(m_gen()) + 0.5) / 4294967296.0;
-            const double u2 = (double(m_gen()) + 0.5) / 4294967296.0;
-            const double z = std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * u2);
-            v[i] = meanDbm + float(sigmaDb * z);
+            const double u1 = uniform();
+            const double u2 = uniform();
+            const double z = std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * std::numbers::pi * u2);
+            v[i] = meanDbm + static_cast<float>(sigmaDb * z);
         }
         return v;
     }
 
 private:
+    // Open interval (0, 1), so log() never sees zero.
+    double uniform()
+    {
+        constexpr double kSpan = static_cast<double>(std::mt19937::max()) + 1.0;
+        return (static_cast<double>(m_gen()) + 0.5) / kSpan;
+    }
+
     std::mt19937 m_gen;
 };
 
@@ -45,8 +53,8 @@ private:
 // [floor(c*step), ceil((c+1)*step)), three or four bins wide at 2270 bins.
 int oldWindowWidth(int n, int c)
 {
-    const double step = double(n) / kDssCols;
-    return int(std::ceil((c + 1) * step)) - int(std::floor(c * step));
+    const double step = static_cast<double>(n) / kDssCols;
+    return static_cast<int>(std::ceil((c + 1) * step)) - static_cast<int>(std::floor(c * step));
 }
 
 }  // namespace
@@ -283,15 +291,19 @@ private slots:
     }
 
     // A flat row at a bin count that is not a multiple of kDssCols stays
-    // flat in every column.
+    // flat in every column: 2270 bins (wider than the columns) and 500 (a
+    // pane narrower than 768 pixels, one bin spread over more than one
+    // column).
     void flatRowAtAnUnevenBinCount_staysFlat() {
-        DssRenderer r;
-        for (int i = 0; i < 3; ++i) {
-            r.pushRow(flatRow(2270, -120.0f), 14.2, 0.192);
-        }
-        const float* row = r.rowDataRing(r.headRing());
-        for (int c = 0; c < kDssCols; ++c) {
-            QCOMPARE(row[c], -120.0f);
+        for (int n : {2270, 500}) {
+            DssRenderer r;
+            for (int i = 0; i < 3; ++i) {
+                r.pushRow(flatRow(n, -120.0f), 14.2, 0.192);
+            }
+            const float* row = r.rowDataRing(r.headRing());
+            for (int c = 0; c < kDssCols; ++c) {
+                QCOMPARE(row[c], -120.0f);
+            }
         }
     }
 
@@ -340,21 +352,22 @@ private slots:
     }
 
     // Equal windows skip no bin: a one-bin carrier anywhere in a 2270-bin
-    // row stands out of the stack.
+    // row, or in a 500-bin row from a narrow pane, stands out of the stack.
     void everyBinOfAnUnevenRow_reachesAColumn() {
-        constexpr int n = 2270;
-        for (int bin = 0; bin < n; ++bin) {
-            DssRenderer r;
-            QVector<float> bins = flatRow(n, -130.0f);
-            bins[bin] = -40.0f;
-            for (int i = 0; i < 3; ++i) {
-                r.pushRow(bins, 14.2, 0.192);
+        for (int n : {2270, 500}) {
+            for (int bin = 0; bin < n; ++bin) {
+                DssRenderer r;
+                QVector<float> bins = flatRow(n, -130.0f);
+                bins[bin] = -40.0f;
+                for (int i = 0; i < 3; ++i) {
+                    r.pushRow(bins, 14.2, 0.192);
+                }
+                const float* row = r.rowDataRing(r.headRing());
+                const float peak = *std::max_element(row, row + kDssCols);
+                QVERIFY2(peak > -100.0f,
+                         qPrintable(QStringLiteral("carrier at bin %1 of %2 lost, peak=%3")
+                                        .arg(bin).arg(n).arg(peak)));
             }
-            const float* row = r.rowDataRing(r.headRing());
-            const float peak = *std::max_element(row, row + kDssCols);
-            QVERIFY2(peak > -100.0f,
-                     qPrintable(QStringLiteral("carrier at bin %1 lost, peak=%2")
-                                    .arg(bin).arg(peak)));
         }
     }
 };

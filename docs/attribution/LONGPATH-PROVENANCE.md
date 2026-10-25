@@ -23,7 +23,9 @@ License section below.
 | License | GPLv3 at project level (the project's LICENSE file) |
 
 Line ranges in a row with no sha are at the Revision pin above; an older row
-names its own sha (`at @<sha>`) where its ranges no longer hold at the pin.
+names its own sha (`at @<sha>`) where its ranges no longer hold at the pin. A
+newer row names its own sha the same way when the change it ports landed
+after the pin; the pin moves only when every row is re-verified against it.
 
 Longpath grew out of NereusSDR. Some Longpath files carry
 a Longpath banner with AetherSDR attribution (for example

@@ -205,6 +205,11 @@ std::array<float, kDssCols> resampledRawRow(const QVector<float>& binsDbm,
         // schmaler Traeger kann nicht verschwinden. Beim Aufweiten
         // (step < 1) ist die Breite 1, also genau das Verhalten von
         // vorher.
+        //
+        // NereusSDR note: not quite. Below 768 bins (a pane narrower than
+        // 768 pixels) the old window took one or two bins from
+        // floor(c*step); this one takes exactly one, at round(c*step), so
+        // a one-bin feature there is about a column narrower than before.
         const double step  = static_cast<double>(n) / kDssCols;
         const int    breit = std::max(1, static_cast<int>(std::ceil(step)));
         for (int c = 0; c < kDssCols; ++c) {
