@@ -14,6 +14,9 @@
 // 2026-10-25: Roundtable fix wave re-review: keyed reads
 // PttButton.holdKeyed, the state the hold PTT's quick-tap unkey reads.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's answer: on a phone the first-run question opens the
+// sheet at full height, so Stay hidden and Go live show without a scroll.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -29,7 +32,7 @@ import SwiftUI
 /// above the 92-point strip that keeps PTT at the left and the dial at the
 /// right; keyed with a dial, the box steps aside and its draft is kept.
 /// Before the station's first answer the sheet asks it
-/// (``RoundtableFirstRunSheet``) and sends nothing until then.
+/// (``RoundtableFirstRunSheet``) at full height and sends nothing until then.
 struct RoundtableSheet: View {
     enum Detent: Equatable {
         case half
@@ -60,6 +63,13 @@ struct RoundtableSheet: View {
     @State private var answeredHere = false
 
     static let handleHeight: CGFloat = 22
+
+    /// The first-run question asked in the sheet itself (a phone) takes the
+    /// full height, so its two buttons show without a scroll. An iPad asks
+    /// in its form sheet and keeps the height it has.
+    static func firstRunAtFullHeight(asking: Bool, asksHere: Bool) -> Bool {
+        asking && asksHere
+    }
 
     private var keyed: Bool { PttButton.holdKeyed(transmit.ptt) }
     private var room: RoundtableModel.Room? { roundtable.room }
@@ -119,9 +129,17 @@ struct RoundtableSheet: View {
         }
         .shadow(color: .black.opacity(0.5), radius: 12, y: -2)
         .onAppear { roundtable.activeSliceId = slices.activeSliceId.map(Int64.init) }
+        .onAppear { fullForFirstRun() }
+        .onChange(of: asking) { _, _ in fullForFirstRun() }
         .onChange(of: slices.activeSliceId) { _, id in roundtable.activeSliceId = id.map(Int64.init) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("roundtableSheet")
+    }
+
+    private func fullForFirstRun() {
+        if Self.firstRunAtFullHeight(asking: asking, asksHere: askFirstRun == nil) {
+            detent = .full
+        }
     }
 
     /// Keyed while the question is open, the band's PTT hidden under the

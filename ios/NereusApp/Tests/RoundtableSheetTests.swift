@@ -21,6 +21,8 @@
 // 2026-10-25: JJ's answer: a missing reading, your own NOT SENT one
 // included, shows "none", not S0. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-25: JJ's answer: on a phone the first-run question takes the
+// full height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -157,6 +159,13 @@ struct RoundtableSheetTests {
         #expect(RoundtableText.readingText(nil) == "")
         #expect(RoundtableText.readingPresent(-160) && RoundtableText.readingPresent(94))
         #expect(!RoundtableText.readingPresent(-160.5) && !RoundtableText.readingPresent(.nan))
+    }
+
+    @Test("on a phone the first-run question takes the full height; an iPad asks in its form sheet")
+    func firstRunAtFullHeight() {
+        #expect(RoundtableSheet.firstRunAtFullHeight(asking: true, asksHere: true))
+        #expect(!RoundtableSheet.firstRunAtFullHeight(asking: true, asksHere: false))
+        #expect(!RoundtableSheet.firstRunAtFullHeight(asking: false, asksHere: true))
     }
 
     @Test("readings drop the talker, and you while keyed, nearest first then by callsign")
@@ -945,6 +954,7 @@ struct RoundtableSheetTests {
             scene.firstRunAnswered = false
             try await station.deliverRoundtable(scene)
             #expect(await settle { model.roundtable.room != nil })
+            // Opened as the line opens it, at half: the question takes the full height.
             try await shoot("07-first-run", model: model, detent: .half)
             await model.disconnect()
         }

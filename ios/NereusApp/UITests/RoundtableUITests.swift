@@ -7,6 +7,9 @@
 // 2026-10-25: Roundtable plan Task 19, on an iPad the sheet asks through its
 // Choose line, which opens the centered form. J.J. Boyd (KG4VCF), AI-assisted
 // via Claude Code.
+// 2026-10-25: JJ's answer: on a phone the first-run question opens at full
+// height, Stay hidden and Go live on screen without a scroll. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -129,7 +132,7 @@ final class RoundtableUITests: XCTestCase {
     @MainActor
     func testTheFirstRunQuestionIsAskedAndItsAnswerNeedsTheCore() throws {
         let app = launch(firstRun: true)
-        _ = try openSheet(app, dismissNote: false)
+        let sheet = try openSheet(app, dismissNote: false)
         // On an iPad the sheet asks through its Choose line (spec 11.4).
         let choose = app.buttons["roundtableFirstRunChoose"]
         if UIDevice.current.userInterfaceIdiom == .pad, choose.waitForExistence(timeout: 10) {
@@ -139,6 +142,21 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(question.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Roundtable is public"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["roundtableBox"].exists, "the box shows before the answer")
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            // The line opens the sheet at half; the question takes it to full
+            // height (its handle offers half again), well above the middle.
+            let screen = app.windows.firstMatch.frame
+            waitUntil("the first-run question did not take the full height") {
+                app.buttons["roundtableHandle"].label == "Half height" && sheet.frame.minY < screen.midY - 100
+            }
+            // Both answers on screen, no scroll to reach them.
+            for id in ["roundtableStayHidden", "roundtableGoLiveFirstRun"] {
+                let button = app.buttons[id]
+                XCTAssertTrue(button.waitForExistence(timeout: 10), "\(id) is missing")
+                XCTAssertTrue(button.isHittable, "\(id) needs a scroll")
+                XCTAssertTrue(screen.contains(button.frame), "\(id) runs off the screen: \(button.frame)")
+            }
+        }
         let hide = app.buttons["roundtableHideSwitch"]
         XCTAssertEqual(hide.value as? String, "Off")
         hide.tap()
