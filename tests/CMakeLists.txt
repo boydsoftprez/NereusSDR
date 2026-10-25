@@ -9798,6 +9798,17 @@ nereus_add_test(tst_station_roundtable_link
     EXTRA_LABELS session)
 target_compile_definitions(tst_station_roundtable_link PRIVATE
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 20 (R-RT-24, R-RT-26's software half): end to end
+# against the real Roundtable server, started as `/usr/bin/python3 -m
+# nereus_roundtable` on free 127.0.0.1 ports with a temporary database, and
+# three in-process Cores on one frequency: a reading in the talker's room
+# within 2 s, the turn's credit, an unknown turn named, AWAY refused, and
+# the archive through the web sign-in link. Skips with the reason when that
+# Python lacks websockets or cryptography. REALTIME: the 2 s window is
+# measured on the wall clock.
+nereus_add_test(tst_roundtable_e2e REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_e2e PRIVATE
+    NEREUS_ROUNDTABLE_SERVER_DIR="${CMAKE_SOURCE_DIR}/roundtable/server")
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.
