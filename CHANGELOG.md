@@ -183,7 +183,7 @@ still connect to each other as before.
   receive path and has not yet been checked on a radio.
   ([#630](https://github.com/boydsoftprez/NereusSDR/pull/630))
 - The filter presets F1 to F10 for LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
-  and DSB now have the standard Thetis values. For example, CW F1 is 1.0 kHz
+  and DSB now have new standard values. For example, CW F1 is 1.0 kHz
   wide instead of 1.5 kHz. A preset you edited and saved keeps what you saved,
   and **Reset** gives the new value. If you ever reordered a mode's presets,
   that mode keeps its old values until you reset it in **Setup > DSP > Filter
