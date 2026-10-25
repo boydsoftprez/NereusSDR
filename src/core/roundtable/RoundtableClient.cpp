@@ -34,6 +34,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHostAddress>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QLoggingCategory>
 #include <QStandardPaths>
 #include <QTimer>

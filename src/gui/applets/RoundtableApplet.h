@@ -36,6 +36,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <utility>
 
 class QVBoxLayout;
 

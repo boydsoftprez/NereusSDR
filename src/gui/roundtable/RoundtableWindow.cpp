@@ -28,6 +28,8 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>

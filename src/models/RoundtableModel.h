@@ -57,6 +57,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 

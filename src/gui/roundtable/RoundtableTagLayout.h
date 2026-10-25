@@ -48,6 +48,7 @@
 #include "gui/NereusGuiExport.h"
 
 #include <QColor>
+#include <QJsonObject>
 #include <QList>
 #include <QPointF>
 #include <QRectF>

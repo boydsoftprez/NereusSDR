@@ -37,11 +37,13 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <utility>
 
 namespace NereusSDR {
 

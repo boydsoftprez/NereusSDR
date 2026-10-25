@@ -59,6 +59,8 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>

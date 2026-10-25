@@ -50,6 +50,7 @@
 #include <QVariant>
 
 #include <functional>
+#include <utility>
 
 namespace NereusSDR {
 
