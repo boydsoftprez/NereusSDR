@@ -13,9 +13,26 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-24 - applyFilterRequest, setFilter's body, so shiftFilter re-sends
+//              the stored pair when its constrain changed the request and
+//              the stored pair did not move. J.J. Boyd (KG4VCF), with
+//              AI-assisted transformation via Claude Code.
+// 2026-10-24 - constrainFilter's comment: the RADE modes take the sideband
+//              rule when the limit is on, NereusSDR's own extension (Thetis
+//              has no RADE). J.J. Boyd (KG4VCF), with AI-assisted
+//              transformation via Claude Code.
 // 2026-10-22 - m_rfGain comment: -20..120, the AGC-T range. After Longpath
 //              f1d0c181 (Martin Fischer, OE5SOS). J.J. Boyd (KG4VCF), with
 //              AI-assisted transformation via Claude Code.
+// 2026-10-22 - applyMinimumFilterWidth (Thetis console.cs:7544-7567
+//              [v2.10.3.15]), filterForRequest for the CAT and Rigctl
+//              replies, and a filterChanged resync when a request was
+//              constrained; Longpath credited by cite and banner. J.J. Boyd
+//              (KG4VCF), with AI-assisted transformation via Claude Code.
+// 2026-10-22 - constrainFilter, shiftFilter, kMaxFilterShiftHz,
+//              kMaxFilterWidthHz and limitFiltersToSidebands, ported from
+//              Thetis console.cs ConstrainFilter [v2.10.3.15] by J.J. Boyd
+//              (KG4VCF), with AI-assisted transformation via Claude Code.
 // 2026-10-22 - rxAntennaLabelFor, the receive-label rule of
 //              refreshAntennasFromAlex on its own. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
@@ -245,6 +262,36 @@
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+
+// --- From SliceModel.h (Longpath) ---
+// The constrainFilter declaration, kMaxFilterShiftHz, kMaxFilterWidthHz
+// and the limitFiltersToSidebands pair follow Longpath
+// src/models/SliceModel.h:492-552 [@383f058] (commit 6a5df5f1). Longpath's
+// banner for that file, byte for byte:
+// =================================================================
+// src/models/SliceModel.h  (Longpath)
+// =================================================================
+//
+// Ported from Thetis sources:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
+//                 GPLv3).
+//   2026-09-27 -- CW pitch range constants + follow API (Martin Fischer,
+//                 OE5SOS, AI-assisted via Anthropic Claude; Thetis
+//                 v2.10.3.15-5-g852bf0e setup.designer.cs udDSPCWPitch /
+//                 console.cs CWPitch setter).
+//   2026-09-28 -- presetNamesForMode (Thetis InitFilterPresets names),
+//                 commonPresetsForMode removed (no caller). Martin
+//                 Fischer (OE5SOS), AI-assisted via Anthropic Claude.
+// =================================================================
 
 #include "core/NereusCoreExport.h"
 #include "Band.h"
@@ -773,7 +820,78 @@ public:
     void setFilterHigh(int high);
 
     // Set both filter edges atomically. Emits filterChanged once.
+    // The edges get the minimum width (applyMinimumFilterWidth), then are
+    // constrained (constrainFilter, filterShift false), and a zero-width
+    // result is refused, as Thetis's UpdateRX1Filters does
+    // (console.cs:7544-7582 [v2.10.3.15]); see filterForRequest. When
+    // those steps changed the request but the stored pair did not move
+    // (a drag held at the cap, a refused zero width), filterChanged is
+    // emitted with the stored pair anyway, so a view that drew the request
+    // shows what the receiver runs, as Thetis sets Display.RX1FilterLow/High
+    // only from the constrained values (console.cs:7589-7590 [v2.10.3.15]).
+    // From Longpath src/models/SliceModel.h:484 [@383f058]: the placement
+    // in setFilter.
     void setFilter(int low, int high);
+
+    // The pair setFilter(low, high) leaves on this slice: the minimum
+    // width, then constrainFilter for the slice's mode and sideband limit;
+    // the current pair when the result has zero width (refused). CAT and
+    // Rigctl compare against it to answer a write that was constrained.
+    std::pair<int, int> filterForRequest(int low, int high) const;
+
+    // From Thetis console.cs:7544-7567 [v2.10.3.15] (UpdateRX1Filters): a
+    // filter narrower than kMinFilterWidthHz is widened by moving the edge
+    // the mode's switch names; an inverted pair (low > high) is widened the
+    // same way. FM's case (7568-7574: edges from the FM deviation plus the
+    // high cut; its halfBw line carries //[2.10.3.4]MW0LGE [original inline
+    // comment from console.cs:7569]) and clampFilterMinMax (7577) are not
+    // ported, so FM and the modes the switch does not name are left alone.
+    static void applyMinimumFilterWidth(int& low, int& high, DSPMode mode);
+
+    // From Thetis console.cs:7549, 7554, 7563, 7565 [v2.10.3.15]: the 10 in
+    // `low = high - 10` / `high = low + 10`.
+    static constexpr int kMinFilterWidthHz = 10;
+
+    // Move the whole passband to low..high: constrained with filterShift
+    // true, so when an edge meets a limit the other edge moves with it
+    // and the width is kept, then set through setFilter. Thetis does
+    // this before UpdateRX1Filters on its whole-passband moves (filter
+    // shift slider, whole-filter drag, MeterManager filter drag):
+    // console.cs:35202, 50635 [v2.10.3.15]; MeterManager.cs:19399.
+    // When the constraint changed the move and the stored pair did not
+    // move (a drag held at the cap), filterChanged is emitted with the
+    // stored pair, as setFilter does for its own steps.
+    void shiftFilter(int low, int high);
+
+    // From Thetis console.cs:35044-35131 [v2.10.3.15] (ConstrainFilter).
+    // Constrains low/high for `mode`; returns true when either changed.
+    // The sideband rule applies only with limitToSidebands, and only in
+    // the sideband, AM/SAM/DSB and SPEC groups. kMaxFilterShiftHz applies
+    // in those same groups; kMaxFilterWidthHz applies in every mode but FM,
+    // so DRM and the RADE modes, which the switch does not name, get only
+    // the width cap. NereusSDR's own extension (Thetis has no RADE): with
+    // limitToSidebands, RADE_U/RADE2_U follow USB's sideband rule and
+    // RADE_L/RADE2_L follow LSB's. filterShift keeps the width when an
+    // edge is moved.
+    // From Longpath src/models/SliceModel.h:524 [@383f058]: the static
+    // signature.
+    static bool constrainFilter(int& low, int& high, DSPMode mode,
+                                bool filterShift = false,
+                                bool limitToSidebands = false);
+
+    // From Thetis console.cs:13208 [v2.10.3.15]: _max_filter_shift = 10000
+    // (Setup udOptMaxFilterShift default, setup.designer.cs:12672).
+    static constexpr int kMaxFilterShiftHz = 10000;
+    // From Thetis console.cs:13221 [v2.10.3.15]: _max_filter_width = 10000
+    // (Setup udOptMaxFilterWidth default, setup.designer.cs:12737).
+    static constexpr int kMaxFilterWidthHz = 10000;
+
+    // From Thetis console.cs:7516-7521 [v2.10.3.15]: LimitFiltersToSideBands,
+    // off by default (Setup "Limit filter edges to sidebands"). Setting it
+    // only stores the flag, as Thetis's setter does; the next filter
+    // change is constrained by it.
+    bool limitFiltersToSidebands() const { return m_limitFiltersToSidebands; }
+    void setLimitFiltersToSidebands(bool on) { m_limitFiltersToSidebands = on; }
 
     // ---- AGC ----
 
@@ -1769,6 +1887,9 @@ private:
     quint64 m_modeRevision{0};
     quint64 m_modeFilterRevision{0};
     DSPMode m_dspMode{DSPMode::USB};
+    // From Thetis console.cs:7516 [v2.10.3.15]:
+    //   private bool m_bLimitFiltersToSidebands = false;    //MW0LGE_21k9
+    bool    m_limitFiltersToSidebands{false};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
@@ -1838,6 +1959,10 @@ private:
     bool m_readOnlyListener{false};
     QString m_readOnlyListenerReason;
     StationApplyProbe m_stationApplyProbe;
+    // setFilter's steps; requestAlreadyChanged marks a request a caller
+    // (shiftFilter) has already constrained, so a stored pair that does
+    // not move is re-sent.
+    void applyFilterRequest(int low, int high, bool requestAlreadyChanged);
     // A setter's check: true (and announced) when `requested` would change
     // the value on a read-only listener outside the Core's own apply.
     template <typename T, typename U>

@@ -1469,6 +1469,13 @@ nereus_add_test(tst_slice_apf)
 # ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
 nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
+# Filter edges constrained as Thetis ConstrainFilter (console.cs:35044 [v2.10.3.15]).
+nereus_add_test(tst_slice_filter_constrain)
+# Setup > General > Filters' "Limit filter edges to sidebands" (Thetis
+# chkLimitFilterEdgesToSidebands): default, gating, persistence, every slice
+# at once, and the Core's setting over the in-process loopback.
+nereus_add_test(tst_limit_filters_to_sidebands
+    fakes/LoopbackTransport.cpp)
 # Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
 # a DSP edit on a slice that is not the active one is saved to that slice.
 nereus_add_test(tst_slice_squelch_channel_seed)
@@ -8277,6 +8284,10 @@ nereus_add_test(tst_vfo_flag_fold)
 # wheel accumulator); NereusSDR-original (flag drag, grab order).
 nereus_add_test(tst_wheel_step_accumulator)
 nereus_add_test(tst_spectrum_receiver_grab)
+# A dragged filter view shows what the slice kept after the 10 kHz cap,
+# and the RX applet's centre drag keeps the width (Thetis console.cs:7589,
+# 35202 [v2.10.3.15]). NereusSDR-original.
+nereus_add_test(tst_filter_view_resync)
 nereus_add_test(tst_vfo_flag_drag)
 # The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
 # buttons and floating buttons carry the pass's sheets with the look on and

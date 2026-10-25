@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - The centre drag emits passbandShifted instead of
+//                 filterChanged. J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -276,7 +279,11 @@ void FilterPassbandWidget::mouseMoveEvent(QMouseEvent* ev)
         m_lo = newLo;
         m_hi = newHi;
         update();
-        emit filterChanged(m_lo, m_hi);
+        if (m_dragMode == DragShift) {
+            emit passbandShifted(m_lo, m_hi);
+        } else {
+            emit filterChanged(m_lo, m_hi);
+        }
     }
 }
 

@@ -30,6 +30,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Frequency (Custom) font, colour, centering and slice lines.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-22 - filterPaneCentreDragKeepsTheWidthAtTheCap. J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Claude Code.
 //   2026-10-23 - frequencyShowsAfterTheStationAdoptsTheSlice. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-10-24 - frequencyShowsWhenRemoteSliceAccessArrives. J.J. Boyd
@@ -340,6 +342,36 @@ private slots:
         BandwidthFilterPane pane;
         QCOMPARE(pane.minimumSize(), QSize(180, 84));
         QCOMPARE(pane.sizeHint(), QSize(360, 140));
+    }
+
+    // The pane's centre drag moves the whole passband through
+    // SliceModel::shiftFilter: at the 10 kHz cap the width is kept, as
+    // Thetis's whole-filter drag does (console.cs:50630-50636 [v2.10.3.15]).
+    void filterPaneCentreDragKeepsTheWidthAtTheCap()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFilter(100, 3100);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFilterType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* pane = qobject_cast<BandwidthFilterPane*>(widget.get());
+        QVERIFY(pane);
+
+        // Centre 9500 for a 3000 Hz passband asks for 8000..11000.
+        emit pane->filterCentreChanged(9500);
+        QCOMPARE(slice->filterLow(), 7000);
+        QCOMPARE(slice->filterHigh(), 10000);
     }
 
     void needleWithoutReadingIsOffline()

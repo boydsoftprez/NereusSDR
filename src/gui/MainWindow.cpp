@@ -27,6 +27,10 @@
 //               (RadioModel::windowSliceId), not Slice A, which a Core
 //               inside the window may keep for a paired device. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: A filter edge drag on a pan takes the slice's pair back
+//               after setFilter, so the pan shows the constrained filter.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -7330,8 +7334,15 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
 
     // Drag a filter edge on this pan.
     connect(sw, &SpectrumWidget::filterEdgeDragged, this,
-            [this, panId](int low, int high) {
-        if (SliceModel* s = sliceForPan(panId)) { s->setFilter(low, high); }
+            [this, panId, sw](int low, int high) {
+        if (SliceModel* s = sliceForPan(panId)) {
+            s->setFilter(low, high);
+            // The pan drew the dragged edges itself; it shows what the
+            // slice kept (constrained, or refused), as Thetis's display
+            // only takes the constrained values (console.cs:7589-7590
+            // [v2.10.3.15]).
+            sw->setFilterOffset(s->filterLow(), s->filterHigh());
+        }
     });
 
     // Drag the pan. Non-CTUN moves the VFO; CTUN pins the DDC to the pan centre

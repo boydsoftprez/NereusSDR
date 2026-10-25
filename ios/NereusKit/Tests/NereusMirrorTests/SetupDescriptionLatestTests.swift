@@ -1,5 +1,8 @@
 // NereusSDR for iOS: Setup description versions 18 to 25: the HL2 clock rows, TCI Forget, the on-air rows, TX Input's radio mic rows and Outputs' radio speaker
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -49,9 +52,9 @@ import Testing
 
     // MARK: What the phone asks for
 
-    @Test func thePhoneAsksForTwentyNineAndReadsEachCategoryAtTheCoresVersion() {
-        #expect(SetupDescription.highestVersion == 29)
-        #expect(LinkFeatures.app["setupDescription"] == 29)
+    @Test func thePhoneAsksForThirtyAndReadsEachCategoryAtTheCoresVersion() {
+        #expect(SetupDescription.highestVersion == 30)
+        #expect(LinkFeatures.app["setupDescription"] == 30)
         #expect(LinkFeatures.app["radioSpeaker"] == 1)
         #expect(LinkFeatures.app["radioMic"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
@@ -69,8 +72,9 @@ import Testing
             "audio": [14: 3, 15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 23: 15, 24: 24, 25: 25, 26: 25, 27: 25, 28: 25],
             "diagnostics": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15, 26: 15, 27: 15, 28: 15],
             "appearance": [15: 12, 22: 12, 24: 12, 25: 12, 26: 12, 27: 27, 28: 27],
-            "display": [15: 12, 22: 12, 24: 12, 25: 12, 26: 26, 27: 26, 28: 28],
-            "general": [15: 3, 22: 3, 24: 3, 25: 3, 26: 3, 27: 3, 28: 3],
+            "display": [15: 12, 22: 12, 24: 12, 25: 12, 26: 26, 27: 26, 28: 28, 29: 29, 30: 29],
+            "general": [1: 1, 2: 2, 15: 3, 22: 3, 24: 3, 25: 3, 26: 3, 27: 3, 28: 3, 29: 3, 30: 30],
+            "test": [29: 3, 30: 3],
         ]
         for (category, caps) in expected {
             for (cap, version) in caps {
@@ -78,8 +82,9 @@ import Testing
                         "\(category) at \(cap)")
             }
         }
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 30, category: "pa") == nil)
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 30, category: "audio") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 31, category: "pa") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 31, category: "audio") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 31, category: "general") == nil)
     }
 
     // MARK: Reading the rows

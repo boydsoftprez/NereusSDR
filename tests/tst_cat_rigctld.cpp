@@ -6,6 +6,8 @@
 // 2026-10-07 A level read through rigctl compares as a number, whatever
 //            Hamlib's float format. J.J. Boyd (KG4VCF), AI-assisted via
 //            Anthropic Claude Code.
+// 2026-10-22 A mode and passband past the filter cap succeeds. J.J. Boyd
+//            (KG4VCF), with AI-assisted transformation via Claude Code.
 // 2026-10-22: ports a test hands to a later listener come from
 // unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
 // range, so a parallel test cannot take one between the pick and the listen.
@@ -79,6 +81,11 @@ private slots:
         QCOMPARE(f.model.sliceById(0)->frequency(),14201000.0); QCOMPARE(f.model.sliceById(2)->frequency(),7074000.0);
         QCOMPARE(exchange(socket,"M LSB 2400\nm\n","RPRT 0\nLSB\n2400\n"),QByteArray("RPRT 0\nLSB\n2400\n"));
         QCOMPARE(f.model.sliceById(0)->dspMode(),DSPMode::LSB);
+        // A passband past the 10 kHz edge cap (Thetis console.cs:35044-35131
+        // [v2.10.3.15]) is constrained, and the write still succeeds.
+        QCOMPARE(exchange(socket,"M USB 12000\nm\n","RPRT 0\nUSB\n9900\n"),QByteArray("RPRT 0\nUSB\n9900\n"));
+        QCOMPARE(exchange(socket,"M AM 24000\nm\n","RPRT 0\nAM\n20000\n"),QByteArray("RPRT 0\nAM\n20000\n"));
+        QCOMPARE(exchange(socket,"M LSB 2400\n","RPRT 0\n"),QByteArray("RPRT 0\n"));
         QCOMPARE(exchange(socket,"V VFOB\nf\nV VFOA\n","RPRT 0\n7074000\nRPRT 0\n"),QByteArray("RPRT 0\n7074000\nRPRT 0\n"));
         QCOMPARE(exchange(socket,"I 7101000\nX USB 2200\ni\nx\n","RPRT 0\nRPRT 0\n7101000\nUSB\n2200\n"),QByteArray("RPRT 0\nRPRT 0\n7101000\nUSB\n2200\n"));
         QCOMPARE(exchange(socket,"S 1 VFOB\ns\nS 0 VFOA\ns\n","RPRT 0\n1\nVFOB\nRPRT 0\n0\nVFOA\n"),QByteArray("RPRT 0\n1\nVFOB\nRPRT 0\n0\nVFOA\n"));

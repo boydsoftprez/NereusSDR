@@ -1,4 +1,17 @@
 // no-port-check: NereusSDR-original live-apply checks for described settings.
+// 2026-10-24: a Core that never stored LimitFiltersToSidebands sends its
+// effective value, False, in the settings snapshot; a stored value is sent
+// as stored. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-24: the fresh Core carries its seed marker, as every headless Core
+// does, and an empty unseeded store still sends an empty snapshot (a window's
+// Core pages wait on that). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
+// 2026-10-24: the fresh Core test compares the whole snapshot (seed marker and
+// LimitFiltersToSidebands), and the empty-store case also asserts a settings
+// snapshot arrived. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-24: the cap is 30; a version 30 phone reads and writes General >
+// Filters' Limit filter edges to sidebands. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // 2026-09-29: the RX buffer size lock follows TUNE and the two-tone test.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-30: the cap is 24 (Audio > TX Input's Line In Gain steps and
@@ -720,7 +733,8 @@ private slots:
         const QList<std::tuple<int, int, int>> declarations{
             {16, 16, 16}, {17, 17, 17}, {18, 18, 18}, {19, 19, 18}, {20, 20, 18},
             {21, 21, 18}, {22, 22, 18}, {23, 23, 23}, {24, 24, 23}, {25, 25, 23},
-            {26, 26, 23}, {27, 27, 23}, {28, 28, 23}, {29, 29, 23}, {99, 29, 23},
+            {26, 26, 23}, {27, 27, 23}, {28, 28, 23}, {29, 29, 23}, {30, 30, 23},
+            {99, 30, 23},
             {15, 15, 13}};
         for (const auto& [declared, granted, received] : declarations) {
             // One Core per phone: five phones are more than a Core's places.
@@ -811,6 +825,137 @@ private slots:
         app->sendText(SessionMessages::encode(
             SessionMessages::settingsWrite(key, QStringLiteral("7"), QStringLiteral("phone"))));
         QTRY_COMPARE(core.settings->value(key).toString(), QStringLiteral("7"));
+    }
+
+    // Version 30: a version 30 phone reads General's Filters page and its
+    // write reaches the Core's LimitFiltersToSidebands, which the Core
+    // applies; a version 29 phone reads General at 3 without the page.
+    void pairedV30PhoneReadsAndWritesLimitFilterEdges()
+    {
+        Core core;
+        Device current(QStringLiteral("Filters V30 iPhone"), QStringLiteral("phone"));
+        Device older(QStringLiteral("Filters V29 iPhone"), QStringLiteral("phone"));
+        core.pair(current);
+        core.pair(older);
+        QHash<QByteArray, int> v30 = kHolder;
+        v30.insert("setupDescription", 30);
+        QHash<QByteArray, int> v29 = kHolder;
+        v29.insert("setupDescription", 29);
+        auto* app = core.signIn(current, v30);
+        auto* olderApp = core.signIn(older, v29);
+        QVERIFY(admitted(app) && admitted(olderApp));
+        QCOMPARE(capability(app->received(), QStringLiteral("setupDescriptionVersion")),
+                 std::optional<qint64>(30));
+        QCOMPARE(capability(olderApp->received(), QStringLiteral("setupDescriptionVersion")),
+                 std::optional<qint64>(29));
+
+        const auto generalOf = [](LoopbackTransport* peer) {
+            return QJsonDocument::fromJson(latest(peer->received(), QStringLiteral("setup"),
+                QStringLiteral("general")).toString().toUtf8()).object();
+        };
+        const auto filtersOf = [](const QJsonObject& general) {
+            for (const QJsonValue& page : general.value("pages").toArray()) {
+                if (page.toObject().value("id") == QJsonValue("general.filters")) {
+                    return page.toObject();
+                }
+            }
+            return QJsonObject{};
+        };
+        const QJsonObject general = generalOf(app);
+        QCOMPARE(general.value("version"), QJsonValue(30));
+        const QJsonArray sections = filtersOf(general).value("sections").toArray();
+        QCOMPARE(sections.size(), 1);
+        const QJsonArray rows = sections.first().toObject().value("controls").toArray();
+        QCOMPARE(rows.size(), 1);
+        QVERIFY(SetupDescriptionService::validateGeneralV30Control(rows.first().toObject()));
+
+        const QJsonObject olderGeneral = generalOf(olderApp);
+        QCOMPARE(olderGeneral.value("version"), QJsonValue(3));
+        QVERIFY(filtersOf(olderGeneral).isEmpty());
+
+        const QString key = QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey);
+        QVERIFY(!core.model->limitFiltersToSidebands());
+        app->sendText(SessionMessages::encode(
+            SessionMessages::settingsWrite(key, QStringLiteral("True"), QStringLiteral("phone"))));
+        QTRY_COMPARE(core.settings->value(key).toString(), QStringLiteral("True"));
+        QTRY_VERIFY(core.model->limitFiltersToSidebands());
+    }
+
+    // A headless Core never stores LimitFiltersToSidebands, yet applies
+    // RadioModel's default to its slices: the settings snapshot carries that
+    // effective value, False, so a phone's row is live. A stored value goes
+    // as stored, and other unstored settings stay out of the snapshot. An
+    // empty, unseeded store still sends an empty snapshot: a window reads
+    // that as "the Core has not sent its settings" and keeps its Core pages
+    // waiting, so no default is added to it.
+    void freshCoreSendsLimitFilterEdgesEffectiveValue()
+    {
+        const QString key = QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey);
+        const auto snapshotOf = [](LoopbackTransport* peer) {
+            QMap<QString, QString> settings;
+            for (const QByteArray& wire : peer->received()) {
+                SessionMessage message;
+                if (SessionMessages::decode(wire, &message)
+                    && message.kind == SessionMessageKind::SettingsSnapshot) {
+                    settings.clear();
+                    for (const MirrorUpdate& update : message.updates) {
+                        settings.insert(QString::fromUtf8(update.name), update.value.toString());
+                    }
+                }
+            }
+            return settings;
+        };
+        QHash<QByteArray, int> v30 = kHolder;
+        v30.insert("setupDescription", 30);
+        {
+            // A headless Core seeds its profile marker on every start
+            // (server_main.cpp).
+            Core core;
+            core.settings->seedDaemonProfileMarker();
+            Device phone(QStringLiteral("Fresh Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            QVERIFY(!core.settings->contains(key));
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            const QMap<QString, QString> settings = snapshotOf(app);
+            // The whole snapshot: the seed marker and the key's effective
+            // value, nothing else (Swift's freshCoreSettings mirrors this).
+            const QMap<QString, QString> expected{
+                {QStringLiteral("DaemonProfileSeeded"), QStringLiteral("True")},
+                {key, QStringLiteral("False")}};
+            QCOMPARE(settings, expected);
+            QVERIFY(!core.settings->contains(key));
+        }
+        {
+            Core core;
+            Device phone(QStringLiteral("Empty Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            // A settings snapshot did arrive, and it is empty.
+            const auto hasSnapshot = [](LoopbackTransport* peer) {
+                for (const QByteArray& wire : peer->received()) {
+                    SessionMessage message;
+                    if (SessionMessages::decode(wire, &message)
+                        && message.kind == SessionMessageKind::SettingsSnapshot) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            QVERIFY(hasSnapshot(app));
+            QVERIFY(snapshotOf(app).isEmpty());
+            QVERIFY(!core.settings->contains(key));
+        }
+        {
+            Core core;
+            core.settings->setValue(key, QStringLiteral("True"));
+            Device phone(QStringLiteral("Stored Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            QCOMPARE(snapshotOf(app).value(key), QStringLiteral("True"));
+        }
     }
 
     // Version 24 (radio codec lane): on the HL2 Core a version 24 phone

@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
+//                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
+//                Core's setting LimitFiltersToSidebands, applied to every
+//                slice. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                via Claude Code.
 //   2026-10-22 - setConnectionRateForTest, a test seam standing in for
 //                connectToRadio()'s write of the connection's sample rate
 //                and active RX count.
@@ -1489,6 +1494,29 @@ public:
     static bool networkWatchdogSetting();
     void setNetworkWatchdogEnabled(bool enabled);
     void applyNetworkWatchdog(bool enabled);
+
+    // Setup > General > Filters' "Limit filter edges to sidebands": the
+    // Core's setting (a slice's filter is constrained where the slice
+    // lives), so a remote window's save goes to the Core. Every slice
+    // takes the flag at once, and a new slice takes it before its saved
+    // filter is restored. As in Thetis the flag is only stored: the next
+    // filter change of each slice is constrained by it.
+    // From Thetis console.cs:7516-7521 [v2.10.3.15]:
+    //   private bool m_bLimitFiltersToSidebands = false;    //MW0LGE_21k9
+    //   public bool LimitFiltersToSideBands
+    //   {
+    //       get { return m_bLimitFiltersToSidebands; }
+    //       set { m_bLimitFiltersToSidebands = value; }
+    //   }
+    static constexpr const char* kLimitFiltersToSidebandsKey = "LimitFiltersToSidebands";
+    static constexpr bool kLimitFiltersToSidebandsDefault = false;
+    static bool limitFiltersToSidebandsSetting();
+    bool limitFiltersToSidebands() const { return m_limitFiltersToSidebands; }
+    // Saves the setting and applies it to this model's slices.
+    void setLimitFiltersToSidebands(bool on);
+    // Applies without saving: a remote window when the Core's value
+    // arrives, the Core when a window's change lands in its settings.
+    void applyLimitFiltersToSidebands(bool on);
 
     // R-R3-49 (parity Task 5): Setup > Transmit > Power's SWR Protection
     // group (SwrProtectionEnabled, SwrProtectionLimit,
@@ -6414,6 +6442,8 @@ signals:
                                  bool shownOnPage);
     /// Remote window: a Core station setting changed (empty: a snapshot).
     void stationSettingChanged(const QString& key);
+    /// "Limit filter edges to sidebands" changed on this model's slices.
+    void limitFiltersToSidebandsChanged(bool on);
     /// A setting the transmit gate reads (ExtendedTransmit) changed on
     /// this model's own settings: a local window's edit, or a device's
     /// edit the Core took. A remote window hears stationSettingChanged.
@@ -8133,6 +8163,9 @@ private:
 
     // Slices and panadapters (client-managed)
     QList<SliceModel*> m_slices;
+    // From Thetis console.cs:7516 [v2.10.3.15]: m_bLimitFiltersToSidebands
+    // = false. Read from the setting in the constructor.
+    bool m_limitFiltersToSidebands{kLimitFiltersToSidebandsDefault};
     QList<QPointer<SliceModel>> m_sliceRemovalsInFlight;
     // ID-keyed consumers must finish an old removal before seeing the next
     // object with that ID. Construction/ownership still complete synchronously.

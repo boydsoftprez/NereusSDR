@@ -18,6 +18,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - passbandShifted: the centre drag (shift and width) is
+//                 its own signal, so the slice moves it as Thetis's filter
+//                 shift and width sliders do. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Claude Code.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -49,7 +53,12 @@ public:
     QSize sizeHint() const override { return {200, 60}; }
 
 signals:
+    // An edge drag (low or high edge).
     void filterChanged(int lo, int hi);
+    // The centre drag: the whole passband moved (horizontal) and its width
+    // changed about its centre (vertical). Emitted instead of
+    // filterChanged for that drag.
+    void passbandShifted(int lo, int hi);
 
 protected:
     void paintEvent(QPaintEvent*) override;
