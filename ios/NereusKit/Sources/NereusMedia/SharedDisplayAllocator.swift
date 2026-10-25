@@ -14,9 +14,20 @@
 /// operator is looking at (``activePanId``) is the one the policy keeps
 /// whole longest; with none set, the first pan in pan-ID order.
 ///
-/// Each pan also says what it holds or has asked the Core for
-/// (``claim(_:forPan:)``): an increase on one pan goes only into the
-/// headroom the others leave (``headroom(forPan:)``).
+/// Each pan's subscriber also says what it holds or has asked the Core for
+/// (``claim(_:by:)``): an increase on one goes only into the headroom the
+/// others leave (``headroom(for:)``). A claim is the subscriber's, not its
+/// pan's: a closed pan's subscriber still letting its endpoint go and the
+/// same pan reopened each hold their own.
+///
+/// Every pan's display endpoint IDs come from one counter for the media
+/// connection (``takeEndpointId()``), as the desktop's remote window takes
+/// each new binding's ID from one `nextEndpoint` for every pan
+/// (`src/gui/RemoteMediaController.cpp:5784-5785`). The Core refuses an
+/// endpoint ID new to it at or below the highest it has seen on the
+/// connection, "This display had already been closed."
+/// (`src/core/session/media/DaemonMediaController.cpp:3766-3802`), so IDs
+/// only ever rise, whichever pan asks.
 ///
 /// It is a calculation only: nothing it does sends anything.
 @MainActor
@@ -33,7 +44,9 @@ public final class SharedDisplayAllocator {
     }
 
     private var wishes: [String: DisplayQualityAllocator.Intent] = [:]
-    private var claims: [String: DisplayQualityAllocator.Charge] = [:]
+    private var claims: [ObjectIdentifier: DisplayQualityAllocator.Charge] = [:]
+    /// The next endpoint ID on this media connection; 0 once every ID is used.
+    private var nextEndpoint: UInt32 = 1
     private var observers: [String: @MainActor () -> Void] = [:]
 
     public init(budget: DisplayQualityAllocator.Budget? = nil) {
@@ -84,31 +97,40 @@ public final class SharedDisplayAllocator {
         recompute()
     }
 
-    /// The pan closed: its wish, its claim and its observer go.
+    /// The pan closed: its wish and its observer go. Its subscriber's claim
+    /// stands until that subscriber holds nothing (``claim(_:by:)``).
     public func remove(pan panId: String) {
         observers[panId] = nil
-        claims[panId] = nil
         guard wishes.removeValue(forKey: panId) != nil else {
             return
         }
         recompute()
     }
 
-    /// What `panId` holds at the Core or has asked it for.
-    public func claim(_ charge: DisplayQualityAllocator.Charge, forPan panId: String) {
-        claims[panId] = charge == DisplayQualityAllocator.Charge() ? nil : charge
+    /// What `claimant` (a pan's subscriber) holds at the Core or has asked
+    /// it for; an empty charge drops its claim.
+    public func claim(_ charge: DisplayQualityAllocator.Charge, by claimant: ObjectIdentifier) {
+        let before = claims[claimant] ?? DisplayQualityAllocator.Charge()
+        claims[claimant] = charge == DisplayQualityAllocator.Charge() ? nil : charge
+        if charge.applicationBytesPerSecond < before.applicationBytesPerSecond
+            || charge.spectrumSampleUnitsPerSecond < before.spectrumSampleUnitsPerSecond {
+            // Headroom came back: a pan whose increase waited for it plans again.
+            for id in observers.keys.sorted() {
+                observers[id]?()
+            }
+        }
     }
 
-    /// The budget less what every other pan holds or has asked for; nil
-    /// without a budget (every pan as asked).
-    public func headroom(forPan panId: String) -> (applicationBytesPerSecond: UInt64,
-                                                   spectrumSampleUnitsPerSecond: UInt64)? {
+    /// The budget less what every other claimant holds or has asked for;
+    /// nil without a budget (every pan as asked).
+    public func headroom(for claimant: ObjectIdentifier) -> (applicationBytesPerSecond: UInt64,
+                                                             spectrumSampleUnitsPerSecond: UInt64)? {
         guard let budget = allocator.budget else {
             return nil
         }
         var bytes = budget.applicationBytesPerSecond
         var units = budget.spectrumSampleUnitsPerSecond
-        for (pan, charge) in claims where pan != panId {
+        for (other, charge) in claims where other != claimant {
             bytes -= min(bytes, charge.applicationBytesPerSecond)
             units -= min(units, charge.spectrumSampleUnitsPerSecond)
         }
@@ -119,6 +141,27 @@ public final class SharedDisplayAllocator {
     @discardableResult
     public func note(_ result: MediaControlEvent.AllocationResult) -> Bool {
         allocator.note(result)
+    }
+
+    /// The next display endpoint ID on this media connection, for whichever
+    /// pan subscribes a new endpoint now; nil once every ID is used, as the
+    /// desktop stops at `nextEndpoint == 0`
+    /// (`src/gui/RemoteMediaController.cpp:5784`). Taken only when the
+    /// subscribe goes, so IDs reach the Core in rising order.
+    public func takeEndpointId() -> UInt32? {
+        guard nextEndpoint != 0 else {
+            return nil
+        }
+        let id = nextEndpoint
+        nextEndpoint &+= 1
+        return id
+    }
+
+    /// The media connection ended: the next one's IDs start again from 1,
+    /// as the Core forgets the old connection's IDs with its peer
+    /// (`src/core/session/media/DaemonMediaController.cpp:1876-1881`, `:8426`).
+    public func restartEndpointIds() {
+        nextEndpoint = 1
     }
 
     /// `handler` runs whenever the allocation moves, so `panId` re-plans.

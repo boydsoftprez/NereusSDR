@@ -1272,9 +1272,11 @@ final class BandSlicesModel: ObservableObject {
         // A band that draws one pan of several (``panKey``): the Core marks
         // one active slice for the whole device, which may be on another
         // pan, so this pan's own active slice is then its first own slice
-        // (R-IOS-59: each pan subscribes on a slice of its own pan).
+        // (R-IOS-59: each pan subscribes on a slice of its own pan). With
+        // none of this device's own on the pan it has no active slice: never
+        // another device's slice, nor one the Core keeps on no pan.
         let own = nextActive ?? anyActive
-            ?? (panKey == nil ? nil : (next.first { !$0.listening && $0.panKey == panKey } ?? next.first)?.id)
+            ?? (panKey == nil ? nil : next.first { !$0.listening && $0.panKey == panKey }?.id)
         if own != ownActiveSliceId {
             ownActiveSliceId = own
         }

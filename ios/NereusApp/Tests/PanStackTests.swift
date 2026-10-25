@@ -46,9 +46,10 @@ struct PanStackTests {
 
     /// A model connected to a fake Core (five slices, two receivers) with
     /// the ANAN-G2 catalogue, as an iPad.
-    private func connected(media: Bool = false) async throws -> Connected {
-        // The extended view's fake answers subscribes and opens media, as PanSheetTests' withMedia.
-        let station = try FakeStation(additions: media ? .wideband : [])
+    private func connected(media: Bool = false, budget: Bool = false) async throws -> Connected {
+        // The extended view's fake answers subscribes and opens media, as PanSheetTests' withMedia;
+        // with the budget wire it answers each with an allocation-result under the Core's ID rules.
+        let station = try FakeStation(additions: media ? (budget ? [.wideband, .displayBudget] : .wideband) : [])
         let suite = "PanStackTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         let store = BandDisplaySettingsStore(defaults: defaults)
@@ -142,7 +143,12 @@ struct PanStackTests {
         let rig = try await connected()
         let stack = rig.stack
         stack.addPan()
+        // While the Core has not answered, the new pan cannot be closed: its slice would be stranded.
+        #expect(stack.closePanState(Self.second) == (false, "Wait for the Core to finish opening this pan."))
+        stack.closePan(Self.second)
+        #expect(stack.open == [.first, Self.second])
         #expect(await settle { stack.status != nil })
+        #expect(stack.closePanState(Self.second) == (true, nil))
         let sent = try #require(invokes(rig.station, PanSheetModel.addSliceVerb).last)
         #expect(sent.args == [.init(name: "panId", value: .utf8("pan-1"))])
         #expect(stack.status == "Pan 2 opened below Pan 1. Slice B added on Pan 2.")
@@ -227,6 +233,20 @@ struct PanStackTests {
         await rig.model.disconnect()
     }
 
+    @Test("a refused move home without the Core's words still says it was refused")
+    func refusedRehomeWithoutWords() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.addPan()
+        #expect(await settle { stack.status != nil && rig.station.panKey(ofSlice: 1) == "pan-1" })
+        #expect(await settle { stack.band(for: Self.second).slices.entries.map(\.id) == [1] })
+        rig.station.refuseNext(FakeStation.panKeyRefusalKey(sliceId: 1), reason: "")
+        stack.closePan(Self.second)
+        #expect(await settle { stack.status == BandSlicesModel.refusedText })
+        #expect(rig.station.panKey(ofSlice: 1) == "pan-1")
+        await rig.model.disconnect()
+    }
+
     // MARK: A smaller radio and a lost link
 
     @Test("a Core reporting fewer pans closes the highest with the limit's words and writes nothing to their slices")
@@ -299,8 +319,8 @@ struct PanStackTests {
         _ = rig.model.main.band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
         #expect(await settle { !self.subscribes(rig.station).isEmpty })
         #expect(subscribes(rig.station).allSatisfy { $0["endpointId"] == .number(1) })
-        let pan2Endpoint = BandSubscriber.firstEndpointId(for: Self.second)
-        #expect(pan2Endpoint == 16_777_217)
+        // One counter for every pan on the media connection: Pan 2's first endpoint is the next after Pan 1's.
+        let pan2Endpoint: UInt32 = 2
         let words = "The Core has no display free for another pan."
         rig.station.refuseNext(FakeStation.subscribeRefusalKey(pan2Endpoint), reason: words)
         stack.addPan()
@@ -322,6 +342,69 @@ struct PanStackTests {
         // Closing the pan clears its refusal.
         stack.closePan(Self.second)
         #expect(stack.displayRefusals.isEmpty)
+        await rig.model.disconnect()
+    }
+
+    // MARK: Endpoint IDs on the budget wire (the Core's high-water rule)
+
+    /// Opens Pan 2 with slice B on it, tuned and drawn, and waits for its display.
+    private func openSecondPan(_ rig: Connected) async throws -> PanBand {
+        let stack = rig.stack
+        let before = stack.status
+        stack.addPan()
+        #expect(await settle { stack.status != before && stack.open.contains(Self.second) })
+        #expect(await settle { rig.station.panKey(ofSlice: 1) == "pan-1" })
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_213_000)),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+        ])))
+        let band = stack.band(for: Self.second)
+        _ = band.band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
+        #expect(await settle { band.subscriber.acceptedDisplay != nil || band.subscriber.displayRefusal != nil })
+        return band
+    }
+
+    @Test("on the budget wire, Pan 1 coming back after Pan 2 subscribed is accepted: its new ID is above Pan 2's")
+    func firstPanResubscribesAboveSecond() async throws {
+        let rig = try await connected(media: true, budget: true)
+        let first = rig.stack.band(for: .first)
+        _ = first.band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
+        #expect(await settle { first.subscriber.acceptedDisplay != nil })
+        let second = try await openSecondPan(rig)
+        #expect(second.subscriber.displayRefusal == nil)
+        let secondId = try #require(second.subscriber.acceptedDisplay?.subscription.endpointId)
+        // Sound only lets every pan's endpoint go; full display brings each back on a new one.
+        first.subscriber.session = .none
+        #expect(await settle { first.subscriber.acceptedDisplay == nil && second.subscriber.acceptedDisplay == nil })
+        first.subscriber.session = SessionPolicy.Mode.full.request
+        #expect(await settle {
+            (first.subscriber.acceptedDisplay != nil || first.subscriber.displayRefusal != nil)
+                && (second.subscriber.acceptedDisplay != nil || second.subscriber.displayRefusal != nil)
+        })
+        #expect(first.subscriber.displayRefusal == nil)
+        #expect(second.subscriber.displayRefusal == nil)
+        let firstBack = try #require(first.subscriber.acceptedDisplay?.subscription.endpointId)
+        #expect(firstBack > secondId)
+        await rig.model.disconnect()
+    }
+
+    @Test("on the budget wire, Pan 2 closed and opened again is accepted: it never asks for a closed ID")
+    func reopenedSecondPanIsAccepted() async throws {
+        let rig = try await connected(media: true, budget: true)
+        let first = rig.stack.band(for: .first)
+        _ = first.band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
+        #expect(await settle { first.subscriber.acceptedDisplay != nil })
+        let opened = try await openSecondPan(rig)
+        #expect(opened.subscriber.displayRefusal == nil)
+        let closedId = try #require(opened.subscriber.acceptedDisplay?.subscription.endpointId)
+        rig.stack.closePan(Self.second)
+        #expect(await settle { opened.subscriber.holdsNothing })
+        #expect(await settle { rig.station.panKey(ofSlice: 1) == "pan-0" })
+        let reopened = try await openSecondPan(rig)
+        #expect(reopened.subscriber.displayRefusal == nil)
+        let reopenedId = try #require(reopened.subscriber.acceptedDisplay?.subscription.endpointId)
+        #expect(reopenedId > closedId)
+        #expect(first.subscriber.displayRefusal == nil)
         await rig.model.disconnect()
     }
 }

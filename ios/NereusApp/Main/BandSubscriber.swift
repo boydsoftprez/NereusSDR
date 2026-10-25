@@ -49,10 +49,12 @@ import os
 /// drops is unsubscribed, so it stops counting against the others.
 ///
 /// Each pan the device shows has its own subscriber (R-IOS-59, spec section
-/// 6.3): its own endpoint IDs (``firstEndpointId(for:)``), its wish offered
-/// to the one ``SharedDisplayAllocator`` every pan shares, and an increase
-/// only into the headroom the other pans leave. A closed pan's subscriber
-/// lets its endpoint go (``close()``).
+/// 6.3): its wish offered to the one ``SharedDisplayAllocator`` every pan
+/// shares, and an increase only into the headroom the other pans leave.
+/// Each new endpoint's ID comes from that allocator's one counter for the
+/// media connection (``SharedDisplayAllocator/takeEndpointId()``), never a
+/// range of the pan's own: the Core refuses a new ID at or below the highest
+/// it has seen. A closed pan's subscriber lets its endpoint go (``close()``).
 @MainActor
 final class BandSubscriber: ObservableObject {
     /// How the subscriber reaches the Core; the app's are its media client's.
@@ -65,17 +67,6 @@ final class BandSubscriber: ObservableObject {
 
     /// The pan the phone's band is, for the allocator's pan order.
     static let panId = "1"
-    /// Each pan's endpoint IDs start in a block of their own, so two pans'
-    /// subscriptions on one media connection never share an ID; Pan 1's
-    /// are 1, 2, 3 as before. The desktop's remote window counts one
-    /// sequence for every pan (src/gui/RemoteMediaController.cpp:5784-5785);
-    /// here each pan's subscriber counts its own, in its own block.
-    static let endpointIdBlock: UInt32 = 1 << 24
-
-    /// The first endpoint ID `pan` uses on a media connection.
-    static func firstEndpointId(for pan: PanIdentity) -> UInt32 {
-        UInt32(clamping: max(pan.number - 1, 0)) &* endpointIdBlock &+ 1
-    }
     /// How long an operation waits for its `allocation-result` (the budget
     /// design's acknowledgment deadline).
     static let acknowledgementDeadline: Duration = .seconds(10)
@@ -177,7 +168,10 @@ final class BandSubscriber: ObservableObject {
     }
 
     private var mediaUp = false
-    private var endpointId: UInt32
+    /// The endpoint the band subscribes on; nil until the next subscribe
+    /// takes a new ID from the shared counter (after a release, or on a new
+    /// media connection).
+    private var endpointId: UInt32?
     private var revision: UInt32 = 0
     /// What the Core has confirmed it holds, and its charge.
     private var accepted: Holding = .none
@@ -223,7 +217,6 @@ final class BandSubscriber: ObservableObject {
          pan: PanIdentity = .first, shared: SharedDisplayAllocator? = nil) {
         self.pan = pan
         self.shared = shared ?? SharedDisplayAllocator()
-        endpointId = Self.firstEndpointId(for: pan)
         self.band = band
         self.slices = slices
         self.mirror = mirror
@@ -292,6 +285,8 @@ final class BandSubscriber: ObservableObject {
             }
         case .mediaState(.closed), .mediaState(.failed):
             mediaUp = false
+            // The next media connection's IDs start again, for every pan.
+            shared.restartEndpointIds()
             startOver()
         case .allocationResult(let result):
             settle(result)
@@ -389,7 +384,10 @@ final class BandSubscriber: ObservableObject {
         if band.gates != gates {
             band.gates = gates
         }
-        band.endpointId = endpointId
+        if let endpointId {
+            // Before the next subscribe takes its ID the band keeps what it has.
+            band.endpointId = endpointId
+        }
         if offeredBudget != .some(budget) {
             offeredBudget = .some(budget)
             refused = nil
@@ -741,7 +739,7 @@ final class BandSubscriber: ObservableObject {
             if waiting {
                 return
             }
-            if !asking, budget != nil, let room = shared.headroom(forPan: panId),
+            if !asking, budget != nil, let room = shared.headroom(for: ObjectIdentifier(self)),
                charge.applicationBytesPerSecond > room.applicationBytesPerSecond
                 || charge.spectrumSampleUnitsPerSecond > room.spectrumSampleUnitsPerSecond {
                 return
@@ -754,8 +752,22 @@ final class BandSubscriber: ObservableObject {
                 return
             }
             requested = .none
-            release(endpointId, revision: held.revision, byResult: byResult)
+            release(held.endpointId, revision: held.revision, byResult: byResult)
         case .endpoint(var subscription):
+            if endpointId == nil {
+                // A new endpoint: the next ID on the media connection,
+                // whichever pan takes it (src/gui/RemoteMediaController.cpp:5785;
+                // the Core's high-water rule, src/core/session/media/DaemonMediaController.cpp:3797-3800).
+                guard let next = shared.takeEndpointId() else {
+                    Self.logger.warning("Every display endpoint ID on this media connection is used")
+                    return
+                }
+                endpointId = next
+            }
+            guard let endpointId else {
+                return
+            }
+            band.endpointId = endpointId
             if refusedEndpoint == endpointId {
                 // Asking for the endpoint again replaces the refused request.
                 refusedEndpoint = nil
@@ -787,10 +799,11 @@ final class BandSubscriber: ObservableObject {
     }
 
     /// Unsubscribes endpoint `id`, whose last revision was `revision`; a
-    /// released endpoint ID is never used again on this connection.
+    /// released endpoint ID is never used again on this connection: the
+    /// next subscribe takes a new one.
     private func release(_ id: UInt32, revision held: UInt32, byResult: Bool) {
-        endpointId &+= 1
-        band.endpointId = endpointId
+        endpointId = nil
+        band.endpointId = nil
         var next = held &+ 1
         if next == 0 {
             next = 1
@@ -900,7 +913,8 @@ final class BandSubscriber: ObservableObject {
         queueReplan()
     }
 
-    /// A new media connection, or none: nothing is held, and IDs start again.
+    /// A new media connection, or none: nothing is held, and the next
+    /// subscribe takes a new ID.
     private func startOver() {
         lastBinPlan = nil
         lastActive = nil
@@ -919,9 +933,10 @@ final class BandSubscriber: ObservableObject {
         requested = .none
         refused = nil
         stalled = false
-        endpointId = Self.firstEndpointId(for: pan)
+        endpointId = nil
         revision = 0
-        band.endpointId = endpointId
+        // The band keeps drawing what it last had until the next subscribe
+        // takes its ID, as it did when the first ID was fixed per pan.
         setRefusal(nil)
         noteClaim()
         noteSharing()
@@ -939,7 +954,9 @@ final class BandSubscriber: ObservableObject {
                                                      operation.charge.spectrumSampleUnitsPerSecond)
             claim.messagesPerSecond = max(claim.messagesPerSecond, operation.charge.messagesPerSecond)
         }
-        shared.claim(closed && holdsNothing ? .init() : claim, forPan: panId)
+        // The claim is this subscriber's own: a closed pan's subscriber and
+        // the same pan reopened never overwrite each other's.
+        shared.claim(closed && holdsNothing ? .init() : claim, by: ObjectIdentifier(self))
     }
 
     /// The Core's words for a refused display, or nil to clear them; a

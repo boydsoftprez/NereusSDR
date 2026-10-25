@@ -271,6 +271,9 @@ public final class FakeStation: @unchecked Sendable {
     private let takesDeviceCommands: Bool
     /// The last revision the app subscribed each display endpoint at.
     private var endpointRevisions: [LinkJSON: LinkJSON] = [:]
+    /// The display budget wire's identities (``Additions/displayBudget``,
+    /// FakeStation+DisplayBudget.swift), under ``lock``.
+    var budgetWire = BudgetWireState()
     /// The newest media start declared `txDisplayVersion`: its contexts carry `transmit`.
     private var txDisplayDeclared = false
     /// The media peers sessions made, newest last.
@@ -779,6 +782,9 @@ public final class FakeStation: @unchecked Sendable {
         if additions.contains(.wideband) {
             set("remoteMediaVersion", 1)
             set("remoteWidebandDisplayVersion", 1)
+        }
+        if additions.contains(.displayBudget) {
+            budgetCapabilities(set: set)
         }
         if additions.contains(.sessionLeave) {
             set("sessionHolderVersion", 1)
@@ -1343,9 +1349,18 @@ public final class FakeStation: @unchecked Sendable {
         }
         if payload["op"] == .string("start") {
             lock.withLock { txDisplayDeclared = payload["txDisplayVersion"] != nil }
+            startBudgetWire()
         }
         if payload["op"] == .string("subscribe"), let endpoint = payload["endpointId"], let revision = payload["revision"] {
             lock.withLock { endpointRevisions[endpoint] = revision }
+        }
+        if additions.contains(.displayBudget),
+           let replies = budgetReplies(payload, refusal: { self.takeRefusal(Self.subscribeRefusalKey($0)) },
+                                       context: { self.additions.contains(.wideband) ? self.context(for: payload) : nil }) {
+            // On the budget wire allocation-result replaces rejected.
+            return replies
+        }
+        if payload["op"] == .string("subscribe"), let endpoint = payload["endpointId"], let revision = payload["revision"] {
             if case .number(let id) = endpoint, let reason = takeRefusal(Self.subscribeRefusalKey(UInt32(id))) {
                 // Refused as the Core refuses a display it cannot place
                 // (src/core/session/media/DaemonMediaController.cpp:3863-4066): a `rejected` for that endpoint.
@@ -1382,7 +1397,9 @@ public final class FakeStation: @unchecked Sendable {
     }
 
     /// The key ``refuseNext(_:reason:)`` takes to refuse the next
-    /// `subscribe` for display endpoint `endpointId`, in the Core's words.
+    /// `subscribe` for display endpoint `endpointId`, in the Core's words:
+    /// a `rejected`, or on the budget wire (``Additions/displayBudget``) an
+    /// `allocation-result` that holds nothing.
     public static func subscribeRefusalKey(_ endpointId: UInt32) -> String {
         "subscribe:\(endpointId)"
     }

@@ -60,6 +60,10 @@ final class PanStackModel: ObservableObject {
     static let firstStaysOpenReason = "Pan 1 stays open."
     /// "Add a pan" before the Core's snapshot is whole, as the pan sheet's add says.
     static let notConnectedReason = "Wait for the Core to connect."
+    /// "Close this pan" on a pan whose opening still waits for the Core's
+    /// answer: closing it then would leave the slice the Core adds on it
+    /// stranded on a pan no longer shown.
+    static let stillOpeningReason = "Wait for the Core to finish opening this pan."
     static let commandTimeout: Duration = .seconds(5)
 
     /// The open pans, Pan 1 first.
@@ -283,6 +287,9 @@ final class PanStackModel: ObservableObject {
         guard open.contains(pan) else {
             return (false, nil)
         }
+        guard adding != pan else {
+            return (false, Self.stillOpeningReason)
+        }
         return (true, nil)
     }
 
@@ -300,8 +307,9 @@ final class PanStackModel: ObservableObject {
             Task { [weak self, mirror] in
                 let outcome = await mirror.write("slice:\(entry.id)", property: Self.panKeyProperty,
                                                  value: .text(PanIdentity.first.corePanKey))
-                if !outcome.accepted, outcome.isCurrent, !outcome.reason.isEmpty {
-                    self?.status = outcome.reason
+                if !outcome.accepted, outcome.isCurrent {
+                    // The Core's words, or the phone's for a refusal without any.
+                    self?.status = outcome.reason.isEmpty ? BandSlicesModel.refusedText : outcome.reason
                 }
             }
         }

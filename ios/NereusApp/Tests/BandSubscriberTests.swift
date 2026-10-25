@@ -462,8 +462,9 @@ struct BandSubscriberTests {
         // accepted display must already be unavailable to the S-meter.
         #expect(rig.subscriber.acceptedDisplay == nil)
         #expect(rig.band.paused)
-        // A released endpoint's ID is not used again.
-        #expect(rig.band.endpointId == 2)
+        // A released endpoint's ID is not used again: the band draws none
+        // until its next subscribe takes a new one.
+        #expect(rig.band.endpointId == nil)
     }
 
     // MARK: Asking for what the operator wants (the several-devices design, 9.3)
@@ -571,7 +572,7 @@ struct BandSubscriberTests {
         ])))
         #expect(await settle { rig.sent.operations.last == .unsubscribe(asked.endpointId) })
         #expect(rig.band.paused)
-        #expect(rig.band.endpointId == asked.endpointId + 1)
+        #expect(rig.band.endpointId == nil)
         // It is not waited for: the Core held nothing for it.
         #expect(!rig.subscriber.stalled)
     }
@@ -590,9 +591,11 @@ struct BandSubscriberTests {
 
     // MARK: Several pans (Task 9)
 
-    @Test("two pans' subscribers share one budget, each on its own pan's slice with its own endpoint IDs, and a refusal stays with its pan")
-    func twoPansShareOneAllocator() async throws {
-        let rig = rig()
+    /// Two pans' subscribers on one shared allocator, each on its own
+    /// pan's slice (slice:0 on pan-0, slice:1 on pan-1), as the iPad's
+    /// stack makes them.
+    private func pans(_ rig: Rig) -> (shared: SharedDisplayAllocator,
+                                      make: (PanIdentity, Sent) -> BandSubscriber) {
         rig.store.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 27, name: "panKey", value: .utf8("pan-0")),
         ])))
@@ -605,7 +608,7 @@ struct BandSubscriberTests {
             .init(ordinal: 28, name: "sampleRateHz", value: .i64(Self.sampleRate)),
         ])))
         let shared = SharedDisplayAllocator()
-        func make(_ pan: PanIdentity, _ sent: Sent) -> BandSubscriber {
+        let make = { (pan: PanIdentity, sent: Sent) -> BandSubscriber in
             let band = BandModel()
             let slices = BandSlicesModel(store: rig.store, commands: nil)
             slices.panKey = pan.corePanKey
@@ -617,6 +620,18 @@ struct BandSubscriberTests {
             _ = band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
             return subscriber
         }
+        return (shared, make)
+    }
+
+    /// The Core's answer to an unsubscribe of `endpointId` at `revision`: let go.
+    private func released(_ endpointId: UInt32, revision: UInt32) -> MediaControlEvent {
+        allocationResult(endpointId: endpointId, revision: revision, accepted: true, reason: "", acceptedRevision: 0)
+    }
+
+    @Test("two pans' subscribers share one budget, each on its own pan's slice with IDs from one counter, and a refusal stays with its pan")
+    func twoPansShareOneAllocator() async throws {
+        let rig = rig()
+        let (shared, make) = pans(rig)
         let sentFirst = Sent()
         let sentSecond = Sent()
         let first = make(.first, sentFirst)
@@ -626,9 +641,9 @@ struct BandSubscriberTests {
         #expect(await settle { !sentFirst.subscriptions.isEmpty && !sentSecond.subscriptions.isEmpty })
         let one = try #require(sentFirst.subscriptions.last)
         let two = try #require(sentSecond.subscriptions.last)
-        #expect(one.sliceId == 0 && one.endpointId == 1)
-        #expect(two.sliceId == 1 && two.endpointId == BandSubscriber.firstEndpointId(for: PanIdentity(number: 2)))
-        #expect(two.endpointId == 16_777_217)
+        #expect(one.sliceId == 0 && two.sliceId == 1)
+        // One counter for the connection: the two pans' first endpoints are 1 and 2.
+        #expect(Set([one.endpointId, two.endpointId]) == [1, 2])
         // One allocation holds both wishes, and both pans get frames.
         #expect(Set(shared.intents.map(\.panId)) == ["1", "2"])
         #expect(shared.quality(forPan: "1") != nil && shared.quality(forPan: "2") != nil)
@@ -644,5 +659,107 @@ struct BandSubscriberTests {
         #expect(await settle { !shared.intents.contains { $0.panId == "2" } })
         // Its refused endpoint is let go at once, as the Core holds nothing for it.
         #expect(await settle { second.holdsNothing && sentSecond.operations.last == .unsubscribe(two.endpointId) })
+    }
+
+    @Test("a pan that releases after another pan subscribed takes a higher ID, and a reopened pan never reuses its old one")
+    func endpointIdsRiseAcrossPans() async throws {
+        let rig = rig(budget: false)
+        let (_, make) = pans(rig)
+        let sentFirst = Sent()
+        let sentSecond = Sent()
+        let first = make(.first, sentFirst)
+        first.receive(.mediaState(.connected))
+        #expect(await settle { sentFirst.subscriptions.count == 1 })
+        let second = make(PanIdentity(number: 2), sentSecond)
+        second.receive(.mediaState(.connected))
+        #expect(await settle { sentSecond.subscriptions.count == 1 })
+        #expect(sentFirst.subscriptions.map(\.endpointId) == [1])
+        #expect(sentSecond.subscriptions.map(\.endpointId) == [2])
+        // Pan 1 lets its endpoint go (Sound only) and comes back: above Pan 2's.
+        first.session = .none
+        #expect(await settle { sentFirst.operations.last == .unsubscribe(1) })
+        first.session = SessionPolicy.Mode.full.request
+        #expect(await settle { sentFirst.subscriptions.count == 2 })
+        #expect(sentFirst.subscriptions.last?.endpointId == 3)
+        // Pan 2 closes and opens again: its new subscriber takes the next ID.
+        second.close()
+        #expect(await settle { sentSecond.operations.last == .unsubscribe(2) })
+        let sentReopened = Sent()
+        let reopened = make(PanIdentity(number: 2), sentReopened)
+        reopened.receive(.mediaState(.connected))
+        #expect(await settle { sentReopened.subscriptions.count == 1 })
+        #expect(sentReopened.subscriptions.last?.endpointId == 4)
+    }
+
+    @Test("Pan 2's claim keeps Pan 1's increase out of the headroom it holds until the Core lets it go")
+    func anotherPansClaimBlocksAnIncrease() async throws {
+        let budget = try wantedCharge().applicationBytesPerSecond
+        let rig = rig(bytes: Int64(budget))
+        let (shared, make) = pans(rig)
+        let sentFirst = Sent()
+        let sentSecond = Sent()
+        let first = make(.first, sentFirst)
+        let second = make(PanIdentity(number: 2), sentSecond)
+        first.receive(.mediaState(.connected))
+        second.receive(.mediaState(.connected))
+        #expect(await settle { sentFirst.subscriptions.count == 1 && sentSecond.subscriptions.count == 1 })
+        // Both ask for the whole band and the Core answers both asks; each
+        // then plans inside its share of a budget with room for one. (A
+        // refused ask is not asked again until the wishes change, so the
+        // asks are taken here to leave Pan 1's later increase its own.)
+        first.receive(result(for: try #require(sentFirst.subscriptions.last)))
+        second.receive(result(for: try #require(sentSecond.subscriptions.last)))
+        #expect(await settle { sentFirst.subscriptions.count == 2 && sentSecond.subscriptions.count == 2 })
+        let held = try #require(sentFirst.subscriptions.last)
+        let secondHeld = try #require(sentSecond.subscriptions.last)
+        first.receive(result(for: held))
+        second.receive(result(for: secondHeld))
+        await quiet()
+        #expect(sentFirst.subscriptions.count == 2)
+        #expect(held.pixels < 1206 || held.fps < BandSubscriber.defaultFps)
+        // Pan 2 closes: Pan 1's share is now the whole budget, but Pan 2's
+        // display still counts until the Core lets it go.
+        second.close()
+        #expect(await settle { sentSecond.operations.last == .unsubscribe(secondHeld.endpointId) })
+        #expect(shared.quality(forPan: "1")?.reduced == false)
+        await quiet()
+        #expect(sentFirst.subscriptions.count == 2)
+        // The Core lets Pan 2's display go: Pan 1 grows into the room.
+        second.receive(released(secondHeld.endpointId, revision: secondHeld.revision &+ 1))
+        #expect(await settle { sentFirst.subscriptions.count == 3 })
+        let grown = try #require(sentFirst.subscriptions.last)
+        #expect(grown.pixels > held.pixels || grown.fps > held.fps)
+        #expect(second.holdsNothing)
+    }
+
+    @Test("a closed pan's subscriber letting go leaves the reopened pan's claim in place")
+    func retiringClaimLeavesTheReopenedClaim() async throws {
+        let rig = rig()
+        let (shared, make) = pans(rig)
+        let sentFirst = Sent()
+        let sentOld = Sent()
+        let sentNew = Sent()
+        let first = make(.first, sentFirst)
+        let old = make(PanIdentity(number: 2), sentOld)
+        first.receive(.mediaState(.connected))
+        old.receive(.mediaState(.connected))
+        #expect(await settle { sentFirst.subscriptions.count == 1 && sentOld.subscriptions.count == 1 })
+        let oldHeld = try #require(sentOld.subscriptions.last)
+        old.receive(result(for: oldHeld))
+        // Pan 2 closes, its endpoint not yet let go, and opens again at once.
+        old.close()
+        #expect(await settle { sentOld.operations.last == .unsubscribe(oldHeld.endpointId) })
+        let reopened = make(PanIdentity(number: 2), sentNew)
+        reopened.receive(.mediaState(.connected))
+        #expect(await settle { sentNew.subscriptions.count == 1 })
+        let full = try #require(shared.budget).applicationBytesPerSecond
+        let withBoth = try #require(shared.headroom(for: ObjectIdentifier(first))).applicationBytesPerSecond
+        // The old display goes: only its claim leaves; the reopened pan's ask still counts.
+        old.receive(released(oldHeld.endpointId, revision: oldHeld.revision &+ 1))
+        #expect(await settle { old.holdsNothing })
+        let left = try #require(shared.headroom(for: ObjectIdentifier(first))).applicationBytesPerSecond
+        #expect(left > withBoth)
+        #expect(left < full)
+        #expect(sentNew.subscriptions.last?.endpointId != oldHeld.endpointId)
     }
 }

@@ -187,15 +187,31 @@ extension FakeStation {
                                                .init(name: "id", value: .i64(count))])]
     }
 
+    /// The key ``refuseNext(_:reason:)`` takes to refuse the next `panKey`
+    /// write to `slice:<sliceId>`, with the reason given (empty for a Core
+    /// that gives none).
+    public static func panKeyRefusalKey(sliceId: Int) -> String {
+        "panKey:slice:\(sliceId)"
+    }
+
     /// The fake's answer to a `property.write` of a slice's `panKey` alone:
     /// the slice moves, a result when the write asks for one, then the
-    /// delta. Nil leaves any other write to the rest of the fake.
+    /// delta; or, refused (``panKeyRefusalKey(sliceId:)``), only the
+    /// refusing result. Nil leaves any other write to the rest of the fake.
     func slicePanReplies(_ write: LinkMessage.PropertyWrite) -> [LinkMessage]? {
         let prefix = "slice:"
         guard write.key.hasPrefix(prefix), let sliceId = Int64(write.key.dropFirst(prefix.count)),
               !write.properties.isEmpty, write.properties.allSatisfy({ $0.name == "panKey" }),
               case .utf8(let pan)? = write.properties.last?.value else {
             return nil
+        }
+        if let reason = takeRefusal(Self.panKeyRefusalKey(sliceId: Int(sliceId))) {
+            guard let writeId = write.writeId, writeId != 0 else {
+                return []
+            }
+            return [.propertyResult(LinkMessage.PropertyResult(key: write.key, writeId: writeId, results: [
+                .init(property: "panKey", accepted: false, reason: reason, value: nil),
+            ]))]
         }
         let moved = displayState.read { _, pans, _ -> Bool in
             guard pans[sliceId] != nil else {
