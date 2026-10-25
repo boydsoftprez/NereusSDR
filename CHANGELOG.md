@@ -291,6 +291,11 @@ still connect to each other as before.
   iPad S-meter's RX Mode; it never changes what a desktop window shows. Max
   Bin is grayed, with the reason, while the slice's pan is not drawn here.
   ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
+- NB Blank on the phone's waterfall now decides as the desktop does: it judges
+  each row by its middle level, so a loud SSB station on part of the band no
+  longer freezes the waterfall, and it hides at most two rows in a row. It also
+  starts fresh when you stop transmitting. The threshold setting is unchanged.
+  ([#626](https://github.com/boydsoftprez/NereusSDR/pull/626))
 
 ### Fixes
 
