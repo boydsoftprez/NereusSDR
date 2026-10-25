@@ -12,6 +12,10 @@
 // swallow the next tap; a quick tap on a keyed hold PTT unkeys (.unkey);
 // VoiceOver keys and unkeys the hold PTT with its action. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave re-review: a quick tap on the hold PTT
+// unkeys whenever the sheet shows it keyed (holdKeyed, keying included),
+// and both PTTs take a touch only inside their circle (inFace). J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import NereusLink
 import SwiftUI
@@ -97,7 +101,7 @@ struct PttButton: View {
         case .hold:
             face
                 .overlay {
-                    PttHoldSurface(enabled: linkUp, keyed: look == .keyed) { action in
+                    PttHoldSurface(enabled: linkUp, keyed: Self.holdKeyed(transmit.ptt)) { action in
                         Self.perform(action, on: transmit)
                         holdObserver?(action)
                     }
@@ -117,7 +121,7 @@ struct PttButton: View {
                     guard linkUp else {
                         return
                     }
-                    Self.accessibilityActivate(transmit, keyed: look == .keyed)
+                    Self.accessibilityActivate(transmit, keyed: Self.holdKeyed(transmit.ptt))
                 }
                 .accessibilityIdentifier("ptt")
         }
@@ -133,6 +137,21 @@ struct PttButton: View {
         case .unkey:
             transmit.unkeyFromHold()
         }
+    }
+
+    /// This device's key is on, on its way or ending: the Roundtable sheet
+    /// is keyed (its keyed foot and layout), and a quick tap on the hold PTT
+    /// unkeys. One state for both, so the PTT the sheet shows to unkey is
+    /// never inert while the key is still coming up.
+    static func holdKeyed(_ ptt: PttController.Snapshot) -> Bool {
+        ptt.transmitting
+    }
+
+    /// A point inside the round face of a PTT drawn in `bounds`: the
+    /// square's corners, over the waterfall, take no touch.
+    static func inFace(_ point: CGPoint, of bounds: CGRect) -> Bool {
+        let radius = min(bounds.width, bounds.height) / 2
+        return hypot(point.x - bounds.midX, point.y - bounds.midY) <= radius
     }
 
     /// What VoiceOver's activate does on the hold PTT.
@@ -533,6 +552,11 @@ final class PttHoldView: UIView {
         backgroundColor = .clear
     }
 
+    /// Only the round face takes a touch, not the square's corners.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        PttButton.inFace(point, of: bounds)
+    }
+
     required init?(coder: NSCoder) {
         nil
     }
@@ -703,6 +727,11 @@ final class PttTapView: UIView {
         super.init(frame: frame)
         isMultipleTouchEnabled = false
         backgroundColor = .clear
+    }
+
+    /// Only the round face takes a touch, not the square's corners.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        PttButton.inFace(point, of: bounds)
     }
 
     required init?(coder: NSCoder) {

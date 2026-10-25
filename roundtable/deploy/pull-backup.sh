@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # pull-backup.sh: copy the Roundtable server's newest nightly snapshot to
-# this machine, and keep the newest 7 here, none dated more than 7 days
+# this machine, and keep the newest 7 here, each dated less than 7 days
 # before today (design 6.2, C12).
 #
 # Run it on JJ's own machine, not on the server: a pull, so the server holds
@@ -80,7 +80,7 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-# The oldest date a copy here may carry: MAX_AGE_DAYS before today (UTC).
+# MAX_AGE_DAYS before today (UTC): a copy dated this day or earlier goes.
 # GNU date first, then BSD date (this Mac).
 cutoff_date() {
     date -u -d "${today} -${MAX_AGE_DAYS} days" +%Y-%m-%d 2>/dev/null \
@@ -88,7 +88,8 @@ cutoff_date() {
 }
 
 # Keep the newest 7 here (with the one pulled in a dry run counted), and
-# remove any copy dated more than 7 days before today whatever the count.
+# remove any copy dated 7 days or more before today whatever the count, so
+# none outlives the promise by a day.
 # It runs once: at the end of a good run, or on the way out of a failed one.
 part=""
 pruned=0
@@ -107,7 +108,7 @@ prune() {
         index=$(( index + 1 ))
         day="${old#roundtable-}"
         day="${day%.db}"
-        if (( index <= count - KEEP )) || { [[ -n "$cutoff" ]] && [[ "$day" < "$cutoff" ]]; }; then
+        if (( index <= count - KEEP )) || { [[ -n "$cutoff" ]] && ! [[ "$day" > "$cutoff" ]]; }; then
             if (( dry_run )); then
                 echo "Would remove: ${local_dir}/${old}"
             else

@@ -11,7 +11,7 @@
   the database through SQLite's online backup, written to
   `roundtable-YYYY-MM-DD.db` (the UTC date of `now`) in `dir`, keeping the
   newest 2. While the disk holding `dir` is under 15% free it is skipped
-  with a warning. Either way, every snapshot dated more than 2 days before
+  with a warning. Either way, every snapshot dated 2 days or more before
   the UTC date of `now` is removed first, so a skipped night never keeps an
   old copy past its time (design 6.2: backups age out within 7 days).
 
@@ -42,7 +42,7 @@ log = logging.getLogger("nereus_roundtable")
 RETENTION_MS = 365 * 86400000
 # Design 6.2 and C12.
 SNAPSHOTS_KEPT = 2
-# A snapshot dated more than this many days before today goes, written or not.
+# A snapshot dated this many days or more before today goes, written or not.
 SNAPSHOT_MAX_AGE_DAYS = 2
 SNAPSHOT_MIN_FREE = 0.15
 DISK_WARN_FREE = 0.20
@@ -117,14 +117,14 @@ class Retention:
 
     @staticmethod
     def _prune_by_age(directory: str, now: int) -> None:
-        """Every snapshot dated more than SNAPSHOT_MAX_AGE_DAYS before the
+        """Every snapshot dated SNAPSHOT_MAX_AGE_DAYS or more before the
         UTC date of `now`, whether or not tonight's is written."""
         today = _utc_date(now)
         for name in os.listdir(directory):
             if not SNAPSHOT_NAME.match(name):
                 continue
             day = _name_date(name)
-            if day is not None and (today - day).days > SNAPSHOT_MAX_AGE_DAYS:
+            if day is not None and (today - day).days >= SNAPSHOT_MAX_AGE_DAYS:
                 os.remove(os.path.join(directory, name))
 
     def snapshot(self, directory: str, now: int) -> Optional[str]:

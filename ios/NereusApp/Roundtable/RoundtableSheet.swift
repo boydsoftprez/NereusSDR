@@ -11,6 +11,9 @@
 // 2026-10-25: Roundtable fix wave: keyed while the first-run question is
 // open, the hold PTT shows at its foot; the TX line's clock is read in the
 // room's timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave re-review: keyed reads
+// PttButton.holdKeyed, the state the hold PTT's quick-tap unkey reads.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -58,7 +61,7 @@ struct RoundtableSheet: View {
 
     static let handleHeight: CGFloat = 22
 
-    private var keyed: Bool { transmit.ptt.transmitting }
+    private var keyed: Bool { PttButton.holdKeyed(transmit.ptt) }
     private var room: RoundtableModel.Room? { roundtable.room }
     private var roomId: String? { roundtable.shownRoomId }
     private var tunedHere: Bool { roundtable.tunedToShownRoom }

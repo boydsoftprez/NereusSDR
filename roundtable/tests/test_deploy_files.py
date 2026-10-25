@@ -354,13 +354,14 @@ def test_pull_backup_takes_the_newest_and_keeps_seven(tmp_path: Path) -> None:
     dry = subprocess.run(["bash", script, "--dry-run"], capture_output=True, text=True, env=env, timeout=60)
     assert dry.returncode == 0, dry.stdout + dry.stderr
     assert "Would pull it to" in dry.stdout
-    assert dry.stdout.count("Would remove:") == 2
+    assert dry.stdout.count("Would remove:") == 3
     assert tree(local) == before
     run = subprocess.run(["bash", script], capture_output=True, text=True, env=env, timeout=60)
     assert run.returncode == 0, run.stdout + run.stderr
     names = sorted(p.name for p in local.iterdir())
-    # The 8 here and the one pulled: the oldest 2 go, other files stay.
-    assert names == sorted([f"roundtable-2026-11-0{d}.db" for d in range(3, 9)] + ["roundtable-2026-11-10.db", "notes.txt"])
+    # The 8 here and the one pulled: the oldest 2 go by count, and 11-03,
+    # exactly 7 days before 11-10, goes by age; other files stay.
+    assert names == sorted([f"roundtable-2026-11-0{d}.db" for d in range(4, 9)] + ["roundtable-2026-11-10.db", "notes.txt"])
     assert filecmp.cmp(str(local / "roundtable-2026-11-10.db"), str(remote / "roundtable-2026-11-10.db"), shallow=False)
     # A second run has it already and removes nothing more.
     again = subprocess.run(["bash", script], capture_output=True, text=True, env=env, timeout=60)
@@ -405,19 +406,21 @@ def test_pull_backup_ages_out_old_copies_when_nothing_new_comes(tmp_path: Path) 
     script = str(DEPLOY / "pull-backup.sh")
     dry = subprocess.run(["bash", script, "--dry-run"], capture_output=True, text=True, env=env, timeout=60)
     assert dry.returncode == 0, dry.stdout + dry.stderr
-    assert dry.stdout.count("Would remove:") == 2
+    assert dry.stdout.count("Would remove:") == 3
     assert len(list(local.iterdir())) == 4
     run = subprocess.run(["bash", script], capture_output=True, text=True, env=env, timeout=60)
     assert run.returncode == 0, run.stdout + run.stderr
     assert "Already here" in run.stdout
-    # 11-04 is exactly 7 days before 11-11 and stays; older ones go.
-    assert sorted(p.name for p in local.iterdir()) == ["roundtable-2026-11-04.db", "roundtable-2026-11-05.db"]
+    # 11-04 is exactly 7 days before 11-11 and goes with the older ones;
+    # 11-05, 6 days before, stays.
+    assert sorted(p.name for p in local.iterdir()) == ["roundtable-2026-11-05.db"]
 
 
 def test_pull_backup_ages_out_old_copies_when_the_pull_fails(tmp_path: Path) -> None:
     local = tmp_path / "local"
     local.mkdir()
-    for day in (1, 2, 8, 9):
+    # 11-03 is exactly 7 days before 11-10 and goes; 11-04 stays.
+    for day in (1, 2, 3, 4, 8, 9):
         snapshot_db(local / f"roundtable-2026-11-0{day}.db", f"day {day}")
     (local / "notes.txt").write_text("kept", "utf-8")
     failing = tmp_path / "failing-ssh"
@@ -432,7 +435,12 @@ def test_pull_backup_ages_out_old_copies_when_the_pull_fails(tmp_path: Path) -> 
     run = subprocess.run(["bash", str(DEPLOY / "pull-backup.sh")], capture_output=True, text=True, env=env, timeout=60)
     assert run.returncode != 0
     assert "could not list" in run.stderr
-    assert sorted(p.name for p in local.iterdir()) == ["notes.txt", "roundtable-2026-11-08.db", "roundtable-2026-11-09.db"]
+    assert sorted(p.name for p in local.iterdir()) == [
+        "notes.txt",
+        "roundtable-2026-11-04.db",
+        "roundtable-2026-11-08.db",
+        "roundtable-2026-11-09.db",
+    ]
 
 
 # ---------------------------------------------------------------- website

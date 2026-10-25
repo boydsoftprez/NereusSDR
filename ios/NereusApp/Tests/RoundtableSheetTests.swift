@@ -9,6 +9,9 @@
 // keyed, the hold view pressed before it leaves, VoiceOver's activate, the
 // TX line's clock, and every roundtable verb before the first-run answer.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave re-review: the first-run PTT unkeys while
+// the key is still coming up, and a PTT takes a touch only in its circle.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -597,6 +600,89 @@ struct RoundtableSheetTests {
         await model.disconnect()
     }
 
+    @Test("the sheet is keyed and the hold PTT's quick tap unkeys on one state, keying included")
+    func holdKeyedIsTheSheetsKeyed() {
+        let states: [PttController.State] = [.idle, .keying, .keyed(since: .now), .unkeying, .ending, .waiting, .linkLost,
+                                              .heldElsewhere(device: "Radio", onAir: true)]
+        for state in states {
+            var ptt = PttController.Snapshot()
+            ptt.state = state
+            #expect(PttButton.holdKeyed(ptt) == ptt.transmitting, "\(state)")
+        }
+        var keying = PttController.Snapshot()
+        keying.state = .keying
+        #expect(PttButton.holdKeyed(keying))
+    }
+
+    @Test("while the key is still coming up, the first-run sheet's PTT shows and a quick tap on it unkeys")
+    func firstRunKeyingFootUnkeys() async throws {
+        let replies = HeldCommandReplies()
+        let (model, station) = try await connected(additions: [.remoteTx, .roundtable], replies: replies)
+        var scene = Self.boardScene()
+        scene.firstRunAnswered = false
+        try await station.deliverRoundtable(scene)
+        let rt = model.roundtable
+        #expect(await settle { rt.available && rt.room != nil && rt.askingFirstRun })
+        let transmit = model.main.transmit
+        // The Core keys, but its answer is held back: the PTT stays keying.
+        replies.hold("tx.key")
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state == .keying && station.keyed })
+        let (window, _) = try host(SheetHost(model: model, detent: .half))
+        defer { window.isHidden = true }
+        let hold = try #require(await settleView(PttHoldView.self, in: window))
+        #expect(await settle { hold.keyed })
+        hold.begin(at: CGPoint(x: hold.bounds.midX, y: hold.bounds.midY), time: ProcessInfo.processInfo.systemUptime)
+        hold.lift()
+        await transmit.settleHold()
+        await replies.release("tx.key")
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
+    @Test("a touch in the corner of either PTT's square keys nothing; one in its circle keys")
+    func pttTakesTouchesInItsCircleOnly() async throws {
+        #expect(PttButton.inFace(CGPoint(x: 38, y: 38), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
+        #expect(PttButton.inFace(CGPoint(x: 38, y: 0), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
+        #expect(!PttButton.inFace(CGPoint(x: 4, y: 4), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        let (window, _) = try host(ZStack {
+            Color.black
+            PttButton(transmit: transmit, linkUp: true)
+        })
+        defer { window.isHidden = true }
+        let tap = try #require(await settleView(PttTapView.self, in: window))
+        #expect(tap.bounds.width > 0)
+        /// Deliver a tap where UIKit would: to the view a hit test finds.
+        func touch(_ point: CGPoint) -> Bool {
+            let atWindow = tap.convert(point, to: window)
+            guard let hit = window.hitTest(atWindow, with: nil), hit === tap || hit.isDescendant(of: tap) else {
+                return false
+            }
+            tap.begin(at: point)
+            tap.lift()
+            return true
+        }
+        // The square's corners: no touch reaches the PTT, nothing keys.
+        let w = tap.bounds.width
+        for corner in [CGPoint(x: 3, y: 3), CGPoint(x: w - 3, y: 3), CGPoint(x: 3, y: w - 3), CGPoint(x: w - 3, y: w - 3)] {
+            #expect(!touch(corner), "\(corner)")
+        }
+        await TransmitScreenTests.barrier(model, station)
+        #expect(!transmit.ptt.transmitting && !station.keyed)
+        // Its center keys, and a second tap there unkeys.
+        #expect(touch(CGPoint(x: tap.bounds.midX, y: tap.bounds.midY)))
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        #expect(touch(CGPoint(x: tap.bounds.midX, y: tap.bounds.midY)))
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        // The hold PTT's view answers the same circle.
+        let holdView = PttHoldView(frame: CGRect(x: 0, y: 0, width: PttButton.holdDiameter, height: PttButton.holdDiameter))
+        #expect(!holdView.point(inside: CGPoint(x: 3, y: 3), with: nil))
+        #expect(holdView.point(inside: CGPoint(x: PttButton.holdDiameter / 2, y: PttButton.holdDiameter / 2), with: nil))
+        await model.disconnect()
+    }
+
     @Test("keyed with the first-run question open, the sheet shows a PTT, and a tap on it unkeys")
     func firstRunKeyedShowsAPtt() async throws {
         #expect(RoundtableSheet.showsKeyedFoot(asking: true, keyed: true, dialOn: false))
@@ -809,15 +895,23 @@ struct RoundtableSheetTests {
             roomRecords: [room: records], linkSince: now - 600_000, mentionCounts: [room: 1], sliceRooms: [0: room])
     }
 
-    private func connected(additions: FakeStation.Additions = [.remoteTx]) async throws -> (AppModel, FakeStation) {
+    private func connected(additions: FakeStation.Additions = [.remoteTx],
+                           replies: HeldCommandReplies? = nil) async throws -> (AppModel, FakeStation) {
         let defaults = try #require(UserDefaults(suiteName: "RoundtableSheetTests-\(UUID().uuidString)"))
         let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
                              displaySettings: BandDisplaySettingsStore(defaults: defaults),
                              platform: platform.platform)
         model.main.transmit.thisDeviceId = TransmitScreenTests.thisDeviceId
         let station = try FakeStation(additions: additions)
+        let factory = station.transportFactory
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: { endpoint, trust in
+            let inner = factory(endpoint, trust)
+            guard let replies else {
+                return inner
+            }
+            return ReplyHoldingTransport(inner: inner, replies: replies)
+        })
         #expect(await station.waitUntilLive())
         await station.deliver(.objectCreate(LinkMessage.ObjectCreate(
             key: "txState", className: "TransmitState",
