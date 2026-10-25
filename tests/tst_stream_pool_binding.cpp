@@ -16,6 +16,11 @@
 // 2026-10-12: an Anvelina Pro 3's third stream is routed from DDC5.
 // J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude
 // Code.
+// 2026-10-25: a slice moved to a stream at another rate is fed that stream
+// only once its channel runs at the stream's block, a binding published in
+// step never overtakes one riding the geometry barrier, a removal reaches
+// the worker, and a single-rate bind still posts no barrier. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QRegularExpression>
@@ -31,6 +36,7 @@
 #include <vector>
 #include "core/AppSettings.h"
 #include "core/DdcAssignment.h"
+#include "core/DspControlThread.h"
 #include "core/RadioDiscovery.h"
 #include "core/P1RadioConnection.h"
 #include "core/ReceiverManager.h"
@@ -142,11 +148,155 @@ struct RestartedP2 {
     int id {-1};
 };
 
+// 2026-10-25: a Protocol 2 radio with real WDSP channels, the DSP worker on
+// its own thread fed through ReceiverManager's stamped signal, and the
+// receive lane. Declaration order is teardown order in reverse: the worker
+// goes after its thread has stopped, the codec after the model.
+struct LaneRig {
+    P2CodecSaturn codec;
+    RadioModel model;
+    WdspEngine* engine {nullptr};
+    QThread dspThread;
+    std::unique_ptr<RxDspWorker> worker;
+    // What the worker did, counted on its own thread as it did it.
+    std::atomic<int> drainedStream[4] {};
+    std::atomic<int> watchedSlice {-1};
+    std::atomic<int> watchedChunks {0};
+    std::atomic<int> watchedMismatched {0};
+    std::atomic<int> watchedAtStreamBlock {0};
+    std::atomic<int> batches {0};
+
+    ~LaneRig()
+    {
+        model.waitForReceiveLaneForTest(10000);
+        model.attachDspWorkerOnThreadForTest(nullptr, nullptr);
+        dspThread.quit();
+        dspThread.wait();
+    }
+
+    void feed(int stream, int samples)
+    {
+        emit model.receiverManager()->iqDataForReceiverStamped(
+            stream, oneChunk(samples), ReceiverManager::enqueueClockNs());
+    }
+};
+
+// A job that holds the receive lane until the test lets go. It waits at
+// most ten seconds, so a test that never releases it fails rather than
+// hanging; timedOut says it was the bound, not the test, that let go.
+struct LaneHold {
+    QSemaphore entered;
+    QSemaphore release;
+    std::atomic<bool> timedOut {false};
+};
+
+bool holdReceiveLane(RadioModel& model, LaneHold& hold)
+{
+    DspControlThread* const lane = model.receiveLane();
+    if (lane == nullptr) {
+        return false;
+    }
+    lane->post([&hold]() {
+        hold.entered.release();
+        if (!hold.release.tryAcquire(1, 10000)) {
+            hold.timedOut.store(true);
+        }
+    });
+    return hold.entered.tryAcquire(1, 10000);
+}
+
+// The worker's own binding for `stream`, read on its thread, sorted.
+QVector<int> workerStreamSlices(RxDspWorker* worker, int stream)
+{
+    QVector<int> out;
+    QMetaObject::invokeMethod(worker, [worker, stream, &out]() {
+        out = worker->streamSlicesForTest(stream);
+    }, Qt::BlockingQueuedConnection);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+QVector<int> sorted(QVector<int> v)
+{
+    std::sort(v.begin(), v.end());
+    return v;
+}
+
 } // namespace
 
 class TestStreamPoolBinding : public QObject {
     Q_OBJECT
 private:
+    // LaneRig's connect: the codec, the pool at 192 kHz, a channel per slice
+    // id, and the worker started on its thread and registered the way
+    // wireConnectionSignals registers it.
+    static void startLaneRig(LaneRig& r)
+    {
+        r.model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        r.model.receiverManager()->setP2Codec(&r.codec);
+        r.engine = r.model.wdspEngine();
+        r.engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+        r.model.configureStreamPoolForTest(4, 4, 192000);
+        for (int st = 0; st < 4; ++st) {
+            r.model.receiverManager()->createReceiver();
+        }
+        r.model.openRxChannelPool(4, bufferSizeForRate(192000), 192000);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+
+        r.dspThread.setObjectName(QStringLiteral("TestDspThread"));
+        r.worker = std::make_unique<RxDspWorker>();
+        r.worker->setEngines(r.engine, r.model.audioEngine());
+        r.worker->setBufferSizes(bufferSizeForRate(192000), 64);
+        r.worker->moveToThread(&r.dspThread);
+        r.dspThread.start();
+        r.model.attachDspWorkerOnThreadForTest(r.worker.get(), &r.dspThread);
+        connect(r.model.receiverManager(), &ReceiverManager::iqDataForReceiverStamped,
+                r.worker.get(), &RxDspWorker::processStampedIqBatch,
+                Qt::QueuedConnection);
+        r.model.republishAllStreamBindings();
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+
+        LaneRig* const rig = &r;
+        RxDspWorker* const worker = r.worker.get();
+        WdspEngine* const engine = r.engine;
+        // Direct: these run on the worker's thread, right after the chunk's
+        // processIq, while nothing can re-rate the channel (every re-rate
+        // parks this worker first).
+        connect(worker, &RxDspWorker::chunkDrainedForStream, worker,
+                [rig](int stream, int) {
+            if (stream >= 0 && stream < 4) {
+                rig->drainedStream[stream].fetch_add(1);
+            }
+        }, Qt::DirectConnection);
+        connect(worker, &RxDspWorker::sliceProcessed, worker,
+                [rig, engine](int slice, int samples) {
+            if (slice != rig->watchedSlice.load()) {
+                return;
+            }
+            RxChannel* const ch = engine->rxChannel(slice);
+            const int block = ch != nullptr ? ch->wdspInputSize() : -1;
+            rig->watchedChunks.fetch_add(1);
+            if (samples != block) {
+                rig->watchedMismatched.fetch_add(1);
+            } else if (samples == bufferSizeForRate(192000)) {
+                rig->watchedAtStreamBlock.fetch_add(1);
+            }
+        }, Qt::DirectConnection);
+        connect(worker, &RxDspWorker::batchProcessed, worker,
+                [rig]() { rig->batches.fetch_add(1); }, Qt::DirectConnection);
+    }
+
+    // A slice added and tuned: addSlice seeds it on the active slice's
+    // frequency, and the retune places it.
+    static int tunedSlice(RadioModel& model, double hz)
+    {
+        const int id = model.addSlice();
+        if (id >= 0) {
+            model.sliceById(id)->setFrequency(hz);
+        }
+        return id;
+    }
+
     static void restartOnP2(RestartedP2& r, int savedRateHz)
     {
         r.model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
@@ -2215,6 +2365,202 @@ private slots:
         QCOMPARE(r.model.sliceById(r.id)->sampleRateHz(), 768000);
         r.model.flushPendingSettingsSave();
         QCOMPARE(r.model.sliceById(r.id)->savedSampleRateHz(Band::Band20m), 768000);
+    }
+
+    // ── 2026-10-25: the stream switch and the re-rate in one step ───────
+    //
+    // Thetis never lets the loop that runs a channel's exchange see a
+    // stream's channel set, drain size and channel input geometry apart:
+    // SetXcmInrate changes the drain size and every sub-receiver's input
+    // rate and size under the same pcm->update[stream] lock xcmaster holds
+    // around fexchange0 (ChannelMaster/cmaster.c:340-404, 457-507
+    // [v2.10.3.15]). Here the receive lane's geometry barrier is that
+    // lock, and a slice's new stream binding has to ride it.
+    //
+    // The Zephyrus G2E Core case: slice B moves from a 1536 kHz stream
+    // (block 2048) to a 192 kHz one (block 256) while chunks flow on both.
+    // The lane is held, so the re-rate waits; the worker must not hand B the
+    // new stream's chunks until B's channel runs at 256.
+    void a_slice_moved_to_a_slower_stream_waits_for_its_channels_block()
+    {
+        LaneRig r;
+        startLaneRig(r);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel& model = r.model;
+
+        const int a = tunedSlice(model, 14200000.0);
+        const int b = tunedSlice(model, 14250000.0);
+        const int c = tunedSlice(model, 7150000.0);
+        QVERIFY(a >= 0 && b >= 0 && c >= 0);
+        const int s0 = model.sliceById(a)->streamIndex();
+        const int s1 = model.sliceById(c)->streamIndex();
+        QVERIFY(s0 >= 0 && s1 >= 0 && s0 != s1 && s0 < 4 && s1 < 4);
+        QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        QVERIFY(model.setStreamSampleRate(s0, 1536000));
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        RxChannel* const rxB = r.engine->rxChannel(b);
+        QVERIFY(rxB != nullptr);
+        QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(1536000));
+        QCOMPARE(r.engine->rxChannel(c)->wdspInputSize(), bufferSizeForRate(192000));
+
+        // Both streams flowing; B is fed stream 0's blocks at its own size.
+        r.watchedSlice.store(b);
+        for (int i = 0; i < 4; ++i) {
+            r.feed(s0, bufferSizeForRate(1536000));
+            r.feed(s1, bufferSizeForRate(192000));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(r.drainedStream[s0].load() >= 4
+                                 && r.drainedStream[s1].load() >= 4, 10000);
+        QVERIFY(r.watchedChunks.load() >= 4);
+        QCOMPARE(r.watchedMismatched.load(), 0);
+        RxChannel::InputSizeMismatch before;
+        rxB->takeInputSizeMismatch(before);
+        rxB->takeOutputNonFiniteSamples();
+
+        // The move, with the lane held so the re-rate cannot land yet.
+        LaneHold hold;
+        QVERIFY(holdReceiveLane(model, hold));
+        model.sliceById(b)->setFrequency(7160000.0);
+        QCOMPARE(model.sliceById(b)->streamIndex(), s1);
+
+        const int s1Before = r.drainedStream[s1].load();
+        const int s0Before = r.drainedStream[s0].load();
+        for (int i = 0; i < 12; ++i) {
+            r.feed(s1, bufferSizeForRate(192000));
+        }
+        for (int i = 0; i < 3; ++i) {
+            r.feed(s0, bufferSizeForRate(1536000));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(r.drainedStream[s1].load() >= s1Before + 12
+                                 && r.drainedStream[s0].load() >= s0Before + 3, 10000);
+        const int mismatchedWhileHeld = r.watchedMismatched.load();
+
+        hold.release.release();
+        QVERIFY(model.waitForReceiveLaneForTest(10000));
+        QVERIFY2(!hold.timedOut.load(), "the lane hold timed out instead of being released");
+
+        // After the lane: B is fed the new stream at its new block.
+        const int s1After = r.drainedStream[s1].load();
+        for (int i = 0; i < 12; ++i) {
+            r.feed(s1, bufferSizeForRate(192000));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(r.drainedStream[s1].load() >= s1After + 12, 10000);
+
+        RxChannel::InputSizeMismatch taken;
+        rxB->takeInputSizeMismatch(taken);
+        const qint64 nonFinite = rxB->takeOutputNonFiniteSamples();
+        qInfo("slice B: %d chunks handed to its channel at another block while the lane "
+              "was held, %d in all; guard count %lld (last chunk %d against block %d); "
+              "%d chunks of 256 at block 256; non-finite output %lld",
+              mismatchedWhileHeld, r.watchedMismatched.load(),
+              static_cast<long long>(taken.chunks), taken.chunkSize, taken.wdspInputSize,
+              r.watchedAtStreamBlock.load(), static_cast<long long>(nonFinite));
+        QCOMPARE(r.watchedMismatched.load(), 0);
+        QCOMPARE(taken.chunks, qint64(0));
+        QCOMPARE(nonFinite, qint64(0));
+        QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(192000));
+        QVERIFY(r.watchedAtStreamBlock.load() >= 1);
+    }
+
+    // B's move is out of step, so its binding rides the barrier; C then
+    // joins the same stream in step. The in-step binding ({B, C}) is a
+    // receive-lane job behind the barrier, so the barrier's {B} can never
+    // land after it and leave C unfed.
+    void an_in_step_binding_never_overtakes_the_barrier()
+    {
+        LaneRig r;
+        startLaneRig(r);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel& model = r.model;
+
+        const int a = tunedSlice(model, 14200000.0);
+        const int b = tunedSlice(model, 14250000.0);
+        const int c = tunedSlice(model, 3600000.0);
+        const int d = tunedSlice(model, 3610000.0);
+        QVERIFY(a >= 0 && b >= 0 && c >= 0 && d >= 0);
+        const int s0 = model.sliceById(a)->streamIndex();
+        QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        QCOMPARE(model.sliceById(d)->streamIndex(), model.sliceById(c)->streamIndex());
+        QVERIFY(model.setStreamSampleRate(s0, 1536000));
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        LaneHold hold;
+        QVERIFY(holdReceiveLane(model, hold));
+        model.sliceById(b)->setFrequency(7150000.0);
+        const int target = model.sliceById(b)->streamIndex();
+        QVERIFY(target >= 0 && target != s0);
+        QCOMPARE(r.engine->rxChannel(b)->wdspInputSize(), bufferSizeForRate(1536000));
+        model.sliceById(c)->setFrequency(7155000.0);
+        QCOMPARE(model.sliceById(c)->streamIndex(), target);
+
+        hold.release.release();
+        QVERIFY(model.waitForReceiveLaneForTest(10000));
+        QVERIFY2(!hold.timedOut.load(), "the lane hold timed out instead of being released");
+
+        QCOMPARE(sorted(model.slicesOnStream(target)), sorted(QVector<int>{b, c}));
+        QCOMPARE(workerStreamSlices(r.worker.get(), target), sorted(QVector<int>{b, c}));
+        QCOMPARE(workerStreamSlices(r.worker.get(), s0), QVector<int>{a});
+    }
+
+    // A slice removed from a stream it shared leaves the worker's binding
+    // for that stream once the lane has drained.
+    void a_removed_slice_leaves_the_workers_binding()
+    {
+        LaneRig r;
+        startLaneRig(r);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel& model = r.model;
+
+        const int a = tunedSlice(model, 14200000.0);
+        const int b = tunedSlice(model, 14210000.0);
+        QVERIFY(a >= 0 && b >= 0);
+        const int s0 = model.sliceById(a)->streamIndex();
+        QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QCOMPARE(workerStreamSlices(r.worker.get(), s0), sorted(QVector<int>{a, b}));
+
+        model.removeSlice(b);
+        QVERIFY(model.sliceById(b) == nullptr);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(workerStreamSlices(r.worker.get(), s0), QVector<int>{a});
+    }
+
+    // On a radio where every stream runs at one rate a bind is in step: no
+    // barrier, so the worker's feed is never quiesced and its partial chunk
+    // survives (a barrier's resetAccumulator would drop it), and the binding
+    // still reaches the worker.
+    void a_single_rate_bind_posts_no_barrier_and_still_binds()
+    {
+        LaneRig r;
+        startLaneRig(r);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel& model = r.model;
+
+        const int a = tunedSlice(model, 14200000.0);
+        QVERIFY(a >= 0);
+        const int s0 = model.sliceById(a)->streamIndex();
+        QVERIFY(s0 >= 0 && s0 < 4);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        const int half = bufferSizeForRate(192000) / 2;
+        const int batchesBefore = r.batches.load();
+        r.feed(s0, half);
+        QTRY_VERIFY_WITH_TIMEOUT(r.batches.load() >= batchesBefore + 1, 10000);
+        const int drainedBefore = r.drainedStream[s0].load();
+
+        const int b = tunedSlice(model, 14210000.0);
+        QVERIFY(b >= 0);
+        QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QCOMPARE(workerStreamSlices(r.worker.get(), s0), sorted(QVector<int>{a, b}));
+
+        // The other half completes the chunk the worker kept.
+        const int batchesMid = r.batches.load();
+        r.feed(s0, half);
+        QTRY_VERIFY_WITH_TIMEOUT(r.batches.load() >= batchesMid + 1, 10000);
+        QCOMPARE(r.drainedStream[s0].load(), drainedBefore + 1);
     }
 };
 
