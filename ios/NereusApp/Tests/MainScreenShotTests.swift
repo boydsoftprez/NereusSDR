@@ -29,6 +29,9 @@ struct MainScreenShotTests {
         let rxPanelOpen: Bool
         /// Sideways: the band column's open menu, or the Display pill (R-IOS-58).
         var columnMenu: BandColumnMenu? = nil
+        /// Sideways with the pill: its rows take the pill's height with the
+        /// footer last among them; a second shot scrolls to that footer.
+        var pillScrolls = false
     }
 
     @Test("the main screen listening, upright and sideways, with the RX panel and the sound notice")
@@ -113,8 +116,8 @@ struct MainScreenShotTests {
             try await shoot(Screen(name: "sideways-column-\(name)", sideways: true, rxPanelOpen: false, columnMenu: menu),
                             model: model)
         }
-        try await shoot(Screen(name: "sideways-column-pill", sideways: true, rxPanelOpen: false, columnMenu: .display),
-                        model: model)
+        try await shoot(Screen(name: "sideways-column-pill", sideways: true, rxPanelOpen: false, columnMenu: .display,
+                               pillScrolls: true), model: model)
         await model.disconnect()
     }
 
@@ -186,15 +189,44 @@ struct MainScreenShotTests {
         try await ShotWait.requireBandShown(band, in: window, after: bandDraw)
         #expect(band.markers.count == 2)
 
+        try write(window, name: screen.name)
+        if screen.pillScrolls {
+            // The pill sits right of the two columns; its rows scroll under its title.
+            let pillLeft = 62 + BandColumnLayout.origin + BandColumnLayout.columnWidth(columns: 2)
+            let rows = try #require(Self.scrollViews(in: window).first {
+                $0.convert($0.bounds, to: window).minX >= pillLeft
+                    && $0.contentSize.height > $0.bounds.height + 1
+            })
+            // The rows keep the pill's height under its title, about 150 of
+            // its 174 points; a pinned footer left them about 75.
+            #expect(rows.bounds.height > 140)
+            rows.setContentOffset(CGPoint(x: 0, y: rows.contentSize.height - rows.bounds.height), animated: false)
+            try? await Task.sleep(for: .milliseconds(300))
+            try write(window, name: "\(screen.name)-scrolled")
+        }
+    }
+
+    private func write(_ window: UIWindow, name: String) throws {
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
            let data = image.pngData() {
-            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(screen.name).png")
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
             try data.write(to: url)
             print("Wrote \(url.path)")
         }
+    }
+
+    private static func scrollViews(in view: UIView) -> [UIScrollView] {
+        var found: [UIScrollView] = []
+        if let scroll = view as? UIScrollView {
+            found.append(scroll)
+        }
+        for subview in view.subviews {
+            found += scrollViews(in: subview)
+        }
+        return found
     }
 }
 

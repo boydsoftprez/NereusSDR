@@ -31,10 +31,12 @@ struct IPadShotTests {
         /// With two pans, the pan whose column has `columnMenu` open.
         var columnPan: PanIdentity = .first
         var displayTab: DisplayPillTab = .spectrum
+        /// On its side, a window shorter than the screen (Stage Manager).
+        var height: CGFloat? = nil
 
         /// The 11-inch iPad's screen, either way up.
         var size: CGSize {
-            onItsSide ? CGSize(width: 1210, height: 834) : CGSize(width: 834, height: 1210)
+            onItsSide ? CGSize(width: 1210, height: height ?? 834) : CGSize(width: 834, height: 1210)
         }
 
         /// The band's width in the layout, in points.
@@ -175,6 +177,14 @@ struct IPadShotTests {
         #expect(model.main.toolbarPan == second)
         try await shootPans(Screen(name: "ipad-upright-two-pans-pill-2", onItsSide: false, columnShown: true,
                                    columnMenu: .display, columnPan: second), model: model, touched: second)
+        // L3: in a short window Pan 2's flag, tuned near the band's left,
+        // reaches down into the PTT's row; the PTT keeps right of it.
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:\(sliceId)", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_227_500)),
+        ])))
+        #expect(await settle(seconds: 30) { pan2.slices.entries.first?.slice.frequencyHz == 7_227_500 })
+        try await shootPans(Screen(name: "ipad-two-pans-ptt-past-pan-2-flag", onItsSide: true, columnShown: true,
+                                   height: 600), model: model, touched: second, pttClearOf: "flagB")
         await model.disconnect()
     }
 
@@ -302,8 +312,17 @@ struct IPadShotTests {
     }
 
     /// Draws the two pans with `touched` the pan last touched, each band fed.
-    private func shootPans(_ screen: Screen, model: AppModel, touched: PanIdentity) async throws {
+    /// With `pttClearOf`, a flag's accessibility identifier, the flag must
+    /// reach the PTT's row and the PTT must not cover it.
+    private func shootPans(_ screen: Screen, model: AppModel, touched: PanIdentity,
+                           pttClearOf flagId: String? = nil) async throws {
         model.main.panStack.lastTouched = touched
+        // SwiftUI builds its accessibility elements only with accessibility on (SetupTypedEntryTests).
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        if flagId != nil {
+            SetupTypedEntryTests.setApplicationAccessibility(true)
+        }
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: CGPoint(x: 0, y: screen.onItsSide ? 120 : 0), size: screen.size)
@@ -329,6 +348,18 @@ struct IPadShotTests {
             let drawn = try await ShotWait.requireBandLaidOut(band, in: window)
             BandFlagShotTests.feed(band, width: drawn.requestedPixels, lines: Int(screen.size.height * 2))
             try await ShotWait.requireBandShown(band, in: window, after: drawn)
+        }
+        if let flagId {
+            let flag = await settleElement(seconds: 10, flagId, in: window)
+            let ptt = await settleElement(seconds: 10, "ptt", in: window)
+            #expect(flag != nil && ptt != nil)
+            if let flag, let ptt {
+                let flagFrame = flag.accessibilityFrame
+                let pttFrame = ptt.accessibilityFrame
+                // The flag reaches the PTT's row, so the check means something.
+                #expect(flagFrame.maxY > pttFrame.minY && flagFrame.minY < pttFrame.maxY)
+                #expect(!flagFrame.intersects(pttFrame))
+            }
         }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)

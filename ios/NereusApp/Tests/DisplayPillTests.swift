@@ -58,6 +58,14 @@ struct DisplayPillTests {
                                                          in: try Self.description()))
         #expect(clear.kind == .button)
         #expect(DisplayPillReasons.noPicture == "No picture is chosen, so there is nothing to clear.")
+        // Greyed Clear always says why: the desktop's words first, then a Core that does not describe it.
+        #expect(DisplayPillReasons.clear(editable: true, described: true, picture: false) == DisplayPillReasons.noPicture)
+        #expect(DisplayPillReasons.clear(editable: true, described: false, picture: false)
+                == DisplayPillReasons.noPicture)
+        #expect(DisplayPillReasons.clear(editable: true, described: false, picture: true) == "Needs a newer Core")
+        #expect(DisplayPillReasons.clear(editable: true, described: true, picture: true) == nil)
+        // The whole row greyed shows the row's own reason, not a second one.
+        #expect(DisplayPillReasons.clear(editable: false, described: false, picture: true) == nil)
     }
 
     // MARK: The tables

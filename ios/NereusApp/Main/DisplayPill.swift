@@ -334,8 +334,8 @@ struct DisplayPill: View {
         }
     }
 
-    /// Reset this pan and Setup defaults, pinned at the pill's foot while
-    /// its rows scroll (the board's `.dp-pill .dp-foot`).
+    /// Reset this pan and Setup defaults at the pill's foot (the board's
+    /// `.dp-pill .dp-foot`), pinned while its rows scroll where it has room.
     private func footer(chrome: Bool) -> AnyView? {
         guard let source = main.displayPillSource else {
             return nil

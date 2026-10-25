@@ -297,6 +297,20 @@ enum DisplayPillReasons {
     static let blankingOff = "NB Blank is off, so there is no threshold to set."
     // From src/gui/SpectrumOverlayPanel.cpp:2710 (Clear greyed with no picture chosen)
     static let noPicture = "No picture is chosen, so there is nothing to clear."
+    /// Why Clear is greyed while the Picture row itself is not: the
+    /// desktop's words with no picture chosen; else, from a Core that does
+    /// not describe Clear, that it needs a newer one, as a row the Core
+    /// does not describe says (``DisplayPillMissingRow``). Nil while Clear
+    /// can act, or while the whole row is greyed with its own reason.
+    static func clear(editable: Bool, described: Bool, picture: Bool) -> String? {
+        guard editable else {
+            return nil
+        }
+        if !picture {
+            return noPicture
+        }
+        return described ? nil : SetupControlDispatcher.needsNewerCoreReason
+    }
     // From src/gui/SpectrumOverlayPanel.cpp:2683
     static let fillOff = "Fill is off."
     // From src/gui/SpectrumOverlayPanel.cpp:2713 and :2717
@@ -714,8 +728,10 @@ struct DisplayPillSettingLine: View {
             }
             .frame(minHeight: 30)
             reason(state)
-            if state.editable, !picture {
-                DisplayPillReason(text: DisplayPillReasons.noPicture)
+            if let why = DisplayPillReasons.clear(editable: state.editable, described: clear != nil,
+                                                  picture: picture) {
+                DisplayPillReason(text: why)
+                    .accessibilityIdentifier("displayPill.\(DisplayPillRows.clearPictureKey).reason")
             }
         }
         .accessibilityIdentifier("displayPill.\(key)")

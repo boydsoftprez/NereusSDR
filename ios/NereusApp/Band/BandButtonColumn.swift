@@ -90,6 +90,17 @@ enum BandColumnLayout {
         max(60, bandHeight - 2 * origin)
     }
 
+    /// Where the pan at `index` of `count` starts down a band `bandHeight`
+    /// tall, as ``PanStack`` lays them: equal shares with a 1-point hairline
+    /// between each two.
+    static func panTop(index: Int, count: Int, bandHeight: CGFloat) -> CGFloat {
+        guard count > 1, index > 0 else {
+            return 0
+        }
+        let share = (bandHeight - CGFloat(count - 1)) / CGFloat(count)
+        return CGFloat(index) * (share + 1)
+    }
+
     /// The PTT's frame: at `home`, or just right of whatever of the column's
     /// frames reaches down to its row (the board's `shiftSideways`); then
     /// right of any full flag it would sit on, so it never covers a flag's

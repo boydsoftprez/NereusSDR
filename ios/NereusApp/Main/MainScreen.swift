@@ -196,9 +196,15 @@ struct MainScreen: View {
         let pttAt = BandColumnLayout.pttFrame(home: pttHome, avoid: boxes)
         let pttMoved = pttAt != pttHome
         let stacked = column && panStack.open.count > 1
-        // With the column, the PTT also keeps off a flag's words (R-IOS-58).
-        // Pan 1's flags are in the band's space only while it is alone.
-        let pttFlags = column && !stacked ? main.slices : nil
+        // With the column, the PTT also keeps off a flag's words (R-IOS-58):
+        // Pan 1's alone, or with the iPad's pans stacked those of the pan at
+        // the foot, where the PTT sits, moved down by that pan's top.
+        let footPan = panStack.open.last ?? .first
+        let pttFlags = column ? (stacked ? main.controls(for: footPan).band.slices : main.slices) : nil
+        let pttFlagsTop = stacked
+            ? BandColumnLayout.panTop(index: panStack.open.count - 1, count: panStack.open.count,
+                                      bandHeight: bandSize.height)
+            : 0
         // Two columns of four where one does not fit (DC14); the chip keeps right of them.
         let columnWidth = BandColumnLayout.columnWidth(
             columns: columnFolded || stacked ? 1 : BandColumnLayout.columns(bandHeight: bandSize.height))
@@ -225,7 +231,7 @@ struct MainScreen: View {
                                      spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                      leadingInset: sideways ? leadingInset : 0)
             }
-            PttPlace(flags: pttFlags, home: pttHome, boxes: boxes) { placed in
+            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes) { placed in
                 let moved = placed != pttHome
                 keyedOverlay(sideways: sideways, avoid: boxes + (moved ? [placed] : []), movedPtt: moved ? placed : nil)
             }
@@ -257,7 +263,7 @@ struct MainScreen: View {
                                  })
                     .environment(\.displayPeek, $displayPeek)
             }
-            PttPlace(flags: pttFlags, home: pttHome, boxes: boxes) { placed in
+            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes) { placed in
                 PttButton(transmit: transmit, linkUp: app.connection == .connected)
                     .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0) + (placed.minX - pttHome.minX))
                     .padding(.bottom, PttButton.bottomInset)
@@ -595,13 +601,15 @@ struct MainScreen: View {
 /// not the whole screen.
 private struct PttPlace<Content: View>: View {
     let flags: BandSlicesModel?
+    /// Where the flags' pan starts down the band: 0 but for a stacked pan.
+    var flagsTop: CGFloat = 0
     let home: CGRect
     let boxes: [CGRect]
     @ViewBuilder let content: (CGRect) -> Content
 
     var body: some View {
         if let flags {
-            Following(slices: flags, home: home, boxes: boxes, content: content)
+            Following(slices: flags, top: flagsTop, home: home, boxes: boxes, content: content)
         } else {
             content(BandColumnLayout.pttFrame(home: home, avoid: boxes))
         }
@@ -609,12 +617,14 @@ private struct PttPlace<Content: View>: View {
 
     private struct Following: View {
         @ObservedObject var slices: BandSlicesModel
+        let top: CGFloat
         let home: CGRect
         let boxes: [CGRect]
         let content: (CGRect) -> Content
 
         var body: some View {
-            content(BandColumnLayout.pttFrame(home: home, avoid: boxes, flags: slices.flagRects))
+            content(BandColumnLayout.pttFrame(home: home, avoid: boxes,
+                                              flags: slices.flagRects.map { $0.offsetBy(dx: 0, dy: top) }))
         }
     }
 }

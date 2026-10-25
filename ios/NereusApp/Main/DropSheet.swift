@@ -14,12 +14,14 @@ enum OpenSheet: String, Equatable {
 /// A sheet dropped under the toolbar over the band, as the board's
 /// `.dropsheet` draws it (picture 25): the applet title row with its words
 /// at the right, then the body, scrolling when the band is too short for it,
-/// and a footer, when given, pinned under the body (the Display pill's
-/// Reset this pan and Setup defaults, as the board's `.dp-foot`).
+/// and a footer, when given, under the body (the Display pill's Reset this
+/// pan and Setup defaults, as the board's `.dp-foot`): pinned while the
+/// body scrolls where the sheet has room for rows above it, else last in
+/// the scrolling body.
 struct DropSheet<Trailing: View, Content: View>: View {
     let title: String
     let accessibilityIdentifier: String
-    /// Pinned at the sheet's foot while the body scrolls.
+    /// At the sheet's foot: pinned while the body scrolls, where there is room.
     var footer: AnyView? = nil
     @ViewBuilder let trailing: () -> Trailing
     @ViewBuilder let content: () -> Content
@@ -49,17 +51,38 @@ struct DropSheet<Trailing: View, Content: View>: View {
             .overlay(alignment: .bottom) {
                 Rectangle().fill(ChromeColours.titleBorder).frame(height: 1)
             }
-            ViewThatFits(in: .vertical) {
-                body(content)
-                ScrollView {
-                    body(content)
-                }
-            }
             if let footer {
-                footer
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Everything in view when it fits; else the footer pinned
+                // while the rows scroll, where the sheet leaves the rows
+                // `pinnedFooterMinimumBody`; else, on a short band (the
+                // phone held sideways), the footer last in the scrolling
+                // rows, so the rows keep the sheet's height.
+                ViewThatFits(in: .vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        body(content)
+                        placed(footer)
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        ScrollView {
+                            body(content)
+                        }
+                        .frame(idealHeight: Self.pinnedFooterMinimumBody)
+                        placed(footer)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            body(content)
+                            placed(footer)
+                        }
+                    }
+                }
+            } else {
+                ViewThatFits(in: .vertical) {
+                    body(content)
+                    ScrollView {
+                        body(content)
+                    }
+                }
             }
         }
         .background(clear ? Color.clear : ChromeColours.sheet)
@@ -74,6 +97,22 @@ struct DropSheet<Trailing: View, Content: View>: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    /// The least height the rows keep above a pinned footer: the pill's
+    /// tabs and three of its 30-point lines with their 9-point gaps, inside
+    /// the body's 10-point padding (30 + 3 x 30 + 3 x 9 + 2 x 10 = 167),
+    /// rounded up. Below that the footer would leave a header and no row
+    /// (the phone held sideways, its pill about 174 points tall), so it scrolls with
+    /// the rows instead; the iPad's pill and the upright phone's sheet keep
+    /// it pinned.
+    static var pinnedFooterMinimumBody: CGFloat { 170 }
+
+    private func placed(_ footer: AnyView) -> some View {
+        footer
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func body(_ content: () -> Content) -> some View {
