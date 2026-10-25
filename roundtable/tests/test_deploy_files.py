@@ -460,3 +460,12 @@ def test_api_page_is_published() -> None:
     page = (ROOT / "website" / "public" / "roundtable" / "api.html").read_text("utf-8")
     assert "<title>Roundtable protocol version 1 | NereusSDR</title>" in page
     assert '<link rel="canonical" href="https://nereussdr.com/roundtable/api.html">' in page
+
+
+def test_public_page_links_the_api_page() -> None:
+    # The API page is in no menu of the manual and guides; the public
+    # Roundtable page links it, beside Your station key.
+    page = (ROOT / "roundtable" / "server" / "static" / "index.html").read_text("utf-8")
+    assert '<a class="btn keybtn" href="https://nereussdr.com/roundtable/api.html">Roundtable protocol</a>' in page
+    for path in (ROOT / "website" / "public").rglob("*.html"):
+        assert "<summary>Reference</summary>" not in path.read_text("utf-8"), path

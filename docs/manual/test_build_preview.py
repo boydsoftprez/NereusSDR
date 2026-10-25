@@ -188,6 +188,11 @@ class RendererTest(unittest.TestCase):
             self.assertFalse(stale.exists())
             manual = Page((output / 'manual/index.html').read_text())
             guide = Page((output / 'guides/tx-eq-cfc.html').read_text())
+            # The API page is in no menu (the public Roundtable page links it).
+            for page in ('manual/index.html', 'guides/tx-eq-cfc.html', 'roundtable/api.html'):
+                text = (output / page).read_text()
+                self.assertNotIn('<summary>Reference</summary>', text, page)
+                self.assertNotIn('/roundtable/api.html', Page(text).links, page)
             self.assertIn('/guides/tx-eq-cfc.html?q=1#settings', manual.links)
             self.assertIn('/manual/01-start.html?view=full#start-here', guide.links)
             self.assertIn('/manual/authoring.md', guide.links)

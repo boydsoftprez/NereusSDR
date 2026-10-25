@@ -151,8 +151,7 @@ for index,p in enumerate(files):
     if args.website:
         howtos=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in files[len(manual_files):] if q not in references)
         navigation += f'<details open><summary>How-to guides</summary>{howtos}</details>'
-        refs=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in references)
-        navigation += f'<details open><summary>Reference</summary>{refs}</details>'
+        # The Roundtable API page is in no menu: the public Roundtable page links it.
     prev='' if index==0 or p not in manual_files else f'<a href="{page_link(files[index-1])}">Previous chapter</a>'
     nxt='' if index>=len(manual_files)-1 else f'<a href="{page_link(files[index+1])}">Next chapter</a>'
     styles = '<link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css">' if args.website else '<link rel="stylesheet" href="site.css"><link rel="stylesheet" href="manual.css">'
