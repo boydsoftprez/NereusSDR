@@ -28,7 +28,7 @@ struct PanSheet: View {
             }
         } content: {
             SheetCaption("Band:")
-            bandGrid
+            BandSelectGrid(model: model)
             if model.sliceLetter != nil {
                 SheetNote("A band opens where slice \(letter) last was on it: its frequency, mode and filter.")
             }
@@ -59,30 +59,6 @@ struct PanSheet: View {
 
     private var letter: String {
         model.sliceLetter ?? "A"
-    }
-
-    @ViewBuilder
-    private var bandGrid: some View {
-        switch model.bandGrid {
-        case .needsNewerCore:
-            PanelButton(label: CatalogFeed.needsNewerCoreText, lit: false, style: .blue, disabled: true) {}
-                .accessibilityIdentifier("bandGridNeedsNewerCore")
-            if model.sliceLetter == nil {
-                SheetNote(model.bandUnavailableReason)
-            }
-        case .buttons(let buttons, let enabled):
-            SheetGrid(columns: 4) {
-                ForEach(buttons) { button in
-                    PanelButton(label: button.label, lit: button.lit, style: .blue, disabled: !enabled) {
-                        model.selectBand(button.id)
-                    }
-                    .accessibilityHint(enabled ? "" : model.bandUnavailableReason)
-                }
-            }
-            if !enabled {
-                SheetNote(model.bandUnavailableReason)
-            }
-        }
     }
 
     private var extendedView: some View {

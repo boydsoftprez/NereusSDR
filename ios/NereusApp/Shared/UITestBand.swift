@@ -25,10 +25,11 @@ enum UITestBand {
     /// Beside ``argument``: two spots on the band, one the Core can place (330 degrees) and one it cannot.
     static let spotsArgument = "-NereusSpotFixture"
     /// Beside ``argument`` and ``displayEnvironment``: the band menu's
-    /// Core. Slice A is on 40 m, the Core takes notch requests (version 1)
+    /// Core. Slice A is on 40 m, the Core takes notch requests (version 2)
     /// and the link is up for settings and commands: each settings write
-    /// comes back as the Core's value, and each `notch.add` is refused with
-    /// its own arguments in the reason, so the UI test reads what was sent.
+    /// comes back as the Core's value, and each `notch.add`, and the band
+    /// column's `addSliceOnPan` and `notch.addAtSlice`, is refused with its
+    /// own arguments in the reason, so the UI test reads what was sent.
     static let bandMenuArgument = "-NereusBandMenuFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
@@ -78,7 +79,8 @@ enum UITestBand {
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
         ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : [])
           + (display == nil ? [] : displayCapabilities)
-          + (bandMenu ? [.init(ordinal: 8, name: PanSheetModel.notchControlCapability, value: .i64(1))] : []))))
+          + (bandMenu ? [.init(ordinal: 8, name: PanSheetModel.notchControlCapability,
+                               value: .i64(PanSheetModel.notchAtSliceVersion))] : []))))
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -156,6 +158,8 @@ enum UITestBand {
         let settings = app.settings
         let commands = app.commands
         let notchVerb = PanSheetModel.addNotchAtVerb
+        let sliceVerb = PanSheetModel.addSliceVerb
+        let notchAtSliceVerb = PanSheetModel.addNotchVerb
         app.useBandFixtureCommandSender { [weak settings] message in
             switch message {
             case .settingsWrite(let write):
@@ -164,8 +168,9 @@ enum UITestBand {
                     settings?.handle(.message(.settingsValue(.init(key: write.key, origin: write.origin,
                                                                    properties: write.properties))))
                 }
-            case .commandInvoke(let invoke) where invoke.verb == notchVerb:
-                let reason = "UI fixture: " + notchText(invoke.args)
+            case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb].contains(invoke.verb):
+                let reason = "UI fixture: " + (invoke.verb == notchVerb ? notchText(invoke.args)
+                                                                        : argumentsText(invoke.verb, invoke.args))
                 Task {
                     await commands.handle(.message(.commandResult(.init(verb: invoke.verb, id: invoke.id,
                                                                         accepted: false, reason: reason,
@@ -179,6 +184,20 @@ enum UITestBand {
         settings.handle(.message(.authResult(.init(accepted: true, reason: "", retryable: false))))
         settings.handle(.message(.settingsSnapshot(.init(properties: []))))
         Task { await commands.handle(.stateChanged(.ready)) }
+    }
+
+    /// The band column's `addSliceOnPan` and `notch.addAtSlice` in words,
+    /// each argument as sent: `addSliceOnPan panId pan-0`.
+    private static func argumentsText(_ verb: String, _ args: [LinkMessage.PropertyEntry]) -> String {
+        let words = args.map { entry -> String in
+            switch entry.value {
+            case .utf8(let text): return "\(entry.name) \(text)"
+            case .i64(let value): return "\(entry.name) \(value)"
+            case .f64(let value): return "\(entry.name) \(value)"
+            default: return entry.name
+            }
+        }
+        return ([verb] + words).joined(separator: " ")
     }
 
     /// A `notch.add`'s arguments in words, for its refusal.

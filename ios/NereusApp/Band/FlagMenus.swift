@@ -226,6 +226,9 @@ struct FlagAntennaMenu: View {
     @ObservedObject var modes: ModesTabModel
     let entry: BandSlicesModel.Entry
     let large: Bool
+    /// What Done does where the menu is not a flag's: the band column's ANT
+    /// menu closes itself. Nil closes the flag's menu.
+    var done: (() -> Void)? = nil
 
     var body: some View {
         FlagMenuChrome.title(entry, "Antennas", large: large)
@@ -257,7 +260,13 @@ struct FlagAntennaMenu: View {
         } else {
             ProgressView().frame(maxWidth: .infinity, minHeight: 44)
         }
-        FlagMenuChrome.item("Done", large: large, identifier: "flagAntennasDone") { controls.close() }
+        FlagMenuChrome.item("Done", large: large, identifier: "flagAntennasDone") {
+            if let done {
+                done()
+            } else {
+                controls.close()
+            }
+        }
     }
 
     /// Why BYPS cannot change: a radio without the relay, or the Core's reason.
@@ -614,7 +623,9 @@ private struct FlagFilterState: View {
 /// The VAX panel: Off and channels 1 to 4, the one the Core feeds this
 /// slice to lit (its `vax` object's channel slices). The Core takes no
 /// channel choice from a phone, so the buttons are greyed with the reason.
-private struct FlagVaxSection: View {
+/// A flag's Audio panel shows it, and so does the band column's VAX menu
+/// for the active slice (R-IOS-58).
+struct FlagVaxSection: View {
     @ObservedObject var controls: FlagControls
     let entry: BandSlicesModel.Entry
 

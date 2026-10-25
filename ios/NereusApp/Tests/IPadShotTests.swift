@@ -26,6 +26,9 @@ struct IPadShotTests {
         let name: String
         let onItsSide: Bool
         let columnShown: Bool
+        /// The band column's open menu, or the Display pill (R-IOS-58).
+        var columnMenu: BandColumnMenu? = nil
+        var displayTab: DisplayPillTab = .spectrum
 
         /// The 11-inch iPad's screen, either way up.
         var size: CGSize {
@@ -73,6 +76,75 @@ struct IPadShotTests {
             try await shoot(screen, model: model)
         }
         await model.disconnect()
+    }
+
+    /// R-IOS-58, DC7, DC8: the band column at the band's top-left, on its
+    /// side and upright, with each of its menus open in turn and the Display
+    /// pill on each of its five tabs, on a Core that describes Display at
+    /// version 29 and opens bands for the phone; for comparing with the
+    /// board's iPad frames. The PTT and the keyed meters sit right of
+    /// whatever is open.
+    @Test("the band column on the iPad with each menu open and the pill on each tab",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          },
+          .timeLimit(.minutes(10)))
+    func bandColumnShots() async throws {
+        let suite = "IPadShotTests-column-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: [.bands, .bandSelect, .notchAtSlice])
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+        let band = model.main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        try await Self.describeDisplayPill(model, station)
+
+        try await shoot(Screen(name: "ipad-column", onItsSide: true, columnShown: true), model: model)
+        let menus: [(BandColumnMenu, String)] = [(.band, "band"), (.antenna, "antenna"), (.vax, "vax"),
+                                                 (.attenuator, "attenuator")]
+        for (menu, name) in menus {
+            try await shoot(Screen(name: "ipad-column-\(name)", onItsSide: true, columnShown: true, columnMenu: menu),
+                            model: model)
+            try await shoot(Screen(name: "ipad-upright-column-\(name)", onItsSide: false, columnShown: true,
+                                   columnMenu: menu), model: model)
+        }
+        for tab in DisplayPillTab.allCases {
+            try await shoot(Screen(name: "ipad-column-pill-\(tab.rawValue)", onItsSide: true, columnShown: true,
+                                   columnMenu: .display, displayTab: tab), model: model)
+        }
+        try await shoot(Screen(name: "ipad-upright-column-pill-spectrum", onItsSide: false, columnShown: true,
+                               columnMenu: .display), model: model)
+        await model.disconnect()
+    }
+
+    /// The Core describes Display at version 29 with display extras 4, as
+    /// DropSheetShotTests' pill shots have it, so the Display pill draws its
+    /// rows; waits until the pill has the description.
+    static func describeDisplayPill(_ model: AppModel, _ station: FakeStation) async throws {
+        var properties = model.mirror.capabilities.keys.sorted().compactMap { name -> LinkMessage.PropertyEntry? in
+            guard name != "setupDescriptionVersion", name != "displayExtrasVersion",
+                  let value = model.mirror.capabilities[name] else { return nil }
+            return LinkMessage.PropertyEntry(name: name, value: value.wireValue)
+        }
+        properties.append(.init(name: "setupDescriptionVersion", value: .i64(29)))
+        // A Core with media on sends display extras 4
+        // (src/core/session/StationServer.cpp:4776-4784).
+        properties.append(.init(name: "displayExtrasVersion", value: .i64(4)))
+        await station.deliver(.capabilities(LinkMessage.Capabilities(properties: properties)))
+        let json = try String(contentsOf: DisplayPillTests.setupFolder.appendingPathComponent("display.json"),
+                              encoding: .utf8)
+        await station.deliverSetup([(id: "display", json: json)])
+        let deadline = Date().addingTimeInterval(30)
+        while model.displayPill.description == nil, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(model.displayPill.description != nil)
     }
 
     /// R-IOS-52, W8: Setup on the iPad on its side, the list beside DSP's
@@ -186,7 +258,8 @@ struct IPadShotTests {
         // home indicator, and takes the iPad's own on-its-side safe area.
         window.frame = CGRect(origin: CGPoint(x: 0, y: screen.onItsSide ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
-        let root = IPadShotRoot(model: model, columnShown: screen.columnShown)
+        let root = IPadShotRoot(model: model, columnShown: screen.columnShown, columnMenu: screen.columnMenu,
+                                displayTab: screen.displayTab)
             .environment(\.horizontalSizeClass, .regular)
             .preferredColorScheme(.dark)
         let host = ShotHosting.host(root)
@@ -226,11 +299,14 @@ struct IPadShotTests {
 private struct IPadShotRoot: View {
     @ObservedObject var model: AppModel
     let columnShown: Bool
+    var columnMenu: BandColumnMenu?
+    var displayTab: DisplayPillTab = .spectrum
 
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                MainScreen(app: model, main: model.main, columnShown: columnShown)
+                MainScreen(app: model, main: model.main, displayTab: displayTab, columnShown: columnShown,
+                           columnMenu: columnMenu)
                 TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height, iPad: true)
             }
         }

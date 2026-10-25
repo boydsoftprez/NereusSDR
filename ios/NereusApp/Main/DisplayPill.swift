@@ -568,10 +568,12 @@ struct DisplayDropSheet: View {
     let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
     let onOpenPage: (String) -> Void
     var onOpen: (PanIdentity) -> Void = { _ in }
+    /// The pan the pill acts on: the toolbar's is Pan 1, a band column's its own pan.
+    var pan: PanIdentity = .first
 
     var body: some View {
         if source.description != nil {
-            DisplayPill(pan: .first, device: device, tab: $tab, main: main, core: main.coreDisplay,
+            DisplayPill(pan: pan, device: device, tab: $tab, main: main, core: main.coreDisplay,
                         onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen)
         } else {
             DisplaySheet(model: main.display, core: main.coreDisplay, topNote: Self.olderCoreNote,

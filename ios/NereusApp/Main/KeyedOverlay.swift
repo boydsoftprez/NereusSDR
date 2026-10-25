@@ -27,6 +27,13 @@ struct KeyedOverlay: View {
     /// The spectrum's share of the band, the pan's split.
     var spectrumShare: CGFloat = BandLayout.spectrumShare
     let sideways: Bool
+    /// What the band column has out on the band (the column, and its open
+    /// pill or menu), in the band's points: the gauges keep right of what
+    /// reaches their height (R-IOS-58, spec DC8).
+    var avoid: [CGRect] = []
+    /// Where the PTT sits when the column moved it (``BandColumnLayout``):
+    /// the gauges go above it when there is no room beside the column.
+    var movedPtt: CGRect?
 
     static let gaugesWidth: CGFloat = 330
 
@@ -46,7 +53,10 @@ struct KeyedOverlay: View {
             let usualTop = layout.waterfall.minY + (sideways ? 14 : 8)
             let height = panelHeight > 0 ? panelHeight : sideways ? 104 : 154
             let bottom = sideways ? proxy.size.height : PttButton.frame(bandSize: proxy.size, leadingInset: 0).minY - 8
-            let top = transmit.ptt.transmitting ? min(usualTop, max(0, bottom - height)) : usualTop
+            let keyedTop = transmit.ptt.transmitting ? min(usualTop, max(0, bottom - height)) : usualTop
+            let place = BandColumnLayout.keyedPlace(top: keyedTop, height: height, bandWidth: proxy.size.width,
+                                                    needed: Self.gaugesWidth, avoid: avoid, ptt: movedPtt)
+            let top = place.top
             VStack(spacing: 8) {
                 if transmit.ptt.transmitting {
                     gauges
@@ -63,7 +73,8 @@ struct KeyedOverlay: View {
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: place.alignLeading ? .leading : .center)
+            .padding(.leading, place.leading)
             .offset(y: top)
         }
         .onChange(of: transmit.ptt.transmitting) { _, keyed in if !keyed { editingSlot = nil } }

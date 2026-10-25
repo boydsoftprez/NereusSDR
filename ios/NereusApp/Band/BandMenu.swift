@@ -329,6 +329,8 @@ struct BandMenuLayer: View {
     let sideways: Bool
     var leadingInset: CGFloat = 0
     var trailingInset: CGFloat = 0
+    /// Where the PTT is when the band column moved it; nil at its home.
+    var ptt: CGRect? = nil
     let close: () -> Void
     let openDisplay: () -> Void
 
@@ -338,7 +340,7 @@ struct BandMenuLayer: View {
         GeometryReader { proxy in
             let origin = BandMenu.origin(finger: anchor.point, size: size, bandSize: proxy.size, sideways: sideways,
                                          leadingInset: leadingInset, trailingInset: trailingInset,
-                                         avoid: PttButton.frame(bandSize: proxy.size, leadingInset: leadingInset))
+                                         avoid: ptt ?? PttButton.frame(bandSize: proxy.size, leadingInset: leadingInset))
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())

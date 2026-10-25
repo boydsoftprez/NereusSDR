@@ -24,6 +24,11 @@ import SwiftUI
 /// in the middle, the band across the whole width, the panel inside the
 /// camera's side.
 ///
+/// On an iPad and on the phone held sideways the desktop's button column
+/// sits at the band's top-left (R-IOS-58, DC7, DC8, ``BandButtonColumn``):
+/// its menus and the Display pill open beside it, and the PTT and the keyed
+/// meters keep just right of what it has out.
+///
 /// On an iPad (spec section 5.6, D30, D31) the RX and TX panels don't slide
 /// in: on its side they sit in the applet column on the band's right, under
 /// the analog S-meter, and upright in three columns below the band
@@ -59,6 +64,15 @@ struct MainScreen: View {
     @State private var bandMenu: BandMenuAnchor?
     /// On an iPad on its side, the applet column shows (its corner button).
     @State private var columnShown: Bool
+    /// What the band's button column has open beside it, on the iPad and
+    /// sideways (R-IOS-58, DC7, DC8).
+    @State private var columnMenu: BandColumnMenu?
+    /// The button column is folded to its one button.
+    @State private var columnFolded = false
+    /// The column's frames on the band, the PTT and keyed meters keep clear of.
+    @State private var columnBoxes: [CGRect] = []
+    /// The band's size, for the PTT's place.
+    @State private var bandSize: CGSize = .zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
 
@@ -66,7 +80,7 @@ struct MainScreen: View {
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
          txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
-         columnShown: Bool = true,
+         columnShown: Bool = true, columnMenu: BandColumnMenu? = nil,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
@@ -83,6 +97,7 @@ struct MainScreen: View {
         _sheet = State(initialValue: sheet)
         _displayTab = State(initialValue: displayTab)
         _columnShown = State(initialValue: columnShown)
+        _columnMenu = State(initialValue: columnMenu)
     }
 
     var body: some View {
@@ -96,7 +111,7 @@ struct MainScreen: View {
                         toolbar(sideways: sideways, layout: layout)
                         ConnectionSummaryRow(app: app)
                         band(sideways: sideways, leadingInset: proxy.safeAreaInsets.leading,
-                             trailingInset: proxy.safeAreaInsets.trailing)
+                             trailingInset: proxy.safeAreaInsets.trailing, column: sideways)
                     }
                 case .column:
                     // The iPad on its side (D30): the band on the left, the applet column on the right.
@@ -104,7 +119,7 @@ struct MainScreen: View {
                         toolbar(sideways: true, layout: layout)
                         ConnectionSummaryRow(app: app)
                         HStack(spacing: 0) {
-                            band(sideways: true, leadingInset: 0, trailingInset: 0)
+                            band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
                                     .transition(.move(edge: .trailing))
@@ -116,7 +131,7 @@ struct MainScreen: View {
                     VStack(spacing: 0) {
                         toolbar(sideways: false, layout: layout)
                         ConnectionSummaryRow(app: app)
-                        band(sideways: false, leadingInset: 0, trailingInset: 0)
+                        band(sideways: false, leadingInset: 0, trailingInset: 0, column: true)
                         FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
                             .frame(height: IPadLayout.frontPanelHeight(underToolbar: proxy.size.height - Toolbar.height))
                     }
@@ -144,11 +159,12 @@ struct MainScreen: View {
     /// and the others) they fade with the band, so the cover's words, which
     /// already say the Core stops transmitting on its own, read alone.
     @ViewBuilder
-    private func keyedOverlay(sideways: Bool) -> some View {
+    private func keyedOverlay(sideways: Bool, avoid: [CGRect], movedPtt: CGRect?) -> some View {
         let overlay = KeyedOverlay(transmit: transmit, accessories: main.accessories, keyedMeters: main.keyedMeters,
                                    take: main.take, meters: main.band.catalog?.meters,
                                    showsStrip: main.band.settings.bandPlanStrip,
-                                   spectrumShare: main.band.shownSpectrumShare, sideways: sideways)
+                                   spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
+                                   avoid: avoid, movedPtt: movedPtt)
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
         } else {
@@ -156,8 +172,15 @@ struct MainScreen: View {
         }
     }
 
-    private func band(sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
+    /// The band and everything over it. `column` puts the desktop's button
+    /// column at its top-left (the iPad, and the phone held sideways); the
+    /// PTT and the keyed meters then keep just right of what it has out.
+    private func band(sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat, column: Bool) -> some View {
+        let pttHome = PttButton.frame(bandSize: bandSize, leadingInset: sideways ? leadingInset : 0)
+        let boxes = column ? columnBoxes : []
+        let pttAt = BandColumnLayout.pttFrame(home: pttHome, avoid: boxes)
+        let pttMoved = pttAt != pttHome
+        return ZStack(alignment: .topLeading) {
             bandLayers(sideways: sideways, leadingInset: sideways ? leadingInset : 0,
                        trailingInset: sideways ? trailingInset : 0)
             GeometryReader { proxy in
@@ -173,18 +196,36 @@ struct MainScreen: View {
                                      spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                      leadingInset: sideways ? leadingInset : 0)
             }
-            keyedOverlay(sideways: sideways)
+            keyedOverlay(sideways: sideways, avoid: boxes + (pttMoved ? [pttAt] : []), movedPtt: pttMoved ? pttAt : nil)
             SharingChip(subscriber: main.subscriber, transmit: transmit)
             .padding(.top, 6)
-            .padding(.leading, 8 + (sideways ? leadingInset : 0))
+            .padding(.leading, 8 + (sideways ? leadingInset : 0)
+                     + (column ? BandColumnLayout.origin + BandColumnLayout.columnWidth : 0))
             GeometryReader { proxy in
                 SessionNoteCard(session: app.longSession, sideways: sideways, bandSize: proxy.size,
                                 showsStrip: main.band.settings.bandPlanStrip,
                                 spectrumShare: main.band.shownSpectrumShare)
             }
             .allowsHitTesting(false)
+            if column {
+                BandButtonColumn(pan: .first, open: $columnMenu, folded: $columnFolded, main: main,
+                                 displayTab: $displayTab, leadingInset: sideways ? leadingInset : 0,
+                                 openSetup: {
+                                     columnMenu = nil
+                                     openSetup()
+                                 }, onSetupDefaults: { tab, pan in
+                                     columnMenu = nil
+                                     openDescribedPage(tab.setupPageId, scope: .pan(pan))
+                                 }, onOpenPage: { pageId in
+                                     columnMenu = nil
+                                     openDescribedPage(pageId)
+                                 }, onOpen: { pan in
+                                     app.phoneNavigation?.followDisplayPan(pan)
+                                 })
+                    .environment(\.displayPeek, $displayPeek)
+            }
             PttButton(transmit: transmit, linkUp: app.connection == .connected)
-                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
+                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0) + (pttAt.minX - pttHome.minX))
                 .padding(.bottom, PttButton.bottomInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             // A spot's details or a badge's list, over PTT and under the covers.
@@ -194,7 +235,8 @@ struct MainScreen: View {
                 // Over PTT, as a spot's details are; a tap off it closes it.
                 BandMenuLayer(anchor: anchor, display: main.display, scale: main.bandScale, pan: main.pan,
                               sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                              trailingInset: sideways ? trailingInset : 0, close: { bandMenu = nil },
+                              trailingInset: sideways ? trailingInset : 0, ptt: pttMoved ? pttAt : nil,
+                              close: { bandMenu = nil },
                               openDisplay: {
                                   bandMenu = nil
                                   sheet = .display
@@ -245,7 +287,8 @@ struct MainScreen: View {
                 }
                 .transition(.move(edge: .leading))
             }
-            if let sheet {
+            // With the column, Display is its pill, never the drop sheet.
+            if let sheet, !(column && sheet == .display) {
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
                     .onTapGesture { self.sheet = nil }
@@ -262,14 +305,66 @@ struct MainScreen: View {
                     .transition(.opacity)
             }
         }
+        .coordinateSpace(name: BandColumnLayout.space)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { bandSize = $0 }
+        .onPreferenceChange(BandColumnFrameKey.self) { columnBoxes = $0 }
         .clipped()
         .ignoresSafeArea(edges: sideways ? .horizontal : [])
-        // A sheet or a panel opening closes the band menu.
+        // A sheet or a panel opening closes the band menu and the column's menu.
         .onChange(of: sheet != nil || rxPanelOpen || txPanelOpen) { _, covered in
             if covered {
                 bandMenu = nil
+                columnMenu = nil
             }
         }
+        // One open thing at a time (DC6, DC7): the band menu, a column menu, a flag's menu.
+        .onChange(of: bandMenu != nil) { _, opened in
+            if opened {
+                columnMenu = nil
+            }
+        }
+        .onChange(of: columnMenu) { _, menu in
+            if menu != nil {
+                bandMenu = nil
+                main.flagControls.close()
+            }
+        }
+        .onReceive(main.flagControls.$open) { flag in
+            if flag != nil {
+                columnMenu = nil
+            }
+        }
+        // With the column, the toolbar's Display and the band menu's Display
+        // settings... open the pill beside it (DC7, DC8).
+        .onChange(of: sheet) { _, opened in
+            if column, opened == .display {
+                openPillInColumn()
+            }
+        }
+        .onChange(of: column) { _, shown in
+            if shown {
+                if sheet == .display {
+                    openPillInColumn()
+                }
+            } else {
+                if columnMenu == .display {
+                    sheet = .display
+                }
+                columnMenu = nil
+            }
+        }
+        .onAppear {
+            if column, sheet == .display {
+                openPillInColumn()
+            }
+        }
+    }
+
+    /// The pill beside the column in place of the drop sheet.
+    private func openPillInColumn() {
+        sheet = nil
+        columnFolded = false
+        columnMenu = .display
     }
 
     /// The band itself: the trace, waterfall, scales, band-plan strip,
@@ -311,6 +406,7 @@ struct MainScreen: View {
             faded.modifier(BandUnderCover(flow: flow) {
                 sheet = nil
                 bandMenu = nil
+                columnMenu = nil
             })
         } else {
             faded

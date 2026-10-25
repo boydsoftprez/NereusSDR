@@ -27,6 +27,8 @@ struct MainScreenShotTests {
         let name: String
         let sideways: Bool
         let rxPanelOpen: Bool
+        /// Sideways: the band column's open menu, or the Display pill (R-IOS-58).
+        var columnMenu: BandColumnMenu? = nil
     }
 
     @Test("the main screen listening, upright and sideways, with the RX panel and the sound notice")
@@ -83,6 +85,39 @@ struct MainScreenShotTests {
         await model.disconnect()
     }
 
+    /// R-IOS-58, DC8: the iPhone held sideways shows the band column at
+    /// the band's top-left inside the safe area: alone, with each of its
+    /// menus open, and with the Display pill as tall as the band, the PTT and the
+    /// keyed meters right of what is open.
+    @Test("sideways, the band column, each of its menus and the Display pill", .timeLimit(.minutes(5)))
+    func sidewaysColumnShots() async throws {
+        let suite = "MainScreenShotTests-column-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: [.bands, .bandSelect, .notchAtSlice])
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        try await Self.fill(station)
+        #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+        let band = model.main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        try await IPadShotTests.describeDisplayPill(model, station)
+
+        try await shoot(Screen(name: "sideways-column", sideways: true, rxPanelOpen: false), model: model)
+        let menus: [(BandColumnMenu, String)] = [(.band, "band"), (.antenna, "antenna"), (.vax, "vax"),
+                                                 (.attenuator, "attenuator")]
+        for (menu, name) in menus {
+            try await shoot(Screen(name: "sideways-column-\(name)", sideways: true, rxPanelOpen: false, columnMenu: menu),
+                            model: model)
+        }
+        try await shoot(Screen(name: "sideways-column-pill", sideways: true, rxPanelOpen: false, columnMenu: .display),
+                        model: model)
+        await model.disconnect()
+    }
+
     // MARK: Inside
 
     private func settle(seconds: Double, _ condition: () -> Bool) async -> Bool {
@@ -131,7 +166,7 @@ struct MainScreenShotTests {
         // indicator, and takes the sideways phone's own safe area instead.
         window.frame = CGRect(origin: CGPoint(x: 0, y: screen.sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
-        let root = ShotRoot(model: model, rxPanelOpen: screen.rxPanelOpen)
+        let root = ShotRoot(model: model, rxPanelOpen: screen.rxPanelOpen, columnMenu: screen.columnMenu)
             .preferredColorScheme(.dark)
         let host = ShotHosting.host(root)
         if screen.sideways {
@@ -167,11 +202,12 @@ struct MainScreenShotTests {
 private struct ShotRoot: View {
     @ObservedObject var model: AppModel
     let rxPanelOpen: Bool
+    var columnMenu: BandColumnMenu?
 
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                MainScreen(app: model, main: model.main, rxPanelOpen: rxPanelOpen)
+                MainScreen(app: model, main: model.main, rxPanelOpen: rxPanelOpen, columnMenu: columnMenu)
                 TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height)
             }
         }

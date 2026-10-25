@@ -72,6 +72,12 @@ final class PanSheetModel: ObservableObject {
     /// The band menu's "Add notch here" can ask the Core (``addNotch(atHz:)``).
     @Published private(set) var canAddNotchAtFrequency = false
     @Published private(set) var canAddSlice = false
+    /// The slices the radio runs, as the Core's `effectiveMaxSlices` says;
+    /// nil while it says nothing.
+    @Published private(set) var sliceLimit: Int?
+    /// Every slice on the Core, this device's and the others', fills the
+    /// radio's slices: the band column's +RX greys (spec DC10).
+    @Published private(set) var sliceLimitReached = false
     @Published private(set) var extendedViewOn = false
     @Published private(set) var extendedViewAvailable = false
     /// The Core's words for the last request it refused; cleared by the next one it takes.
@@ -136,6 +142,25 @@ final class PanSheetModel: ObservableObject {
 
     var addSliceUnavailableReason: String { "Wait for the Core to connect." }
 
+    /// Why the band column's +RX cannot add a slice now, or nil when it can:
+    /// the link first, then the radio's slice limit in the spec's words,
+    /// naming the radio as the Core reports it (``MainScreenModel/radioName``).
+    func addSliceOnPanReason(radio: String?) -> String? {
+        if !canAddSlice {
+            return addSliceUnavailableReason
+        }
+        if sliceLimitReached, let limit = sliceLimit {
+            return Self.sliceLimitReason(radio: radio, limit: limit)
+        }
+        return nil
+    }
+
+    /// "The <radio> runs <n> slices." (spec sections 6.2 and 9).
+    static func sliceLimitReason(radio: String?, limit: Int) -> String {
+        let name = radio.flatMap { $0.isEmpty ? nil : $0 } ?? "radio"
+        return "The \(name) runs \(limit) \(limit == 1 ? "slice" : "slices")."
+    }
+
     // MARK: Asking the Core
 
     /// A band button: the Core opens the band on the active slice. The lit
@@ -157,6 +182,15 @@ final class PanSheetModel: ObservableObject {
             return
         }
         invoke(Self.addSliceVerb, [CommandArgument(name: "panId", value: .text(panKey))])
+    }
+
+    /// The band column's +RX: a slice on `pan`, named by its Core key
+    /// (``PanIdentity/corePanKey``), while the radio has a slice free.
+    func addSlice(on pan: PanIdentity) {
+        guard canAddSlice, !sliceLimitReached else {
+            return
+        }
+        invoke(Self.addSliceVerb, [CommandArgument(name: "panId", value: .text(pan.corePanKey))])
     }
 
     /// Add a notch at the active slice, where the Core places it.
@@ -267,6 +301,11 @@ final class PanSheetModel: ObservableObject {
         set(\.canAddNotchAtFrequency, store.isSnapshotComplete && slices.activeSliceId != nil &&
             store.capabilityVersion(Self.notchControlCapability) >= Self.notchAtFrequencyVersion)
         set(\.canAddSlice, commands != nil && store.isSnapshotComplete)
+        let limit = PanLimits.sliceCount(capabilities: store.capabilities)
+        set(\.sliceLimit, limit)
+        set(\.sliceLimitReached, store.isSnapshotComplete && limit.map {
+            store.objects(ofClass: BandSlicesModel.sliceClass).count >= $0
+        } ?? false)
         let wideband = gates.wideband
         set(\.extendedViewAvailable, wideband)
         set(\.extendedViewOn, wideband && band.settings.extendedView)
