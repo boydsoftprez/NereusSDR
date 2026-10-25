@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the settings this phone keeps for itself, in UserDefaults
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the first-run note shown once on
+// this phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -282,6 +285,17 @@ final class PhoneSettings: ObservableObject {
     static let cellularModeKey = "data.cellularMode"
     static let cellularWarningKey = "data.cellularWarning"
     static let cellularNoteShownKey = "data.cellularNoteShown"
+
+    // MARK: Roundtable (spec 11.2)
+
+    /// The note that the station answered Roundtable's first question on
+    /// another device was shown on this phone.
+    var roundtableFirstRunNoteSeen: Bool {
+        get { bool(Self.roundtableFirstRunNoteSeenKey, default: false) }
+        set { setBool(newValue, for: Self.roundtableFirstRunNoteSeenKey) }
+    }
+
+    static let roundtableFirstRunNoteSeenKey = "roundtable.firstRunNoteSeen"
 
     /// Keeps a value without telling the screens: for counters that change
     /// every few seconds and that only their owner reads.

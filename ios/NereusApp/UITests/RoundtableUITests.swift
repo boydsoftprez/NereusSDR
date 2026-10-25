@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Roundtable sheet under a finger: its heights and the hold PTT that never keys on a swipe
+// NereusSDR for iOS: the Roundtable sheet under a finger: its heights, the hold PTT that never keys on a swipe, and the first-run question
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original.
 // Modification history (NereusSDR):
@@ -120,10 +120,31 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertEqual(holdLog(app), "none")
     }
 
+    /// Spec 11.2: before the station's answer the sheet asks it, Hide my
+    /// station moves the main button, and an answer with no Core to take
+    /// it says so and leaves the question open.
+    @MainActor
+    func testTheFirstRunQuestionIsAskedAndItsAnswerNeedsTheCore() throws {
+        let app = launch(firstRun: true)
+        _ = try openSheet(app, dismissNote: false)
+        let question = app.descendants(matching: .any)["roundtableFirstRun"]
+        XCTAssertTrue(question.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Roundtable is public"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableBox"].exists, "the box shows before the answer")
+        let hide = app.buttons["roundtableHideSwitch"]
+        XCTAssertEqual(hide.value as? String, "Off")
+        hide.tap()
+        waitUntil("Hide my station did not turn on") { hide.value as? String == "On" }
+        try save("roundtable-ui-first-run")
+        app.buttons["roundtableStayHidden"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableFirstRunError"].waitForExistence(timeout: 30))
+        XCTAssertTrue(question.exists, "the question closed with no Core to take the answer")
+    }
+
     // MARK: Helpers
 
     @MainActor
-    private func openSheet(_ app: XCUIApplication) throws -> XCUIElement {
+    private func openSheet(_ app: XCUIApplication, dismissNote: Bool = true) throws -> XCUIElement {
         let line = app.descendants(matching: .any)["roundtableLineA"]
         if !line.waitForExistence(timeout: 30) {
             try save("no-roundtable-line")
@@ -133,6 +154,10 @@ final class RoundtableUITests: XCTestCase {
         line.tap()
         let sheet = app.descendants(matching: .any)["roundtableSheet"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let ok = app.buttons["roundtableFirstRunNoteOk"]
+        if dismissNote, ok.waitForExistence(timeout: 2) {
+            ok.tap()
+        }
         return sheet
     }
 
@@ -164,10 +189,11 @@ final class RoundtableUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(firstRun: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]
+            + (firstRun ? ["-NereusRoundtableFirstRun"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

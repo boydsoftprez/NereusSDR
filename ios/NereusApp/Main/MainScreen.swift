@@ -67,6 +67,7 @@ struct MainScreen: View {
     @State private var roundtableSheet: RoundtableSheet.Detent?
     /// Where the keyed gauges end on the band, while keyed.
     @State private var gaugesFoot: CGFloat?
+    @State private var firstRunNoteSeen: Bool
     /// Told each press and release of the hold PTT (the UI tests' record).
     private let holdObserver: ((PttHold.Action) -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -84,6 +85,7 @@ struct MainScreen: View {
         transmit = main.transmit
         roundtable = app.roundtable
         _roundtableSheet = State(initialValue: roundtableSheet)
+        _firstRunNoteSeen = State(initialValue: app.phoneSettings.roundtableFirstRunNoteSeen)
         self.holdObserver = holdObserver
         _txPanelOpen = State(initialValue: txPanelOpen)
         self.flow = flow
@@ -218,7 +220,11 @@ struct MainScreen: View {
                                     detent: Binding(get: { roundtableSheet ?? .half },
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
-                                    stationCallsign: app.freedv.callsign,
+                                    stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
+                                    firstRunNoteSeen: Binding(get: { firstRunNoteSeen }, set: { seen in
+                                        firstRunNoteSeen = seen
+                                        app.phoneSettings.roundtableFirstRunNoteSeen = seen
+                                    }),
                                     close: closeRoundtable, holdObserver: holdObserver)
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
                         .frame(height: place.height)

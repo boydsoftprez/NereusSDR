@@ -18,6 +18,8 @@ import SwiftUI
 /// every station's reading of you. With a tuning dial on, the sheet stops
 /// above the 92-point strip that keeps PTT at the left and the dial at the
 /// right; keyed with a dial, the box steps aside and its draft is kept.
+/// Before the station's first answer the sheet asks it
+/// (``RoundtableFirstRunSheet``) and sends nothing until then.
 struct RoundtableSheet: View {
     enum Detent: Equatable {
         case half
@@ -32,14 +34,19 @@ struct RoundtableSheet: View {
     let dialOn: Bool
     /// The session is up: PTT can be used.
     let linkUp: Bool
-    /// The station's callsign, as the Core's settings give it.
+    /// The station's callsign and grid, as the Core's settings give them.
     let stationCallsign: String
+    let stationGrid: String
+    /// The first-run note was shown on this phone.
+    @Binding var firstRunNoteSeen: Bool
     let close: () -> Void
     var holdObserver: ((PttHold.Action) -> Void)?
 
     @State private var sending = false
     @State private var failed: String?
     @FocusState private var boxFocused: Bool
+    /// The question was answered here: no note follows it.
+    @State private var answeredHere = false
 
     static let handleHeight: CGFloat = 22
 
@@ -54,6 +61,12 @@ struct RoundtableSheet: View {
     private var activeLetter: String {
         slices.entries.first { $0.id == slices.activeSliceId }?.slice.letter ?? "A"
     }
+    private var asking: Bool {
+        roundtable.available && roundtable.linkState != .off && !roundtable.firstRunAnswered
+    }
+    private var noting: Bool {
+        roundtable.available && roundtable.firstRunAnswered && !firstRunNoteSeen && !answeredHere
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,13 +74,23 @@ struct RoundtableSheet: View {
             if !keyed {
                 handle
             }
-            if !keyed {
-                header
-                connection
-            }
-            content
-            if !(dialOn && keyed) {
-                boxRow
+            if asking {
+                RoundtableFirstRunSheet(roundtable: roundtable, callsign: stationCallsign, grid: stationGrid) {
+                    answeredHere = true
+                    firstRunNoteSeen = true
+                }
+            } else {
+                if noting {
+                    RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
+                }
+                if !keyed {
+                    header
+                    connection
+                }
+                content
+                if !(dialOn && keyed) {
+                    boxRow
+                }
             }
         }
         .background(RoundtableColours.ground)

@@ -34,6 +34,8 @@ enum UITestBand {
     /// PTT takes presses with no Core, and each press and release the hold
     /// PTT makes is written in ``UITestHoldLog``.
     static let roundtableArgument = "-NereusRoundtableFixture"
+    /// With ``roundtableArgument``: the station has not answered Roundtable's first question.
+    static let roundtableFirstRunArgument = "-NereusRoundtableFirstRun"
     static let roundtableRoomId = "lsb-7236400"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     static let centreHz = 7_244_500.0
@@ -119,7 +121,7 @@ enum UITestBand {
                                                                className: "RoundtableState", properties: [
                 .init(ordinal: 0, name: "linkState", value: .enumeration(2)),
                 .init(ordinal: 1, name: "linkSince", value: .i64(now - 600_000)),
-                .init(ordinal: 2, name: "firstRunAnswered", value: .bool(true)),
+                .init(ordinal: 2, name: "firstRunAnswered", value: .bool(!arguments.contains(roundtableFirstRunArgument))),
                 .init(ordinal: 3, name: "hidden", value: .bool(false)),
                 .init(ordinal: 4, name: "mentionCounts", value: .utf8(#"{"\#(roundtableRoomId)":1}"#)),
                 .init(ordinal: 5, name: "sliceRooms", value: .utf8(#"{"0":"\#(roundtableRoomId)"}"#)),

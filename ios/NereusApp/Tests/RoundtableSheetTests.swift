@@ -16,8 +16,9 @@ import Testing
 import UIKit
 
 /// Spec 11.2 and 11.3: the flag's Roundtable line, the sheet's places on
-/// the band, and the hold PTT that never keys on a swipe or a drag and
-/// always lets go. With `NEREUS_MAIN_SHOTS` set to a directory (through
+/// the band, the hold PTT that never keys on a swipe or a drag and always
+/// lets go, and the first-run question that sends nothing before its
+/// answer. With `NEREUS_MAIN_SHOTS` set to a directory (through
 /// `TEST_RUNNER_NEREUS_MAIN_SHOTS`), the sheet's states are written there
 /// for comparing with the board's phone pictures.
 @Suite("Roundtable sheet", .serialized)
@@ -393,12 +394,60 @@ struct RoundtableSheetTests {
         #expect(await settle { !rt.connected && !rt.available })
     }
 
+    // MARK: The first-run question
+
+    @Test("the first-run sheet's words are spec 11.2's")
+    func firstRunWords() {
+        #expect(RoundtableFirstRunSheet.title == "Roundtable is public")
+        #expect(RoundtableFirstRunSheet.intro == "Roundtable shows who hears whom, live, to everyone on it and on its "
+                + "web page. With your station on, they see:")
+        #expect(RoundtableFirstRunSheet.readingsItem
+                == "Your radio's reading of each talker, and how far you are from them")
+        #expect(RoundtableFirstRunSheet.youItem == "Every station's reading of you while you talk")
+        #expect(RoundtableFirstRunSheet.messagesItem == "Messages you post on your frequency")
+        #expect(RoundtableFirstRunSheet.archive == "Your archive of who heard you stays private to you.")
+        #expect(RoundtableFirstRunSheet.hideTitle == "Hide my station")
+        #expect(RoundtableFirstRunSheet.hideText == "You still see everything. Your station and your readings are "
+                + "not sent. Others can still hear you, and may name you when you talk.")
+        #expect(RoundtableFirstRunSheet.stayHidden == "Stay hidden" && RoundtableFirstRunSheet.goLive == "Go live")
+        #expect(RoundtableFirstRunSheet.foot == "Asked once for this station, on any of its devices. Change it any "
+                + "time in Roundtable settings.")
+        let who = RoundtableFirstRunSheet.whoItem(callsign: "kg4vcf", grid: "EM73")
+        #expect(who.lead + (who.call ?? "") + (who.middle ?? "") + (who.grid ?? "")
+                == "Your callsign KG4VCF and grid EM73")
+        #expect(RoundtableFirstRunNote.head(hidden: true) == "Your station chose Stay hidden on another device.")
+        #expect(RoundtableFirstRunNote.head(hidden: false) == "Your station went live from another device.")
+    }
+
+    @Test("with the question open nothing of the station is sent until it is answered")
+    func firstRunSendsNothingBeforeTheAnswer() async throws {
+        let (model, station) = try await connected(additions: [.remoteTx, .roundtable])
+        var scene = Self.boardScene()
+        scene.firstRunAnswered = false
+        try await station.deliverRoundtable(scene)
+        let rt = model.roundtable
+        #expect(await settle { rt.available && rt.room != nil && !rt.firstRunAnswered })
+        let (window, _) = try host(SheetHost(model: model, detent: .half))
+        defer { window.isHidden = true }
+        // Longer than a message's two seconds on screen.
+        try await Task.sleep(for: .milliseconds(2_600))
+        await TransmitScreenTests.barrier(model, station)
+        #expect(station.roundtableAnswered.isEmpty)
+        #expect(station.roundtablePosts.isEmpty)
+        #expect(await rt.answerFirstRun(live: false) == nil)
+        #expect(station.roundtableAnswered == ["answerFirstRun"])
+        #expect(await settle { rt.firstRunAnswered })
+        await model.disconnect()
+    }
+
     // MARK: Shots
 
-    @Test("shots: the flag line, half and full, keyed, and the dial strip")
+    @Test("shots: the flag line, half and full, keyed, the dial strip, the first run and the note")
     func shots() async throws {
         do {
             let (model, station) = try await shotStation()
+            // This phone answered the question itself: no note.
+            model.phoneSettings.roundtableFirstRunNoteSeen = true
             try await station.deliverRoundtable(Self.boardScene())
             #expect(await settle { model.roundtable.room != nil })
             try await shoot("01-band-flag-line", model: model, detent: nil)
@@ -419,6 +468,26 @@ struct RoundtableSheetTests {
             model.main.transmit.tapPtt()
             #expect(await settle { model.main.transmit.ptt.state == .idle })
             model.phoneSettings.dialKind = .off
+            await model.disconnect()
+        }
+        do {
+            let (model, station) = try await shotStation()
+            var scene = Self.boardScene()
+            scene.firstRunAnswered = false
+            try await station.deliverRoundtable(scene)
+            #expect(await settle { model.roundtable.room != nil })
+            try await shoot("07-first-run", model: model, detent: .half)
+            await model.disconnect()
+        }
+        do {
+            let (model, station) = try await shotStation()
+            var scene = Self.boardScene()
+            // Answered Stay hidden on another device: this phone shows the note once.
+            scene.hidden = true
+            scene.link = .hidden
+            try await station.deliverRoundtable(scene)
+            #expect(await settle { model.roundtable.room != nil })
+            try await shoot("08-first-run-note", model: model, detent: .half)
             await model.disconnect()
         }
     }
