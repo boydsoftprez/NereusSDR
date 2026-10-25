@@ -20,6 +20,10 @@
 //   2026-10-24: Roundtable plan Task 15: setStationInfo() starts the
 //               station connection again with the new callsign or grid.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: Roundtable fix wave: a no-reading value (the -400 dBm a
+//               cleared slice holds) never enters the signal floor; a web
+//               sign-in that will get no link says so (webLinkFailed).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableClient.h"
@@ -271,7 +275,9 @@ void RoundtableClient::pushMeter(int sliceId, double dbm, qint64 meterReadingNs)
     meter.stampNs = meterReadingNs;
     meter.dbm = dbm;
     meter.wallMs = wallNow();
-    if (std::isfinite(dbm)) {
+    // Only a value a reading may carry (5.3.3) feeds the floor: a cleared
+    // slice's no-reading value would pull it down until it aged out.
+    if (std::isfinite(dbm) && dbm >= kMinDbm && dbm <= kMaxDbm) {
         meter.present = meter.floor.update(dbm, monoNow());
     }
 }
@@ -799,6 +805,9 @@ void RoundtableClient::handleStation(const QJsonObject& message)
     }
     if (type == QLatin1String("error")) {
         handleError(m_main, message);
+        if (message.value(QStringLiteral("about")).toString() == QLatin1String("weblink")) {
+            emit webLinkFailed(message.value(QStringLiteral("reason")).toString());
+        }
         return;
     }
     if (type == QLatin1String("welcome")) {
@@ -1237,6 +1246,9 @@ void RoundtableClient::runArchive(ArchiveAction action)
         return;
     }
     m_archiveQueue.append(action);
+    if (action == ArchiveAction::WebLink) {
+        ++m_archiveWebLinks;
+    }
     if (!m_archive.socket) {
         m_archiveErrored = false;
         m_archiveUnanswered = 0;
@@ -1267,6 +1279,7 @@ void RoundtableClient::handleArchive(const QJsonObject& message)
         m_archive.signedIn = true;
         flushQueuedArchive(m_archive, m_archiveQueue);
     } else if (type == QLatin1String("weblinkOk")) {
+        m_archiveWebLinks = std::max(0, m_archiveWebLinks - 1);
         emit webLinkReady(QUrl(message.value(QStringLiteral("url")).toString()));
         --m_archiveUnanswered;
         finishArchiveIfAnswered();
@@ -1280,6 +1293,21 @@ void RoundtableClient::handleArchive(const QJsonObject& message)
         m_archiveErrored = true;
         handleError(m_archive, message);
         const QString about = message.value(QStringLiteral("about")).toString();
+        // A web sign-in waiting here hears now, not after the 30 s sweep:
+        // the one refused, or every one when the brief connection itself
+        // failed (a sign-in or connection error). A deleteArchive's own
+        // refusal leaves the weblinks waiting for their answers.
+        const QString reason = message.value(QStringLiteral("reason")).toString();
+        int failed = 0;
+        if (about == QLatin1String("weblink")) {
+            failed = std::min(1, m_archiveWebLinks);
+        } else if (about != QLatin1String("deleteArchive")) {
+            failed = m_archiveWebLinks;
+        }
+        m_archiveWebLinks -= failed;
+        for (int i = 0; i < failed; ++i) {
+            emit webLinkFailed(reason);
+        }
         if (about == QLatin1String("weblink") || about == QLatin1String("deleteArchive")) {
             --m_archiveUnanswered;
             finishArchiveIfAnswered();
@@ -1303,11 +1331,19 @@ void RoundtableClient::finishArchiveIfAnswered()
 void RoundtableClient::onArchiveClosed()
 {
     const bool unanswered = m_archiveUnanswered > 0 || !m_archiveQueue.isEmpty();
+    const int webLinks = m_archiveWebLinks;
     m_archiveUnanswered = 0;
+    m_archiveWebLinks = 0;
     m_archiveQueue.clear();
     if (unanswered && !m_archiveErrored) {
         emit errorReceived(QStringLiteral("unreachable"),
                            tr("Roundtable could not be reached. Try again shortly."));
+    } else if (m_archiveErrored) {
+        // An error that was not about them closed the connection under
+        // them: they get no link either.
+        for (int i = 0; i < webLinks; ++i) {
+            emit webLinkFailed(tr("Roundtable could not be reached. Try again shortly."));
+        }
     }
     if (m_started) {
         reconcile();

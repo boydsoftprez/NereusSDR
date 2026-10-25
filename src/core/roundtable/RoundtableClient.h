@@ -54,6 +54,9 @@
 //   2026-10-24: Roundtable plan Task 15: a new callsign or grid starts
 //               the station connection again. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-25: Roundtable fix wave: webLinkFailed, once for each web
+//               sign-in request that will get no link. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -184,7 +187,12 @@ signals:
     void postResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
     /// {"type":"mention","room":...,"message":{...}}.
     void mentionReceived(const QJsonObject& message);
+    /// One answer to one requestWebLink, in the order they were asked.
     void webLinkReady(const QUrl& url);
+    /// One requestWebLink will get no link: the server refused it, or the
+    /// brief archive connection it waited on failed (any error there but
+    /// one about a deleteArchive). Emitted once for each such request.
+    void webLinkFailed(const QString& reason);
     void noticeReceived(const QString& text);
     void errorReceived(const QString& code, const QString& reason);
     /// statusText() may have changed.
@@ -315,6 +323,7 @@ private:
     QList<ArchiveAction> m_archiveQueue;   // waiting for the archive sign-in
     bool m_archiveErrored = false;
     int m_archiveUnanswered = 0;           // sent on the archive link
+    int m_archiveWebLinks = 0;             // weblinks queued or sent there, unanswered
 
     QString m_stationId;
     QTimer* m_tick = nullptr;

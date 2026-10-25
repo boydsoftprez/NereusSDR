@@ -29,6 +29,9 @@
 //               peer, the spotSources Roundtable properties per peer, and
 //               two connections' posts with one clientId. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: Roundtable fix wave: each web sign-in link answers the
+//               oldest waiting request, and a failed one is answered at
+//               once. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -290,6 +293,7 @@ public:
     }
 
     QList<QJsonObject> posts;
+    int weblinks = 0;
 
     void answerPost(const QString& clientId, qint64 messageId)
     {
@@ -354,6 +358,8 @@ private:
             sendJson(welcome);
         } else if (decoded.type == QLatin1String("post")) {
             posts.append(decoded.message);
+        } else if (decoded.type == QLatin1String("weblink")) {
+            ++weblinks;
         }
     }
 
@@ -690,6 +696,63 @@ private slots:
         QVERIFY(!twice.accepted);
         NEREUS_TRY_COMPARE(roundtable.posts.size(), 3);
         QVERIFY(!resultFor(first, again).has_value());
+        core.client()->stop();
+    }
+
+    // Fix wave: every link is good once, so each one the server sends
+    // answers one waiting web sign-in, the oldest; and a request that will
+    // get no link is answered at once with the reason.
+    void eachWebLinkAnswersTheOldestWaitingRequest()
+    {
+        QTemporaryDir keyDir;
+        QVERIFY(keyDir.isValid());
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        QVERIFY(roundtable.listen());
+        QVERIFY(identity.isValid());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"),
+                                QStringLiteral("Live"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        core.client()->start();
+        NEREUS_TRY_VERIFY(core.client()->linkState() == RoundtableClient::LinkState::Live);
+
+        LoopbackTransport* first = core.connect(this, {{"roundtable", 1}});
+        LoopbackTransport* second = core.connect(this, {{"roundtable", 1}});
+        NEREUS_TRY_VERIFY(snapshotDone(first));
+        NEREUS_TRY_VERIFY(snapshotDone(second));
+        const quint32 firstId = sendCommand(first, "roundtable.webSignIn", {});
+        NEREUS_TRY_COMPARE(roundtable.weblinks, 1);
+        const quint32 secondId = sendCommand(second, "roundtable.webSignIn", {});
+        NEREUS_TRY_COMPARE(roundtable.weblinks, 2);
+        QVERIFY(!resultFor(first, firstId).has_value());
+        QVERIFY(!resultFor(second, secondId).has_value());
+
+        const QUrl one(QStringLiteral("https://roundtable.nereussdr.com/signin?t=one"));
+        const QUrl two(QStringLiteral("https://roundtable.nereussdr.com/signin?t=two"));
+        emit core.client()->webLinkReady(one);
+        NEREUS_TRY_VERIFY(resultFor(first, firstId).has_value());
+        QVERIFY(resultFor(first, firstId)->accepted);
+        QCOMPARE(valueOf(*resultFor(first, firstId), "link"), one.toString());
+        QCoreApplication::processEvents();
+        QVERIFY(!resultFor(second, secondId).has_value());
+        emit core.client()->webLinkReady(two);
+        NEREUS_TRY_VERIFY(resultFor(second, secondId).has_value());
+        QVERIFY(resultFor(second, secondId)->accepted);
+        QCOMPARE(valueOf(*resultFor(second, secondId), "link"), two.toString());
+
+        // One the server will not answer is told so at once, not after
+        // the 30 s wait.
+        const quint32 thirdId = sendCommand(first, "roundtable.webSignIn", {});
+        NEREUS_TRY_COMPARE(roundtable.weblinks, 3);
+        const QString refused = QStringLiteral("Too many at once. Try again in a moment.");
+        emit core.client()->webLinkFailed(refused);
+        NEREUS_TRY_VERIFY(resultFor(first, thirdId).has_value());
+        QVERIFY(!resultFor(first, thirdId)->accepted);
+        QCOMPARE(resultFor(first, thirdId)->reason, refused);
         core.client()->stop();
     }
 

@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-25: Roundtable fix wave: each web sign-in link answers the
+//               oldest waiting request only, and a request that will get
+//               no link (RoundtableClient::webLinkFailed) is answered at
+//               once. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion 1, the
 //               read-only `roundtable` object, the roundtableRooms and
 //               roundtableRoom:<id> streams and the thirteen roundtable.*
@@ -14478,20 +14482,36 @@ void StationServer::setUpRoundtable()
                                                   QVariant(messageIdOrReason)}}
                : QList<MirrorUpdate>{});
     });
+    // The web sign-ins waiting, oldest first ("weblink:<n>" by n): each
+    // link the server sends answers one request, in the order they were
+    // asked, since every link is good once.
     const auto webLinkKeys = [this]() {
-        QStringList keys;
+        QList<QPair<quint64, QString>> waiting;
         for (auto it = m_roundtablePending.cbegin(); it != m_roundtablePending.cend(); ++it) {
             if (it.key().startsWith(QLatin1String("weblink:"))) {
-                keys.append(it.key());
+                waiting.append({it.key().mid(8).toULongLong(), it.key()});
             }
+        }
+        std::sort(waiting.begin(), waiting.end());
+        QStringList keys;
+        for (const auto& entry : std::as_const(waiting)) {
+            keys.append(entry.second);
         }
         return keys;
     };
     connect(client, &RoundtableClient::webLinkReady, this, [this, webLinkKeys](const QUrl& url) {
-        for (const QString& key : webLinkKeys()) {
-            answerRoundtablePending(key, true, QString(),
+        const QStringList keys = webLinkKeys();
+        if (!keys.isEmpty()) {
+            answerRoundtablePending(keys.first(), true, QString(),
                                     {MirrorUpdate{0, "link", MirrorWireKind::Utf8,
                                                   QVariant(url.toString())}});
+        }
+    });
+    connect(client, &RoundtableClient::webLinkFailed, this,
+            [this, webLinkKeys](const QString& reason) {
+        const QStringList keys = webLinkKeys();
+        if (!keys.isEmpty()) {
+            answerRoundtablePending(keys.first(), false, reason, {});
         }
     });
     connect(client, &RoundtableClient::errorReceived, this,

@@ -13,6 +13,10 @@
 //   2026-10-24: Roundtable's ham-sense phrases set aside, by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 12).
+//   2026-10-25: Roundtable fix wave: "a station id" is no longer set aside
+//               for every string; the one wire label that uses it is in
+//               the sweep's notShown list. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //
 // coreCalledStationIn() is the tests' one rule for "Core" and "station" in
 // user text (R-R3-21): both wording tests use it.
@@ -59,7 +63,7 @@ inline QString coreCalledStationIn(const QString& text)
                        // Roundtable's words: a station there is a ham station,
                        // known by its callsign and its key (design 11.2).
                        "|\\bthis station's (key|sign-in)\\b|\\bthis station signed in to Roundtable\\b"
-                       "|\\bsent about this station\\b|\\ba station id\\b|\\bmuted stations\\b"
+                       "|\\bsent about this station\\b|\\bmuted stations\\b"
                        "|%[0-9] (other )?stations (on|without you)\\b|\\bwith %[0-9] other stations\\b"
                        "|\\bevery station's reading\\b|\\basked once (for this|per) station\\b"),
         QRegularExpression::CaseInsensitiveOption);

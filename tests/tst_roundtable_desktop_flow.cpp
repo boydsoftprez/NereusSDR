@@ -34,6 +34,9 @@
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-25: Roundtable fix wave: the Core's meter pump stops while the
+//               own reading is shown, since a clear now reaches the panel.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -70,6 +73,7 @@
 #include "core/ConnectionState.h"
 #include "core/MoxController.h"
 #include "core/audio/CompositeTxMicRouter.h"
+#include "core/meters/SliceMeterPump.h"
 #include "core/SpotSourceHost.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/roundtable/RoundtableState.h"
@@ -1139,6 +1143,14 @@ private:
         // Your own meter, shown only here.
         SliceModel* coreSlice = p.core()->sliceById(p.sliceId());
         QVERIFY(coreSlice != nullptr);
+        // A Core with no radio clears every slice's readings each tick
+        // (SliceMeterPump::poll, not Connected), and a clear now reaches
+        // the panel. The pump stops here so the reading holds as a steady
+        // signal's would, on the Core and in a window of it alike.
+        SliceMeterPump* pump = p.core()->sliceMeterPump();
+        if (pump != nullptr) {
+            pump->stop();
+        }
         coreSlice->setSignalStrengthDbm(-73.0);
         coreSlice->setMeterReadingNs(coreSlice->meterReadingNs() + 1000000);
         QTRY_VERIFY_WITH_TIMEOUT(visibleChild<QLabel>(panel, QStringLiteral("roundtableNotSentTag")) != nullptr,
@@ -1185,6 +1197,9 @@ private:
         QCOMPARE(server.last(QStringLiteral("/v1/station"))->types(),
                  (QStringList{QStringLiteral("hello"), QStringLiteral("weblink")}));
         take(p, QStringLiteral("archive"), shots);
+        if (pump != nullptr) {
+            pump->start();
+        }
 
         // Every word the panel showed is plain.
         for (const Shot& shot : std::as_const(shots)) {

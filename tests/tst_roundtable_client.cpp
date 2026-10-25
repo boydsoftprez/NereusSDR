@@ -44,6 +44,10 @@
 //   2026-10-24: Roundtable plan Task 15: the live station-info write case
 //               through SpotSourceHost. J.J. Boyd (KG4VCF), AI-assisted
 //               via Claude Code.
+//   2026-10-25: Roundtable fix wave: a cleared slice's no-reading value
+//               sends nothing and stays out of the signal floor; an error
+//               on the brief connection fails its waiting web sign-ins.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/AppSettings.h"
@@ -285,8 +289,10 @@ private slots:
     void unansweredOpensLiveOnlyAndSendsNothingAboutTheStation();
     void afterTheAnswerPresenceThenReadingsOnceASecond();
     void noReadingWhileKeyed();
+    void aClearedSlicesNoReadingSendsNothingAndLeavesTheFloor();
     void hiddenIsTheLastFrameBeforeTheClose();
     void archiveWhileUnansweredSendsOnlyHelloAndWeblink();
+    void aBriefConnectionErrorFailsItsWaitingWebLinks();
     void retriesFollowTheLadder();
     void connectionCapWaitsItsRetryAfter();
     void refusedSignInStopsRetrying();
@@ -530,6 +536,47 @@ void TstRoundtableClient::noReadingWhileKeyed()
     QVERIFY(c->allFramesValid);
 }
 
+// Fix wave: a cleared slice (link lost, channel gone) holds the -400 dBm
+// no-reading value under a new stamp. It sends no reading, and it does not
+// enter the signal floor: with three real readings in the window, a -400
+// there would be the floor and make -102 dBm read as present.
+void TstRoundtableClient::aClearedSlicesNoReadingSendsNothingAndLeavesTheFloor()
+{
+    makeClient(true);
+    m_client->start();
+    FakeConnection* c = waitConnection(QStringLiteral("/v1/station"), 1);
+    QVERIFY(c != nullptr);
+    QVERIFY(waitFrames(c, 2));
+    m_client->pushMeter(0, -110.0, 1000);
+    tick(5000);
+    m_client->pushMeter(0, -110.0, 2000);
+    tick(5500);
+    m_client->pushMeter(0, -110.0, 3000);  // past the 10 s warm-up
+    tick(1100);
+    QVERIFY(flush(c));
+    const int readings = c->types().count(QStringLiteral("reading"));
+    QCOMPARE(readings, 3);
+
+    m_client->pushMeter(0, -400.0, 4000);  // the slice was cleared
+    tick(1100);
+    QVERIFY(flush(c));
+    QCOMPARE(c->types().count(QStringLiteral("reading")), readings);
+
+    m_client->pushMeter(0, -102.0, 5000);
+    tick(1100);
+    QVERIFY(flush(c));
+    QCOMPARE(c->types().count(QStringLiteral("reading")), readings + 1);
+    QJsonObject last;
+    for (const QJsonObject& frame : std::as_const(c->frames)) {
+        if (typeOf(frame) == QStringLiteral("reading")) {
+            last = frame;
+        }
+    }
+    QCOMPARE(last.value(QStringLiteral("dbm")).toDouble(), -102.0);
+    QCOMPARE(last.value(QStringLiteral("present")).toBool(), false);
+    QVERIFY(c->allFramesValid);
+}
+
 void TstRoundtableClient::hiddenIsTheLastFrameBeforeTheClose()
 {
     makeClient(true);
@@ -574,6 +621,47 @@ void TstRoundtableClient::archiveWhileUnansweredSendsOnlyHelloAndWeblink()
     // The live reader carried on beside it.
     QVERIFY(!live->closed);
     QCOMPARE(m_client->linkState(), RoundtableClient::LinkState::Hidden);
+}
+
+// Fix wave: a web sign-in waiting on the brief connection hears at once
+// when it will get no link: the one an error about `weblink` refuses, and
+// every one left when an error about anything else (here a rate error
+// about presence) comes there.
+void TstRoundtableClient::aBriefConnectionErrorFailsItsWaitingWebLinks()
+{
+    m_server->autoWebLink = false;
+    makeClient(false);
+    m_client->start();
+    FakeConnection* live = waitConnection(QStringLiteral("/v1/live"), 1);
+    QVERIFY(live != nullptr);
+    QVERIFY(waitFrames(live, 1));
+
+    QSignalSpy links(m_client.get(), &RoundtableClient::webLinkReady);
+    QSignalSpy failed(m_client.get(), &RoundtableClient::webLinkFailed);
+    m_client->requestWebLink();
+    m_client->requestWebLink();
+    FakeConnection* c = waitConnection(QStringLiteral("/v1/station"), 1);
+    QVERIFY(c != nullptr);
+    QVERIFY(waitFrames(c, 3));
+    QCOMPARE(c->types(), (QStringList{QStringLiteral("hello"), QStringLiteral("weblink"),
+                                      QStringLiteral("weblink")}));
+
+    c->send(QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
+                        {QStringLiteral("code"), QStringLiteral("rate")},
+                        {QStringLiteral("reason"), QStringLiteral("Too many at once. Try again in a moment.")},
+                        {QStringLiteral("about"), QStringLiteral("weblink")},
+                        {QStringLiteral("retryAfterMs"), 420}});
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, kWaitMs);
+    QCOMPARE(failed.first().first().toString(), QStringLiteral("Too many at once. Try again in a moment."));
+
+    c->send(fixtureWire(QStringLiteral("server-station-error-rate")));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 2, kWaitMs);
+    QCOMPARE(links.size(), 0);
+    // Nothing more when the brief connection closes.
+    c->socket->close();
+    QTRY_VERIFY_WITH_TIMEOUT(c->closed, kWaitMs);
+    QTest::qWait(50);
+    QCOMPARE(failed.size(), 2);
 }
 
 void TstRoundtableClient::retriesFollowTheLadder()

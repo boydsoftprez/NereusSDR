@@ -14,6 +14,9 @@
 // its floor drops to 55 and the noise-reduction table's labels, units and
 // items are checked here instead. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-25 (Roundtable fix wave): RoundtableWire's "a station id" check
+// label is in notShown, and the rule no longer sets that phrase aside for
+// every string. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -1573,6 +1576,10 @@ private slots:
             // kept for the operator's checkpoint.
             {"src/gui/PsForm.cpp",
              "Remember whether automatic calibration should resume when the station is ready."},
+            // A wire check's label (RoundtableWire's pattern check): it names
+            // what a malformed field should have been, for the log, and is
+            // never shown.
+            {"src/core/roundtable/RoundtableWire.cpp", "a station id"},
         };
         static const QRegularExpression placeholder(QStringLiteral("%[0-9]"));
         static const QRegularExpression stationWord(QStringLiteral("\\bstations?\\b"),
@@ -1635,6 +1642,9 @@ private slots:
                      .contains(QLatin1String("\"Remote Station\"")));
 
         // The rule catches the old words and keeps the ham sense.
+        // "a station id" is not a ham-sense phrase everywhere.
+        QVERIFY(!OperatorWording::coreCalledStationIn(
+                     QStringLiteral("Enter a station id to continue.")).isEmpty());
         QVERIFY(!OperatorWording::coreCalledStationIn(
                      QStringLiteral("Transmit controls are unavailable until the station "
                                     "confirms transmit permission.")).isEmpty());
