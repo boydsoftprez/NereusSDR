@@ -51,6 +51,9 @@
 //               watches its slices' rooms, and an archive action never
 //               opens a second station connection beside the main one.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: a new callsign or grid starts
+//               the station connection again. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -126,6 +129,8 @@ public:
 
     /// The callsign must pass RoundtableWire::isCallsign for a station
     /// connection; the grid is sent as RoundtableWire::gridToSend gives it.
+    /// A change while the station connection is open starts it again, so
+    /// its hello and presence carry the new station.
     void setStationInfo(const QString& callsign, const QString& grid);
     /// Active slice first. Slices in a mode with no family are left out of
     /// presence; at most 4 are listed.

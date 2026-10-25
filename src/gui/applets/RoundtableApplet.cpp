@@ -10,6 +10,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: Roundtable plan Task 15: the active slice's meter is the
+//               panel's own reading (setOwnReading). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-24: host() falls back to the panel named on the applet, for a
 //               managed workspace. J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
@@ -159,12 +162,20 @@ void RoundtableApplet::bindActiveSlice()
         return;
     }
     disconnect(m_sliceFrequency);
+    disconnect(m_sliceMeter);
     m_slice = slice;
     if (slice == nullptr) {
         m_panel->followSlice(-1);
         m_panel->setSliceFrequency(0);
         return;
     }
+    // Its meter is your own reading, which the panel shows only to you
+    // while nothing about the station is sent.
+    m_sliceMeter = connect(slice, &SliceModel::meterReadingNsChanged, this, [this]() {
+        if (m_slice) {
+            m_panel->setOwnReading(m_slice->signalStrengthDbm(), RoundtableModel::nowMs());
+        }
+    });
     // Tuning the slice anywhere goes back to following it (design 11.1).
     m_sliceFrequency = connect(slice, &SliceModel::frequencyChanged, this, [this](double hz) {
         m_panel->setSliceFrequency(std::llround(hz));

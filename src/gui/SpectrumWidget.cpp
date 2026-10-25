@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a move,
+//                 resize, show or hide of the pan's toolbar draws the room
+//                 tags again, in the GPU path too (Roundtable plan
+//                 Task 15).
 //   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 the Roundtable room tags along the foot of the spectrum,
 //                 drawn in both paint paths, a tag click and the +N fold
@@ -12884,8 +12888,35 @@ void SpectrumWidget::paintMoxOverlay(QPainter& p)
 // QRhiWidget on macOS Metal does not deliver mouseMoveEvent without a button press.
 // Workaround: m_mouseOverlay (a plain QWidget child) receives mouse tracking events.
 // This eventFilter forwards them to our mouseMoveEvent/mousePressEvent/etc.
+void SpectrumWidget::childEvent(QChildEvent* event)
+{
+    SpectrumBaseClass::childEvent(event);
+    // Roundtable plan Task 15: the child is not built yet when it is
+    // added, so which kind it is is checked as its events come in.
+    if (event->type() == QEvent::ChildAdded && event->child() != nullptr
+        && event->child()->isWidgetType()) {
+        event->child()->installEventFilter(this);
+    }
+}
+
 bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // Roundtable plan Task 15: the room tags keep clear of the pan's
+    // toolbar (drawRoundtableTags), so when it collapses, moves, shows or
+    // hides they are laid out again; the GPU path's overlay is cached.
+    switch (ev->type()) {
+    case QEvent::Move:
+    case QEvent::Resize:
+    case QEvent::Show:
+    case QEvent::Hide:
+        if (!m_roundtableTags.isEmpty() && obj->inherits("NereusSDR::SpectrumOverlayPanel")) {
+            markOverlayDirty();
+        }
+        break;
+    default:
+        break;
+    }
+
     // Phase 3Q-8: clicks on the disconnect-overlay label open the connection panel.
     if (obj == m_disconnectLabel) {
         if (ev->type() == QEvent::MouseButtonPress) {

@@ -24,6 +24,11 @@
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 13). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: fitsTheRealAppletColumn, every
+//               scene at the applet column's 260 px minimum, a 280 px
+//               viewport and the design's 340 px, nothing past the
+//               viewport and long callsigns elided with a tooltip.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -942,6 +947,174 @@ private slots:
         QCOMPARE(parts.join(QLatin1Char(' ')), QStringLiteral("Reading 7.249 · Tune A here · Back to my slice"));
     }
 
+    void fitsTheRealAppletColumn_data()
+    {
+        QTest::addColumn<int>("scene");
+        QTest::addColumn<int>("width");
+        const QStringList scenes{QStringLiteral("talking"),  QStringLiteral("unknown"),
+                                 QStringLiteral("doubled"),  QStringLiteral("keyed"),
+                                 QStringLiteral("quiet"),    QStringLiteral("reading"),
+                                 QStringLiteral("hidden"),   QStringLiteral("naming"),
+                                 QStringLiteral("muted"),    QStringLiteral("mention")};
+        // 260: the applet column's minimum (Style::kAppletPanelW). 298: the
+        // column at 1512x869 (a 280 px viewport inside the applet frame),
+        // 280 that viewport itself. 340: the design's width.
+        for (int width : {260, 280, 298, 340}) {
+            for (int i = 0; i < scenes.size(); ++i) {
+                QTest::newRow(qPrintable(QStringLiteral("%1 %2").arg(scenes.at(i)).arg(width))) << i << width;
+            }
+        }
+    }
+
+    void fitsTheRealAppletColumn()
+    {
+        // Every scene in the real applet column: no widget runs past the
+        // viewport, no label is clipped, and a long callsign elides with the
+        // whole one in a tooltip rather than widening the panel.
+        QFETCH(int, scene);
+        QFETCH(int, width);
+        Posed p;
+        QJsonArray who = members();
+        who.append(member(QStringLiteral("l"), QStringLiteral("KH6/W1LONGCALL"), 4800, reading(-79, 1500)));
+        const QJsonArray chat{
+            message(1, QStringLiteral("b"), QStringLiteral("N3XYZ"), QStringLiteral("muted")),
+            message(2, QStringLiteral("a"), QStringLiteral("W4ABC"),
+                    QStringLiteral("Who was that on at the top of the hour? Strong but no ID.")),
+            message(3, QStringLiteral("l"), QStringLiteral("KH6/W1LONGCALL"),
+                    QStringLiteral("KG4VCF are you there? Good signal into Hawaii tonight."))};
+        QJsonObject room = talkingRoom(chat);
+        room.insert(QStringLiteral("members"), who);
+        const QJsonArray pair{talker(QStringLiteral("t"), QStringLiteral("W1TLK")),
+                              talker(QStringLiteral("l"), QStringLiteral("KH6/W1LONGCALL"))};
+        switch (scene) {
+        case 1:
+            room.insert(QStringLiteral("now"),
+                        QJsonArray{turn(31, QStringLiteral("unknown"), {}, g_now - 9000, QJsonValue::Null)});
+            break;
+        case 2:
+            room.insert(QStringLiteral("now"),
+                        QJsonArray{turn(31, QStringLiteral("doubled"), pair, g_now - 9000, QJsonValue::Null)});
+            break;
+        case 3:
+            room.insert(QStringLiteral("now"),
+                        QJsonArray{turn(40, QStringLiteral("talking"),
+                                        QJsonArray{talker(QStringLiteral("me"), QStringLiteral("KG4VCF"))},
+                                        g_now - 65000, QJsonValue::Null, true)});
+            break;
+        case 4:
+            room.insert(QStringLiteral("now"), QJsonArray{});
+            break;
+        case 8:
+            AppSettings::instance().setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("N3XYZ"));
+            break;
+        case 9:
+            p.state.applyStationValue("mentionCounts", QStringLiteral("{\"%1\":1}").arg(kRoom));
+            break;
+        default:
+            break;
+        }
+        p.model.applyRoom(room);
+        if (scene == 5) {
+            QJsonObject other = talkingRoom(chat);
+            other.insert(QStringLiteral("members"), who);
+            other.insert(QStringLiteral("id"), kOther);
+            p.model.applyRoom(other);
+        }
+        if (scene == 6) {
+            p.setLink(RoundtableModel::LinkState::Hidden);
+        }
+        RoundtablePanel panel(&p.model);
+        panel.resize(width, 900);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        if (scene == 5) {
+            panel.readRoom(kOther);
+            settle();
+            QVERIFY(panel.isReading());
+        }
+        if (scene == 6) {
+            panel.setOwnReading(-73.0, g_now);
+            settle();
+            QCOMPARE(texts(&panel, QStringLiteral("roundtableConnectionLine")),
+                     QStringList{QStringLiteral("You are hidden")});
+        }
+        if (scene == 7) {
+            auto names = panel.findChildren<QPushButton*>(QStringLiteral("roundtableTurnNameBtn"));
+            QVERIFY(!names.isEmpty());
+            names.first()->click();
+            settle();
+            QVERIFY(child<QLineEdit>(&panel, QStringLiteral("roundtableNameInput")) != nullptr);
+        }
+        // The resize-driven rebuild runs on the next turn of the loop.
+        settle();
+
+        auto* scroll = child<QScrollArea>(&panel, QStringLiteral("roundtableScroll"));
+        auto* content = child<QWidget>(&panel, QStringLiteral("roundtableContent"));
+        const int viewport = scroll->viewport()->width();
+        QVERIFY(viewport > 0);
+        // What the content may ask for: the viewport, less a scroll bar
+        // when none shows (so one appearing cannot clip the content).
+        const int allowed = scroll->verticalScrollBar()->isVisible()
+                             ? viewport
+                             : viewport - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+        QStringList wide;
+        if (content->width() > viewport) {
+            wide.append(QStringLiteral("content %1").arg(content->width()));
+        }
+        for (QWidget* w : content->findChildren<QWidget*>()) {
+            if (!w->isVisibleTo(content)) {
+                continue;
+            }
+            const int right = w->mapTo(content, QPoint(w->width(), 0)).x();
+            const int hint = w->layout() != nullptr ? w->layout()->minimumSize().width()
+                                                    : w->minimumSizeHint().width();
+            // Elided or wrapped, never clipped: a label narrower than its
+            // minimum (an eliding label's is its kept characters) is cut.
+            if (auto* label = qobject_cast<QLabel*>(w); label != nullptr && !label->wordWrap()
+                                                         && !label->text().isEmpty() && label->pixmap().isNull()
+                                                         && label->width() < label->minimumSizeHint().width()) {
+                wide.append(QStringLiteral("QLabel %1 \"%2\" clipped to %3 of %4")
+                                .arg(label->objectName(), label->text())
+                                .arg(label->width())
+                                .arg(label->minimumSizeHint().width()));
+            }
+            if (right > viewport || std::max(hint, w->minimumWidth()) > allowed) {
+                wide.append(QStringLiteral("%1 %2 ends at %3, asks %4")
+                                .arg(QString::fromLatin1(w->metaObject()->className()), w->objectName())
+                                .arg(right)
+                                .arg(std::max(hint, w->minimumWidth())));
+            }
+        }
+        QVERIFY2(wide.isEmpty(), qPrintable(QStringLiteral("viewport %1: %2").arg(viewport).arg(
+                                                wide.join(QStringLiteral("; ")))));
+        // Room for a scroll bar too, so the scroll area cannot flip.
+        const int withBar = width - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+        QVERIFY2(content->minimumSizeHint().width() <= withBar,
+                 qPrintable(QString::number(content->minimumSizeHint().width())));
+
+        // The long callsign's reading row elides it, with the whole
+        // callsign in a tooltip once it is painted short. (Doubled, it is
+        // talking; keyed, the rows are of you; quiet, a list of names.)
+        if (scene != 2 && scene != 3 && scene != 4) {
+            QLabel* longCall = nullptr;
+            for (QLabel* label : panel.findChildren<QLabel*>(QStringLiteral("roundtableReadingCall"))) {
+                if (label->text() == QLatin1String("KH6/W1LONGCALL") && label->isVisibleTo(&panel)) {
+                    longCall = label;
+                }
+            }
+            QVERIFY(longCall != nullptr);
+            longCall->repaint();
+            const int whole = longCall->fontMetrics().horizontalAdvance(longCall->text());
+            if (longCall->width() < whole) {
+                QCOMPARE(longCall->toolTip(), QStringLiteral("KH6/W1LONGCALL"));
+            }
+            // Six characters always show whole.
+            QVERIFY2(longCall->width() >= longCall->fontMetrics().horizontalAdvance(QStringLiteral("KH6/W1")),
+                     qPrintable(QString::number(longCall->width())));
+        }
+    }
+
     void mutedMessagesFold()
     {
         AppSettings::instance().setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("W4ABC"));
@@ -1590,3 +1763,4 @@ private slots:
 
 QTEST_MAIN(TstRoundtablePanel)
 #include "tst_roundtable_panel.moc"
+

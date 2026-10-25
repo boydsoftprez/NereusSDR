@@ -11,6 +11,13 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 15: every roundtable-panel-* scene
+//                 and roundtable-keyed also at the applet column's widths
+//                 (--column, 298 px, the column at 1512x869; --min, its
+//                 260 px minimum), and roundtable-docked: the panel in a
+//                 real MainWindow's applet column, checked for anything past
+//                 its viewport. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 14: the roundtable-flag-live,
 //                 -mention, -keyed, -offline and -connecting scenes, each
 //                 checking slice A's Roundtable line, its text and fit.
@@ -381,6 +388,7 @@
 #include "gui/applets/DvkApplet.h"
 #include "gui/applets/EqApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
+#include "gui/applets/RoundtableApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/AmpApplet.h"
 #include "gui/applets/Rf2ksApplet.h"
@@ -6982,6 +6990,45 @@ void checkRoundtableFlag(SceneContext& ctx, const QString& name, const QString& 
     ctx.images.append(img);
 }
 
+// Roundtable plan Task 15: the panel at the applet column's widths too:
+// --column at 298 px (the column at 1512x869, a 280 px viewport inside the
+// applet frame) and --min at the column's 260 px minimum.
+void captureRoundtableColumnWidths(SceneContext& ctx, QWidget* panel, const QString& name)
+{
+    const QSize designed = panel->size();
+    const QList<std::pair<int, QString>> widths{{298, QStringLiteral("--column")},
+                                                {260, QStringLiteral("--min")}};
+    for (const auto& [width, suffix] : widths) {
+        panel->resize(width, designed.height());
+        pump(kTabSettleMs);
+        captureDialog(ctx, panel, name + suffix);
+    }
+    panel->resize(designed);
+    pump(kTabSettleMs);
+}
+
+// Roundtable plan Task 15: the visible widgets under `content` that run
+// past `viewport` px, for a docked panel's check.
+QStringList roundtableOverruns(QWidget* content, int viewport)
+{
+    QStringList out;
+    if (content->width() > viewport) {
+        out.append(QStringLiteral("content %1").arg(content->width()));
+    }
+    for (QWidget* w : content->findChildren<QWidget*>()) {
+        if (!w->isVisibleTo(content)) {
+            continue;
+        }
+        const int right = w->mapTo(content, QPoint(w->width(), 0)).x();
+        if (right > viewport) {
+            out.append(QStringLiteral("%1 %2 ends at %3")
+                           .arg(QString::fromLatin1(w->metaObject()->className()), w->objectName())
+                           .arg(right));
+        }
+    }
+    return out;
+}
+
 void appendRoundtableScenes(QVector<Scene>& scenes)
 {
     // The panel in the right column, 340 px wide: in a room, reading
@@ -7002,6 +7049,7 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
                 panel.show();
                 pump(kTabSettleMs);
                 captureDialog(ctx, &panel, name);
+                captureRoundtableColumnWidths(ctx, &panel, name);
                 panel.close();
             });
             ctx.notes.append(note);
@@ -7063,6 +7111,7 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
             panel.show();
             pump(kTabSettleMs);
             captureDialog(ctx, &panel, QStringLiteral("roundtable-keyed"));
+            captureRoundtableColumnWidths(ctx, &panel, QStringLiteral("roundtable-keyed"));
             panel.close();
         });
         ctx.notes.append(QStringLiteral("KG4VCF transmitting for 1:05 in 7.185 LSB"));
@@ -7283,6 +7332,70 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
                   rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
               },
               QStringLiteral("Roundtable") + dot + QStringLiteral("Connecting"), 0);
+
+    // Roundtable plan Task 15: the panel docked in a real MainWindow's
+    // applet column, live in room 7.185 with W1TLK talking: the window, the
+    // applet alone (--applet), and a check that nothing in the panel runs
+    // past its viewport.
+    scenes.append({QStringLiteral("roundtable-docked"), QStringLiteral("2v"), false, [](SceneContext& ctx) {
+        onRoundtableClock([&] {
+            WindowRoundtable rt(ctx.model);
+            if (rt.model == nullptr) {
+                ctx.failure = QStringLiteral("the window has no Roundtable model");
+                return;
+            }
+            runWindowScene(ctx, twoBandPoses(), 0, [&rt](SceneContext&) { rt.live(false); });
+            if (!ctx.failure.isEmpty()) {
+                return;
+            }
+            auto* applet = ctx.window->findChild<RoundtableApplet*>();
+            if (applet == nullptr || applet->panel() == nullptr) {
+                ctx.failure = QStringLiteral("roundtable-docked: no Roundtable applet in the window");
+                return;
+            }
+            applet->panel()->followSlice(0);
+            applet->panel()->setSliceFrequency(7185000);
+            // The applet column scrolls: bring the applet into view.
+            for (QWidget* up = applet->parentWidget(); up != nullptr; up = up->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(up)) {
+                    area->ensureWidgetVisible(applet, 0, 0);
+                    break;
+                }
+            }
+            pump(kFinalSettleMs);
+            captureWindow(ctx, QStringLiteral("roundtable-docked"));
+            CapturedImage img;
+            img.name = QStringLiteral("roundtable-docked--applet");
+            img.kind = QStringLiteral("detail");
+            img.image = grabWidget(applet);
+            img.logicalSize = applet->size();
+            img.dpr = img.image.devicePixelRatio();
+            ctx.images.append(img);
+            auto* scroll = applet->panel()->findChild<QScrollArea*>(QStringLiteral("roundtableScroll"));
+            auto* content = applet->panel()->findChild<QWidget*>(QStringLiteral("roundtableContent"));
+            const int viewport = scroll != nullptr ? scroll->viewport()->width() : 0;
+            const QStringList overruns = content != nullptr ? roundtableOverruns(content, viewport)
+                                                            : QStringList{QStringLiteral("no content")};
+            ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-docked")},
+                                          {QStringLiteral("applet_width"), applet->width()},
+                                          {QStringLiteral("panel_width"), applet->panel()->width()},
+                                          {QStringLiteral("viewport_width"), viewport},
+                                          {QStringLiteral("overruns"), QJsonArray::fromStringList(overruns)},
+                                          {QStringLiteral("fits"), overruns.isEmpty()}});
+            ctx.notes.append(QStringLiteral("roundtable-docked: the applet %1 px wide, the panel %2 px, "
+                                            "its viewport %3 px; %4")
+                                 .arg(applet->width())
+                                 .arg(applet->panel()->width())
+                                 .arg(viewport)
+                                 .arg(overruns.isEmpty() ? QStringLiteral("nothing past the viewport")
+                                                         : overruns.join(QStringLiteral("; "))));
+            if (!overruns.isEmpty()) {
+                ctx.failure = QStringLiteral("roundtable-docked: past the %1 px viewport: %2")
+                                  .arg(viewport)
+                                  .arg(overruns.join(QStringLiteral("; ")));
+            }
+        });
+    }});
 }
 
 void appendMenuScenes(QVector<Scene>& scenes)

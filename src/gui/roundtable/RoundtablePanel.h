@@ -34,6 +34,14 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: Roundtable plan Task 15: setOwnReading(), your own
+//               reading shown only to you, marked NOT SENT, while nothing
+//               about the station is sent. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
+//   2026-10-24: Roundtable plan Task 15: the panel fits the real applet
+//               column (260 px and up): roomWidth(), fitReadBar(),
+//               refitToWidth(). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "gui/NereusGuiExport.h"
@@ -47,6 +55,7 @@
 #include <QWidget>
 
 class QFrame;
+class QHBoxLayout;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -112,6 +121,11 @@ public:
     /// Re-reads the clock: ages, stale rows, the keyed time, the connection
     /// line and the 2-second marks. Runs every second on its own.
     void refreshNow();
+    /// The followed slice's own meter reading, taken at `takenMs` (the
+    /// model's clock). While nothing about the station is sent (hidden, or
+    /// before the first-run answer) it is the "You" row of the readings,
+    /// shown only here and marked NOT SENT (design 10.x hidden, R-RT-13).
+    void setOwnReading(double dbm, qint64 takenMs);
 
 signals:
     /// Tune A here: tune the slice to `hz` in the room's `family`.
@@ -141,6 +155,11 @@ private:
     void rebuild();
     void rebuildHead(const QJsonObject& room);
     void fitCount();
+    // Roundtable plan Task 15: the room's width (the scroll's viewport), and
+    // the read bar on one line or two to fit it.
+    int roomWidth() const;
+    void fitReadBar();
+    void refitToWidth();
     void rebuildTalker(const QJsonObject& room);
     void rebuildReadings(const QJsonObject& room);
     void rebuildEarlier(const QJsonObject& room);
@@ -184,6 +203,9 @@ private:
     int m_sliceId = -1;
     qint64 m_sliceHz = 0;
     QString m_readId;
+    // setOwnReading(): 0 until the slice's meter reads.
+    double m_ownDbm = 0.0;
+    qint64 m_ownReadingMs = 0;
     QString m_shownId;
     bool m_split = false;
     bool m_popped = false;
@@ -242,6 +264,19 @@ private:
 
     QTimer m_tick;
     bool m_settingBox = false;
+    // The room width the sections were last built for, and a rebuild for a
+    // new one waiting for the event loop.
+    int m_fittedWidth = 0;
+    bool m_refitQueued = false;
+    // The read bar's second line, for Back to my slice when one line does
+    // not fit.
+    QWidget* m_readBack = nullptr;
+    QWidget* m_readBackSeparator = nullptr;
+    QHBoxLayout* m_readFirstLine = nullptr;
+    QHBoxLayout* m_readSecondLine = nullptr;
+    // The count on a line of its own under the header row, when even two
+    // lines beside the frequency would not fit (fitCount).
+    QPointer<QLabel> m_countBelow;
 };
 
 } // namespace NereusSDR

@@ -34,6 +34,10 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 14).
+//   2026-10-24: Roundtable plan Task 15: roundtableTurnIsYours(), whose
+//               turn it is from the talkers and your own row, not from
+//               `mine` (wire spec 6.9: the name you gave). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "gui/NereusGuiExport.h"
@@ -135,6 +139,12 @@ struct RoundtableFlagLine {
     }
     bool operator!=(const RoundtableFlagLine& other) const { return !(*this == other); }
 };
+
+/// Whether `turn`, one of room view `room`'s turns, is the station's own:
+/// a talker is the room's "you" member, or, for an `open` turn, that
+/// member is keyed. A turn's `mine` is the name this station gave the turn
+/// (wire spec 6.9), never whose turn it is.
+NEREUS_GUI_EXPORT bool roundtableTurnIsYours(const QJsonObject& room, const QJsonObject& turn, bool open);
 
 /// The line for slice `sliceId`'s flag (design 11.2): the room's member
 /// count and who is talking, "N hear you" while you transmit there, the

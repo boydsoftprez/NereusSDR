@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 15: a flag's Roundtable line asks the
+//               first-run question once, as the Spot Hub tab does. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-24: Roundtable plan Task 14: every flag shows its slice's
 //               Roundtable line, and a click on it shows the panel on that
 //               slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -6485,10 +6488,14 @@ void MainWindow::openRoundtableForSlice(int sliceId)
             window->raise();
             window->activateWindow();
         }
+        openRoundtableFirstRunIfNeeded();
         return;
     }
     if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
     m_roundtableApplet->raise();
+    // Roundtable plan Task 15 (design 11.2 First run): opening Roundtable
+    // from a flag asks the first-run question too, as the Spot Hub tab does.
+    openRoundtableFirstRunIfNeeded();
 }
 
 void MainWindow::onRoundtableRoomClicked(const QString& roomId)

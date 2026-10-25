@@ -17,6 +17,9 @@
 //               wanted, and the station connection waits for the archive
 //               connection to finish (3.1: never two at once). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: setStationInfo() starts the
+//               station connection again with the new callsign or grid.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableClient.h"
@@ -206,6 +209,15 @@ void RoundtableClient::setStationInfo(const QString& callsign, const QString& gr
     m_grid = square;
     m_presenceDirty = true;
     clearOffline();
+    if (m_main.socket && m_main.leg == Leg::Station) {
+        // A new callsign or grid while signed in: the station connection
+        // starts again, so the hello and presence carry the new station.
+        // reconcile() goes offline with the reason when the server would
+        // refuse the callsign.
+        closeLink(m_main, true);
+        m_attempt = 0;
+        m_reconnectDueMs = -1;
+    }
     reconcile();
 }
 

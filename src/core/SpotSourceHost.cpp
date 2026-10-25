@@ -185,6 +185,12 @@
 //                                    the Core in a remote window.
 //                                    NereusSDR-original. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 15: a write of
+//                                    the callsign, grid or away choice
+//                                    while Roundtable runs restarts its
+//                                    station connection, or stops it with
+//                                    the refusal. NereusSDR-original.
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/SpotSourceHost.h"
@@ -686,6 +692,7 @@ bool SpotSourceHost::disconnectSource(const QString& source, QString* reason)
         m_freedv->stopConnection();
         setSource(kFreedvReporter, kOff);
     } else if (source == kRoundtable && m_roundtable) {
+        m_roundtableStoppedByInfo = false;
         m_roundtable->stop();
         setSource(kRoundtable, kOff);
     } else if (source == kPskReporter && m_pskReporter) {
@@ -830,6 +837,13 @@ bool SpotSourceHost::setFreedvHidden(bool on, QString* reason)
 
 // ── Roundtable (Roundtable plan Task 10) ─────────────────────────────────
 
+SpotSourceHost::~SpotSourceHost()
+{
+    if (m_roundtableObserver != 0) {
+        AppSettings::instance().removeWriteObserver(m_roundtableObserver);
+    }
+}
+
 void SpotSourceHost::setRoundtableClient(RoundtableClient* client)
 {
     if (m_roundtable) {
@@ -838,6 +852,25 @@ void SpotSourceHost::setRoundtableClient(RoundtableClient* client)
     m_roundtable = client;
     if (client == nullptr) {
         return;
+    }
+    if (m_roundtableObserver == 0) {
+        // The keys roundtableCallsign() and roundtableGridSquare() read,
+        // and the away choice. Applied from the event loop, once for a
+        // burst of writes (the Spot Hub saves several at once).
+        m_roundtableObserver = AppSettings::instance().addWriteObserver([this](const QString& key) {
+            static const QStringList kKeys{
+                QStringLiteral("Roundtable/Callsign"), QStringLiteral("Roundtable/GridSquare"),
+                QStringLiteral("Roundtable/AwayChoice"), QStringLiteral("User/Callsign"),
+                QStringLiteral("User/GridSquare"), QStringLiteral("StationCallsign")};
+            if (m_roundtableInfoPending || !kKeys.contains(key)) {
+                return;
+            }
+            m_roundtableInfoPending = true;
+            QMetaObject::invokeMethod(this, [this] {
+                m_roundtableInfoPending = false;
+                applyRoundtableStationInfo();
+            }, Qt::QueuedConnection);
+        });
     }
     // Follow the client, whoever started it.
     connect(client, &RoundtableClient::linkStateChanged, this, [this]() { followRoundtable(); });
@@ -916,6 +949,7 @@ bool SpotSourceHost::startRoundtableWith(QString* reason)
                                      "digit, and no / at either end or two together.")
                           .arg(call));
     }
+    m_roundtableStoppedByInfo = false;
     auto& s = AppSettings::instance();
     m_roundtable->setStationInfo(call, roundtableGridSquare());
     m_roundtable->setStopWhenAway(
@@ -927,6 +961,26 @@ bool SpotSourceHost::startRoundtableWith(QString* reason)
     }
     followRoundtable();
     return true;
+}
+
+void SpotSourceHost::applyRoundtableStationInfo()
+{
+    if (!m_roundtable) {
+        return;
+    }
+    if (m_roundtable->linkState() == RoundtableClient::LinkState::Off && !m_roundtableStoppedByInfo) {
+        // Stopped, or never started: the next start reads the settings.
+        return;
+    }
+    QString reason;
+    if (startRoundtableWith(&reason)) {
+        return;
+    }
+    // A callsign the server would refuse: nothing about the station goes
+    // out under it, and the source says why.
+    m_roundtable->stop();
+    m_roundtableStoppedByInfo = true;
+    setSource(kRoundtable, kOff, reason);
 }
 
 bool SpotSourceHost::freedvReporterHidden() const

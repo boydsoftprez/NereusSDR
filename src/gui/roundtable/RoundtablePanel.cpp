@@ -10,9 +10,26 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: Roundtable plan Task 15: while nothing about the station
+//               is sent, its own reading is the "You" row, marked NOT
+//               SENT (setOwnReading); your own turn is found from the
+//               talkers and your row, not from `mine`
+//               (roundtableTurnIsYours). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
+//   2026-10-24: Roundtable plan Task 15: the panel fits the real applet
+//               column (260 px and up) as well as the design's 340 px:
+//               the readings columns fit the room's width (the reading
+//               bar takes the slack, callsigns elide past 6 characters
+//               with the full one in a tooltip), the count, Back to my
+//               slice, the name caption and the name box move to lines of
+//               their own, two talkers at once take a line each, NOT
+//               SENT takes your row's km and Offset cells, and prose
+//               wraps. The fit leaves room for a scroll bar (roomWidth).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 #include "core/AppSettings.h"
 #include "core/roundtable/RoundtableWire.h"
@@ -78,6 +95,11 @@ constexpr int kKmWidth = 40;
 constexpr int kOffsetWidth = 40;
 constexpr int kValueWidth = 46;
 constexpr int kAgeWidth = 40;
+// The reading bar's least width, the slack the columns leave above it.
+constexpr int kReadingBarMinWidth = 24;
+// In the narrowest column the bar gives way before a value does, down to
+// this.
+constexpr int kReadingBarNarrowWidth = 10;
 // The rooms the empty state offers to read.
 constexpr int kEmptyRooms = 8;
 // Name chips beside the callsign box (design 8.6 names).
@@ -147,6 +169,13 @@ QLabel* makeLabel(QWidget* parent, const QString& text, const char* color, int p
     auto* label = new QLabel(text, parent);
     label->setStyleSheet(labelStyle(color, px, bold, isMono));
     return label;
+}
+
+// The AWAY and NOT SENT tags beside a reading's call.
+QString readingTagStyle()
+{
+    return labelStyle("#a5a5a9", kSmallPx, true, false)
+         + QStringLiteral(" border: 1px solid #48484b; border-radius: 2px; padding: 0 2px;");
 }
 
 QLabel* capLabel(QWidget* parent, const QString& text)
@@ -319,7 +348,7 @@ public:
         : QWidget(parent), m_fraction(fraction), m_doubled(doubled), m_stale(stale)
     {
         setFixedHeight(8);
-        setMinimumWidth(24);
+        setMinimumWidth(kReadingBarMinWidth);
     }
 
 protected:
@@ -354,6 +383,83 @@ private:
     bool m_doubled;
     bool m_stale;
 };
+
+// A one-line label that fits a narrow column by eliding its end, never by
+// clipping: it keeps its first `keep` characters (a callsign stays whole
+// to 6), and while elided its full text is the tooltip. Each line of a
+// two-line text elides on its own.
+class ElideLabel : public QLabel {
+public:
+    ElideLabel(const QString& text, int keep, QWidget* parent)
+        : QLabel(text, parent), m_keep(keep)
+    {
+        setMinimumWidth(0);
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        QSize size = QLabel::minimumSizeHint();
+        const QFontMetrics metrics(font());
+        int widest = 0;
+        for (const QString& line : text().split(QLatin1Char('\n'))) {
+            const QString kept = line.size() > m_keep ? line.left(m_keep) + QChar(0x2026) : line;
+            widest = std::max(widest, metrics.horizontalAdvance(kept));
+        }
+        const QMargins margins = contentsMargins();
+        size.setWidth(widest + margins.left() + margins.right() + 2 * margin() + 1);
+        return size;
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        const QRect area = contentsRect().adjusted(margin(), margin(), -margin(), -margin());
+        const QFontMetrics metrics(font());
+        QStringList lines = text().split(QLatin1Char('\n'));
+        bool elided = false;
+        for (QString& line : lines) {
+            const QString shown = metrics.elidedText(line, Qt::ElideRight, area.width());
+            elided = elided || shown != line;
+            line = shown;
+        }
+        style()->drawItemText(&painter, area, static_cast<int>(alignment()), palette(), isEnabled(),
+                              lines.join(QLatin1Char('\n')), foregroundRole());
+        // The whole text on hover while it does not fit.
+        const QString tip = elided ? text() : QString();
+        if (m_ownTip != tip && (toolTip().isEmpty() || toolTip() == m_ownTip)) {
+            m_ownTip = tip;
+            setToolTip(tip);
+        }
+    }
+
+private:
+    int m_keep;
+    QString m_ownTip;
+};
+
+// Callsigns stay whole to 6 characters before they elide.
+constexpr int kCallsignKeep = 6;
+// Other one-line text keeps a word's worth.
+constexpr int kTextKeep = 4;
+
+ElideLabel* makeElided(QWidget* parent, const QString& text, const char* color, int px,
+                       bool bold = false, bool isMono = false, int keep = kCallsignKeep)
+{
+    auto* label = new ElideLabel(text, keep, parent);
+    label->setStyleSheet(labelStyle(color, px, bold, isMono));
+    return label;
+}
+
+// Prose that wraps at the room's width instead of widening it.
+QLabel* makeWrapped(QWidget* parent, const QString& text, const char* color, int px,
+                    bool bold = false)
+{
+    QLabel* label = makeLabel(parent, text, color, px, bold);
+    label->setWordWrap(true);
+    label->setMinimumWidth(0);
+    return label;
+}
 
 QString messageRowStyle(bool isNew, bool mention)
 {
@@ -420,11 +526,19 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_readBar->setStyleSheet(QStringLiteral("QWidget#roundtableReadBar { background: #151518; %1 }")
                                  .arg(rule()));
     {
-        // "Reading 7.249 · Tune A here · Back to my slice", one line that
-        // fits the docked width with room for a scroll bar.
-        auto* row = new QHBoxLayout(m_readBar);
-        row->setContentsMargins(8, 4, 8, 4);
+        // "Reading 7.249 · Tune A here · Back to my slice", one line where
+        // it fits, else Back to my slice on a second (fitReadBar).
+        auto* lines = new QVBoxLayout(m_readBar);
+        lines->setContentsMargins(8, 4, 8, 4);
+        lines->setSpacing(2);
+        auto* row = new QHBoxLayout();
         row->setSpacing(4);
+        lines->addLayout(row);
+        m_readFirstLine = row;
+        m_readSecondLine = new QHBoxLayout();
+        m_readSecondLine->setSpacing(4);
+        m_readSecondLine->addStretch(1);
+        lines->addLayout(m_readSecondLine);
         const auto separator = [this]() {
             QLabel* dot = makeLabel(m_readBar, QStringLiteral("·"), kDim, kSmallPx);
             dot->setObjectName(QStringLiteral("roundtableReadSeparator"));
@@ -444,11 +558,13 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
             }
         });
         row->addWidget(tune);
-        row->addWidget(separator());
+        m_readBackSeparator = separator();
+        row->addWidget(m_readBackSeparator);
         QPushButton* back = makeButton(m_readBar, QStringLiteral("Back to my slice"), kLinkStyle);
         back->setObjectName(QStringLiteral("roundtableBackBtn"));
         connect(back, &QPushButton::clicked, this, &RoundtablePanel::backToSlice);
         row->addWidget(back);
+        m_readBack = back;
         row->addStretch(1);
     }
     m_contentLayout->addWidget(m_readBar);
@@ -457,6 +573,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_contentLayout->addWidget(m_head);
     m_connection = makeLabel(m_content, QString(), kDim, kSmallPx);
     m_connection->setObjectName(QStringLiteral("roundtableConnectionLine"));
+    m_connection->setWordWrap(true);
     m_connection->setContentsMargins(8, 3, 8, 3);
     m_contentLayout->addWidget(m_connection);
     m_txLine = makeSection(m_content, QStringLiteral("roundtableTxLine"));
@@ -916,8 +1033,10 @@ void RoundtablePanel::rebuild()
         emit shownRoomChanged(id);
     }
 
+    m_fittedWidth = roomWidth();
     m_readBar->setVisible(isReading());
     m_readLabel->setText(QStringLiteral("Reading %1").arg(shortFrequency(roomHz(id))));
+    fitReadBar();
 
     if (id.isEmpty()) {
         for (QWidget* section : {m_head, m_txLine, m_talker, m_readings, m_earlier, m_messages}) {
@@ -934,7 +1053,7 @@ void RoundtablePanel::rebuild()
 
     const QJsonObject room = m_model ? m_model->room(id) : QJsonObject();
     const QJsonObject turn = openTurn(room);
-    const bool keyed = turn.value(QStringLiteral("mine")).toBool();
+    const bool keyed = roundtableTurnIsYours(room, turn, true);
 
     m_head->setVisible(!keyed);
     m_talker->setVisible(!keyed);
@@ -1077,6 +1196,10 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
     row->addWidget(menu);
+    m_countBelow = makeLabel(body, m_countOneLine, kDim, kSmallPx);
+    m_countBelow->setObjectName(QStringLiteral("roundtableCount"));
+    m_countBelow->hide();
+    stack->addWidget(m_countBelow);
     fitCount();
 }
 
@@ -1086,12 +1209,22 @@ void RoundtablePanel::fitCount()
     // onto two lines first, then NOT TUNED HERE moves to a line of its
     // own (not a word-wrapping label: one with a height for its width
     // makes the scroll area lay out mid-rebuild).
+    // [Roundtable plan Task 15: and in the narrower real column, last, the
+    // count goes under the frequency.]
     if (m_countLabel == nullptr) {
         return;
     }
     // Measured, not laid out: nothing here may relayout the content.
-    auto* row = qobject_cast<QHBoxLayout*>(m_countLabel->parentWidget()->layout()->itemAt(
-        m_countLabel->parentWidget()->layout()->count() - 1)->layout());
+    // The row is the stack item that holds the count (the count below the
+    // frequency comes after it).
+    QLayout* stack = m_countLabel->parentWidget()->layout();
+    QHBoxLayout* row = nullptr;
+    for (int i = 0; stack != nullptr && i < stack->count(); ++i) {
+        auto* candidate = qobject_cast<QHBoxLayout*>(stack->itemAt(i)->layout());
+        if (candidate != nullptr && candidate->indexOf(m_countLabel) >= 0) {
+            row = candidate;
+        }
+    }
     if (row == nullptr) {
         return;
     }
@@ -1110,7 +1243,7 @@ void RoundtablePanel::fitCount()
     int tagWidth = 0;
     for (int i = 0; i < row->count(); ++i) {
         QWidget* w = row->itemAt(i)->widget();
-        if (w == nullptr || (w->isHidden() && w != m_tagInline)) {
+        if (w == nullptr || (w->isHidden() && w != m_tagInline && w != m_countLabel)) {
             continue;
         }
         ++widgets;
@@ -1125,7 +1258,7 @@ void RoundtablePanel::fitCount()
         }
     }
     others += std::max(0, widgets - 1) * row->spacing() - (tagWidth > 0 ? row->spacing() : 0);
-    const int room = m_scroll->viewport()->width() > 0 ? m_scroll->viewport()->width() : width();
+    const int room = roomWidth();
     bool twoLineCount = false;
     bool tagAbove = false;
     if (others + tagWidth + oneLine > room) {
@@ -1140,12 +1273,99 @@ void RoundtablePanel::fitCount()
         m_tagInline->setVisible(!tagAbove);
         m_tagAbove->setVisible(tagAbove);
     }
+    // Roundtable plan Task 15: in the narrowest column the count goes
+    // under the frequency, on one line (or wrapped), rather than past the
+    // edge.
+    if (m_countBelow != nullptr) {
+        const int countWidth = twoLineCount ? twoLines : oneLine;
+        const bool below = others + (tagAbove ? 0 : tagWidth) + countWidth > room;
+        if (m_countBelow->text() != m_countOneLine) {
+            m_countBelow->setText(m_countOneLine);
+        }
+        if (m_countBelow->isHidden() == below) {
+            m_countLabel->setVisible(!below);
+            m_countBelow->setVisible(below);
+        }
+    }
 }
 
 void RoundtablePanel::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    refitToWidth();
+}
+
+int RoundtablePanel::roomWidth() const
+{
+    // The viewport less a vertical scroll bar whether one shows or not:
+    // the fit never changes when the bar comes and goes, and a content
+    // minimum between the two widths cannot make the scroll area flip.
+    const int viewport = m_scroll->viewport()->width();
+    if (viewport <= 0) {
+        return width();
+    }
+    const QScrollBar* bar = m_scroll->verticalScrollBar();
+    const int extent = bar->isVisible() ? 0 : style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, bar);
+    return viewport - extent;
+}
+
+void RoundtablePanel::refitToWidth()
+{
     fitCount();
+    fitReadBar();
+    // The readings columns, the name chips and the name editor are laid
+    // out for a width; a new one rebuilds them, once the resize settles.
+    if (roomWidth() == m_fittedWidth || m_refitQueued) {
+        return;
+    }
+    m_refitQueued = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_refitQueued = false;
+        if (roomWidth() == m_fittedWidth) {
+            return;
+        }
+        setProperty("roundtableTalkerSig", QString());
+        m_earlierSignature.clear();
+        rebuild();
+    });
+}
+
+void RoundtablePanel::fitReadBar()
+{
+    if (m_readBack == nullptr) {
+        return;
+    }
+    // Measured, as fitCount is: the first line's parts at their size.
+    int needed = 16;
+    int parts = 0;
+    for (int i = 0; i < m_readFirstLine->count(); ++i) {
+        QWidget* w = m_readFirstLine->itemAt(i)->widget();
+        if (w == nullptr || w == m_readBack || w == m_readBackSeparator) {
+            continue;
+        }
+        w->ensurePolished();
+        needed += w->sizeHint().width();
+        ++parts;
+    }
+    m_readBackSeparator->ensurePolished();
+    m_readBack->ensurePolished();
+    const int spacing = m_readFirstLine->spacing();
+    needed += std::max(0, parts - 1) * spacing;
+    const int oneLine = needed + 2 * spacing + m_readBackSeparator->sizeHint().width()
+                      + m_readBack->sizeHint().width();
+    const bool twoLines = oneLine > roomWidth();
+    const bool onSecond = m_readSecondLine->indexOf(m_readBack) >= 0;
+    if (twoLines == onSecond) {
+        return;
+    }
+    if (twoLines) {
+        m_readFirstLine->removeWidget(m_readBack);
+        m_readSecondLine->insertWidget(0, m_readBack);
+    } else {
+        m_readSecondLine->removeWidget(m_readBack);
+        m_readFirstLine->insertWidget(m_readFirstLine->indexOf(m_readBackSeparator) + 1, m_readBack);
+    }
+    m_readBackSeparator->setVisible(!twoLines);
 }
 
 void RoundtablePanel::updateConnectionLine(const QJsonObject& room)
@@ -1200,7 +1420,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     const qint64 now = RoundtableModel::nowMs();
     const QJsonObject turn = openTurn(room);
     const QString kind = turn.value(QStringLiteral("kind")).toString();
-    const bool keyed = turn.value(QStringLiteral("mine")).toBool();
+    const bool keyed = roundtableTurnIsYours(room, turn, true);
     const bool canName = tunedHere() && live() && !awayHere(room);
     const QJsonArray earlier = room.value(QStringLiteral("earlier")).toArray();
     int hearing = 0;
@@ -1246,8 +1466,8 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         tx->setStyleSheet(tx->styleSheet() + QStringLiteral(" background: #c02020; padding: 0 4px;"
                                                             " border-radius: 2px;"));
         row->addWidget(tx);
-        QLabel* who = makeLabel(body, QStringLiteral("You \u00b7 %1 hear you").arg(hearing), kYou,
-                                kBodyPx, true);
+        QLabel* who = makeWrapped(body, QStringLiteral("You \u00b7 %1 hear you").arg(hearing), kYou,
+                                  kBodyPx, true);
         who->setObjectName(QStringLiteral("roundtableTxText"));
         row->addWidget(who);
         QLabel* time = makeLabel(body, keyedText, kText, kBodyPx, false, true);
@@ -1305,7 +1525,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             const qint64 ago = now - last.value(QStringLiteral("end")).toInteger();
             const QJsonArray lastTalkers = last.value(QStringLiteral("talkers")).toArray();
             QString text;
-            if (last.value(QStringLiteral("mine")).toBool()) {
+            if (roundtableTurnIsYours(room, last, false)) {
                 text = QStringLiteral("Last turn was yours, %1 ago").arg(ageText(ago));
             } else if (!lastTalkers.isEmpty()
                        && last.value(QStringLiteral("kind")).toString() != QLatin1String("unknown")) {
@@ -1314,27 +1534,54 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             } else {
                 text = QStringLiteral("Last turn by an unknown talker, %1 ago").arg(ageText(ago));
             }
-            col->addWidget(makeLabel(body, text, kDim, kSmallPx));
+            col->addWidget(makeWrapped(body, text, kDim, kSmallPx));
         }
         return;
     }
 
     if (kind == QLatin1String("doubled")) {
         col->addWidget(capLabel(body, QStringLiteral("TWO AT ONCE")));
-        QHBoxLayout* row = bigRow();
+        // Roundtable plan Task 15: each talker's part (TX, the name, the
+        // "+" after it), then DOUBLED; where they do not fit one line of
+        // the room, each talker takes a line of its own.
+        QList<QList<QWidget*>> parts;
         for (qsizetype i = 0; i < talkers.size(); ++i) {
-            if (i > 0) {
-                row->addWidget(makeLabel(body, QStringLiteral("+"), kDim, 17, true, true));
-            }
-            row->addWidget(txBadge());
-            QLabel* name = makeLabel(body, withNth(talkers.at(i).toObject()), kDoubled, 17, true, true);
+            QList<QWidget*> part;
+            part.append(txBadge());
+            QLabel* name = makeElided(body, withNth(talkers.at(i).toObject()), kDoubled, 17, true, true);
             name->setObjectName(QStringLiteral("roundtableTalkerName"));
-            row->addWidget(name);
+            part.append(name);
+            if (i + 1 < talkers.size()) {
+                part.append(makeLabel(body, QStringLiteral("+"), kDim, 17, true, true));
+            }
+            parts.append(part);
         }
         QLabel* tag = makeLabel(body, QStringLiteral("DOUBLED"), "#f0dcdc", kSmallPx, true);
         tag->setStyleSheet(tag->styleSheet() + QStringLiteral(" background: #5a1616; border: 1px solid"
                                                               " #c25a5c; padding: 0 4px;"));
-        row->addWidget(tag);
+        if (parts.isEmpty()) {
+            parts.append(QList<QWidget*>{});
+        }
+        parts.last().append(tag);
+        constexpr int kBigRowSpacing = 6;
+        int oneLine = 16 - kBigRowSpacing;
+        for (const QList<QWidget*>& part : std::as_const(parts)) {
+            for (QWidget* w : part) {
+                w->ensurePolished();
+                oneLine += w->minimumSizeHint().width() + kBigRowSpacing;
+            }
+        }
+        const bool lineEach = oneLine > roomWidth();
+        QHBoxLayout* row = bigRow();
+        for (qsizetype i = 0; i < parts.size(); ++i) {
+            if (lineEach && i > 0) {
+                row->addStretch(1);
+                row = bigRow();
+            }
+            for (QWidget* w : parts.at(i)) {
+                row->addWidget(w);
+            }
+        }
         row->addStretch(1);
         auto* sub = new QHBoxLayout();
         sub->setSpacing(4);
@@ -1342,8 +1589,8 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         QLabel* time = makeLabel(body, keyedText, kDim, kSmallPx, false, true);
         time->setObjectName(QStringLiteral("roundtableKeyedTime"));
         sub->addWidget(time);
-        sub->addWidget(makeLabel(body, QStringLiteral("\u00b7 each reading is both signals together"),
-                                 kDim, kSmallPx));
+        sub->addWidget(makeWrapped(body, QStringLiteral("\u00b7 each reading is both signals together"),
+                                   kDim, kSmallPx));
         sub->addStretch(1);
         col->addLayout(sub);
         return;
@@ -1369,15 +1616,16 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
                              .arg(name.value(QStringLiteral("count")).toInt()));
         }
         if (!given.isEmpty()) {
-            QLabel* named = makeLabel(body, QStringLiteral("Named %1").arg(given.join(QStringLiteral(", "))),
-                                      kUnknown, kSmallPx);
+            QLabel* named = makeWrapped(body, QStringLiteral("Named %1").arg(given.join(QStringLiteral(", "))),
+                                        kUnknown, kSmallPx);
             named->setObjectName(QStringLiteral("roundtableNamesGiven"));
             col->addWidget(named);
         }
         // NAME THIS TURN: the names in view as chips, and a callsign box.
         auto* names = new QHBoxLayout();
         names->setSpacing(4);
-        names->addWidget(capLabel(body, QStringLiteral("NAME THIS TURN")));
+        QLabel* nameCaption = capLabel(body, QStringLiteral("NAME THIS TURN"));
+        names->addWidget(nameCaption);
         const qint64 turnId = turn.value(QStringLiteral("id")).toInteger();
         for (const QString& suggestion : nameSuggestions(room)) {
             QPushButton* chip = makeButton(body, suggestion, kButtonStyle);
@@ -1388,6 +1636,19 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             connect(chip, &QPushButton::clicked, this,
                     [this, turnId, suggestion]() { submitName(turnId, suggestion); });
             names->addWidget(chip);
+        }
+        // Roundtable plan Task 15: where the caption and the chips do not
+        // fit one line of the room, the caption takes a line of its own.
+        int namesWidth = 16 + std::max(0, names->count() - 1) * names->spacing();
+        for (int i = 0; i < names->count(); ++i) {
+            if (QWidget* w = names->itemAt(i)->widget()) {
+                w->ensurePolished();
+                namesWidth += w->sizeHint().width();
+            }
+        }
+        if (namesWidth > roomWidth()) {
+            names->removeWidget(nameCaption);
+            col->addWidget(nameCaption);
         }
         names->addStretch(1);
         col->addLayout(names);
@@ -1420,7 +1681,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     QHBoxLayout* row = bigRow();
     row->addWidget(txBadge());
     const QJsonObject talker = talkers.isEmpty() ? QJsonObject() : talkers.first().toObject();
-    QLabel* name = makeLabel(body, withNth(talker), kTalking, 17, true, true);
+    QLabel* name = makeElided(body, withNth(talker), kTalking, 17, true, true);
     name->setObjectName(QStringLiteral("roundtableTalkerName"));
     row->addWidget(name);
     row->addWidget(makeLabel(body, gridOf(talker.value(QStringLiteral("ref")).toString()), kDim,
@@ -1432,8 +1693,8 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     QLabel* time = makeLabel(body, keyedText, kDim, kSmallPx, false, true);
     time->setObjectName(QStringLiteral("roundtableKeyedTime"));
     sub->addWidget(time);
-    sub->addWidget(makeLabel(body, QStringLiteral("\u00b7 on NereusSDR, so the talker is known"),
-                             kDim, kSmallPx));
+    sub->addWidget(makeWrapped(body, QStringLiteral("\u00b7 on NereusSDR, so the talker is known"),
+                               kDim, kSmallPx));
     sub->addStretch(1);
     col->addLayout(sub);
 }
@@ -1450,7 +1711,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     }
     const QJsonObject turn = openTurn(room);
     const QString kind = turn.value(QStringLiteral("kind")).toString();
-    const bool keyed = turn.value(QStringLiteral("mine")).toBool();
+    const bool keyed = roundtableTurnIsYours(room, turn, true);
     QSet<QString> talkerRefs;
     QStringList talkerNames;
     for (const QJsonValue& value : turn.value(QStringLiteral("talkers")).toArray()) {
@@ -1500,6 +1761,31 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         rows.append(row);
     }
     // Nearest first; rows with no distance follow by callsign (6.8).
+    // Hidden, or before the first-run answer, the room has no row of you:
+    // your own reading shows here only, marked NOT SENT (R-RT-13).
+    const bool unsent = m_model && m_model->linkState() == RoundtableModel::LinkState::Hidden;
+    if (unsent && tunedHere() && !keyed && m_ownReadingMs > 0) {
+        bool listed = false;
+        for (const Row& row : std::as_const(rows)) {
+            listed = listed || row.member.value(QStringLiteral("you")).toBool();
+        }
+        if (!listed) {
+            Row own;
+            own.member = QJsonObject{
+                {QStringLiteral("ref"), QString()},
+                {QStringLiteral("callsign"), myCallsign(room)},
+                {QStringLiteral("nth"), 1},
+                {QStringLiteral("km"), QJsonValue::Null},
+                {QStringLiteral("grid"), QString()},
+                {QStringLiteral("offsetHz"), 0},
+                {QStringLiteral("away"), false},
+                {QStringLiteral("you"), true},
+                {QStringLiteral("reading"), QJsonObject{{QStringLiteral("dbm"), m_ownDbm},
+                                                        {QStringLiteral("t"), m_ownReadingMs},
+                                                        {QStringLiteral("present"), true}}}};
+            rows.append(own);
+        }
+    }
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         if (a.hasKm != b.hasKm) {
             return a.hasKm;
@@ -1516,6 +1802,8 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     head->setContentsMargins(8, 6, 8, 3);
     QLabel* titleLabel = capLabel(body, title);
     titleLabel->setObjectName(QStringLiteral("roundtableReadingsTitle"));
+    titleLabel->setWordWrap(true);
+    titleLabel->setMinimumWidth(0);
     head->addWidget(titleLabel, 1);
     if (!turn.isEmpty() && !rows.isEmpty()) {
         head->addWidget(makeLabel(body, byDistance ? QStringLiteral("nearest first")
@@ -1544,26 +1832,156 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         return;
     }
 
-    const auto columns = [](QHBoxLayout* row) {
-        row->setContentsMargins(8, 0, 8, 0);
-        row->setSpacing(4);
+    // The columns at the room's width (the real applet column is 260 px
+    // and up, the design's 340 px panel the widest docked shape): the
+    // values in each column stay whole, the reading bar takes the slack,
+    // and under the design widths the Station column gives way first,
+    // its callsigns eliding past 6 characters, then the others down to
+    // what they hold, then the gaps.
+    const QFont callFont = [body]() {
+        QLabel probe(body);
+        probe.setStyleSheet(labelStyle(kText, kSmallPx, true, true));
+        probe.ensurePolished();
+        return probe.font();
+    }();
+    const QFont valueFont = [body]() {
+        QLabel probe(body);
+        probe.setStyleSheet(labelStyle(kText, kSmallPx, false, true));
+        probe.ensurePolished();
+        return probe.font();
+    }();
+    const QFontMetrics callMetrics(callFont);
+    const QFontMetrics valueMetrics(valueFont);
+    // A tag (AWAY, NOT SENT) as the row draws it, border and padding too.
+    const auto tagWidth = [body](const QString& text) {
+        QLabel probe(text, body);
+        probe.setStyleSheet(readingTagStyle());
+        probe.ensurePolished();
+        return probe.sizeHint().width();
+    };
+    int callNeed = 0;
+    // The call column without the NOT SENT tag, and the tag: where the
+    // call and the tag cannot share the column, the tag takes your row's
+    // km and Offset cells (empty for you) and the bar the rest.
+    int callNeedPlain = 0;
+    const int unsentTagWidth = tagWidth(QStringLiteral("NOT SENT"));
+    const int awayTagWidth = tagWidth(QStringLiteral("AWAY"));
+    int kmNeed = 0;
+    int offsetNeed = 0;
+    int valueNeed = valueMetrics.horizontalAdvance(QStringLiteral("none"));
+    int ageNeed = 0;
+    for (const Row& entry : std::as_const(rows)) {
+        const QJsonObject& member = entry.member;
+        const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+        const QString call = withNth(member);
+        const QString kept = call.size() > kCallsignKeep ? call.left(kCallsignKeep) + QChar(0x2026) : call;
+        // A tag (AWAY, NOT SENT) beside the call: its text, 2 px padding and
+        // the border each side, and the gap.
+        int tags = 0;
+        if (member.value(QStringLiteral("away")).toBool()) {
+            tags += awayTagWidth + 3;
+        }
+        callNeedPlain = std::max(callNeedPlain, callMetrics.horizontalAdvance(kept) + 1 + tags);
+        if (member.value(QStringLiteral("you")).toBool() && unsent) {
+            tags += unsentTagWidth + 3;
+        }
+        callNeed = std::max(callNeed, callMetrics.horizontalAdvance(kept) + 1 + tags);
+        kmNeed = std::max(kmNeed, valueMetrics.horizontalAdvance(
+                                      entry.hasKm ? QString::number(std::lround(entry.km))
+                                                  : member.value(QStringLiteral("grid")).toString()) + 1);
+        offsetNeed = std::max(offsetNeed, valueMetrics.horizontalAdvance(
+                                              offsetText(member.value(QStringLiteral("offsetHz")).toInteger())) + 1);
+        const double dbm = reading.value(QStringLiteral("dbm")).toDouble();
+        valueNeed = std::max(valueNeed, valueMetrics.horizontalAdvance(sText(dbm)) + 1);
+        ageNeed = std::max(ageNeed, valueMetrics.horizontalAdvance(
+                                        ageText(now - reading.value(QStringLiteral("t")).toInteger())) + 1);
+    }
+    // The column heads stay whole too.
+    const QFontMetrics headMetrics([body]() {
+        QLabel probe(body);
+        probe.setStyleSheet(labelStyle(kDim2, kSmallPx, false, false));
+        probe.ensurePolished();
+        return probe.font();
+    }());
+    kmNeed = std::max(kmNeed, headMetrics.horizontalAdvance(QStringLiteral("km")) + 1);
+    // The Offset head elides (whole in its tooltip) to its first three
+    // letters, never further.
+    offsetNeed = std::max(offsetNeed, headMetrics.horizontalAdvance(QStringLiteral("Off") + QChar(0x2026)) + 1);
+    ageNeed = std::max(ageNeed, headMetrics.horizontalAdvance(QStringLiteral("Age")) + 1);
+    callNeed = std::max(callNeed, headMetrics.horizontalAdvance(QStringLiteral("Stn")) + 1);
+    callNeedPlain = std::max(callNeedPlain, headMetrics.horizontalAdvance(QStringLiteral("Stn")) + 1);
+    // Up to 2 seconds of ageing between rebuilds ("9 s" to "10 s").
+    ageNeed = std::max(ageNeed, valueMetrics.horizontalAdvance(QStringLiteral("59 s")) + 1);
+    const int available = roomWidth();
+    // At the tightest gaps (4 px margins, 2 px between), does NOT SENT
+    // still fit beside the call?
+    const bool unsentBeforeBar =
+        callNeed != callNeedPlain
+        && 2 * 4 + 5 * 2 + kReadingBarMinWidth + callNeed + kmNeed + offsetNeed + valueNeed + ageNeed > available;
+    if (unsentBeforeBar) {
+        callNeed = callNeedPlain;
+    }
+    int barMinWidth = kReadingBarMinWidth;
+    struct Column {
+        int want;
+        int need;
+    };
+    Column cols[] = {{std::max(kCallWidth, callNeed), callNeed},
+                     {std::max(kKmWidth, kmNeed), kmNeed},
+                     {std::max(kOffsetWidth, offsetNeed), offsetNeed},
+                     {std::max(kValueWidth, valueNeed), valueNeed},
+                     {std::max(kAgeWidth, ageNeed), ageNeed}};
+    int widths[5];
+    for (int i = 0; i < 5; ++i) {
+        widths[i] = cols[i].want;
+    }
+    int margin = 8;
+    int spacing = 4;
+    const auto total = [&widths, &margin, &spacing, &barMinWidth]() {
+        int sum = 2 * margin + 5 * spacing + barMinWidth;
+        for (const int w : widths) {
+            sum += w;
+        }
+        return sum;
+    };
+    for (int i = 0; i < 5 && total() > available; ++i) {
+        widths[i] = std::max(cols[i].need, widths[i] - (total() - available));
+    }
+    if (total() > available) {
+        spacing = 2;
+    }
+    if (total() > available) {
+        margin = 4;
+    }
+    if (total() > available) {
+        barMinWidth = std::max(kReadingBarNarrowWidth, barMinWidth - (total() - available));
+    }
+    const int callWidth = widths[0];
+    const int kmWidth = widths[1];
+    const int offsetWidth = widths[2];
+    const int valueWidth = widths[3];
+    const int ageWidth = widths[4];
+
+    const auto columns = [margin, spacing](QHBoxLayout* row) {
+        row->setContentsMargins(margin, 0, margin, 0);
+        row->setSpacing(spacing);
     };
     {
         auto* header = new QHBoxLayout();
         columns(header);
         const auto cell = [body](const QString& text, int width, Qt::Alignment align) {
-            QLabel* label = makeLabel(body, text, kDim2, kSmallPx);
+            QLabel* label = makeElided(body, text, kDim2, kSmallPx, false, false, 3);
             if (width > 0) {
                 label->setFixedWidth(width);
             }
             label->setAlignment(align | Qt::AlignVCenter);
             return label;
         };
-        header->addWidget(cell(QStringLiteral("Station"), kCallWidth, Qt::AlignLeft));
-        header->addWidget(cell(QStringLiteral("km"), kKmWidth, Qt::AlignRight));
-        header->addWidget(cell(QStringLiteral("Offset"), kOffsetWidth, Qt::AlignRight));
+        header->addWidget(cell(QStringLiteral("Station"), callWidth, Qt::AlignLeft));
+        header->addWidget(cell(QStringLiteral("km"), kmWidth, Qt::AlignRight));
+        header->addWidget(cell(QStringLiteral("Offset"), offsetWidth, Qt::AlignRight));
         header->addWidget(cell(QStringLiteral("Reading"), 0, Qt::AlignLeft), 1);
-        header->addWidget(cell(QStringLiteral("Age"), kAgeWidth, Qt::AlignRight));
+        header->addWidget(cell(QStringLiteral("Age"), ageWidth, Qt::AlignRight));
         col->addLayout(header);
     }
 
@@ -1599,52 +2017,73 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         const char* text = stale ? kStale : (isYou ? kYou : (away ? "#959599" : kText));
 
         auto* callCell = new QWidget(rowWidget);
-        callCell->setFixedWidth(kCallWidth);
+        callCell->setObjectName(QStringLiteral("roundtableReadingCallCell"));
+        // The row's own background (yours tinted) shows through the cell.
+        callCell->setStyleSheet(QStringLiteral("QWidget#roundtableReadingCallCell { background: transparent; }"));
+        callCell->setFixedWidth(callWidth);
         auto* callRow = new QHBoxLayout(callCell);
         callRow->setContentsMargins(0, 0, 0, 0);
         callRow->setSpacing(3);
-        QLabel* call = makeLabel(callCell, withNth(member), text, kSmallPx, true, true);
+        QLabel* call = makeElided(callCell, withNth(member), text, kSmallPx, true, true);
         call->setObjectName(QStringLiteral("roundtableReadingCall"));
         callRow->addWidget(call);
         if (away) {
-            QLabel* awayTag = makeLabel(callCell, QStringLiteral("AWAY"), "#a5a5a9", kSmallPx, true);
+            QLabel* awayTag = new QLabel(QStringLiteral("AWAY"), callCell);
             awayTag->setObjectName(QStringLiteral("roundtableAwayTag"));
-            awayTag->setStyleSheet(awayTag->styleSheet()
-                                   + QStringLiteral(" border: 1px solid #48484b; border-radius: 2px;"
-                                                    " padding: 0 2px;"));
+            awayTag->setStyleSheet(readingTagStyle());
             callRow->addWidget(awayTag);
+        }
+        QLabel* unsentTag = nullptr;
+        if (isYou && unsent) {
+            unsentTag = new QLabel(QStringLiteral("NOT SENT"),
+                                   unsentBeforeBar ? static_cast<QWidget*>(rowWidget) : callCell);
+            unsentTag->setObjectName(QStringLiteral("roundtableNotSentTag"));
+            unsentTag->setToolTip(QStringLiteral("Hidden: only you see this reading"));
+            unsentTag->setStyleSheet(readingTagStyle());
+            if (!unsentBeforeBar) {
+                callRow->addWidget(unsentTag);
+            }
         }
         callRow->addStretch(1);
         row->addWidget(callCell);
 
-        QLabel* km = makeLabel(rowWidget,
-                               entry.hasKm ? QString::number(std::lround(entry.km))
-                                           : member.value(QStringLiteral("grid")).toString(),
-                               stale ? kStale : kDim, kSmallPx, false, true);
-        km->setFixedWidth(kKmWidth);
-        km->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(km);
-        const qint64 offsetHz = member.value(QStringLiteral("offsetHz")).toInteger();
-        QLabel* offset = makeLabel(rowWidget, offsetText(offsetHz),
-                                   stale ? kStale : (std::llabs(offsetHz) >= 50 ? kUnknown : kDim),
-                                   kSmallPx, false, true);
-        offset->setFixedWidth(kOffsetWidth);
-        offset->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(offset);
-        row->addWidget(new ReadingBar(present ? sFraction(dbm) : 0.0, kind == QLatin1String("doubled"),
-                                      stale, rowWidget),
-                       1);
+        auto* bar = new ReadingBar(present ? sFraction(dbm) : 0.0, kind == QLatin1String("doubled"), stale,
+                                   rowWidget);
+        bar->setMinimumWidth(barMinWidth);
+        if (unsentTag != nullptr && unsentBeforeBar) {
+            // Roundtable plan Task 15: NOT SENT in your row's (empty) km
+            // and Offset cells, the bar taking what is left.
+            row->addWidget(unsentTag);
+            bar->setMinimumWidth(0);
+            row->addWidget(bar, 1);
+        } else {
+            QLabel* km = makeLabel(rowWidget,
+                                   entry.hasKm ? QString::number(std::lround(entry.km))
+                                               : member.value(QStringLiteral("grid")).toString(),
+                                   stale ? kStale : kDim, kSmallPx, false, true);
+            km->setFixedWidth(kmWidth);
+            km->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            row->addWidget(km);
+            const qint64 offsetHz = member.value(QStringLiteral("offsetHz")).toInteger();
+            QLabel* offset = makeLabel(rowWidget, offsetText(offsetHz),
+                                       stale ? kStale : (std::llabs(offsetHz) >= 50 ? kUnknown : kDim),
+                                       kSmallPx, false, true);
+            offset->setFixedWidth(offsetWidth);
+            offset->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            row->addWidget(offset);
+            row->addWidget(bar, 1);
+        }
         QLabel* value = makeLabel(rowWidget, present ? sText(dbm) : QStringLiteral("none"), text,
                                   kSmallPx, false, true);
         value->setObjectName(QStringLiteral("roundtableReadingValue"));
-        value->setFixedWidth(kValueWidth);
+        value->setFixedWidth(valueWidth);
         value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         row->addWidget(value);
         // The age turns amber once stale (U4).
         QLabel* ageLabel = makeLabel(rowWidget, ageText(age), stale ? kUnknown : kDim, kSmallPx,
                                      stale, true);
         ageLabel->setObjectName(QStringLiteral("roundtableReadingAge"));
-        ageLabel->setFixedWidth(kAgeWidth);
+        ageLabel->setFixedWidth(ageWidth);
         ageLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         row->addWidget(ageLabel);
         col->addWidget(rowWidget);
@@ -1705,7 +2144,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         const QJsonObject turn = earlier.at(i).toObject();
         const qint64 id = turn.value(QStringLiteral("id")).toInteger();
         const QString kind = turn.value(QStringLiteral("kind")).toString();
-        const bool mine = turn.value(QStringLiteral("mine")).toBool();
+        const bool mine = roundtableTurnIsYours(room, turn, false);
         auto* row = new QFrame(body);
         row->setObjectName(QStringLiteral("roundtableTurnRow"));
         row->setStyleSheet(QLatin1String(kTurnRowStyle));
@@ -1742,7 +2181,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         } else {
             who = talkers.isEmpty() ? QStringLiteral("Unknown") : talkers.first();
         }
-        QLabel* whoLabel = makeLabel(row, who, color, kSmallPx, true, true);
+        QLabel* whoLabel = makeElided(row, who, color, kSmallPx, true, true);
         whoLabel->setObjectName(QStringLiteral("roundtableTurnWho"));
         line->addWidget(whoLabel);
         QStringList given;
@@ -1752,8 +2191,8 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
                              .arg(name.value(QStringLiteral("count")).toInt()));
         }
         if (!given.isEmpty()) {
-            QLabel* named = makeLabel(row, QStringLiteral("named %1").arg(given.join(QStringLiteral(", "))),
-                                      kDim, kSmallPx);
+            QLabel* named = makeWrapped(row, QStringLiteral("named %1").arg(given.join(QStringLiteral(", "))),
+                                        kDim, kSmallPx);
             named->setObjectName(QStringLiteral("roundtableTurnNames"));
             line->addWidget(named);
         }
@@ -1778,9 +2217,12 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         if (id == m_nameEditorTurn && canName) {
             auto* editor = new QWidget(body);
             editor->setObjectName(QStringLiteral("roundtableNameEditor"));
-            auto* edit = new QHBoxLayout(editor);
-            edit->setContentsMargins(8, 2, 8, 4);
+            auto* editLines = new QVBoxLayout(editor);
+            editLines->setContentsMargins(8, 2, 8, 4);
+            editLines->setSpacing(4);
+            auto* edit = new QHBoxLayout();
             edit->setSpacing(4);
+            editLines->addLayout(edit);
             for (const QString& suggestion : nameSuggestions(room)) {
                 QPushButton* chip = makeButton(editor, suggestion, kButtonStyle);
                 chip->setObjectName(QStringLiteral("roundtableNameChip"));
@@ -1799,6 +2241,22 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
             connect(input, &QLineEdit::returnPressed, this,
                     [this, id, input]() { submitName(id, input->text()); });
             edit->addWidget(input);
+            // Roundtable plan Task 15: the box under the chips where one
+            // line of the room does not hold them all.
+            int editWidth = 16 + std::max(0, edit->count() - 1) * edit->spacing();
+            for (int i = 0; i < edit->count(); ++i) {
+                if (QWidget* w = edit->itemAt(i)->widget()) {
+                    w->ensurePolished();
+                    editWidth += std::max(w->sizeHint().width(), w->minimumWidth());
+                }
+            }
+            if (editWidth > roomWidth() && edit->count() > 1) {
+                edit->removeWidget(input);
+                auto* second = new QHBoxLayout();
+                second->addWidget(input);
+                second->addStretch(1);
+                editLines->addLayout(second);
+            }
             edit->addStretch(1);
             col->addWidget(editor);
             focusTarget = input;
@@ -1955,7 +2413,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
 
         auto* top = new QHBoxLayout();
         top->setSpacing(6);
-        QLabel* who = makeLabel(row, withNth(message), isMine ? kYou : kBright, kSmallPx, true, true);
+        QLabel* who = makeElided(row, withNth(message), isMine ? kYou : kBright, kSmallPx, true, true);
         who->setObjectName(QStringLiteral("roundtableMessageWho"));
         top->addWidget(who);
         const QJsonValue dbm = message.value(QStringLiteral("dbm"));
@@ -2065,6 +2523,7 @@ void RoundtablePanel::rebuildEmpty()
     QLabel* title = makeLabel(body, QStringLiteral("Nobody on Roundtable is tuned here."), kBright,
                               kBodyPx, true);
     title->setObjectName(QStringLiteral("roundtableEmptyTitle"));
+    title->setWordWrap(true);
     title->setContentsMargins(8, 4, 8, 0);
     col->addWidget(title);
     QLabel* how = makeLabel(body, QStringLiteral("Click a callsign on the panadapter to tune there, or "
@@ -2145,7 +2604,7 @@ void RoundtablePanel::updateFooter()
         const QJsonArray talkers = turn.value(QStringLiteral("talkers")).toArray();
         if (turn.isEmpty()) {
             hint = QStringLiteral("Sent with no reading, nobody is talking");
-        } else if (turn.value(QStringLiteral("mine")).toBool()) {
+        } else if (roundtableTurnIsYours(room, turn, true)) {
             hint = QStringLiteral("Sent as transmitting");
         } else {
             // The mockup's compose hint (placement.html composeBlock): who
@@ -2220,6 +2679,15 @@ void RoundtablePanel::refreshNow()
     rebuildTalker(room);
     rebuildReadings(room);
     checkOnScreen();
+}
+
+void RoundtablePanel::setOwnReading(double dbm, qint64 takenMs)
+{
+    m_ownDbm = dbm;
+    m_ownReadingMs = takenMs;
+    if (m_model && m_model->linkState() == RoundtableModel::LinkState::Hidden && tunedHere()) {
+        rebuildReadings(m_model->room(roomId()));
+    }
 }
 
 void RoundtablePanel::checkOnScreen()
@@ -2589,7 +3057,7 @@ bool RoundtablePanel::eventFilter(QObject* watched, QEvent* event)
     // The room's width is the scroll's viewport, which settles after the
     // panel's own resize.
     if (event->type() == QEvent::Resize && watched == m_scroll->viewport()) {
-        fitCount();
+        refitToWidth();
         return false;
     }
     if (event->type() != QEvent::KeyPress) {

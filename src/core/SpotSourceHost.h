@@ -69,6 +69,10 @@
 //                                    Hub's Roundtable Start and Stop
 //                                    (startRoundtable, stopRoundtable).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 15: a running
+//                                    Roundtable follows a write of its
+//                                    callsign, grid or away choice.
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -198,6 +202,7 @@ public:
                    SpotCollectorClient* spotCollector, PotaClient* pota,
                    PskReporterClient* pskReporter, SpotModel* spots,
                    QObject* parent = nullptr);
+    ~SpotSourceHost() override;
 
     /// FreeDV Reporter's client (RadioModel owns it). Set once, after
     /// construction.
@@ -355,6 +360,10 @@ private:
     bool startFreedvWith(QString* reason);
     bool startRoundtableWith(QString* reason);
     void followRoundtable();
+    // Roundtable plan Task 15: a write of the callsign, grid or away
+    // choice while Roundtable runs restarts its station connection with
+    // the new values, or stops it with the reason the start would give.
+    void applyRoundtableStationInfo();
     bool forwardFreedv(const QByteArray& verb, const QVariantMap& args);
 
     QPointer<DxClusterClient> m_dxCluster;
@@ -365,6 +374,11 @@ private:
     QPointer<PskReporterClient> m_pskReporter;
     QPointer<FreeDVReporterClient> m_freedv;
     QPointer<RoundtableClient> m_roundtable;
+    int m_roundtableObserver = 0;
+    bool m_roundtableInfoPending = false;
+    // The write above stopped a running Roundtable: a later good write
+    // starts it again.
+    bool m_roundtableStoppedByInfo = false;
     QPointer<FreeDVStationModel> m_freedvList;
     QPointer<SpotModel> m_spots;
     QHash<QString, SourceState> m_local;

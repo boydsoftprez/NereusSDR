@@ -10,6 +10,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 14).
+//   2026-10-24: Roundtable plan Task 15: your own turn is found from the
+//               talkers and your row (roundtableTurnIsYours), not from
+//               `mine`. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "RoundtableTagLayout.h"
@@ -198,7 +201,7 @@ QString callsignOf(const QJsonValue& talker)
 bool youAreTalking(const QJsonObject& room)
 {
     for (const QJsonValue& value : room.value(QStringLiteral("now")).toArray()) {
-        if (value.toObject().value(QStringLiteral("mine")).toBool()) {
+        if (roundtableTurnIsYours(room, value.toObject(), true)) {
             return true;
         }
     }
@@ -225,6 +228,30 @@ QString labelOf(RoundtableGlyph glyph, const QJsonArray& talkers)
 }
 
 } // namespace
+
+bool roundtableTurnIsYours(const QJsonObject& room, const QJsonObject& turn, bool open)
+{
+    if (turn.isEmpty()) {
+        return false;
+    }
+    QJsonObject you;
+    for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
+        if (value.toObject().value(QStringLiteral("you")).toBool()) {
+            you = value.toObject();
+            break;
+        }
+    }
+    const QString ref = you.value(QStringLiteral("ref")).toString();
+    if (ref.isEmpty()) {
+        return false;
+    }
+    for (const QJsonValue& talker : turn.value(QStringLiteral("talkers")).toArray()) {
+        if (talker.toObject().value(QStringLiteral("ref")).toString() == ref) {
+            return true;
+        }
+    }
+    return open && you.value(QStringLiteral("keyed")).toBool();
+}
 
 QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& tags, double hzPerPixel,
                                                    qint64 leftHz, double width, double tagWidth,

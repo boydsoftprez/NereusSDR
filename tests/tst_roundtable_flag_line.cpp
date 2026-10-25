@@ -17,6 +17,9 @@
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: the keyed room's turn is yours by
+//               its talker, as the server sends it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -117,9 +120,14 @@ struct Station {
                         member(QStringLiteral("KC1ABC"), false, false)}},
             {QStringLiteral("now"),
              QJsonArray{QJsonObject{{QStringLiteral("id"), 40}, {QStringLiteral("kind"), QStringLiteral("talking")},
-                                    {QStringLiteral("talkers"), QJsonArray{}},
+                                    // Yours: you are its talker (`mine` is the name
+                                    // you gave a turn, wire spec 6.9).
+                                    {QStringLiteral("talkers"),
+                                     QJsonArray{QJsonObject{{QStringLiteral("ref"), QStringLiteral("N0CALL")},
+                                                            {QStringLiteral("callsign"), QStringLiteral("N0CALL")},
+                                                            {QStringLiteral("nth"), 1}}}},
                                     {QStringLiteral("start"), 1}, {QStringLiteral("end"), QJsonValue::Null},
-                                    {QStringLiteral("names"), QJsonArray{}}, {QStringLiteral("mine"), true}}}},
+                                    {QStringLiteral("names"), QJsonArray{}}, {QStringLiteral("mine"), QJsonValue::Null}}}},
             {QStringLiteral("earlier"), QJsonArray{}},
             {QStringLiteral("messages"), QJsonArray{}}});
     }

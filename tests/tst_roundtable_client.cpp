@@ -25,7 +25,11 @@
 //     station connections at once (3.1, the fake server closes the older
 //     with 4003);
 //   - a hidden client's live reader watches its slice's room once the
-//     band list names it (7.8), and unwatches it when the slice leaves.
+//     band list names it (7.8), and unwatches it when the slice leaves;
+//   - a write of Roundtable/Callsign or Roundtable/GridSquare while the
+//     Core runs Roundtable starts the station connection again with the
+//     new values; a callsign the server would refuse stops it with the
+//     reason; while unanswered nothing about the station opens (D25).
 //
 // Keys and nonces are made at run time; nothing leaves this computer.
 //
@@ -37,8 +41,19 @@
 //   2026-10-24: Task 11 fix round: the fake server's 3.1 rule and the
 //               archive-then-live and slice-watch cases. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: the live station-info write case
+//               through SpotSourceHost. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
+#include "core/AppSettings.h"
+#include "core/DxClusterClient.h"
+#include "core/PotaClient.h"
+#include "core/PskReporterClient.h"
+#include "core/SpotCollectorClient.h"
+#include "core/SpotSourceHost.h"
+#include "core/WsjtxClient.h"
+#include "models/SpotModel.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/roundtable/RoundtableWire.h"
 #include "core/security/StationIdentity.h"
@@ -282,6 +297,7 @@ private slots:
     void refusedCallsignMeansNoStart();
     void archiveThenLiveMakesOneStationConnection();
     void hiddenReaderWatchesItsSlicesRoom();
+    void aStationInfoWriteRestartsTheStationConnection();
 
 private:
     // The client set up against the fake server with the fake clocks.
@@ -810,6 +826,119 @@ void TstRoundtableClient::hiddenReaderWatchesItsSlicesRoom()
     QCOMPARE(live->frames.at(2), Wire::unwatch(kRoom));
     QVERIFY(live->allFramesValid);
     QCOMPARE(m_server->count(QStringLiteral("/v1/station")), 0);
+}
+
+void TstRoundtableClient::aStationInfoWriteRestartsTheStationConnection()
+{
+    auto& settings = AppSettings::instance();
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4VCF"));
+    settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("EM73tu42"));
+    settings.setValue(QStringLiteral("Roundtable/AwayChoice"), QStringLiteral("Report"));
+    makeClient(true);
+    DxClusterClient dx;
+    DxClusterClient rbn;
+    WsjtxClient wsjtx;
+    SpotCollectorClient spotCollector;
+    PotaClient pota;
+    PskReporterClient psk;
+    SpotModel spots;
+    SpotSourceHost host(&dx, &rbn, &wsjtx, &spotCollector, &pota, &psk, &spots);
+    host.setRoundtableClient(m_client.get());
+    const QString station = QStringLiteral("/v1/station");
+    const auto presenceOf = [](FakeConnection* c) {
+        for (const QJsonObject& frame : c->frames) {
+            if (typeOf(frame) == QLatin1String("presence")) {
+                return frame;
+            }
+        }
+        return QJsonObject{};
+    };
+
+    // A write while stopped starts nothing.
+    settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("EM73tu"));
+    QTest::qWait(100);
+    QCOMPARE(m_server->count(station), 0);
+    QCOMPARE(m_client->linkState(), RoundtableClient::LinkState::Off);
+
+    QString reason;
+    QVERIFY(host.connectSource(SpotSourceHost::kRoundtable, &reason));
+    FakeConnection* first = waitConnection(station, 1);
+    QVERIFY(first != nullptr);
+    QVERIFY(waitFrames(first, 2));
+    QCOMPARE(presenceOf(first).value(QStringLiteral("grid")).toString(), QStringLiteral("EM73tu"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+
+    // A new grid: the station connection starts again, signed in afresh.
+    settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("FN31pr"));
+    FakeConnection* second = waitConnection(station, 2);
+    QVERIFY(second != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(first->closed, kWaitMs);
+    QVERIFY(waitFrames(second, 2));
+    QCOMPARE(second->types().mid(0, 2), (QStringList{QStringLiteral("hello"), QStringLiteral("presence")}));
+    QVERIFY(second->signatureVerified);
+    QCOMPARE(presenceOf(second).value(QStringLiteral("grid")).toString(), QStringLiteral("FN31pr"));
+    QCOMPARE(presenceOf(second).value(QStringLiteral("callsign")).toString(), QStringLiteral("KG4VCF"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+
+    // A callsign and a grid saved together: one new connection.
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("w1aw"));
+    settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("FN31"));
+    FakeConnection* third = waitConnection(station, 3);
+    QVERIFY(third != nullptr);
+    QVERIFY(waitFrames(third, 2));
+    QCOMPARE(presenceOf(third).value(QStringLiteral("callsign")).toString(), QStringLiteral("W1AW"));
+    QCOMPARE(presenceOf(third).value(QStringLiteral("grid")).toString(), QStringLiteral("FN31"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+    QTest::qWait(200);
+    QCOMPARE(m_server->count(station), 3);
+    QCOMPARE(m_server->maxSignedInStations, 1);
+    QCOMPARE(host.roundtableText(), QStringLiteral("Live as W1AW"));
+
+    // One the server would refuse: stopped, with the start's reason, and
+    // nothing sent under it.
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4//VCF"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Off, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(third->closed, kWaitMs);
+    QCOMPARE(host.roundtableState(), SpotSourceHost::kOff);
+    QVERIFY2(host.roundtableText().contains(QStringLiteral("KG4//VCF")), qPrintable(host.roundtableText()));
+    QTest::qWait(200);
+    QCOMPARE(m_server->count(station), 3);
+
+    // Put right, it starts again.
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4VCF"));
+    FakeConnection* fourth = waitConnection(station, 4);
+    QVERIFY(fourth != nullptr);
+    QVERIFY(waitFrames(fourth, 2));
+    QCOMPARE(presenceOf(fourth).value(QStringLiteral("callsign")).toString(), QStringLiteral("KG4VCF"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+
+    // D25: unanswered, only the live reader runs, and a write opens no
+    // station connection.
+    m_client->setFirstRunAnswered(false);
+    FakeConnection* live = waitConnection(QStringLiteral("/v1/live"), 1);
+    QVERIFY(live != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(fourth->closed, kWaitMs);
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Hidden, kWaitMs);
+    settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("EM74"));
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("K4ABC"));
+    QTest::qWait(300);
+    QCOMPARE(m_server->count(station), 4);
+    QCOMPARE(m_server->count(QStringLiteral("/v1/live")), 1);
+    QVERIFY(!live->closed);
+    QVERIFY(flush(live));
+    QVERIFY(!live->types().contains(QStringLiteral("presence")));
+
+    // Stopped by the operator: a write starts nothing.
+    QVERIFY(host.disconnectSource(SpotSourceHost::kRoundtable, &reason));
+    settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4VCF"));
+    QTest::qWait(200);
+    QCOMPARE(m_client->linkState(), RoundtableClient::LinkState::Off);
+    QCOMPARE(m_server->count(station), 4);
+    QVERIFY(first->allFramesValid && second->allFramesValid && third->allFramesValid && fourth->allFramesValid);
+
+    for (const char* key : {"Roundtable/Callsign", "Roundtable/GridSquare", "Roundtable/AwayChoice"}) {
+        settings.remove(QString::fromLatin1(key));
+    }
 }
 
 QTEST_GUILESS_MAIN(TstRoundtableClient)

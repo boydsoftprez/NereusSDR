@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 15: the slices' rooms are placed on
+//                the next turn of the event loop, so a window that tunes
+//                into a room is told it is in it. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 12: a window's Core setting changes
 //                reach RoundtableModel (noteSettingChanged), so the Spot
 //                Hub's Roundtable tab shows the Core's values.
@@ -6051,7 +6055,16 @@ void RadioModel::pushRoundtableSlices()
     }
     m_roundtable->setSlices(states);
     // Roundtable plan Task 11: and which room each is in (`sliceRooms`).
-    m_roundtableState->setSlices(states);
+    // Roundtable plan Task 15: placed on the next turn of the event loop,
+    // not inside this call. A window's tune reaches here while the Core
+    // applies that window's write, and the mirror withholds every change
+    // made during a write from the writer's own view (StateMirror, ruling
+    // 5.7), so the window that tuned into a room would never learn it is
+    // in it.
+    QMetaObject::invokeMethod(
+        m_roundtableState,
+        [state = m_roundtableState, states]() { state->setSlices(states); },
+        Qt::QueuedConnection);
 }
 
 void RadioModel::pushRoundtableMeter()

@@ -9776,6 +9776,17 @@ nereus_add_test(tst_roundtable_tag_layout)
 # who talks, @N, "N hear you" while keyed, the link state when not live,
 # its fit at the flag's width, the fold, and a click asking for the panel.
 nereus_add_test(tst_roundtable_flag_line)
+# Roundtable plan Task 15: one operator's whole Roundtable session in a real
+# MainWindow against a fake Roundtable server on 127.0.0.1: first run, Go
+# live, a tag, readings, a post, a mention read on two windows, the pop-out
+# list, keyed, a named turn, hidden and the Archive link; in the Everything
+# placement and again in a remote window of a Core, with the same screens.
+nereus_add_test(tst_roundtable_desktop_flow
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_desktop_flow PRIVATE NEREUS_BUILD_TESTS
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and

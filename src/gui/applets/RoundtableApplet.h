@@ -20,6 +20,8 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: Roundtable plan Task 15: m_sliceMeter. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-24: tuneToRoom, for a panadapter tag (Roundtable plan Task 14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -93,6 +95,7 @@ private:
     QPointer<RoundtableWindow> m_window;
     QPointer<SliceModel> m_slice;
     QMetaObject::Connection m_sliceFrequency;
+    QMetaObject::Connection m_sliceMeter;
     std::function<void(const QUrl&)> m_urlOpener;
     bool m_webLinkPending = false;
     bool m_tuning = false;

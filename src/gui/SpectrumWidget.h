@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the tags
+//                 are drawn again when the pan's toolbar moves, resizes,
+//                 shows or hides (childEvent; Roundtable plan Task 15).
 //   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 the Roundtable room tags along the foot of the spectrum
 //                 (setRoundtableTags, roundtableRoomClicked, the fold list)
@@ -3170,6 +3173,10 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;  // mouse overlay forwarding
+    // Roundtable plan Task 15: every child widget is watched, so the room
+    // tags (which keep clear of the pan's toolbar) are drawn again when
+    // the toolbar collapses or moves.
+    void childEvent(QChildEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;

@@ -16,11 +16,16 @@
 // the tags along the foot of the spectrum, clear of the VFO flags and the
 // band plan; a click tunes, +N lists its rooms by frequency and a row
 // tunes; offline greys them, connecting hides them; no tune while keyed.
+// Collapsing the pan's toolbar lays the tags out again, in the GPU path's
+// cached overlay too.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: the toolbar collapse case; your
+//               own turn is the one you talk in, not `mine`.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -32,6 +37,7 @@
 #include <QLoggingCategory>
 #include <QMenu>
 #include <QPainter>
+#include <QPushButton>
 #include <QSignalSpy>
 
 #include "OperatorWording.h"
@@ -40,6 +46,7 @@
 #include "core/ConnectionState.h"
 #include "core/WdspTypes.h"
 #include "gui/applets/RoundtableApplet.h"
+#include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
 #include "gui/widgets/VfoWidget.h"
@@ -54,6 +61,8 @@ namespace {
 
 constexpr double kTagWidth = 80.0;
 constexpr double kGap = 4.0;
+// A pan short enough that the open toolbar reaches the tag row.
+constexpr int kShortPanHeight = 300;
 
 RoundtableTag tagAt(const QString& id, qint64 hz, bool mine = false, bool mentionsMe = false)
 {
@@ -407,12 +416,20 @@ private slots:
         model.applyRoom(QJsonObject{
             {QStringLiteral("type"), QStringLiteral("room")},
             {QStringLiteral("id"), QStringLiteral("lsb-7185000")},
-            {QStringLiteral("members"), QJsonArray{}},
+            {QStringLiteral("members"),
+             QJsonArray{QJsonObject{{QStringLiteral("ref"), QStringLiteral("me")},
+                                    {QStringLiteral("callsign"), QStringLiteral("KG4VCF")},
+                                    {QStringLiteral("you"), true}}}},
+            // Yours: you are its talker (`mine` is the name you gave a
+            // turn, wire spec 6.9).
             {QStringLiteral("now"),
              QJsonArray{QJsonObject{{QStringLiteral("id"), 40}, {QStringLiteral("kind"), QStringLiteral("talking")},
-                                    {QStringLiteral("talkers"), QJsonArray{}},
+                                    {QStringLiteral("talkers"),
+                                     QJsonArray{QJsonObject{{QStringLiteral("ref"), QStringLiteral("me")},
+                                                            {QStringLiteral("callsign"), QStringLiteral("KG4VCF")},
+                                                            {QStringLiteral("nth"), 1}}}},
                                     {QStringLiteral("start"), 1}, {QStringLiteral("end"), QJsonValue::Null},
-                                    {QStringLiteral("names"), QJsonArray{}}, {QStringLiteral("mine"), true}}}},
+                                    {QStringLiteral("names"), QJsonArray{}}, {QStringLiteral("mine"), QJsonValue::Null}}}},
             {QStringLiteral("earlier"), QJsonArray{}},
             {QStringLiteral("messages"), QJsonArray{}}});
         const QList<RoundtableTag> keyed = roundtableTagsFor(&model, QList<int>{0});
@@ -636,6 +653,55 @@ private slots:
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
 #endif
+    }
+
+    void collapsingThePansToolbarRedrawsTheTags()
+    {
+        // A short pan, so the open toolbar down the left side reaches the
+        // tag row, and one tag under it.
+        Pan pan(kShortPanHeight);
+        auto* toolbar = new SpectrumOverlayPanel(&pan.widget);
+        toolbar->move(4, 4);
+        toolbar->show();
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const double lowHz = kPanCenterHz - kPanSpanHz / 2.0;
+        const qint64 hz = static_cast<qint64>(lowHz + 20.0 * kPanSpanHz / spec.width());
+        const QString id = QStringLiteral("lsb-%1").arg(hz);
+        pan.widget.setRoundtableTags({tagAt(id, hz)}, RoundtableTagDisplay::Live);
+        pan.draw();
+        const auto* open = hitFor(pan.widget, id);
+        QVERIFY(open != nullptr);
+        const QRect openRect = open->rect;
+        QVERIFY2(toolbar->geometry().bottom() >= openRect.top(),
+                 qPrintable(QStringLiteral("toolbar %1 px tall, tag row at %2")
+                                .arg(toolbar->height()).arg(openRect.top())));
+        QVERIFY(openRect.left() > toolbar->geometry().right());
+
+        pan.widget.clearOverlayStaticDirtyForTest();
+        QSignalSpy collapsed(toolbar, &SpectrumOverlayPanel::collapsed);
+        auto* collapse = qobject_cast<QPushButton*>(toolbar->childAt(3, 3));
+        QVERIFY(collapse != nullptr);
+        collapse->click();
+        QCOMPARE(collapsed.count(), 1);
+        QCOMPARE(collapsed.first().first().toBool(), true);
+        QVERIFY(toolbar->geometry().bottom() < openRect.top());
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(pan.widget.overlayStaticDirtyForTest());
+#endif
+        pan.draw();
+        const auto* shut = hitFor(pan.widget, id);
+        QVERIFY(shut != nullptr);
+        QVERIFY2(shut->rect.left() < openRect.left(),
+                 qPrintable(QStringLiteral("tag at %1, was %2").arg(shut->rect.left()).arg(openRect.left())));
+
+        // Opened again, the tag moves aside again.
+        pan.widget.clearOverlayStaticDirtyForTest();
+        collapse->click();
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(pan.widget.overlayStaticDirtyForTest());
+#endif
+        pan.draw();
+        QCOMPARE(hitFor(pan.widget, id)->rect, openRect);
     }
 
     void frequenciesAsTheFoldListShowsThem()
