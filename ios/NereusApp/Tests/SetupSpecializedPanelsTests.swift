@@ -1,5 +1,8 @@
 // NereusSDR for iOS: Setup's closed panels against the fake Core: the notch table, the settings check, the antenna rows and the PA readings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -80,7 +83,7 @@ struct SetupSpecializedPanelsTests {
         }.first
         let features = hello?.features ?? [:]
         #expect(features == LinkFeatures.app)
-        #expect(features["setupDescription"] == 29)
+        #expect(features["setupDescription"] == 30)
         #expect(features["settingsHygiene"] == 2 && features["radioAntennaRows"] == 2)
         #expect(features["band2m"] == 1)
         #expect(rig.app.mirror.capabilityVersion("setupDescriptionVersion") == 11)

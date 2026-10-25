@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the Setup pages the Core describes: their places in the tree, every kind drawn, each control's owner, and pictures
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: General V30's Filters page: listed greyed on a V29 Core, drawn
+//   and edited on a V30 one. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -179,6 +182,9 @@ struct SetupDescribedPagesTests {
                 // then V29 rebuilt the category: 12 to 26 see 12 and 27/28
                 // see the frozen V27 document.
                 root["version"] = peer < 27 ? 12 : peer < 29 ? 27 : 29
+            } else if id == "general" {
+                // General changed at 30 (the Filters page): 3 to 29 see 3.
+                root["version"] = peer < 30 ? min(peer, 3) : 30
             } else {
                 root["version"] = max(root["version"] as? Int ?? 3, ceilings[id] ?? 3)
             }
@@ -256,7 +262,9 @@ struct SetupDescribedPagesTests {
         #expect(tree.map(\.tag) == [.core, .both, .core, .core, .both, .core, .both, .both, .thisPhone, .both, .core,
                                     .both, .thisPhone])
         func pages(_ title: String) -> [String] { tree.first { $0.title == title }?.pages.map(\.title) ?? [] }
-        #expect(pages("General") == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options"])
+        // A Core below description 30 lists General's Filters page greyed with its reason.
+        #expect(pages("General") == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Filters"])
+        #expect(tree.first { $0.title == "General" }?.pages.last?.unavailableReason == SetupTree.filtersCoreOlderText)
         // A Core below description 12 lists 3D View greyed with its reason (the 3D View board).
         #expect(pages("Display") == ["On this phone", "Spectrum Defaults", "Spectrum Peaks", "Waterfall Defaults",
                                      "Multimeter", "TX Display", "3D View"])
@@ -334,13 +342,13 @@ struct SetupDescribedPagesTests {
             SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable)
                 .first { $0.title == "General" }?.pages.map(\.title) ?? []
         }
-        #expect(general() == ["Navigation", "Battery and sessions", "Options"])
+        #expect(general() == ["Navigation", "Battery and sessions", "Options", "Filters"])
         #expect(!SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable)
             .contains { $0.title == "DSP" }, "a category with no page is left out")
         await rig.station.publishSetup("general", json: FakeStation.syntheticSetup(
             "general", title: "Options", version: 3, extraPage: "Startup & Preferences"), revision: 2)
-        #expect(await settle { general().count == 4 })
-        #expect(general() == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options"])
+        #expect(await settle { general().count == 5 })
+        #expect(general() == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Filters"])
         try await Self.shoot("setup-described-general", rig: rig, path: [.category("General")])
         await rig.app.disconnect()
     }
@@ -539,12 +547,12 @@ struct SetupDescribedPagesTests {
         app.mirror.apply(.capabilities(LinkMessage.Capabilities(properties: entries)))
     }
 
-    @Test("V29: the phone asks for 29 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
+    @Test("V30: the phone asks for 30 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
     func v12DrawsEveryRow() async throws {
-        #expect(LinkFeatures.app["setupDescription"] == 29)
+        #expect(LinkFeatures.app["setupDescription"] == 30)
         #expect(LinkFeatures.app["alexLpf"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
-        #expect(SetupDescription.highestVersion == 29)
+        #expect(SetupDescription.highestVersion == 30)
         #expect(SetupDescribedPages.notDrawnYet.isEmpty)
         let rig = try await Self.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
@@ -680,6 +688,67 @@ struct SetupDescribedPagesTests {
         #expect(average.range == .init(minimum: 1, maximum: 9999, step: 1))
         #expect(await controls.edit(average, in: "display", to: .integer(1)) == .applied)
         #expect(await settle { app.main.band.settings.spectrumAverageTimeMs == 1 })
+        await rig.app.disconnect()
+    }
+
+    @Test("V30: General lists Filters after Options with Limit filter edges to sidebands; a V29 Core lists it greyed")
+    func v30DrawsGeneralFilters() async throws {
+        let rig = try await Self.connected()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let app = rig.app
+        let controls = app.setupControls
+        func general() -> SetupTree.Category? {
+            SetupTree.categories(described: app.setupPages.categories, order: app.setupPages.order,
+                                 unreadable: app.setupPages.unreadable).first { $0.title == "General" }
+        }
+        // A Core at 29 sends General at 3, without the page: Filters is listed greyed, never hidden.
+        Self.asV12Core(app, setupDescription: 29)
+        await rig.station.deliverSetup(try Self.coreCategories(peer: 29))
+        #expect(await settle { app.setupPages.isCurrent && app.setupFeed.description(for: "general")?.version == 3
+            && app.setupPages.categories["general"] == app.setupFeed.description(for: "general") })
+        let older = try #require(general())
+        #expect(older.pages.map(\.title) == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options",
+                                             "Filters"])
+        #expect(older.pages.last?.unavailableReason == SetupTree.filtersCoreOlderText)
+        #expect(older.pages.dropLast().allSatisfy { $0.unavailableReason == nil })
+
+        // The Core at 30: the page opens, with the desktop's one checkbox.
+        Self.asV12Core(app, setupDescription: 30)
+        await rig.station.deliverSetup(try Self.coreCategories(peer: 30))
+        #expect(await settle { app.setupPages.isCurrent && app.setupFeed.description(for: "general")?.version == 30
+            && app.setupPages.categories["general"] == app.setupFeed.description(for: "general") })
+        let tree = try #require(general())
+        #expect(tree.pages.map(\.title) == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options",
+                                            "Filters"])
+        #expect(tree.pages.allSatisfy { $0.unavailableReason == nil })
+        #expect(tree.pages.last?.destination == .described(category: "general", page: SetupTree.filtersPageId))
+        let page = try #require(app.setupPages.categories["general"]?.pages.first { $0.id == SetupTree.filtersPageId })
+        let rows = page.sections.flatMap(\.controls)
+        #expect(rows.map(\.id) == ["general.filters.limitFilterEdgesToSidebands"])
+        let row = try #require(rows.first)
+        #expect(row.label == "Limit filter edges to sidebands")
+        #expect(row.tooltip == "Prevents crossing the 0 point with certain filters")
+        #expect(DescribedControl.row(for: row) == .switchRow)
+
+        // The Core's stored value, then an edit's round trip.
+        let key = "LimitFiltersToSidebands"
+        await rig.station.deliver(.settingsValue(.init(key: key, origin: "", properties: [.init(name: key, value: .utf8("False"))])))
+        #expect(await settle { controls.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil) })
+        let writing = Task { await controls.edit(row, in: "general", to: .bool(true)) }
+        let write = try await Self.settingsWrite(key, rig.station)
+        #expect(write.properties.first?.value == .utf8("True"))
+        await rig.station.deliver(.settingsValue(.init(key: write.key, origin: write.origin, properties: write.properties)))
+        #expect(await writing.value == .applied)
+        #expect(await settle { controls.state(of: row, in: "general").value == .bool(true) })
+
+        // The Core refuses: its words come back and the row goes back.
+        let reason = "This Core does not take that setting."
+        let refusing = Task { await controls.edit(row, in: "general", to: .bool(false)) }
+        let refused = try await Self.settingsWrite(key, rig.station) { $0.properties.first?.value == .utf8("False") }
+        await rig.station.deliver(.settingsReject(LinkMessage.SettingsReject(
+            key: refused.key, properties: [.init(name: key, value: .utf8("True"))], reason: reason)))
+        #expect(await refusing.value == .refused(reason))
+        #expect(await settle { controls.state(of: row, in: "general").value == .bool(true) })
         await rig.app.disconnect()
     }
 

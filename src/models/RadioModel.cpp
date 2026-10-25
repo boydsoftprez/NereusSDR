@@ -20,6 +20,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
+//                setting (Setup's "Limit filter edges to sidebands", Thetis
+//                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
+//                applied to every slice and to each new slice before its
+//                filter is restored; a remote window follows the Core's
+//                copy. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                via Claude Code.
 //   2026-10-23 - reportDspDiagnostics logs the I/Q chunks a slice's channel
 //                silenced because their size was not its WDSP input block
 //                (inputSizeMismatchLogLine) with the chunk size and input
@@ -3231,6 +3238,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
             [this](const QString& key) {
                 if (key.isEmpty() || key == QLatin1String("RxOnly")) {
                     applyRxOnlySetting(rxOnlySetting());
+                }
+            });
+    // Setup > General > Filters' "Limit filter edges to sidebands": the
+    // saved value from the start, and a remote window follows the Core's
+    // copy (an empty key is a snapshot), so its own slices constrain a
+    // filter as the Core's do.
+    m_limitFiltersToSidebands = limitFiltersToSidebandsSetting();
+    connect(this, &RadioModel::stationSettingChanged, this,
+            [this](const QString& key) {
+                if (key.isEmpty() || key == QLatin1String(kLimitFiltersToSidebandsKey)) {
+                    applyLimitFiltersToSidebands(limitFiltersToSidebandsSetting());
                 }
             });
     // Level Cal: a remote window follows the Core's meter and display
@@ -15943,6 +15961,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     const QPointer<RadioModel> self(this);
     auto* slice = new SliceModel(this);
     const QPointer<SliceModel> added(slice);
+    // "Limit filter edges to sidebands" before any saved filter is
+    // restored, so the restore is constrained as every later change is.
+    slice->setLimitFiltersToSidebands(m_limitFiltersToSidebands);
     // Slice control plan Task 5: a change held back on a slice a remote
     // window only listens to is announced once, here, for the window.
     connect(slice, &SliceModel::listenerWriteHeld, this, [this, slice](const QString& reason) {
@@ -19224,6 +19245,42 @@ void RadioModel::setNetworkWatchdogEnabled(bool enabled)
     AppSettings::instance().setValue(QStringLiteral("NetworkWatchdogEnabled"),
                                      enabled ? QStringLiteral("True") : QStringLiteral("False"));
     applyNetworkWatchdog(enabled);
+}
+
+bool RadioModel::limitFiltersToSidebandsSetting()
+{
+    return AppSettings::instance()
+               .value(QLatin1String(kLimitFiltersToSidebandsKey),
+                      kLimitFiltersToSidebandsDefault ? QStringLiteral("True")
+                                                      : QStringLiteral("False"))
+               .toString()
+           == QStringLiteral("True");
+}
+
+void RadioModel::setLimitFiltersToSidebands(bool on)
+{
+    // From Thetis setup.cs:22378-22381 [v2.10.3.15]:
+    //   console.LimitFiltersToSideBands = chkLimitFilterEdgesToSidebands.Checked;
+    AppSettings::instance().setValue(QLatin1String(kLimitFiltersToSidebandsKey),
+                                     on ? QStringLiteral("True") : QStringLiteral("False"));
+    applyLimitFiltersToSidebands(on);
+}
+
+void RadioModel::applyLimitFiltersToSidebands(bool on)
+{
+    // Thetis keeps one flag on the console that ConstrainFilter reads; each
+    // SliceModel keeps its own copy, so every slice takes it here. Only
+    // the flag: as Thetis's setter, no filter is re-applied.
+    for (SliceModel* slice : m_slices) {
+        if (slice != nullptr) {
+            slice->setLimitFiltersToSidebands(on);
+        }
+    }
+    if (m_limitFiltersToSidebands == on) {
+        return;
+    }
+    m_limitFiltersToSidebands = on;
+    emit limitFiltersToSidebandsChanged(on);
 }
 
 void RadioModel::applyNetworkWatchdog(bool enabled)

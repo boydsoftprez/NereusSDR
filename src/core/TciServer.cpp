@@ -211,6 +211,13 @@ mw0lge@grange-lane.co.uk
 //                rfGainChanged, the AGC-T, as Thetis's ptbRF_Scroll raises
 //                AGCGainChangedHandlers with ptbRF.Value (console.cs:28797
 //                [v2.10.3.15]), after Longpath f1d0c181.
+//   2026-10-22 - Ported from Longpath src/core/TciServer.{h,cpp}
+//                [@383f058] by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code: a browser
+//                origin is refused before the WebSocket upgrade on every
+//                listener (TciAllowedOrigins), and a keyed-client watchdog
+//                pings the app that holds a TCI key and releases that key
+//                through the disconnect path after three unanswered pings.
 
 // --- From TciServer.cpp ---
 // no-port-check: AetherSDR-derived Longpath file.  Transport lifecycle
@@ -299,6 +306,7 @@ void  destroy_resampleFV(void* ptr);
 #include <QHostAddress>
 #include <QTimer>
 #include <QWebSocket>
+#include <QWebSocketCorsAuthenticator>
 #include <QWebSocketServer>
 #include <QDateTime>
 
@@ -1718,6 +1726,7 @@ bool TciServer::start(const QList<QHostAddress>& bindAddresses, quint16 port)
     for (qsizetype i = 1; i < bindAddresses.size(); ++i) {
         auto* extra = new QWebSocketServer(QStringLiteral("NereusSDR-TCI"),
                                            QWebSocketServer::NonSecureMode, this);
+        refuseBrowserOrigins(extra);
         if (!extra->listen(bindAddresses.at(i), boundPort)) {
             const QString errStr = extra->errorString();
             if (m_quietListenAttempts) {
@@ -1757,6 +1766,7 @@ bool TciServer::addListener(const QHostAddress& address)
     const quint16 port = m_server->serverPort();
     auto* extra = new QWebSocketServer(QStringLiteral("NereusSDR-TCI"),
                                        QWebSocketServer::NonSecureMode, this);
+    refuseBrowserOrigins(extra);
     if (!extra->listen(address, port)) {
         if (m_quietListenAttempts) {
             qCDebug(lcTci) << "TciServer: failed to listen on" << address.toString()
@@ -1917,6 +1927,269 @@ void TciServer::releaseDesktopProgramKey()
     }
 }
 
+// ── releaseKeyHeldBy() ───────────────────────────────────────────────────────
+//
+// The key release onClientDisconnected() made inline, moved here so the
+// keyed-client watchdog releases a hung app's key by the same path. A step
+// that lets a callback stop the server, destroy the socket or drop the
+// client returns false, as the disconnect path returned.
+bool TciServer::releaseKeyHeldBy(QWebSocket* ws)
+{
+    const QPointer<TciServer> self(this);
+    const QPointer<QWebSocket> client(ws);
+    const auto stillHere = [this, &self, &client, ws]() {
+        return self && client && m_clients.contains(ws);
+    };
+
+    if (m_desktopHostMode && m_desktopKeyClient.data() == ws) {
+        releaseDesktopProgramKey();
+        if (!stillHere()) { return false; }
+    }
+
+    // Fix wave RD-C1 (JJ ruling 1): the app that keyed through its trx is
+    // gone, so nothing would ever send its trx:N,false. Its key is released
+    // first; releasing only the TX audio lock below would leave the
+    // transmitter keyed with the microphone as its audio.
+    //
+    // Deliberate departure from Thetis TCIServer.cs:3010-3026 [v2.10.3.15]
+    // (StopSocketListener), which clears m_tciPttActive and releases the
+    // audio listener but leaves console.TCIPTT, and so the key, as it was.
+    // Fix round 1 (Important 1): also a TCI level no app owns.
+    if (m_tciPttClient.isNull() || m_tciPttClient.data() == ws) {
+        if (!releaseAppTciKey(ws) || !stillHere()) { return false; }
+    }
+
+    // Fix round 2 (Critical 1, RD-C1): in a remote window, the app whose
+    // trx:N,true was forwarded is gone, with or without TCI audio. Nothing
+    // would send its trx:N,false, so the window's key is released on the
+    // Core now, or the Core's answer is when it comes.
+    if (m_remoteWindow && !m_remoteKeyClient.isNull() && m_remoteKeyClient.data() == ws) {
+        m_remoteKeyClient = nullptr;
+        if (m_remoteKeyPending) {
+            m_remoteReleaseWhilePending = true;
+        }
+        if (m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
+            qCInfo(lcTci) << "TciServer: the app that keyed left; unkeys this window's key, epoch"
+                          << m_remoteKeyEpoch;
+            m_remoteTransmit.unkey(m_remoteKeyEpoch);
+            m_remoteKeyEpoch = 0;
+            endRemoteKey();
+            if (!stillHere()) { return false; }
+        }
+    }
+    return true;
+}
+
+QWebSocket* TciServer::keyHoldingClient() const
+{
+    // Only a key still held counts. MoxController drops the TCI level on
+    // any unkey (dropPttOnUnkey, clearPttSources, a refusal) without
+    // telling this server, so m_tciPttClient alone can name an app that
+    // holds nothing.
+    if (m_desktopHostMode && m_desktopKeyHeld && !m_desktopKeyClient.isNull()) {
+        return m_desktopKeyClient.data();
+    }
+    if (!m_tciPttClient.isNull()) {
+        const MoxController* mox = m_model ? m_model->moxController() : nullptr;
+        if (mox && mox->isTciPttHeld()) {
+            return m_tciPttClient.data();
+        }
+    }
+    // A key still being asked for counts too: the Core's answer may come
+    // while the app is hung, and nothing would start the watchdog again.
+    if (m_remoteWindow && !m_remoteKeyClient.isNull()
+        && (m_remoteKeyEpoch != 0 || m_remoteKeyPending)) {
+        return m_remoteKeyClient.data();
+    }
+    return nullptr;
+}
+
+// The TX audio lock `ws` holds, released as its disconnect releases it
+// (shared by onClientDisconnected() and the keyed-client watchdog).
+void TciServer::releaseTxAudioLockHeldBy(QWebSocket* ws, const char* why)
+{
+    // Phase 17: release TX audio mutex if this client held it.
+    // QPointer auto-nulls when the socket is deleted (ws->deleteLater below),
+    // but we clear explicitly here so activeTxClientCount() returns 0 in the
+    // same event-loop pass as the disconnect.
+    if (!m_txAudioActiveClient.isNull() && m_txAudioActiveClient.data() == ws) {
+        // Task 35: the app whose audio a remote window's key carried is
+        // gone; nothing would ever send its trx:N,false, so the key is
+        // released on the Core.
+        if (m_remoteWindow && m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
+            m_remoteTransmit.unkey(m_remoteKeyEpoch);
+            m_remoteKeyEpoch = 0;
+            broadcastRemoteKeyState(false);
+        }
+        m_txAudioActiveClient = nullptr;
+        qCInfo(lcTci) << "TciServer: TX audio mutex released" << why;
+        // Phase 23: notify indicator / MainWindow.
+        emit txAudioActiveClientChanged(nullptr);
+        // Phase 3J-1 bench fix: stop TX_CHRONO frames on client disconnect.
+        stopTxChrono();
+    }
+}
+
+// From Longpath src/core/TciServer.cpp:2240-2249 [@383f058]
+// ── Keyed-client watchdog + shared MOX release (2026-09-17) ──────────────────
+//
+// Two ways a keying client can go missing: its socket closes (a crash —
+// onClientDisconnected handles that) or its event loop freezes while the
+// socket stays open (a hang — nothing would ever fire). The watchdog covers
+// the second: while a client owns MOX it is pinged every
+// m_keyedWatchdogIntervalMs, and after m_keyedWatchdogMaxUnanswered pings
+// in a row without a pong, MOX is released exactly as on a disconnect. The
+// socket itself is left alone — a client that wakes up again may carry on;
+// it just is not allowed to hold the transmitter while nobody is home.
+//
+// NereusSDR: "exactly as on a disconnect" is releaseKeyHeldBy(), the path
+// onClientDisconnected() takes, instead of Longpath's releaseMoxHeldBy().
+
+// From Longpath src/core/TciServer.cpp:2555-2562 [@383f058]
+void TciServer::setKeyedWatchdog(int intervalMs, int maxUnanswered)
+{
+    m_keyedWatchdogIntervalMs   = qMax(50, intervalMs);
+    m_keyedWatchdogMaxUnanswered = qMax(1, maxUnanswered);
+    if (m_keyedWatchdog && m_keyedWatchdog->isActive()) {
+        m_keyedWatchdog->start(m_keyedWatchdogIntervalMs);
+    }
+}
+
+// From Longpath src/core/TciServer.cpp:2618-2633 [@383f058]
+void TciServer::startKeyedWatchdog()
+{
+    if (!m_keyedWatchdog) {
+        m_keyedWatchdog = new QTimer(this);   // parented — destroyed with server
+        connect(m_keyedWatchdog, &QTimer::timeout,
+                this, &TciServer::onKeyedWatchdogTick);
+    }
+    if (!m_keyedWatchdog->isActive()) {
+        m_ownerPingsUnanswered = 0;
+        m_watchdogClient = nullptr;
+        m_keyedWatchdog->start(m_keyedWatchdogIntervalMs);
+    }
+}
+
+// From Longpath src/core/TciServer.cpp:2635-2640 [@383f058]
+void TciServer::stopKeyedWatchdog()
+{
+    if (m_keyedWatchdog) { m_keyedWatchdog->stop(); }
+    m_ownerPingsUnanswered = 0;
+    m_watchdogClient = nullptr;
+}
+
+// From Longpath src/core/TciServer.cpp:2642-2658 [@383f058]
+void TciServer::onKeyedWatchdogTick()
+{
+    QWebSocket* owner = keyHoldingClient();
+    if (owner == nullptr) {
+        stopKeyedWatchdog();
+        return;
+    }
+    // NereusSDR: the count belongs to one owner; a new one starts at zero,
+    // as Longpath's trx path resets it when the owner changes.
+    if (m_watchdogClient.data() != owner) {
+        m_watchdogClient = owner;
+        m_ownerPingsUnanswered = 0;
+    }
+    if (m_ownerPingsUnanswered >= m_keyedWatchdogMaxUnanswered) {
+        auto it = m_clients.find(owner);
+        const QString peer = (it != m_clients.end()) ? it.value()->peer
+                                                     : QStringLiteral("(unknown)");
+        qCWarning(lcTci) << "TciServer: the app at" << peer
+                         << "holds a key and stopped answering pings; releasing its key";
+        stopKeyedWatchdog();
+        const QPointer<TciServer> self(this);
+        const QPointer<QWebSocket> client(owner);
+        if (!releaseKeyHeldBy(owner) || !self || !client) { return; }
+        // As on a disconnect: an operator key that stays on must not keep
+        // the hung app's audio on the air.
+        releaseTxAudioLockHeldBy(owner, "from an app that stopped answering pings");
+        return;
+    }
+    ++m_ownerPingsUnanswered;
+    owner->ping(QByteArrayLiteral("NereusSDR-keyed"));
+}
+
+// From Longpath src/core/TciServer.cpp:2660-2667 [@383f058]
+void TciServer::onPong(quint64 elapsedTime, const QByteArray& payload)
+{
+    Q_UNUSED(elapsedTime);
+    Q_UNUSED(payload);
+    auto* ws = qobject_cast<QWebSocket*>(sender());
+    if (ws == nullptr || m_watchdogClient.isNull() || m_watchdogClient.data() != ws) { return; }
+    m_ownerPingsUnanswered = 0;
+}
+
+// From Longpath src/core/TciServer.cpp:1756-1828 [@383f058]
+void TciServer::refuseBrowserOrigins(QWebSocketServer* server)
+{
+    // ── Herkunftsprüfung (2026-09-30) ───────────────────────────────────────
+    //
+    // WebSocket-Verbindungen unterliegen NICHT der Gleiche-Herkunft-Regel des
+    // Browsers. Ohne diesen Haken konnte jede beliebige Webseite, die der
+    // Bediener irgendwo im Browser offen hat, `new WebSocket("ws://127.0.0.1:
+    // 50001")` aufmachen und `trx:0,true;` schicken — also die Station tasten.
+    // Die Bindung an 127.0.0.1 hilft dagegen NICHT: sie hält andere Rechner
+    // fern, nicht einen Browser auf genau diesem Rechner. Auch Thetis,
+    // deskHPSDR und AetherSDR haben diese Prüfung nicht; sie ist
+    // Longpath-eigen.
+    //
+    // Die Regel, und warum sie nichts kaputtmacht:
+    //   - Native Clients (WSJT-X, JTDX, N1MM+, Log4OM, Hamlib, TCI Remote)
+    //     senden beim Handschlag KEINEN Origin-Kopf. Sie werden angenommen
+    //     wie bisher.
+    //   - Ein Browser sendet IMMER einen Origin-Kopf. Solche Verbindungen
+    //     werden nur angenommen, wenn die Herkunft in `TciAllowedOrigins`
+    //     steht (Vorgabe: leer, also keine).
+    //
+    // Deshalb ist es ausdrücklich KEINE Erlaubnisliste über alle Clients —
+    // das würde jeden Logger aussperren, der nichts von Herkünften weiß —
+    // sondern genau eine Sperre gegen fremde Webseiten.
+    //
+    // Eine eigene Longpath-Weboberfläche trägt sich später hier ein.
+    //
+    // NereusSDR: every listening server gets this check (the first one and
+    // the Core station server's extra addresses alike). Longpath's later
+    // exemption for an origin on this computer (istEigeneHerkunft) is not
+    // ported: NereusSDR serves no web page of its own, and a page served
+    // from this computer is exactly what the check keeps out.
+    if (!server) { return; }
+    // NereusSDR: a direct connection, so the answer is set before the
+    // handshake goes on whatever thread the server runs on; made before
+    // listen() so no connection can arrive unchecked.
+    connect(server, &QWebSocketServer::originAuthenticationRequired,
+            // Kein `this` in der Erfassung: `istEigeneHerkunft` ist eine
+            // freie Funktion in dieser Datei. Die Erfassung war ungenutzt
+            // und die einzige Warnung, die diese Datei noch erzeugte.
+            this, [](QWebSocketCorsAuthenticator* auth) {
+                if (!auth) { return; }
+                const QString origin = auth->origin().trimmed();
+                if (origin.isEmpty()) {
+                    auth->setAllowed(true);   // nativer Client, kein Browser
+                    return;
+                }
+                const QStringList allowed =
+                    AppSettings::instance()
+                        .value(QStringLiteral("TciAllowedOrigins"), QString())
+                        .toString()
+                        .split(QLatin1Char(','), Qt::SkipEmptyParts);
+                bool ok = false;
+                for (const QString& a : allowed) {
+                    if (a.trimmed().compare(origin, Qt::CaseInsensitive) == 0) {
+                        ok = true;
+                        break;
+                    }
+                }
+                auth->setAllowed(ok);
+                if (!ok) {
+                    qCWarning(lcTci)
+                        << "TciServer: refused a browser connection from origin"
+                        << origin << "(not listed in TciAllowedOrigins)";
+                }
+            }, Qt::DirectConnection);
+}
+
 void TciServer::setDesktopHostMode(bool enabled)
 {
     if (m_desktopHostMode == enabled) { return; }
@@ -1992,6 +2265,7 @@ bool TciServer::start(const QHostAddress& bindAddress, quint16 port)
     // server to the LAN — there is no authentication in TCI 2.0 — so the
     // Setup UI surfaces a tooltip warning when a non-loopback option is
     // selected.
+    refuseBrowserOrigins(m_server);
     if (!m_server->listen(bindAddress, port)) {
         if (m_quietListenAttempts) {
             qCDebug(lcTci) << "TciServer: failed to listen on" << bindAddress.toString()
@@ -2139,6 +2413,8 @@ void TciServer::stop()
     m_wdspInitConn = {};
 
     m_pingTimer->stop();
+    // From Longpath src/core/TciServer.cpp:1937 [@383f058]
+    stopKeyedWatchdog();
     m_drainTimer->stop();        // Phase 14: stop drain before disconnecting clients
     m_rxSensorTimer->stop();     // Phase 19: stop sensor broadcast timers
     m_txSensorTimer->stop();
@@ -2407,6 +2683,10 @@ void TciServer::onNewConnection()
                 this, &TciServer::onBinaryMessageReceived);
         connect(ws, &QWebSocket::disconnected,
                 this, &TciServer::onClientDisconnected);
+        // From Longpath src/core/TciServer.cpp:2163-2165 [@383f058]
+        // Keyed-client watchdog (2026-09-17): every client answers pings
+        // at the WebSocket layer; only the MOX owner's answers are counted.
+        connect(ws, &QWebSocket::pong, this, &TciServer::onPong);
 
         qCInfo(lcTci) << "TciServer: client connected from" << session->peer;
         emit clientConnected(ws);
@@ -2459,69 +2739,13 @@ void TciServer::onClientDisconnected()
     it = m_clients.find(ws);
     if (it == m_clients.end()) { return; }
 
-    if (m_desktopHostMode && m_desktopKeyClient.data() == ws) {
-        releaseDesktopProgramKey();
-        if (!self || !client) { return; }
-        it = m_clients.find(ws);
-        if (it == m_clients.end()) { return; }
-    }
+    // The key this app held is released first, by the path the keyed-client
+    // watchdog shares (releaseKeyHeldBy).
+    if (!releaseKeyHeldBy(ws) || !self || !client) { return; }
+    it = m_clients.find(ws);
+    if (it == m_clients.end()) { return; }
 
-    // Fix wave RD-C1 (JJ ruling 1): the app that keyed through its trx is
-    // gone, so nothing would ever send its trx:N,false. Its key is released
-    // first; releasing only the TX audio lock below would leave the
-    // transmitter keyed with the microphone as its audio.
-    //
-    // Deliberate departure from Thetis TCIServer.cs:3010-3026 [v2.10.3.15]
-    // (StopSocketListener), which clears m_tciPttActive and releases the
-    // audio listener but leaves console.TCIPTT, and so the key, as it was.
-    // Fix round 1 (Important 1): also a TCI level no app owns.
-    if (m_tciPttClient.isNull() || m_tciPttClient.data() == ws) {
-        if (!releaseAppTciKey(ws) || !client) { return; }
-        it = m_clients.find(ws);
-        if (it == m_clients.end()) { return; }
-    }
-
-    // Fix round 2 (Critical 1, RD-C1): in a remote window, the app whose
-    // trx:N,true was forwarded is gone, with or without TCI audio. Nothing
-    // would send its trx:N,false, so the window's key is released on the
-    // Core now, or the Core's answer is when it comes.
-    if (m_remoteWindow && !m_remoteKeyClient.isNull() && m_remoteKeyClient.data() == ws) {
-        m_remoteKeyClient = nullptr;
-        if (m_remoteKeyPending) {
-            m_remoteReleaseWhilePending = true;
-        }
-        if (m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
-            qCInfo(lcTci) << "TciServer: the app that keyed left; unkeys this window's key, epoch"
-                          << m_remoteKeyEpoch;
-            m_remoteTransmit.unkey(m_remoteKeyEpoch);
-            m_remoteKeyEpoch = 0;
-            endRemoteKey();
-            if (!self || !client) { return; }
-            it = m_clients.find(ws);
-            if (it == m_clients.end()) { return; }
-        }
-    }
-
-    // Phase 17: release TX audio mutex if this client held it.
-    // QPointer auto-nulls when the socket is deleted (ws->deleteLater below),
-    // but we clear explicitly here so activeTxClientCount() returns 0 in the
-    // same event-loop pass as the disconnect.
-    if (!m_txAudioActiveClient.isNull() && m_txAudioActiveClient.data() == ws) {
-        // Task 35: the app whose audio a remote window's key carried is
-        // gone; nothing would ever send its trx:N,false, so the key is
-        // released on the Core.
-        if (m_remoteWindow && m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
-            m_remoteTransmit.unkey(m_remoteKeyEpoch);
-            m_remoteKeyEpoch = 0;
-            broadcastRemoteKeyState(false);
-        }
-        m_txAudioActiveClient = nullptr;
-        qCInfo(lcTci) << "TciServer: TX audio mutex released on disconnect";
-        // Phase 23: notify indicator / MainWindow.
-        emit txAudioActiveClientChanged(nullptr);
-        // Phase 3J-1 bench fix: stop TX_CHRONO frames on client disconnect.
-        stopTxChrono();
-    }
+    releaseTxAudioLockHeldBy(ws, "on disconnect");
 
     // Phase 16 Task 16.3 (sub-commit b): destroy all RESAMPLEF instances for
     // this client before removing the session from the map.
@@ -3908,6 +4132,7 @@ void TciServer::handleRemoteTrx(QWebSocket* ws, const QString& peer, int rx, boo
     m_remoteReleaseWhilePending = false;
     // Fix round 2 (Critical 1, RD-C1): which app keyed.
     m_remoteKeyClient = asker;
+    startKeyedWatchdog();
     const quint64 generation = ++m_remoteKeyGeneration;
     qCInfo(lcTci) << "TciServer: trx from" << peer << "forwarded to the Core as a program's key";
     m_remoteTransmit.key(hasTciArg, [this, asker, peer, rx, hasTciArg, generation, answerAsker](
@@ -4574,6 +4799,7 @@ void TciServer::onTextMessageReceived(const QString& msg)
                         m_desktopKeyClient = ws;
                         m_desktopKeyHeld = true;
                         m_tciPttClient = ws;
+                        startKeyedWatchdog();
                         if (hasTciArg && m_txAudioActiveClient.isNull()) {
                             m_txAudioActiveClient = ws;
                             emit txAudioActiveClientChanged(ws);
@@ -4775,6 +5001,7 @@ void TciServer::onTextMessageReceived(const QString& msg)
             m_tciPttClient = nullptr;
         } else if (localTrxWantsMox && !tciLevelBefore) {
             m_tciPttClient = ws;
+            startKeyedWatchdog();
         }
     }
 

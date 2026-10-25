@@ -18,6 +18,10 @@
 // 2026-10-15 - Reads and changes through a RigctlTarget, so a remote window's
 //              rigctld uses this parser too. J.J. Boyd (KG4VCF), AI-assisted
 //              via Anthropic Claude Code.
+// 2026-10-22 - A mode and passband write succeeds when the slice holds the
+//              pair it keeps after its minimum width and constraint
+//              (SliceModel::filterForRequest). J.J. Boyd (KG4VCF), with
+//              AI-assisted transformation via Claude Code.
 #include "RigctlProtocol.h"
 #include "RigctlTarget.h"
 #include "models/SliceModel.h"
@@ -384,7 +388,11 @@ QString RigctlProtocol::handleLine(const QString& line)
         for (const QByteArray& property : {QByteArray("filterLow"),QByteArray("filterHigh")}) {
             const int refusal = writeError(vfo,property); if (refusal) { return reply(refusal); }
         }
-        return reply(guardedWrite("filterLow",[&] { slice->setFilter(low,high); },[&] { return slice->filterLow() == low && slice->filterHigh() == high; }));
+        // The slice widens, constrains or refuses the pair as Thetis's
+        // UpdateRX1Filters does (console.cs:7544-7582 [v2.10.3.15]); the
+        // write succeeded when the slice holds that pair.
+        const std::pair<int,int> expected = slice->filterForRequest(low,high);
+        return reply(guardedWrite("filterLow",[&] { slice->setFilter(low,high); },[&] { return slice->filterLow() == expected.first && slice->filterHigh() == expected.second; }));
     }
     if (operation.endsWith("rit") || operation.endsWith("xit") || operation.endsWith("ts")) {
         const bool rit = operation.endsWith("rit"), xit = operation.endsWith("xit");

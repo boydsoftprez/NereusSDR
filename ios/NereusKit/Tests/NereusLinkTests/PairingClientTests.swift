@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-22: the app's hello declares displayCodec 2 (NSDC v2).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -69,7 +71,7 @@ import Testing
             throw PairingError.ended(reason: nil)
         }
         #expect(own.features == ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                 "setupDescription": 29, "settingsHygiene": 2, "radioAntennaRows": 2, "vax": 1, "txEqCurve": 2,
+                                 "setupDescription": 30, "settingsHygiene": 2, "radioAntennaRows": 2, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,

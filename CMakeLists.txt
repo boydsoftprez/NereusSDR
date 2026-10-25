@@ -2135,6 +2135,7 @@ set(GUI_SOURCES
     src/gui/SetupPage.cpp
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
+    src/gui/setup/GeneralFiltersPage.cpp
     src/gui/setup/HardwarePage.cpp
     src/gui/setup/HardwareDdcRoutingPage.cpp
     src/gui/setup/PaSetupPages.cpp

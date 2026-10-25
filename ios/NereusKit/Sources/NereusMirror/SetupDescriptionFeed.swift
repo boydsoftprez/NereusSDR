@@ -1,5 +1,9 @@
 // NereusSDR for iOS: current-session Setup descriptions from the mirror
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: General is version 30 from a version 30 Core (the Filters
+//   page), version 3 below it. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//   Code.
 
 import Combine
 
@@ -119,8 +123,9 @@ public final class SetupDescriptionFeed: ObservableObject {
         // 1.5 dB steps, the Saturn G2's Mic Tip-Ring) and 25 (Outputs' radio
         // speaker rows), Diagnostics at 15, Display at 26 (Waterfall
         // Defaults' level gates) and 28 (Sizing, with the Size and Hz/bin
-        // Target it gates, and averaging from 1 ms) and Appearance at 27
-        // (Trace Color).
+        // Target it gates, and averaging from 1 ms), Appearance at 27
+        // (Trace Color), Display and Appearance at 29 (the rebuild) and
+        // General at 30 (the Filters page).
         let cap: Int64
         switch category {
         case "hardware": cap = maximum < 13 ? 6 : maximum < 16 ? 13 : maximum < 17 ? 16 : maximum < 18 ? 17 : maximum < 23 ? 18 : 23
@@ -132,6 +137,7 @@ public final class SetupDescriptionFeed: ObservableObject {
         case "diagnostics": cap = maximum < 15 ? 3 : 15
         case "appearance": cap = maximum < 7 ? 4 : maximum < 12 ? 7 : maximum < 27 ? 12 : maximum < 29 ? 27 : 29
         case "display": cap = maximum < 8 ? 4 : maximum < 12 ? 11 : maximum < 26 ? 12 : maximum < 28 ? 26 : maximum < 29 ? 28 : 29
+        case "general": cap = maximum < 30 ? 3 : 30
         default: cap = 3
         }
         return Int(min(maximum, cap))
