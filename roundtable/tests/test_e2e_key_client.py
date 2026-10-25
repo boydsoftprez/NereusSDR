@@ -257,6 +257,10 @@ async def scenario(srv: Server) -> Dict[str, str]:
         mark_k = await key.reading(0, -85.0, False)
         await key.presence(None, None, [usb_slice(HZ + 100)])
         await core.wait_for(lambda: core.view(ROOM).turns[t1["id"]]["end"] is not None, "turn 1 ends", TURN_TIMEOUT_S)
+        # Each station's view gets the end on its own socket: until the key
+        # station's has it, turn 1 is still its open talking turn.
+        await key.wait_for(lambda: key.view(ROOM).turns[t1["id"]]["end"] is not None,
+                           "turn 1 ends in the key station's view", TURN_TIMEOUT_S)
 
         # ---- Turn 2: the Core talks, the key station reads it.
         await core.presence(CORE_CALL, "EM73", [usb_slice(HZ, keyed=True)])
