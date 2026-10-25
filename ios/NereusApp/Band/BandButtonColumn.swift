@@ -130,6 +130,10 @@ struct BandButtonColumn: View {
     let main: MainScreenModel
     @ObservedObject var sheet: PanSheetModel
     @ObservedObject var slices: BandSlicesModel
+    /// The pans, for the status line under the pan last touched's column.
+    @ObservedObject var stack: PanStackModel
+    /// This pan's flags' menus (ANT, VAX), its pill's model and its band.
+    let controls: PanControls
     /// The pill's open tab, kept while it closes and opens.
     @Binding var displayTab: DisplayPillTab
     /// The phone's rounded edge sideways; 0 on the iPad.
@@ -158,8 +162,11 @@ struct BandButtonColumn: View {
         _open = open
         _folded = folded
         self.main = main
-        sheet = main.pan
-        slices = main.slices
+        let controls = main.controls(for: pan)
+        self.controls = controls
+        sheet = controls.sheet
+        slices = controls.band.slices
+        stack = main.panStack
         _displayTab = displayTab
         self.leadingInset = leadingInset
         self.openSetup = openSetup
@@ -191,6 +198,18 @@ struct BandButtonColumn: View {
                     }
                     .frame(maxHeight: BandColumnLayout.menuMaxHeight(bandHeight: proxy.size.height), alignment: .top)
                     .reportsBandColumnFrame()
+                    if let status = stack.status, stack.lastTouched == pan, !folded {
+                        // What the last Add a pan or Close this pan did (spec section 6.3).
+                        Text(status)
+                            .font(.system(size: 12))
+                            .foregroundStyle(ChromeColours.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: 260, alignment: .leading)
+                            .workspacePanel()
+                            .accessibilityIdentifier("bandColumnPanStatus")
+                    }
                     if let shownNote, !folded {
                         Text(shownNote)
                             .font(.system(size: 12))
@@ -357,8 +376,8 @@ struct BandButtonColumn: View {
             .reportsBandColumnFrame()
         case .antenna:
             ColumnMenuShell(identifier: "bandColumnMenu.antenna", padding: 6) {
-                if let entry = slices.active, let modes = main.flagControls.modes {
-                    FlagAntennaMenu(controls: main.flagControls, modes: modes, entry: entry, large: false) {
+                if let entry = slices.active, let modes = controls.flagControls.modes {
+                    FlagAntennaMenu(controls: controls.flagControls, modes: modes, entry: entry, large: false) {
                         open = nil
                     }
                 } else {
@@ -370,7 +389,7 @@ struct BandButtonColumn: View {
         case .vax:
             ColumnMenuShell(identifier: "bandColumnMenu.vax", padding: 0) {
                 if let entry = slices.active {
-                    FlagVaxSection(controls: main.flagControls, entry: entry)
+                    FlagVaxSection(controls: controls.flagControls, entry: entry)
                 } else {
                     ModesChrome.section("VAX") {
                         ModesChrome.note(PanSheetModel.noSliceReason)
@@ -402,7 +421,7 @@ struct BandButtonColumn: View {
                              device: DisplayDropSheet.deviceWord, openSetup: openSetup,
                              onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen, pan: pan)
         } else {
-            DisplaySheet(model: main.display, core: main.coreDisplay, openSetup: openSetup)
+            DisplaySheet(model: controls.display, core: main.coreDisplay, openSetup: openSetup)
         }
     }
 }

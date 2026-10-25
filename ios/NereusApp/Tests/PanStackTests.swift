@@ -300,6 +300,131 @@ struct PanStackTests {
         await rig.model.disconnect()
     }
 
+    // MARK: The pan last touched
+
+    /// Every property write the app sent for `property`: the slice's key.
+    private func writes(_ station: FakeStation, _ property: String) -> [String] {
+        station.messages.compactMap {
+            if case .propertyWrite(let write) = $0, write.properties.contains(where: { $0.name == property }) {
+                return write.key
+            }
+            return nil
+        }
+    }
+
+    /// Two pans, slice A on Pan 1 and slice B moved onto Pan 2 by Add a pan.
+    private func twoPans(_ rig: Connected) async throws {
+        let main = rig.model.main
+        main.pan.addSlice(on: .first)
+        #expect(await settle { main.slices.entries.count == 2 })
+        rig.stack.addPan()
+        #expect(await settle { rig.stack.status != nil && rig.station.panKey(ofSlice: 1) == "pan-1" })
+        #expect(await settle { rig.stack.band(for: Self.second).slices.entries.map(\.id) == [1] })
+        #expect(await settle { rig.stack.band(for: Self.second).slices.activeSliceId == 1 })
+        #expect(await settle { main.slices.entries.map(\.id) == [0] })
+    }
+
+    @Test("with two pans the RX panel, Modes, Match RX, the S-meter and the toolbar follow the pan last touched")
+    func rxPanelFollowsThePanLastTouched() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        let stack = rig.stack
+        try await twoPans(rig)
+        let second = stack.band(for: Self.second)
+        // Add a pan touched Pan 2: the toolbar names it, with its active slice.
+        #expect(stack.lastTouched == Self.second)
+        #expect(main.toolbarPan == Self.second)
+        #expect(await settle { main.sliceLetter == "B" && main.rx.sliceLetter == "B" })
+        #expect(main.rx.slices === second.slices)
+        #expect(main.modes.slices === second.slices)
+        #expect(main.transmit.receiveSlices === second.slices)
+        // An RX change reaches Pan 2's active slice, and never Pan 1's.
+        let before = writes(rig.station, "agcMode").count
+        main.rx.selectAgc(2)
+        #expect(await settle { self.writes(rig.station, "agcMode").count == before + 1 })
+        #expect(writes(rig.station, "agcMode").last == "slice:1")
+        // Pan 1 touched again: everything is back on slice A.
+        stack.lastTouched = .first
+        #expect(main.toolbarPan == .first)
+        #expect(main.rx.slices === main.slices)
+        #expect(main.transmit.receiveSlices == nil)
+        #expect(await settle { main.sliceLetter == "A" && main.rx.sliceLetter == "A" })
+        main.rx.selectAgc(3)
+        #expect(await settle { self.writes(rig.station, "agcMode").count == before + 2 })
+        #expect(writes(rig.station, "agcMode").last == "slice:0")
+        // Pan 2 closing puts the toolbar back on Pan 1 for good.
+        stack.lastTouched = Self.second
+        #expect(main.toolbarPan == Self.second)
+        stack.closePan(Self.second)
+        #expect(main.toolbarPan == .first)
+        #expect(main.rx.slices === main.slices)
+        await rig.model.disconnect()
+    }
+
+    @Test("a shared row changed on Pan 2's pill shows on Pan 1's; an own row stays Pan 2's")
+    func sharedRowsReachEveryPan() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        let first = main.band
+        let second = rig.stack.band(for: Self.second).band
+        // Pan 2's pill is open: its rows edit Pan 2.
+        main.displayEditScope = .pan(Self.second)
+        #expect(main.displayEditingSettings == second.settings)
+        let ctun = first.settings.ctun
+        let rewind = first.settings.rewindSeconds == 900 ? 300 : 900
+        main.changeDisplay { settings in
+            settings.ctun = !ctun
+            settings.displayDuplex = !settings.displayDuplex
+            settings.rewindSeconds = rewind
+            settings.decimation = 4
+        }
+        #expect(second.settings.ctun == !ctun)
+        #expect(first.settings.ctun == !ctun)
+        #expect(first.settings.displayDuplex == second.settings.displayDuplex)
+        #expect(first.settings.rewindSeconds == rewind)
+        #expect(first.settings.decimation == 4)
+        // Spectrum Height from Pan 2's own Display model reaches Pan 1 too.
+        main.controls(for: Self.second).display.setSpectrumHeight(61)
+        #expect(second.settings.currentSpectrumSharePercent == 61)
+        #expect(first.settings.currentSpectrumSharePercent == 61)
+        // An own row: Pan 2's fill changes, Pan 1's does not.
+        let fill = first.settings.traceFill
+        main.changeDisplay { $0.traceFill = !fill }
+        #expect(second.settings.traceFill == !fill)
+        #expect(first.settings.traceFill == fill)
+        #expect(main.ownDisplayFields(for: Self.second).contains("traceFill"))
+        #expect(!main.ownDisplayFields(for: .first).contains("traceFill"))
+        // Pan 1's pill sees Pan 1's own value again.
+        main.displayEditScope = .pan(.first)
+        #expect(main.displayEditingSettings.traceFill == fill)
+        await rig.model.disconnect()
+    }
+
+    @Test("each pan's controls act on its own slices; Pan 1's are the main screen's")
+    func eachPanHasItsOwnControls() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        let first = main.controls(for: .first)
+        #expect(first.sheet === main.pan)
+        #expect(first.display === main.display)
+        #expect(first.flagControls === main.flagControls)
+        let second = main.controls(for: Self.second)
+        #expect(second.band.slices === rig.stack.band(for: Self.second).slices)
+        #expect(second.sheet !== main.pan)
+        #expect(main.controls(for: Self.second) === second)
+        #expect(await settle { second.sheet.sliceLetter == "B" })
+        // Pan 2's +RX asks for a slice on Pan 2.
+        second.sheet.addSlice(on: Self.second)
+        #expect(await settle { self.invokes(rig.station, PanSheetModel.addSliceVerb).last?.args
+                == [.init(name: "panId", value: .utf8("pan-1"))] })
+        // Closed, its controls go; Pan 2 opened again gets new ones.
+        rig.stack.closePan(Self.second)
+        #expect(main.controls(for: Self.second) === first)
+        await rig.model.disconnect()
+    }
+
     // MARK: Pan 2's display
 
     /// The subscriptions the app sent the fake, in order.

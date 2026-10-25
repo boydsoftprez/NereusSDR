@@ -39,7 +39,10 @@ final class DisplayPillPhoneKeys: SetupPhoneKeys {
 
     /// The pill's pan is drawn on the transmit scale now.
     var transmitting: Bool {
-        pan == .first && main.band.transmitOverlay
+        guard pan == .first || main.panStack.open.contains(pan) else {
+            return false
+        }
+        return main.panStack.band(for: pan).band.transmitOverlay
     }
 
     private func heldForTransmit(_ key: String) -> Bool {
@@ -301,6 +304,9 @@ struct DisplayPill: View {
         self.onOpen = onOpen
     }
 
+    /// The pill's pan's band and Display model: its own on an iPad pan below Pan 1.
+    private var controls: PanControls { main.controls(for: pan) }
+
     var body: some View {
         let chrome = DisplayPillPeek.drawsChrome(held: peek.wrappedValue)
         DropSheet(title: "Display", accessibilityIdentifier: "displayPill") {
@@ -312,11 +318,12 @@ struct DisplayPill: View {
         } content: {
             tabs
                 .modifier(DisplayPillPeekRow(draws: chrome, held: false))
-            DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: main.display, core: core,
-                                main: main, onOpenPage: onOpenPage)
+            DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: controls.display, core: core,
+                                main: main, band: controls.band.band, onOpenPage: onOpenPage)
                 .environment(\.panelButtonHeight, 30)
             if let source = main.displayPillSource {
-                DisplayPillFooter(tab: tab, keys: source.keys, band: main.band, onSetupDefaults: onSetupDefaults)
+                DisplayPillFooter(tab: tab, keys: source.keys, band: controls.band.band,
+                                  onSetupDefaults: onSetupDefaults)
                     .modifier(DisplayPillPeekRow(draws: chrome, held: false))
             }
         }
@@ -353,6 +360,8 @@ private struct DisplayPillRowsView: View {
     @ObservedObject var display: DisplaySheetModel
     @ObservedObject var core: CoreDisplayModel
     let main: MainScreenModel
+    /// The pill's pan's band.
+    @ObservedObject var band: BandModel
     let onOpenPage: (String) -> Void
 
     /// The row a finger holds; while one is, only it draws.
@@ -377,7 +386,7 @@ private struct DisplayPillRowsView: View {
             case .chips(let chips, let columns):
                 if let source {
                     DisplayPillChipsLine(chips: chips, columns: columns, source: source, display: display,
-                                         band: main.band)
+                                         band: band)
                 }
             case .phone(let row):
                 phone(row)
@@ -396,7 +405,7 @@ private struct DisplayPillRowsView: View {
             case .segment(let key, _), .menu(let key, _, _), .slider(let key, _, _, _), .toggle(let key),
                  .picture(let key), .retune(let key):
                 if let source {
-                    DisplayPillSettingLine(line: line, source: source, band: main.band)
+                    DisplayPillSettingLine(line: line, source: source, band: band)
                 } else {
                     DisplayPillMissingRow(key: key)
                 }
@@ -460,7 +469,7 @@ private struct DisplayPillRowsView: View {
         case .ctun, .dup:
             if let source {
                 DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display,
-                                     band: main.band)
+                                     band: band)
             }
         case .decimation:
             let range = BandDisplaySettings.decimationRange
@@ -468,7 +477,7 @@ private struct DisplayPillRowsView: View {
                 DisplayPillLabel(text: "Decimation")
                     .frame(minHeight: 26)
                     .setupGreyed(!display.gates.decimation)
-                PanelSliderRow(label: nil, value: Double(main.band.settings.decimation),
+                PanelSliderRow(label: nil, value: Double(band.settings.decimation),
                                range: StationCatalog.Range(min: Double(range.lowerBound),
                                                            max: Double(range.upperBound), step: 1),
                                accessibility: "Decimation", format: { String(Int($0.rounded())) },
@@ -576,7 +585,7 @@ struct DisplayDropSheet: View {
             DisplayPill(pan: pan, device: device, tab: $tab, main: main, core: main.coreDisplay,
                         onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen)
         } else {
-            DisplaySheet(model: main.display, core: main.coreDisplay, topNote: Self.olderCoreNote,
+            DisplaySheet(model: main.controls(for: pan).display, core: main.coreDisplay, topNote: Self.olderCoreNote,
                          openSetup: openSetup)
         }
     }

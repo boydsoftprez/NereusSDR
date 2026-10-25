@@ -25,6 +25,8 @@ public final class BandDisplaySettingsStore {
     private static let sharedKey = "phone.display.shared.v29"
     private static let revisionKey = "phone.display.revision.v29"
     private static let migrationKey = "phone.display.scopeVersion"
+    /// Set once this device's own rows (``deviceRowFields``) are in the shared entry.
+    private static let deviceRowsKey = "phone.display.deviceRowsShared"
     private var initialized = false
     private var revision: UInt64 = 1
     private var nextSnapshotToken: UInt64 = 0
@@ -35,12 +37,20 @@ public final class BandDisplaySettingsStore {
 
     /// Device-shared exceptions: exactly nine Appearance colors (RX color
     /// and alpha are separate existing typed fields), two Custom definitions,
-    /// and all existing TX scale/waterfall rendering settings.
-    public static let sharedFields: Set<String> = [
+    /// and all existing TX scale/waterfall rendering settings, and this
+    /// device's own rows (``deviceRowFields``).
+    public static let sharedFields: Set<String> = Set([
         "gridColour", "gridFineColour", "hGridColour", "gridTextColour", "bandEdgeColour",
         "rxZeroLineColour", "txZeroLineColour", "passbandColour", "passbandOpacity", "txPassbandColour",
         "customPalette", "txCustomPalette", "txGridTopDbm", "txGridRangeDb",
         "txWaterfallLowDbm", "txWaterfallHighDbm", "txWaterfallPaletteId", "txWaterfallLowColour",
+    ]).union(deviceRowFields)
+    /// This device's own rows (spec DC2, DC9): Spectrum Height, Look back,
+    /// CTUN, DUP and decimation. They are the device's, never a pan's, so
+    /// every pan the iPad shows draws the one value, and no pan holds its own.
+    public static let deviceRowFields: Set<String> = [
+        "spectrumSharePercent", "spectrumSharePercentSideways", "rewindSeconds", "ctun", "displayDuplex",
+        "decimation",
     ]
     public static let waterfallModeFields: Set<String> = [
         "clarityEnabled", "waterfallAgc", "waterfallNfAgc", "useSpectrumMinMax",
@@ -59,8 +69,8 @@ public final class BandDisplaySettingsStore {
         "backgroundImagePath", "backgroundOpacityPercent", "traceColour", "traceLineColour", "traceWidthPoints",
         "traceFill", "traceFillOpacity", "traceGradient", "frequencyLabelAlignment", "waterfallPaletteId",
         "spectrumAverageTimeMs", "waterfallAverageTimeMs", "spectrumDetector", "spectrumAveraging",
-        "waterfallDetector", "waterfallAveraging", "decimation", "normalize", "waterfallPeriodMs",
-        "waterfallOpacityPercent", "waterfallStopOnTx", "rewindSeconds", "showRxFilterOnWaterfall",
+        "waterfallDetector", "waterfallAveraging", "normalize", "waterfallPeriodMs",
+        "waterfallOpacityPercent", "waterfallStopOnTx", "showRxFilterOnWaterfall",
         "showTxFilterOnWaterfall", "showRxZeroLineOnWaterfall", "showTxZeroLineOnWaterfall", "timestampPosition",
         "timestampUtc", "waterfallLowColour", "gridFollowsNoiseFloor", "gridNoiseFloorOffsetDb", "gridKeepsRange",
         "showPeakValue", "peakValueCorner", "peakValueDelayMs", "peakValueColour", "showBinWidth", "showFps",
@@ -123,6 +133,7 @@ public final class BandDisplaySettingsStore {
         if defaults.integer(forKey: Self.migrationKey) >= 29 {
             revision = max(1, UInt64(max(0, defaults.integer(forKey: Self.revisionKey))))
             for field in Self.pictureFields.union(Self.sharedFields) { fieldRevisions[field] = revision }
+            shareDeviceRows()
             return
         }
         let seed = Self.dictionary(.desktopDefaults)
@@ -149,6 +160,25 @@ public final class BandDisplaySettingsStore {
         revision = 1
         defaults.set(1, forKey: Self.revisionKey)
         defaults.set(29, forKey: Self.migrationKey)
+        defaults.set(true, forKey: Self.deviceRowsKey)
+    }
+    /// A store kept before this device's own rows were shared: each takes
+    /// Pan 1's value as it drew it, so nothing on Pan 1 moves, and every
+    /// other pan follows it from now on.
+    private func shareDeviceRows() {
+        guard !defaults.bool(forKey: Self.deviceRowsKey) else { return }
+        defaults.set(true, forKey: Self.deviceRowsKey)
+        var shared = read(Self.sharedKey)
+        let missing = Self.deviceRowFields.filter { shared[$0] == nil }
+        guard !missing.isEmpty else { return }
+        var first = Self.dictionary(.desktopDefaults)
+        first.merge(read(Self.masterKey)) { _, new in new }
+        first.merge(read(Self.keyPrefix + "1")) { _, new in new }
+        Self.readRewindAsOffered(&first)
+        for field in missing {
+            shared[field] = first[field]
+        }
+        write(shared, key: Self.sharedKey)
     }
     private func changed() {
         revision &+= 1

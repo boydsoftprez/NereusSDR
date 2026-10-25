@@ -177,6 +177,77 @@ final class IPadUITests: XCTestCase {
         XCTAssertTrue(app.buttons["bandColumn.band"].waitForExistence(timeout: 5), "▶ did not bring the buttons back")
     }
 
+    /// R-IOS-59, DC9, spec section 6.3: the Pan sheet's Add a pan opens Pan
+    /// 2 below Pan 1 with its own column, the toolbar naming the pan last
+    /// touched; Pan 2's column opens Pan 2's pill; Close this pan on Pan 2's
+    /// sheet closes it, and Pan 1 is the toolbar's again.
+    @MainActor
+    func testTwoPansFromThePanSheet() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "A second pan is the iPad's")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusBandMenuFixture",
+                               "-NereusTwoPansFixture"]
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
+            .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
+        app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
+        app.launch()
+        let panButton = app.buttons["pan"]
+        XCTAssertTrue(panButton.waitForExistence(timeout: 30))
+        XCTAssertEqual(panButton.label, "Pan 1")
+        panButton.tap()
+        let add = app.buttons["panSheet.addPan"]
+        let close = app.buttons["panSheet.closePan"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "The Pan sheet has no Add a pan")
+        XCTAssertTrue(add.isEnabled)
+        XCTAssertFalse(close.isEnabled, "Close this pan is not greyed on Pan 1")
+        add.tap()
+        let second = app.descendants(matching: .any)["pan.2"]
+        XCTAssertTrue(second.waitForExistence(timeout: 10), "Add a pan opened no Pan 2")
+        let first = app.descendants(matching: .any)["pan.1"]
+        XCTAssertTrue(first.exists)
+        // Pan 1 on top, the two sharing the height.
+        XCTAssertLessThan(first.frame.minY, second.frame.minY)
+        XCTAssertEqual(first.frame.height, second.frame.height, accuracy: 2)
+        XCTAssertTrue(waitUntil { panButton.label == "Pan 2" }, "The toolbar does not follow Pan 2")
+        let displays = app.buttons.matching(identifier: "bandColumn.display")
+        XCTAssertTrue(waitUntil { displays.count == 2 }, "Each pan has no column of its own")
+        // The Pan sheet stays down after Add a pan; a tap off it closes it.
+        app.buttons["Close the sheet"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["panSheet"].waitForNonExistence(timeout: 10),
+                      "A tap off the Pan sheet left it down")
+
+        // Pan 1's BAND touches Pan 1: the toolbar follows it.
+        let bands = app.buttons.matching(identifier: "bandColumn.band")
+        let firstBand = bands.allElementsBoundByIndex.min { $0.frame.minY < $1.frame.minY }
+        firstBand?.tap()
+        XCTAssertTrue(waitUntil { panButton.label == "Pan 1" }, "Touching Pan 1 left the toolbar on Pan 2")
+        app.descendants(matching: .any)["bandColumnClose"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.3)).tap()
+
+        // Pan 2's Display opens Pan 2's pill.
+        let secondDisplay = displays.allElementsBoundByIndex.max { $0.frame.minY < $1.frame.minY }
+        secondDisplay?.tap()
+        let pillPan = app.staticTexts["displayPillPan"]
+        XCTAssertTrue(pillPan.waitForExistence(timeout: 10), "Pan 2's Display opened no pill")
+        XCTAssertTrue(pillPan.label.hasPrefix("Pan 2"), "The pill is \(pillPan.label)")
+        XCTAssertTrue(waitUntil { panButton.label == "Pan 2" })
+        XCTAssertGreaterThan(pillPan.frame.minY, second.frame.minY, "Pan 2's pill is not on Pan 2")
+        shoot(app, "ipad-ui-two-pans-pill-2")
+
+        // Close this pan on Pan 2's sheet.
+        panButton.tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(close.isEnabled, "Close this pan is greyed on Pan 2")
+        close.tap()
+        XCTAssertTrue(second.waitForNonExistence(timeout: 10), "Close this pan left Pan 2 open")
+        XCTAssertTrue(waitUntil { panButton.label == "Pan 1" })
+    }
+
     /// Each of the column's menus open in turn: one at a time, the PTT
     /// clear of it and of the column, closed by a tap elsewhere.
     @MainActor

@@ -31,6 +31,11 @@ enum UITestBand {
     /// column's `addSliceOnPan` and `notch.addAtSlice`, is refused with its
     /// own arguments in the reason, so the UI test reads what was sent.
     static let bandMenuArgument = "-NereusBandMenuFixture"
+    /// Beside ``bandMenuArgument``: a radio that shows two pans (four
+    /// slices, two receivers) with a second slice, B on 7.2130 MHz, on Pan 1
+    /// beside A, so the Pan sheet's Add a pan moves B to Pan 2; the Core
+    /// takes each `panKey` write and says so.
+    static let twoPansArgument = "-NereusTwoPansFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's
@@ -40,6 +45,8 @@ enum UITestBand {
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
     static let sliceHz = 7_236_400.0
+    /// Slice B's frequency with ``twoPansArgument``.
+    static let secondSliceHz = 7_213_000.0
 
     /// Hands the main screen's models the band, the slice and the catalogue
     /// when the launch arguments carry ``argument``.
@@ -52,12 +59,14 @@ enum UITestBand {
         let rotor = arguments.contains(rotorArgument)
         let noRotor = arguments.contains(noRotorArgument)
         let bandMenu = arguments.contains(bandMenuArgument)
+        let twoPans = arguments.contains(twoPansArgument)
         let display = environment[displayEnvironment].flatMap { path in
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
         app.useBandFixturePropertySender { [weak mirror] write in
-            guard write.key == "slice:0", write.properties.count == 1,
-                  let entry = write.properties.first, entry.name == "afGain" else {
+            guard write.properties.count == 1, let entry = write.properties.first,
+                  write.key == "slice:0" && entry.name == "afGain"
+                    || twoPans && write.key.hasPrefix("slice:") && entry.name == "panKey" else {
                 throw LinkSendError.notConnected
             }
             await MainActor.run {
@@ -80,7 +89,9 @@ enum UITestBand {
         ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : [])
           + (display == nil ? [] : displayCapabilities)
           + (bandMenu ? [.init(ordinal: 8, name: PanSheetModel.notchControlCapability,
-                               value: .i64(PanSheetModel.notchAtSliceVersion))] : []))))
+                               value: .i64(PanSheetModel.notchAtSliceVersion))] : [])
+          + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
+                        .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : []))))
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -116,7 +127,28 @@ enum UITestBand {
             .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-72)),
             .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
             .init(ordinal: 35, name: "locked", value: .bool(false)),
-        ] + (bandMenu ? [.init(ordinal: 30, name: "band", value: .i64(3))] : []))))
+        ] + (bandMenu ? [.init(ordinal: 30, name: "band", value: .i64(3))] : [])
+          + (twoPans ? [.init(ordinal: 36, name: "panKey", value: .utf8("pan-0"))] : []))))
+        if twoPans {
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "slice:1", className: "SliceModel", properties: [
+                .init(ordinal: 1, name: "frequency", value: .f64(secondSliceHz)),
+                .init(ordinal: 2, name: "dspMode", value: .enumeration(0)),
+                .init(ordinal: 3, name: "filterLow", value: .i64(-3000)),
+                .init(ordinal: 4, name: "filterHigh", value: .i64(-100)),
+                .init(ordinal: 6, name: "stepHz", value: .i64(100)),
+                .init(ordinal: 7, name: "afGain", value: .i64(37)),
+                .init(ordinal: 9, name: "rxAntenna", value: .utf8("ANT1")),
+                .init(ordinal: 10, name: "txAntenna", value: .utf8("ANT1")),
+                .init(ordinal: 11, name: "active", value: .bool(false)),
+                .init(ordinal: 12, name: "txSlice", value: .bool(false)),
+                .init(ordinal: 13, name: "sliceIndex", value: .i64(1)),
+                .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-90)),
+                .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+                .init(ordinal: 30, name: "band", value: .i64(3)),
+                .init(ordinal: 35, name: "locked", value: .bool(false)),
+                .init(ordinal: 36, name: "panKey", value: .utf8("pan-0")),
+            ])))
+        }
         if rotor {
             mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RotorModel.objectKey, className: "RotorModel",
                                                                properties: rotorProperties)))

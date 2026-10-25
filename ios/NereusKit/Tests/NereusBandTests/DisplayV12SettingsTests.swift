@@ -227,14 +227,18 @@ import Testing
         // Halfway (the phone's old 10 minutes): the longer.
         #expect(BandDisplaySettings.nearestRewind(600) == 900)
         #expect(BandDisplaySettings.nearestRewind(5000) == 1200 && BandDisplaySettings.nearestRewind(0) == 60)
-        let suite = "DisplayV12SettingsTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let store = BandDisplaySettingsStore(defaults: defaults)
+        // Look back is this device's own row, kept for every pan (DC9): a
+        // depth an earlier build kept on Pan 1 moves there as the nearest
+        // offered one, and every pan reads it.
         for (kept, read) in [(600, 900), (60, 60), (240, 300), (1200, 1200)] {
+            let suite = "DisplayV12SettingsTests-\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
             defaults.set(Data(#"{"rewindSeconds":\#(kept),"desktopValuesVersion":1}"#.utf8),
                          forKey: BandDisplaySettingsStore.keyPrefix + "1")
+            let store = BandDisplaySettingsStore(defaults: defaults)
             #expect(store.settings(forPan: "1").rewindSeconds == read, "\(kept)")
+            #expect(store.settings(forPan: "2").rewindSeconds == read, "\(kept)")
         }
     }
 }

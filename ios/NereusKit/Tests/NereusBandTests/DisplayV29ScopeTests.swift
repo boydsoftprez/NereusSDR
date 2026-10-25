@@ -182,4 +182,51 @@ import Testing
             #expect(followed.scaleTopDbm == -30 && followed.threeDFloorDb == 16 && followed.txGridTopDbm == 15)
         }
     }
+
+    /// Spec DC2, DC9: Spectrum Height, Look back, CTUN, DUP and decimation
+    /// are this device's own rows, so a change on one pan shows on every
+    /// pan and no pan keeps its own; a picture row stays the pan's.
+    @Test func thisDevicesOwnRowsAreSharedByEveryPanAndAPictureRowIsNot() throws {
+        try isolated { _, store in
+            var second = store.settings(forPan: "2")
+            second.ctun = false
+            second.displayDuplex = true
+            second.rewindSeconds = BandDisplaySettings.rewindChoices.last ?? second.rewindSeconds
+            second.decimation = 4
+            second.spectrumSharePercent = 60
+            second.traceFill = !second.traceFill
+            store.setSettings(second, forPan: "2")
+            let first = store.settings(forPan: "1")
+            #expect(!first.ctun && first.displayDuplex && first.decimation == 4 && first.spectrumSharePercent == 60)
+            #expect(first.rewindSeconds == second.rewindSeconds)
+            #expect(first.traceFill != second.traceFill)
+            #expect(store.ownFields(forPan: "2", among: BandDisplaySettingsStore.deviceRowFields).isEmpty)
+            #expect(store.ownFields(forPan: "2", among: ["traceFill"]) == ["traceFill"])
+            #expect(BandDisplaySettingsStore.pictureFields.isDisjoint(with: BandDisplaySettingsStore.deviceRowFields))
+        }
+    }
+
+    /// A store kept before the device rows were shared: each takes Pan 1's
+    /// value as Pan 1 drew it, and Pan 2 follows it.
+    @Test func aStoreKeptBeforeTheDeviceRowsWereSharedTakesPanOnesValues() throws {
+        try isolated { defaults, store in
+            var kept = store.settings(forPan: "1")
+            kept.ctun = false
+            kept.decimation = 2
+            store.setSettings(kept, forPan: "1")
+            // As an earlier build kept them: in Pan 1's own entry, none shared.
+            defaults.removeObject(forKey: "phone.display.deviceRowsShared")
+            defaults.set(try JSONSerialization.data(withJSONObject: [String: Any]()), forKey: "phone.display.shared.v29")
+            let blob = try #require(defaults.data(forKey: BandDisplaySettingsStore.keyPrefix + "1"))
+            var own = try #require(try JSONSerialization.jsonObject(with: blob) as? [String: Any])
+            own["ctun"] = false
+            own["decimation"] = 2
+            defaults.set(try JSONSerialization.data(withJSONObject: own), forKey: BandDisplaySettingsStore.keyPrefix + "1")
+            let reopened = BandDisplaySettingsStore(defaults: defaults)
+            let first = reopened.settings(forPan: "1")
+            #expect(!first.ctun && first.decimation == 2)
+            let second = reopened.settings(forPan: "2")
+            #expect(!second.ctun && second.decimation == 2)
+        }
+    }
 }

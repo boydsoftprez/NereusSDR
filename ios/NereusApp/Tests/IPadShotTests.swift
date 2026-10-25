@@ -28,6 +28,8 @@ struct IPadShotTests {
         let columnShown: Bool
         /// The band column's open menu, or the Display pill (R-IOS-58).
         var columnMenu: BandColumnMenu? = nil
+        /// With two pans, the pan whose column has `columnMenu` open.
+        var columnPan: PanIdentity = .first
         var displayTab: DisplayPillTab = .spectrum
 
         /// The 11-inch iPad's screen, either way up.
@@ -121,6 +123,95 @@ struct IPadShotTests {
         try await shoot(Screen(name: "ipad-upright-column-pill-spectrum", onItsSide: false, columnShown: true,
                                columnMenu: .display), model: model)
         await model.disconnect()
+    }
+
+    /// R-IOS-59, DC9, DC10: two pans on the iPad, Pan 1 on top and Pan 2
+    /// below sharing the band's height, each with its own column; Pan 1's
+    /// pill open, then Pan 2's, the toolbar naming the pan last touched;
+    /// for comparing with the board's "Two pans, two pills".
+    @Test("two pans on the iPad, each pill open in turn",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          },
+          .timeLimit(.minutes(10)))
+    func twoPanShots() async throws {
+        let suite = "IPadShotTests-pans-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: [.bands, .bandSelect, .notchAtSlice])
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+        try await Self.describeDisplayPill(model, station)
+        let stack = model.main.panStack
+        #expect(stack.allowsMorePans)
+        stack.addPan()
+        #expect(await settle(seconds: 30) { stack.status != nil && stack.open.count == 2 })
+        let second = PanIdentity(number: 2)
+        let pan2 = stack.band(for: second)
+        #expect(await settle(seconds: 30) { !pan2.slices.entries.isEmpty })
+        // Pan 2's slice on 40 m inside its view, with a receiver's rate.
+        let sliceId = try #require(pan2.slices.entries.first?.id)
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:\(sliceId)", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_247_500)),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+        ])))
+        for band in [model.main.band, pan2.band] {
+            band.endpointId = 1
+            band.receive(.context(try #require(BandFlagShotTests.context())))
+        }
+        try await shootPans(Screen(name: "ipad-two-pans-pill-1", onItsSide: true, columnShown: true,
+                                   columnMenu: .display, columnPan: .first), model: model, touched: .first)
+        #expect(model.main.toolbarPan == .first)
+        try await shootPans(Screen(name: "ipad-two-pans-pill-2", onItsSide: true, columnShown: true,
+                                   columnMenu: .display, columnPan: second), model: model, touched: second)
+        #expect(model.main.toolbarPan == second)
+        try await shootPans(Screen(name: "ipad-upright-two-pans-pill-2", onItsSide: false, columnShown: true,
+                                   columnMenu: .display, columnPan: second), model: model, touched: second)
+        await model.disconnect()
+    }
+
+    /// Draws the two pans with `touched` the pan last touched, each band fed.
+    private func shootPans(_ screen: Screen, model: AppModel, touched: PanIdentity) async throws {
+        model.main.panStack.lastTouched = touched
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: CGPoint(x: 0, y: screen.onItsSide ? 120 : 0), size: screen.size)
+        window.windowLevel = .alert + 1
+        let root = IPadShotRoot(model: model, columnShown: screen.columnShown, columnMenu: screen.columnMenu,
+                                columnPan: screen.columnPan, displayTab: screen.displayTab)
+            .environment(\.horizontalSizeClass, .regular)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        if screen.onItsSide {
+            host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        }
+        host.view.frame = CGRect(origin: .zero, size: screen.size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let bands = model.main.panStack.open.map { model.main.panStack.band(for: $0).band }
+        #expect(bands.count == 2)
+        for band in bands {
+            let drawn = try await ShotWait.requireBandLaidOut(band, in: window)
+            BandFlagShotTests.feed(band, width: drawn.requestedPixels, lines: Int(screen.size.height * 2))
+            try await ShotWait.requireBandShown(band, in: window, after: drawn)
+        }
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_IPAD_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(screen.name).png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
     }
 
     /// The Core describes Display at version 29 with display extras 4, as
@@ -300,13 +391,14 @@ private struct IPadShotRoot: View {
     @ObservedObject var model: AppModel
     let columnShown: Bool
     var columnMenu: BandColumnMenu?
+    var columnPan: PanIdentity = .first
     var displayTab: DisplayPillTab = .spectrum
 
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
                 MainScreen(app: model, main: model.main, displayTab: displayTab, columnShown: columnShown,
-                           columnMenu: columnMenu)
+                           columnMenu: columnMenu, columnPan: columnPan)
                 TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height, iPad: true)
             }
         }
