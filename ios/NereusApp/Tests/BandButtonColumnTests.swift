@@ -70,6 +70,39 @@ struct BandButtonColumnTests {
                 == column.maxX + BandColumnLayout.clearance)
     }
 
+    @Test("DC15: while keyed the PTT stays home over a flag in its row, beside the column if it reaches")
+    func keyedPttStaysHome() {
+        let home = CGRect(x: 76, y: 94, width: 76, height: 76)
+        let flag = CGRect(x: 20, y: 0, width: 252, height: 157)
+        #expect(BandColumnLayout.pttFrame(home: home, avoid: [], flags: [flag], keyed: true) == home)
+        // Receiving, the same flag moves it.
+        #expect(BandColumnLayout.pttFrame(home: home, avoid: [], flags: [flag]).minX
+                == flag.maxX + BandColumnLayout.clearance)
+        // The column still reaches its row while keyed: just right of it, over the flag.
+        let column = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        let beside = BandColumnLayout.pttFrame(home: home, avoid: [column], flags: [flag], keyed: true)
+        #expect(beside.minX == column.maxX + BandColumnLayout.clearance)
+        #expect(beside.minY == home.minY && beside.size == home.size)
+    }
+
+    @Test("the PTT moving past flags stops at the band's right edge")
+    func pttStaysOnTheBand() {
+        let home = CGRect(x: 76, y: 94, width: 76, height: 76)
+        let flags = [CGRect(x: 60, y: 0, width: 252, height: 157), CGRect(x: 320, y: 0, width: 252, height: 157),
+                     CGRect(x: 580, y: 0, width: 252, height: 157)]
+        let unbounded = BandColumnLayout.pttFrame(home: home, avoid: [], flags: flags)
+        #expect(unbounded.minX == 832 + BandColumnLayout.clearance)
+        let maxX: CGFloat = 874 - 62 - PttButton.inset
+        let bounded = BandColumnLayout.pttFrame(home: home, avoid: [], flags: flags, maxX: maxX)
+        #expect(bounded.maxX == maxX)
+        #expect(bounded.minY == home.minY && bounded.size == home.size)
+        // Room enough: the bound changes nothing.
+        #expect(BandColumnLayout.pttFrame(home: home, avoid: [], flags: [flags[0]], maxX: maxX).minX
+                == flags[0].maxX + BandColumnLayout.clearance)
+        // A band too narrow for even home: the PTT stays home rather than left of it.
+        #expect(BandColumnLayout.pttFrame(home: home, avoid: [], flags: flags, maxX: 100) == home)
+    }
+
     @Test("the column's note sits at the band's lower right, clear of the pill, the flags and the PTT")
     func notePlace() {
         let band = CGSize(width: 874, height: 182)

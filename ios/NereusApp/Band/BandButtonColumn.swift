@@ -104,13 +104,22 @@ enum BandColumnLayout {
     /// The PTT's frame: at `home`, or just right of whatever of the column's
     /// frames reaches down to its row (the board's `shiftSideways`); then
     /// right of any full flag it would sit on, so it never covers a flag's
-    /// words (`flags`, the band's ``BandSlicesModel/flagRects``).
-    static func pttFrame(home: CGRect, avoid: [CGRect], flags: [CGRect] = []) -> CGRect {
+    /// words (`flags`, the band's ``BandSlicesModel/flagRects``). While
+    /// `keyed` it keeps off the column alone and leaves the flags be, so the
+    /// keyed meters above it keep their room (spec DC15, JJ 2026-10-25).
+    /// Never past `maxX`, the band's right edge less its insets: with more
+    /// flags than fit it stops there, on the last.
+    static func pttFrame(home: CGRect, avoid: [CGRect], flags: [CGRect] = [], keyed: Bool = false,
+                         maxX: CGFloat = .infinity) -> CGRect {
         var frame = home
         let reaching = avoid.filter { $0.maxY > home.minY && $0.minY < home.maxY }
         if let edge = reaching.map(\.maxX).max(), edge + clearance > home.minX {
             frame.origin.x = edge + clearance
         }
+        guard !keyed else {
+            return frame
+        }
+        let beside = frame.minX
         let inRow = flags.filter { $0.maxY > home.minY && $0.minY < home.maxY }
         // Each step moves right past one flag, so this ends.
         for _ in 0...inRow.count {
@@ -120,6 +129,7 @@ enum BandColumnLayout {
             }
             frame.origin.x = edge + clearance
         }
+        frame.origin.x = max(beside, min(frame.minX, maxX - frame.width))
         return frame
     }
 
@@ -392,7 +402,8 @@ struct BandButtonColumn: View {
         }
         let flags = slices.flagRects
         let ptt = BandColumnLayout.pttFrame(home: PttButton.frame(bandSize: bandSize, leadingInset: leadingInset),
-                                            avoid: avoid, flags: flags)
+                                            avoid: avoid, flags: flags, keyed: main.transmit.ptt.transmitting,
+                                            maxX: bandSize.width - trailingInset - PttButton.inset)
         return BandColumnLayout.notePlace(bandSize: bandSize, trailingInset: trailingInset, height: noteHeight,
                                           maxWidth: leadingInset > 0 ? Self.noteMaxWidthSideways
                                               : Self.noteMaxWidth,

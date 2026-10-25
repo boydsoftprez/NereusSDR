@@ -205,6 +205,11 @@ struct MainScreen: View {
             ? BandColumnLayout.panTop(index: panStack.open.count - 1, count: panStack.open.count,
                                       bandHeight: bandSize.height)
             : 0
+        // While keyed the PTT leaves the flags be and stays where the column
+        // puts it, so the keyed meters keep their room (DC15); it never
+        // moves past the band's right edge.
+        let keyed = transmit.ptt.transmitting
+        let pttMaxX = bandSize.width - (sideways ? trailingInset : 0) - PttButton.inset
         // Two columns of four where one does not fit (DC14); the chip keeps right of them.
         let columnWidth = BandColumnLayout.columnWidth(
             columns: columnFolded || stacked ? 1 : BandColumnLayout.columns(bandHeight: bandSize.height))
@@ -231,7 +236,8 @@ struct MainScreen: View {
                                      spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                      leadingInset: sideways ? leadingInset : 0)
             }
-            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes) { placed in
+            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
+                     maxX: pttMaxX) { placed in
                 let moved = placed != pttHome
                 keyedOverlay(sideways: sideways, avoid: boxes + (moved ? [placed] : []), movedPtt: moved ? placed : nil)
             }
@@ -263,7 +269,8 @@ struct MainScreen: View {
                                  })
                     .environment(\.displayPeek, $displayPeek)
             }
-            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes) { placed in
+            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
+                     maxX: pttMaxX) { placed in
                 // Moved by an offset, not by its leading padding: padding
                 // past the safe area's width made the band wider than it was
                 // offered, which narrowed the band, moved the flags and so
@@ -602,9 +609,9 @@ struct MainScreen: View {
     }
 }
 
-/// The PTT's place on the band (``BandColumnLayout/pttFrame(home:avoid:flags:)``):
-/// right of the column's frames that reach its row and, with `flags`, of a
-/// full flag it would cover. Only this view follows the flags as they move,
+/// The PTT's place on the band (``BandColumnLayout/pttFrame(home:avoid:flags:keyed:maxX:)``):
+/// right of the column's frames that reach its row and, with `flags` and
+/// not `keyed`, of a full flag it would cover, never past `maxX`. Only this view follows the flags as they move,
 /// not the whole screen.
 private struct PttPlace<Content: View>: View {
     let flags: BandSlicesModel?
@@ -612,13 +619,16 @@ private struct PttPlace<Content: View>: View {
     var flagsTop: CGFloat = 0
     let home: CGRect
     let boxes: [CGRect]
+    var keyed = false
+    var maxX: CGFloat = .infinity
     @ViewBuilder let content: (CGRect) -> Content
 
     var body: some View {
         if let flags {
-            Following(slices: flags, top: flagsTop, home: home, boxes: boxes, content: content)
+            Following(slices: flags, top: flagsTop, home: home, boxes: boxes, keyed: keyed, maxX: maxX,
+                      content: content)
         } else {
-            content(BandColumnLayout.pttFrame(home: home, avoid: boxes))
+            content(BandColumnLayout.pttFrame(home: home, avoid: boxes, maxX: maxX))
         }
     }
 
@@ -627,11 +637,14 @@ private struct PttPlace<Content: View>: View {
         let top: CGFloat
         let home: CGRect
         let boxes: [CGRect]
+        let keyed: Bool
+        let maxX: CGFloat
         let content: (CGRect) -> Content
 
         var body: some View {
             content(BandColumnLayout.pttFrame(home: home, avoid: boxes,
-                                              flags: slices.flagRects.map { $0.offsetBy(dx: 0, dy: top) }))
+                                              flags: slices.flagRects.map { $0.offsetBy(dx: 0, dy: top) },
+                                              keyed: keyed, maxX: maxX))
         }
     }
 }
