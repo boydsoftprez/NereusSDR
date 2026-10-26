@@ -7,6 +7,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: JJ's answer: hidden, the tags show every room dimmed.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-25: the room page found by its read bar, not by an identifier on
+// a ScrollView, which another suite's accessibility walk can blank.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -385,7 +388,14 @@ struct RoundtableToolsPageTests {
         var row: NSObject?
         #expect(await settle { row = SetupTypedEntryTests.element("roundtableTools.row.\(id)", in: window); return row != nil })
         #expect(row?.accessibilityActivate() == true)
-        #expect(await settle { SetupTypedEntryTests.element("roundtableTools.room", in: window) != nil })
+        // The room page is open: the list's row is gone and the room's read bar is there. Not found by
+        // "roundtableTools.room": that identifier sits on a ScrollView, and once an earlier suite has walked
+        // a hosted ScrollView's accessibility tree (BandButtonColumnTests) with app accessibility switched on
+        // mid-run, SwiftUI's platform scroll views report no identifier for the rest of the process.
+        #expect(await settle {
+            SetupTypedEntryTests.element("roundtableTools.row.\(id)", in: window) == nil
+                && SetupTypedEntryTests.element("roundtableBackToSlice", in: window) != nil
+        })
         #expect(await settle { station.roundtableReads == [id] })
         #expect(await settle { model.roundtable.room?.id == id })
         try await Task.sleep(for: .milliseconds(300))
