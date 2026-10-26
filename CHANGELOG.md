@@ -78,6 +78,12 @@ still connect to each other as before.
 - The Max Bin peak hold falls again after a signal above 0 dBm. It used to
   creep toward 0 dBm and stay there.
   ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
+- The 3D view no longer shows a false ripple that can look like a band full of
+  stations. On some FFT sizes, some columns took the peak of four bins and the
+  rest of three, and the noise floor stood in ridges through the rows. Every
+  column now takes the peak of equally wide windows. Thanks to Martin Fischer
+  (OE5SOS), whose Longpath fix this follows.
+  ([#647](https://github.com/boydsoftprez/NereusSDR/pull/647))
 
 ### Tuning on the pan
 
