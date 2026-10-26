@@ -24,6 +24,9 @@ private:
     void buildTypeSpecific() override;
     // The beam width, alpha and colour rows follow "Show beam width".
     void updateBeamWidthRows();
+    // The control rows follow "Allow control"; the data source rows also
+    // need the data source command path.
+    void updateControlRows();
 
     QComboBox*      m_comboMode{nullptr};
     QCheckBox*      m_chkShowValue{nullptr};
@@ -45,6 +48,16 @@ private:
     QPushButton*    m_btnArrow{nullptr};
     QPushButton*    m_btnBeamWidth{nullptr};
     QPushButton*    m_btnBackground{nullptr};
+
+    // Control
+    QCheckBox*      m_chkAllowControl{nullptr};
+    QPushButton*    m_btnControlColour{nullptr};
+    QComboBox*      m_comboCommandPath{nullptr};
+    QLineEdit*      m_editFourChar{nullptr};
+    QLineEdit*      m_editAzCommand{nullptr};
+    QLineEdit*      m_editEleCommand{nullptr};
+    QLineEdit*      m_editStopCommand{nullptr};
+    QPushButton*    m_btnPstRotator{nullptr};
 };
 
 } // namespace NereusSDR

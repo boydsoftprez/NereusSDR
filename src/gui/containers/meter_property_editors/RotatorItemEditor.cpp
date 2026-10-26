@@ -5,8 +5,16 @@
 //                 width rows disabled when the beam is off, a full background
 //                 row; setting padding lets it size the face. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator control rows: Allow control, control
+//                 colour, the command path (rotor link or data source), the
+//                 data source 4-char ID and the AZ, ELE and STOP command
+//                 text with a pstRotator defaults button, enabled as Thetis
+//                 does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 #include "RotatorItemEditor.h"
 #include "../../meters/RotatorItem.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -75,7 +83,18 @@ void RotatorItemEditor::setItem(MeterItem* item)
     applyBtnColor(m_btnArrow,      r->arrowColour());
     applyBtnColor(m_btnBeamWidth,  r->beamWidthColour());
     applyBtnColor(m_btnBackground, r->backgroundColour());
+    m_chkAllowControl->setChecked(r->allowControl());
+    applyBtnColor(m_btnControlColour, r->controlColour());
+    m_comboCommandPath->setCurrentIndex(
+        m_comboCommandPath->findData(static_cast<int>(r->commandPath())));
+    const MmioEndpoint* ep = r->commandEndpointGuid().isNull()
+        ? nullptr : ExternalVariableEngine::instance().endpoint(r->commandEndpointGuid());
+    m_editFourChar->setText(ep ? ep->fourChar() : QString());
+    m_editAzCommand->setText(r->azControlString());
+    m_editEleCommand->setText(r->eleControlString());
+    m_editStopCommand->setText(r->stopControlString());
     updateBeamWidthRows();
+    updateControlRows();
     endProgrammaticUpdate();
 }
 
@@ -91,6 +110,28 @@ void RotatorItemEditor::updateBeamWidthRows()
         field->setEnabled(en);
         if (QWidget* label = m_form->labelForField(field)) { label->setEnabled(en); }
     }
+}
+
+// From Thetis setup.cs:31321-31336 [v2.10.3.15] (updateRotatorControlControls):
+// the control rows are enabled only while control is allowed. The data
+// source rows (ID and command text) also need the data source path.
+void RotatorItemEditor::updateControlRows()
+{
+    const bool en = m_chkAllowControl->isChecked();
+    const bool mmio = en && m_comboCommandPath->currentData().toInt()
+        == static_cast<int>(RotatorItem::CommandPath::Mmio);
+    const auto enable = [this](QWidget* field, bool on) {
+        if (!field) { return; }
+        field->setEnabled(on);
+        if (QWidget* label = m_form->labelForField(field)) { label->setEnabled(on); }
+    };
+    enable(m_btnControlColour, en);
+    enable(m_comboCommandPath, en);
+    enable(m_editFourChar, mmio);
+    enable(m_editAzCommand, mmio);
+    enable(m_editEleCommand, mmio);
+    enable(m_editStopCommand, mmio);
+    enable(m_btnPstRotator, mmio);
 }
 
 void RotatorItemEditor::buildTypeSpecific()
@@ -262,7 +303,118 @@ void RotatorItemEditor::buildTypeSpecific()
     makeColorBtn(QStringLiteral("Beam width"),   m_btnBeamWidth, &RotatorItem::setBeamWidthColour);
     makeColorBtn(QStringLiteral("Background"),   m_btnBackground,&RotatorItem::setBackgroundColour);
     m_btnBeamWidth->setObjectName(QStringLiteral("rotatorBeamWidthColour"));
+
+    addHeader(QStringLiteral("Control"));
+
+    m_chkAllowControl = makeCheckRow(QStringLiteral("Allow control"));
+    m_chkAllowControl->setObjectName(QStringLiteral("rotatorAllowControl"));
+    m_chkAllowControl->setToolTip(QStringLiteral(
+        "Let a drag on the dial turn the rotor and a click on its centre stop it."));
+    connect(m_chkAllowControl, &QCheckBox::toggled, this, [this](bool on) {
+        updateControlRows();
+        if (isProgrammaticUpdate()) { return; }
+        RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+        if (!r) { return; }
+        r->setAllowControl(on);
+        notifyChanged();
+    });
+
+    makeColorBtn(QStringLiteral("Control color"), m_btnControlColour,
+                 &RotatorItem::setControlColour);
+    m_btnControlColour->setObjectName(QStringLiteral("rotatorControlColour"));
+
+    m_comboCommandPath = new QComboBox(this);
+    m_comboCommandPath->setObjectName(QStringLiteral("rotatorCommandPath"));
+    m_comboCommandPath->setStyleSheet(kComboStyle);
+    m_comboCommandPath->addItem(QStringLiteral("Rotor link"),
+                                static_cast<int>(RotatorItem::CommandPath::RotorLink));
+    m_comboCommandPath->addItem(QStringLiteral("Data source (MMIO)"),
+                                static_cast<int>(RotatorItem::CommandPath::Mmio));
+    m_comboCommandPath->setToolTip(QStringLiteral(
+        "Rotor link turns the rotor set up in this app. Data source sends the command "
+        "text below to a meter data source, such as PstRotator."));
+    addRow(QStringLiteral("Send commands by"), m_comboCommandPath);
+    connect(m_comboCommandPath, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+        updateControlRows();
+        if (isProgrammaticUpdate()) { return; }
+        RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+        if (!r) { return; }
+        r->setCommandPath(static_cast<RotatorItem::CommandPath>(
+            m_comboCommandPath->currentData().toInt()));
+        notifyChanged();
+    });
+
+    // The data source the commands go to, by its 4-char ID (Thetis
+    // txtRotator_4charID). An ID no data source has sends nothing.
+    m_editFourChar = new QLineEdit(this);
+    m_editFourChar->setObjectName(QStringLiteral("rotatorFourCharId"));
+    m_editFourChar->setStyleSheet(kLineStyle);
+    m_editFourChar->setMaxLength(4);
+    m_editFourChar->setPlaceholderText(QStringLiteral("ID"));
+    m_editFourChar->setToolTip(QStringLiteral(
+        "The 4-character ID of the meter data source the rotor commands are sent to"));
+    addRow(QStringLiteral("Data source 4-char ID"), m_editFourChar);
+    connect(m_editFourChar, &QLineEdit::editingFinished, this, [this]() {
+        if (isProgrammaticUpdate()) { return; }
+        RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+        if (!r) { return; }
+        const MmioEndpoint* ep =
+            ExternalVariableEngine::instance().endpointByFourChar(m_editFourChar->text().trimmed());
+        const QUuid guid = ep ? ep->guid() : QUuid();
+        if (guid == r->commandEndpointGuid()) { return; }
+        r->setCommandEndpointGuid(guid);
+        notifyChanged();
+    });
+
+    const QString commandTip = QStringLiteral(
+        "%AZ% is replaced by the azimuth in whole degrees (007) and %ELE% by the elevation "
+        "(05). Type \\r, \\n or \\0 to send a carriage return, line feed or null.");
+    auto makeCommandRow = [this, &commandTip](const QString& label, const QString& name,
+                                              QLineEdit*& out, auto getter, auto setter) {
+        out = new QLineEdit(this);
+        out->setObjectName(name);
+        out->setStyleSheet(kLineStyle);
+        out->setToolTip(commandTip);
+        QLineEdit* edit = out;
+        connect(edit, &QLineEdit::editingFinished, this, [this, edit, getter, setter]() {
+            if (isProgrammaticUpdate()) { return; }
+            RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+            if (!r || (r->*getter)() == edit->text()) { return; }
+            (r->*setter)(edit->text());
+            notifyChanged();
+        });
+        addRow(label, out);
+    };
+    makeCommandRow(QStringLiteral("Azimuth command"), QStringLiteral("rotatorAzCommand"),
+                   m_editAzCommand, &RotatorItem::azControlString, &RotatorItem::setAzControlString);
+    makeCommandRow(QStringLiteral("Elevation command"), QStringLiteral("rotatorEleCommand"),
+                   m_editEleCommand, &RotatorItem::eleControlString, &RotatorItem::setEleControlString);
+    makeCommandRow(QStringLiteral("Stop command"), QStringLiteral("rotatorStopCommand"),
+                   m_editStopCommand, &RotatorItem::stopControlString, &RotatorItem::setStopControlString);
+
+    // From Thetis setup.cs:31337-31342 [v2.10.3.15]
+    // (bntMultiMeterItemRotator_default_pstRotator_Click): the pstRotator
+    // command text.
+    m_btnPstRotator = new QPushButton(QStringLiteral("PstRotator defaults"), this);
+    m_btnPstRotator->setObjectName(QStringLiteral("rotatorPstRotatorDefaults"));
+    m_btnPstRotator->setToolTip(QStringLiteral("Fill in the PstRotator command text."));
+    addRow(QString(), m_btnPstRotator);
+    connect(m_btnPstRotator, &QPushButton::clicked, this, [this]() {
+        RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+        if (!r) { return; }
+        r->setAzControlString(QString::fromLatin1(RotatorItem::kPstRotatorAzCommand));
+        r->setEleControlString(QString::fromLatin1(RotatorItem::kPstRotatorEleCommand));
+        r->setStopControlString(QString::fromLatin1(RotatorItem::kPstRotatorStopCommand));
+        beginProgrammaticUpdate();
+        m_editAzCommand->setText(r->azControlString());
+        m_editEleCommand->setText(r->eleControlString());
+        m_editStopCommand->setText(r->stopControlString());
+        endProgrammaticUpdate();
+        notifyChanged();
+    });
     updateBeamWidthRows();
+    updateControlRows();
 }
 
 } // namespace NereusSDR

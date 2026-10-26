@@ -848,6 +848,11 @@ nereus_add_test(tst_meter_magic_eye)
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
 nereus_add_test(tst_rotator_item_drag)
+# Container item parity Task 46: the Thetis rotator MMIO command path beside
+# the rotor link: the AZ, ELE and STOP messages, Allow control off by default,
+# a direction-In data source and preview copies send nothing. Loopback UDP
+# data sources inside the test only; no rotor.
+nereus_add_test(tst_rotator_item_mmio)
 # Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.

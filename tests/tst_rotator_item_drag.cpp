@@ -21,6 +21,11 @@
 //                                    elevation on variable 2 and inert
 //                                    preview copies. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Allow control (off by default) gates
+//                                    the rotor link too; the drags allow
+//                                    it, the preview and new live copies
+//                                    show it off. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QCheckBox>
@@ -147,6 +152,7 @@ private slots:
         rotor.setState(connectedRotor());
         FakeCommands commands;
         RotatorItem item;
+        item.setAllowControl(true);
         item.setRotor(&rotor, &commands);
         QVERIFY(item.rotorControllable());
 
@@ -186,6 +192,7 @@ private slots:
         rotor.setState(connectedRotor());
         FakeCommands commands;
         RotatorItem item;
+        item.setAllowControl(true);
         item.setMode(RotatorItem::RotatorMode::Az);
         item.setRotor(&rotor, &commands);
         const QPointF az = item.azimuthCentre(kW, kH);
@@ -209,6 +216,7 @@ private slots:
         rotor.setState(connectedRotor());
         FakeCommands commands;
         RotatorItem item;
+        item.setAllowControl(true);
         item.setRotor(&rotor, &commands);
         const QPointF az = item.azimuthCentre(kW, kH);
         const float stop = item.stopCircleRadius(kW, kH);
@@ -242,6 +250,7 @@ private slots:
         RotorModel rotor;  // driver none
         FakeCommands commands;
         RotatorItem item;
+        item.setAllowControl(true);
         item.setRotor(&rotor, &commands);
         QVERIFY(!item.rotorControllable());
         QVERIFY(!press(item, compassPoint(az, 90.0, 20.0)));
@@ -326,6 +335,7 @@ private slots:
         rotor.setState(connectedRotor());
         FakeCommands commands;
         RotatorItem item;  // Both
+        item.setAllowControl(true);
         item.setRotor(&rotor, &commands);
         QVERIFY(item.elevationControllable());
         const QPointF ele = item.elevationCentre(kW, kH);
@@ -369,8 +379,10 @@ private slots:
         QCOMPARE(item.mode(), RotatorItem::RotatorMode::Az);
         QCOMPARE(item.beamWidth(), 45.5f);
         QVERIFY(item.darkMode());
-        // The 22 fields come back as saved; the appended pair reads off.
-        QCOMPARE(item.serialize(), record + QStringLiteral("|0|0"));
+        // The 22 fields come back as saved; the appended pair reads off,
+        // and control is off on the rotor link path (fields 24-30).
+        QVERIFY(item.serialize().startsWith(record + QStringLiteral("|0|0|0|")));
+        QCOMPARE(item.serialize().split(QLatin1Char('|')).size(), 31);
         RotatorItem again;
         QVERIFY(again.deserialize(item.serialize()));
         QCOMPARE(again.serialize(), item.serialize());
@@ -404,7 +416,7 @@ private slots:
 
         // The appended fields round-trip.
         RotatorItem both;
-        QCOMPARE(both.serialize().split(QLatin1Char('|')).size(), 24);
+        QCOMPARE(both.serialize().split(QLatin1Char('|')).size(), 31);
         both.setPaddingLayout(false);
         RotatorItem copy;
         QVERIFY(copy.deserialize(both.serialize()));
@@ -625,6 +637,8 @@ private slots:
             registry.createMeterItem(entry, &previewWidget, ContentRenderMode::Preview));
         QVERIFY(preview);
         QVERIFY(!preview->controlEnabled());
+        // Even with control allowed, a preview copy sends nothing.
+        preview->setAllowControl(true);
         preview->setRotor(&rotor, &commands);
         QVERIFY(!preview->rotorControllable());
         const QPointF az = preview->azimuthCentre(kW, kH);
@@ -640,7 +654,12 @@ private slots:
         auto* live = qobject_cast<RotatorItem*>(
             registry.createMeterItem(entry, &liveWidget, ContentRenderMode::Live));
         QVERIFY(live);
+        // A new item has control off; the live copy sends once it is allowed.
         live->setRotor(&rotor, &commands);
+        QVERIFY(!live->rotorControllable());
+        QVERIFY(!press(*live, compassPoint(az, 90.5, r * 0.8)));
+        QVERIFY(commands.targets.isEmpty());
+        live->setAllowControl(true);
         QVERIFY(live->rotorControllable());
         QVERIFY(press(*live, compassPoint(az, 90.5, r * 0.8)));
         QVERIFY(release(*live, compassPoint(az, 90.5, r * 0.8)));
