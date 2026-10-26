@@ -61,6 +61,9 @@
 //               not only while one waits: the TCI server and the remote
 //               window's rigctld share this one program key. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: keepaliveTick sends the session copy even after the "tx"
+//               channel accepts the same sequence. J.J. Boyd (KG4VCF),
+//               AI-assisted via Grok.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -232,11 +235,14 @@ void RemoteTransmitClient::keepaliveTick()
         if (!self || m_sessionGeneration != sessionGeneration) { return; }
         if (sent) {
             ++m_channelKeepalives;
-            return;
         }
     }
-    // A channel callback can issue an off before declining the send.
-    // Recheck its new fence before attempting another path in this tick.
+    // The channel is unordered and never retransmitted. A send it accepts
+    // can still vanish on a relay, and four lost copies is the Core's
+    // quiet link: VOX off, and a live transmission cut. The session carries
+    // this same sequence either way. The Core counts a sequence once.
+    // A channel callback can issue an off before it returns. Recheck that
+    // fence before the session copy.
     if (m_releaseDispatches != 0 || m_pendingReleases != 0 || m_releaseFailureSticky) {
         return;
     }

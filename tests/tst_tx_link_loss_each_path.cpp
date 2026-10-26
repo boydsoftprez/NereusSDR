@@ -16,7 +16,9 @@
 //     close, and closed);
 //   - the media connection's "tx" data channel on a direct pair (real
 //     DTLS/SCTP between two libdatachannel peers on this machine), severed
-//     at the Core's end with the session still up;
+//     at the Core's end with the session still up. The session carries the
+//     same keepalive, so that alone no longer stops transmit; the session
+//     going quiet as well does;
 //   - through TURN over UDP, and through the relay floor: the transports
 //     (the plan's Tasks 27 to 29) are built, but this file cannot yet sever
 //     either path with the key held (the fake TURN server and the stand-in
@@ -476,10 +478,10 @@ struct CutRig {
             qWarning("cut rig: no key with the guard judging the tx channel");
             return false;
         }
-        // Settled: a few keepalives on the channel and none on the session.
+        // Settled: the channel keepalive and the same sequence on the session.
         QTest::qWait(500);
         return h.station.moxController()->isMox() && h.server.txCutGuard()->isJudging()
-            && transmit->sessionKeepalivesSent() == 0
+            && transmit->channelKeepalivesSent() > 0 && transmit->sessionKeepalivesSent() > 0
             && h.station.keyedBy().deviceId == h.windowKey->fingerprint();
     }
 };
@@ -579,9 +581,10 @@ private slots:
 
     // ---- The media connection's "tx" data channel (a direct pair) --------
 
-    // Keyed with the media connection up, the keepalives ride the "tx"
-    // channel (none on the session); the channel's path dies at the Core's
-    // end, the session still up, and transmit stops 400 to 500 ms after the
+    // Keyed with the media connection up, every keepalive goes on the "tx"
+    // channel and on the session. The channel's path dies at the Core's
+    // end and the session stays up: the session copy holds the key. The
+    // session going quiet as well stops transmit 400 to 500 ms after the
     // last keepalive the Core heard.
     void dataChannelSeveredStopsWithin500ms()
     {
@@ -615,31 +618,24 @@ private slots:
         QVERIFY(h.station.moxController()->isMox());
         QCOMPARE(tripped.count(), 0);
         QVERIFY(transmit->channelKeepalivesSent() >= 15);
-        QCOMPARE(transmit->sessionKeepalivesSent(), quint64(0));
-        QCOMPARE(commandsOf(h.stationLink, QStringLiteral("tx.keepalive")), 0);
+        QVERIFY(transmit->sessionKeepalivesSent() >= 15);
+        QVERIFY(commandsOf(h.stationLink, QStringLiteral("tx.keepalive")) >= 15);
 
         // The media path dies at the Core's end: nothing arrives on it (the
-        // keepalives and the microphone alike); the session stays up.
+        // channel keepalives and the microphone alike). The session copy
+        // still arrives, so the key stays up.
         coreTransport->setReceiveSeveredForTest(true);
-        QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 3000);
-        const Trip trip = tripOf(tripped);
-        qInfo("tx data channel severed: stopped %lld ms after the last keepalive",
-              static_cast<long long>(trip.silentMs));
-        QVERIFY(!trip.linkClosed);
-        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkLossDeadlineMs && trip.silentMs <= kBoundMs,
-                 qPrintable(QString::number(trip.silentMs)));
-        QVERIFY(!h.station.moxController()->isMox());
-        // USB: the microphone starved on the way (at 250 ms), which stops
-        // nothing in USB; the watchdog did.
-        QCOMPARE(stopped.count(), 1);
-        QCOMPARE(stopped.first().at(0).toString(), kStopSentence);
+        QTest::qWait(1000);
+        QVERIFY(h.station.moxController()->isMox());
+        QCOMPARE(tripped.count(), 0);
         QVERIFY(h.client.isHandshakeComplete());
-        // Merge of Tasks 37 to 39: the window, its session still up, is told
-        // why on txState, in the words the Core stopped with.
-        QTRY_COMPARE(h.client.transmitState()->stopSerial(), quint32(1));
-        QCOMPARE(h.client.transmitState()->stopReason(), QStringLiteral("linkLost"));
-        QCOMPARE(h.client.transmitState()->stopText(), kStopSentence);
-        QTRY_VERIFY(!h.client.transmitState()->keyed());
+
+        // USB: the microphone starved on the way (at 250 ms), which stops
+        // nothing in USB. The session keepalive holds the watchdog, so a
+        // dead "tx" channel alone does not either.
+        QCOMPARE(stopped.count(), 0);
+        QCOMPARE(h.client.transmitState()->stopSerial(), quint32(0));
+        QVERIFY(h.client.transmitState()->keyed());
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

@@ -469,11 +469,13 @@ private slots:
         QCOMPARE(auxiliary.size(), 1);
         QCOMPARE(channel.size(), 1);
         QCOMPARE(auxiliary.first(), channel.first());
-        QCOMPARE(primary, 0);
+        // The session carries the same sequence as the accepted channel copy.
+        QCOMPARE(primary, 1);
         client.keepaliveTick();
         QCOMPARE(auxiliary.size(), 2);
         QCOMPARE(channel.size(), 2);
         QCOMPARE(auxiliary.last(), channel.last());
+        QCOMPARE(primary, 2);
     }
 
     void auxiliaryCallbackReleaseFencesEveryOtherPath()
@@ -823,10 +825,11 @@ private slots:
 
     // ---- Task 37: the keepalive -------------------------------------------
 
-    // Keepalives run from the press to the release, every 100 ms, on the
-    // "tx" channel when it takes them and otherwise on the session; the
-    // epoch is 4294967295 until the key's answer, then the key's; the
-    // sequence rises by one and never starts again while the link lasts.
+    // Keepalives run from the press to the release, every 100 ms. The "tx"
+    // channel carries one when it is open, and the session carries the
+    // same sequence either way. The epoch is 4294967295 until the key's
+    // answer, then the key's; the sequence rises by one and never starts
+    // again while the link lasts.
     void keepalivesRunWhileKeyedOnTheChannelFirst()
     {
         Recorder core;
@@ -861,12 +864,15 @@ private slots:
         answerCopies(client, core.sent.at(0), true, QString(), epochValue(7));
         channelOpen = true;
         client.keepaliveTick();
-        QCOMPARE(sent.size(), 2);
+        QCOMPARE(sent.size(), 3);
         QCOMPARE(sent.at(1).channel, true);
         QCOMPARE(sent.at(1).sequence, quint64(2));
         QCOMPARE(sent.at(1).epoch, 7u);
+        QCOMPARE(sent.at(2).channel, false);
+        QCOMPARE(sent.at(2).sequence, quint64(2));
+        QCOMPARE(sent.at(2).epoch, 7u);
         QCOMPARE(client.channelKeepalivesSent(), quint64(1));
-        QCOMPARE(client.sessionKeepalivesSent(), quint64(1));
+        QCOMPARE(client.sessionKeepalivesSent(), quint64(2));
 
         client.setScreenKey(false);
         QVERIFY(!client.keepaliveRunning());
@@ -1113,13 +1119,17 @@ private slots:
         client.setVoxArmed(true);
         client.setScreenKey(true);
         const quint64 beforeChannel = client.channelKeepalivesSent();
+        // Keyed ticks send the session copy too; count only what the
+        // release sends.
+        const quint64 beforeSession = client.sessionKeepalivesSent();
+        QVERIFY(beforeSession > 0);
         client.setScreenKey(false);
         QCOMPARE(channelAtReentrantTick, beforeChannel);
-        QCOMPARE(sessionAtReentrantTick, quint64(0));
+        QCOMPARE(sessionAtReentrantTick, beforeSession);
         // A returned command id alone still does not prove Core delivery.
         client.keepaliveTick();
         QCOMPARE(client.channelKeepalivesSent(), beforeChannel);
-        QCOMPARE(client.sessionKeepalivesSent(), quint64(0));
+        QCOMPARE(client.sessionKeepalivesSent(), beforeSession);
     }
 
     void senderResetCannotInsertAnOldSessionsOffResult()
