@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
+//                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
+//                 via ContentFade::nextValue), setForeignSession; a virtual
+//                 clearHistory() (Thetis clsMeterItem.ClearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - BAR building block: Segments and Solid styles, a peak hold
 //                 marker separate from the live marker, peak value colour,
 //                 ignore history, power limit, marker stroke width and the
@@ -439,6 +444,42 @@ public:
     int  displayGroup() const { return m_displayGroup; }
     void setDisplayGroup(int g) { m_displayGroup = g; }
 
+    // Fade on RX / Fade on TX: the animated dim of Thetis fade()
+    // (MeterManager.cs:33153-33177 [v2.10.3.15], ContentFade::nextValue).
+    // MeterWidget draws a veil of the container background at alpha
+    // 255 - fadeValue() over the item; advanceFade() steps the value once
+    // per fadeIntervalMs(). Runtime state (transmitting, value, foreign
+    // session) is not saved; the two flags are saved in the entry context
+    // (ContentFade::kFadeOnRxKey / kFadeOnTxKey) when set explicitly.
+    // ButtonBoxItem and FadeCoverItem keep the flags in their records and
+    // override the accessors.
+    virtual void setTransmitting(bool tx) { m_transmitting = tx; }
+    bool transmitting() const { return m_transmitting; }
+    virtual void setFadeOnRx(bool on) { m_fadeOnRx = on; m_explicitFade = true; }
+    virtual void setFadeOnTx(bool on) { m_fadeOnTx = on; m_explicitFade = true; }
+    virtual bool fadeOnRx() const { return m_fadeOnRx; }
+    virtual bool fadeOnTx() const { return m_fadeOnTx; }
+    // True once a fade setter ran (the entry then saves both keys).
+    virtual bool hasExplicitFade() const { return m_explicitFade; }
+    // kDimmedLevel (48) .. 255; 255 is undimmed.
+    int fadeValue() const { return m_fadeValue; }
+    // An entry whose source names another session's radio: its fade stays
+    // in the receive state whatever this window transmits.
+    void setForeignSession(bool foreign) { m_foreignSession = foreign; }
+    bool foreignSession() const { return m_foreignSession; }
+    // The fade step interval: the item's update interval when set, else
+    // kDefaultUpdateIntervalMs, at most 500 ms.
+    int fadeIntervalMs() const;
+    // Steps the fade once for each fadeIntervalMs() since the last step.
+    // The first call, and a call while the fade is at rest, only take the
+    // time. Returns true when the value changed. MeterWidget::advanceMeters
+    // calls it for every item, beside advanceMeter().
+    bool advanceFade(qint64 monotonicMs);
+
+    // From Thetis MeterManager.cs:7072-7074 [v2.10.3.15] (clsMeterItem
+    // ClearHistory): no history in the base.
+    virtual void clearHistory() {}
+
     // Per-item update interval in ms; 0 (the value of a saved item without
     // one) takes every poll. MeterWidget::updateMeterValue asks
     // acceptsUpdate() before delivering a reading: true when the interval
@@ -591,6 +632,16 @@ protected:
     bool m_onlyWhenRx{false};
     bool m_onlyWhenTx{false};
     int  m_displayGroup{0};
+
+    // Fade on RX / TX (see public accessors above).
+    bool   m_fadeOnRx{false};
+    bool   m_fadeOnTx{false};
+    bool   m_explicitFade{false};
+    bool   m_transmitting{false};
+    bool   m_foreignSession{false};
+    // From Thetis MeterManager.cs:6778 [v2.10.3.15] (_fadeValue = 255)
+    int    m_fadeValue{255};
+    qint64 m_lastFadeStepMs{-1};
 
     // Update interval (see public accessors above); runtime only below.
     int    m_updateIntervalMs{0};
@@ -882,7 +933,7 @@ public:
     // ClearHistory). Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
     void setIgnoreHistoryMs(int ms);
     int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
-    void clearHistory();
+    void clearHistory() override;
     int ignoringReadings() const { return m_ignoringNext; }
 
     // Power limit (W): a calibrated forward or reverse power bar reads
@@ -1346,7 +1397,7 @@ public:
     // Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
     void setIgnoreHistoryMs(int ms);
     int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
-    void clearHistory();
+    void clearHistory() override;
     int ignoringReadings() const { return m_ignoringNext; }
     int historySize() const { return static_cast<int>(m_history.size()); }
     // MinHistory / MaxHistory: the live value with no history.

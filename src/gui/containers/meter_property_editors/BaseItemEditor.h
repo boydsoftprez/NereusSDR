@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
+//                 RX / TX". J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
 //                 spin box (15-5000) for the per-item update interval.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -159,6 +162,10 @@ private:
     QComboBox*      m_comboBinding{nullptr};
     QCheckBox*      m_chkOnlyRx{nullptr};
     QCheckBox*      m_chkOnlyTx{nullptr};
+    // Fade on RX / TX (MeterItem's animated fade). Hidden for a fade cover
+    // and a button grid, whose editors carry the record's own rows.
+    QCheckBox*      m_chkFadeRx{nullptr};
+    QCheckBox*      m_chkFadeTx{nullptr};
     QSpinBox*       m_spinDisplayGroup{nullptr};
     QCheckBox*      m_chkLimitUpdate{nullptr};
     QSpinBox*       m_spinUpdateInterval{nullptr};

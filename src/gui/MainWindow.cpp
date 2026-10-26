@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: refreshContainerMeter marks the items of
+//                 an entry on another session's radio (setForeignSession);
+//                 a slice band change clears container item history
+//                 (ContainerManager::clearItemHistory). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - refreshContainerMeter gives each data out item the slice
 //                 letter its entry's Source resolves to and the session id
 //                 (radio). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -15007,6 +15012,11 @@ void MainWindow::watchSlicesForContainers()
                            clearMiniSlice(slice->sliceIndex());
                            reconcileMiniDisplays();
                        })
+            // Thetis zeroes every meter, history included, on any
+            // receiver's band change (bandChange, MeterManager.cs:4405-4462
+            // [v2.10.3.15]).
+            << connect(slice, &SliceModel::bandChanged, this,
+                       [this]() { if (m_containerManager) { m_containerManager->clearItemHistory(); } })
             << connect(slice, &SliceModel::dspModeChanged, this, refresh)
             << connect(slice, &SliceModel::filterChanged, this, refresh)
             << connect(slice, &SliceModel::stepHzChanged, this, refresh)
@@ -15070,6 +15080,12 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
             out->setRadioId(containerSessionId());
         }
     }
+    // Fade on RX / TX: an entry whose source names another session's radio
+    // is unavailable here (ContainerSourceAdapter::slice), so its fade
+    // stays in the receive state and does not follow this window's MOX.
+    const QString entrySession = context.value(QStringLiteral("sessionId")).toString();
+    const bool foreignSession = !entrySession.isEmpty() && entrySession != containerSessionId();
+    for (MeterItem* item : items) { item->setForeignSession(foreignSession); }
     // Snapshot actual child presentation rather than dirtying equal model pushes.
     const auto signature = [](MeterItem* item) {
         QString value = item->serialize() + QString::number(item->aboveS9Frequency());

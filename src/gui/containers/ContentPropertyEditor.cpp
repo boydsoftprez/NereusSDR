@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / Fade on TX rows for bar presets, composites
+//                 and waveform faces (addFadeRows); a composite's edit turns
+//                 its legacy fadeRx / fadeTx off. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - An RX section item's Advanced bindings are disabled with
 //                 the reason, as a TX section row's are: its factory never
 //                 reads the entry's context. J.J. Boyd (KG4VCF),
@@ -127,6 +131,37 @@ void ContentPropertyEditor::captureRenderer()
         }
     }
     m_entry=captured;
+}
+void ContentPropertyEditor::addFadeRows(QFormLayout* fields)
+{
+    if(!m_item || !fields) {return;}
+    auto* composite=qobject_cast<CompositePresetItem*>(m_item.get());
+    // A composite without the entry keys shows its legacy configuration.
+    const bool legacy=composite && !m_item->hasExplicitFade();
+    const QJsonObject config=composite?composite->configuration():QJsonObject{};
+    const bool rx=legacy?config.value("fadeRx").toBool():m_item->fadeOnRx();
+    const bool tx=legacy?config.value("fadeTx").toBool():m_item->fadeOnTx();
+    const auto row=[this,fields](const QString& name,const QString& label,bool checked,bool receive) {
+        auto* check=new QCheckBox(fields->parentWidget());check->setObjectName(name);check->setChecked(checked);
+        fields->addRow(label,check);
+        connect(check,&QCheckBox::toggled,this,[this,receive](bool on) {
+            if(!m_item) {return;}
+            auto* face=qobject_cast<CompositePresetItem*>(m_item.get());
+            const bool explicitFade=m_item->hasExplicitFade();
+            const QJsonObject faceConfig=face?face->configuration():QJsonObject{};
+            // Both flags are set, so the entry saves both keys.
+            const bool otherRx=face && !explicitFade?faceConfig.value("fadeRx").toBool():m_item->fadeOnRx();
+            const bool otherTx=face && !explicitFade?faceConfig.value("fadeTx").toBool():m_item->fadeOnTx();
+            m_item->setFadeOnRx(receive?on:otherRx);
+            m_item->setFadeOnTx(receive?otherTx:on);
+            // From now on the composite uses the animated veil, not its
+            // instant 25% fade.
+            if(face && !face->applyConfiguration(QJsonObject{{"fadeRx",false},{"fadeTx",false}})) {return;}
+            captureRenderer();publish();
+        });
+    };
+    row(QStringLiteral("fadeOnRx"),tr("Fade on RX"),rx,true);
+    row(QStringLiteral("fadeOnTx"),tr("Fade on TX"),tx,false);
 }
 QJsonValue ContentPropertyEditor::effectiveProperty(const QString& key,int channel) const
 {
@@ -455,6 +490,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         for (const auto& key : keys) {
             fields->addRow(fieldLabel(key), control(key, props[key]));
         }
+        addFadeRows(fields);
         auto* note = new QLabel(tr("Fixed amplitude −1 to +1. The waveform observes existing audio; "
                                   "microphone setup is available through Raw microphone."), this);
         note->setWordWrap(true);
@@ -463,10 +499,12 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         const auto props=composite->configuration();
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
         const auto add=[this](QFormLayout* target,const QString& key,const QJsonValue& value,int channel) {
-            if(key=="bindingId" || QStringList{"x","y","w","h","channels","vfo","bands","modes"}.contains(key)) {return;}
+            // fadeRx / fadeTx: the Fade on RX / TX rows (addFadeRows).
+            if(key=="bindingId" || QStringList{"x","y","w","h","channels","vfo","bands","modes","fadeRx","fadeTx"}.contains(key)) {return;}
             if(auto* widget=control(key,value,channel)) {target->addRow(fieldLabel(key),widget);}
         };
         for(const auto& key:composite->editableFields()) { add(fields,key,props[key],-1); }
+        addFadeRows(fields);
         const auto channels=props["channels"].toArray();
         for(int i=0;i<channels.size();++i) {
             const auto c=channels[i].toObject(); auto* group=new QGroupBox(tr("Channel %1 — %2").arg(i+1).arg(c["name"].toString()),this); auto* fields=new QFormLayout(group); root->addWidget(group);
@@ -481,6 +519,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         if(flavor=="Custom") { keys.append({"minValue","maxValue","redThreshold","units"}); }
         keys.removeAll("bindingId");keys.removeAll("secondaryBindingId");
         for(const auto& key:keys) {if(auto* widget=control(key,props[key])) {fields->addRow(fieldLabel(key),widget);}}
+        addFadeRows(fields);
         auto* note=new QLabel(flavor=="Custom"?tr("Custom calibration range is editable."):tr("This face uses its calibrated source scale; minimum and maximum are fixed."),this); note->setWordWrap(true); root->addWidget(note);
         if(flavor.contains("Signal") || flavor=="PbSnr") { auto* note=new QLabel(tr("Signal units and decimal precision follow the global multimeter preferences."),this); note->setWordWrap(true); root->addWidget(note); }
     } else if(m_item) {

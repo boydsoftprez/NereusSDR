@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: setItemTxState gives every item the
+//                 transmit state, and clears every item's history on a
+//                 change (Thetis OnMox / ZeroOut); clearItemHistory();
+//                 advanceMeters steps each item's fade and repaints while it
+//                 moves; drawFadeVeils on the CPU and GPU paths.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Per-item update interval: updateMeterValue skips an item
 //                 whose interval has not passed (MeterItem::acceptsUpdate).
 //                 Bar presets, composites and waveform faces keep their own
@@ -109,6 +115,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ControlRanges.h"
 #include "MeterWidget.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/LegacyContainerImporter.h"
@@ -401,6 +408,9 @@ void MeterWidget::advanceMeters(qint64 monotonicMs)
     for (MeterItem* item : m_items) {
         if (item->advanceMeter(monotonicMs)) { invalidateItemLayers(item); }
         if (item->takeStaticPresentationChange()) { invalidateReadingLayers(true); }
+        // Fade on RX / TX: repaint while the item's fade moves (its veil, or
+        // a fade cover, is drawn on the dynamic layer).
+        if (item->advanceFade(monotonicMs)) { invalidateReadingLayers(false); }
     }
 }
 
@@ -745,6 +755,31 @@ void MeterWidget::drawItems(QPainter& p)
         item->paint(p, w, h);
     }
     drawUnavailableVeils(p);
+    drawFadeVeils(p);
+}
+
+// Fade on RX / TX: each item's veil, the container background at alpha
+// 255 - fadeValue() over the item's cover rect (Thetis renderFadeCover,
+// MeterManager.cs:37826-37845 [v2.10.3.15]). A fade cover draws its own
+// fade and gets no veil.
+void MeterWidget::drawFadeVeils(QPainter& p) const
+{
+    const int w = width();
+    const int h = height();
+    QColor colour;
+    for (const MeterItem* item : m_items) {
+        if (!shouldRender(item) || qobject_cast<const FadeCoverItem*>(item) != nullptr) { continue; }
+        const int alpha = ContentFade::kUndimmedLevel - item->fadeValue();
+        if (alpha <= 0) { continue; }
+        if (!colour.isValid()) { colour = ContentFade::coverColour(this); }
+        QColor fill = colour;
+        fill.setAlpha(alpha);
+        // The item's own rectangle (MeterItem::pixelRect's arithmetic).
+        const QRectF rect(static_cast<int>(item->x() * w), static_cast<int>(item->y() * h),
+                          static_cast<int>(item->itemWidth() * w),
+                          static_cast<int>(item->itemHeight() * h));
+        p.fillRect(ContentFade::coverRect(rect), fill);
+    }
 }
 
 // iPhone app plan Task 39: an unavailable binding's items, dimmed by the
@@ -893,28 +928,24 @@ void MeterWidget::setMox(bool mox)
     emit displayVisibilityChanged();
 }
 
-// NereusSDR: hands the transmit state to the item types that react to it.
-// Returns true when the item is one of them.
+// NereusSDR: hands the transmit state to an item (MeterItem::setTransmitting:
+// the fade on every item; fade covers, VFO displays and button grids also
+// change their look or clicks). Returns true when there was an item.
 bool MeterWidget::applyItemTxState(MeterItem* item, bool tx)
 {
-    if (auto* cover = qobject_cast<FadeCoverItem*>(item)) {
-        cover->setTxState(tx);
-        return true;
-    }
-    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
-        vfo->setTransmitting(tx);
-        return true;
-    }
-    if (auto* buttons = qobject_cast<ButtonBoxItem*>(item)) {
-        buttons->setTransmitting(tx);
-        return true;
-    }
-    return false;
+    if (!item) { return false; }
+    item->setTransmitting(tx);
+    return true;
 }
 
 void MeterWidget::setItemTxState(bool tx)
 {
+    const bool transition = tx != m_itemTxState;
     m_itemTxState = tx;
+    // Thetis zeroes every meter, history included, on each MOX change
+    // (OnMox, MeterManager.cs:5252-5275 [v2.10.3.15], calling ZeroOut,
+    // MeterManager.cs:26398-26406, which calls mi.ClearHistory()).
+    if (transition) { clearItemHistory(); }
     bool any = false;
     for (MeterItem* item : m_items) {
         any = applyItemTxState(item, tx) || any;
@@ -923,6 +954,16 @@ void MeterWidget::setItemTxState(bool tx)
         invalidateReadingLayers(true);
         update();
     }
+}
+
+// From Thetis MeterManager.cs:26398-26406 [v2.10.3.15] (ZeroOut: every
+// item's ClearHistory()).
+void MeterWidget::clearItemHistory()
+{
+    for (MeterItem* item : m_items) {
+        if (item) { item->clearHistory(); }
+    }
+    invalidateReadingLayers(false);
 }
 
 void MeterWidget::setDisplayGroup(int group)
@@ -1270,6 +1311,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // Task 39: over everything drawn so far (the overlay is the top
             // layer), so an unavailable item's bar is dimmed too.
             drawUnavailableVeils(p);
+            drawFadeVeils(p);
             m_overlayDynamicDirty = false;
             m_overlayNeedsUpload = true;
         }

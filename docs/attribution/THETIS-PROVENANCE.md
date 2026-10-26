@@ -325,6 +325,8 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | src/gui/meters/DialItem.h | Project Files/Source/Console/MeterManager.cs | 15399+ | port | thetis-samphire | clsDialDisplay |
 | src/gui/meters/FadeCoverItem.cpp | Project Files/Source/Console/MeterManager.cs | 7665+; 36292; 7887-7888; 1900 | port | thetis-samphire | clsFadeCover, renderFadeCover, FadeOnRx/Tx |
 | src/gui/meters/FadeCoverItem.h | Project Files/Source/Console/MeterManager.cs | 7665+; 1900 | port | thetis-samphire | clsFadeCover, FadeOnRx/Tx |
+| src/gui/containers/ContentFade.cpp | Project Files/Source/Console/MeterManager.cs | 33152-33177; 37826-37845; 6778 | port | thetis-samphire | fade() step, renderFadeCover rect and colour, fade overlay |
+| src/gui/containers/ContentFade.h | Project Files/Source/Console/MeterManager.cs | 33155; 6778 | port | thetis-samphire | fade() dimmed level and initial FadeValue |
 | src/gui/meters/FilterButtonItem.cpp | Project Files/Source/Console/MeterManager.cs | 7674+ | port | thetis-samphire | clsFilterButtonBox |
 | src/gui/meters/FilterButtonItem.h | Project Files/Source/Console/MeterManager.cs | 7674+; 7917 | port | thetis-samphire | clsFilterButtonBox, PopupFilterContextMenu |
 | src/gui/meters/FilterDisplayItem.cpp | Project Files/Source/Console/MeterManager.cs | 16852+; 18296+; 16936; 16940+; 16865; 16951-16952; 16957; 17006 | port | thetis-samphire | clsFilterItem, FIDisplayMode, palette, notch color |

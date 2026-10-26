@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 class QLabel;
+class QFormLayout;
 namespace NereusSDR {
 class MeterItem;
 class NEREUS_GUI_EXPORT ContentPropertyEditor : public QWidget {
@@ -25,6 +26,10 @@ private:
     // Workspace preview: a control for a declared ContentProperty.
     QWidget* declaredControl(const ContentProperty& property, QWidget* parent);
     void captureRenderer();
+    // Fade on RX / Fade on TX rows for a bar preset, composite or waveform
+    // face: they set the item's fade (saved in the entry context); a
+    // composite's legacy fadeRx / fadeTx configuration is turned off.
+    void addFadeRows(QFormLayout* fields);
     void publish();
     QJsonValue effectiveProperty(const QString& key, int channel) const;
     bool property(const QString& key, const QJsonValue& value, int channel=-1);

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: fadeOnRx / fadeOnTx read from and
+//                 written to the entry context (written only when set).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - createMeterItem: a data out item made in Preview or
 //                 Validation mode never sends (no timer, no outbound
 //                 message); previews never act. J.J. Boyd (KG4VCF),
@@ -38,6 +41,7 @@
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
+#include "ContentFade.h"
 #include "gui/meters/WaveformMeterItem.h"
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
@@ -435,6 +439,10 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     }
     if (entry.context.contains(QStringLiteral("onlyWhenRx"))) { item->setOnlyWhenRx(entry.context.value(QStringLiteral("onlyWhenRx")).toBool()); }
     if (entry.context.contains(QStringLiteral("onlyWhenTx"))) { item->setOnlyWhenTx(entry.context.value(QStringLiteral("onlyWhenTx")).toBool()); }
+    // Fade on RX / TX: absent keys (a layout saved before them) leave the
+    // fade off and unset, so the entry re-saves without them.
+    if (entry.context.contains(QLatin1String(ContentFade::kFadeOnRxKey))) { item->setFadeOnRx(entry.context.value(QLatin1String(ContentFade::kFadeOnRxKey)).toBool()); }
+    if (entry.context.contains(QLatin1String(ContentFade::kFadeOnTxKey))) { item->setFadeOnTx(entry.context.value(QLatin1String(ContentFade::kFadeOnTxKey)).toBool()); }
     if (entry.context.contains(QStringLiteral("displayGroup"))) { item->setDisplayGroup(entry.context.value(QStringLiteral("displayGroup")).toInt()); }
     // No key (a saved item from before the update interval): every poll.
     if (!face && !composite && !waveform && entry.context.contains(QStringLiteral("updateIntervalMs"))) { item->setUpdateIntervalMs(entry.context.value(QStringLiteral("updateIntervalMs")).toInt()); }
@@ -573,6 +581,12 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     entry.context.insert(QStringLiteral("slotLocalH"),item.slotLocalH());
     entry.context.insert(QStringLiteral("onlyWhenRx"),item.onlyWhenRx());
     entry.context.insert(QStringLiteral("onlyWhenTx"),item.onlyWhenTx());
+    // Written only once the item's fade was set explicitly (button grids
+    // and fade covers keep theirs in the record).
+    if (item.hasExplicitFade()) {
+        entry.context.insert(QLatin1String(ContentFade::kFadeOnRxKey),item.fadeOnRx());
+        entry.context.insert(QLatin1String(ContentFade::kFadeOnTxKey),item.fadeOnTx());
+    }
     entry.context.insert(QStringLiteral("displayGroup"),item.displayGroup());
     if (!face && !composite && !waveform && item.updateIntervalMs() > 0) { entry.context.insert(QStringLiteral("updateIntervalMs"),item.updateIntervalMs()); }
     else { entry.context.remove(QStringLiteral("updateIntervalMs")); }

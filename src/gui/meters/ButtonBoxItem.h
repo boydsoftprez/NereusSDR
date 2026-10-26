@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: the fade accessors and setTransmitting
+//                 override MeterItem's, so a faded grid gets the animated
+//                 veil; clicks stay guarded. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-22 - Button faces can be painted by a subclass. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-10-03 — Consume transient interaction dirtiness by J.J. Boyd (KG4VCF),
@@ -171,12 +175,15 @@ public:
     QString buttonUnavailableReason(int index) const;
 
     // FadeOnRx/FadeOnTx (from Thetis clsButtonBox)
-    void setFadeOnRx(bool v) { m_fadeOnRx = v; }
-    bool fadeOnRx() const { return m_fadeOnRx; }
-    void setFadeOnTx(bool v) { m_fadeOnTx = v; }
-    bool fadeOnTx() const { return m_fadeOnTx; }
+    // The record holds the flags (MeterItem's fade reads them through these
+    // overrides), so the entry context never saves them.
+    void setFadeOnRx(bool v) override { m_fadeOnRx = v; }
+    bool fadeOnRx() const override { return m_fadeOnRx; }
+    void setFadeOnTx(bool v) override { m_fadeOnTx = v; }
+    bool fadeOnTx() const override { return m_fadeOnTx; }
+    bool hasExplicitFade() const override { return false; }
 
-    void setTransmitting(bool tx) { m_transmitting = tx; }
+    void setTransmitting(bool tx) override { MeterItem::setTransmitting(tx); m_transmitting = tx; }
 
     // Rendering
     Layer renderLayer() const override { return Layer::OverlayDynamic; }

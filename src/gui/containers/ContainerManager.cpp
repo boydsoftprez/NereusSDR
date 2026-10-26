@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setTransmitting reaches widget content fade overlays;
+//                 clearItemHistory() for a band change (Thetis bandChange
+//                 / ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - Hide when slice not open hides a container while its slice
 //                 is not open (onSliceOpenChanged), for every slice where
 //                 Thetis asks it only of RX2; Minimizes follows the main
@@ -281,6 +285,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/applets/AppletPanelWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterWidget.h"
+#include "ContentFade.h"
 
 #include <QSplitter>
 #include <QScopedValueRollback>
@@ -716,6 +721,10 @@ void ContainerManager::setTransmitting(bool transmitting)
         for (MeterWidget* meter : std::as_const(meters)) {
             meter->setItemTxState(transmitting);
         }
+        // Widget content with Fade on RX / TX (ContentFade::attach).
+        for (ContentFadeOverlay* overlay : c->content()->findChildren<ContentFadeOverlay*>()) {
+            overlay->setTransmitting(transmitting);
+        }
     }
     if (!m_store) {
         return;
@@ -723,6 +732,25 @@ void ContainerManager::setTransmitting(bool transmitting)
     for (const auto &document : m_store->snapshot().containers) {
         if (auto *c = container(document.id)) {
             (c->isFloating() ? c->window() : c)->setVisible(effectiveVisible(document));
+        }
+    }
+}
+// From Thetis MeterManager.cs:4405-4462 [v2.10.3.15]: bandChange zeroes
+// every meter (m.ZeroOut, and so ClearHistory) whichever receiver changed
+// band.
+void ContainerManager::clearItemHistory()
+{
+    for (ContainerWidget* c : std::as_const(m_containers)) {
+        if (!c || !c->content()) {
+            continue;
+        }
+        QList<MeterWidget*> meters;
+        if (auto* direct = qobject_cast<MeterWidget*>(c->content())) {
+            meters.append(direct);
+        }
+        meters += c->content()->findChildren<MeterWidget*>();
+        for (MeterWidget* meter : std::as_const(meters)) {
+            meter->clearItemHistory();
         }
     }
 }

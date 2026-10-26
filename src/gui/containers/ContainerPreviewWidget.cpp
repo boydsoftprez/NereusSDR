@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-26 - The preview's meters take the radio's transmit state
+//                 (MeterWidget::setItemTxState), read only, so Fade on RX /
+//                 TX and Only when TX items show their transmit look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: the preview paints the content
 //                 background the container paints in the window, through
 //                 ContainerWidget::contentBackground() and userBackground().
@@ -161,6 +165,9 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     m_inTx=m_poller->inTx();
     for (const auto& surface : m_surfaces) {
         if (!surface.widget) { continue; }
+        // The radio's transmit state, read only: the TX look of fades, VFO
+        // displays and button grids. Preview items send and key nothing.
+        surface.widget->setItemTxState(m_inTx);
         if (!reusedMeters.contains(surface.widget)) { m_poller->replayReadings(surface.widget,surface.context); }
         emit presentationRequested(surface.widget,surface.context);
     }
@@ -206,7 +213,7 @@ void ContainerPreviewWidget::advance(qint64 timestamp)
     if (!m_poller) { return; }
     for (const auto& surface : m_surfaces) {
         if (!surface.widget) { continue; }
-        if (m_inTx!=m_poller->inTx()) { surface.widget->resetForTxTransition(m_poller->inTx()); }
+        if (m_inTx!=m_poller->inTx()) { surface.widget->resetForTxTransition(m_poller->inTx()); surface.widget->setItemTxState(m_poller->inTx()); }
         m_poller->copyCachedReadings(surface.widget,surface.context);
         emit presentationRequested(surface.widget,surface.context);
         surface.widget->advanceMeters(timestamp);

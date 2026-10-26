@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX for every item: setItemTxState reaches
+//                 every item and clears history on a change;
+//                 clearItemHistory(); drawFadeVeils(). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - lastBindingValues(): the latest value of each binding, for
 //                 data out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -136,6 +140,8 @@ public:
     quint64 readingInvalidationsForTest() const { return m_readingInvalidations; }
     // Replaces the monotonic ms clock updateMeterValue throttles on.
     void setMonotonicClockForTest(std::function<qint64()> clock) { m_monotonicClock = std::move(clock); }
+    // The fade veils drawItems and the GPU overlay draw.
+    void drawFadeVeilsForTest(QPainter& p) const { drawFadeVeils(p); }
 #ifdef NEREUS_GPU_SPECTRUM
     void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
     bool backgroundDirtyForTest() const { return m_bgDirty; }
@@ -190,13 +196,18 @@ public:
     void setDisplayGroup(int group);
     int  displayGroup() const { return m_displayGroup; }
 
-    // NereusSDR: the transmit state for items that change on transmit
-    // (FadeCoverItem::setTxState, VfoDisplayItem and ButtonBoxItem
-    // setTransmitting). ContainerManager::setTransmitting feeds it; every
-    // item added later takes it at once. Applied to every item on each call
-    // (an item's own default need not match), then the widget repaints.
+    // NereusSDR: the transmit state for items (MeterItem::setTransmitting:
+    // every item's Fade on RX / TX; fade covers, VFO displays and button
+    // grids also change on transmit). ContainerManager::setTransmitting
+    // feeds it; every item added later takes it at once. Applied to every
+    // item on each call (an item's own default need not match), then the
+    // widget repaints. A change of state clears every item's history
+    // (clearItemHistory), as Thetis does on MOX.
     void setItemTxState(bool tx);
     bool itemTxState() const { return m_itemTxState; }
+    // Every item's ClearHistory (Thetis ZeroOut): on a transmit change and
+    // on a band change (ContainerManager::clearItemHistory).
+    void clearItemHistory();
 
     // Returns true if an item should paint under the current mode/group.
     // Mirrors Thetis MeterManager.cs:31366-31368 verbatim.
@@ -267,6 +278,8 @@ private:
     static bool applyItemTxState(MeterItem* item, bool tx);
     // Task 39: dims each drawn item whose binding is unavailable.
     void drawUnavailableVeils(QPainter& p) const;
+    // Fade on RX / TX: each item's fade veil (ContentFade).
+    void drawFadeVeils(QPainter& p) const;
     QHash<int, QString> m_unavailableBindings;
     QHash<int, MeterItem::BindingSupport> m_bindingSupport;
     QVector<MeterItem*> m_items;

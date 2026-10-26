@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setTransmitting overrides MeterItem's (Fade on RX / TX).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -83,7 +85,7 @@ public:
     void setModeLabel(const QString& label) { m_modeLabel = label; }
     void setFilterLabel(const QString& label) { m_filterLabel = label; }
     void setBandLabel(const QString& label) { m_bandLabel = label; }
-    void setTransmitting(bool tx) { m_transmitting = tx; }
+    void setTransmitting(bool tx) override { MeterItem::setTransmitting(tx); m_transmitting = tx; }
     bool isTransmitting() const noexcept { return m_transmitting; }
     void setSplit(bool split) { m_split = split; }
     // R-R3-49 / R-R3-21 (fix wave M2): plain words shown instead of the
