@@ -231,6 +231,13 @@ If the window stays covered the test fails with a message that says so,
 which is not a product stall; rerun it with the window unobstructed. A
 frame that never arrives while the window is exposed is a real failure.
 
+A native-window case that needs GPU frames skips, with a reason naming the
+platform, where Qt cannot render QRhi at all, such as a run with
+`QT_QPA_PLATFORM=offscreen` (`NEREUS_SKIP_WITHOUT_QRHI()` in
+`tests/NativeWindowFrames.h`). CI runs those cases under xvfb, where QRhi
+works and they must submit frames; a covered window or a stalled frame still
+fails.
+
 ## Building tests is opt-in
 
 Test executables are `EXCLUDE_FROM_ALL`, so a routine build only builds the

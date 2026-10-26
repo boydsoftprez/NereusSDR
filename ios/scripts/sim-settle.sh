@@ -24,7 +24,22 @@
 #   2. reads the one-minute load average every 10 seconds until three
 #      readings in a row are under SIM_SETTLE_LOAD (default: eight times the
 #      number of cores, well over a booted simulator at rest and well under
-#      its first boot).
+#      its first boot), by the load average itself or by the load over the
+#      last 30 seconds worked out from it.
+#
+# The one-minute average trails the load: from 400 it takes three minutes
+# to come under 24 after the work has stopped. On GitHub's hosted Mac
+# (2026-10-25) the readings fell exactly as that decay from about 320
+# seconds on, so the work had ended there, and the wait went on to 490
+# seconds. The kernel moves the average a fixed share of the way to the
+# number of runnable threads every 5 seconds, a share that comes to
+# 1 - e^(-t/60) over t seconds, so two readings t apart give the load
+# between them:
+#
+#     load over t = (now - before * e^(-t/60)) / (1 - e^(-t/60))
+#
+# That is the number of threads runnable on average over those t seconds,
+# with no trail behind it.
 #
 # Step 2 ends after SIM_SETTLE_TIMEOUT seconds (default 1500) whatever the
 # load, says so, and still exits 0: the tests then run as they would have
@@ -106,23 +121,43 @@ done
 started=$(date +%s)
 calm=0
 reading=0
+# The readings 10, 20 and 30 seconds ago, each "<seconds> <load>", for the
+# load over the last 30 seconds.
+back1=""
+back2=""
+back3=""
+recent="-"
 while :; do
     load=$(sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1}')
-    if awk -v load="$load" -v limit="$limit" 'BEGIN { exit !(load < limit) }'; then
+    now=$(date +%s)
+    recent="-"
+    if [ -n "$back3" ]; then
+        recent=$(echo "$back3" | awk -v now="$now" -v load="$load" '{
+            t = now - $1
+            if (t <= 0) { print "-"; exit }
+            keep = exp(-t / 60)
+            printf "%.2f", (load - $2 * keep) / (1 - keep)
+        }')
+    fi
+    if awk -v load="$load" -v recent="$recent" -v limit="$limit" \
+        'BEGIN { exit !(load < limit || (recent != "-" && recent + 0 < limit)) }'; then
         calm=$((calm + 1))
     else
         calm=0
     fi
     if [ "$calm" -ge 3 ]; then
-        say "quiet after $(elapsed) s: load $load, under $limit three readings in a row"
+        say "quiet after $(elapsed) s: load $load, $recent over the last 30 s, under $limit three readings in a row"
         exit 0
     fi
+    back3=$back2
+    back2=$back1
+    back1="$now $load"
     if [ "$(elapsed)" -ge "$timeout" ]; then
         break
     fi
     # One line a minute, so the log shows the load coming down.
     if [ $((reading % 6)) -eq 0 ]; then
-        say "$(elapsed) s: load $load, waiting for under $limit"
+        say "$(elapsed) s: load $load, $recent over the last 30 s, waiting for under $limit"
     fi
     reading=$((reading + 1))
     sleep 10

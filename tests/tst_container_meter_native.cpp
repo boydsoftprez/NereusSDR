@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native palette, reconstruction and workload evidence.
 // Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QDir>
@@ -70,6 +72,7 @@ private slots:
         }
     }
     void nativeFaces() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QFETCH(QString,type);QFETCH(int,width);QFETCH(bool,light);
         ContainerContentRegistry registry;QWidget host;host.setAttribute(Qt::WA_ShowWithoutActivating);host.setStyleSheet(light?"background:#e4e6ea;":"background:#121826;");
         auto* layout=new QVBoxLayout(&host);layout->setContentsMargins(12,12,12,12);
@@ -109,6 +112,7 @@ private slots:
         QCOMPARE(alpha,0); // Static selector must not be duplicated in the dynamic layer.
     }
     void realTxAppletMovesNeverRequestTransmit() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);
         RadioModel model(RadioModel::Role::Remote);QWidget original;TxApplet tx(&model,&original);QPointer<TxApplet> identity=&tx;
         int mox=0,tune=0,twoTone=0;tx.setDesktopKeyHandlers([&](bool){++mox;},[&](bool){++tune;},[]{return false;},[]{return false;});tx.setDesktopTwoToneHandler([&](bool){++twoTone;});

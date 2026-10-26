@@ -38,11 +38,12 @@ struct MainScreenShotTests {
         let model = AppModel(audio: audio, displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation()
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await Self.fill(station)
         #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
-        // The link's round trip is timed at its first heartbeat, 20 s in.
+        // The link's round trip is timed at its first heartbeat, which the
+        // test clock brings to 1 s in (20 s in the app).
         #expect(await settle(seconds: 30) { model.roundTripMs != nil })
 
         let band = model.main.band

@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: A CTUN tune that stays on the view takes its shift from
+//               the pan's DDC centre, not the view's centre, which the
+//               refused off-view move leaves off the DDC. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: A remote window's slice access changes reach the container
 //               instruments (sliceAccessChanged, watchSliceAccess). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -5674,9 +5678,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         // afterwards, so a slice tuned to another band left its pan behind.
         //
         // Per pan now, and using this slice's own WDSP channel rather than the
-        // hardcoded rxChannel(0) the single-pan version used. The DDC retune
-        // itself lives in RadioModel::bindSliceToStream (Sub-Epic I) and is not
-        // duplicated here; this is the DISPLAY half.
+        // hardcoded rxChannel(0) the single-pan version used. Without CTUN the
+        // DDC retune itself lives in RadioModel::bindSliceToStream (Sub-Epic I)
+        // and is not duplicated here; this is the DISPLAY half. With CTUN on,
+        // bindSliceToStream keeps a pinned DDC put whenever the slice is still
+        // inside its window, so a tune past the zoomed VIEW moves the DDC here
+        // instead (issue #648).
         const double center = host->centerFrequency();
         const double halfBw = host->bandwidth() / 2.0;
         const bool offScreen = (hz < center - halfBw) || (hz > center + halfBw);
@@ -5684,7 +5691,48 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             followRemoteSliceFrequency(host, hz);
             return;
         }
-        if (!host->ctunEnabled() || offScreen) {
+        if (host->ctunEnabled() && offScreen && !foreignHost) {
+            // CTUN, off the view: the slice may still sit inside the pinned
+            // DDC window (the view is zoomed narrower than the DDC rate), and
+            // then nothing has moved the hardware. Move it through the model
+            // so the allocator, the radio and every shift on the stream agree;
+            // streamCentreChanged brings this pan's DDC centre with it. The
+            // CTUN pin stays as it is.
+            //
+            // From Thetis console.cs:31418-31425 [v2.10.3.15]: when the
+            // passband leaves the display, Thetis sets CentreFrequency = freq
+            // (during a click-tune drag it scrolls by the overshoot instead).
+            // if (!m_bIgnoreLimitsForZTB) // MW0LGE_21k9  [original inline comment from console.cs:31418]
+            // // re-center if we've jumped far  [original inline comment from console.cs:31422]
+            m_handlingBandJump = true;
+            const bool moved = m_radioModel->requestStreamCentre(
+                slice->sliceIndex(), std::round(hz));
+            if (moved) {
+                host->setCenterFrequency(hz);
+                host->setDdcCenterFrequency(
+                    m_radioModel->streamCentreHz(slice->streamIndex()));
+            } else {
+                // Refused: another slice on the stream would leave the moved
+                // window, so the DDC stays where it really is (a CTUN drag
+                // writes that into this widget, ahead of the allocator) and
+                // the shift is kept against it rather than zeroed.
+                const double ddcHz = host->ddcCenterFrequency();
+                m_radioModel->applySliceStreamCentre(slice, ddcHz);
+                // The view follows the slice only as far as the DDC has
+                // data: its span stays inside the DDC window, and a view
+                // wider than the window centres on the DDC.
+                const double halfWindow =
+                    m_radioModel->streamSampleRateHz(slice->streamIndex()) / 2.0;
+                const double halfView = host->bandwidth() / 2.0;
+                double viewHz = ddcHz;
+                if (halfWindow > 0.0 && halfView < halfWindow) {
+                    viewHz = std::clamp(hz, ddcHz - halfWindow + halfView,
+                                        ddcHz + halfWindow - halfView);
+                }
+                host->setCenterFrequency(viewHz);
+            }
+            m_handlingBandJump = false;
+        } else if (!host->ctunEnabled() || offScreen) {
             m_handlingBandJump = true;
             const bool wasCtun = host->ctunEnabled();
             if (m_radioModel->receiverManager()) {
@@ -5707,8 +5755,16 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             // CTUN, still on-screen: the DDC stays put and WDSP shifts.
             // Written to the model and WDSP together (R-R3-49), so the
             // slice's shiftOffsetHz names the centre the demodulator uses.
+            //
+            // Measured from the DDC, not from the view: the view can sit off
+            // the DDC (a refused off-view move above clamps it there), and a
+            // shift from the view's centre puts the receiver off the flag by
+            // the distance between the two. From Thetis console.cs:31408
+            // [v2.10.3.15]: rx1_osc = -(freq - CentreFrequency), the DDC
+            // centre; the zoomed display window never enters it.
             m_radioModel->applySliceStreamCentre(
-                slice, foreignHost ? m_radioModel->streamCentreHz(slice->streamIndex()) : center);
+                slice, foreignHost ? m_radioModel->streamCentreHz(slice->streamIndex())
+                                   : host->ddcCenterFrequency());
         }
         host->setVfoFrequency(hz);
     };
