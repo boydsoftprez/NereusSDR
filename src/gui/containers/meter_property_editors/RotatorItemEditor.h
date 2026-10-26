@@ -1,4 +1,7 @@
 #pragma once
+// NereusSDR-original declarations. Independently implemented from the
+// Thetis setup.cs interface; the ported ranges and row enabling live in
+// RotatorItemEditor.cpp, which carries the headers.
 // Modification history (NereusSDR):
 //   2026-10-26 - Thetis rotator settings: full background row, beam width
 //                 rows disabled when the beam is off. J.J. Boyd (KG4VCF),

@@ -6,6 +6,10 @@
 // added copies of the SIGNAL STRENGTH dial (SMeterWidget, itself ported
 // from AetherSDR and attributed in its own files). Workspace preview only.
 //
+// Independently implemented from the Thetis MeterManager.cs interface;
+// the ported constants live in SMeterDialContent.cpp, which carries the
+// headers.
+//
 // Registers one per-instance widget type with ContainerContentRegistry:
 //
 //   sMeter.dial   SMeterWidget, SettingsStore::Instance

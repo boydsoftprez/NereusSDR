@@ -7,7 +7,9 @@
 // src/gui/containers/ContainerButtonDispatcher.h  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original; no upstream port.
+// NereusSDR-original declarations. Independently implemented from the
+// Thetis console.cs interface; the ported step constants, NR cycle and lit
+// states live in ContainerButtonDispatcher.cpp, which carries the headers.
 //
 // R-R3-49 / R-R3-21: a container's function buttons (OtherButtonItem) and
 // its band buttons do what their labels say. Each connected button calls
