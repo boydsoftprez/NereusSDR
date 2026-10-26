@@ -317,12 +317,16 @@ private slots:
         QCOMPARE(reloaded.durationMs(), 60000);
         QCOMPARE(reloaded.serialize(), created);
 
-        // A capacity edited in the item editor survives too.
+        // A capacity set on a graph without its own length (setCapacity
+        // alone, field [17] = 0) also reloads as saved; deserialize applies
+        // the saved capacity after the duration whatever the own-length
+        // flag. The Multimeter apply may still change it later.
         HistoryGraphItem edited;
         edited.setCapacity(1000);
         HistoryGraphItem editedReloaded;
         QVERIFY(editedReloaded.deserialize(edited.serialize()));
         QCOMPARE(editedReloaded.capacity(), 1000);
+        QVERIFY(!editedReloaded.hasOwnLength());
         QCOMPARE(editedReloaded.durationMs(), 60000);
         QCOMPARE(editedReloaded.serialize(), edited.serialize());
 

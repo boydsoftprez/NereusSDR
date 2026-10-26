@@ -79,6 +79,9 @@ mw0lge@grange-lane.co.uk
 //                 lets the saved duration recompute it, and clamps it to
 //                 kMaxCapacity. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - deserialize comments give the field counts it reads
+//                 (16, 17, 18). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "HistoryGraphItem.h"
@@ -399,18 +402,18 @@ QString HistoryGraphItem::serialize() const
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected parts:
-// v1 (15 fields): [0]=HISTORY [1]=x [2]=y [3]=w [4]=h [5]=bindingId [6]=zOrder
+// v1 (16 fields): [0]=HISTORY [1]=x [2]=y [3]=w [4]=h [5]=bindingId [6]=zOrder
 //                 [7]=capacity [8]=lineColor0 [9]=lineColor1
 //                 [10]=showGrid [11]=autoScale0 [12]=autoScale1
 //                 [13]=showScale0 [14]=showScale1 [15]=bindingId1
 // v2 (17 fields): ...all v1... [16]=durationMs
 // v3 (18 fields): ...all v2... [17]=hasOwnLength (0/1)
-// Task 3.3: both v1 and v2 supported for backward compatibility
+// Task 3.3: v1, v2 and v3 all load, for backward compatibility
 // ---------------------------------------------------------------------------
 bool HistoryGraphItem::deserialize(const QString& data)
 {
     const QStringList parts = data.split(QLatin1Char('|'));
-    // Accept 16 parts (v1) or 17 parts (v2)
+    // Accept 16 parts (v1), 17 parts (v2) or 18 parts (v3)
     if (parts.size() < 16 || parts[0] != QLatin1String("HISTORY")) {
         return false;
     }

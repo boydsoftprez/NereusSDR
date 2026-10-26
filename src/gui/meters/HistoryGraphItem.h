@@ -25,6 +25,8 @@
 //   2026-10-26 - kMaxCapacity: deserialize clamps a loaded capacity to the
 //                 largest one NereusSDR produces. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The own-length cite names Thetis clsHistoryItem._keep_for.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -138,9 +140,14 @@ public:
     void setDurationMs(int ms);
 
     // NereusSDR: true once the operator sets this graph's length in its
-    // editor. Thetis keeps a history length per item (Magic eye
-    // _msHistoryDuration, MeterManager.cs:17178 [v2.10.3.15]); the
-    // Multimeter history duration then leaves this graph alone.
+    // editor. Thetis keeps a history length on each history item:
+    // clsHistoryItem._keep_for, in seconds, default 60 (MeterManager.cs:17485,
+    // :17538, KeepFor at :17708 [v2.10.3.15]), loaded per item clamped to
+    // 1..86400 (history_keep_for, MeterManager.cs:26937 [v2.10.3.15]).
+    // Thetis history items never follow a global duration; following the
+    // Multimeter setting until an own length is set is NereusSDR's choice.
+    // With an own length, the Multimeter history duration leaves this
+    // graph alone.
     bool hasOwnLength() const { return m_hasOwnLength; }
     void setHasOwnLength(bool v) { m_hasOwnLength = v; }
 
