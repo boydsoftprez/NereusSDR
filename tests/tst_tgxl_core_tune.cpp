@@ -57,9 +57,14 @@
 //               waits for A's own settle callback instead of a wall-clock
 //               window, so machine load cannot fail its setup. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CI load round: five ctest entries, each function in one
+//               by its place in the list (the whole file took 95 s of
+//               ctest's 120 s on a quiet Linux runner). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "TestFunctionGroups.h"
 
 #include "core/PgxlConnection.h"
 #include "core/DspControlThread.h"
@@ -73,6 +78,7 @@
 #include "core/safety/TxRefusal.h"
 #include "models/SliceModel.h"
 
+#include <QApplication>
 #include <QHostAddress>
 #include <QPointer>
 #include <QSignalSpy>
@@ -2134,5 +2140,29 @@ private slots:
     }
 };
 
-QTEST_MAIN(TgxlCoreTuneTest)
+// CI load round, 2026-10-26: one entry took 84 s on a quiet Mac and 95 s
+// on a quiet Linux runner, and timed out on a busy one.
+// 5 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3, _part4, _part5 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TgxlCoreTuneTest test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 5;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}, {QStringLiteral("part5"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 5 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_TGXL_CORE_TUNE_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_tgxl_core_tune.moc"

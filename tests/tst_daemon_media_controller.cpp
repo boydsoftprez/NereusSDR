@@ -6,6 +6,14 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CI load round: five ctest entries, each function in one by
+//               its place in the list (the whole file took 110 s of ctest's
+//               120 s on a quiet Linux runner), and the gap test drives the
+//               engine's 5 ms frame gap on its own clock instead of waiting
+//               6 ms of real time per step, and awaits each handoff on a
+//               short poll instead of qWaitFor's 10 ms sleeps (20 s to
+//               5.5 s on a quiet Mac). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: JJ's ruling (option c): the Core's source keeps the
 //               healthy rate with gaps one to a few windows apart, at 262144
 //               and 65536 (gapsOneToFourWindowsApartKeepTheCoresRate);
@@ -87,6 +95,8 @@
 #include <QtTest>
 
 #include "fakes/RecordingRtpSink.h"
+#include "TestFunctionGroups.h"
+#include <QApplication>
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/ClarityController.h"
@@ -4553,6 +4563,10 @@ void TstDaemonMediaController::gapsOneToFourWindowsApartKeepTheCoresRate()
     QVERIFY(gapEveryPairs > fftSize);
     QVERIFY(gapEveryPairs < NereusSDR::FFTEngine::kGapLossyLinkWindows * fftSize);
 
+    // The engine's 5 ms minimum frame gap reads this clock, so each step
+    // passes it by moving the clock rather than sleeping (some 2,300 steps
+    // over the rows took 31 s of real waiting, CI 2026-10-25).
+    std::atomic<qint64> frameGapClockMs{0};
     RadioModel radio;
     DaemonSpectrumSource source;
     source.setRadioModel(&radio);
@@ -4566,6 +4580,8 @@ void TstDaemonMediaController::gapsOneToFourWindowsApartKeepTheCoresRate()
     config.maxPendingIqFloats = kIntervalPairs * 2 * 4;
     QVERIFY(source.activate(key, config));
     QTRY_VERIFY(source.isActive(key));
+    QVERIFY(source.setEngineFrameGapClockForTest(
+        key, [&frameGapClockMs] { return frameGapClockMs.load(); }));
 
     // One step: the gap first when it is due, then a frame interval at most,
     // short of the next gap, past the engine's 5 ms minimum frame gap and
@@ -4581,13 +4597,23 @@ void TstDaemonMediaController::gapsOneToFourWindowsApartKeepTheCoresRate()
             ++gaps;
         }
         const int n = static_cast<int>(std::min<qint64>(kIntervalPairs, nextGapAt - fed));
-        QTest::qWait(6);
+        frameGapClockMs += 6;
         const quint64 handoffs = source.completedInputHandoffs(key);
         emit radio.rawIqDataForStream(key.streamIndex,
                                       n == kIntervalPairs ? interval : interval.first(n * 2));
         fed += n;
-        return QTest::qWaitFor(
-            [&] { return source.completedInputHandoffs(key) == handoffs + 1; }, 10'000);
+        // Awaited on a short poll: QTest::qWaitFor sleeps 10 ms whenever
+        // the spectrum thread has not finished by its first look, which
+        // was every step, and those sleeps alone took 20 s over the rows.
+        const QDeadlineTimer deadline(10'000);
+        while (source.completedInputHandoffs(key) != handoffs + 1) {
+            if (deadline.hasExpired()) {
+                return false;
+            }
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        return true;
     };
 
     // Healthy up to the first gap: one frame, the window just full.
@@ -7106,7 +7132,32 @@ void TstDaemonMediaController::unkeyEventLinesPlaceTheOversDropouts()
                 .isEmpty());
 }
 
-QTEST_MAIN(TstDaemonMediaController)
+// CI load round, 2026-10-26: one entry took 96 s on a quiet Mac and 110 s
+// on a quiet Linux runner, against ctest's 120 s limit, and timed out on
+// busy runners (main at 6b765cf95 and 02dae18cb).
+// 5 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3, _part4, _part5 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstDaemonMediaController test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 5;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}, {QStringLiteral("part5"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 5 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_DAEMON_MEDIA_CONTROLLER_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_daemon_media_controller.moc"
 
 // R-R3-01/R-R3-08: E1 owns a Wide engine. E2 on the same stream asks for a

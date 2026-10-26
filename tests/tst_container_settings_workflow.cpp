@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original complete-entry draft workflow regressions.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
 #include "gui/meters/OtherButtonItem.h"
@@ -441,6 +444,7 @@ private slots:
     QVERIFY(ContainerArrangeController::returnBatch(d,2,d.containers[2].contents).ok);d.containers.removeLast();QCOMPARE(d.containers[1].contents[1].id,returned.id);QCOMPARE(d.containers[0].contents[0].config,unknown.config);
  }
  void nativeMixedPreviewHasCachedReadingActualAppletAndLegacyContent() {
+    NEREUS_SKIP_WITHOUT_QRHI();
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     RadioModel model(RadioModel::Role::Remote);SliceModel slice(0);QWidget root,liveParent;RxApplet applet(&slice,&model,&liveParent);applet.resize(520,300);liveParent.show();applet.show();registry.attachSingleton("applet:rx",&applet);
     QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);

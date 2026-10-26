@@ -483,15 +483,21 @@ endfunction()
 # with <variable>=rest. The test's main() picks its functions through
 # tests/TestFunctionGroups.h. Use it for a test whose cases add up near its
 # limit, so no entry carries another's time. Each entry takes the test's
-# labels, limit, RUN_SERIAL, PROCESSORS and environment, with a home of its
-# own. Call it after every set_tests_properties() on <name>; a test sharded
-# away is left alone.
+# labels, limit, RUN_SERIAL, PROCESSORS, RESOURCE_LOCK and environment,
+# with a home of its own. Call it after every set_tests_properties() on
+# <name>; a test sharded away is left alone. COMMAND <target> names the
+# binary when <name> is an entry of another target's (CI load round,
+# 2026-10-26).
 function(nereus_split_test name)
-    cmake_parse_arguments(_st "" "ENV" "GROUPS" ${ARGN})
+    cmake_parse_arguments(_st "" "ENV;COMMAND" "GROUPS" ${ARGN})
+    if(NOT _st_COMMAND)
+        set(_st_COMMAND ${name})
+    endif()
     if(NOT TEST ${name})
         return()
     endif()
-    foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION ENVIRONMENT)
+    foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS RESOURCE_LOCK ENVIRONMENT_MODIFICATION
+            ENVIRONMENT)
         get_test_property(${name} ${_prop} _st_${_prop})
     endforeach()
     # The test's home is its own; each entry gets another.
@@ -503,8 +509,8 @@ function(nereus_split_test name)
     endforeach()
     foreach(_group IN LISTS _st_GROUPS)
         set(_entry_name ${name}_${_group})
-        add_test(NAME ${_entry_name} COMMAND ${name})
-        foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION)
+        add_test(NAME ${_entry_name} COMMAND ${_st_COMMAND})
+        foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS RESOURCE_LOCK ENVIRONMENT_MODIFICATION)
             if(_st_${_prop})
                 set_property(TEST ${_entry_name} PROPERTY ${_prop} "${_st_${_prop}}")
             endif()
@@ -2800,6 +2806,12 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
 nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
+# CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet Linux
+# runner and timed out in a busy one (PR 657, run 40260509791), so four
+# entries: the test's main() places each function in one by its place
+# in the list (the limit is not raised).
+nereus_split_test(tst_panadapter_stack_layouts ENV NEREUS_PANADAPTER_STACK_LAYOUTS_GROUP
+    GROUPS part2 part3 part4)
 
 # ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
 # Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.
@@ -9063,6 +9075,12 @@ target_compile_definitions(tst_core_parity PRIVATE NEREUS_BUILD_TESTS)
 # table, and Connection Quality's EP6 sequence gap count.
 nereus_add_test(tst_controls_that_work)
 target_compile_definitions(tst_controls_that_work PRIVATE NEREUS_BUILD_TESTS)
+# CI load round, 2026-10-26: about 12 full MainWindows ran near the 120 s
+# limit and timed out at load 76 locally, so three entries: the test's
+# main() places each function in one by its place in the list (the limit
+# is not raised).
+nereus_split_test(tst_controls_that_work ENV NEREUS_CONTROLS_THAT_WORK_GROUP
+    GROUPS part2 part3)
 # R3 controls that work, Task 2 (R-R3-21): menu entries, the Phone/CW
 # applet's transmit controls, container controls, the pan overlay's ATT
 # and zoom buttons and the status badges reach their existing features.
@@ -9395,6 +9413,12 @@ nereus_split_test(tst_remote_window_harness
 # limit. Loopback WebSocket and test models only; no RF, no audio device.
 nereus_add_test(tst_pan_actions_per_pan fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_pan_actions_per_pan PRIVATE NEREUS_BUILD_TESTS)
+# CI load round, 2026-10-26: the whole run took 66 to 69 s on a quiet Linux
+# runner and timed out in a busy one (PR 657, run 40260509791), so four
+# entries: the test's main() places each function in one by its place
+# in the list (the limit is not raised).
+nereus_split_test(tst_pan_actions_per_pan ENV NEREUS_PAN_ACTIONS_PER_PAN_GROUP
+    GROUPS part2 part3 part4)
 
 # Step persistence lane (2026-10-15): a remote window's tune step is the
 # Core's; a step the Core refuses goes back and says why, a listened slice
@@ -9478,6 +9502,12 @@ nereus_add_test(tst_realtime_audio_priority)
 nereus_add_test(tst_thread_placement EXTRA_LABELS core)
 nereus_add_test(tst_daemon_radio_recovery fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_daemon_radio_recovery PRIVATE NEREUS_BUILD_TESTS)
+# CI load round, 2026-10-26: the whole run took 78 to 81 s on a quiet Linux
+# runner and timed out in a busy one (PR 657, run 40260509791), so five
+# entries: the test's main() places each function in one by its place
+# in the list (the limit is not raised).
+nereus_split_test(tst_daemon_radio_recovery ENV NEREUS_DAEMON_RADIO_RECOVERY_GROUP
+    GROUPS part2 part3 part4 part5)
 
 # Exercise the real daemon signal handler and detect allocation from signal
 # context, where a queued Qt invocation can deadlock the interrupted thread.
@@ -9609,11 +9639,23 @@ nereus_add_test(tst_on_air_refusals
 nereus_add_test(tst_station_multi_session
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CI load round, 2026-10-26: the whole run took 52 to 61 s on a quiet Linux
+# runner and timed out in a busy one (PR 657, run 40260509791), so three
+# entries: the test's main() places each function in one by its place
+# in the list (the limit is not raised).
+nereus_split_test(tst_station_multi_session ENV NEREUS_STATION_MULTI_SESSION_GROUP
+    GROUPS part2 part3)
 # TGXL tune lane (bench 2026-09-30): the Tuner Genius's LAN PTT and a
 # device's tx.tunerTune against a real Core over loopback links. No RF.
 nereus_add_test(tst_tgxl_core_tune
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CI load round, 2026-10-26: the whole run took 95 s of the 120 s limit on
+# a quiet Linux runner and timed out on a busy one, so five entries:
+# the test's main() places each function in one by its place in the
+# list (the limit is not raised).
+nereus_split_test(tst_tgxl_core_tune ENV NEREUS_TGXL_CORE_TUNE_GROUP
+    GROUPS part2 part3 part4 part5)
 # TGXL tune lane round 2: what the Core sent the tuner that it may answer
 # with its own tune on/off, as one table of sequences. No sockets.
 nereus_add_test(tst_tgxl_answer_tracker)
@@ -9752,6 +9794,12 @@ target_compile_definitions(tst_radio_bound_antenna_rows PRIVATE NEREUS_BUILD_TES
 nereus_add_test(tst_confirm_step
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CI load round, 2026-10-26: the whole run took 30 to 38 s on a quiet Linux
+# runner and timed out in a busy one (PR 657, run 40260509791), so two
+# entries: the test's main() places each function in one by its place
+# in the list (the limit is not raised).
+nereus_split_test(tst_confirm_step ENV NEREUS_CONFIRM_STEP_GROUP
+    GROUPS part2)
 
 # Level Cal as a Core procedure: a paired device starts and cancels it,
 # progress comes back on the wire, a remote window makes the same calls.
@@ -10312,6 +10360,17 @@ if(TEST tst_link_conformance_session)
     endforeach()
     set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
         "NEREUS_LINK_REALTIME=only")
+    # CI load round, 2026-10-26: the in-process and data-channel entries
+    # took 122 to 128 s and 117 to 119 s on a quiet Linux runner and passed
+    # their 300 s limit in a busy one (PR 657, run 40260509791), so each
+    # deals its fixture rows to three entries by NEREUS_LINK_SHARE (the
+    # test's kLinkShares): the first also runs every other check, _part2
+    # and _part3 the rows alone (the limit is not raised).
+    nereus_split_test(tst_link_conformance_session ENV NEREUS_LINK_SHARE
+        GROUPS part2 part3)
+    nereus_split_test(tst_link_conformance_session_datachannel
+        COMMAND tst_link_conformance_session ENV NEREUS_LINK_SHARE
+        GROUPS part2 part3)
 endif()
 nereus_add_test(tst_link_conformance_media
     LinkFixtures.cpp
@@ -10655,6 +10714,12 @@ endif()
 # real FFT/display production, stale control rejection, and slice cleanup.
 nereus_add_test(tst_daemon_media_controller
     fakes/LoopbackTransport.cpp)
+# CI load round, 2026-10-26: the whole run took 110 s of the 120 s limit on
+# a quiet Linux runner and timed out on main under load, so five entries:
+# the test's main() places each function in one by its place in the
+# list (the limit is not raised).
+nereus_split_test(tst_daemon_media_controller
+    ENV NEREUS_DAEMON_MEDIA_CONTROLLER_GROUP GROUPS part2 part3 part4 part5)
 
 # iPhone app plan Task 24 (R-IOS-10): a session with no display endpoint
 # keeps its audio, metrics and S-meter readings and gets no display.
@@ -11310,10 +11375,21 @@ nereus_add_test(tst_cat_headless CORE_ONLY)
 nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
 
 nereus_add_test(tst_cat_rx_commands CORE_ONLY)
+# CI load round, 2026-10-26: 20 s on a quiet Linux runner, six times that
+# on a busy one; the test's main() deals fixtureExecution's rows to
+# _fixtures1 and _fixtures2, and the rest runs the other functions.
+nereus_split_test(tst_cat_rx_commands ENV NEREUS_CAT_RX_COMMANDS_GROUP
+    GROUPS fixtures1 fixtures2)
 
 nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
 nereus_add_test(tst_cat_tx_commands CORE_ONLY)
 nereus_add_test(tst_cat_coverage CORE_ONLY)
+# CI load round, 2026-10-26: 783 fixture rows took 84 s of the 120 s limit
+# on a quiet Linux runner and timed out on a busy one; the test's main()
+# deals allCurrentFixtures's rows to _fixtures1 to _fixtures4, and the
+# rest runs the other functions.
+nereus_split_test(tst_cat_coverage ENV NEREUS_CAT_COVERAGE_GROUP
+    GROUPS fixtures1 fixtures2 fixtures3 fixtures4)
 
 nereus_add_test(tst_cat_tcp CORE_ONLY)
 nereus_add_test(tst_cat_reporting CORE_ONLY)

@@ -8,6 +8,8 @@
 // Test 1: saveAndRestoreEachKey
 //   Set non-default DSP values on 20m, save, create fresh SliceModel,
 //   restore for 20m, verify all per-band and session keys round-trip.
+//   The antenna labels are not saved (Setup's antenna table is their only
+//   store, 2026-10-23).
 //
 // Test 2: bandChangeRestoresPreviouslyStoredValuesForNewBand
 //   Store different AgcThreshold on 20m and 40m. Simulate a band change
@@ -178,8 +180,13 @@ private slots:
         QCOMPARE(reader.xitHz(),        -100);
         QCOMPARE(reader.afGain(),       70);
         QCOMPARE(reader.rfGain(),       60);
-        QCOMPARE(reader.rxAntenna(),    QStringLiteral("ANT2"));
-        QCOMPARE(reader.txAntenna(),    QStringLiteral("ANT2"));
+        // The antenna labels are not slice state (2026-10-23): Setup's
+        // antenna table is their only store, so nothing is written for them
+        // and the reader keeps its own.
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("Slice0/RxAntenna")));
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("Slice0/TxAntenna")));
+        QCOMPARE(reader.rxAntenna(),    QStringLiteral("ANT1"));
+        QCOMPARE(reader.txAntenna(),    QStringLiteral("ANT1"));
     }
 
     // ── Test 2: per-band isolation ────────────────────────────────────────────

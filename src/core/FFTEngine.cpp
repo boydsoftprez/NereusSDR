@@ -60,6 +60,9 @@
 //               (m_pairsSinceGap, m_refillingAfterReset), so gaps one to
 //               four windows apart no longer crawl. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Claude Code.
+//   2026-10-26: The 5 ms minimum frame gap reads a test's clock when one is
+//               set (setFrameGapClockForTest). J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -791,9 +794,15 @@ void FFTEngine::processFrame()
     // its remaining batch samples when processFrame returned without
     // running the FFT.  This preserves the overlap region across the
     // (rare) cap fire.
-    if (m_frameTimerStarted && m_frameTimer.elapsed() < 5) {
-        m_minimumGapHeldFrame = true;  // NereusSDR-original: feedIQ counts it
-        return;  // buffer stays full; next feedIQ call retries
+    if (m_frameTimerStarted) {
+        // The timer is read only once started (an invalid one is undefined).
+        const qint64 sinceFrameMs = m_frameGapClockForTest
+            ? m_frameGapClockForTest() - m_frameGapTestStampMs
+            : m_frameTimer.elapsed();
+        if (sinceFrameMs < 5) {
+            m_minimumGapHeldFrame = true;  // NereusSDR-original: feedIQ counts it
+            return;  // buffer stays full; next feedIQ call retries
+        }
     }
 
     // 2026-05-26 KG4VCF perf instrumentation: time the FFT compute
@@ -858,6 +867,9 @@ void FFTEngine::processFrame()
 
     // Restart frame timer
     m_frameTimer.restart();
+    if (m_frameGapClockForTest) {
+        m_frameGapTestStampMs = m_frameGapClockForTest();
+    }
     m_frameTimerStarted = true;
     // NereusSDR-original (2026-10-23): the gap-reset stall bound counts
     // from here.

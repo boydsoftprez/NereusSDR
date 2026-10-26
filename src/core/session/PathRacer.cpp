@@ -36,6 +36,13 @@
 //               rankForPath(); the race's start line counts the names still
 //               to look up; "canceled". J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-24: an attempt's end line says how long after its dial it
+//               ended and what it met: the socket error and Qt's text for
+//               it, or, for a WebSocket closed before the Core's hello, its
+//               close code and quoted, escaped reason, or "no close frame"
+//               when the link dropped without one. Log only; the operator's
+//               words are unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
@@ -49,10 +56,13 @@
 #include "core/session/StationClient.h"
 
 #include <memory>
+#include <QAbstractSocket>
 #include <QAuthenticator>
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QLoggingCategory>
+#include <QMetaEnum>
 #include <QNetworkInterface>
 #include <QSslError>
 #include <QTimer>
@@ -65,6 +75,80 @@ Q_LOGGING_CATEGORY(lcPathRacer, "nereus.session.pathracer")
 namespace {
 
 constexpr const char* kNoPath = "The Core could not be reached from here.";
+
+// For the log only: a socket error by its Qt name, with Qt's text for it.
+QString socketErrorText(QAbstractSocket::SocketError error, const QString& text)
+{
+    const char* name = QMetaEnum::fromType<QAbstractSocket::SocketError>().valueToKey(error);
+    QString words = QStringLiteral("socket error %1")
+                        .arg(name != nullptr ? QLatin1String(name)
+                                             : QString::number(static_cast<int>(error)));
+    if (!text.isEmpty()) {
+        words += QStringLiteral(", ") + text;
+    }
+    return words;
+}
+
+// For the log only: a far end's text, quoted, with a quote, a backslash and
+// anything that could break the line (a control character, a line or
+// paragraph separator) escaped, so a peer cannot forge a log line.
+QString quotedForLog(const QString& text)
+{
+    QString quoted = QStringLiteral("\"");
+    const QList<uint> codePoints = text.toUcs4();
+    for (const uint codePoint : codePoints) {
+        const char32_t c = static_cast<char32_t>(codePoint);
+        if (c == U'"' || c == U'\\') {
+            quoted += QLatin1Char('\\');
+            quoted.append(QString::fromUcs4(&c, 1));
+        } else if (!QChar::isPrint(c) || QChar::category(c) == QChar::Separator_Line
+                   || QChar::category(c) == QChar::Separator_Paragraph) {
+            quoted += QStringLiteral("\\u%1").arg(static_cast<uint>(c), 4, 16, QLatin1Char('0'));
+        } else {
+            quoted.append(QString::fromUcs4(&c, 1));
+        }
+    }
+    quoted += QLatin1Char('"');
+    return quoted;
+}
+
+// For the log only: how a link closed before the Core's hello. A WebSocket
+// says its close code and reason when it closed with a close frame, or that
+// none came, and the socket error if there was one. Without a close frame,
+// Qt's closeCode() keeps its default, 1000, so the code alone cannot tell
+// (qwebsocket_p.cpp:118, :396 in Qt 6.11.0).
+QString closedBeforeHelloText(SessionTransport* transport, bool closeFrame)
+{
+    QString words = QStringLiteral("closed before the Core's hello");
+    auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
+    if (webSocket == nullptr || webSocket->socket() == nullptr) {
+        return words;
+    }
+    const QWebSocket* socket = webSocket->socket();
+    if (closeFrame) {
+        words += QStringLiteral(", close code %1").arg(static_cast<int>(socket->closeCode()));
+        if (!socket->closeReason().isEmpty()) {
+            words += QStringLiteral(", reason ") + quotedForLog(socket->closeReason());
+        }
+    } else {
+        words += QStringLiteral(", no close frame");
+    }
+    if (socket->error() != QAbstractSocket::UnknownSocketError) {
+        words += QStringLiteral(", ") + socketErrorText(socket->error(), socket->errorString());
+    }
+    return words;
+}
+
+// The racer's connections to a transport, and its close-frame note on a
+// WebSocket's socket, dropped when the transport leaves the racer.
+void disconnectTransport(SessionTransport* transport, const QObject* racer)
+{
+    QObject::disconnect(transport, nullptr, racer, nullptr);
+    if (auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
+        webSocket != nullptr && webSocket->socket() != nullptr) {
+        QObject::disconnect(webSocket->socket(), &QWebSocket::aboutToClose, racer, nullptr);
+    }
+}
 
 // For the log only: a rank as its number and its name.
 QString rankText(int rank)
@@ -144,6 +228,13 @@ struct PathRacer::Entry {
     QByteArray hello;
     /// A direct rung started and not yet ready or ended (review Minor 8).
     bool opening = false;
+    /// For the end's log line: since the rung started (its dial), and
+    /// what ended it when the racer saw it (a link closed before its hello).
+    QElapsedTimer dialed;
+    QString endDetail;
+    /// For the end's log line: the link closed with a WebSocket close
+    /// frame, the far end's or Qt's own on a frame it could not take.
+    bool closeFrame = false;
 };
 
 PathRacer::PathRacer(QObject* parent) : QObject(parent) {}
@@ -348,6 +439,7 @@ void PathRacer::startWaitingDirect()
         ++m_directOpening;
         e.opening = true;
         qCDebug(lcPathRacer) << "Trying" << e.rung->address();
+        e.dialed.start();
         e.rung->start();
     }
 }
@@ -446,6 +538,7 @@ void PathRacer::startRung(Entry& entry)
             return;
         }
         qCDebug(lcPathRacer) << "Trying" << e.rung->address();
+        e.dialed.start();
         e.rung->start();
     });
     entry.startTimer->start(entry.startDelayMs);
@@ -466,9 +559,24 @@ void PathRacer::onOpened(int index, SessionTransport* transport)
     entry.transport = transport;
     connect(transport, &SessionTransport::textReceived, this,
             [this, index](const QByteArray& wire) { onHello(index, wire); });
+    // For the log only: whether the link closed with a close frame. Qt
+    // emits aboutToClose from close(), which a received close frame (or a
+    // frame Qt could not take) runs before the link goes; a link that drops
+    // with no close frame only disconnects (qwebsocket_p.cpp:390-420,
+    // :719-726, :1403-1407 and qabstractsocket.cpp:643-648, :2669-2750 in
+    // Qt 6.11.0). The racer reads it only for a link it did not close.
+    if (auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
+        webSocket != nullptr && webSocket->socket() != nullptr) {
+        connect(webSocket->socket(), &QWebSocket::aboutToClose, this, [this, index] {
+            m_entries[static_cast<size_t>(index)]->closeFrame = true;
+        });
+    }
     connect(transport, &SessionTransport::closed, this, [this, index] {
         Entry& e = *m_entries[static_cast<size_t>(index)];
         if (!e.ended) {
+            if (e.hello.isEmpty()) {
+                e.endDetail = closedBeforeHelloText(e.transport, e.closeFrame);
+            }
             endRung(index, e.hello.isEmpty() ? Outcome::NoAnswer : Outcome::Failed, QString());
         } else if (e.standby) {
             // A standby the Core closed (its connect deadline): gone.
@@ -536,7 +644,7 @@ void PathRacer::onHello(int index, const QByteArray& wire)
             ready.url = direct->url();
         }
         // Handed over: the session's from here.
-        disconnect(entry.transport, nullptr, this, nullptr);
+        disconnectTransport(entry.transport, this);
         entry.transport->setParent(nullptr);
         entry.transport = nullptr;
         qCInfo(lcPathRacer) << "Reached the Core at" << ready.address << "rank" << rank;
@@ -580,7 +688,7 @@ void PathRacer::releaseTransport(Entry& entry, bool close)
     if (transport == nullptr) {
         return;
     }
-    disconnect(transport, nullptr, this, nullptr);
+    disconnectTransport(transport, this);
     if (close) {
         transport->closeLink(QStringLiteral("another path connected first"));
     }
@@ -598,6 +706,15 @@ void PathRacer::endRung(int index, Outcome outcome, const QString& reason)
     }
     entry.ended = true;
     entry.outcome = outcome;
+    // For the log line: how long after its dial, and what it met.
+    QString detail = entry.endDetail;
+    if (detail.isEmpty() && entry.rung != nullptr) {
+        detail = entry.rung->endDetail();
+    }
+    if (entry.dialed.isValid()) {
+        const QString after = QStringLiteral("after %1 ms").arg(entry.dialed.elapsed());
+        detail = detail.isEmpty() ? after : after + QStringLiteral(": ") + detail;
+    }
     releaseDirectTurn(entry);
     if (entry.startTimer != nullptr) {
         entry.startTimer->stop();
@@ -617,9 +734,10 @@ void PathRacer::endRung(int index, Outcome outcome, const QString& reason)
     line.outcome = outcome;
     line.reason = reason;
     qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
-        QStringLiteral("Attempt at %1 ended: %2%3")
+        QStringLiteral("Attempt at %1 ended: %2%3%4")
             .arg(line.address, QLatin1String(outcomeText(outcome)),
-                 reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason)));
+                 reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason),
+                 detail.isEmpty() ? QString() : QStringLiteral(" [%1]").arg(detail)));
     emit linesChanged();
     checkAllEnded();
 }
@@ -703,7 +821,7 @@ std::optional<PathRacer::Ready> PathRacer::takeStandby()
         if (const auto* direct = qobject_cast<const DirectPathRung*>(entry->rung.data())) {
             ready.url = direct->url();
         }
-        disconnect(entry->transport, nullptr, this, nullptr);
+        disconnectTransport(entry->transport, this);
         entry->transport->setParent(nullptr);
         entry->transport = nullptr;
         return ready;
@@ -838,12 +956,13 @@ void DirectPathRung::start()
 #else
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
 #endif
-            [this, transport, proxyLogin](QAbstractSocket::SocketError error) {
+            [this, socket, transport, proxyLogin](QAbstractSocket::SocketError error) {
         if (m_done || m_transport != transport) {
             return;
         }
         m_done = true;
         m_transport = nullptr;
+        m_endDetail = socketErrorText(error, socket->errorString());
         transport->deleteLater();
         // Empty but for a proxy that demands a login, which says so.
         emit ended(PathRacer::Outcome::NoAnswer,

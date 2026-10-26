@@ -344,6 +344,12 @@ private slots:
         QVERIFY(slice->nnrRunning());
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrActualModelSlot(), 1);
+        // The Core's own load sampler keeps ticking while the operator acts
+        // (CI run 40260774173: a loaded runner's lane waits spanned a tick).
+        // The governor's clock is still this test's: a real tick in between
+        // must not set its time base on another clock.
+        model.dspLoadTickForTest();
+        model.dspLoadTickForTest();
 
         // Choosing the saved model again is the operator asking again too.
         QCOMPARE(runUntilStep(overloaded), 5);

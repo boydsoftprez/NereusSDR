@@ -31,7 +31,7 @@ struct TuningShotTests {
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation(additions: .all)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
@@ -163,24 +163,13 @@ struct TuningShotTests {
     /// The same stations as ``BandFlagShotTests/feed(_:width:lines:)``,
     /// seen through a view centred on `centreHz`.
     static func feed(_ band: BandModel, width: Int, lines: Int, centreHz: Double, generation: UInt32) {
-        var seed: UInt64 = 7
-        func random() -> Float {
-            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            return Float(seed >> 40) / Float(1 << 24)
-        }
         let span = BandFlagShotTests.span
         let low = centreHz - span / 2
         let stations: [(hz: Double, dbm: Float, width: Double)] = [(7_234_900, -72, 2_600), (7_247_500, -84, 2_600),
                                                                    (7_261_000, -96, 2_400), (7_268_000, -80, 2_400)]
+        let traces = BandFlagShotTests.traces(width: width, lines: lines, low: low, stations: stations)
         for sequence in 1...lines {
-            let trace = (0..<width).map { index -> Float in
-                let hz = low + (Double(index) + 0.5) / Double(width) * span
-                var level = -128 + random() * 12
-                for station in stations where abs(hz - station.hz) < station.width / 2 && sequence % 40 < 32 {
-                    level = max(level, station.dbm - random() * 8)
-                }
-                return level
-            }
+            let trace = traces[sequence - 1]
             band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: generation,
                                                     encoderSequence: UInt32(sequence),
                                                     producerTimestamp: UInt64(sequence) * 33_000_000,

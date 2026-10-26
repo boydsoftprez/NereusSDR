@@ -174,6 +174,8 @@ final class BandModel: ObservableObject {
     private(set) var wideSpanFactorNow = 1.0
     /// The frames a second the Core's latest context sends.
     private(set) var contextFps = 0
+    /// The frames to a waterfall line in the Core's latest context.
+    private(set) var contextFramesPerLine = 0
     /// The display frames received, for drawing every second one at half rate.
     private var stackFrameCount: UInt64 = 0
 
@@ -246,7 +248,8 @@ final class BandModel: ObservableObject {
         guard !state.waterfallHeld, let newest = state.stack.newestTime else {
             return 0
         }
-        return min(max((now - newest) / (secondsPerLine * Double(state.effectiveStackRowDivider)), 0), 1)
+        return StackedTrace.glide(since: now - newest, rowPeriod: secondsPerLine,
+                                  divider: state.effectiveStackRowDivider)
     }
     /// The grid's minimum following the noise floor (``GridFloorTracker``):
     /// what it sets is drawn, never kept.
@@ -511,8 +514,12 @@ final class BandModel: ObservableObject {
         lookBack(lines: 0, visibleLines: 0)
     }
 
-    /// The seconds a line stands for at the pan's line period.
-    var secondsPerLine: Double { Double(max(settings.waterfallPeriodMs, 1)) / 1000 }
+    /// The seconds a line stands for: the Core's row period, or the pan's
+    /// Update period before the Core has said (``StackedTrace/rowPeriodSeconds(fps:framesPerLine:fallbackMs:)``).
+    var secondsPerLine: Double {
+        StackedTrace.rowPeriodSeconds(fps: contextFps, framesPerLine: contextFramesPerLine,
+                                      fallbackMs: settings.waterfallPeriodMs)
+    }
 
     /// When the waterfall's top line arrived (the newest while live).
     var topLineTime: Double? { state.history.time(age: lookBackLines) }
@@ -553,6 +560,7 @@ final class BandModel: ObservableObject {
                        wide: BandCoverage(centerHz: context.wideCentreHz, spanHz: context.wideSpanHz))
             wideSpanFactorNow = context.spanHz > 0 ? max(1, context.wideSpanHz / context.spanHz) : 1
             contextFps = context.fps
+            contextFramesPerLine = context.framesPerLine
             sourceCentreHz = context.sourceCentreHz
             sourceRateHz = context.sampleRateHz
             // The bin width the Core's engine runs at, when it says its FFT size.
@@ -759,7 +767,7 @@ final class BandModel: ObservableObject {
         let layout = BandLayout(size: size, scale: scale, settings: shownSettings)
         state.resizeWaterfall(lines: Self.waterfallCapacity(size: size, scale: scale, settings: shownSettings))
         visibleLines = layout.waterfallLines
-        state.stackVisibleWaterfallRows = visibleLines
+        state.noteVisibleWaterfall(layout)
         state.commit(manualLevels: drawnSettings.phoneLevels)
         moveMarks()
         let pixels = BandGeometry.requestedPixels(forWidthPixels: Double(size.width))

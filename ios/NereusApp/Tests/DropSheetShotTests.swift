@@ -77,7 +77,7 @@ struct DropSheetShotTests {
         let model = AppModel(mediaPeerFactory: { IdlePeer() }, displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation(additions: .all)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         // Slice A is on 40 m, as the board draws it.
@@ -150,7 +150,7 @@ struct DropSheetShotTests {
         let model = AppModel(mediaPeerFactory: { IdlePeer() }, displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation(additions: .all)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
@@ -202,7 +202,7 @@ struct DropSheetShotTests {
         let model = AppModel(mediaPeerFactory: station.mediaPeerFactory,
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
