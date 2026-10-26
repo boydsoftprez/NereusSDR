@@ -54,6 +54,12 @@ python3 -m nereus_roundtable --config /etc/nereus-roundtable/roundtable.conf
 An unknown section or key, or a value the server cannot use, stops it at
 start with exit code 2 and a one-line message.
 
+SIGTERM or SIGINT stops it cleanly with exit code 0; systemd stops it with
+SIGTERM. `--stop-on-stdin-eof` adds a stop that works on every OS: the
+server stops the same way when its standard input reaches end of file. It
+is off unless given; the end-to-end test uses it on Windows, which has no
+SIGTERM to send a console program.
+
 ## The load probe
 
 `tests/load_probe.py` runs the real server in its own process and loads it

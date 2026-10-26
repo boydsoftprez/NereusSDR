@@ -20,8 +20,12 @@
 //   - A's archive, through the web sign-in link it asked for, lists the
 //     session with B's track of A's turn (and C's, marked AWAY); the link
 //     works once;
-//   - the server's log and files hold no address, no whole station id, no
-//     callsign and no message text (wire spec 9.3, 9.4).
+//   - the server stops cleanly with exit code 0, and its log and files
+//     hold no address, no whole station id, no callsign and no message
+//     text (wire spec 9.3, 9.4). On POSIX the stop is SIGTERM, the
+//     droplet's systemd stop; on Windows, which has no SIGTERM for a
+//     console program, it is the end of the server's standard input
+//     (--stop-on-stdin-eof).
 // The cases run in order on one server and one set of Cores.
 //
 // Skipped with the reason when no Python 3 is found or it lacks the
@@ -40,6 +44,11 @@
 //               /usr/bin/python3, which Windows does not have; the skip
 //               names what is missing. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: the server starts with --stop-on-stdin-eof and Windows
+//               stops it by closing its standard input: terminate() there
+//               posts WM_CLOSE, which a console Python never gets, so the
+//               test force-killed it after 10 s. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -409,8 +418,10 @@ void TstRoundtableE2e::initTestCase()
     m_server.setWorkingDirectory(kServerDir);
     m_server.setStandardOutputFile(root + QStringLiteral("/server.out"));
     m_server.setStandardErrorFile(root + QStringLiteral("/server.log"));
+    // --stop-on-stdin-eof: stopServer() closes the server's standard input
+    // on Windows. Elsewhere it stays open until the server exits.
     m_server.start(kPython, {QStringLiteral("-m"), QStringLiteral("nereus_roundtable"), QStringLiteral("--config"),
-                             config.fileName()});
+                             config.fileName(), QStringLiteral("--stop-on-stdin-eof")});
     QVERIFY2(m_server.waitForStarted(10000), qPrintable(m_server.errorString()));
 
     QElapsedTimer listening;
@@ -460,7 +471,14 @@ void TstRoundtableE2e::stopServer()
     if (m_server.state() == QProcess::NotRunning) {
         return;
     }
+#if defined(Q_OS_WIN)
+    // terminate() posts WM_CLOSE, which a console program never gets; the
+    // end of standard input is the server's clean stop here.
+    m_server.closeWriteChannel();
+#else
+    // SIGTERM: the stop systemd sends the live server.
     m_server.terminate();
+#endif
     if (!m_server.waitForFinished(10000)) {
         m_server.kill();
         m_server.waitForFinished(5000);
@@ -748,6 +766,10 @@ void TstRoundtableE2e::serverKeepsNoAddressOrMessageText()
     const QByteArray log = logFile.readAll();
     QVERIFY2(!log.contains("Traceback"), log.constData());
     QVERIFY2(log.contains("signed in (core)"), log.constData());
+#if defined(Q_OS_WIN)
+    // The clean stop came through standard input, not the kill() fallback.
+    QVERIFY2(log.contains("standard input closed"), log.constData());
+#endif
     QStringList forbidden{kHost, QStringLiteral("KG4VCF"), QStringLiteral("W4XYZ"), QStringLiteral("K4ABC"), kPostText,
                           kAwayText};
     forbidden.append(m_stationIds);
