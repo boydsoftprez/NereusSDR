@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-25 - A registered widget type with no declared properties (the
+//                 TX and RX section rows) is no longer labelled an
+//                 unsupported configuration; it gets the applet's binding
+//                 note. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: the declared-property group is
 //                 built only when it has rows (named declaredProperties), and
 //                 Advanced bindings are disabled while a declared type is
@@ -305,9 +310,13 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     // Workspace preview: a widget type with declared properties (no MeterItem).
     const QVector<ContentProperty> schema=m_item?QVector<ContentProperty>{}:m_registry.declaredProperties(entry.typeId);
     const bool declared=!schema.isEmpty();
-    if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:") && !declared)) {
+    // A registered widget type that declares no properties (the TX and RX
+    // section rows) is known and supported: it simply has no item-specific
+    // options. Only a type the registry does not know is unsupported.
+    const bool widgetType=!m_item && m_registry.hasWidgetFactory(entry.typeId);
+    if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:") && !declared && !widgetType)) {
         auto* note=new QLabel(reason.isEmpty()?tr("Unsupported configuration. Original data is retained; this object can be removed explicitly."):reason,this); note->setWordWrap(true); root->addWidget(note);
-    } else if(declared) {
+    } else if(declared || widgetType) {
         // The group exists only when it has rows, so nothing is built and
         // thrown away.
         const bool hasRows=std::any_of(schema.cbegin(),schema.cend(),
@@ -387,7 +396,9 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     const bool applet=entry.typeId.startsWith("applet:");
     if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
-    } else if(applet && entry.typeId!="applet:s_meter") {
+    } else if((applet && entry.typeId!="applet:s_meter") || (widgetType && !declared)) {
+        // A TX or RX section row is a copy its applet makes and wires, so it
+        // follows the applet's radio and slice as the applet itself does.
         advanced->setEnabled(false);advanced->setToolTip(tr("This applet keeps its current radio and slice. Saved source choices are retained."));
     } else if(!m_item && !applet && !declared) {advanced->setEnabled(false);advanced->setToolTip(tr("Unsupported content retains its stored bindings."));}
     else if(declared && !reason.isEmpty()) {advanced->setEnabled(false);advanced->setToolTip(reason);}
