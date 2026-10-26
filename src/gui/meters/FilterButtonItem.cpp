@@ -18,6 +18,9 @@
 //   2026-10-26 - Column range from Thetis setup.cs (columnRange), which
 //                 the editor clamps to. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 51: no limit by slice; Var1
+//                 and Var2 use the named indices. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -131,8 +134,11 @@ FilterButtonItem::FilterButtonItem(QObject* parent)
     // R-R3-49: Var1 and Var2 have no NereusSDR filter behind them; not
     // drawn until they do (the saved visibility is untouched).
     const bool varBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::VariableFilters);
-    setButtonHiddenUntilBuilt(10, !varBuilt);
-    setButtonHiddenUntilBuilt(11, !varBuilt);
+    // Thetis guards its RX2 grid (MeterManager.cs:7935 [v2.10.3.15]) and
+    // gives it only 9 buttons (:7726); no NereusSDR slice is limited, so
+    // nothing here depends on which slice the grid follows.
+    setButtonHiddenUntilBuilt(kVar1Button, !varBuilt);
+    setButtonHiddenUntilBuilt(kVar2Button, !varBuilt);
 
     connect(this, &ButtonBoxItem::buttonClicked,
             this, &FilterButtonItem::onButtonClicked);

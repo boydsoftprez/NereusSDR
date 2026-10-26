@@ -9226,6 +9226,11 @@ nereus_add_test(tst_other_button_ids)
 # never keys.
 nereus_add_test(tst_antenna_button_item)
 target_compile_definitions(tst_antenna_button_item PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 51: the filter grid has 12 buttons on every
+# slice; a click sets the entry's slice's RX filter only and leaves the
+# transmit filter alone; a preview copy never acts.
+nereus_add_test(tst_filter_button_item)
+target_compile_definitions(tst_filter_button_item PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 59: Alt-drag reorders the other buttons (Shift
 # swaps), the order is saved, and the editor lists every offered button.
 nereus_add_test(tst_other_button_reorder)

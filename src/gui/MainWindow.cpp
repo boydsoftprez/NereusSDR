@@ -1008,6 +1008,11 @@
 //                (transmit) with Thetis's on-state rules, and lights again
 //                when the transmit slice moves. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 51: a filter grid click sets
+//                the RX filter of its entry's slice only, on every slice;
+//                Thetis's MatchTXFilterToRXFilter has no NereusSDR
+//                equivalent yet (noted at the click). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -16050,8 +16055,19 @@ void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)
     //   Filter f = (Filter)((int)Filter.F1 + index); console.RX1Filter = f;
     // F1..F10 are the mode's presets, as the RX applet and the VFO flag
     // apply them. Var1 / Var2 (index 10, 11) have no NereusSDR filter yet.
+    // Thetis limits RX2's grid to 9 buttons and remaps its index
+    // (MeterManager.cs:7718-7727, :7947-7948 [v2.10.3.15]); every NereusSDR
+    // slice has all 12, so the index is used as is on any slice.
     const QList<FilterPreset> presets = store->presetsForMode(slice->dspMode());
     if (index < 0 || index >= presets.size()) { return; }
+    // Gap: Thetis's setFilter also calls console.MatchTXFilterToRXFilter()
+    // after setting the RX filter (MeterManager.cs:7956-7975 [v2.10.3.15]),
+    // which copies the RX filter to TX only while Shift is held
+    // (console.cs:34901-34921 [v2.10.3.15]):
+    //   //set tx to use rx filter if shift key down
+    // NereusSDR has no port of console.SetTXFilter (console.cs:17839-17870
+    // [v2.10.3.15]), so this click sets the slice's RX filter only and
+    // leaves TransmitModel's filter as it is.
     slice->setFilter(presets[index].low, presets[index].high);
 }
 
