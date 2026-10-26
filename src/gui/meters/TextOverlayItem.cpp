@@ -21,6 +21,9 @@
 //                 meter keeps WDSP's -400 zero-power floor as a number.
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the text back colours and toggles after
+//                 the older fields, so they survive a reload. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -265,9 +268,12 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
 //         fontFamily1|fontSize1|fontBold1|
 //         fontFamily2|fontSize2|fontBold2|
 //         scrollX|padding|
-//         <base64(text1)>|<base64(text2)>
+//         <base64(text1)>|<base64(text2)>|
+//         textBackColour1|textBackColour2|showTextBack1|showTextBack2
 //
-// text1/text2 are base64-encoded to avoid '|' collisions.
+// text1/text2 are base64-encoded to avoid '|' collisions. The text back
+// fields follow the older ones, so a record saved before they existed
+// still loads (with the defaults).
 // ---------------------------------------------------------------------------
 QString TextOverlayItem::serialize() const
 {
@@ -300,7 +306,12 @@ QString TextOverlayItem::serialize() const
         .arg(static_cast<double>(m_scrollX))
         .arg(static_cast<double>(m_padding))
         .arg(text1B64)
-        .arg(text2B64);
+        .arg(text2B64)
+        + QStringLiteral("|%1|%2|%3|%4")
+              .arg(m_textBackColour1.name(QColor::HexArgb))
+              .arg(m_textBackColour2.name(QColor::HexArgb))
+              .arg(m_showTextBack1 ? 1 : 0)
+              .arg(m_showTextBack2 ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +327,9 @@ QString TextOverlayItem::serialize() const
 // [15] = fontFamily2          [16] = fontSize2   [17] = fontBold2
 // [18] = scrollX              [19] = padding
 // [20] = text1 (base64)       [21] = text2 (base64)
+// Optional (absent from older records):
+// [22] = textBackColour1      [23] = textBackColour2
+// [24] = showTextBack1        [25] = showTextBack2
 // ---------------------------------------------------------------------------
 bool TextOverlayItem::deserialize(const QString& data)
 {
@@ -384,6 +398,23 @@ bool TextOverlayItem::deserialize(const QString& data)
     m_padding       = padding;
     m_text1         = text1;
     m_text2         = text2;
+
+    if (parts.size() > 22) {
+        const QColor back1(parts[22]);
+        if (back1.isValid()) { m_textBackColour1 = back1; }
+    }
+    if (parts.size() > 23) {
+        const QColor back2(parts[23]);
+        if (back2.isValid()) { m_textBackColour2 = back2; }
+    }
+    if (parts.size() > 24) {
+        const int show1 = parts[24].toInt(&ok);
+        if (ok) { m_showTextBack1 = (show1 != 0); }
+    }
+    if (parts.size() > 25) {
+        const int show2 = parts[25].toInt(&ok);
+        if (ok) { m_showTextBack2 = (show2 != 0); }
+    }
 
     return true;
 }

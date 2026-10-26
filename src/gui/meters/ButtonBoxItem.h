@@ -20,6 +20,10 @@
 //                 built (the saved visibility untouched), and an unavailable
 //                 button whose click says why. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -67,6 +71,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QColor>
 #include <QFont>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 
@@ -196,6 +201,14 @@ protected:
 
     // Thetis face. A subclass may draw its own face without changing hits or clicks.
     virtual void paintButton(QPainter& p, int index, const QRectF& rect);
+
+    // Grid styling every button grid saves after its own fields:
+    // "|borderWidth|margin|cornerRadius|heightRatio|fadeOnRx|fadeOnTx".
+    QString serializeGridStyle() const;
+    // Reads the styling from parts[first] on. A record saved before these
+    // fields existed ends sooner; a missing or unreadable field keeps its
+    // current value.
+    void deserializeGridStyle(const QStringList& parts, int first);
 
     int m_buttonCount{0};
     QVector<ButtonState> m_buttons;

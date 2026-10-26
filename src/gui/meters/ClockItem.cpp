@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 - Saves and restores the time, date and title colours after
+//                 the older fields, so they survive a reload. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -118,7 +121,13 @@ QString ClockItem::serialize() const
     return QStringLiteral("CLOCK|%1|%2|%3|%4|%5|%6|%7|%8")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
-        .arg(m_show24Hour ? 1 : 0).arg(m_showType ? 1 : 0);
+        .arg(m_show24Hour ? 1 : 0).arg(m_showType ? 1 : 0)
+        // Colours follow the older fields, so a record saved before they
+        // existed still loads (with the default colours).
+        + QStringLiteral("|%1|%2|%3")
+              .arg(m_timeColour.name(QColor::HexArgb))
+              .arg(m_dateColour.name(QColor::HexArgb))
+              .arg(m_typeTitleColour.name(QColor::HexArgb));
 }
 
 bool ClockItem::deserialize(const QString& data)
@@ -130,6 +139,14 @@ bool ClockItem::deserialize(const QString& data)
     m_bindingId = parts[5].toInt(); m_zOrder = parts[6].toInt();
     if (parts.size() > 7) { m_show24Hour = parts[7].toInt() != 0; }
     if (parts.size() > 8) { m_showType = parts[8].toInt() != 0; }
+    const auto readColour = [&](int index, QColor& colour) {
+        if (index >= parts.size()) { return; }
+        const QColor parsed(parts[index]);
+        if (parsed.isValid()) { colour = parsed; }
+    };
+    readColour(9, m_timeColour);
+    readColour(10, m_dateColour);
+    readColour(11, m_typeTitleColour);
     return true;
 }
 

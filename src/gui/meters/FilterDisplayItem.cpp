@@ -15,6 +15,9 @@
 //                 (setFilterResponseBins) in a remote window, resampled as
 //                 the local channel's is. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the text colour after the older fields,
+//                 so they survive a reload. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -581,7 +584,9 @@ void FilterDisplayItem::paintNotches(QPainter& p, const QRect& rect)
 // Format: FILTERDISPLAY|x|y|w|h|bindingId|zOrder|displayMode|dataLineColour|
 //         dataFillColour|edgesColourRX|edgesColourTX|notchColour|
 //         meterBackColour|fillSpectrum|padding|specMinDb|specMaxDb|
-//         waterfallPalette|waterfallFrameInterval
+//         waterfallPalette|waterfallFrameInterval|textColour
+// textColour follows the older fields, so a record saved before it existed
+// still loads (with the default colour).
 // ---------------------------------------------------------------------------
 QString FilterDisplayItem::serialize() const
 {
@@ -604,7 +609,8 @@ QString FilterDisplayItem::serialize() const
         .arg(static_cast<double>(m_specMinDb))
         .arg(static_cast<double>(m_specMaxDb))
         .arg(static_cast<int>(m_waterfallPalette))
-        .arg(m_waterfallFrameInterval);
+        .arg(m_waterfallFrameInterval)
+        + QLatin1Char('|') + m_textColour.name(QColor::HexArgb);
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +621,7 @@ QString FilterDisplayItem::serialize() const
 // [10]=edgesColourRX [11]=edgesColourTX [12]=notchColour [13]=meterBackColour
 // [14]=fillSpectrum [15]=padding [16]=specMinDb [17]=specMaxDb
 // [18]=waterfallPalette [19]=waterfallFrameInterval
+// Optional (absent from older records): [20]=textColour
 // ---------------------------------------------------------------------------
 bool FilterDisplayItem::deserialize(const QString& data)
 {
@@ -665,6 +672,11 @@ bool FilterDisplayItem::deserialize(const QString& data)
     m_specMaxDb         = specMaxDb;
     m_waterfallPalette  = static_cast<WaterfallPalette>(waterfallFrameInterval < 0 ? 0 : waterfallPalette);
     m_waterfallFrameInterval = (waterfallFrameInterval > 0) ? waterfallFrameInterval : 4;
+
+    if (parts.size() > 20) {
+        const QColor textColour(parts[20]);
+        if (textColour.isValid()) { m_textColour = textColour; }
+    }
 
     return true;
 }

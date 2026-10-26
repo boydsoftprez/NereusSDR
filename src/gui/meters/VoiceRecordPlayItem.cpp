@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -73,7 +77,8 @@ void VoiceRecordPlayItem::onButtonClicked(int index, Qt::MouseButton btn)
 QString VoiceRecordPlayItem::serialize() const
 {
     return QStringLiteral("VOICERECPLAY|%1|%2|%3|%4|%5|%6|%7")
-        .arg(m_x).arg(m_y).arg(m_w).arg(m_h).arg(m_bindingId).arg(m_zOrder).arg(columns());
+        .arg(m_x).arg(m_y).arg(m_w).arg(m_h).arg(m_bindingId).arg(m_zOrder).arg(columns())
+        + serializeGridStyle();
 }
 
 bool VoiceRecordPlayItem::deserialize(const QString& data)
@@ -84,6 +89,7 @@ bool VoiceRecordPlayItem::deserialize(const QString& data)
     m_w = parts[3].toFloat(); m_h = parts[4].toFloat();
     m_bindingId = parts[5].toInt(); m_zOrder = parts[6].toInt();
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
+    deserializeGridStyle(parts, 8);
     return true;
 }
 } // namespace NereusSDR

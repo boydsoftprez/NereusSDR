@@ -21,6 +21,10 @@
 //   2026-09-30 - The Power button is removed (maintainer decision): never
 //                 drawn, and a saved layout's Power bit is dropped on load.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -216,7 +220,8 @@ QString OtherButtonItem::serialize() const
     return QStringLiteral("OTHERBTNS|%1|%2|%3|%4|%5|%6|%7|%8")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
-        .arg(columns()).arg(visibleBits());
+        .arg(columns()).arg(visibleBits())
+        + serializeGridStyle();
 }
 
 bool OtherButtonItem::deserialize(const QString& data)
@@ -229,6 +234,7 @@ bool OtherButtonItem::deserialize(const QString& data)
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
     // A layout saved with a Power button loads without it.
     if (parts.size() > 8) { setVisibleBits(withoutOmittedButtons(parts[8].toUInt())); }
+    deserializeGridStyle(parts, 9);
     return true;
 }
 

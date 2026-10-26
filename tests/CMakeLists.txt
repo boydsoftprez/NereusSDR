@@ -769,6 +769,9 @@ nereus_add_test(tst_longpath_instruments)
 # Workspace preview: added copies of the SIGNAL STRENGTH dial (per-copy settings, own source).
 nereus_add_test(tst_smeter_dial_content)
 nereus_add_test(tst_container_document)
+# Container item colours and button grid styling survive a save and reload;
+# records saved before those fields existed still load.
+nereus_add_test(tst_container_item_persistence)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)

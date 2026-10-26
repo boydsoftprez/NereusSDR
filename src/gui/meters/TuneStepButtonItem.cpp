@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -103,7 +107,8 @@ QString TuneStepButtonItem::serialize() const
     return QStringLiteral("TUNESTEPBTNS|%1|%2|%3|%4|%5|%6|%7|%8|%9")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
-        .arg(columns()).arg(m_activeStep).arg(visibleBits());
+        .arg(columns()).arg(m_activeStep).arg(visibleBits())
+        + serializeGridStyle();
 }
 
 bool TuneStepButtonItem::deserialize(const QString& data)
@@ -116,6 +121,7 @@ bool TuneStepButtonItem::deserialize(const QString& data)
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
     if (parts.size() > 8) { setActiveStep(parts[8].toInt()); }
     if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
+    deserializeGridStyle(parts, 10);
     return true;
 }
 

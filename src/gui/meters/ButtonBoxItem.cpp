@@ -26,6 +26,10 @@
 //                 built (the saved visibility untouched), and an unavailable
 //                 button whose click says why. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -441,6 +445,42 @@ bool ButtonBoxItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH
 // ============================================================================
 // Serialization
 // ============================================================================
+
+QString ButtonBoxItem::serializeGridStyle() const
+{
+    return QStringLiteral("|%1|%2|%3|%4|%5|%6")
+        .arg(static_cast<double>(m_borderWidth))
+        .arg(static_cast<double>(m_margin))
+        .arg(static_cast<double>(m_cornerRadius))
+        .arg(static_cast<double>(m_heightRatio))
+        .arg(m_fadeOnRx ? 1 : 0)
+        .arg(m_fadeOnTx ? 1 : 0);
+}
+
+void ButtonBoxItem::deserializeGridStyle(const QStringList& parts, int first)
+{
+    // Sizes are never negative; a zero height ratio would leave no rows.
+    const auto readSize = [&](int index, float& value, bool allowZero) {
+        if (index >= parts.size()) { return; }
+        bool ok = false;
+        const float parsed = parts[index].toFloat(&ok);
+        if (ok && std::isfinite(parsed) && (allowZero ? parsed >= 0.0f : parsed > 0.0f)) {
+            value = parsed;
+        }
+    };
+    const auto readFlag = [&](int index, bool& value) {
+        if (index >= parts.size()) { return; }
+        bool ok = false;
+        const int parsed = parts[index].toInt(&ok);
+        if (ok) { value = parsed != 0; }
+    };
+    readSize(first, m_borderWidth, true);
+    readSize(first + 1, m_margin, true);
+    readSize(first + 2, m_cornerRadius, true);
+    readSize(first + 3, m_heightRatio, false);
+    readFlag(first + 4, m_fadeOnRx);
+    readFlag(first + 5, m_fadeOnTx);
+}
 
 QString ButtonBoxItem::serialize() const
 {

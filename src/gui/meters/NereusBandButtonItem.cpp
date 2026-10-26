@@ -19,6 +19,10 @@
 //   2026-10-24 - Default colors from NereusButtonFace.h, shared with the
 //                 RX Filter copy. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -252,7 +256,8 @@ QString NereusBandButtonItem::serialize() const
         + QLatin1Char('|') + m_backgroundTop.name(QColor::HexArgb)
         + QLatin1Char('|') + m_backgroundBottom.name(QColor::HexArgb)
         + QLatin1Char('|') + m_selectedTop.name(QColor::HexArgb)
-        + QLatin1Char('|') + m_selectedBottom.name(QColor::HexArgb);
+        + QLatin1Char('|') + m_selectedBottom.name(QColor::HexArgb)
+        + serializeGridStyle();
 }
 
 bool NereusBandButtonItem::deserialize(const QString& data)
@@ -290,6 +295,7 @@ bool NereusBandButtonItem::deserialize(const QString& data)
         const QColor bottom(parts[14]);
         if (bottom.isValid()) { m_selectedBottom = bottom; }
     }
+    deserializeGridStyle(parts, 15);
     applyChrome();
     return true;
 }

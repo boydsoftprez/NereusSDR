@@ -17,6 +17,9 @@
 //                 target marker in amber; elevation fed and drawn; "Both"
 //                 laid out two faces wide as in Thetis. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Corrected the "N" colour note: Thetis draws every
+//                 cardinal in OuterTextColour. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -391,7 +394,9 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             font.setBold(deg == 0);
             p.setFont(font);
-            // From Thetis MeterManager.cs:35275 — "N" drawn in red (bigBlobColour = red)
+            // Thetis draws every cardinal, "N" included, in OuterTextColour
+            // (MeterManager.cs:36809 [v2.10.3.15]). NereusSDR draws "N" bold in the
+            // large-dot colour (m_bigBlobColour); that is our own choice, not Thetis.
             p.setPen(deg == 0 ? m_bigBlobColour : m_outerTextColour);
             p.setBrush(Qt::NoBrush);
 

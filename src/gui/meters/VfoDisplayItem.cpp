@@ -15,6 +15,9 @@
 //   2026-09-24 : paint draws the unavailable text in place of the
 //                 frequency and labels (R-R3-49, R-R3-21). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores all six colours after the older fields,
+//                 so they survive a reload. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -205,7 +208,16 @@ QString VfoDisplayItem::serialize() const
 {
     return QStringLiteral("VFO|%1|%2|%3|%4|%5|%6|%7")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
-        .arg(m_bindingId).arg(m_zOrder).arg(static_cast<int>(m_displayMode));
+        .arg(m_bindingId).arg(m_zOrder).arg(static_cast<int>(m_displayMode))
+        // Colours follow the older fields, so a record saved before they
+        // existed still loads (with the default colours).
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6")
+              .arg(m_freqColour.name(QColor::HexArgb))
+              .arg(m_modeColour.name(QColor::HexArgb))
+              .arg(m_filterColour.name(QColor::HexArgb))
+              .arg(m_bandColour.name(QColor::HexArgb))
+              .arg(m_rxColour.name(QColor::HexArgb))
+              .arg(m_txColour.name(QColor::HexArgb));
 }
 
 bool VfoDisplayItem::deserialize(const QString& data)
@@ -216,6 +228,17 @@ bool VfoDisplayItem::deserialize(const QString& data)
     m_w = parts[3].toFloat(); m_h = parts[4].toFloat();
     m_bindingId = parts[5].toInt(); m_zOrder = parts[6].toInt();
     if (parts.size() > 7) { m_displayMode = static_cast<DisplayMode>(parts[7].toInt()); }
+    const auto readColour = [&](int index, QColor& colour) {
+        if (index >= parts.size()) { return; }
+        const QColor parsed(parts[index]);
+        if (parsed.isValid()) { colour = parsed; }
+    };
+    readColour(8, m_freqColour);
+    readColour(9, m_modeColour);
+    readColour(10, m_filterColour);
+    readColour(11, m_bandColour);
+    readColour(12, m_rxColour);
+    readColour(13, m_txColour);
     return true;
 }
 

@@ -434,7 +434,8 @@ private slots:
         QSplitter splitter;
         QString savedId;
         const QString savedItem = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967295");
-        const QString savedWithoutPower = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967294");
+        // Saving appends the default grid styling after the older fields.
+        const QString savedWithoutPower = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967294|0.005|0|3|1|0|0");
         {
             ContainerManager mgr(&dockParent, &splitter);
             ContainerWidget* c = mgr.createContainer(1, DockMode::Floating);

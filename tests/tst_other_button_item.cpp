@@ -346,7 +346,9 @@ private slots:
         QVERIFY(item.deserialize(saved));
         QVERIFY(!item.isButtonShown(Id::Rx2));
         QVERIFY(item.isButtonShown(Id::Anf));
-        QCOMPARE(item.serialize(), saved);
+        // Saving appends the grid styling (default here) after the older
+        // fields: border, margin, corner radius, height ratio, fade RX/TX.
+        QCOMPARE(item.serialize(), saved + QStringLiteral("|0.005|0|3|1|0|0"));
     }
 
     // ── The container's own slice ───────────────────────────────────────
@@ -721,7 +723,7 @@ private slots:
         QCOMPARE(item.columns(), 6);
         const uint32_t kept = bits & ~(1u << int(Id::Power));
         QCOMPARE(item.visibleBits(), kept);
-        QCOMPARE(item.serialize(), QStringLiteral("OTHERBTNS|0.1|0.2|0.5|0.5|0|3|6|%1").arg(kept));
+        QCOMPARE(item.serialize(), QStringLiteral("OTHERBTNS|0.1|0.2|0.5|0.5|0|3|6|%1|0.005|0|3|1|0|0").arg(kept));
     }
 
     void everyReasonIsPlain()

@@ -13,6 +13,10 @@
 //   2026-09-28 - 2 m button at index 14 (R-IOS-26, R-R3-49). J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -116,7 +120,8 @@ QString BandButtonItem::serialize() const
     return QStringLiteral("BANDBTNS|%1|%2|%3|%4|%5|%6|%7|%8|%9")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
-        .arg(columns()).arg(m_activeBand).arg(visibleBits());
+        .arg(columns()).arg(m_activeBand).arg(visibleBits())
+        + serializeGridStyle();
 }
 
 bool BandButtonItem::deserialize(const QString& data)
@@ -132,6 +137,7 @@ bool BandButtonItem::deserialize(const QString& data)
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
     if (parts.size() > 8) { setActiveBand(parts[8].toInt()); }
     if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
+    deserializeGridStyle(parts, 10);
     return true;
 }
 
