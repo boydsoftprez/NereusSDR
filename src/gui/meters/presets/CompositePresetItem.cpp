@@ -1,5 +1,11 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Clock: thetisFormat draws Thetis's strings (12 hour h:mm:ss
+//                 with am / pm apart, ddd d MMM yyyy, titles local / utc);
+//                 new clock faces take kClockPresetThetisDefaults, a saved
+//                 clock without the key keeps yyyy-MM-dd and its earlier time
+//                 format. The clock reads ClockItem's time source.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history: trace 2 (a second channel) reads its own
 //                 source (trace2Context, a slice per trace) or data source
 //                 variable 2, keeps its own samples and draws its own line,
@@ -273,6 +279,13 @@ AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,
     return {skin,window,skin,QRectF(outer.left(),outer.bottom()-readoutHeight,outer.width(),readoutHeight),
         QRectF(outer.right()-qMin(outer.width()*.48,190*outer.width()/720),outer.top(),qMin(outer.width()*.48,186*outer.width()/720),header),scale,readoutFont,columns,nameHeight,valueHeight,peakHeight};
 }
+// Thetis draws the time at FontSize * 1.9f and am / pm at FontSize * 0.8f.
+// From Thetis MeterManager.cs:40523,40525 [v2.10.3.15]
+constexpr float kClockTimeFontScale=1.9f;
+constexpr float kClockAmPmFontScale=0.8f;
+// The am / pm share of the time line (NereusSDR layout; Thetis offsets it
+// w * 0.228f from the time's start, MeterManager.cs:40525 [v2.10.3.15]).
+constexpr double kClockAmPmShare=0.22;
 QColor onDarkGlass(QColor requested) {
     // Contrast adaptation changes display only: alpha and stored color survive.
     if(requested.lightnessF()<.38) { return QColor(224,231,237,requested.alpha()); }
@@ -359,6 +372,10 @@ void CompositePresetItem::initialise() {
         m_bands->setAllButtonsAvailable(false,"No live slice is attached"); m_modes->setAllButtonsAvailable(false,"No live slice is attached");
     }
     if(m_face==Face::Clock || m_face==Face::Contest) { m_clock=new ClockItem(this,false); }
+    // Off: yyyy-MM-dd and the earlier time format, as the clock painted
+    // before the option existed. New clock faces take
+    // kClockPresetThetisDefaults (applyNewItemDefaults).
+    if(m_clock) { m_config["thetisFormat"]=false; }
     setBindingId(m_channels.isEmpty() ? -1 : m_channels.first().binding); configureDynamics();
 }
 QString CompositePresetItem::typeId() const {
@@ -522,6 +539,13 @@ QString CompositePresetItem::faceArtPath(double diagonalPx) const {
 }
 void CompositePresetItem::applyNewItemDefaults() {
     MeterItem::applyNewItemDefaults();
+    if(m_face==Face::Clock) {
+        // New clock faces draw Thetis's time and date strings
+        // (kClockPresetThetisDefaults, CompositePresetItem.h).
+        const ClockPresetThetisDefaults& d=kClockPresetThetisDefaults;
+        if(!applyConfiguration({{"thetisFormat",d.thetisFormat},{"show24Hour",d.show24Hour}})) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
     if(m_face==Face::Eye) {
         // New magic eyes take Thetis's AddMagicEye / clsMagicEyeItem values
         // (kMagicEyeThetisDefaults, MagicEyeItem.h). Thetis's "eye-bezel"
@@ -767,7 +791,7 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face==Face::Anan) { fields.append("darkMode"); }
     if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
     if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units","trace2Context"}); }
-    if(m_clock) { fields.append({"clockMode","showDate","show24Hour","clockTimeColor","clockDateColor","clockTitleColor"}); }
+    if(m_clock) { fields.append({"clockMode","showDate","show24Hour","thetisFormat","clockTimeColor","clockDateColor","clockTitleColor"}); }
     if(m_vfo) { fields.append({"vfo","vfoFrequencyColor","vfoModeColor","vfoFilterColor","vfoBandColor"}); }
     if(m_bands) { fields.append({"bands","modes"}); }
     if(!m_channels.isEmpty()) { fields.append("bindingId"); }
@@ -778,7 +802,7 @@ QJsonObject CompositePresetItem::configuration() const {
     const QStringList fields=editableFields();
     const QStringList known{"title","showTitle","titleColor","backdropColor","lowColor","highColor","showReadout","showPeakValue","fontSize","displayGroup","clockMode","showDate","show24Hour","historyCapacity","historyMs","autoScale","minValue","maxValue","units",
         "powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode","eyeScale","bezelScale","bezelImage",
-        "showType","typeColor","showSubMarker","subMarkerColor","trace2Context"};
+        "showType","typeColor","showSubMarker","subMarkerColor","trace2Context","thetisFormat"};
     for(const QString& key:known) { if(!fields.contains(key)) { c.remove(key); } }
     if(m_vfo) { c["vfo"]=m_vfo->serialize(); c["vfoFrequencyColor"]=m_vfo->frequencyColour().name(QColor::HexArgb); c["vfoModeColor"]=m_vfo->modeColour().name(QColor::HexArgb); c["vfoFilterColor"]=m_vfo->filterColour().name(QColor::HexArgb); c["vfoBandColor"]=m_vfo->bandColour().name(QColor::HexArgb); }
     if(m_bands) { c["bands"]=m_bands->serialize(); c["modes"]=m_modes->serialize(); }
@@ -809,7 +833,7 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
     for(const QString& key:{QStringLiteral("peakHoldColor"),QStringLiteral("peakValueColor"),QStringLiteral("powerScaleColor"),QStringLiteral("subNeedleColor")}) {
         if(next.contains(key) && (!next[key].isString() || (!next[key].toString().isEmpty() && !QColor(next[key].toString()).isValid()))) { return false; }
     }
-    for(const QString& key:{QStringLiteral("shadow"),QStringLiteral("darkMode"),QStringLiteral("showType"),QStringLiteral("showSubMarker")}) { if(next.contains(key) && !next[key].isBool()) { return false; } }
+    for(const QString& key:{QStringLiteral("shadow"),QStringLiteral("darkMode"),QStringLiteral("showType"),QStringLiteral("showSubMarker"),QStringLiteral("thetisFormat")}) { if(next.contains(key) && !next[key].isBool()) { return false; } }
     for(const QString& key:{QStringLiteral("typeColor"),QStringLiteral("subMarkerColor")}) {
         if(next.contains(key) && (!next[key].isString() || !QColor(next[key].toString()).isValid())) { return false; }
     }
@@ -1554,19 +1578,39 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
             const float clockLeft=m_clock->x()*width,clockTop=m_clock->y()*height;
             const float clockWidth=m_clock->itemWidth()*width,clockHeight=m_clock->itemHeight()*height;
             const QRectF clock(static_cast<qreal>(clockLeft),static_cast<qreal>(clockTop),
-                               static_cast<qreal>(clockWidth),static_cast<qreal>(clockHeight)); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
+                               static_cast<qreal>(clockWidth),static_cast<qreal>(clockHeight)); const QString mode=m_config["clockMode"].toString();
+            // ClockItem's time source (tests fix it); unset, the current time.
+            const QDateTime local=m_clock->currentLocalTime(); const QDateTime utc=local.toUTC(); p.setPen(m_clock->timeColour());
+            const bool thetis=m_config.value("thetisFormat").toBool(false);
             const auto display=[&](QDateTime time,QString title,QRectF rect) {
-                const QString fmt=m_config["show24Hour"].toBool()?"HH:mm:ss":"hh:mm:ss AP";
+                const bool show24=m_config["show24Hour"].toBool();
+                const QString fmt=show24?"HH:mm:ss":"hh:mm:ss AP";
                 const bool titleOn=m_config["showTitle"].toBool(),dateOn=m_config["showDate"].toBool();
                 const int lines=1+int(titleOn)+int(dateOn); const double lineHeight=rect.height()/lines;
                 // Child clock roles use the owning face scale, then measured fitting.
                 // Contest already assigns a compact child rectangle; do not multiply twice.
                 double top=rect.top();
                 if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),title,textSize); top+=lineHeight; }
-                p.setPen(m_clock->timeColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString(fmt),textSize); top+=lineHeight;
-                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString("yyyy-MM-dd"),textSize); }
+                p.setPen(m_clock->timeColour());
+                const QRectF timeBox(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight);
+                if(thetis && !show24) {
+                    // 12 hour: h:mm:ss, then am / pm apart in a smaller font.
+                    // From Thetis MeterManager.cs:40491-40495,40521-40525 [v2.10.3.15]
+                    //time [original inline comment from MeterManager.cs:40521]
+                    const double amPmWidth=timeBox.width()*kClockAmPmShare;
+                    drawObjectText(p,timeBox.adjusted(0,0,-amPmWidth,0),ClockItem::thetisTime(time,false),textSize,Qt::AlignRight|Qt::AlignVCenter);
+                    drawObjectText(p,QRectF(timeBox.right()-amPmWidth,timeBox.top(),amPmWidth,timeBox.height()),ClockItem::thetisAmPm(time),textSize*kClockAmPmFontScale/kClockTimeFontScale,Qt::AlignLeft|Qt::AlignVCenter);
+                } else {
+                    drawObjectText(p,timeBox,thetis?ClockItem::thetisTime(time,show24):time.toString(fmt),textSize);
+                }
+                top+=lineHeight;
+                //date [original inline comment from MeterManager.cs:40532]
+                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),thetis?ClockItem::thetisDate(time):time.toString("yyyy-MM-dd"),textSize); }
             };
-            if(mode=="Both") { display(utc.toLocalTime(),"Local",QRectF(clock.left(),clock.top(),clock.width()/2,clock.height())); display(utc,"UTC",QRectF(clock.center().x(),clock.top(),clock.width()/2,clock.height())); } else { display(mode=="UTC"?utc:utc.toLocalTime(),mode,clock); }
+            // Thetis titles the halves "local" and "utc".
+            // From Thetis MeterManager.cs:40515-40516 [v2.10.3.15]
+            const QString localTitle=thetis?QStringLiteral("local"):QStringLiteral("Local"),utcTitle=thetis?QStringLiteral("utc"):QStringLiteral("UTC");
+            if(mode=="Both") { display(local,localTitle,QRectF(clock.left(),clock.top(),clock.width()/2,clock.height())); display(utc,utcTitle,QRectF(clock.center().x(),clock.top(),clock.width()/2,clock.height())); } else { display(mode=="UTC"?utc:local,mode=="UTC"?utcTitle:localTitle,clock); }
         }
     }
     p.restore();

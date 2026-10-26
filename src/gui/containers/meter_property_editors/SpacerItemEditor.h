@@ -1,6 +1,7 @@
 #pragma once
 #include "BaseItemEditor.h"
 
+class QCheckBox;
 class QDoubleSpinBox;
 class QPushButton;
 
@@ -21,6 +22,8 @@ private:
     QPushButton*    m_btnColour1{nullptr};
     QPushButton*    m_btnColour2{nullptr};
     QDoubleSpinBox* m_spinPadding{nullptr};
+    QCheckBox*      m_chkRxTxColours{nullptr};
+    QCheckBox*      m_chkPaddingSetsHeight{nullptr};
 };
 
 } // namespace NereusSDR

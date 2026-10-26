@@ -19,6 +19,10 @@
 //                 date_loc as Thetis builds them; paint and readings share
 //                 an injectable time source. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - The Thetis time, am / pm and date strings are public
+//                 statics (thetisTime, thetisAmPm, thetisDate) so the
+//                 composite clock face draws them too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -131,23 +135,45 @@ namespace {
 // From Thetis MeterManager.cs:31093-31094 [v2.10.3.15]
 constexpr const char* kPublishedDateFormat = "ddd d MMM yyyy";
 
+} // namespace
+
 // Thetis formats with .NET custom format strings. "HH:mm:ss" matches Qt;
 // .NET "h" is the 12-hour hour (1-12), which Qt's "h" is not without an
 // AP marker, so the 12-hour hour is computed here.
 // From Thetis MeterManager.cs:31073-31091 [v2.10.3.15]
-QString publishedTime(const QDateTime& dt, bool show24Hour)
+// The clock face draws the same strings (renderClock).
+// From Thetis MeterManager.cs:40489-40511 [v2.10.3.15]
+QString ClockItem::thetisTime(const QDateTime& dt, bool show24Hour)
 {
     const QLocale c = QLocale::c();
     if (show24Hour) {
         return c.toString(dt, QStringLiteral("HH:mm:ss"));
     }
-    const int hour = dt.time().hour();
-    int hour12 = hour % 12;
+    int hour12 = dt.time().hour() % 12;
     if (hour12 == 0) {
         hour12 = 12;
     }
-    return QString::number(hour12) + c.toString(dt, QStringLiteral(":mm:ss"))
-        + (hour >= 12 ? QStringLiteral("pm") : QStringLiteral("am"));
+    return QString::number(hour12) + c.toString(dt, QStringLiteral(":mm:ss"));
+}
+
+QString ClockItem::thetisAmPm(const QDateTime& dt)
+{
+    return dt.time().hour() >= 12 ? QStringLiteral("pm") : QStringLiteral("am");
+}
+
+QString ClockItem::thetisDate(const QDateTime& dt)
+{
+    return QLocale::c().toString(dt, QString::fromLatin1(kPublishedDateFormat));
+}
+
+namespace {
+
+QString publishedTime(const QDateTime& dt, bool show24Hour)
+{
+    if (show24Hour) {
+        return ClockItem::thetisTime(dt, true);
+    }
+    return ClockItem::thetisTime(dt, false) + ClockItem::thetisAmPm(dt);
 }
 
 } // namespace
@@ -156,15 +182,13 @@ QHash<QString, QVariant> ClockItem::publishedReadings() const
 {
     const QDateTime now = currentLocalTime();
     const QDateTime utcNow = now.toUTC();
-    const QLocale c = QLocale::c();
-    const QString dateFmt = QString::fromLatin1(kPublishedDateFormat);
 
     // From Thetis MeterManager.cs:31096-31099 [v2.10.3.15]
     QHash<QString, QVariant> readings;
     readings.insert(QStringLiteral("time_utc"), publishedTime(utcNow, m_show24Hour));
-    readings.insert(QStringLiteral("date_utc"), c.toString(utcNow, dateFmt));
+    readings.insert(QStringLiteral("date_utc"), thetisDate(utcNow));
     readings.insert(QStringLiteral("time_loc"), publishedTime(now, m_show24Hour));
-    readings.insert(QStringLiteral("date_loc"), c.toString(now, dateFmt));
+    readings.insert(QStringLiteral("date_loc"), thetisDate(now));
     return readings;
 }
 

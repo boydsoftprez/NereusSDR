@@ -15,6 +15,9 @@
 //   2026-10-25 - publishedReadings(): time_utc, time_loc, date_utc and
 //                 date_loc as Thetis builds them; injectable time source.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - thetisTime / thetisAmPm / thetisDate and a public
+//                 currentLocalTime(), shared with the composite clock face.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -95,6 +98,15 @@ public:
     // empty function) means QDateTime::currentDateTime(). Tests inject a
     // fixed time.
     void setTimeSource(std::function<QDateTime()> source) { m_timeSource = std::move(source); }
+    // The time source's local time (or QDateTime::currentDateTime()).
+    QDateTime currentLocalTime() const;
+
+    // Thetis's clock strings, in the C locale. 24 hour is HH:mm:ss; 12 hour
+    // is h:mm:ss with am / pm apart (thetisAmPm). The date is
+    // ddd d MMM yyyy. From Thetis MeterManager.cs:40489-40511 [v2.10.3.15]
+    static QString thetisTime(const QDateTime& dt, bool show24Hour);
+    static QString thetisAmPm(const QDateTime& dt);
+    static QString thetisDate(const QDateTime& dt);
 
 private:
     bool m_show24Hour{true};
@@ -104,7 +116,5 @@ private:
     QColor m_typeTitleColour{0x70, 0x80, 0x90};
     qint64 m_lastClockSecond{-1};
     std::function<QDateTime()> m_timeSource;
-
-    QDateTime currentLocalTime() const;
 };
 } // namespace NereusSDR

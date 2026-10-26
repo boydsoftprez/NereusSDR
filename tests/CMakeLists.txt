@@ -848,6 +848,10 @@ nereus_add_test(tst_meter_magic_eye)
 # PK / AVG / FFT type glyph, the uV and dBm sub lines, the peak value without
 # peak hold, the background, history, saved records and new-item defaults.
 nereus_add_test(tst_meter_signal_text)
+# Container item parity Task 24: spacer RX/TX colours with the transmit-flip
+# fade, padding sets height, saved records keep the gradient, and new-item
+# defaults.
+nereus_add_test(tst_meter_spacer)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
