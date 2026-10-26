@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut: the cut guard also holds
+//               RF through the model's cut line (TransmitCutLine::hold)
+//               before it cuts. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -3061,9 +3065,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                                  silentMs);
                 });
         // Remote transmit cut off the main thread (2026-10-15): the guard
-        // judges the same 400 ms from the "tx" channel's messages at their
-        // receipt, on a thread of its own, so a held main thread still cuts
-        // a keyed remote device's transmit. Its cut, on its thread, only
+        // judges the watchdog's hold and cut deadlines from the "tx"
+        // channel's messages at their receipt, on a thread of its own, so a
+        // held main thread still holds, then cuts, a keyed remote device's
+        // transmit. Its cut, on its thread, only
         // cuts the model's line and posts the rest here
         // (onTransmitCutOffMain); it never waits on this thread.
         m_txCutTarget = std::make_shared<TxCutTarget>();
@@ -3091,6 +3096,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                 server->onTransmitCutOffMain(mediaEpoch, armSerial, silentMs);
                             },
                             Qt::QueuedConnection);
+                    }
+                },
+                // Remote transmit hold then cut (2026-10-26): past the hold
+                // deadline the guard holds RF silent through the same line
+                // (the TX channel's Guard bit only) and releases it on a
+                // receipt, a disarm, a new arm or after its cut.
+                [target](bool held) {
+                    const std::lock_guard<std::mutex> lock(target->mutex);
+                    if (target->line) {
+                        target->line->hold(held);
                     }
                 });
         }

@@ -24,6 +24,15 @@
 //     guard cuts while main sleeps, and the server is destroyed before its
 //     post runs; the connection's cut is still cleared and the next key
 //     reaches the connection.
+//   lineHoldSetsOnlyTheGuardBit: hold(true) from a std::thread while main
+//     sleeps sets only the TX channel's Guard hold bit: the gate stays
+//     open and nothing reaches the connection; hold(false) clears it; cut()
+//     still closes the gate and latches cutTransmit; a line with no
+//     targets does nothing.
+//   aServerGuardHoldsWithinTheHoldBound: the station server's cut guard,
+//     armed and heard once while main sleeps, sets the Guard bit more than
+//     kLinkHoldMs and at most kLinkHoldMs + 100 ms after the heard, with no
+//     cut; a receipt clears it.
 //
 // REALTIME: wall-clock bounds while the main thread is held.
 //
@@ -41,6 +50,10 @@
 //               RemoteTxWatchdog::kLinkCutMs (renamed from
 //               kLinkLossDeadlineMs). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the line's hold sets only
+//               the Guard bit, and the server's guard holds within
+//               kLinkHoldMs + 100 ms. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -83,6 +96,9 @@ constexpr int kMainHoldMs = 500;
 constexpr double kReachBoundMs = 50.0;
 // The bound tst_tx_link_loss_each_path uses (kBoundMs).
 constexpr qint64 kCutBoundMs = RemoteTxWatchdog::kLinkCutMs + 100;
+// The hold's bound, the same 100 ms past kLinkHoldMs.
+constexpr qint64 kHoldBoundMs = RemoteTxWatchdog::kLinkHoldMs + 100;
+constexpr quint32 kGuardBit = static_cast<quint32>(TxChannel::RfHold::Guard);
 
 double msBetween(Clock::time_point a, Clock::time_point b)
 {
@@ -504,6 +520,115 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(findEntry(rig.conn.since(beforeKey), QStringLiteral("MOX on")),
                                  5000);
         rig.model.setTune(false);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.model.moxController()->state() == MoxState::Rx, 5000);
+    }
+
+    void lineHoldSetsOnlyTheGuardBit()
+    {
+        // A line with no targets: hold does nothing.
+        {
+            TransmitCutLine empty;
+            empty.hold(true);
+            empty.hold(false);
+        }
+
+        Rig rig;
+        rig.model.moxController()->setMox(true);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.tx.isRfGateOpen()
+                                     && findEntry(rig.conn.entries(), QStringLiteral("MOX on"))
+                                     && findEntry(rig.conn.entries(), QStringLiteral("relay on")),
+                                 5000);
+        const std::shared_ptr<TransmitCutLine> line = rig.model.transmitCutLine();
+        QVERIFY(line != nullptr);
+        QCOMPARE(rig.tx.rfHoldMask(), 0u);
+        const std::size_t mark = rig.conn.count();
+
+        std::atomic<quint32> maskAfterHold{0};
+        std::atomic<bool> gateAfterHold{false};
+        runOffMainWhileMainSleeps([line, &rig, &maskAfterHold, &gateAfterHold]() {
+            line->hold(true);
+            maskAfterHold.store(rig.tx.rfHoldMask());
+            gateAfterHold.store(rig.tx.isRfGateOpen());
+        });
+        QCOMPARE(maskAfterHold.load(), kGuardBit);
+        QVERIFY2(gateAfterHold.load(), "the hold closed the RF gate");
+        QCOMPARE(rig.tx.rfHoldMask(), kGuardBit);
+        QTest::qWait(50);
+        QVERIFY(!rig.conn.transmitCut());
+        QCOMPARE(rig.conn.count(), mark);
+        QVERIFY(rig.model.mox());
+
+        line->hold(false);
+        QCOMPARE(rig.tx.rfHoldMask(), 0u);
+        QVERIFY(rig.tx.isRfGateOpen());
+
+        // cut() still closes the gate and latches cutTransmit.
+        line->cut();
+        QVERIFY(!rig.tx.isRfGateOpen());
+        QVERIFY(rig.conn.transmitCut());
+        rig.model.catchUpTransmitCut(QString());
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.conn.transmitCut() && !rig.model.mox(), 5000);
+    }
+
+    // The station server's guard holds the model's TX channel past
+    // kLinkHoldMs of silence, off the main thread, without cutting; a
+    // receipt gives RF back.
+    void aServerGuardHoldsWithinTheHoldBound()
+    {
+        Rig rig;
+        rig.model.moxController()->setMox(true);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.model.mox() && rig.tx.isRfGateOpen()
+                                     && findEntry(rig.conn.entries(), QStringLiteral("MOX on"))
+                                     && findEntry(rig.conn.entries(), QStringLiteral("relay on")),
+                                 5000);
+        QTemporaryDir settingsDir;
+        QTemporaryDir securityDir;
+        QVERIFY(settingsDir.isValid());
+        QVERIFY(securityDir.isValid());
+        AppSettings settings(settingsDir.filePath(QStringLiteral("station.settings")));
+        auto server = std::make_unique<StationServer>(
+            &rig.model, settings, Test::seedCoreIdentity(securityDir.path()));
+        server->setRemoteTransmitAllowed(true);
+        RemoteTxCutGuard* const guard = server->txCutGuard();
+        QVERIFY(guard != nullptr);
+        const std::size_t mark = rig.conn.count();
+
+        // Heard once, then silent while main sleeps with no event loop.
+        constexpr quint64 kMediaEpoch = 7;
+        guard->arm(kMediaEpoch);
+        const Clock::time_point heard = Clock::now();
+        guard->heardOffMain(kMediaEpoch, heard);
+        const Clock::time_point until =
+            heard + std::chrono::milliseconds(kHoldBoundMs + 500);
+        while (Clock::now() < until && (rig.tx.rfHoldMask() & kGuardBit) == 0u) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const double heldAfter = msBetween(heard, Clock::now());
+        qInfo("guard hold +%.2f ms after the heard (more than %lld, at most %lld)", heldAfter,
+              static_cast<long long>(RemoteTxWatchdog::kLinkHoldMs),
+              static_cast<long long>(kHoldBoundMs));
+        QCOMPARE(rig.tx.rfHoldMask(), kGuardBit);
+        QVERIFY(guard->isHolding());
+        QVERIFY2(heldAfter > double(RemoteTxWatchdog::kLinkHoldMs)
+                     && heldAfter <= double(kHoldBoundMs),
+                 qPrintable(QStringLiteral("held %1 ms after the heard").arg(heldAfter)));
+        QVERIFY(rig.tx.isRfGateOpen());
+        QVERIFY(!rig.conn.transmitCut());
+        QCOMPARE(rig.conn.count(), mark);
+
+        // A receipt gives RF back, still off the main thread's event loop.
+        guard->heardOffMain(kMediaEpoch, Clock::now());
+        const Clock::time_point releaseBy = Clock::now() + std::chrono::milliseconds(100);
+        while (Clock::now() < releaseBy && (rig.tx.rfHoldMask() & kGuardBit) != 0u) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        QCOMPARE(rig.tx.rfHoldMask(), 0u);
+        QVERIFY(guard->isJudging());
+        guard->disarm();
+        QVERIFY(!rig.conn.transmitCut());
+
+        server.reset();
+        rig.model.moxController()->setMox(false);
         QTRY_VERIFY_WITH_TIMEOUT(rig.model.moxController()->state() == MoxState::Rx, 5000);
     }
 };

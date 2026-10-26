@@ -13,6 +13,11 @@
 //   2026-10-16: cuts after more than kDeadlineMs of silence, not at it,
 //               as the watchdog does. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: run() holds RF after more
+//               than kHoldMs of silence, releases the hold on a heard,
+//               and cuts after more than kCutMs; arm(), disarm() and the
+//               destructor release a hold. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxCutGuard.h"
@@ -39,8 +44,9 @@ void nameThisThread()
 
 } // namespace
 
-RemoteTxCutGuard::RemoteTxCutGuard(CutFn cut)
+RemoteTxCutGuard::RemoteTxCutGuard(CutFn cut, HoldFn hold)
     : m_cut(std::move(cut))
+    , m_hold(std::move(hold))
 {
     m_thread = std::thread([this] { run(); });
 }
@@ -51,6 +57,7 @@ RemoteTxCutGuard::~RemoteTxCutGuard()
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_stop = true;
         m_judging.store(false);
+        releaseHoldLocked();
     }
     m_wake.notify_all();
     if (m_thread.joinable()) {
@@ -63,6 +70,8 @@ quint64 RemoteTxCutGuard::arm(quint64 mediaEpoch)
     quint64 serial = 0;
     {
         const std::lock_guard<std::mutex> lock(m_mutex);
+        // The previous arm's hold goes before this arm starts.
+        releaseHoldLocked();
         m_armed = true;
         m_epoch = mediaEpoch;
         m_lastHeard = Clock::now();
@@ -80,13 +89,14 @@ void RemoteTxCutGuard::disarm()
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_armed = false;
         m_judging.store(false);
+        releaseHoldLocked();
     }
     m_wake.notify_all();
 }
 
 void RemoteTxCutGuard::heardOffMain(quint64 mediaEpoch, Clock::time_point at)
 {
-    bool started = false;
+    bool wake = false;
     {
         const std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_armed || mediaEpoch == 0 || mediaEpoch != m_epoch) {
@@ -97,30 +107,58 @@ void RemoteTxCutGuard::heardOffMain(quint64 mediaEpoch, Clock::time_point at)
         }
         if (!m_judging.load()) {
             m_judging.store(true);
-            started = true;
+            wake = true;
+        }
+        // A heard while holding wakes the thread to release the hold now,
+        // not at the cut deadline it is waiting for.
+        if (m_holding.load()) {
+            wake = true;
         }
     }
-    // Only the start of judging wakes the thread; a later heard is picked up
-    // when the thread rechecks at the deadline.
-    if (started) {
+    // Otherwise a later heard is picked up when the thread rechecks at the
+    // deadline.
+    if (wake) {
         m_wake.notify_all();
     }
 }
 
 void RemoteTxCutGuard::heardOnMain(Clock::time_point at)
 {
-    const std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_armed) {
-        return;
+    bool wake = false;
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_armed) {
+            return;
+        }
+        if (at > m_lastHeard) {
+            m_lastHeard = at;
+        }
+        wake = m_holding.load();
     }
-    if (at > m_lastHeard) {
-        m_lastHeard = at;
+    if (wake) {
+        m_wake.notify_all();
     }
 }
 
 bool RemoteTxCutGuard::isJudging() const
 {
     return m_judging.load();
+}
+
+bool RemoteTxCutGuard::isHolding() const
+{
+    return m_holding.load();
+}
+
+void RemoteTxCutGuard::releaseHoldLocked()
+{
+    if (!m_holding.load()) {
+        return;
+    }
+    m_holding.store(false);
+    if (m_hold) {
+        m_hold(false);
+    }
 }
 
 quint64 RemoteTxCutGuard::armSerial() const
@@ -140,13 +178,34 @@ void RemoteTxCutGuard::run()
         // "More than 400 ms", as RemoteTxWatchdog judges it: the first
         // millisecond past the deadline. Cutting at the deadline itself cut
         // at exactly 400 ms of silence, and the watchdog's stop then
-        // reported 400 (CI, 2026-10-16).
-        const Clock::time_point deadline =
-            m_lastHeard + std::chrono::milliseconds(kDeadlineMs + 1);
+        // reported 400 (CI, 2026-10-16). The hold and the cut follow the
+        // same rule (2026-10-26).
+        const Clock::time_point holdAt =
+            m_lastHeard + std::chrono::milliseconds(kHoldMs + 1);
+        const Clock::time_point cutAt =
+            m_lastHeard + std::chrono::milliseconds(kCutMs + 1);
         const Clock::time_point now = Clock::now();
-        if (now < deadline) {
+        if (now < holdAt) {
+            if (m_holding.load()) {
+                // Heard again within the hold: RF back, judging goes on.
+                releaseHoldLocked();
+                continue;
+            }
             // Woken early or spuriously, or last-heard moved: recheck then.
-            m_wake.wait_until(lock, deadline);
+            m_wake.wait_until(lock, holdAt);
+            continue;
+        }
+        if (!m_holding.load()) {
+            m_holding.store(true);
+            if (m_hold) {
+                m_hold(true);
+            }
+            continue;
+        }
+        if (now < cutAt) {
+            // Holding: a heard wakes this wait, so the hold is released at
+            // once rather than at the cut deadline.
+            m_wake.wait_until(lock, cutAt);
             continue;
         }
         const qint64 silentMs =
@@ -158,6 +217,8 @@ void RemoteTxCutGuard::run()
         if (m_cut) {
             m_cut(m_epoch, m_armSerial.load(), silentMs);
         }
+        // The cut has shut RF; the hold is no longer needed.
+        releaseHoldLocked();
     }
 }
 
