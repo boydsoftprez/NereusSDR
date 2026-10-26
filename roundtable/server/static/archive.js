@@ -126,7 +126,7 @@
       RT.topBar("Your archive", null),
       el("div", { class: "center" }, [
         el("h2", { text: "Sign in to see your archive." }),
-        el("p", { text: "Your archive is private to your station. Open it from the Archive button in NereusSDR (the Roundtable panel menu, the phone's Roundtable page or the Spot Hub tab), which signs this browser in for you." }),
+        el("p", { text: "Your archive is private to your station. Open it from the Archive button in NereusSDR on the desktop (the Roundtable panel's menu, or Spot Hub > Roundtable), which signs this browser in for you." }),
         el("p", {}, ["Stations on other software sign in with their website key on ", el("a", { href: "/key", text: "the key page" }), "."]),
       ]),
     ]);

@@ -62,6 +62,7 @@ All ruled by JJ. "Superseded" entries are kept so nobody re-asks them. Claude's 
 | D25 | Until someone answers the first-run sheet, the Core connects read-only and sends nothing about the station; reporting starts when someone taps Go live on any device. A Core never answered stays read-only, even unattended. Auto-Start defaults on | 2026-10-23 | report at once with the sheet only informing |
 | D26 | No admin handling of ordinary users: a lost key is a fresh start, and only the old key can move its own history. JJ manages the helper list and nothing else | 2026-10-23 | JJ moves history between station ids after his own check |
 | D27 | The first-run sheet keeps the mockup's words on every platform (11.2 quotes them, from `ios/NereusApp/Roundtable/RoundtableFirstRunSheet.swift`); on the phone it opens at full height so both buttons show without a scroll | 2026-10-25 | this spec's earlier summary of the words; the phone sheet at half height with a scroll |
+| D28 | A phone Archive control is not in this release; it needs JJ's sign-off on its shape before it is added. People open the Archive from the desktop (panel menu, Spot Hub tab) | 2026-10-25 | the phone Roundtable page opening the Archive |
 
 UX review fixes, all approved by JJ (full text in [reporter-brainstorm/ux-review.md](reporter-brainstorm/ux-review.md)). The details Claude added to each are calls in section 18.
 
@@ -215,7 +216,7 @@ Growth: at the load the server is tested to (section 14, R-RT-9: 500 stations in
 
 The archive and the review list open in a browser, which holds no station key.
 
-- **From the app:** the Archive button (desktop panel menu, phone Roundtable page, Spot Hub tab) asks the Core for a sign-in link (`roundtable.webSignIn`). The Core sends `weblink` on its station socket; the server answers `weblinkOk` with a one-time link that works once, within 5 minutes. The app opens it; the server swaps it for a session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, 30 days) and redirects, so the token leaves the address bar.
+- **From the app:** the Archive button (desktop panel menu, Spot Hub tab; none on the phone, D28) asks the Core for a sign-in link (`roundtable.webSignIn`). The Core sends `weblink` on its station socket; the server answers `weblinkOk` with a one-time link that works once, within 5 minutes. The app opens it; the server swaps it for a session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, 30 days) and redirects, so the token leaves the address bar.
 - **With a website key:** the key page signs the browser in with the key.
 - **Hidden stations:** the Core opens a brief station connection that sends `hello` and `weblink` only, no presence, and closes (section 10.2).
 - Every state-changing web action checks the `Origin` header and a per-session token (CSRF). The archive page has "Sign out everywhere", which ends every browser session of that station.
@@ -465,7 +466,7 @@ Every screen uses the 2026.10.1 workspace look (desktop and web) or the app's wo
 
 ### 11.6 Archive
 
-Opened from the panel menu, the phone's Roundtable page, the Spot Hub tab, or the public page after signing in (7.4).
+Opened from the desktop panel's menu, the Spot Hub Roundtable tab, or the public page after signing in (7.4). The phone has no Archive control in this release (D28).
 
 - One row per session: band, frequency, start, length, how many stations reported you.
 - A session opens to one row per station that reported you: callsign, distance, WATCHED (how long it kept reporting you, from its signal-present track, not how long you talked), and its own raw readings on a timeline. Amber hatching marks time you were keyed and that station had lost you; plain gaps are time you were not keyed. A row opens that station's readings over the session.

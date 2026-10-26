@@ -168,7 +168,7 @@
     return el("div", { class: "ways" }, [
       el("section", { class: "card" }, [
         el("h2", { text: "On NereusSDR" }),
-        el("p", { text: "You need nothing here. NereusSDR keeps its own station key. The Archive button (the Roundtable panel menu, the phone's Roundtable page or the Spot Hub tab) opens a one-time link that signs this browser in." }),
+        el("p", { text: "You need nothing here. NereusSDR keeps its own station key. The Archive button in NereusSDR on the desktop (the Roundtable panel's menu, or Spot Hub > Roundtable) opens a one-time link that signs this browser in." }),
       ]),
       el("section", { class: "card" }, [
         el("h2", { text: "On other software" }),
