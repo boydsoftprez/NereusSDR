@@ -1,5 +1,11 @@
 #pragma once
+
+// Independently implemented from MeterManager.cs interface: a Qt editor
+// declaration; the ported ranges live in FilterDisplayItemEditor.cpp.
 #include "BaseItemEditor.h"
+
+#include <functional>
+#include <vector>
 
 class QComboBox;
 class QDoubleSpinBox;
@@ -17,6 +23,11 @@ public:
 
 private:
     void buildTypeSpecific() override;
+    // Thetis filter display settings and colours (rows added 2026-10-26).
+    void buildThetisSettings();
+    void addColourRow(const QString& label, const QString& objectName,
+                      QColor (FilterDisplayItem::*getter)() const,
+                      void (FilterDisplayItem::*setter)(const QColor&));
 
     QComboBox*      m_comboDisplayMode{nullptr};
     QComboBox*      m_comboWfPalette{nullptr};
@@ -32,6 +43,9 @@ private:
     QPushButton*    m_btnNotch{nullptr};
     QPushButton*    m_btnBack{nullptr};
     QPushButton*    m_btnText{nullptr};
+
+    // Each refreshes one Thetis settings row from the item in setItem().
+    std::vector<std::function<void(const FilterDisplayItem&)>> m_refreshers;
 };
 
 } // namespace NereusSDR

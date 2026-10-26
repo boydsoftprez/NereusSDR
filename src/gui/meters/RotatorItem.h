@@ -19,6 +19,18 @@
 //                 target marker in amber; elevation fed and drawn; "Both"
 //                 laid out two faces wide as in Thetis. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator settings (container item parity): full
+//                 background, padding sizes the AZ/ELE face, dark mode picks
+//                 the "-dark" image, the elevation from data source variable
+//                 2, a 100 ms update for new items, and copies that never
+//                 turn the rotor. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator MMIO command path (container item
+//                 parity): Allow control (off by default) and the control
+//                 colour; per item, commands go through the rotor link or,
+//                 as Thetis SendRotatorMessage does, as the AZ, ELE and STOP
+//                 strings to a meter data source chosen by its 4-char ID.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -67,6 +79,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointF>
 #include <QPointer>
 #include <QTimer>
+#include <QUuid>
 
 namespace NereusSDR {
 
@@ -101,10 +114,89 @@ public:
     void setBeamWidthAlpha(float a) { m_beamWidthAlpha = a; }
     float beamWidthAlpha() const { return m_beamWidthAlpha; }
 
-    void setDarkMode(bool d) { m_darkMode = d; }
+    // From Thetis MeterManager.cs:27370, 27393, 40641 [v2.10.3.15]: dark
+    // mode draws the "-dark" variant of the background image when there is
+    // one (for us, <name>-dark.<ext> beside the chosen file); takes effect
+    // on the next paint.
+    void setDarkMode(bool d);
     bool darkMode() const { return m_darkMode; }
-    void setPadding(float p) { m_padding = p; }
+    // From Thetis MeterManager.cs:16536-16543 [v2.10.3.15]: held to at
+    // least kMinPadding. A loaded record keeps the value it saved.
+    void setPadding(float p);
     float padding() const { return m_padding; }
+    static constexpr float kMinPadding = 0.001f;
+
+    // Thetis fills the whole item with the background colour (a
+    // clsSolidColour the size of the rotator, MeterManager.cs:23550-23556,
+    // 27396-27406 [v2.10.3.15]). Off: only the compass disc is filled, as
+    // records saved before this option were drawn.
+    void setFullBackground(bool on) { m_fullBackground = on; }
+    bool fullBackground() const { return m_fullBackground; }
+
+    // In AZ or ELE the face is padding times the item's width, centred
+    // across it and at its top (MeterManager.cs:27335-27346 [v2.10.3.15]).
+    // Off: the face fills the item's largest square, as records saved
+    // before this option were drawn. Both is laid out as before either way.
+    void setPaddingLayout(bool on) { m_paddingLayout = on; }
+    bool paddingLayout() const { return m_paddingLayout; }
+
+    // Live containers only. A copy drawn as a preview never turns or stops
+    // the rotor, even with a rotor attached.
+    void setControlEnabled(bool on);
+    bool controlEnabled() const { return m_controlEnabled; }
+
+    // ── Thetis rotator control (MeterManager.cs:16402-16505 [v2.10.3.15]) ──
+    // From Thetis MeterManager.cs:16428 [v2.10.3.15] (_alow_control = false;):
+    // a new item has it off; off, nothing is sent on either command path. A
+    // record saved before this field loads it on, so its rotor link control
+    // is kept. Turning it off cancels a press or drag in progress.
+    void setAllowControl(bool on);
+    bool allowControl() const { return m_allowControl; }
+    // The drag line and the target marker. From Thetis MeterManager.cs:16426
+    // [v2.10.3.15] (_control_colour = System.Drawing.Color.LimeGreen;).
+    void setControlColour(const QColor& c) { m_controlColour = c; }
+    QColor controlColour() const { return m_controlColour; }
+
+    // How a press or drag reaches the rotor. RotorLink (the default) sends
+    // through setRotor()'s RotorCommandSink. Mmio sends the command strings
+    // to the meter data source commandEndpointGuid(), as Thetis does.
+    enum class CommandPath { RotorLink = 0, Mmio = 1 };
+    void setCommandPath(CommandPath path);
+    CommandPath commandPath() const { return m_commandPath; }
+    // The data source the Mmio path sends to (Thetis DataOutMMIOGuid); null
+    // sends nothing. The editor picks it by the source's 4-char ID.
+    void setCommandEndpointGuid(const QUuid& guid);
+    QUuid commandEndpointGuid() const { return m_commandGuid; }
+
+    // From Thetis MeterManager.cs:16429-16431 [v2.10.3.15]: the pstRotator
+    // command strings a new rotator starts with.
+    static constexpr char kPstRotatorAzCommand[] = "<PST><AZIMUTH>%AZ%</AZIMUTH></PST>";
+    static constexpr char kPstRotatorEleCommand[] = "<PST><ELEVATION>%ELE%</ELEVATION></PST>";
+    static constexpr char kPstRotatorStopCommand[] = "<PST><STOP>1</STOP></PST>";
+    void setAzControlString(const QString& s) { m_azControlString = s; }
+    QString azControlString() const { return m_azControlString; }
+    void setEleControlString(const QString& s) { m_eleControlString = s; }
+    QString eleControlString() const { return m_eleControlString; }
+    void setStopControlString(const QString& s) { m_stopControlString = s; }
+    QString stopControlString() const { return m_stopControlString; }
+
+    enum class CommandKind { Azimuth, Elevation, Stop };
+    // The message the Mmio path sends for a command (Thetis
+    // SendRotatorMessage, MeterManager.cs:16475-16505 [v2.10.3.15]):
+    // %AZ% becomes the whole degrees as "000", %ELE% as "00", the stop
+    // string is sent as it is (value unused), then the two-character
+    // sequences \n, \r and \0 become those characters. Empty for an
+    // azimuth or elevation that is not a finite number. Pure.
+    QString buildRotatorMessage(CommandKind kind, double value) const;
+
+    // From Thetis MeterManager.cs:23490, 23503 [v2.10.3.15]: a new rotator
+    // takes its reading every 100 ms.
+    static constexpr int kThetisUpdateIntervalMs = 100;
+    void applyNewItemDefaults() override;
+
+    // Data source variable 2 is the elevation, as Thetis's ELE item reads
+    // MMIOVariableIndex 1 (MeterManager.cs:22669, 23501 [v2.10.3.15]).
+    void setSecondaryValue(int index, double value) override;
 
     // Colors (from Thetis clsRotatorItem properties)
     void setBigBlobColour(const QColor& c) { m_bigBlobColour = c; }
@@ -123,6 +215,10 @@ public:
     // Background image (file-based, user-replaceable)
     void setBackgroundImagePath(const QString& path);
     QString backgroundImagePath() const { return m_bgImagePath; }
+    // The file last drawn: in dark mode the "-dark" variant when it exists,
+    // and a "-small" or "-large" variant for the face's size (see
+    // ImageItem::variantPath); else the chosen path.
+    QString effectiveBackgroundImagePath() const { return m_bgImageLoadedPath; }
 
     // Elevation value (for BOTH mode — azimuth uses base m_value)
     // Rotor control plan Task 5: smoothed into the drawn elevation the way
@@ -143,8 +239,11 @@ public:
     // as long as `state` (RadioModel owns both). nullptr, nullptr detaches:
     // the dial then only displays, as before.
     void setRotor(RotorLink::RotorModel* state, RotorCommandSink* commands);
-    // A rotor is connected and the commands can reach it. Without one a
-    // press or drag does nothing (the dial stays, showing what it last had).
+    // A press or drag can send now: this is a live copy, Allow control is
+    // on, and on the RotorLink path a rotor is connected and the commands
+    // can reach it, or on the Mmio path the chosen data source exists and
+    // sends (its direction is not In). Otherwise a press or drag does
+    // nothing (the dial stays, showing what it last had).
     bool rotorControllable() const;
     bool elevationControllable() const;
 
@@ -203,6 +302,8 @@ private:
     void updateDrag(const QPointF& pos, const Faces& f);
     void sendStop();
     void sendTarget();
+    bool mmioReady() const;
+    bool sendMmio(const QString& message);
     void clearArrivedTargets();
     void cancelControl();
     void onRotorChanged();
@@ -210,7 +311,9 @@ private:
     void paintCompassFace(QPainter& p, const QRect& compassRect);
     void paintHeading(QPainter& p, const QRect& compassRect);
     void paintElevationArc(QPainter& p, const QRect& eleRect);
+    void paintFullBackground(QPainter& p, int widgetW, int widgetH);
     QRect squareRect(int widgetW, int widgetH) const;
+    void ensureBackgroundImage(const QRect& rect);
 
     // From Thetis clsRotatorItem (MeterManager.cs:15095)
     RotatorMode m_mode{RotatorMode::Both};
@@ -221,6 +324,20 @@ private:
     float  m_beamWidthAlpha{0.6f};
     bool   m_darkMode{false};
     float  m_padding{0.5f};
+    // Appended fields 22 and 23. A new item draws as Thetis; a record saved
+    // without them loads with both off (deserialize()).
+    bool   m_fullBackground{true};
+    bool   m_paddingLayout{true};
+    bool   m_controlEnabled{true};
+    // Appended fields 24-30 (serialize()). A record saved without them loads
+    // with control on, the rotor link path and the amber it was drawn in.
+    bool   m_allowControl{false};
+    QColor m_controlColour{0x32, 0xcd, 0x32};      // LimeGreen
+    CommandPath m_commandPath{CommandPath::RotorLink};
+    QUuid  m_commandGuid;
+    QString m_azControlString{QLatin1String(kPstRotatorAzCommand)};
+    QString m_eleControlString{QLatin1String(kPstRotatorEleCommand)};
+    QString m_stopControlString{QLatin1String(kPstRotatorStopCommand)};
 
     // Colors (from Thetis clsRotatorItem MeterManager.cs:15100-15106)
     QColor m_bigBlobColour{0xff, 0x00, 0x00};     // Red
@@ -232,6 +349,7 @@ private:
 
     // Background image
     QString m_bgImagePath;
+    QString m_bgImageLoadedPath;
     QImage  m_bgImage;
 
     // Smoothed values (from Thetis clsRotatorItem Update() MeterManager.cs:15290-15312)

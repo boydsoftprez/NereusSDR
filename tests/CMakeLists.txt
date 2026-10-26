@@ -852,6 +852,11 @@ nereus_add_test(tst_meter_signal_text)
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
 nereus_add_test(tst_rotator_item_drag)
+# Container item parity Task 46: the Thetis rotator MMIO command path beside
+# the rotor link: the AZ, ELE and STOP messages, Allow control off by default,
+# a direction-In data source and preview copies send nothing. Loopback UDP
+# data sources inside the test only; no rotor.
+nereus_add_test(tst_rotator_item_mmio)
 # Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.
@@ -6159,6 +6164,10 @@ nereus_add_test(tst_filter_high_resolution)
 # bindRxChannel(nullptr) safety, paint-with-nullptr-channel no-crash,
 # bind-and-clear lifecycle.
 nereus_add_test(tst_filter_display_high_resolution)
+# Task 44: the Thetis filter display's edge drags (RX to the slice, TX to
+# TransmitModel), notches, MNF/+MNF (refused while transmitting), SNAP/FIT,
+# inert preview copies and old records painting as before.
+nereus_add_test(tst_filter_display_item_input)
 nereus_add_test(tst_mini_display_composition fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_mini_filter_response_lifecycle)
 

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - mmioVariableCount: ROTATOR reads 2 (AZ, then ELE), as
+//                 Thetis MeterVariables does. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Several data source (MMIO) variables per item
 //                 (setMmioBinding(index, ...)) and mmioVariableCount(), the
 //                 port of Thetis MeterVariables. J.J. Boyd (KG4VCF),
@@ -480,6 +483,7 @@ int MeterItem::mmioVariableCount(const QString& typeId)
         {QStringLiteral("meter.vfoDisplay"), 0},   // MeterType.VFO_DISPLAY
         {QStringLiteral("meter.clock"), 0},        // MeterType.CLOCK
         {QStringLiteral("meter.spacer"), 0},       // MeterType.SPACER
+        {QStringLiteral("ROTATOR"), 2},            // MeterType.ROTATOR (AZ, ELE)
         {QStringLiteral("meter.historyGraph"), 2}, // MeterType.HISTORY
         {QStringLiteral("meter.customBar"), 2},    // MeterType.CUSTOM_METER_BAR
     };
