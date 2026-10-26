@@ -35,6 +35,10 @@
 //                 hold clear on each transmit change (Thetis OnMox /
 //                 ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Final review fix wave (I8): a copy's power limit puts the
+//                 scale's top 20% above it (kRfPowerGaugeHeadroom), as the
+//                 bars do. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Final review fix wave (C1): the Thetis MeterManager.cs
 //                 header for the ported constants and the clear on each
 //                 transmit change. J.J. Boyd (KG4VCF), AI-assisted via
@@ -134,6 +138,8 @@ mw0lge@grange-lane.co.uk
 
 #include "models/MainPowerMeter.h"
 #include "gui/instruments/SMeterDialContent.h"
+
+#include "core/ControlRanges.h"
 
 #include "gui/SMeterWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
@@ -333,9 +339,12 @@ void applyConfig(SMeterWidget& dial, const QJsonObject& config)
     } else {
         dial.setFollowsSetupFace(true);
     }
-    // A power limit of the copy's own: red from it, full scale at it.
+    // A power limit of the copy's own: red from it, full scale 20% above
+    // it, as the bars, the composites and the radio's own scale put it
+    // (Thetis NormaliseTo100W: the limit at 100, the top at 120,
+    // MeterManager.cs:25231-25236 [v2.10.3.15]; kRfPowerGaugeHeadroom).
     if (const int limit = powerLimitW(config); limit > 0) {
-        dial.setPowerDisplayScale(limit, limit);
+        dial.setPowerDisplayScale(limit, limit * ControlRanges::kRfPowerGaugeHeadroom);
     }
     applyAppearance(dial, config);
 }

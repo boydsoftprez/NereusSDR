@@ -68,8 +68,8 @@ inline constexpr auto kDialType = "sMeter.dial";
 // "Signal Peak", "Max Bin"; kPeakHoldKey true/false; kPeakDecayKey "Fast",
 // "Medium", "Slow"; kFaceKey an SMeterWidget::faceStyleKey.
 // kPowerLimitKey, whole watts: the copy's own power scale, red from the
-// limit and full scale at it (MeterItem::setPowerScale(limit, top) with
-// top = limit). Absent or 0: the radio's scale, followed as the Main
+// limit and full scale 20% above it (top = limit *
+// ControlRanges::kRfPowerGaugeHeadroom, as the bars). Absent or 0: the radio's scale, followed as the Main
 // Panel's dial follows it (the external amplifier's included).
 inline constexpr auto kTxModeKey    = "txMode";
 inline constexpr auto kRxModeKey    = "rxMode";

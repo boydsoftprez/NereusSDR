@@ -731,7 +731,8 @@ private:
 
 public:
     // Scales of the appended TX modes: the calibration range of Thetis
-    // ANANMM's needle for each reading (linear here; no red zone, as
+    // ANANMM's needle for each reading (linear here, except ALC Group,
+    // which maps through ReadingSource's calibration; no red zone, as
     // Thetis's needles carry no HighPoint).
     // From Thetis MeterManager.cs:24048-24054 [v2.10.3.15] (ni6, ALC_G "alc_comp")
     static constexpr float kAlcMinDb = 0.0f;

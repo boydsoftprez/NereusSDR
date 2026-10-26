@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I10): a needle applies its saved
+//                 attack ratio rising and decay ratio falling, and draws
+//                 with its saved stroke width; one saved without them
+//                 keeps 0.3 both ways and the 2 px pen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - advanceFade: a stage-disabled item (setStageDisabled,
 //                 Thetis clsMeterItem.Disabled) steps toward 48 whatever its
 //                 fade options; never for a foreign session's entry.
@@ -2343,8 +2348,16 @@ void NeedleItem::setValue(double v)
 
     const float val = static_cast<float>(v);
 
-    // Exponential smoothing (from AetherSDR SMOOTH_ALPHA = 0.3)
-    m_smoothedDbm += kSmoothAlpha * (val - m_smoothedDbm);
+    // Exponential smoothing with the needle's saved attack and decay
+    // ratios; a needle saved without them keeps 0.3 both ways (AetherSDR
+    // SMOOTH_ALPHA, kSmoothAlpha).
+    // From Thetis MeterManager.cs:22012-22015 [v2.10.3.15] (clsNeedleItem.Update):
+    //   if (reading > Value)
+    //      Value = (reading * AttackRatio) + (Value * (1f - AttackRatio));
+    //   else
+    //       Value = (reading * DecayRatio) + (Value * (1f - DecayRatio));
+    const float ratio = val > m_smoothedDbm ? m_attackRatio : m_decayRatio;
+    m_smoothedDbm = (val * ratio) + (m_smoothedDbm * (1.0f - ratio));
 
     // Clamp to the appropriate value range. Calibrated needles
     // (ANANMM Volts/Amps/Power/SWR/Compression/ALC) use the
@@ -2538,7 +2551,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
     if (g.calibrated && peakHold()) {
         QPen peakPen(m_peakHoldColour);
-        peakPen.setWidthF(2.0f);
+        peakPen.setWidthF(static_cast<double>(m_strokeWidth));
         p.setPen(peakPen);
         p.drawLine(pivot, tipFor(g, peakValue()));
     }
@@ -2553,7 +2566,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Needle
     QPen needlePen(m_needleColor);
-    needlePen.setWidthF(2.0f);
+    needlePen.setWidthF(static_cast<double>(m_strokeWidth));
     p.setPen(needlePen);
     p.drawLine(pivot, tip);
 
@@ -2662,8 +2675,11 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 
     // From AetherSDR: shadow pen width 3 (halfWidth 1.5), needle pen width 2 (halfWidth 1.0)
     // Uniform width along entire length — NOT tapered (matches QPainter drawLine)
+    // The needle's pen is its saved stroke width (Thetis fStrokeWidth =
+    // ni.StrokeWidth * fScale, MeterManager.cs:40883 [v2.10.3.15]); a
+    // needle saved without one keeps AetherSDR's 2 px.
     const float shadowHW = 1.5f;
-    const float needleHW = 1.0f;
+    const float needleHW = m_strokeWidth / 2.0f;
 
     // Pixel to NDC conversion lambdas
     const float invW = 2.0f / static_cast<float>(widgetW);

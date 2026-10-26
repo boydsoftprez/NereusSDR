@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original checks for added copies of the SIGNAL
 // STRENGTH dial as container content (workspace preview).
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I8): a 50 W power limit tops the
+//                 scale at 60 W, so 30 W is mid-scale. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The dial's picker name is "S-Meter dial". J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
@@ -906,9 +909,10 @@ private slots:
         QCOMPARE(station.entry(QStringLiteral("dial-comp")).config, saved);
     }
 
-    // "Power limit" 50 W: red from 50 W and full scale at it, so 25 W sits
-    // at mid-scale; the radio's scale no longer moves this copy's.
-    void powerLimitPutsHalfOfItAtMidScale()
+    // "Power limit" 50 W: red from 50 W and full scale 20% above it (60 W,
+    // as the bars and Thetis's NormaliseTo100W put it), so 30 W sits at
+    // mid-scale; the radio's scale no longer moves this copy's (fix wave I8).
+    void powerLimitTopsTheScaleTwentyPercentAbove()
     {
         MeterPoller poller;
         RadioModel radio;
@@ -936,15 +940,15 @@ private slots:
         std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
         auto* dial = qobject_cast<SMeterWidget*>(widget.get());
         QVERIFY(dial);
-        QCOMPARE(dial->testPowerScaleMax(), 50.0f);
+        QCOMPARE(dial->testPowerScaleMax(), 60.0f);
         QCOMPARE(dial->testPowerRedStart(), 50.0f);
         dial->setTransmitting(true);
-        emit poller.readingUpdated(entry.context, MeterBinding::TxPower, 25.0);
-        QCOMPARE(dial->testTxValue(), 25.0f);
+        emit poller.readingUpdated(entry.context, MeterBinding::TxPower, 30.0);
+        QCOMPARE(dial->testTxValue(), 30.0f);
         QCOMPARE(dial->testNeedleTarget(), 0.5f);
         // The radio's scale changes; this copy keeps its own.
         radio.mainPowerMeter()->setHardwareModel(HPSDRModel::HERMESLITE);
-        QCOMPARE(dial->testPowerScaleMax(), 50.0f);
+        QCOMPARE(dial->testPowerScaleMax(), 60.0f);
 
         // Absent (or 0), the copy follows the radio's scale.
         std::unique_ptr<QWidget> follows(registry.createWidget(dialEntry(registry, QStringLiteral("dial-radio")), &parent));

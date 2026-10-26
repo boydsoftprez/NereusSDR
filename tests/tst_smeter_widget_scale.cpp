@@ -14,6 +14,9 @@
 //   2026-10-26 - The VHF S9 boundary at 30 MHz, the appended TX modes'
 //                 scales, and a 50 W display limit. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I6, M3): Max Bin takes no VHF S9
+//                 offset; ALC Group follows Thetis's uneven calibration.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 #include "gui/SMeterWidget.h"
@@ -31,6 +34,7 @@ private slots:
     void appendedTxModesKeepTheOldValues();
     void appendedTxModeScales();
     void powerDisplayLimitPutsHalfAtMidScale();
+    void maxBinTakesNoVhfOffset();
 };
 
 void SMeterWidgetScaleTest::powerScaleBarefootDefault()
@@ -116,11 +120,15 @@ void SMeterWidgetScaleTest::appendedTxModeScales()
     QCOMPARE(w.testNeedleTarget(), 0.5f);
     QCOMPARE(w.testTxReadout(), QStringLiteral("15 dB"));
 
+    // ALC Group on Thetis's calibration:
+    // -30 at 0, 0 at half, 25 at 0.99.
     w.setTxMode(QStringLiteral("ALC Group"));
     QCOMPARE(w.txMode(), SMeterWidget::TxMode::AlcGroup);
     QCOMPARE(w.testNeedleTarget(), 0.0f);
+    w.setAlcMeters(15.0f, 0.0f);
+    QCOMPARE(w.testNeedleTarget(), 0.5f);
     w.setAlcMeters(15.0f, 25.0f);
-    QCOMPARE(w.testNeedleTarget(), 1.0f);
+    QCOMPARE(w.testNeedleTarget(), 0.99f);
     QCOMPARE(w.testTxReadout(), QStringLiteral("25 dB"));
 
     w.setTxMode(QStringLiteral("Volts"));
@@ -152,6 +160,22 @@ void SMeterWidgetScaleTest::powerDisplayLimitPutsHalfAtMidScale()
     w.setTransmitting(true);
     w.setTxMeters(25.0f, 1.0f);
     QCOMPARE(w.testNeedleTarget(), 0.5f);
+}
+
+// Fix wave I6: above 30 MHz Thetis raises Signal and its average by 20 dB
+// (its getPerc), never Max Bin.
+void SMeterWidgetScaleTest::maxBinTakesNoVhfOffset()
+{
+    SMeterWidget w(SMeterWidget::SettingsStore::Instance);
+    w.setAboveS9Frequency(true);
+    w.setRxMode(QStringLiteral("Max Bin"));
+    QCOMPARE(w.rxMode(), SMeterWidget::RxMode::MaxBin);
+    w.setLevel(-73.0f);
+    QCOMPARE(w.sUnitsText(), QStringLiteral("S9"));
+    QCOMPARE(w.testNeedleTarget(), 0.6f);
+    w.setRxMode(QStringLiteral("Sig Avg"));
+    w.setLevel(-73.0f);
+    QCOMPARE(w.sUnitsText(), QStringLiteral("S9+20"));
 }
 
 QTEST_MAIN(SMeterWidgetScaleTest)

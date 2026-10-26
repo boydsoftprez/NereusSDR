@@ -11,6 +11,10 @@
 //                 hold and its colour, the history arc, ignore history, the
 //                 power limit, the saved record and the new-item defaults.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I10): the saved attack, decay and
+//                 stroke width are applied; an old record keeps 0.3 both
+//                 ways and the 2 px pen. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -392,6 +396,57 @@ private slots:
         QVERIFY(again.deserialize(arc.serialize()));
         QVERIFY(again.peakHold());
         QCOMPARE(again.peakHoldColour(), kAmber);
+    }
+
+    // Fix wave I10: attack when rising, decay when falling (Thetis
+    // clsNeedleItem.Update, MeterManager.cs:22012-22015), and the needle's
+    // pen is its stroke width. An old record behaves as before.
+    void attackDecayAndStrokeWidthAreApplied()
+    {
+        NeedleItem n;
+        makeCalibrated(n);
+        n.setAttackRatio(0.8f);
+        n.setDecayRatio(0.2f);
+        settle(n, 0.0);
+        n.setValue(100.0);
+        QCOMPARE(n.smoothedValue(), 80.0f);
+        n.setValue(0.0);
+        QCOMPARE(n.smoothedValue(), 64.0f);
+
+        // An old record: 0.3 both ways, as before.
+        NeedleItem old;
+        QVERIFY(old.deserialize(kSavedCalibratedNeedle));
+        QCOMPARE(old.attackRatio(), 0.3f);
+        QCOMPARE(old.decayRatio(), 0.3f);
+        settle(old, 0.0);
+        old.setValue(100.0);
+        QCOMPARE(old.smoothedValue(), 30.0f);
+        QCOMPARE(old.strokeWidth(), 2.0f);
+
+        // The needle's quad is the stroke width across: wider at 6 px than
+        // at the old record's 2 px.
+        const auto needleSpan = [](NeedleItem& item) {
+            const QVector<float> v = vertsOf(item);
+            // The needle is the last white quad before any marker; measure
+            // the distance between its first two vertices in pixels.
+            for (int i = 0; i + 11 < v.size(); i += 6) {
+                if (std::abs(v[i + 2] - 1.0f) < 0.01f && std::abs(v[i + 3] - 1.0f) < 0.01f
+                    && std::abs(v[i + 4] - 1.0f) < 0.01f && std::abs(v[i + 5] - 1.0f) < 0.01f) {
+                    const float dx = (v[i + 6] - v[i]) * kW / 2.0f;
+                    const float dy = (v[i + 7] - v[i + 1]) * kH / 2.0f;
+                    return std::sqrt(dx * dx + dy * dy);
+                }
+            }
+            return 0.0f;
+        };
+        n.setShadow(false);
+        n.setPeakHold(false);
+        settle(n, 50.0);
+        n.setStrokeWidth(6.0f);
+        QVERIFY(std::abs(needleSpan(n) - 6.0f) < 0.01f);
+        old.setShadow(false);
+        settle(old, 50.0);
+        QVERIFY(std::abs(needleSpan(old) - 2.0f) < 0.01f);
     }
 
     void newOptions_roundTrip()

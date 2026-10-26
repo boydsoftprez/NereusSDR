@@ -14,6 +14,10 @@
 //     and renderNeedle's history wedge, for a container copy's dial)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I6, M3): Max Bin takes no VHF S9
+//                 offset (only Signal and its average do); ALC Group maps
+//                 through ReadingSource's uneven calibration. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
 //               it is still there after exec(), since a parent that dies
 //               while it is open takes it along. With AI-assisted
@@ -179,6 +183,8 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "SMeterWidget.h"
+#include "gui/instruments/ReadingSource.h"
+#include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 
 #include <algorithm>
@@ -533,7 +539,14 @@ void SMeterWidget::setAboveS9Frequency(bool above)
 // AboveS9Frequency.h).
 float SMeterWidget::sScaleDbm(float dbm) const
 {
-    return m_aboveS9Frequency ? dbm + static_cast<float>(kAboveS9OffsetDb) : dbm;
+    // Signal and its average take the offset; Max Bin does not.
+    // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc):
+    //   if (mi.ReadingSource == Reading.SIGNAL_STRENGTH || mi.ReadingSource == Reading.AVG_SIGNAL_STRENGTH)
+    //   {
+    //       value += MeterManager.dbmOffsetForAboveS9Frequency(_rx);
+    //   }
+    if (!m_aboveS9Frequency || m_rxMode == RxMode::MaxBin) { return dbm; }
+    return dbm + static_cast<float>(kAboveS9OffsetDb);
 }
 
 void SMeterWidget::setTransmitting(bool tx)
@@ -847,6 +860,12 @@ float SMeterWidget::txValueToFraction(float value) const
     case TxMode::Alc:
         return qBound(0.0f, (value - kAlcMinDb) / (kAlcMaxDb - kAlcMinDb), 1.0f);
     case TxMode::AlcGroup:
+        // Thetis's uneven ALC group calibration, the one table the bars and
+        // the Longpath needle use (ReadingSource, MeterManager.cs:24817-24819
+        // [v2.10.3.15]).
+        if (const ReadingDescriptor* alcGroup = readingFor(static_cast<int>(MeterBinding::TxAlcGroup))) {
+            return qBound(0.0f, static_cast<float>(alcGroup->fraction(value)), 1.0f);
+        }
         return qBound(0.0f, (value - kAlcGroupMinDb) / (kAlcGroupMaxDb - kAlcGroupMinDb), 1.0f);
     case TxMode::Volts:
         return qBound(0.0f, (value - kVoltsMin) / (kVoltsMax - kVoltsMin), 1.0f);

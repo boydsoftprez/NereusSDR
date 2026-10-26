@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I10): a needle applies its saved
+//                 attack ratio rising and decay ratio falling, and draws
+//                 with its saved stroke width; one saved without them
+//                 keeps 0.3 both ways and the 2 px pen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setStageDisabled() / stageDisabled(): a TX stage that is
 //                 off (Thetis clsMeterItem.Disabled) dims the item whatever
 //                 its fade options; never for a foreign session's entry.
@@ -1637,7 +1642,9 @@ private:
     QPointF m_needleOffset{0.0, 0.0};     // Center offset for needle pivot
     QPointF m_radiusRatio{1.0, 1.0};      // Elliptical scaling
     float   m_lengthFactor{1.0f};         // Needle length multiplier
-    float   m_strokeWidth{1.5f};          // Needle line thickness
+    // Needle line thickness: the 2 px pen a needle has always drawn with,
+    // so one saved without a stroke width looks as it did.
+    float   m_strokeWidth{2.0f};
 
     // Direction
     NeedleDirection m_direction{NeedleDirection::Clockwise};
