@@ -1174,6 +1174,14 @@ final class BandSlicesModel: ObservableObject {
         rebuild()
     }
 
+    /// Reads the mirror's slices now. The watches redraw on a later
+    /// main-actor turn, each model in a job of its own, so another model can
+    /// already show a change this one has not drawn; a caller that acts on
+    /// ``entries`` at once (Add a pan's spare slice) calls this first.
+    func catchUp() {
+        watchSlices()
+    }
+
     private func watchSlices() {
         // The slices, who controls each (`access:<id>`), and who is on the
         // Core (the holder's name in the owner line).

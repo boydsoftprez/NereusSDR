@@ -213,6 +213,10 @@ final class PanStackModel: ObservableObject {
     /// "Add a pan": the next pan opens below the last, with a spare slice
     /// moved onto it or a new slice the Core adds there.
     func addPan() {
+        // Every slice the mirror holds now: its redraw of this list may still
+        // wait behind Pan 1's, and a spare slice not yet drawn here would go
+        // unseen, so the Core would be asked for a new slice beside it.
+        everySlice.catchUp()
         guard addPanState().enabled else {
             return
         }

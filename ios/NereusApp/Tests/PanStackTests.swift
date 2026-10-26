@@ -216,6 +216,37 @@ struct PanStackTests {
         await rig.model.disconnect()
     }
 
+    /// Add a pan reads every slice the mirror holds when it acts, not the
+    /// copy the mirror's change queued for a later main-actor turn: in CI the
+    /// test's wait resumed between Pan 1's redraw and that copy's, and Add a
+    /// pan asked the Core for a new slice beside a spare it had not seen.
+    @Test("Add a pan takes the spare the mirror holds even before the slices' queued redraw has run")
+    func addTakesASpareTheMirrorJustGained() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        let main = rig.model.main
+        main.pan.addSlice(on: .first)
+        #expect(await settle { main.slices.entries.count == 2 })
+        // The Core moves slice B to a pan this iPad does not show: no pan holds two, none is spare.
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-2")),
+        ])))
+        #expect(await settle { main.slices.entries.first { $0.id == 1 }?.panKey == "pan-2" })
+        await quiet()
+        let asked = invokes(rig.station, PanSheetModel.addSliceVerb).count
+        // Back on Pan 1, B is the spare. Add a pan acts on the same turn, before the redraws the change queued.
+        rig.model.mirror.apply(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-0")),
+        ])))
+        stack.addPan()
+        #expect(await settle { stack.status != nil })
+        #expect(stack.status == "Pan 2 opened below Pan 1. Slice B moved to it from Pan 1, which had a spare.")
+        #expect(panKeyWrites(rig.station).map(\.key) == ["slice:1"])
+        #expect(panKeyWrites(rig.station).map(\.pan) == ["pan-1"])
+        #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        await rig.model.disconnect()
+    }
+
     @Test("a refused Add a pan closes the new pan again and shows the Core's words")
     func refusedAdd() async throws {
         let rig = try await connected()
