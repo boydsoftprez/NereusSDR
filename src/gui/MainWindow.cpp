@@ -970,6 +970,9 @@
 //                the band's number, so the GEN group's SWL bands reach the
 //                slice too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - A VFO display face on a fixed slice or All slices redraws
+//                when any slice it shows tunes, as a VFO display does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -15719,8 +15722,9 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                     (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
                 // A VFO display on a fixed slice or on All slices shows
                 // slices other than its Source, so any slice's tuning
-                // reaches it.
-                const auto* vfo = qobject_cast<const VfoDisplayItem*>(root);
+                // reaches it. A VFO display face shows its own VFO display.
+                const auto* face = qobject_cast<const CompositePresetItem*>(root);
+                const auto* vfo = face ? face->vfoDisplay() : qobject_cast<const VfoDisplayItem*>(root);
                 const bool showsOtherSlices = vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice;
                 if (containerSourceSlice(context) == slice || showsOtherSlices) {
                     refreshContainerMeter(c, meter, root, context, true);
