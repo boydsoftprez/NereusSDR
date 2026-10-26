@@ -1473,6 +1473,9 @@ private slots:
             {"src/gui/setup/PgxlAdvancedPage.cpp", {"Slice Binding:"}, {"Follows slice:"}},
             {"src/gui/setup/AudioAdvancedPage.cpp", {}, {}},
         };
+        // Item settings keys written as code (the container paste keeps
+        // these from the target, ContainerSettingsDialog.cpp), never shown.
+        static const QStringList configurationKeys{QStringLiteral("bindingId")};
         for (const auto& site : sites) {
             const QStringList literals = userVisibleLiterals(sourcePath(site.file));
             QVERIFY2(literals.size() >= 5, site.file);
@@ -1493,6 +1496,11 @@ private slots:
                                     + QLatin1Char(']')));
             }
             for (const QString& text : literals) {
+                // A settings key the paste code names is not user text; it
+                // is set aside as the whole literal, never by the word.
+                if (configurationKeys.contains(text)) {
+                    continue;
+                }
                 QVERIFY2(!tciAndMmioJargon().match(text).hasMatch(),
                          qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(site.file), text)));
             }
