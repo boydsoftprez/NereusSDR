@@ -23,6 +23,8 @@
 //     row whose feature is not built is disabled with the reason.
 //   - Fix round 1: a reorder on a container's grid is committed to the
 //     workspace document and survives a restart.
+//   - A reorder after an editor change (Reset layout, an override of the
+//     order) clears the entry's overrides, so the rebuild keeps it.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -42,6 +44,10 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  Task 62: and the 12 display and
 //                                    window buttons. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  A reorder after an editor change
+//                                    survives the save and rebuild.
+//                                    AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -67,6 +73,7 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/meter_property_editors/BaseItemEditor.h"
 #include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
 #include "gui/meters/MeterWidget.h"
@@ -497,6 +504,103 @@ private slots:
             }
         }
         QVERIFY(found);
+    }
+
+    // An editor change leaves overrides on the entry; Reset layout leaves
+    // one for the order itself (field 28). A later reorder in place saves
+    // a new record and clears them, so the host's rebuild, which applies
+    // the overrides last, keeps the new order.
+    void aReorderAfterAnEditorChangeSurvivesTheRebuild()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings{directory.filePath(QStringLiteral("reorder-overrides.xml"))};
+        ContainerWorkspaceStore store{settings};
+        QWidget dock;
+        QSplitter splitter;
+        ContainerContentRegistry registry;
+        ContainerManager manager{&dock, &splitter};
+        manager.setWorkspaceAdapter(&store, &registry);
+        dock.resize(1200, 900);
+
+        // A saved grid whose record holds a moved order (six columns, as
+        // pointOfShown expects).
+        ContentEntry entry = registry.makeEntry(QStringLiteral("OTHERBTNS"));
+        entry.id = QStringLiteral("grid-buttons");
+        {
+            std::unique_ptr<MeterItem> built(registry.createMeterItem(entry, nullptr, ContentRenderMode::Live));
+            auto* grid = qobject_cast<OtherButtonItem*>(built.get());
+            QVERIFY(grid);
+            grid->setColumns(6);
+            QVector<short> moved = identityMap();
+            std::swap(moved[int(Id::Mon)], moved[int(Id::Tun)]);
+            grid->setButtonMap(moved);
+            entry.config.insert(QStringLiteral("legacyRecord"), grid->serialize());
+        }
+        // The editor's Reset layout: an override of the order.
+        {
+            ContentPropertyEditor editor(registry);
+            ContentEntry edited;
+            connect(&editor, &ContentPropertyEditor::entryEdited, this,
+                    [&edited](const ContentEntry& e) { edited = e; });
+            editor.setEntry(entry);
+            auto* reset = editor.findChild<QPushButton*>(QStringLiteral("otherResetLayout"));
+            QVERIFY(reset);
+            reset->click();
+            QCOMPARE(edited.id, entry.id);
+            entry = edited;
+        }
+        QVERIFY(entry.config.value(QStringLiteral("overrides")).toObject().contains(QStringLiteral("28")));
+
+        ContainerDocument container;
+        container.id = QStringLiteral("grid");
+        container.name = QStringLiteral("grid");
+        container.layout = ContentLayout::VerticalStack;
+        container.geometry = QRect(10, 20, 600, 600);
+        container.contents.append(entry);
+        WorkspaceDocument document;
+        document.containers.append(container);
+        document.mainContainerId = container.id;
+        QCOMPARE(manager.commitWorkspace(document, 0).status, CommitStatus::Saved);
+
+        const auto liveGrid = [&manager]() -> OtherButtonItem* {
+            ContainerContentHost* host = manager.contentHost(QStringLiteral("grid"));
+            if (!host) { return nullptr; }
+            for (MeterWidget* meter : host->meterSurfaces()) {
+                for (MeterItem* item : meter->items()) {
+                    if (auto* other = qobject_cast<OtherButtonItem*>(item)) { return other; }
+                }
+            }
+            return nullptr;
+        };
+        QVERIFY(QTest::qWaitFor([&] { return liveGrid() != nullptr; }, 5000));
+        OtherButtonItem* item = liveGrid();
+        // Built with the override: the first order.
+        QCOMPARE(item->buttonMap(), identityMap());
+        drag(*item, pointOf(*item, Id::Mon), pointOf(*item, Id::Bin), Qt::AltModifier, Qt::NoModifier);
+        const QVector<short> dragged = item->buttonMap();
+        QVERIFY(dragged != identityMap());
+
+        const auto savedEntry = [&store] {
+            for (const auto& c : store.snapshot().containers) {
+                for (const auto& e : c.contents) {
+                    if (e.id == QStringLiteral("grid-buttons")) { return e; }
+                }
+            }
+            return ContentEntry();
+        };
+        // The queued save commits the new record with no overrides.
+        QVERIFY(QTest::qWaitFor([&] {
+            return savedEntry().config.value(QStringLiteral("overrides")).toObject().isEmpty();
+        }, 5000));
+        // The grid rebuilt from the committed entry keeps the new order.
+        QVERIFY(QTest::qWaitFor([&] { return liveGrid() && liveGrid()->buttonMap() == dragged; }, 5000));
+        // And an entry built from the store again.
+        std::unique_ptr<MeterItem> rebuilt(registry.createMeterItem(savedEntry(), nullptr, ContentRenderMode::Live));
+        auto* other = qobject_cast<OtherButtonItem*>(rebuilt.get());
+        QVERIFY(other);
+        QCOMPARE(other->buttonMap(), dragged);
+        QCOMPARE(other->columns(), 6);
     }
 
     // A copy (the settings preview) and the grid it was made from reorder

@@ -56,6 +56,9 @@
 //   2026-10-26 - Column range from Thetis setup.cs (columnRange), which
 //                 the editor clamps to. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - An in-place reorder clears the entry's overrides with the
+//                 new record, so a rebuild keeps the new order. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -748,9 +751,15 @@ bool OtherButtonItem::handleMouseRelease(QMouseEvent* event, int widgetW, int wi
         //Debug.Print($"{_dragging_index} to {_last_draged_to}");
         // [original inline comment from MeterManager.cs:9381]
         setButtonMap(map);
-        // The new order is saved with the layout.
+        // The new order is saved with the layout. The record now holds the
+        // item's whole state (the editor's overrides were applied when it
+        // was built), so the overrides go: kept, an editor override of the
+        // order (Reset layout) would win again on the rebuild and undo the
+        // move. Geometry comes from the entry's canvas rect, and the
+        // bindings from its context, so neither is lost.
         emit m_configNotifier->configEdited(
-            QJsonObject{{QStringLiteral("legacyRecord"), serialize()}});
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()},
+                        {QStringLiteral("overrides"), QJsonObject{}}});
     }
     return true;
 }
