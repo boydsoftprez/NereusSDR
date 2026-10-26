@@ -93,6 +93,12 @@
 //                 not open or is the item's own. It follows txSliceChanged.
 //                 The Custom line toggles are named for slices.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A needle or bar takes the VHF S9 rule from its entry's
+//                 slice: Signal Peak and Signal Avg are raised 20 dB at or
+//                 above 30 MHz (aboveS9Adjusted, AboveS9Frequency.h), so S9
+//                 sits at -93 dBm there, as Thetis getPerc does. Max Bin
+//                 and the TX readings are unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -107,6 +113,7 @@
 #include "gui/instruments/FrequencyInstrument.h"
 #include "gui/instruments/NeedleInstrument.h"
 #include "gui/instruments/ReadingSource.h"
+#include "gui/meters/AboveS9Frequency.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/widgets/BandwidthFilterPane.h"
@@ -571,6 +578,13 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         // that does not send it, no transmit source): no value, as a
         // MeterWidget shows the binding disabled.
         auto unavailable = std::make_shared<bool>(false);
+        // Whether the entry's slice is at or above the S9 frequency (30 MHz).
+        // There Thetis raises Signal Strength and Avg Signal Strength by
+        // 20 dB before it positions them (getPerc, MeterManager.cs:41049-41052
+        // [v2.10.3.15]), so S9 reads at -93 dBm; aboveS9Adjusted leaves every
+        // other reading as it is. Set from the slice below, before any
+        // reading arrives.
+        auto aboveS9 = std::make_shared<bool>(false);
         if (entry.typeId == QLatin1String(kBarType)) {
             auto owned = std::make_unique<BarInstrument>(parent);
             owned->setCompact(entry.config.value(QLatin1String(kCompactKey)).toBool(true));
@@ -578,14 +592,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             BarInstrument* bar = owned.release();
             if (secondary >= 0) { bar->setSecondary(secondary); }
             QPointer<BarInstrument> guard(bar);
-            onReading = [guard, primary, unavailable](int binding, double value) {
+            onReading = [guard, primary, unavailable, aboveS9](int binding, double value) {
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); }
                     else { guard->clearSecondValue(); }
                     return;
                 }
-                guard->onReading(binding, value);
+                guard->onReading(binding, aboveS9Adjusted(binding, value, *aboveS9));
             };
             widget = bar;
         } else {
@@ -597,14 +611,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             // good when NereusSDR has no producer for the reading.
             needle->setOffline(true);
             QPointer<NeedleInstrument> guard(needle);
-            onReading = [guard, primary, available, unavailable](int binding, double value) {
+            onReading = [guard, primary, available, unavailable, aboveS9](int binding, double value) {
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); guard->setOffline(true); }
                     else { guard->clearSecondValue(); }
                     return;
                 }
-                guard->onReading(binding, value);
+                guard->onReading(binding, aboveS9Adjusted(binding, value, *aboveS9));
                 if (binding == primary && available) { guard->setOffline(false); }
             };
             widget = needle;
@@ -628,6 +642,21 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             }
         }
         widget->setProperty("longpathPrimaryBinding", primary);
+        // The S9 rule follows the entry's slice: its band changes take
+        // effect on the next reading, and a Follow selected RX entry moves
+        // to the newly selected slice. An inert preview reads the slice once.
+        if (mode == ContentRenderMode::Preview) {
+            SliceModel* slice = sliceNow(sources, entry.context);
+            *aboveS9 = slice && isAboveS9Frequency(slice->frequency());
+        } else {
+            auto* follower = new SliceFollower(widget, sources, entry.context);
+            follower->start([follower, aboveS9](SliceModel* slice) {
+                *aboveS9 = slice && isAboveS9Frequency(slice->frequency());
+                if (!slice) { return; }
+                follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, follower,
+                                                 [aboveS9](double hz) { *aboveS9 = isAboveS9Frequency(hz); }));
+            });
+        }
         if (sources.poller && available && mode == ContentRenderMode::Preview) {
             // Inert preview: the cached readings once, nothing registered.
             *unavailable = !sources.poller->bindingUnavailableReason(primary).isEmpty();

@@ -49,8 +49,15 @@
 //                 frequencyEditorsNameSlices; the slice-letter, follow and
 //                 Custom cases set a transmit slice. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The VHF S9 rule on needles and bars, per slice:
+//                 signalReadingsTakeTheVhfS9RuleOfTheirSlice,
+//                 vhfS9RuleFollowsTheSliceAcross30MHz,
+//                 secondReadingTakesTheVhfS9RuleOfItsBinding and
+//                 previewTakesTheVhfS9RuleOnce. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <QAbstractButton>
 #include <QApplication>
@@ -1438,6 +1445,226 @@ private slots:
                          "a preview holds no slice follower");
             }
         }
+    }
+
+    void signalReadingsTakeTheVhfS9RuleOfTheirSlice()
+    {
+        // At or above 30 MHz Thetis raises Signal Strength and Avg Signal
+        // Strength 20 dB before positioning them (getPerc), so -93 dBm
+        // shows S9. Max Bin and the TX readings are not raised.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        const QJsonObject context{{QStringLiteral("sliceId"), 0}};
+        const auto entryFor = [&](const char* type, int binding) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), binding);
+            entry.context = context;
+            return entry;
+        };
+        const ReadingDescriptor* signal = readingFor(MeterBinding::SignalPeak);
+        QVERIFY(signal);
+        QCOMPARE(signal->textWithUnit(kS9Dbm), QStringLiteral("S9"));
+        QWidget parent;
+
+        struct Case {
+            double hz;
+            double shown;
+        };
+        // 50.1 MHz and exactly 30.000000 MHz are shifted; 14.2 MHz is not.
+        for (const Case& c : {Case{50.1e6, -73.0}, Case{30.0e6, -73.0}, Case{14.2e6, -93.0}}) {
+            slice->setFrequency(c.hz);
+            const QByteArray where = QByteArray::number(c.hz, 'f', 0);
+            std::unique_ptr<QWidget> n(registry.createWidget(entryFor(LongpathContent::kNeedleType, MeterBinding::SignalPeak), &parent));
+            auto* needle = qobject_cast<NeedleInstrument*>(n.get());
+            QVERIFY(needle);
+            emit poller.readingUpdated(context, MeterBinding::SignalPeak, -93.0);
+            QVERIFY2(needle->hasValue(), where.constData());
+            QCOMPARE(needle->peakHold().value(), c.shown);
+            QCOMPARE(footerValueText(*needle), signal->textWithUnit(c.shown));
+            QCOMPARE(footerValueText(*needle) == QStringLiteral("S9"), c.shown == -73.0);
+
+            const auto barValue = [&](int binding, double fed) -> double {
+                std::unique_ptr<QWidget> b(registry.createWidget(entryFor(LongpathContent::kBarType, binding), &parent));
+                auto* bar = qobject_cast<BarInstrument*>(b.get());
+                if (!bar) { return std::numeric_limits<double>::quiet_NaN(); }
+                emit poller.readingUpdated(context, binding, fed);
+                return bar->hasValue() ? bar->value() : std::numeric_limits<double>::quiet_NaN();
+            };
+            QCOMPARE(barValue(MeterBinding::SignalPeak, -93.0), c.shown);
+            QCOMPARE(barValue(MeterBinding::SignalAvg, -93.0), c.shown);
+            QCOMPARE(barValue(MeterBinding::SignalMaxBin, -93.0), -93.0);
+            QCOMPARE(barValue(MeterBinding::TxPower, 50.0), 50.0);
+            QCOMPARE(barValue(MeterBinding::TxSwr, 1.5), 1.5);
+        }
+    }
+
+    void vhfS9RuleFollowsTheSliceAcross30MHz()
+    {
+        // A band change takes effect on the next reading, without a
+        // rebuild; a Follow selected RX entry takes the newly selected
+        // slice's rule and drops the old slice's.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(14.2e6);
+        sliceB->setFrequency(144.2e6);
+        model.setActiveSlice(0);
+        QCOMPARE(model.activeSlice(), sliceA);
+
+        MeterPoller poller;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        // Follow selected RX: the context names whichever slice is active.
+        sources.sliceForContext = [&model](const QJsonObject&) { return model.activeSlice(); };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), MeterBinding::SignalAvg);
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 0}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* bar = qobject_cast<BarInstrument*>(widget.get());
+        QVERIFY(bar);
+        const auto feed = [&] { emit poller.readingUpdated(entry.context, MeterBinding::SignalAvg, -93.0); };
+
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+        sliceA->setFrequency(50.1e6);
+        QCOMPARE(bar->value(), -93.0);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        sliceA->setFrequency(29.999999e6);
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+
+        // Slice B (144.2 MHz) becomes the selected RX.
+        model.setActiveSlice(1);
+        QCOMPARE(model.activeSlice(), sliceB);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        // The old slice's band no longer counts; the new one's does.
+        sliceA->setFrequency(7.1e6);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        sliceB->setFrequency(21.2e6);
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+    }
+
+    void secondReadingTakesTheVhfS9RuleOfItsBinding()
+    {
+        // Each trough of a compact bar takes the rule for its own reading:
+        // on 50.1 MHz the same -93 dBm is S9 on Signal Peak or Avg and S6
+        // on Max Bin.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(50.1e6);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        const QString s9 = readingFor(MeterBinding::SignalPeak)->textWithUnit(-73.0);
+        const QString s6 = readingFor(MeterBinding::SignalMaxBin)->textWithUnit(-93.0);
+        QVERIFY(s9 != s6);
+
+        struct Case {
+            int primary;
+            int secondary;
+            QStringList shown;
+        };
+        const QList<Case> cases{
+            {MeterBinding::SignalMaxBin, MeterBinding::SignalAvg, {s6, s9}},
+            {MeterBinding::SignalPeak, MeterBinding::SignalMaxBin, {s9, s6}},
+        };
+        QWidget parent;
+        for (const Case& c : cases) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+            entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.primary);
+            entry.config.insert(QString::fromLatin1(LongpathContent::kSecondaryKey), c.secondary);
+            entry.context = QJsonObject{{QStringLiteral("sliceId"), 0}};
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* bar = qobject_cast<BarInstrument*>(widget.get());
+            QVERIFY(bar);
+            QVERIFY(bar->isCompact());
+            emit poller.readingUpdated(entry.context, c.primary, -93.0);
+            emit poller.readingUpdated(entry.context, c.secondary, -93.0);
+            QVERIFY(bar->hasValue() && bar->hasSecondValue());
+            QStringList drawn = textsDrawnBy(*bar, QSize(320, bar->sizeHint().height()));
+            const int before = drawn.size();
+            drawn.removeAll(readingFor(c.primary)->thetisName());
+            drawn.removeAll(readingFor(c.secondary)->thetisName());
+            QCOMPARE(before - drawn.size(), 2);
+            QCOMPARE(drawn, c.shown);
+        }
+    }
+
+    void previewTakesTheVhfS9RuleOnce()
+    {
+        // An inert preview reads its slice once, when it is built: the
+        // cached -93 dBm shows S9 for a 50.1 MHz slice, and a later band
+        // change does not move it.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(50.1e6);
+        MeterPoller poller;
+        poller.setRxReadingSource([](const QJsonObject&, int) { return -93.0; });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+
+        std::unique_ptr<QWidget> view(registry.createPreview(entry, &parent));
+        auto* needle = qobject_cast<NeedleInstrument*>(view.get());
+        QVERIFY(needle);
+        QCOMPARE(poller.readingConsumerCountForTest(), 0);
+        QVERIFY(needle->hasValue());
+        QCOMPARE(needle->peakHold().value(), -73.0);
+        QCOMPARE(footerValueText(*needle), QStringLiteral("S9"));
+        for (QObject* child : needle->findChildren<QObject*>(Qt::FindDirectChildrenOnly)) {
+            QVERIFY2(std::strcmp(child->metaObject()->className(), "QObject") != 0,
+                     "a preview holds no slice follower");
+        }
+
+        slice->setFrequency(14.2e6);
+        emit poller.readingUpdated(entry.context, MeterBinding::SignalPeak, -93.0);
+        QCOMPARE(needle->peakHold().value(), -73.0);
+        QCOMPARE(footerValueText(*needle), QStringLiteral("S9"));
+
+        // Built again on 14.2 MHz, the same reading sits 20 dB lower.
+        std::unique_ptr<QWidget> rebuilt(registry.createPreview(entry, &parent));
+        auto* hf = qobject_cast<NeedleInstrument*>(rebuilt.get());
+        QVERIFY(hf);
+        QCOMPARE(hf->peakHold().value(), -93.0);
+        QCOMPARE(footerValueText(*hf), readingFor(MeterBinding::SignalPeak)->textWithUnit(-93.0));
     }
 
     void registrationReplayReachesOnlyTheNewWidget()
