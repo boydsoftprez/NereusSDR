@@ -23,10 +23,10 @@
 //   2026-10-25: Hidden reads "Hidden · 9 · K4ABC" with the
 //               glyph dimmed; live and the other link states are unchanged.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-25: The longest lines are measured in the line's own font
-//               (VfoWidget::roundtableLineFont), and a family with no
-//               semibold face draws at Normal. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//   2026-10-25: The longest lines are measured in the font the line
+//               draws each in (VfoWidget::roundtableLineFont), and a text
+//               that fits only at Normal is drawn at Normal. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -389,14 +389,15 @@ private slots:
         flag.setRoundtableLine(line);
         QCOMPARE(flag.width(), 252);
 
-        // The line's own font and pads (VfoWidget.cpp RoundtableLineButton):
-        // 5 px pads, a 9 px glyph, the @N badge 8 px wider than its text.
-        const QFont font = VfoWidget::roundtableLineFont();
-        QCOMPARE(font.pixelSize(), 11);
-        QFont badge = font;
+        // The line's room, as the widget lays it out (VfoWidget.cpp
+        // RoundtableLineButton): 5 px pads, a 9 px glyph, the @N badge 8 px
+        // wider than its ExtraBold text.
+        const int room = VfoWidget::roundtableLineTextRoom(line, button->width());
+        QFont badge;
+        badge.setPixelSize(11);
         badge.setWeight(QFont::ExtraBold);
         const int badgeW = std::max(15, QFontMetrics(badge).horizontalAdvance(QStringLiteral("@12")) + 8);
-        const int room = button->width() - (5 + 9 + 5) - 5 - badgeW - 5;
+        QCOMPARE(room, button->width() - (5 + 9 + 5) - 5 - badgeW - 5);
         const QStringList longest{
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("KC1ABC/MM"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Reconnecting"),
@@ -412,49 +413,48 @@ private slots:
                 + QStringLiteral("Doubled"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("Nobody here")};
         for (const QString& text : longest) {
-            QVERIFY2(QFontMetrics(font).horizontalAdvance(text) <= room,
-                     qPrintable(QStringLiteral("%1: %2 > %3")
+            // In the font the widget draws this text in.
+            const QFont font = VfoWidget::roundtableLineFont(text, room);
+            QCOMPARE(font.pixelSize(), 11);
+            const int width = QFontMetrics(font).horizontalAdvance(text);
+            const QFontInfo info(font);
+            QVERIFY2(width <= room,
+                     qPrintable(QStringLiteral("%1: %2 > %3 in %4 '%5' weight %6 (asked %7)")
                                     .arg(text)
-                                    .arg(QFontMetrics(font).horizontalAdvance(text))
-                                    .arg(room)));
+                                    .arg(width)
+                                    .arg(room)
+                                    .arg(info.family(), info.styleName())
+                                    .arg(info.weight())
+                                    .arg(static_cast<int>(font.weight()))));
         }
     }
 
-    void noSemiboldFaceDrawsAtNormal()
+    void aLineTooWideAtSemiboldDrawsAtNormal()
     {
-        // A family with no semibold face (DejaVu Sans on Linux; Arial,
-        // Verdana on the Mac) would give Bold for DemiBold, wider; the line
-        // is drawn at Normal there. A family with one keeps semibold.
-        const QFont previous = QApplication::font();
-        QString without;
-        for (const QString& family : {QStringLiteral("DejaVu Sans"), QStringLiteral("Arial"),
-                                      QStringLiteral("Verdana"), QStringLiteral("Liberation Sans")}) {
-            QFont probe(family);
-            probe.setPixelSize(11);
-            probe.setWeight(QFont::DemiBold);
-            const QFontInfo info(probe);
-            if (info.family() == family && info.weight() > QFont::DemiBold) {
-                without = family;
-                break;
-            }
-        }
-        if (without.isEmpty()) {
-            QSKIP("no family without a semibold face on this machine");
-        }
-        QApplication::setFont(QFont(without));
-        const QFont font = VfoWidget::roundtableLineFont();
-        const QFontInfo drawn(font);
-        QApplication::setFont(previous);
-        QCOMPARE(drawn.family(), without);
-        QCOMPARE(font.pixelSize(), 11);
-        QCOMPARE(drawn.weight(), static_cast<int>(QFont::Normal));
+        // The weight is chosen by what fits, whatever faces the machine
+        // has: a text that fits its room at semibold keeps semibold; one
+        // that fits only at Normal is drawn at Normal.
+        const QString text = QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot
+                             + QStringLiteral("KC1ABC/MM");
+        QFont semibold;
+        semibold.setPixelSize(11);
+        semibold.setWeight(QFont::DemiBold);
+        QFont normal = semibold;
+        normal.setWeight(QFont::Normal);
+        const int atSemibold = QFontMetrics(semibold).horizontalAdvance(text);
+        const int atNormal = QFontMetrics(normal).horizontalAdvance(text);
 
-        QFont asked = previous;
-        asked.setPixelSize(11);
-        asked.setWeight(QFont::DemiBold);
-        if (QFontInfo(asked).weight() == QFont::DemiBold) {
-            QCOMPARE(QFontInfo(VfoWidget::roundtableLineFont()).weight(), static_cast<int>(QFont::DemiBold));
-        }
+        QCOMPARE(static_cast<int>(VfoWidget::roundtableLineFont(text, atSemibold).weight()), static_cast<int>(QFont::DemiBold));
+        QCOMPARE(static_cast<int>(VfoWidget::roundtableLineFont(text, atSemibold + 40).weight()),
+                 static_cast<int>(QFont::DemiBold));
+        QCOMPARE(static_cast<int>(VfoWidget::roundtableLineFont(text, atSemibold - 1).weight()), static_cast<int>(QFont::Normal));
+        QVERIFY2(atNormal < atSemibold,
+                 qPrintable(QStringLiteral("Normal %1, semibold %2 in %3").arg(atNormal).arg(atSemibold)
+                                .arg(QFontInfo(semibold).family())));
+        const QFont drawn = VfoWidget::roundtableLineFont(text, atNormal);
+        QCOMPARE(static_cast<int>(drawn.weight()), static_cast<int>(QFont::Normal));
+        QCOMPARE(drawn.pixelSize(), 11);
+        QVERIFY(QFontMetrics(drawn).horizontalAdvance(text) <= atNormal);
     }
 
     void aClickAsksForThePanel()

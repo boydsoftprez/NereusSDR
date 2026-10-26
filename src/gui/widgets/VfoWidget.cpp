@@ -13,8 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-25 - The Roundtable line is drawn at Normal where the
-//                family has no semibold face (roundtableLineFontFor).
+//   2026-10-25 - The Roundtable line's text is drawn at Normal when it
+//                does not fit its room at semibold (roundtableLineFontFor,
+//                by measurement; it was by the face's reported weight).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                (Claude Opus 5.5).
 //   2026-10-25 - While you are hidden the Roundtable line's glyph is
@@ -487,7 +488,6 @@ warren@wpratt.com
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/AppSettings.h"
 
-#include <QFontInfo>
 #include <QFontMetrics>
 #include <QAccessible>
 #include <QAccessibleWidget>
@@ -527,16 +527,48 @@ constexpr qreal kRoundtableLineGlyph = 9.0;
 constexpr int kRoundtableBadgeHeight = 15;
 constexpr int kRoundtableBadgeMinWidth = 15;
 
-// The line's font: semibold where the family has a semibold face. Where it
-// has none (DejaVu Sans, Linux's usual), Qt would take the Bold face for
-// DemiBold, about 8% wider, and the longest lines would elide; the line is
-// drawn at Normal there instead.
-QFont roundtableLineFontFor(const QFont& base)
+// The line's font as the design asks: 11 px semibold. The end (@N badge,
+// chevron) always draws in it.
+QFont roundtableLineBaseFont()
 {
-    QFont font = base;
+    QFont font;
     font.setPixelSize(kRoundtableLineFontPx);
     font.setWeight(QFont::DemiBold);
-    if (QFontInfo(font).weight() > QFont::DemiBold) {
+    return font;
+}
+
+// How wide the line's end is: the @N badge when messages name you, else
+// the chevron.
+int roundtableLineEndWidth(int mentions)
+{
+    QFont end = roundtableLineBaseFont();
+    if (mentions > 0) {
+        end.setWeight(QFont::ExtraBold);
+        const QString at = QStringLiteral("@%1").arg(mentions);
+        return std::max(kRoundtableBadgeMinWidth, QFontMetrics(end).horizontalAdvance(at) + 8);
+    }
+    return QFontMetrics(end).horizontalAdvance(QStringLiteral("\u203a"));
+}
+
+constexpr int kRoundtableLineTextLeft =
+    kRoundtableLinePad + static_cast<int>(kRoundtableLineGlyph) + kRoundtableLinePad;
+
+// The room the text has on a line this wide: after the glyph, before the end.
+int roundtableLineTextRoomFor(int mentions, int lineWidth)
+{
+    const int textRight = lineWidth - kRoundtableLinePad - roundtableLineEndWidth(mentions) - kRoundtableLinePad;
+    return std::max(0, textRight - kRoundtableLineTextLeft);
+}
+
+// The text's font: semibold when the text fits its room at semibold, else
+// Normal. Chosen by measurement, not by the face Qt reports: where the
+// family has no true semibold face (DejaVu Sans on Linux) fontconfig may
+// answer DemiBold with a face as wide as Bold whose reported weight is
+// still DemiBold, and the longest lines would elide.
+QFont roundtableLineFontFor(const QString& text, int room)
+{
+    QFont font = roundtableLineBaseFont();
+    if (QFontMetrics(font).horizontalAdvance(text) > room) {
         font.setWeight(QFont::Normal);
     }
     return font;
@@ -569,7 +601,7 @@ public:
     QSize sizeHint() const override { return QSize(120, kRoundtableLineHeight); }
 
     // How wide the line's text would be, unelided (for tests and fit).
-    int textWidth() const { return QFontMetrics(lineFont()).horizontalAdvance(m_line.text); }
+    int textWidth() const { return QFontMetrics(roundtableLineBaseFont()).horizontalAdvance(m_line.text); }
 
 protected:
     void paintEvent(QPaintEvent*) override
@@ -587,40 +619,33 @@ protected:
                              kRoundtableLineGlyph, m_line.glyph, false, m_line.dimmed);
 
         // The end: @N in cyan when a message names you, else a chevron.
-        QFont end = lineFont();
-        int endLeft = width() - kRoundtableLinePad;
+        QFont end = roundtableLineBaseFont();
+        const int endW = roundtableLineEndWidth(m_line.mentions);
+        const int endLeft = width() - kRoundtableLinePad - endW;
         if (m_line.mentions > 0) {
             end.setWeight(QFont::ExtraBold);
             const QString at = QStringLiteral("@%1").arg(m_line.mentions);
-            const int w = std::max(kRoundtableBadgeMinWidth, QFontMetrics(end).horizontalAdvance(at) + 8);
-            const QRectF badge(width() - kRoundtableLinePad - w, midY - kRoundtableBadgeHeight / 2.0, w,
-                               kRoundtableBadgeHeight);
+            const QRectF badge(endLeft, midY - kRoundtableBadgeHeight / 2.0, endW, kRoundtableBadgeHeight);
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(0x00, 0xd4, 0xff));
             p.drawRoundedRect(badge, kRoundtableBadgeHeight / 2.0, kRoundtableBadgeHeight / 2.0);
             p.setFont(end);
             p.setPen(QColor(0x04, 0x16, 0x1c));
             p.drawText(badge, Qt::AlignCenter, at);
-            endLeft = static_cast<int>(badge.left());
         } else {
             const QString chevron = QStringLiteral("\u203a");
-            const int w = QFontMetrics(end).horizontalAdvance(chevron);
             p.setFont(end);
             p.setPen(QColor(0xa6, 0xa6, 0xac));
-            const QRect box(width() - kRoundtableLinePad - w, 0, w, height());
+            const QRect box(endLeft, 0, endW, height());
             p.drawText(box, Qt::AlignVCenter | Qt::AlignRight, chevron);
-            endLeft = box.left();
         }
 
-        const QFont font = lineFont();
+        const int room = roundtableLineTextRoomFor(m_line.mentions, width());
+        const QFont font = roundtableLineFontFor(m_line.text, room);
         p.setFont(font);
         p.setPen(QColor(0xdc, 0xdc, 0xe1));
-        const int textLeft = kRoundtableLinePad + static_cast<int>(kRoundtableLineGlyph) + kRoundtableLinePad;
-        const int textRight = endLeft - kRoundtableLinePad;
-        const QString text = QFontMetrics(font).elidedText(m_line.text, Qt::ElideRight,
-                                                           std::max(0, textRight - textLeft));
-        p.drawText(QRect(textLeft, 0, std::max(0, textRight - textLeft), height()),
-                   Qt::AlignVCenter | Qt::AlignLeft, text);
+        const QString text = QFontMetrics(font).elidedText(m_line.text, Qt::ElideRight, room);
+        p.drawText(QRect(kRoundtableLineTextLeft, 0, room, height()), Qt::AlignVCenter | Qt::AlignLeft, text);
     }
 
     void enterEvent(QEnterEvent* event) override
@@ -635,8 +660,6 @@ protected:
     }
 
 private:
-    static QFont lineFont() { return roundtableLineFontFor(QFont()); }
-
     RoundtableFlagLine m_line;
 };
 
@@ -1314,9 +1337,14 @@ void VfoWidget::buildRoundtableLine()
     button->hide();
 }
 
-QFont VfoWidget::roundtableLineFont()
+int VfoWidget::roundtableLineTextRoom(const RoundtableFlagLine& line, int lineWidth)
 {
-    return roundtableLineFontFor(QFont());
+    return roundtableLineTextRoomFor(line.mentions, lineWidth);
+}
+
+QFont VfoWidget::roundtableLineFont(const QString& text, int room)
+{
+    return roundtableLineFontFor(text, room);
 }
 
 void VfoWidget::setRoundtableLine(const RoundtableFlagLine& line)

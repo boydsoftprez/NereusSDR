@@ -15,8 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-25 - roundtableLineFont: the Roundtable line is drawn at
-//                 Normal where the family has no semibold face. J.J. Boyd
+//   2026-10-25 - roundtableLineFont and roundtableLineTextRoom: the
+//                 Roundtable line's text is drawn at Normal when it does
+//                 not fit its room at semibold. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5).
 //   2026-10-24 - setRoundtableLine and roundtableLineClicked, the
@@ -795,9 +796,12 @@ public slots:
     void setRoundtableLine(const RoundtableFlagLine& line);
     RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
     QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
-    // The font the line's text is drawn in: 11 px semibold, or Normal where
-    // the application font's family has no semibold face.
-    static QFont roundtableLineFont();
+    // The room the line's text has on a line lineWidth wide: after the
+    // glyph, before the @N badge or chevron.
+    static int roundtableLineTextRoom(const RoundtableFlagLine& line, int lineWidth);
+    // The font the line draws text in with that room: 11 px semibold when
+    // it fits at semibold, else Normal (then elided if it still does not).
+    static QFont roundtableLineFont(const QString& text, int room);
 
 signals:
     // The Roundtable line was clicked: open the Roundtable panel.
