@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original tests for the text overlay item.
 // Modification history (NereusSDR):
+//   2026-10-26 - Item editors' colour swatches keep their colour under the
+//                 workspace look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Text overlay RX/TX swap (line 1 on receive, line 2 on
 //                 transmit) for new items, both lines for saved ones; the
 //                 panel's MOX flip fade; copy font 1 to 2; auto scroll
@@ -18,6 +21,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QColor>
 #include <QImage>
 #include <QPainter>
@@ -25,9 +29,12 @@
 
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentFade.h"
+#include "gui/containers/meter_property_editors/ClockItemEditor.h"
 #include "gui/containers/meter_property_editors/LedItemEditor.h"
 #include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
+#include "gui/meters/ClockItem.h"
 #include "gui/meters/LEDItem.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/meters/LedResultRegistry.h"
 #include "gui/meters/TextOverlayItem.h"
 
@@ -467,6 +474,51 @@ private slots:
         // Cleared on request (MeterWidget::removeItem).
         qobject_cast<LEDItem*>(rebuilt.get())->clearPublishedResult();
         QVERIFY(!LedResultRegistry::instance().get(id).has_value());
+    }
+
+    // The workspace look leaves an item editor's colour swatches alone: a
+    // grey or white colour reads as itself, not as the look's dark fill.
+    void colourSwatchesKeepTheirColourUnderTheLook()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        const auto swatchSheets = [](QWidget& editor) {
+            QHash<QPushButton*, QString> sheets;
+            for (QPushButton* b : editor.findChildren<QPushButton*>()) {
+                if (b->styleSheet().contains(QLatin1String("background: #"))) { sheets.insert(b, b->styleSheet()); }
+            }
+            return sheets;
+        };
+        const auto check = [&swatchSheets](QWidget& editor, const QString& name, const QStringList& colours) {
+            const QHash<QPushButton*, QString> before = swatchSheets(editor);
+            QStringList all;
+            for (const QString& sheet : before) { all.append(sheet); }
+            for (const QString& colour : colours) {
+                QVERIFY2(all.join(QLatin1Char(' ')).contains(colour), qPrintable(name + QStringLiteral(": no swatch ") + colour));
+            }
+            WorkspacePreview::themeSubtree(&editor);
+            for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
+                QVERIFY2(it.key()->styleSheet() == it.value(),
+                         qPrintable(QStringLiteral("%1: \"%2\" became \"%3\"").arg(name, it.value(), it.key()->styleSheet())));
+            }
+        };
+        LEDItem led;
+        led.setTrueColour(Qt::white);
+        led.setFalseColour(QColor(192, 192, 192));
+        LedItemEditor ledEditor;
+        ledEditor.setItem(&led);
+        check(ledEditor, QStringLiteral("LED"), {QStringLiteral("#ffffffff"), QStringLiteral("#ffc0c0c0")});
+        TextOverlayItem overlay;
+        overlay.setTextColour1(Qt::white);
+        overlay.setTextColour2(QColor(128, 128, 128));
+        TextOverlayItemEditor overlayEditor;
+        overlayEditor.setItem(&overlay);
+        check(overlayEditor, QStringLiteral("Text overlay"), {QStringLiteral("#ffffffff"), QStringLiteral("#ff808080")});
+        ClockItem clock(nullptr, false);
+        clock.applyNewItemDefaults();
+        ClockItemEditor clockEditor;
+        clockEditor.setItem(&clock);
+        check(clockEditor, QStringLiteral("Clock"), {QStringLiteral("#ff808080")});
     }
 
     void editorsShowTheIdAndWriteTheGates()
