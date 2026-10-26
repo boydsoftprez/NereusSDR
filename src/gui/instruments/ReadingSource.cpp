@@ -138,10 +138,11 @@ mw0lge@grange-lane.co.uk
 //
 //   Ported from Thetis source:
 //   Project Files/Source/Console/MeterManager.cs [v2.10.3.15], original
-//   licence from Thetis source is included above. Only the TX: ALC
-//   scale comes from it (AddALCBar's calibration and generalScale's
-//   ticks), a NereusSDR addition: upstream lists TX: ALC without a
-//   scale, so no instrument could show it.
+//   licence from Thetis source is included above. The scales of the
+//   readings upstream lists without one come from it (each bar's or
+//   needle's ScaleCalibration and HighPoint, renderScale's generalScale
+//   ticks, ReadingUnits), a NereusSDR addition: without a scale no
+//   instrument could show them. TX: ALC was the first.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -153,6 +154,13 @@ mw0lge@grange-lane.co.uk
 //   2026-10-08 - English labels for the noise floor and RADE SNR readings;
 //                 the TX: ALC cite points at the average ALC bar.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Every MeterPoller reading Thetis draws gets the scale of
+//                 the Thetis bar or needle that draws it (ScaleCalibration,
+//                 HighPoint, renderScale ticks): ADC, AGC, AGC gain, PB SNR,
+//                 reverse power, the TX stage readings and their peaks, the
+//                 gains, ALC group, volts and amps. The six peak readings
+//                 become rows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/instruments/ReadingSource.h"
@@ -163,6 +171,9 @@ mw0lge@grange-lane.co.uk
 #include <QtGlobal>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
 
 namespace NereusSDR {
 
@@ -203,6 +214,212 @@ double alcFraction(double db)
     }
     return kAlcCentreFraction
         + (db - kAlcCentreDb) / (kAlcMaxDb - kAlcCentreDb) * (kAlcMaxFraction - kAlcCentreFraction);
+}
+
+// NereusSDR: one Thetis ScaleCalibration entry, the reading value (key)
+// and the bar position it sits at (PointF.X). Thetis's bar item
+// interpolates linearly between neighbouring entries and holds the end
+// positions outside them, as alcFraction does for TX: ALC.
+struct CalibrationPoint {
+    double key;
+    double position;
+};
+
+template <std::size_t N>
+double calibratedFraction(const std::array<CalibrationPoint, N>& points, double value)
+{
+    if (value <= points.front().key) { return points.front().position; }
+    for (std::size_t i = 1; i < N; ++i) {
+        if (value <= points[i].key) {
+            const CalibrationPoint& low = points[i - 1];
+            const CalibrationPoint& high = points[i];
+            return low.position
+                + (value - low.key) / (high.key - low.key) * (high.position - low.position);
+        }
+    }
+    return points.back().position;
+}
+
+// ReadingDescriptor::fractionOf is a plain function pointer, so each
+// calibration gets its own instantiation.
+template <const auto& Points>
+double fractionOn(double value)
+{
+    return calibratedFraction(Points, value);
+}
+
+// From Thetis MeterManager.cs:23084-23086 [v2.10.3.15] (Reading.ADC_PK;
+// Reading.ADC_AV :23109-23111 is the same)
+//   cb.ScaleCalibration.Add(-120, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(-20, new PointF(0.8333f, 0));
+//   cb.ScaleCalibration.Add(0, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kAdcCalibration{{
+    {-120.0, 0.0}, {-20.0, 0.8333}, {0.0, 0.99}}};
+
+// From Thetis MeterManager.cs:23306-23308 [v2.10.3.15] (Reading.AGC_PK;
+// Reading.AGC_AV :23332-23334 is the same)
+//   cb.ScaleCalibration.Add(-125, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(0, new PointF(0.5f, 0));
+//   cb.ScaleCalibration.Add(125, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kAgcCalibration{{
+    {-125.0, 0.0}, {0.0, 0.5}, {125.0, 0.99}}};
+
+// From Thetis MeterManager.cs:23244-23246 [v2.10.3.15] (Reading.AGC_GAIN)
+//   cb.ScaleCalibration.Add(-50, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(100, new PointF(0.857f, 0));
+//   cb.ScaleCalibration.Add(125, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kAgcGainCalibration{{
+    {-50.0, 0.0}, {100.0, 0.857}, {125.0, 0.99}}};
+
+// From Thetis MeterManager.cs:23173-23175 [v2.10.3.15] (Reading.ESTIMATED_PBSNR)
+//   cb.ScaleCalibration.Add(0, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(50, new PointF(0.8333f, 0));
+//   cb.ScaleCalibration.Add(60, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kPbSnrCalibration{{
+    {0.0, 0.0}, {50.0, 0.8333}, {60.0, 0.99}}};
+
+// From Thetis MeterManager.cs:25181-25184, 25231-25236 [v2.10.3.15]
+// (AddREVPWRBar calls AddPWRBar with Reading.REVERSE_PWR; the 100 W case,
+// the only one not commented out)
+//   cb.ScaleCalibration.Add(0, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(5, new PointF(0.1875f, 0));
+//   cb.ScaleCalibration.Add(10, new PointF(0.375f, 0));
+//   cb.ScaleCalibration.Add(50, new PointF(0.5625f, 0));
+//   cb.ScaleCalibration.Add(100, new PointF(0.75f, 0));
+//   cb.ScaleCalibration.Add(120, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 6> kPowerCalibration{{
+    {0.0, 0.0}, {5.0, 0.1875}, {10.0, 0.375}, {50.0, 0.5625}, {100.0, 0.75}, {120.0, 0.99}}};
+// From Thetis MeterManager.cs:25276 [v2.10.3.15]
+//   cb.HighPoint = cb.ScaleCalibration.OrderBy(p => p.Key).ElementAt(4).Value;
+constexpr std::size_t kPowerHighPointIndex = 4;
+
+// From Thetis MeterManager.cs [v2.10.3.15], the same three points on
+// every TX stage bar: MIC_PK :24348-24350, MIC :24372-24374,
+// EQ_PK :24435-24437, EQ :24460-24462, LEVELER_PK :24523-24525,
+// LEVELER :24547-24549, ALC_PK :24670-24672, CFC_PK :24878-24880,
+// CFC_AV :24902-24904, COMP_PK :25025-25027, COMP :25049-25051
+//   cb.ScaleCalibration.Add(-30, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(0, new PointF(0.665f, 0));
+//   cb.ScaleCalibration.Add(12, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kTxStageCalibration{{
+    {-30.0, 0.0}, {0.0, 0.665}, {12.0, 0.99}}};
+
+// From Thetis MeterManager.cs [v2.10.3.15]: LVL_G :24609-24611,
+// ALC_G :24756-24758, CFC_G :24964-24966
+//   cb.ScaleCalibration.Add(0, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(20, new PointF(0.8f, 0));
+//   cb.ScaleCalibration.Add(25, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kTxGainCalibration{{
+    {0.0, 0.0}, {20.0, 0.8}, {25.0, 0.99}}};
+
+// From Thetis MeterManager.cs:24817-24819 [v2.10.3.15] (Reading.ALC_GROUP)
+//   cb.ScaleCalibration.Add(-30, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(0, new PointF(0.5f, 0));
+//   cb.ScaleCalibration.Add(25, new PointF(0.99f, 0));
+constexpr std::array<CalibrationPoint, 3> kAlcGroupCalibration{{
+    {-30.0, 0.0}, {0.0, 0.5}, {25.0, 0.99}}};
+
+// The bars above set HighPoint to the second calibration point, the
+// value the scale's high (red) colour starts from.
+// From Thetis MeterManager.cs:24700 [v2.10.3.15]
+//   cb.HighPoint = cb.ScaleCalibration.OrderBy(p => p.Key).ElementAt(1).Value;
+constexpr std::size_t kBarHighPointIndex = 1;
+
+// From Thetis MeterManager.cs:23855-23857 [v2.10.3.15] (ANANMM, Reading.VOLTS).
+// The keys give the range only: the positions are points on the needle
+// face's arc, so the NereusSDR scale is linear between them.
+//   ni2.ScaleCalibration.Add(10f, new PointF(0.559f, 0.756f));
+//   ni2.ScaleCalibration.Add(12.5f, new PointF(0.605f, 0.772f));
+//   ni2.ScaleCalibration.Add(15f, new PointF(0.665f, 0.784f));
+constexpr double kVoltsMin = 10.0;
+constexpr double kVoltsMid = 12.5;
+constexpr double kVoltsMax = 15.0;
+
+// From Thetis MeterManager.cs:23884-23894 [v2.10.3.15] (ANANMM, Reading.AMPS).
+// The keys give the range only (0f to 20f in 2 A steps on the needle
+// face's arc); the NereusSDR scale is linear between them.
+//   ni3.ScaleCalibration.Add(0f, new PointF(0.199f, 0.576f));
+//   ...
+//   ni3.ScaleCalibration.Add(20f, new PointF(0.799f, 0.576f));
+constexpr double kAmpsMin = 0.0;
+constexpr double kAmpsMax = 20.0;
+constexpr double kAmpsStep = 2.0;
+
+// Ticks as Thetis's generalScale draws them (MeterManager.cs:33872-33950
+// [v2.10.3.15]): long ticks with labels at lowStart + i * lowIncrement
+// (i = 1 .. lowLongTicks - 1) and (highEnd - highLongTicks * highIncrement)
+// + i * highIncrement (i = 1 .. highLongTicks); a short tick halfway
+// before each long one.
+struct GeneralScale {
+    int lowLongTicks;
+    int highLongTicks;
+    int lowStart;
+    int highEnd;
+    int lowIncrement;
+    int highIncrement;
+    bool trailingPlus;
+};
+
+void addGeneralScaleTicks(ReadingDescriptor& d, const GeneralScale& g)
+{
+    double previous = g.lowStart;
+    const auto add = [&d, &previous](double at, const QString& label) {
+        d.ticks.append({at, label});
+        d.minorTicks.append((previous + at) / 2.0);
+        previous = at;
+    };
+    for (int i = 1; i < g.lowLongTicks; ++i) {
+        const int at = g.lowStart + i * g.lowIncrement;
+        add(at, QString::number(at));
+    }
+    for (int i = 1; i <= g.highLongTicks; ++i) {
+        const int at = (g.highEnd - g.highLongTicks * g.highIncrement) + i * g.highIncrement;
+        QString label = QString::number(at);
+        if (g.trailingPlus && i == g.highLongTicks) { label += QLatin1Char('+'); }
+        add(at, label);
+    }
+}
+
+// From Thetis MeterManager.cs:33455 [v2.10.3.15] (ADC_PK, ADC_AV)
+//   generalScale(x, y, w, h, scale, 6, 1, -120, 0, 20, 20, fLineBaseY, fontSizeEmScaled, 255);
+constexpr GeneralScale kAdcTicks{6, 1, -120, 0, 20, 20, false};
+// From Thetis MeterManager.cs:33442 [v2.10.3.15] (AGC_AV, AGC_PK)
+//   generalScale(x, y, w, h, scale, 6, 5, -125, 125, 25, 25, fLineBaseY, fontSizeEmScaled, 255);
+constexpr GeneralScale kAgcTicks{6, 5, -125, 125, 25, 25, false};
+// From Thetis MeterManager.cs:33436 [v2.10.3.15] (AGC_GAIN)
+//   generalScale(x, y, w, h, scale, 7, 1, -50, 125, 25, 25, fLineBaseY, fontSizeEmScaled, 255);
+constexpr GeneralScale kAgcGainTicks{7, 1, -50, 125, 25, 25, false};
+// From Thetis MeterManager.cs:33460 [v2.10.3.15] (ESTIMATED_PBSNR)
+//   generalScale(x, y, w, h, scale, 6, 1, 0, 60, 10, 10, fLineBaseY, fontSizeEmScaled, 255);
+constexpr GeneralScale kPbSnrTicks{6, 1, 0, 60, 10, 10, false};
+// From Thetis MeterManager.cs:33479 [v2.10.3.15] (MIC .. ALC_PK)
+//   generalScale(x, y, w, h, scale, 4, 3, -30, 12, 10, 4, fLineBaseY, fontSizeEmScaled, 255, 0.665f);
+constexpr GeneralScale kTxStageTicks{4, 3, -30, 12, 10, 4, false};
+// From Thetis MeterManager.cs:33484 [v2.10.3.15] (ALC_GROUP)
+//   generalScale(x, y, w, h, scale, 4, 5, -30, 25, 10, 5, fLineBaseY, fontSizeEmScaled, 255, 0.5f, true);
+constexpr GeneralScale kAlcGroupTicks{4, 5, -30, 25, 10, 5, true};
+// From Thetis MeterManager.cs:33689 [v2.10.3.15] (ALC_G, LVL_G, CFC_G)
+//   generalScale(x, y, w, h, scale, 5, 1, 0, 25, 5, 5, fLineBaseY, fontSizeEmScaled, 255, -1, true);
+constexpr GeneralScale kTxGainTicks{5, 1, 0, 25, 5, 5, true};
+
+// A reading on a Thetis bar's calibrated scale: range from the first and
+// last keys, red from HighPoint's key.
+template <const auto& Points>
+ReadingDescriptor calibratedReading(int id, const char* label, const char* unit,
+                                    std::size_t highPointIndex, const GeneralScale& ticks)
+{
+    ReadingDescriptor d;
+    d.bindingId  = id;
+    d.label      = QString::fromLatin1(label);
+    d.unit       = QString::fromLatin1(unit);
+    d.hasScale   = true;
+    d.min        = Points.front().key;
+    d.max        = Points.back().key;
+    d.threshold  = Points[highPointIndex].key;
+    d.decimals   = 1;
+    d.fractionOf = &fractionOn<Points>;
+    addGeneralScaleTicks(d, ticks);
+    return d;
 }
 
 // From Longpath src/gui/instruments/ReadingSource.cpp:32 [@551576e3]
@@ -286,12 +503,27 @@ QList<ReadingDescriptor> buildTable()
         t.append(d);
     }
 
-    plain(MeterBinding::AdcPeak,      "RX: ADC Peak");
-    plain(MeterBinding::AdcAvg,       "RX: ADC Avg");
-    plain(MeterBinding::AgcGain,      "RX: AGC Gain");
-    plain(MeterBinding::AgcPeak,      "RX: AGC Peak");
-    plain(MeterBinding::AgcAvg,       "RX: AGC Avg");
-    plain(MeterBinding::PbSnr,        "RX: PB SNR");
+    // NereusSDR: upstream's lines were
+    //   plain(MeterBinding::AdcPeak,      "RX: ADC Peak");
+    //   plain(MeterBinding::AdcAvg,       "RX: ADC Avg");
+    //   plain(MeterBinding::AgcGain,      "RX: AGC Gain");
+    //   plain(MeterBinding::AgcPeak,      "RX: AGC Peak");
+    //   plain(MeterBinding::AgcAvg,       "RX: AGC Avg");
+    //   plain(MeterBinding::PbSnr,        "RX: PB SNR");
+    // Each gets the scale of the Thetis bar that draws it; units from
+    // Thetis MeterManager.cs:2326-2335 (ReadingUnits) [v2.10.3.15].
+    t.append(calibratedReading<kAdcCalibration>(MeterBinding::AdcPeak, "RX: ADC Peak", "dBFS",
+                                                kBarHighPointIndex, kAdcTicks));
+    t.append(calibratedReading<kAdcCalibration>(MeterBinding::AdcAvg, "RX: ADC Avg", "dBFS",
+                                                kBarHighPointIndex, kAdcTicks));
+    t.append(calibratedReading<kAgcGainCalibration>(MeterBinding::AgcGain, "RX: AGC Gain", "dB",
+                                                    kBarHighPointIndex, kAgcGainTicks));
+    t.append(calibratedReading<kAgcCalibration>(MeterBinding::AgcPeak, "RX: AGC Peak", "dB",
+                                                kBarHighPointIndex, kAgcTicks));
+    t.append(calibratedReading<kAgcCalibration>(MeterBinding::AgcAvg, "RX: AGC Avg", "dB",
+                                                kBarHighPointIndex, kAgcTicks));
+    t.append(calibratedReading<kPbSnrCalibration>(MeterBinding::PbSnr, "RX: PB SNR", "dB",
+                                                  kBarHighPointIndex, kPbSnrTicks));
 
     // ── Rauschflur ───────────────────────────────────────────────────
     //
@@ -410,7 +642,31 @@ QList<ReadingDescriptor> buildTable()
         t.append(d);
     }
 
-    plain(MeterBinding::TxReversePower, "TX: Reverse Power");
+    // NereusSDR: upstream's line was
+    //   plain(MeterBinding::TxReversePower, "TX: Reverse Power");
+    // Thetis draws reverse power on the forward power bar's scale
+    // (AddREVPWRBar calls AddPWRBar). With a radio, LongpathContent gives
+    // the instrument the per-model power scale, as for forward power.
+    {
+        ReadingDescriptor d;
+        d.bindingId  = MeterBinding::TxReversePower;
+        d.label      = QStringLiteral("TX: Reverse Power");
+        d.unit       = QStringLiteral("W");
+        d.hasScale   = true;
+        d.min        = kPowerCalibration.front().key;
+        d.max        = kPowerCalibration.back().key;
+        d.threshold  = kPowerCalibration[kPowerHighPointIndex].key;
+        d.decimals   = 0;
+        d.fractionOf = &fractionOn<kPowerCalibration>;
+        // From Thetis MeterManager.cs:33531-33535 [v2.10.3.15] (PWR,
+        // REVERSE_PWR, scaled to 100 W): long ticks 5, 10, 50, 100, 120+
+        // at the calibration positions, short ticks halfway.
+        d.ticks = {{5.0, QStringLiteral("5")},     {10.0, QStringLiteral("10")},
+                   {50.0, QStringLiteral("50")},   {100.0, QStringLiteral("100")},
+                   {120.0, QStringLiteral("120+")}};
+        d.minorTicks = {2.5, 7.5, 30.0, 75.0, 110.0};
+        t.append(d);
+    }
 
     // ── TX: SWR ──────────────────────────────────────────────────────
     //
@@ -439,8 +695,19 @@ QList<ReadingDescriptor> buildTable()
         t.append(d);
     }
 
-    plain(MeterBinding::TxMic,          "TX: Mic");
-    plain(MeterBinding::TxComp,         "TX: Compressor");
+    // NereusSDR: upstream's lines were
+    //   plain(MeterBinding::TxMic,          "TX: Mic");
+    //   plain(MeterBinding::TxComp,         "TX: Compressor");
+    // Each TX stage reading and its peak (a NereusSDR row) get the scale
+    // of the Thetis bar that draws them, the TX: ALC scale.
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxMic, "TX: Mic", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxMicPeak, "TX: Mic Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxComp, "TX: Compressor", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxCompPeak, "TX: Compressor Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
     // NereusSDR: upstream's line was
     //   plain(MeterBinding::TxAlc,          "TX: ALC");
     // which gives TX: ALC no scale. NereusSDR's MeterPoller hands out a
@@ -471,16 +738,79 @@ QList<ReadingDescriptor> buildTable()
         d.minorTicks = {-25.0, -15.0, -5.0, 2.0, 6.0, 10.0};
         t.append(d);
     }
-    plain(MeterBinding::TxEq,           "TX: EQ");
-    plain(MeterBinding::TxLeveler,      "TX: Leveler");
-    plain(MeterBinding::TxLevelerGain,  "TX: Leveler Gain");
-    plain(MeterBinding::TxAlcGain,      "TX: ALC Gain");
-    plain(MeterBinding::TxAlcGroup,     "TX: ALC Group");
-    plain(MeterBinding::TxCfc,          "TX: CFC");
-    plain(MeterBinding::TxCfcGain,      "TX: CFC Gain");
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxAlcPeak, "TX: ALC Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    // NereusSDR: upstream's lines were
+    //   plain(MeterBinding::TxEq,           "TX: EQ");
+    //   plain(MeterBinding::TxLeveler,      "TX: Leveler");
+    //   plain(MeterBinding::TxLevelerGain,  "TX: Leveler Gain");
+    //   plain(MeterBinding::TxAlcGain,      "TX: ALC Gain");
+    //   plain(MeterBinding::TxAlcGroup,     "TX: ALC Group");
+    //   plain(MeterBinding::TxCfc,          "TX: CFC");
+    //   plain(MeterBinding::TxCfcGain,      "TX: CFC Gain");
+    //
+    //   plain(MeterBinding::HwVolts,        "HW: Volts");
+    //   plain(MeterBinding::HwAmps,         "HW: Amps");
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxEq, "TX: EQ", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxEqPeak, "TX: EQ Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxLeveler, "TX: Leveler", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxLevelerPeak, "TX: Leveler Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxGainCalibration>(MeterBinding::TxLevelerGain, "TX: Leveler Gain", "dB",
+                                                   kBarHighPointIndex, kTxGainTicks));
+    t.append(calibratedReading<kTxGainCalibration>(MeterBinding::TxAlcGain, "TX: ALC Gain", "dB",
+                                                   kBarHighPointIndex, kTxGainTicks));
+    t.append(calibratedReading<kAlcGroupCalibration>(MeterBinding::TxAlcGroup, "TX: ALC Group", "dB",
+                                                     kBarHighPointIndex, kAlcGroupTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxCfc, "TX: CFC", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxStageCalibration>(MeterBinding::TxCfcPeak, "TX: CFC Peak", "dB",
+                                                    kBarHighPointIndex, kTxStageTicks));
+    t.append(calibratedReading<kTxGainCalibration>(MeterBinding::TxCfcGain, "TX: CFC Gain", "dB",
+                                                   kBarHighPointIndex, kTxGainTicks));
 
-    plain(MeterBinding::HwVolts,        "HW: Volts");
-    plain(MeterBinding::HwAmps,         "HW: Amps");
+    // Volts and amps: the range of ANANMM's needles, linear, no red zone
+    // (Thetis's needles carry no HighPoint). Units from Thetis
+    // MeterManager.cs:2337, 2366 (ReadingUnits) [v2.10.3.15].
+    {
+        ReadingDescriptor d;
+        d.bindingId = MeterBinding::HwVolts;
+        d.label     = QStringLiteral("HW: Volts");
+        d.unit      = QStringLiteral("V");
+        d.hasScale  = true;
+        d.min       = kVoltsMin;
+        d.max       = kVoltsMax;
+        d.threshold = std::nullopt;
+        d.decimals  = 1;
+        // The calibration keys, labelled.
+        d.ticks = {{kVoltsMin, QStringLiteral("10")}, {kVoltsMid, QStringLiteral("12.5")},
+                   {kVoltsMax, QStringLiteral("15")}};
+        d.minorTicks = {(kVoltsMin + kVoltsMid) / 2.0, (kVoltsMid + kVoltsMax) / 2.0};
+        t.append(d);
+    }
+    {
+        ReadingDescriptor d;
+        d.bindingId = MeterBinding::HwAmps;
+        d.label     = QStringLiteral("HW: Amps");
+        d.unit      = QStringLiteral("A");
+        d.hasScale  = true;
+        d.min       = kAmpsMin;
+        d.max       = kAmpsMax;
+        d.threshold = std::nullopt;
+        d.decimals  = 1;
+        // The calibration keys: every second one labelled, the rest short.
+        for (double at = kAmpsMin; at <= kAmpsMax; at += kAmpsStep) {
+            if (std::fmod(at, 2.0 * kAmpsStep) == 0.0) {
+                d.ticks.append({at, QString::number(at, 'f', 0)});
+            } else {
+                d.minorTicks.append(at);
+            }
+        }
+        t.append(d);
+    }
 
     // ── HW: Temperatur — ohne Skala, und das mit Absicht ─────────────
     //

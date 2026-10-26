@@ -83,6 +83,10 @@
 //                 slice access changes (Sources::watchSliceAccess), so a
 //                 remote window's frequency shows its digits too.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - A needle or bar on reverse power takes the per-instance
+//                 power scale and follows MainPowerMeter::scaleChanged, as
+//                 forward power does. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -550,10 +554,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         }
         // Per-model or amplifier scale belongs to this instance, not the
         // fixed descriptor table. Keep its binding and current value intact.
-        if (primary == MeterBinding::TxPower && sources.radio) {
+        // Reverse power shares it: Thetis draws it on the forward power
+        // bar's scale (AddREVPWRBar calls AddPWRBar).
+        if ((primary == MeterBinding::TxPower || primary == MeterBinding::TxReversePower) && sources.radio) {
             MainPowerMeter* meter = sources.radio->mainPowerMeter();
-            const auto scale = [widget, meter] {
-                const ReadingDescriptor d = powerReadingDescriptor(meter->visualLimitW(), meter->scaleTopW());
+            const auto scale = [widget, meter, descriptor] {
+                ReadingDescriptor d = powerReadingDescriptor(meter->visualLimitW(), meter->scaleTopW());
+                d.bindingId = descriptor->bindingId;
+                d.label = descriptor->label;
                 if (auto* bar = qobject_cast<BarInstrument*>(widget)) { bar->setPrimaryScale(d); }
                 if (auto* needle = qobject_cast<NeedleInstrument*>(widget)) { needle->setPrimaryScale(d); }
             };
