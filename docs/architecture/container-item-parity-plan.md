@@ -653,7 +653,7 @@ labels them "Unsupported configuration". Same check for PR 635's `rx.*` items
 
 **Requirements:**
 - Settled call: the ADC bar reads the ADC behind the chosen slice. `meter.adc` reads the slice channel's RXA_ADC_PK/AV (`src/core/meters/SliceMeterPump.cpp:389-390`), which is per slice already; this task proves it with tests.
-- `meter.adcMax` has no provider today (binding -1, `src/gui/meters/presets/BarPresetItem.cpp:118-121`). Thetis reads ADC_MAX_MAG from Protocol 2 high-priority bytes 35-38 (`console.cs:47057`, `:47221`; `netInterface.c:159-166`; `network.c:721-722`), which NereusSDR does not parse. Until a core provider exists (appendix), the bar shows the reason "ADC magnitude is not reported yet" instead of a blank bar.
+- `meter.adcMax` has no provider today (binding -1, `src/gui/meters/presets/BarPresetItem.cpp:118-121`). Thetis reads ADC_MAX_MAG from Protocol 2 high-priority bytes 35-38 (`console.cs:47057`, `:47221`; `netInterface.c:159-166`; `network.c:721-722`), which NereusSDR does not parse. Until a core provider exists (appendix), the bar shows the reason "ADC magnitude is not available" instead of a blank bar.
 
 **Files:**
 - Modify: `src/gui/meters/presets/BarPresetItem.cpp` (`AdcMax` calls `setBindingUnavailable` with the reason)
