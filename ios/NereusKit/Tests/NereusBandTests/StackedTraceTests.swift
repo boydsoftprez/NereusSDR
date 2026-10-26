@@ -171,6 +171,36 @@ import Testing
         #expect(geometry.baselineY(depth: 1) < geometry.baselineY(depth: 0.5))
     }
 
+    /// The ridge lines stay at their depths and dissolve from one row's
+    /// shape to the next as the glide runs, as the desktop's 3D draws its
+    /// lines; the lines used to be each row's top edge and stepped back
+    /// with the row.
+    @Test func ridgeLinesStayPutAndCrossfade() {
+        #expect(StackedTraceGeometry.lineDepth(place: 0) == 0)
+        #expect(StackedTraceGeometry.lineDepth(place: 12) == 12.0 / 96)
+        #expect(abs(StackedTraceGeometry.lineStrength(depth: 0, colourShare: 1) - 0.62) < 1e-12)
+        #expect(abs(StackedTraceGeometry.lineStrength(depth: 1, colourShare: 1) - 0.12) < 1e-12)
+        #expect(abs(StackedTraceGeometry.lineStrength(depth: 0, colourShare: 0) - 0.62 * 0.42) < 1e-12,
+                "fainter over the floor")
+        for strength in [0.12, 0.4, 0.62] {
+            let start = StackedTraceGeometry.lineOpacities(glide: 0, strength: strength)
+            #expect(start.older == strength && start.newer == 0, "at a new row the line is the older row's")
+            let end = StackedTraceGeometry.lineOpacities(glide: 1, strength: strength)
+            #expect(end.older == 0 && abs(end.newer - strength) < 1e-12, "and by the next, the newer row's")
+            var lastOlder = start.older
+            var lastNewer = start.newer
+            for step in 1...20 {
+                let layers = StackedTraceGeometry.lineOpacities(glide: Double(step) / 20, strength: strength)
+                #expect(layers.older < lastOlder && layers.newer > lastNewer)
+                // Where both rows draw the same line, it keeps its strength.
+                let together = layers.older + layers.newer * (1 - layers.older)
+                #expect(abs(together - strength) < 1e-9)
+                lastOlder = layers.older
+                lastNewer = layers.newer
+            }
+        }
+    }
+
     @Test func theScaleInThreeDReadsFromTheFloorUpTheFrontRow() {
         let geometry = Self.geometry()
         let ticks = geometry.scaleTicks(stepDb: 10)
@@ -597,5 +627,55 @@ import Testing
         let after = try render(glide: 0)
         #expect(after.grey(middle, probe) > 40, "the signal stays at the front, now as the older layer")
         #expect(largestChange(grown, after) <= largestStep, "and nothing jumps as the next row arrives")
+    }
+
+    /// The front's ridge line stays as it is while the glide runs over
+    /// rows that agree, and the lines lie over the whole stack.
+    @Test func theRidgeLineHoldsItsStrengthThroughTheGlide() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        var state = BandState(waterfallLines: 10)
+        state.stacksRows = true
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        state.note(context: 1, coverage: coverage)
+        var line = [Float](repeating: -125, count: 200)
+        for index in 90..<110 {
+            line[index] = -100
+        }
+        for sequence in 1...40 {
+            state.receive(frame: BandFixtures.frame(trace: line, sequence: UInt32(sequence)),
+                          manualLevels: .init(lowDbm: -130, highDbm: -60))
+        }
+        func render(glide: Double) throws -> Image {
+            var overlays = BandRendererTests.overlays(settings)
+            overlays.frameCoverage = coverage
+            overlays.stacked = StackedTraceOverlay(noiseFloorDbm: -125, glide: glide, availableSpanFactor: 1)
+            renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: nil,
+                          overlays: overlays, into: target.texture)?.waitUntilCompleted()
+            return try target.read()
+        }
+        let plot = BandRendererTests.geometry(settings)
+        let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
+                                            scale: settings.scaleRange)
+        let dbm = Double(state.stack.sample(age: 0, frequencyHz: coverage.centerHz, view: coverage,
+                                            currentFloor: -200).dbm)
+        let ridge = Int(geometry.ridgeY(dbm: dbm, depth: 0).rounded(.down))
+        let middle = BandRendererTests.width / 2
+        let start = try render(glide: 0)
+        for glide in [0.25, 0.5, 0.75, 0.999] {
+            let image = try render(glide: glide)
+            // The ridge and the row under it: the rows behind glide, the front does not.
+            for y in ridge...(ridge + 1) {
+                #expect(image.grey(middle, y).isNear(start.grey(middle, y)), "glide \(glide), row \(y)")
+            }
+        }
+        // Behind the front, a light line runs along every row's ridge over
+        // the whole stack: no pixel there falls back to a row's dimmer
+        // body, as it did between the rows' own top edges.
+        let body = start.grey(middle, ridge + 3)
+        let darkest = ((ridge - 8)..<ridge).map { start.grey(middle, $0) }.min() ?? 0
+        #expect(darkest > body + 40, "darkest \(darkest) over a body of \(body)")
     }
 }

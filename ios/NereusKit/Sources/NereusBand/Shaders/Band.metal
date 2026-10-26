@@ -241,6 +241,24 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
     return out;
 }
 
+// Slice Shadow: each passband darkens the surface, with its centre cued in the slice's colour.
+static float3 stackedShadow(float3 colour, float unit, float widthScale, constant StackedUniforms &u) {
+    uint passbands = min(uint(u.shadowMeta.x), 8u);
+    float unitsPerPixel = 1.0 / max(u.plot.z * widthScale, 1.0);
+    for (uint i = 0; i < passbands; i++) {
+        float4 band = u.shadows[i];
+        float3 cue = u.cues[i].rgb;
+        float3 dark = float3(0.008) + cue * 0.045;
+        if (unit >= band.x && unit <= band.y) {
+            colour = mix(colour, dark, u.shadowMeta.y);
+        }
+        if (abs(unit - band.z) <= u.shadowMeta.w * unitsPerPixel) {
+            colour = mix(colour, cue, u.shadowMeta.z);
+        }
+    }
+    return colour;
+}
+
 fragment float4 bandStackedFragment(StackedOut in [[stage_in]],
                                     constant StackedUniforms &u [[buffer(0)]],
                                     texture2d<float> palette [[texture(0)]]) {
@@ -252,23 +270,106 @@ fragment float4 bandStackedFragment(StackedOut in [[stage_in]],
     float3 background = u.background.rgb;
     // The ridge line in the whole colour, the body under it dimmer.
     float3 colour = mix(background, lit, in.below * in.across < u.look.z ? 1.0 : u.look.y);
-    // Slice Shadow: each passband darkens the surface, with its centre cued in the slice's colour.
-    uint passbands = min(uint(u.shadowMeta.x), 8u);
-    float unitsPerPixel = 1.0 / max(u.plot.z * in.widthScale, 1.0);
-    for (uint i = 0; i < passbands; i++) {
-        float4 band = u.shadows[i];
-        float3 cue = u.cues[i].rgb;
-        float3 dark = float3(0.008) + cue * 0.045;
-        if (in.unit >= band.x && in.unit <= band.y) {
-            colour = mix(colour, dark, u.shadowMeta.y);
-        }
-        if (abs(in.unit - band.z) <= u.shadowMeta.w * unitsPerPixel) {
-            colour = mix(colour, cue, u.shadowMeta.z);
-        }
-    }
+    colour = stackedShadow(colour, in.unit, in.widthScale, u);
     // Farther rows fade toward the background.
     colour = mix(colour, background, in.depth * u.look.x);
     // Premultiplied: the newest row at the front lets the older show through.
     float opacity = clamp(in.opacity, 0.0, 1.0);
     return float4(colour * opacity, opacity);
+}
+
+// The 3D view's ridge lines: a light line along every row's ridge, drawn
+// over the whole stack. The lines do not glide with the rows. Each stays
+// at its own depth, one a row from the front back, and there shows the two
+// rows the stack is gliding between: the older fading out as the newer
+// fades in, so the lines dissolve from one row's shape to the next rather
+// than stepping back. Each line is a ribbon a line's width across its
+// ridge with soft edges, two vertices per column; the instances run from
+// the back, the older layer of each depth before the newer.
+
+struct StackedLineOut {
+    float4 position [[position]];
+    float side;           // -1 to 1 across the ribbon
+    float depth;
+    float unit;
+    float strength;       // the level's share of the colour span, 0 to 1
+    float layer;          // 0 the older row at this depth, 1 the newer
+    float valid;
+    float widthScale;
+};
+
+static float2 stackedRidgePoint(float unit, float dbm, bool ok, float depth, constant StackedUniforms &u) {
+    float d = clamp(depth, 0.0, 1.0);
+    float widthScale = 1.0 - d * (1.0 - u.shape.x);
+    float share = ok ? pow(clamp((dbm - u.levels.x) / u.levels.y, 0.0, 1.0), u.shape.w) : 0.0;
+    float baseY = u.plot.y + u.plot.w * (1.0 - d * u.shape.y);
+    float x = u.plot.x + u.plot.z * (0.5 + (unit - 0.5) * widthScale);
+    return float2(x, baseY - share * u.shape.z * widthScale * u.plot.w);
+}
+
+vertex StackedLineOut bandStackedLineVertex(uint vertexId [[vertex_id]], uint instance [[instance_id]],
+                                            constant StackedUniforms &u [[buffer(0)]],
+                                            texture2d<float, access::read> rows [[texture(0)]],
+                                            texture2d<float, access::read> windows [[texture(1)]]) {
+    StackedLineOut out;
+    uint shown = min(u.count, u.capacity);
+    uint depths = min(shown, uint(u.view.w));
+    uint place = depths - 1 - min(instance / 2, depths - 1);
+    bool newer = (instance & 1) == 1;
+    uint age = newer ? place : place + 1;
+    uint row = (u.newestRow + u.capacity - min(age, u.capacity - 1)) % u.capacity;
+    uint column = min(vertexId / 2, u.columns - 1);
+    float depth = float(place) / u.view.w;
+    float4 window = windows.read(uint2(0, row));
+    float unit = 0.5 + ((float(column) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    float2 sampled = stackedSample(unit, window, row, u, rows);
+    float dbm = sampled.x;
+    bool ok = age < shown && sampled.y > 0.5 && isfinite(dbm) && window.y > 0.0;
+    float2 point = stackedRidgePoint(unit, dbm, ok, depth, u);
+    // Across the ridge from its neighbours, so a steep flank's line is as
+    // wide as a flat top's.
+    uint left = column > 0 ? column - 1 : column;
+    uint right = min(column + 1, u.columns - 1);
+    float leftUnit = 0.5 + ((float(left) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    float rightUnit = 0.5 + ((float(right) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    float leftDbm = stackedSample(leftUnit, window, row, u, rows).x;
+    float rightDbm = stackedSample(rightUnit, window, row, u, rows).x;
+    float2 along = stackedRidgePoint(rightUnit, isfinite(rightDbm) ? rightDbm : dbm, ok, depth, u)
+                   - stackedRidgePoint(leftUnit, isfinite(leftDbm) ? leftDbm : dbm, ok, depth, u);
+    float2 normal = length(along) > 0.0001 ? normalize(float2(-along.y, along.x)) : float2(0.0, 1.0);
+    float side = (vertexId & 1) == 0 ? -1.0 : 1.0;
+    float halfWidth = max(u.look.z, 1.0);
+    out.position = clipPosition(point + normal * side * halfWidth, u.viewport);
+    out.side = side;
+    out.depth = clamp(depth, 0.0, 1.0);
+    out.unit = unit;
+    out.strength = ok ? clamp((dbm - u.levels.x) / u.levels.z, 0.0, 1.0) : 0.0;
+    out.layer = newer ? 1.0 : 0.0;
+    out.valid = ok ? 1.0 : 0.0;
+    out.widthScale = 1.0 - out.depth * (1.0 - u.shape.x);
+    return out;
+}
+
+fragment float4 bandStackedLineFragment(StackedLineOut in [[stage_in]],
+                                        constant StackedUniforms &u [[buffer(0)]]) {
+    if (in.valid < 0.999 || abs(in.unit - 0.5) > u.look.w * 0.5) {
+        discard_fragment();
+    }
+    float nearness = 1.0 - in.depth;
+    // A light grey, brighter and stronger near the front, fainter over the
+    // floor: the numbers are StackedTrace's line constants.
+    float3 colour = mix(u.background.rgb, float3(0.92), 0.45 + 0.55 * nearness);
+    colour = stackedShadow(colour, in.unit, in.widthScale, u);
+    float overFloor = mix(0.42, 1.0, smoothstep(0.0, 0.035, in.strength));
+    float edge = 1.0 - smoothstep(0.15, 1.0, abs(in.side));
+    float strength = (0.12 + 0.5 * nearness) * overFloor * edge;
+    // The older layer fades out with the glide. The newer, drawn over it,
+    // is strengthened so a line both rows share keeps its strength.
+    float glide = clamp(u.view.z, 0.0, 1.0);
+    float older = strength * (1.0 - glide);
+    float alpha = in.layer > 0.5 ? strength * glide / max(1.0 - older, 0.0001) : older;
+    if (alpha <= 0.0) {
+        discard_fragment();
+    }
+    return float4(colour * alpha, alpha);
 }

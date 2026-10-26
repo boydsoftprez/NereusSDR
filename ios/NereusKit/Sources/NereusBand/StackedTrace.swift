@@ -76,6 +76,18 @@ public enum StackedTrace {
     /// over the background; the ridge line itself is the whole colour.
     public static let fillShare = 0.5
 
+    /// The ridge lines over the stack (the desktop's values): a light grey
+    /// ``lineGrey`` over the background, at ``lineFarStrength`` at the back
+    /// up to that plus ``lineNearExtra`` at the front, and at
+    /// ``lineOverFloorShare`` of that where the level is within
+    /// ``lineFloorSpan`` of the colour span over the floor. The shader
+    /// draws with the same numbers.
+    public static let lineGrey = 0.92
+    public static let lineFarStrength = 0.12
+    public static let lineNearExtra = 0.5
+    public static let lineOverFloorShare = 0.42
+    public static let lineFloorSpan = 0.035
+
     /// The 3D Angle's curves: the back row's width and the rise of the back
     /// row's foot, from angle 0 to angle 100, and the tallest ridge allowed.
     public static let backWidthAtZero = 0.35
@@ -231,6 +243,36 @@ public struct StackedTraceGeometry: Equatable, Sendable {
     /// changes a little on every frame rather than all at once on a row.
     public static func frontOpacity(glide: Double) -> Double {
         min(max(glide, 0), 1)
+    }
+
+    /// The depth of the ridge line `place` lines from the front. The lines
+    /// stay put while the rows glide: each shows the two rows the stack is
+    /// gliding between at its depth (``lineOpacities(glide:strength:)``).
+    public static func lineDepth(place: Int) -> Double {
+        Double(max(place, 0)) / Double(StackedTrace.visibleRows)
+    }
+
+    /// How strong a ridge line is at `depth` over a level `colourShare` of
+    /// the colour span above the floor, before the glide shares it out.
+    public static func lineStrength(depth: Double, colourShare: Double) -> Double {
+        let nearness = 1 - min(max(depth, 0), 1)
+        let share = min(max(colourShare, 0), 1)
+        // The shader's smoothstep: an S curve from 0 to the floor span.
+        let t = min(max(share / StackedTrace.lineFloorSpan, 0), 1)
+        let overFloor = StackedTrace.lineOverFloorShare
+            + (1 - StackedTrace.lineOverFloorShare) * (t * t * (3 - 2 * t))
+        return (StackedTrace.lineFarStrength + StackedTrace.lineNearExtra * nearness) * overFloor
+    }
+
+    /// The opacities of a ridge line's two layers at one depth, `glide` of
+    /// the way to the next row: the older row's line fades out, and the
+    /// newer's, drawn over it, fades in strengthened so that where both
+    /// rows draw the same line it keeps its `strength` all the way.
+    public static func lineOpacities(glide: Double, strength: Double) -> (older: Double, newer: Double) {
+        let share = min(max(glide, 0), 1)
+        let older = strength * (1 - share)
+        let newer = strength * share / max(1 - older, 0.0001)
+        return (older, newer)
     }
 
     /// Where a frequency lands across the plot at `depth`: `unit` is its

@@ -156,6 +156,7 @@ public final class BandRenderer {
     private let labelPipeline: any MTLRenderPipelineState
     private let waterfallPipeline: any MTLRenderPipelineState
     private let stackedPipeline: any MTLRenderPipelineState
+    private let stackedLinePipeline: any MTLRenderPipelineState
 
     /// The 3D view's rows: levels in dBm, and each row's window from
     /// ``stackReferenceHz`` and its span.
@@ -318,6 +319,7 @@ public final class BandRenderer {
         labelPipeline = try pipeline("bandRectVertex", "bandLabelFragment")
         waterfallPipeline = try pipeline("bandRectVertex", "bandWaterfallFragment")
         stackedPipeline = try pipeline("bandStackedVertex", "bandStackedFragment")
+        stackedLinePipeline = try pipeline("bandStackedLineVertex", "bandStackedLineFragment")
     }
 
     /// The compiled shaders, one library a device. The source compiles the
@@ -1638,6 +1640,12 @@ public final class BandRenderer {
         // Every row but the newest glides; the front draws two layers.
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
                                instanceCount: min(stack.count, stack.capacity) + 1)
+        // The ridge lines over the whole stack, one at each row's depth from
+        // the front back, each in two layers.
+        let lineDepths = min(stack.count, stack.capacity, StackedTrace.visibleRows)
+        encoder.setRenderPipelineState(stackedLinePipeline)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
+                               instanceCount: lineDepths * 2)
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(target.width), height: Int(target.height)))
     }
 
