@@ -508,22 +508,25 @@ alone (`--popup`).
 - `container-parity-clock`: new clocks with Large time and Centered, a
   saved clock and a new clock face, all reading 14:32:10 local
   (`ClockItem::setTimeSource`), and their editors.
-- `container-parity-overlay-led`: new and saved text overlays and a new
-  LED; the overlay editor (with its LED gate rows), its "%" token picker
+- `container-parity-overlay-led`: new and saved text overlays with slice
+  tokens typed into Text 1 (a new overlay starts empty, as Thetis's does)
+  and a new LED; the overlay editor (with its LED gate rows), its "%" token picker
   open, and the LED editor before and after a condition with a mistake.
 - `container-parity-smeter-dial`: added S-meter dials with dark mode and
   history off and on, fed a swinging level so history has a wedge; new and
   saved-look tuning dials.
 - `container-parity-web-image`: a web image item reading a local PNG (no
   network) on Pan 1, and pan 1 with that picture behind its spectrum, with
-  the pan's own background off and on.
+  the pan's own background off (the picture at full strength) and on. The
+  words "Web image (preview picture)" are the picture's own caption.
 - `container-parity-artwork-options`: the ANAN face's Dark mode and the
   magic eye's Built-in bezel, disabled with their reason.
 - `container-parity-signal-text`: new and saved signal text items and
   faces fed -73 dBm, the editor and its Units list.
 - `container-parity-sections`: a TX and an RX section item as built and
   with a part hidden and the order reversed, and the reordered one's editor.
-- `container-parity-long-title`: "Signal max bin bar" and a short title in
+- `container-parity-long-title`: "Signal max bin bar" and a short title
+  ("Signal": a one-entry container's header shows its entry's name) in
   a 260 px left strip; the notes give the header and title widths.
 
 ```

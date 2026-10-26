@@ -11,6 +11,13 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - container-parity-* round 2: the text overlays carry
+//                 token text (a new item starts empty, as Thetis's does),
+//                 the short-title container's entry is named "Signal",
+//                 the token picker opens where Qt places it (no forced
+//                 move off the screen), and the web image notes say the
+//                 picture's caption is its own. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - container-parity-* scenes: the items and editors the
 //                 container item parity branch changed (button grid
 //                 editors, mode grid, VFO display and its screens, clock,
@@ -8475,14 +8482,35 @@ void sceneParityClock(SceneContext& ctx)
 
 // ---- 5 and 10: text overlay and LED -------------------------------------------
 
+// The text a user typed into Text 1, so the overlay has something to show:
+// a new text overlay starts with no text, as Thetis's does (clsTextOverlay,
+// MeterManager.cs:20144 [v2.10.3.15]: _text_1 = ""), and draws only its
+// back panel. The slice tokens read the posed slices.
+constexpr char kParityOverlayNewText[] = "%sliceA_freq% %sliceA_mode%";
+constexpr char kParityOverlaySavedText[] = "Slice A %sliceA_band% %sliceA_filter%";
+
+// A text overlay record with Text 1 typed in: a new item (Thetis's
+// defaults) or one as a saved layout holds it.
+QString parityOverlayRecord(bool newItem, const QString& text)
+{
+    TextOverlayItem item;
+    if (newItem) {
+        item.applyNewItemDefaults();
+    }
+    item.setText1(text);
+    return item.serialize();
+}
+
 void sceneParityOverlayLed(SceneContext& ctx)
 {
     const QString name = QStringLiteral("container-parity-overlay-led");
     ParityBuilt built;
     const QVector<ParityBox> boxes = {
         {QStringLiteral("Overlay and LED"), DockEdge::Left,
-         {{QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)")},
-          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (saved layout)"), savedRecord<TextOverlayItem>()},
+         {{QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)"),
+           parityOverlayRecord(true, QString::fromLatin1(kParityOverlayNewText))},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (saved layout)"),
+           parityOverlayRecord(false, QString::fromLatin1(kParityOverlaySavedText))},
           {QStringLiteral("LED"), QStringLiteral("LED (new)")}}},
     };
     if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
@@ -8490,6 +8518,13 @@ void sceneParityOverlayLed(SceneContext& ctx)
     }
     const QString id = built.containers.value(0);
     fixParityClocks(ctx, id);
+    ctx.notes.append(QStringLiteral("text overlays: Text 1 typed in, new \"%1\", saved layout \"%2\"; "
+                                    "the LED has no condition, so it shows its false look (Thetis "
+                                    "_false_colour 192,192,192, a flat square)")
+                         .arg(QString::fromLatin1(kParityOverlayNewText), QString::fromLatin1(kParityOverlaySavedText)));
+    for (const auto& [meter, overlay] : parityItems<TextOverlayItem>(ctx, id)) {
+        ctx.notes.append(QStringLiteral("text overlay \"%1\" shows \"%2\"").arg(overlay->text1(), overlay->resolvedText1()));
+    }
     captureParityWindow(ctx, name);
     captureParityContainer(ctx, name + QStringLiteral("--items"), id);
     ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
@@ -8506,14 +8541,18 @@ void sceneParityOverlayLed(SceneContext& ctx)
         } else {
             scrollParityEditorTo(editor, picker);
             // The menu InstantPopup opens, shown with popup() so the grab
-            // needs no nested loop.
+            // needs no nested loop. popup() keeps it on the screen as the
+            // tool button's own popup does; it is not moved after.
             menu->popup(globalOf(picker) + QPoint(0, picker->height()));
             pump(kFinalSettleMs);
-            menu->move(globalOf(picker) + QPoint(0, picker->height()));
-            pump(kFinalSettleMs);
             appendPopupImages(ctx, name + QStringLiteral("--token-picker"), dialog, {menu}, menu);
-            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3")
-                                 .arg(menu->actions().size()).arg(menu->width()).arg(menu->height()));
+            const QRect screen = picker->screen() != nullptr ? picker->screen()->geometry() : QRect();
+            const QRect placed = menu->geometry();
+            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3 at %4,%5; screen %6x%7, "
+                                            "menu inside the screen: %8")
+                                 .arg(menu->actions().size()).arg(placed.width()).arg(placed.height())
+                                 .arg(placed.x()).arg(placed.y()).arg(screen.width()).arg(screen.height())
+                                 .arg(screen.contains(placed) ? QStringLiteral("yes") : QStringLiteral("no")));
             menu->close();
             pump(kFinalSettleMs);
         }
@@ -8695,7 +8734,9 @@ void sceneParityWebImage(SceneContext& ctx)
     captureParityContainer(ctx, name + QStringLiteral("--item"), built.containers.value(0));
     QWidget* applet = appletFor(ctx.window, panIdAt(0));
     QWidget* panWidget = applet != nullptr ? applet : pan;
-    ctx.notes.append(QStringLiteral("pan 1 background: own background %1, opacity %2%")
+    ctx.notes.append(QStringLiteral("pan 1 background: own background %1, opacity %2%; with it off the "
+                                    "web image is drawn at full strength (Thetis shows it undimmed), and the words over "
+                                    "the trace are the preview picture's own caption")
                          .arg(pan->backgroundEnabled() ? QStringLiteral("on") : QStringLiteral("off"))
                          .arg(pan->backgroundOpacity()));
     ctx.images.append(parityGrab(panWidget, name + QStringLiteral("--pan"), QStringLiteral("pan")));
@@ -8930,7 +8971,9 @@ void sceneParityLongTitle(SceneContext& ctx)
     ParityBuilt built;
     const QVector<ParityBox> boxes = {
         {QStringLiteral("Signal max bin bar"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin")}}},
-        {QStringLiteral("Signal"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin")}}},
+        // A one-entry container's header shows its entry's name
+        // (ContainerManager::applyWorkspaceHeader), so the entry is named.
+        {QStringLiteral("Signal"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin"), QStringLiteral("Signal")}}},
     };
     if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParityNarrowStripPx}}, built,
                          [&built](SceneContext& c) {
