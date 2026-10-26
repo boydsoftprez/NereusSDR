@@ -7,6 +7,10 @@
 //                 MainWindow's routing (TX is a handoff only, never MOX),
 //                 a VFO display face's own display included.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I2): a VFO display or dial on
+//                 another radio's entry shows none of this window's slices
+//                 and says why. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest>
 #include <QApplication>
@@ -26,6 +30,7 @@
 #include "gui/MainWindow.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/meters/DialItem.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/SpacerItem.h"
 #include "gui/meters/VfoDisplayItem.h"
@@ -517,6 +522,74 @@ private slots:
         QCOMPARE(mox.count(), 0);
         QCOMPARE(tune.count(), 0);
         if (moxState) { QCOMPARE(moxState->count(), 0); }
+    }
+    // Fix wave I2: a VFO display (every mode) and a dial on another
+    // session's radio show none of this window's slices; the display says
+    // why, with the reason its clicks give.
+    void anotherRadiosEntryShowsNoSlices()
+    {
+        AppSettings::setProfileOverride(QStringLiteral("vfo-foreign-%1").arg(QCoreApplication::applicationPid()));
+        AppSettings::instance().clear();
+        QVERIFY(AppSettings::instance().save());
+        RadioDiscovery discovery;
+        discovery.holdOffScans(std::chrono::minutes(5));
+        const auto cleanup = qScopeGuard([] {
+            QFile::remove(AppSettings::instance().filePath());
+            RadioDiscovery::clearHoldOffForTest();
+        });
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->configureStreamPool(5, 5, 192000);
+        while (model->slices().size() < 2) { QVERIFY(model->addSlice() >= 0); }
+        SliceModel* a = model->sliceById(0);
+        QVERIFY(a);
+        // A frequency no item shows unless it is fed this window's slice.
+        a->setFrequency(14'123'456.0);
+        ContainerManager* cm = model->containerManager();
+        QVERIFY(cm);
+        ContainerWidget* container = cm->createContainer(1, DockMode::OverlayDocked);
+        QVERIFY(container);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        const QJsonObject foreign{{"sessionId", "another-radio"}, {"sliceId", 0}};
+        QList<VfoDisplayItem*> vfos;
+        for (const auto mode : {VfoDisplayItem::DisplayMode::SourceSlice,
+                                VfoDisplayItem::DisplayMode::AllSlices,
+                                VfoDisplayItem::DisplayMode::LegacySliceB}) {
+            auto* vfo = new VfoDisplayItem();
+            vfo->setDisplayMode(mode);
+            vfo->setRect(0, 0, 1, 1);
+            vfo->setProperty("containerSourceContext", foreign);
+            meter->addItem(vfo);
+            vfos.append(vfo);
+        }
+        auto* dial = new DialItem();
+        dial->setRect(0, 0, 1, 1);
+        dial->setProperty("containerSourceContext", foreign);
+        meter->addItem(dial);
+        // A slice change refreshes every container.
+        a->setStepHz(kTuneStepList[3].stepHz);
+        a->setStepHz(kTuneStepList[10].stepHz);
+        QCoreApplication::processEvents();
+        for (VfoDisplayItem* vfo : vfos) {
+            QVERIFY(vfo->sliceState(0).frequencyHz != 14'123'456);
+            QCOMPARE(vfo->unavailableText(), QStringLiteral("This control belongs to another radio"));
+        }
+        QCOMPARE(dial->sourceSliceIndex(), -1);
+        QCOMPARE(dial->activeSliceIndex(), -1);
+        QCOMPARE(dial->sliceState(0).index, -1);
+
+        // The same items on this window's radio show its slices.
+        for (VfoDisplayItem* vfo : vfos) { vfo->setProperty("containerSourceContext", QJsonObject{{"sliceId", 0}}); }
+        dial->setProperty("containerSourceContext", QJsonObject{{"sliceId", 0}});
+        a->setStepHz(kTuneStepList[4].stepHz);
+        a->setStepHz(kTuneStepList[11].stepHz);
+        QCoreApplication::processEvents();
+        for (VfoDisplayItem* vfo : vfos) {
+            QCOMPARE(vfo->sliceState(0).frequencyHz, qint64(14'123'456));
+            QVERIFY(vfo->unavailableText().isEmpty());
+        }
+        QCOMPARE(dial->sliceState(0).index, 0);
     }
 };
 

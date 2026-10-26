@@ -33,6 +33,12 @@
 //                 look saved as field [43]. FilterDisplayRequests applies
 //                 the requests for MainWindow. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (C2, I7): TX state from the
+//                 display's own slice (txActive), not the window's MOX;
+//                 input no longer needs the Thetis look, so saved items
+//                 keep their look and take drags, notches, wheel and
+//                 buttons. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -972,7 +978,19 @@ const QVector<float>& FilterDisplayItem::snapFrequencies(DSPMode mode)
 
 bool FilterDisplayItem::interactive() const
 {
-    return m_thetisLook && m_requestsEnabled && m_state.sliceIndex >= 0;
+    // Input does not depend on the look: a saved item that paints the old
+    // look still takes drags, notches, the wheel and the buttons.
+    return m_requestsEnabled && m_state.sliceIndex >= 0;
+}
+
+bool FilterDisplayItem::txActive() const
+{
+    // From Thetis MeterManager.cs:5264 [v2.10.3.15] (OnMox):
+    //   m.MOX = rx == m.RX && newMox;
+    // MOX reaches a meter only on its own receiver. Here: MOX on, and this
+    // display's slice is the transmit slice.
+    if (m_state.sliceIndex < 0) { return transmitting(); }
+    return transmitting() && m_state.transmitSlice;
 }
 
 int FilterDisplayItem::sidebandModeSign() const
@@ -1017,7 +1035,7 @@ bool FilterDisplayItem::filterEnabled() const
 {
     // From Thetis MeterManager.cs:18764-18791 [v2.10.3.15] (RXEnabled,
     // TXEnabled).
-    if (transmitting()) {
+    if (txActive()) {
         return !(m_state.mode == DSPMode::CWL || m_state.mode == DSPMode::CWU
                  || m_state.mode == DSPMode::DRM);
     }
@@ -1040,13 +1058,13 @@ int FilterDisplayItem::extentHz() const
     if (m_frameAvailable && m_frameSpanHz > 0.0) {
         return std::max(1, int(std::lround(m_frameSpanHz / 2.0)));
     }
-    return transmitting() ? kTxExtentHz : kRxExtentHz;
+    return txActive() ? kTxExtentHz : kRxExtentHz;
 }
 
 float FilterDisplayItem::displayLowHz() const
 {
     // From Thetis MeterManager.cs:19151-19178 [v2.10.3.15] (Low getter).
-    if (transmitting()) {
+    if (txActive()) {
         switch (m_state.mode) {
         case DSPMode::AM:
         case DSPMode::SAM:
@@ -1074,7 +1092,7 @@ float FilterDisplayItem::displayLowHz() const
 float FilterDisplayItem::displayHighHz() const
 {
     // From Thetis MeterManager.cs:19257-19278 [v2.10.3.15] (High getter).
-    if (transmitting()) {
+    if (txActive()) {
         switch (m_state.mode) {
         //case DSPMode.LSB:
         //case DSPMode.DIGL:
@@ -1173,7 +1191,7 @@ FilterDisplayItem::ThetisLayout FilterDisplayItem::thetisLayout(int widgetW, int
         break;
     }
 
-    const bool tx = transmitting();
+    const bool tx = txActive();
     const float modeZoom = (m_state.mode == DSPMode::LSB || m_state.mode == DSPMode::USB
                             || m_state.mode == DSPMode::DIGL || m_state.mode == DSPMode::DIGU)
         ? m_sidebandsScale : (isCw() ? m_cwScale : m_othersScale);
@@ -1297,7 +1315,7 @@ FilterDisplayItem::Hover FilterDisplayItem::hoverAt(const ThetisLayout& l,
 {
     Hover hv;
     if (!l.valid || !filterEnabled() || !m_mouseInside) { return hv; }
-    const bool tx = transmitting();
+    const bool tx = txActive();
 
     // From Thetis MeterManager.cs:35871 [v2.10.3.15]: bool highlight_button =
     // mouse_entered && (any button rect contains the mouse).
@@ -1489,7 +1507,7 @@ void FilterDisplayItem::paintThetisCharacteristic(QPainter& p, const ThetisLayou
     // high-resolution curve uses) is plotted from 0 dB at the top line down
     // to CharacteristicLow at the bottom line. TX has no response data, so
     // only the dashed edges show while transmitting.
-    if (transmitting() || m_rfFilterResponseDb.isEmpty() || m_rfFilterStepHz <= 0.0
+    if (txActive() || m_rfFilterResponseDb.isEmpty() || m_rfFilterStepHz <= 0.0
         || !m_frameAvailable) {
         return;
     }
@@ -1544,7 +1562,7 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
         p.restore();
         return;
     }
-    const bool tx = transmitting();
+    const bool tx = txActive();
     const QColor extentTextColour = m_textColour;
     const QColor extentColour = m_extentsColour;
     const QColor snaplineColour = m_snapLineColour;
@@ -1741,7 +1759,7 @@ void FilterDisplayItem::requestLow(float value, Qt::KeyboardModifiers mods, bool
     if (!interactive()) { return; }
     const bool ctrl = mods.testFlag(Qt::ControlModifier);
     const bool shift = mods.testFlag(Qt::ShiftModifier);
-    if (transmitting()) {
+    if (txActive()) {
         float val = ctrl ? roundTo10(value) : value;
         if (!ignoreSnap && m_snapLines && !m_autoZoom) { val = float(findNearestVGrid(int(val))); }
         int low = m_state.txLowHz;
@@ -1786,7 +1804,7 @@ void FilterDisplayItem::requestHigh(float value, Qt::KeyboardModifiers mods, boo
     if (!interactive()) { return; }
     const bool ctrl = mods.testFlag(Qt::ControlModifier);
     const bool shift = mods.testFlag(Qt::ShiftModifier);
-    if (transmitting()) {
+    if (txActive()) {
         float val = ctrl ? roundTo10(value) : value;
         if (!ignoreSnap && m_snapLines && !m_autoZoom) { val = float(findNearestVGrid(int(val))); }
         int low = m_state.txLowHz;
@@ -1824,7 +1842,7 @@ void FilterDisplayItem::requestShift(float shiftHz, Qt::KeyboardModifiers mods)
 {
     // From Thetis MeterManager.cs:19378-19412 [v2.10.3.15]: nothing while
     // MOX.
-    if (!interactive() || transmitting()) { return; }
+    if (!interactive() || txActive()) { return; }
     if (shiftHz == 0) { return; }
     const float shift = float(int(shiftHz));
     float fLow = m_startLow + shift;
@@ -1865,7 +1883,7 @@ void FilterDisplayItem::resetFilterPosition()
     // the top line puts the passband back at the mode's default place,
     // keeping its width. Thetis sets Low then High; one request carries
     // both here.
-    if (!interactive() || transmitting()) { return; }
+    if (!interactive() || txActive()) { return; }
     const int bw = int(displayHighHz() - displayLowHz());
     int high = int(displayHighHz());
     int low = int(displayLowHz());
@@ -1994,7 +2012,7 @@ bool FilterDisplayItem::handleMouseRelease(QMouseEvent* event, int widgetW, int 
     const Qt::MouseButton button = event->button();
     const Qt::KeyboardModifiers mods = event->modifiers();
     const bool ctrl = mods.testFlag(Qt::ControlModifier);
-    const bool tx = transmitting();
+    const bool tx = txActive();
 
     if (button == Qt::RightButton && m_topSelected) {
         // reset

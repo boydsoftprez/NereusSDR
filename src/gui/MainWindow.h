@@ -200,6 +200,9 @@
 //                m_remoteRigctl, refreshRigctlRemoteTransmit,
 //                applyRemoteRigctldSettings. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
+//                 line reason for the container button and the applets.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1614,6 +1617,11 @@ private:
     // while another device holds transmit, why VOX may not be armed here
     // (that device has the transmitter); empty when it may.
     QString desktopVoxHolderReason() const;
+    // Why VOX may not be armed from this window's microphone line: no line
+    // to the Core, the Core's microphone source unsettled or the radio's
+    // microphone, or another device holding transmit; empty when it may.
+    // The TX applet, Setup and the container's VOX button all use it.
+    QString voxLineReason() const;
     // The TX applet's VOX button and every Setup's Enable VOX follow it.
     void applyDesktopVoxHolderGate();
     void requestDesktopTransmit(bool tune, bool on);

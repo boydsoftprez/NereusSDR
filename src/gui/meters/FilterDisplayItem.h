@@ -35,6 +35,11 @@
 //                 requests through FilterDisplayRequests, and an item it has
 //                 not armed (a preview copy) asks nothing.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (C2, I7): the display transmits
+//                 only while its own slice is the transmit slice and MOX
+//                 is on (SliceFilterState::transmitSlice); saved items keep
+//                 their look and take the input. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -210,6 +215,11 @@ public:
         QString filterName;
         QString txProfileName;
         QVector<NotchMark> notches;
+        // True while this slice is the transmit slice. The display shows
+        // and edits the TX filter only while this is true and MOX is on
+        // (Thetis m.MOX = rx == m.RX && newMox, MeterManager.cs:5264
+        // [v2.10.3.15]); any other slice shows its RX filter.
+        bool    transmitSlice{false};
     };
     void setSliceFilterState(const SliceFilterState& state) { m_state = state; }
     const SliceFilterState& sliceFilterState() const { return m_state; }
@@ -485,6 +495,9 @@ private:
     };
     Hover hoverAt(const ThetisLayout& l, const QPointF& mouse) const;
     bool interactive() const;
+    // The TX state the display shows and edits: MOX on this display's
+    // slice only. An item with no slice (a preview copy) follows MOX.
+    bool txActive() const;
     bool filterEnabled() const;   // Thetis RXEnabled / TXEnabled
     bool canAdjust() const;       // Thetis CanAdjust
     bool twoSidebands() const;    // console.CurrentDSPhasTwoSidebands

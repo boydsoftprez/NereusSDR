@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (M5): a meter surface on another
+//                 session's radio stays in the receive state, as its fade
+//                 view does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Widget-factory rows with Fade on RX / TX get the fade
 //                 overlay (ContentFadeOverlay, which only paints) and the
 //                 radio's transmit state, read only, as the meters do.
@@ -181,8 +185,11 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     for (const auto& surface : m_surfaces) {
         if (!surface.widget) { continue; }
         // The radio's transmit state, read only: the TX look of fades, VFO
-        // displays and button grids. Preview items send and key nothing.
-        surface.widget->setItemTxState(m_inTx);
+        // displays and button grids. Preview items send and key nothing. An
+        // entry on another session's radio stays in the receive state, as
+        // its fade view does (updateFadeViews).
+        surface.widget->setItemTxState(m_inTx
+            && !ContainerContentHost::foreignSession(surface.context, m_poller->sessionId()));
         if (!reusedMeters.contains(surface.widget)) { m_poller->replayReadings(surface.widget,surface.context); }
         emit presentationRequested(surface.widget,surface.context);
     }
@@ -236,7 +243,12 @@ void ContainerPreviewWidget::advance(qint64 timestamp)
     if (!m_poller) { return; }
     for (const auto& surface : m_surfaces) {
         if (!surface.widget) { continue; }
-        if (m_inTx!=m_poller->inTx()) { surface.widget->resetForTxTransition(m_poller->inTx()); surface.widget->setItemTxState(m_poller->inTx()); }
+        if (m_inTx!=m_poller->inTx()) {
+            const bool tx = m_poller->inTx()
+                && !ContainerContentHost::foreignSession(surface.context, m_poller->sessionId());
+            surface.widget->resetForTxTransition(tx);
+            surface.widget->setItemTxState(tx);
+        }
         m_poller->copyCachedReadings(surface.widget,surface.context);
         emit presentationRequested(surface.widget,surface.context);
         surface.widget->advanceMeters(timestamp);

@@ -3,6 +3,10 @@
 // Modification history (NereusSDR):
 //   2026-10-26: first version. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: final review fix wave (C2, I7): a display on a slice that
+//               is not transmitting shows and edits its RX filter; a saved
+//               item keeps its look and takes input. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 #include <QAction>
@@ -42,6 +46,8 @@ FilterDisplayItem::SliceFilterState stateFor(DSPMode mode, int low, int high)
     s.txLowHz = 100;
     s.txHighHz = 2900;
     s.filterName = QStringLiteral("2.7k");
+    // The display's own slice is the transmit slice unless a case says not.
+    s.transmitSlice = true;
     return s;
 }
 
@@ -219,6 +225,52 @@ private slots:
         QCOMPARE(slice.filterHigh(), expected.second);
         QCOMPARE(tx.filterLow(), 100);
         QCOMPARE(tx.filterHigh(), 3000);
+    }
+
+    // C2: Slice B transmits; a display on Slice A shows Slice A's RX filter
+    // and a drag asks for Slice A's RX filter only. Applied, TransmitModel
+    // is untouched (Thetis m.MOX = rx == m.RX && newMox, MeterManager.cs:5264).
+    void nonTransmitSliceShowsAndEditsItsRxFilter()
+    {
+        auto item = makeItem(DSPMode::USB, 200, 2600);
+        FilterDisplayItem::SliceFilterState state = stateFor(DSPMode::USB, 200, 2600);
+        state.transmitSlice = false;   // Slice B is the transmit slice
+        item->setSliceFilterState(state);
+        item->setTransmitting(true);   // the window's MOX is on
+        const auto l = item->thetisLayout(kW, kH);
+        QCOMPARE(l.lowHz, 200.0f);
+        QCOMPARE(l.highHz, 2600.0f);
+        QSignalSpy spy(item.get(), &FilterDisplayItem::filterEdgesRequested);
+        const QPointF grab = midpoint(l.highTop, l.highBot);
+        drag(*item, grab, QPointF(edgeX(*item, l, 2800.0), grab.y()), Qt::ControlModifier);
+        QVERIFY(!spy.isEmpty());
+        QCOMPARE(spy.last().at(0).toInt(), kSlice);
+        QCOMPARE(spy.last().at(1).toInt(), 200);
+        QCOMPARE(spy.last().at(2).toInt(), 2800);
+        QCOMPARE(spy.last().at(3).toBool(), false);
+
+        SliceModel sliceA(kSlice);
+        sliceA.setFilter(200, 2600);
+        TransmitModel tx;
+        tx.setFilterLow(100);
+        tx.setFilterHigh(2900);
+        QSignalSpy txSpy(&tx, &TransmitModel::moxChanged);
+        const auto expected = sliceA.filterForRequest(200, 2800);
+        FilterDisplayRequests::applyEdges(&sliceA, &tx, spy.last().at(1).toInt(),
+                                          spy.last().at(2).toInt(), spy.last().at(3).toBool());
+        QCOMPARE(sliceA.filterLow(), expected.first);
+        QCOMPARE(sliceA.filterHigh(), expected.second);
+        QCOMPARE(tx.filterLow(), 100);
+        QCOMPARE(tx.filterHigh(), 2900);
+        QVERIFY(!tx.isMox());
+        QCOMPARE(txSpy.count(), 0);
+
+        // The same display on the transmit slice shows the TX filter.
+        state.transmitSlice = true;
+        item->setSliceFilterState(state);
+        const auto txLayout = item->thetisLayout(kW, kH);
+        QCOMPARE(txLayout.lowHz, 100.0f);
+        QCOMPARE(txLayout.highHz, 2900.0f);
     }
 
     // LSB while transmitting: the passband is drawn at -TXFilterHigh..
@@ -471,6 +523,20 @@ private slots:
         QVERIFY(yellowNear(kH / 2));
         QVERIFY(yellowNear(kH - 3));
         QVERIFY(!imageContains(legacy, QColor(32, 32, 32)));
+
+        // I7: it keeps its look and still takes input once armed: a drag
+        // asks for the RX edge.
+        old.setRequestsEnabled(true);
+        {
+            const auto l = old.thetisLayout(kW, kH);
+            QSignalSpy spy(&old, &FilterDisplayItem::filterEdgesRequested);
+            const QPointF grab = midpoint(l.highTop, l.highBot);
+            drag(old, grab, QPointF(edgeX(old, l, 3000.0), grab.y()), Qt::ControlModifier);
+            QVERIFY(!spy.isEmpty());
+            QCOMPARE(spy.last().at(2).toInt(), 3000);
+            QCOMPARE(spy.last().at(3).toBool(), false);
+            QVERIFY(!old.thetisLook());
+        }
 
         // Re-saved, it stays old.
         QVERIFY(old.serialize().endsWith(QStringLiteral("|0")));

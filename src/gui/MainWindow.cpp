@@ -1013,6 +1013,14 @@
 //                Thetis's MatchTXFilterToRXFilter has no NereusSDR
 //                equivalent yet (noted at the click). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
+//                 learns whether its slice is the transmit slice; the VFO
+//                 display's TX box asks requestTransmitSlice and shows
+//                 transmitSliceChoiceReason when refused; a VFO display or
+//                 dial on another radio's entry is cleared with that
+//                 reason; one VOX line reason (voxLineReason) for the
+//                 container button and the applets. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -9331,23 +9339,7 @@ void MainWindow::buildUI()
         // (applyDesktopVoxHolderGate).
         hooks.voxRefusal = [this] {
             if (!transmitControlsPermitted()) { return remoteTransmitReason(); }
-            QString reason;
-            if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
-                reason = TxRefusals::micNotConnected().text;
-            }
-            if (m_stationClient && m_stationClient->remoteTransmit()) {
-                const auto* source = m_stationClient->remoteTransmit();
-                if (!source->micSourceSettled()) {
-                    reason = source->micSourceReason();
-                } else if (source->acceptedMicSource() == RemoteMicSource::RadioMic) {
-                    reason = remoteRadioVoxReason();
-                }
-            }
-            if (reason.isEmpty() && m_stationClient && m_stationClient->knowsTransmitHolder()
-                && !m_stationClient->holdsTransmitHere()) {
-                const QString holder = m_stationClient->otherHolderReason();
-                reason = holder.isEmpty() ? TxRefusals::notHolder().text : holder;
-            }
+            const QString reason = voxLineReason();
             return reason.isEmpty() ? desktopVoxHolderReason() : reason;
         };
         hooks.remoteTransmitReason =
@@ -15162,6 +15154,10 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
     state.rxHighHz = slice->filterHigh();
     state.txLowHz = tx.filterLow();
     state.txHighHz = tx.filterHigh();
+    // MOX reaches the display only on the transmit slice (Thetis OnMox,
+    // m.MOX = rx == m.RX && newMox, MeterManager.cs:5264 [v2.10.3.15]);
+    // a display on any other slice keeps showing and editing its RX filter.
+    state.transmitSlice = m_radioModel->txBoundSlice() == slice;
     // From Thetis display.cs:1029 [v2.10.3.15]: cw_pitch default 600
     // (the key SliceModel's CW presets read).
     state.cwPitchHz = AppSettings::instance().value(QStringLiteral("CWPitch"), 600).toInt();
@@ -15496,11 +15492,20 @@ void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
     });
     // From Thetis MeterManager.cs:14905-14932 [v2.10.3.15] (setTX:
     // _console.VFOATX = true). Transmit moves to the slice through the
-    // handoff alone; no MOX or TUNE setter is ever called here.
+    // handoff alone; no MOX or TUNE setter is ever called here. It asks as
+    // the TX applet's letters and every flag's TX button do
+    // (requestTransmitSlice): a remote window asks its Core, and a hosting
+    // window moves transmit only while this computer holds it; a refusal
+    // says why.
     connect(vfo, &VfoDisplayItem::txRequested, this,
             [this, guard](int sliceId) {
         if (!vfoRequestSlice(guard, sliceId)) { return; }
-        m_radioModel->requestTxHandoffToSlice(sliceId);
+        const QString refusal = transmitSliceChoiceReason();
+        if (!refusal.isEmpty()) {
+            showContainerButtonReason(refusal);
+            return;
+        }
+        requestTransmitSlice(sliceId);
     });
     // From Thetis MeterManager.cs:14879-14896 [v2.10.3.15] (setLock).
     connect(vfo, &VfoDisplayItem::lockToggleRequested, this,
@@ -15816,7 +15821,9 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     const auto feedDial = [&](DialItem* dial) {
         dial->clearSliceStates();
         dial->setSourceFollowsSelection(ContainerSourceAdapter::followsSelectedRx(context));
-        if (unsupported) {
+        // An entry on another session's radio shows none of this window's
+        // slices, as one with a source its canvas cannot read.
+        if (unsupported || foreignSession) {
             dial->setSourceSliceIndex(-1);
             dial->setActiveSliceIndex(-1);
             return;
@@ -15839,7 +15846,12 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         // opened, or closed while this container was set to it) shows
         // none of its last state. The buttons light nothing and say why
         // when clicked; the VFO display says the slice is not open.
+        // An entry on another session's radio says so (the reason its
+        // clicks give, containerFunctionScopeReason).
+        const QString foreignReason = foreignSession
+            ? containerFunctionScopeReason(context, containerSessionId()) : QString();
         const QString notOpen = unsupported ? only->property("unsupportedSourceReason").toString() :
+            foreignSession ? foreignReason :
             ContainerSourceAdapter::followsSelectedRx(context) ? tr("No selected RX is available in this window") :
             tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(
                 context.contains("sliceId") ? context.value("sliceId").toInt(-1)+1 :
@@ -15864,8 +15876,10 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 ant->setActiveTxAntenna(-1);
             } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
                 // A display on a fixed slice or on All slices does not
-                // follow the Source; it shows its own slices.
-                if (unsupported || vfo->displayMode() == VfoDisplayItem::DisplayMode::SourceSlice) {
+                // follow the Source; it shows its own slices, unless the
+                // entry belongs to another session's radio.
+                if (unsupported || foreignSession
+                    || vfo->displayMode() == VfoDisplayItem::DisplayMode::SourceSlice) {
                     vfo->clearSliceStates();
                     vfo->setUnavailableText(notOpen);
                 } else {
@@ -17998,6 +18012,33 @@ QString MainWindow::remoteTransmitReason() const
     return tr("Remote transmit controls are not available from this Core.");
 }
 
+QString MainWindow::voxLineReason() const
+{
+    // Fix wave 2 (M8): VOX listens to this computer's microphone line to
+    // the Core; without one it is shown disabled with the reason (the
+    // Core's refusal of arming it stays the backstop).
+    QString reason;
+    if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
+        reason = TxRefusals::micNotConnected().text;
+    }
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled()) {
+            reason = source->micSourceReason();
+        } else if (source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            reason = remoteRadioVoxReason();
+        }
+    }
+    // iPhone app plan Task 77 (rulings 7.7, 8.4): VOX follows the
+    // transmit holder.
+    if (reason.isEmpty() && m_stationClient && m_stationClient->knowsTransmitHolder()
+        && !m_stationClient->holdsTransmitHere()) {
+        const QString holder = m_stationClient->otherHolderReason();
+        reason = holder.isEmpty() ? TxRefusals::notHolder().text : holder;
+    }
+    return reason;
+}
+
 QString MainWindow::transmitSliceChoiceReason() const
 {
     // Slice control plan Task 11 fix: the TX applet's letters and every
@@ -18625,15 +18666,10 @@ void MainWindow::applyRemoteRoleGating()
     // Fix wave 2 (M8): VOX listens to this computer's microphone line to
     // the Core; without one it is shown disabled with the reason (the
     // Core's refusal of arming it stays the backstop).
-    bool voxLine = m_remoteMedia == nullptr || m_remoteMedia->micLineOpen();
-    QString voxReason = voxLine ? QString() : TxRefusals::micNotConnected().text;
-    if (m_stationClient && m_stationClient->remoteTransmit()) {
-        const auto* source = m_stationClient->remoteTransmit();
-        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
-            voxLine = false;
-            voxReason = !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason();
-        }
-    }
+    // The line, the Core's microphone source and the transmit holder, in
+    // one place with the container's VOX button (voxLineReason).
+    const QString voxReason = voxLineReason();
+    const bool voxLine = voxReason.isEmpty();
     // iPhone app plan Task 77 (rulings 7.7, 8.4): while another device
     // holds transmit, the transmitter's settings are its own, and VOX
     // follows the holder: every transmit control here is shown disabled
@@ -18656,10 +18692,6 @@ void MainWindow::applyRemoteRoleGating()
             if (chainPermitted) { chainPermitted = false; chainReason = holderReason; }
             if (profilePermitted) { profilePermitted = false; profileReason = holderReason; }
             if (processingPermitted) { processingPermitted = false; processingReason = holderReason; }
-        }
-        if (voxLine && !m_stationClient->holdsTransmitHere()) {
-            voxLine = false;
-            voxReason = holderReason.isEmpty() ? TxRefusals::notHolder().text : holderReason;
         }
     }
     TxEqDialog::setSettingsPermitted(processingPermitted, processingReason);
