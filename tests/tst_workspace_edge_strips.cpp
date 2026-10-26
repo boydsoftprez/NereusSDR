@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original workspace preview four-edge strip regressions.
 // Modification history (NereusSDR):
+//   2026-10-26 - emptyStripTakesNoSpace sets the split at the 260 px
+//                 floor and raises it only to the content's minimum, as
+//                 the strip does; a longer default header title no longer
+//                 moves the expected split. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-12 - Seed the baseline panel split at the 260 px container
 //                 floor before raising its content minimum, matching
 //                 production ordering. J.J. Boyd (KG4VCF), AI-assisted
@@ -261,15 +266,17 @@ private slots:
         // The right strip has no padding.
         f.window.resize(1512, 800);
         settle();
+        // The split is set at the container's 260 px floor; the content's
+        // own minimum (its header title included) is applied after it, as
+        // the strip's floor (EdgeDockArea::migratedRightThickness).
         constexpr int kPadding = 2 * EdgeDockStrip::kRightPaddingPx;
         const int minimum = qMax(f.manager->container("main")->minimumWidth(),
                                  f.manager->container("main")->minimumSizeHint().width());
-        const int panel = qMax(256, minimum);
-        const int share = int(std::lround((f.area->width() - 3) * double(panel) / (1024 + panel)));
-        if (minimum == 260) {
-            // The value the 1512 px preview profile shows today.
-            QCOMPARE(share, 306);
-        }
+        const int panel = qMax(256, ContainerWidget::kMinContainerWidth);
+        const int split = int(std::lround((f.area->width() - 3) * double(panel) / (1024 + panel)));
+        // The value the 1512 px preview profile shows today.
+        QCOMPARE(split, 306);
+        const int share = qMax(split, minimum);
         QVERIFY2(qAbs(f.area->strip(DockEdge::Right)->width() - (share + kPadding)) <= 2,
                  qPrintable(QStringLiteral("%1 vs %2").arg(f.area->strip(DockEdge::Right)->width())
                                 .arg(share + kPadding)));
