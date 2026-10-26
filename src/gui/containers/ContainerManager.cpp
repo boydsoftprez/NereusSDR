@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - clearItemHistory() also clears each added S-meter dial's
+//                 history and peak hold (SMeterWidget::clearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setTransmitting reaches widget-factory rows through
 //                 ContainerContentHost::setTransmitting, which keeps a row
 //                 on another session's radio in the receive state; each
@@ -291,6 +294,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/applets/AppletPanelWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterWidget.h"
+#include "gui/SMeterWidget.h"
 #include "ContentFade.h"
 
 #include <QSplitter>
@@ -758,6 +762,14 @@ void ContainerManager::clearItemHistory()
         meters += c->content()->findChildren<MeterWidget*>();
         for (MeterWidget* meter : std::as_const(meters)) {
             meter->clearItemHistory();
+        }
+        // NereusSDR: an added S-meter dial's history and peak hold, as
+        // Thetis's ANANMM needles clear theirs. The Main Panel's dial
+        // (SettingsStore::Global) keeps its own behaviour.
+        for (SMeterWidget* dial : c->content()->findChildren<SMeterWidget*>()) {
+            if (dial->settingsStore() == SMeterWidget::SettingsStore::Instance) {
+                dial->clearHistory();
+            }
         }
     }
 }

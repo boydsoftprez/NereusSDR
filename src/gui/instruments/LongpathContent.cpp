@@ -103,6 +103,9 @@
 //                 (ContentFade::properties); the container host gives a
 //                 row with either on its fade overlay. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - followAboveS9Frequency: the needle's slice following for
+//                 the VHF S9 rule, for the added S-meter dial. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -823,6 +826,23 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             return pane;
         },
         filterProperties());
+}
+
+void followAboveS9Frequency(QWidget* owner, const Sources& sources, const QJsonObject& context,
+                            bool preview, const std::function<void(bool above)>& changed)
+{
+    if (preview) {
+        SliceModel* slice = sliceNow(sources, context);
+        changed(slice && isAboveS9Frequency(slice->frequency()));
+        return;
+    }
+    auto* follower = new SliceFollower(owner, sources, context);
+    follower->start([follower, changed](SliceModel* slice) {
+        changed(slice && isAboveS9Frequency(slice->frequency()));
+        if (!slice) { return; }
+        follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, follower,
+                                         [changed](double hz) { changed(isAboveS9Frequency(hz)); }));
+    });
 }
 
 } // namespace NereusSDR::LongpathContent

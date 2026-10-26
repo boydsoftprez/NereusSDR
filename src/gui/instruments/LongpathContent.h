@@ -40,6 +40,10 @@
 //                 its slice (transmit slice by default, none, or Slice A
 //                 to D). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - followAboveS9Frequency: the VHF S9 rule of an entry's
+//                 slice, for content outside this file (the added S-meter
+//                 dial). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -51,6 +55,7 @@
 #include <functional>
 
 class QObject;
+class QWidget;
 
 namespace NereusSDR {
 
@@ -111,6 +116,15 @@ struct Sources {
 
 // Registers the types. Call only with the workspace preview on.
 void registerAll(ContainerContentRegistry& registry, const Sources& sources);
+
+// The VHF S9 rule for the slice behind `context`: calls `changed` with
+// isAboveS9Frequency (gui/meters/AboveS9Frequency.h) of that slice's
+// frequency, false with no slice, now and whenever the slice behind the
+// context or its frequency changes, as a needle's rule follows its slice.
+// `preview` (an inert preview) reads the slice once and follows nothing.
+// The follower is a child of `owner`.
+void followAboveS9Frequency(QWidget* owner, const Sources& sources, const QJsonObject& context,
+                            bool preview, const std::function<void(bool above)>& changed);
 
 // The primary binding an entry asks for (config "binding", else the
 // type's default: SignalPeak for an RX needle, TxPower for a TX needle,

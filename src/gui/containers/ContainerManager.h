@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - clearItemHistory() reaches added S-meter dials. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setTransmitting reaches widget content fade overlays;
 //                 clearItemHistory() for a band change. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -220,7 +222,8 @@ public:
     // take it too.
     void setTransmitting(bool transmitting);
     // Every container meter's item history is cleared (Thetis ZeroOut on a
-    // band change, MeterManager.cs:4405-4462 [v2.10.3.15]).
+    // band change, MeterManager.cs:4405-4462 [v2.10.3.15]), and each added
+    // S-meter dial's history and peak hold (SMeterWidget::clearHistory).
     void clearItemHistory();
     // Hide when slice not open: slice `sliceIndex` (its id, 0 for Slice A,
     // as RadioModel::sliceAdded and sliceRemoved carry it) was opened or
