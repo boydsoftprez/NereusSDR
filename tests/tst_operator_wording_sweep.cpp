@@ -1166,7 +1166,7 @@ private slots:
               "+100 = full right)",
               "Mute the receive audio",
               "Binaural audio: I and Q play in separate ears, for a stereo image in headphones. "
-              "While noise reduction or the auto-notch is on, both ears hear the same audio.",
+              "While noise reduction, SNB or the auto-notch is on, both ears hear the same audio.",
               "RX Bypass on TX: routes the receive path through the bypass relay while "
               "transmitting.",
               "NNR: neural noise reduction. Left-click activates, right-click adjusts settings"}},

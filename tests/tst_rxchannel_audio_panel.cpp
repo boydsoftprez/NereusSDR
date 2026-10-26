@@ -11,9 +11,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
-//   2026-10-25 - Issue #650: BIN with a stage that zeroes Q sends WDSP
-//                 dual mono, read back from rxa[].panel.p->copy. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Issue #650: BIN with a stage that zeroes Q (NR, SNB,
+//                 ANF) sends WDSP dual mono, read back from
+//                 rxa[].panel.p->copy. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -337,6 +338,65 @@ private slots:
 #endif
     }
 
+    // SNB writes Q = 0 too (snb.c:569-570), before the panel in xrxa.
+    void spectralBlankerHoldsBinauralAtDualMono() {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP");
+#else
+        WdspEngine engine;
+        engine.m_initialized = true;
+        RxChannel* rx = engine.createRxChannel(kPanelChannel);
+        QVERIFY(rx != nullptr);
+
+        rx->setBinauralEnabled(true);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+        rx->setSnbEnabled(true);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
+        QCOMPARE(rx->binauralEnabled(), true);
+
+        rx->setSnbEnabled(false);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+
+        // SNB on first, then BIN.
+        rx->setBinauralEnabled(false);
+        rx->setSnbEnabled(true);
+        rx->setBinauralEnabled(true);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
+
+        engine.destroyRxChannel(kPanelChannel);
+#endif
+    }
+
+    // A rebuild reopens the channel (seeded dual mono) under a new wrapper,
+    // whose sent-value tracker starts there, so later changes still land.
+    void rebuiltChannelFollowsTheEffectiveValue() {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP");
+#else
+        WdspEngine engine;
+        engine.m_initialized = true;
+        RxChannel* rx = engine.createRxChannel(kPanelChannel);
+        QVERIFY(rx != nullptr);
+        rx->setBinauralEnabled(true);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+
+        ChannelConfig cfg;
+        QVERIFY(engine.rebuildRxChannel(kPanelChannel, cfg) >= 0);
+        RxChannel* rebuilt = engine.rxChannel(kPanelChannel);
+        QVERIFY(rebuilt != nullptr);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
+
+        rebuilt->setBinauralEnabled(true);
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+        QVERIFY(rebuilt->setActiveNr(NrSlot::NR2));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
+        QVERIFY(rebuilt->setActiveNr(NrSlot::Off));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+
+        engine.destroyRxChannel(kPanelChannel);
+#endif
+    }
+
     void binauralOffStaysDualMono() {
 #ifndef HAVE_WDSP
         QSKIP("needs WDSP");
@@ -390,6 +450,23 @@ private slots:
         QVERIFY(lane.waitIdleForTest(kLaneIdleTimeoutMs));
         QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
         QCOMPARE(rx->binauralEnabled(), true);
+        rx->setAnfEnabled(false);
+        QVERIFY(lane.waitIdleForTest(kLaneIdleTimeoutMs));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+
+        rx->setSnbEnabled(true);
+        QVERIFY(lane.waitIdleForTest(kLaneIdleTimeoutMs));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyDualMono);
+        rx->setSnbEnabled(false);
+        QVERIFY(lane.waitIdleForTest(kLaneIdleTimeoutMs));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
+
+        // A quick on and off settles binaural: the dual-mono job queued
+        // before the run job never outlives the job after it.
+        QVERIFY(rx->setActiveNr(NrSlot::NR2));
+        QVERIFY(rx->setActiveNr(NrSlot::Off));
+        QVERIFY(lane.waitIdleForTest(kLaneIdleTimeoutMs));
+        QCOMPARE(panelCopy(kPanelChannel), kCopyBinaural);
 
         engine.shutdown();
         engine.setReceiveLane(nullptr);

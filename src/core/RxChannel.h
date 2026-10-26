@@ -94,7 +94,7 @@
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
 //   2026-10-25 - Issue #650: BIN sends WDSP dual mono while a stage that
-//                 zeroes Q runs (NR1 to NR4, NNR, ANF), so the right ear
+//                 zeroes Q runs (NR1 to NR4, NNR, SNB, ANF), so the right ear
 //                 is not silent; binauralEnabled() stays the operator's
 //                 choice (applyEffectiveBinaural). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code. NereusSDR-original.
@@ -832,9 +832,9 @@ public:
 
     // Binaural mode: enabled → I and Q carry separate headphone channels.
     // Disabled (default) → dual-mono (Q copies I).
-    // From Thetis Project Files/Source/Console/radio.cs:1145-1162
+    // From Thetis Project Files/Source/Console/radio.cs:1147-1162 [v2.10.3.15]
     //   Thetis default bin_on = false
-    // WDSP: third_party/wdsp/src/patchpanel.c:187
+    // WDSP: third_party/wdsp/src/patchpanel.c:197
     // binauralEnabled() is the operator's choice. WDSP gets dual mono while
     // a stage that zeroes Q runs (issue #650, applyEffectiveBinaural).
     bool binauralEnabled() const { return m_binauralEnabled.load(); }
@@ -1392,12 +1392,18 @@ private:
     // Sets the NR selection flags (m_activeNr and the ones kept with it).
     void storeActiveNrFlags(NrSlot slot);
     // Issue #650: true while a WDSP stage that writes Q = 0 is selected
-    // (NR1 to NR4, NNR not held off by its limit, legacy ANR / EMNR, ANF).
+    // (NR1 to NR4, NNR not held off by its limit, legacy ANR / EMNR, SNB,
+    // ANF).
     bool qSilencingStageSelected() const;
-    // Issue #650: sends SetRXAPanelBinaural the effective value,
-    // m_binauralEnabled && !qSilencingStageSelected(), read when the job
-    // runs. Every writer of those inputs calls it after its own WDSP job.
-    void applyEffectiveBinaural();
+    // Issue #650: where a panel job goes relative to a stage's run job.
+    enum class BinauralStep { BeforeStageRun, AfterStageRun };
+    // Issue #650: AfterStageRun sends SetRXAPanelBinaural the effective
+    // value, m_binauralEnabled && !qSilencingStageSelected(), read when the
+    // job runs. Every writer of those inputs calls it after its own WDSP
+    // job. BeforeStageRun, called before the run job, queues dual mono
+    // first when a stage is (or, with stageStarting, is about to be) on.
+    void applyEffectiveBinaural(BinauralStep step = BinauralStep::AfterStageRun,
+                                bool stageStarting = false);
     // R-R3-39: builds this channel's DeepFilterNet3 instance when `slot` is
     // DFNR and none is built yet (on the receive lane when there is one), publishes the
     // pointer, then sets m_dfnrActive from the current selection.
@@ -1498,8 +1504,16 @@ private:
     // from Thetis radio.cs, which sets AF as SetRXAPanelGain1.
     static constexpr double kPanelGain1Unity = 1.0;
     // binauralEnabled: binaural audio — off by default (dual-mono)
-    // From Thetis radio.cs:1145-1162 — bin_on = false
+    // From Thetis radio.cs:1147-1162 [v2.10.3.15]: bin_on = false
     std::atomic<bool> m_binauralEnabled{false};
+    // Issue #650: the bin value last sent to SetRXAPanelBinaural, so the
+    // panel is pushed only when the effective value changes (a channel
+    // never opened in WDSP sees no call while it stays at the default).
+    // create_panel opens with copy 0 (third_party/wdsp/src/RXA.c:567), but
+    // WdspEngine::openRxChannelWdsp then sends bin 0 (WdspEngine.cpp:808),
+    // and every open (create or rebuild) gets a new wrapper, so 0 is what
+    // WDSP holds when this wrapper's first job runs. Written on the lane.
+    std::atomic<int> m_panelBinauralSent{0};
     std::atomic<bool> m_active{false};
     // Task 8: nonzero while a no-drain stop is waiting for WDSP to report it
     // done. processIq keeps exchanging on the channel meanwhile and clears it

@@ -79,6 +79,10 @@
 //                 maxBinHoldNextDbm declared, ported from Longpath PR 215
 //                 (src/core/WdspEngine.h:631-654 [@383f058]), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-25 : Issue #650 by J.J. Boyd (KG4VCF): test-only friendship
+//                 for the audio panel test, which reads the panel's copy
+//                 flag back from real RX channels. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs

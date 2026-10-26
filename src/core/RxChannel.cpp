@@ -93,10 +93,12 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
 //   2026-10-25 - Issue #650: applyEffectiveBinaural sends WDSP dual mono
-//                 while a stage that zeroes Q runs (NR1 to NR4, NNR, ANF),
-//                 so BIN no longer silences the right ear; the operator's
-//                 BIN choice is kept. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code. NereusSDR-original.
+//                 while a stage that zeroes Q runs (NR1 to NR4, NNR, SNB,
+//                 ANF), so BIN no longer silences the right ear; the
+//                 operator's BIN choice is kept. Dual mono is queued before
+//                 a stage starts, binaural only after it stops. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -1024,6 +1026,7 @@ void RxChannel::setNrEnabled(bool enabled)
     m_nrEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runKeyed(laneParameter("setNrEnabled"), 0, [=, this]() {
         SetRXAANRRun(m_channelId, enabled ? 1 : 0);
     });
@@ -1040,6 +1043,7 @@ void RxChannel::setAnfEnabled(bool enabled)
     m_anfEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runKeyed(laneParameter("setAnfEnabled"), 0, [=, this]() {
         SetRXAANFRun(m_channelId, enabled ? 1 : 0);
     });
@@ -1060,6 +1064,7 @@ void RxChannel::setEmnrEnabled(bool enabled)
     m_emnrEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runKeyed(laneParameter("setEmnrEnabled"), 0, [=, this]() {
         // From Thetis Project Files/Source/Console/radio.cs:2216-2232
         //   WDSP.SetRXAEMNRRun(WDSP.id(thread, subrx), value)
@@ -1650,6 +1655,7 @@ bool RxChannel::requestNnrLimit(int limit)
         return false;
     }
     m_nnrLimit.store(limit, std::memory_order_release);
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     // In order with the other NNR calls: RadioModel clears a limit before
     // NNR goes on and after it goes off (R-R3-40).
     runOrdered([this, limit]() { NnrAdapter::requestLimit(m_channelId, limit); });
@@ -1806,6 +1812,7 @@ bool RxChannel::setActiveNr(NrSlot slot)
         }
     }
     storeActiveNrFlags(slot);
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runOrdered([this, slot]() {
         if (!applyActiveNrOnLane(slot)) {
             NrSlot expected = slot;
@@ -1878,6 +1885,7 @@ bool RxChannel::selectNr(NrSlot slot, const NnrSettings* tuningFirst, NrSlot pre
         m_nnrTuning = *tuningFirst;
     }
     storeActiveNrFlags(slot);
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runOrdered([this, slot, tuning, previousTuning, previous]() {
         auto refuse = [this, slot, previous](const QString& why) {
             NrSlot expected = slot;
@@ -1933,6 +1941,7 @@ void RxChannel::applyNnrState(int limit, const NnrSettings& settings, NrSlot slo
         m_nnrLimit.store(limit, std::memory_order_release);
     }
     storeActiveNrFlags(optimistic);
+    applyEffectiveBinaural(BinauralStep::BeforeStageRun);
     runOrdered([this, limit, settings, slot, nr3Blocked, before, optimistic]() {
         QString reason;
         // R-R3-40: a new or reopened channel starts with the slice's runtime
@@ -1973,7 +1982,14 @@ void RxChannel::applyNnrState(int limit, const NnrSettings& settings, NrSlot slo
 
 void RxChannel::setSnbEnabled(bool enabled)
 {
-    if (m_nb) m_nb->setSnbEnabled(enabled);
+    if (m_nb) {
+        // Issue #650: SNB writes Q = 0 too (snb.c:569-570).
+        if (enabled) {
+            applyEffectiveBinaural(BinauralStep::BeforeStageRun, /*stageStarting=*/true);
+        }
+        m_nb->setSnbEnabled(enabled);
+        applyEffectiveBinaural();
+    }
 }
 
 // ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
@@ -2365,9 +2381,10 @@ void RxChannel::setBinauralEnabled(bool enabled)
 
 // Issue #650: every WDSP noise stage writes Q = 0 on its output:
 // third_party/wdsp/src/anr.c:113 (NR1), emnr.c:1281 (NR2), rnnr.c:334
-// (NR3), sbnr.c:158 (NR4), nnr.c:644 (NNR, output mode 1, RXA.c:366) and
-// anf.c:113 (ANF). The panel runs after all of them (xrxa, RXA.c), so with
-// BIN on (copy = 0) the right ear was silent. Thetis has the same bug.
+// (NR3), sbnr.c:158 (NR4), nnr.c:644 (NNR, output mode 1, RXA.c:366),
+// snb.c:569-570 (SNB) and anf.c:113 (ANF). The panel runs after all of
+// them (xrxa, RXA.c), so with BIN on (copy = 0) the right ear was silent.
+// Thetis has the same bug.
 // While one of them is selected WDSP gets dual mono (copy = 1); the
 // operator's BIN choice (m_binauralEnabled) is not changed. DFNR and MNR
 // write their mono output to both channels; BNR runs nothing here.
@@ -2382,22 +2399,47 @@ bool RxChannel::qSilencingStageSelected() const
     // The legacy setNrEnabled / setEmnrEnabled run flags. With NNR selected,
     // m_nrEnabled is only storeActiveNrFlags' mirror and ANR is off.
     const bool legacy = (m_nrEnabled.load() && nr != NrSlot::NNR) || m_emnrEnabled.load();
-    return wdspNr || nnr || legacy || m_anfEnabled.load();
+    // SNB's run flag is NbFamily's atomic (m_nb lives as long as the channel).
+    const bool snb = m_nb && m_nb->snbEnabled();
+    return wdspNr || nnr || legacy || snb || m_anfEnabled.load();
 }
 
-void RxChannel::applyEffectiveBinaural()
+void RxChannel::applyEffectiveBinaural(BinauralStep step, bool stageStarting)
 {
 #ifdef HAVE_WDSP
-    // Read when the job runs, after the run-flag jobs queued before it.
+    if (step == BinauralStep::BeforeStageRun) {
+        // Queued ahead of a stage's run job, so Q is never zeroed with the
+        // panel still binaural. Ordered, not keyed, so the AfterStageRun
+        // job cannot replace it. It only ever sets dual mono, which is
+        // never silent; the AfterStageRun job settles the value.
+        if (m_binauralEnabled.load() && (stageStarting || qSilencingStageSelected())) {
+            runOrdered([this]() {
+                if (m_panelBinauralSent.exchange(0) != 0) {
+                    // WDSP: third_party/wdsp/src/patchpanel.c:197
+                    SetRXAPanelBinaural(m_channelId, 0);
+                }
+            });
+        }
+        return;
+    }
+    // Read when the job runs, after the run-flag jobs queued before it, so
+    // binaural returns only once the stage has stopped.
     runKeyed(laneParameter("setBinauralEnabled"), 0, [this]() {
-        const bool bin = m_binauralEnabled.load() && !qSilencingStageSelected();
+        const int bin = (m_binauralEnabled.load() && !qSilencingStageSelected()) ? 1 : 0;
+        // Only a change reaches WDSP (m_panelBinauralSent).
+        if (m_panelBinauralSent.exchange(bin) == bin) {
+            return;
+        }
         // bin=1 → copy=0 → binaural (I/Q separate headphone stereo image)
         // bin=0 → copy=1 → dual-mono (Q := I, same audio on both channels)
-        // From Thetis Project Files/Source/Console/radio.cs:1145-1162
+        // From Thetis Project Files/Source/Console/radio.cs:1147-1162 [v2.10.3.15]
         //   default bin_on = false → dual-mono
-        // WDSP: third_party/wdsp/src/patchpanel.c:187
-        SetRXAPanelBinaural(m_channelId, bin ? 1 : 0);
+        // WDSP: third_party/wdsp/src/patchpanel.c:197
+        SetRXAPanelBinaural(m_channelId, bin);
     });
+#else
+    Q_UNUSED(step);
+    Q_UNUSED(stageStarting);
 #endif
 }
 
