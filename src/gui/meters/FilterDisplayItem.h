@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2 (I7): legacyLayout, the old look's hit
+//                 geometry. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -278,7 +281,10 @@ public:
         float  filterH{0};
         QPointF lowBot, lowTop, highBot, highTop, topLeft, topRight;
     };
+    // The hit layout: Thetis's, or for the old look (no m_thetisLook) the
+    // geometry that look draws (legacyLayout).
     ThetisLayout thetisLayout(int widgetW, int widgetH) const;
+    ThetisLayout legacyLayout(int widgetW, int widgetH) const;
     float hzToPixels(double hz, float pixelSpan, int hzSpan) const;
     double pixelsToHz(float pixels, float pixelSpan, int hzSpan) const;
 

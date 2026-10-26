@@ -7,6 +7,9 @@
 //               is not transmitting shows and edits its RX filter; a saved
 //               item keeps its look and takes input. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: fix wave round 2 (I7): a saved display is hit only where
+//               its old look draws. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 
 #include <QtTest>
 #include <QAction>
@@ -491,6 +494,99 @@ private slots:
                      + notchMenu.count() + tnfToggle.count() + tnfAdd.count(),
                  0);
         QVERIFY(!item->autoZoom());
+    }
+
+    // Fix wave round 2 (I7, no hidden touch surfaces): a saved display in
+    // the old look takes input only on what that look draws. The drawn edge
+    // is grabbed where it is painted; empty space, the places Thetis's
+    // buttons would be and the wheel off an edge do nothing.
+    void legacyLookTakesInputOnlyWhereItDraws()
+    {
+        FilterDisplayItem source;
+        const QString oldRecord = source.serialize().split(QLatin1Char('|')).mid(0, 21).join(QLatin1Char('|'));
+        FilterDisplayItem old;
+        QVERIFY(old.deserialize(oldRecord));
+        QVERIFY(!old.thetisLook());
+        old.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        old.setRequestsEnabled(true);
+        presentFlatFrame(old);
+        auto state = stateFor(DSPMode::USB, 100, 2900);
+        state.notches = {{7, kVfoHz + 1500.0, 200.0, true}};
+        old.setSliceFilterState(state);
+        old.setRfMarkers(kVfoHz + 100.0, kVfoHz + 2900.0, kVfoHz + 100.0, kVfoHz + 2900.0,
+                         {kVfoHz + 1500.0});
+
+        // Where paint() draws the high edge and the notch (setRfMarkers'
+        // pixel, paintFilterEdges' scale).
+        const auto paintedX = [](double offsetHz) {
+            const double pixel = std::lround((offsetHz + 10000.0) / 20000.0
+                                             * FilterDisplayItem::kSpectrumPixels);
+            return float(int(pixel * (float(kW) / FilterDisplayItem::kSpectrumPixels)));
+        };
+        const float highX = paintedX(2900.0);
+        const float notchX = paintedX(1500.0);
+        const QImage image = render(old);
+        bool drawn = false;
+        for (int dx = -1; dx <= 1; ++dx) {
+            drawn = drawn || image.pixelColor(int(highX) + dx, kH / 2).rgb() == QColor(0xff, 0xff, 0x00).rgb();
+        }
+        QVERIFY2(drawn, "the high edge is painted at highX");
+
+        QSignalSpy edges(&old, &FilterDisplayItem::filterEdgesRequested);
+        QSignalSpy shift(&old, &FilterDisplayItem::filterShiftRequested);
+        QSignalSpy notchAdd(&old, &FilterDisplayItem::notchAddRequested);
+        QSignalSpy notchChange(&old, &FilterDisplayItem::notchChangeRequested);
+        QSignalSpy tnfToggle(&old, &FilterDisplayItem::tnfToggleRequested);
+        QSignalSpy tnfAdd(&old, &FilterDisplayItem::tnfAddRequested);
+        const auto total = [&] {
+            return edges.count() + shift.count() + notchAdd.count() + notchChange.count()
+                + tnfToggle.count() + tnfAdd.count();
+        };
+        const bool snap = old.snapLines();
+
+        // Empty space: left and right clicks, and the wheel.
+        const QPointF empty(kW / 8.0, kH / 2.0);
+        click(old, empty, Qt::LeftButton);
+        click(old, empty, Qt::RightButton);
+        QWheelEvent emptyWheel(empty, empty, QPoint(), QPoint(0, 120), Qt::NoButton,
+                               Qt::NoModifier, Qt::NoScrollPhase, false);
+        old.handleWheel(&emptyWheel, kW, kH);
+        // Where the Thetis look's buttons and number text would be.
+        auto thetis = makeItem(DSPMode::USB, 100, 2900);
+        const auto tl = thetis->thetisLayout(kW, kH);
+        for (const QRectF& button : {tl.mnfRect, tl.mnfPlusRect, tl.snapRect, tl.fitRect}) {
+            click(old, button.center(), Qt::LeftButton);
+        }
+        click(old, QPointF(tl.filterL - 15.0f, tl.textY - tl.textHeight * 2.0f), Qt::LeftButton);
+        QCOMPARE(total(), 0);
+        QCOMPARE(old.snapLines(), snap);
+        QVERIFY(!old.autoZoom());
+
+        // The drawn high edge, grabbed where it is painted.
+        drag(old, QPointF(highX, kH / 2.0), QPointF(highX + 4.0f * kW / 200.0f, kH / 2.0),
+             Qt::ControlModifier);
+        QVERIFY(!edges.isEmpty());
+        QCOMPARE(edges.last().at(1).toInt(), 100);
+        QVERIFY(edges.last().at(2).toInt() > 2900);
+        // The wheel on the drawn edge steps it.
+        const int before = edges.count();
+        const QPointF onEdge(highX, kH / 3.0);
+        QWheelEvent edgeWheel(onEdge, onEdge, QPoint(), QPoint(0, 120), Qt::NoButton,
+                              Qt::NoModifier, Qt::NoScrollPhase, false);
+        old.handleWheel(&edgeWheel, kW, kH);
+        QCOMPARE(edges.count(), before + 1);
+        // The wheel on the drawn notch line changes its width.
+        const QPointF onNotch(notchX, kH / 2.0);
+        QWheelEvent notchWheel(onNotch, onNotch, QPoint(), QPoint(0, 120), Qt::NoButton,
+                               Qt::NoModifier, Qt::NoScrollPhase, false);
+        old.handleWheel(&notchWheel, kW, kH);
+        QCOMPARE(notchChange.count(), 1);
+        // Ctrl+right-click adds a notch at the frequency under the pointer
+        // on the old look's scale: a quarter width left of centre is -5 kHz.
+        click(old, QPointF(kW / 4.0, kH / 2.0), Qt::RightButton, Qt::ControlModifier);
+        QCOMPARE(notchAdd.count(), 1);
+        QVERIFY(std::abs(notchAdd.last().at(1).toDouble() - (kVfoHz - 5000.0)) <= 30.0);
+        QVERIFY(!old.thetisLook());
     }
 
     // Old records (no Thetis-look field) paint as before: the legacy full

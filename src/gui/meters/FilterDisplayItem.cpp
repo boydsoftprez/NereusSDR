@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2 (I7): a saved display in the old look is
+//                 hit where that look draws: legacyLayout maps the frame's
+//                 span across the full rect, edges and notches are lines,
+//                 and the buttons, click-to-step areas, top line and wheel
+//                 off an edge do nothing. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -103,6 +109,7 @@ mw0lge@grange-lane.co.uk
 #include <algorithm>
 #include <iterator>
 #include <cmath>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -1160,8 +1167,55 @@ void FilterDisplayItem::clearSelection()
     m_notchStartHz = -1.0;
 }
 
+FilterDisplayItem::ThetisLayout FilterDisplayItem::legacyLayout(int widgetW, int widgetH) const
+{
+    // The old look (paint() without m_thetisLook) draws the frame's span
+    // across the full rect (setRfMarkers, paintFilterEdges, paintNotches):
+    // no extent text margins, no slopes, no zoom and no controls. Input on
+    // a saved display hits what that look draws: the edges and notches,
+    // full height, nothing else (no hidden touch surfaces).
+    ThetisLayout l;
+    const QRect r = pixelRect(widgetW, widgetH);
+    if (r.width() <= 0 || r.height() <= 0 || !m_frameAvailable || m_frameSpanHz <= 0.0
+        || m_displayMode == DisplayMode::None) {
+        return l;
+    }
+    l.itemRect = QRectF(r);
+    l.x = float(r.left());
+    l.y = float(r.top());
+    l.w = float(r.width());
+    l.h = float(r.height());
+    l.zoom = 1.0f;
+    l.hzSpan = std::max(1, int(std::lround(m_frameSpanHz)));
+    l.extentHz = std::max(1, l.hzSpan / 2);
+    l.pixelSpan = l.w;
+    l.extentL = l.x;
+    l.extentH = l.x + l.w;
+    // The slice's frequency where the frame draws it.
+    const double frameLowHz = m_frameCentreHz - m_frameSpanHz / 2.0;
+    l.centre = l.x + float((m_state.vfoHz - frameLowHz) / m_frameSpanHz) * l.w;
+    l.lowHz = displayLowHz();
+    l.highHz = displayHighHz();
+    l.filterL = l.centre + hzToPixels(std::abs(l.lowHz), l.pixelSpan, l.hzSpan) * (l.lowHz < 0 ? -1.0f : 1.0f);
+    l.filterH = l.centre + hzToPixels(std::abs(l.highHz), l.pixelSpan, l.hzSpan) * (l.highHz < 0 ? -1.0f : 1.0f);
+    l.lowBot = QPointF(l.filterL, l.y + l.h);
+    l.lowTop = QPointF(l.filterL, l.y);
+    l.highBot = QPointF(l.filterH, l.y + l.h);
+    l.highTop = QPointF(l.filterH, l.y);
+    l.topLeft = l.lowTop;
+    l.topRight = l.highTop;
+    l.textY = l.y + l.h;
+    l.topLineY = l.topPos = l.y;
+    l.botLineY = l.botPos = l.y + l.h;
+    l.spectrumHeight = l.h;
+    // mnfRect, mnfPlusRect, snapRect and fitRect stay empty: not drawn.
+    l.valid = true;
+    return l;
+}
+
 FilterDisplayItem::ThetisLayout FilterDisplayItem::thetisLayout(int widgetW, int widgetH) const
 {
+    if (!m_thetisLook) { return legacyLayout(widgetW, widgetH); }
     // From Thetis MeterManager.cs:35470-35612, 35771-35776, 35834-35866,
     // 35873-35884 [v2.10.3.15].
     ThetisLayout l;
@@ -1328,7 +1382,9 @@ FilterDisplayItem::Hover FilterDisplayItem::hoverAt(const ThetisLayout& l,
     if (!hv.onButton && canAdjust() && !m_autoZoom && !selected) {
         const float lowDist = pointToSegmentDistance(l.lowBot, l.lowTop, mouse);
         const float highDist = pointToSegmentDistance(l.highBot, l.highTop, mouse);
-        const float shiftDist = pointToSegmentDistance(l.topLeft, l.topRight, mouse);
+        // The old look draws no top line: only the edges are hit.
+        const float shiftDist = m_thetisLook ? pointToSegmentDistance(l.topLeft, l.topRight, mouse)
+                                             : std::numeric_limits<float>::max();
         if (lowDist <= highDist && lowDist <= shiftDist) {
             hv.low = isMouseNearLine(l.lowBot, l.lowTop, mouse, kEdgeGrabPixels);
         } else if (highDist <= lowDist && highDist <= shiftDist) {
@@ -1351,7 +1407,9 @@ FilterDisplayItem::Hover FilterDisplayItem::hoverAt(const ThetisLayout& l,
                 if (std::abs(shiftHz) > extent + extent / 2.0) { continue; }
                 const float notchX = l.centre + hzToPixels(std::abs(shiftHz), l.pixelSpan, l.hzSpan)
                     * (shiftHz < 0 ? -1.0f : 1.0f);
-                const float widthPix = hzToPixels(std::abs(notch.widthHz / 2.0), l.pixelSpan, l.hzSpan);
+                // The old look draws a notch as a line at its centre.
+                const float widthPix = m_thetisLook
+                    ? hzToPixels(std::abs(notch.widthHz / 2.0), l.pixelSpan, l.hzSpan) : 0.0f;
                 if (mouse.x() >= notchX - widthPix - kNotchGrabPixels
                     && mouse.x() <= notchX + widthPix + kNotchGrabPixels
                     && mouse.y() >= l.y + l.textHeight && mouse.y() <= l.y + l.h) {
@@ -1379,8 +1437,9 @@ FilterDisplayItem::Hover FilterDisplayItem::hoverAt(const ThetisLayout& l,
     }
 
     // closest to which filter edge? From Thetis MeterManager.cs:36213-36234
-    // [v2.10.3.15].
-    if (hv.notchId == -1 && !hv.onButton && canAdjust() && !edgeSelected) {
+    // [v2.10.3.15]. The old look draws none of the number text these
+    // click-to-step areas stand for, so it has none.
+    if (m_thetisLook && hv.notchId == -1 && !hv.onButton && canAdjust() && !edgeSelected) {
         const float centreTopLine = float(l.topLeft.x() + ((l.topRight.x() - l.topLeft.x()) / 2.0));
         const float lowDist = distanceBetweenPoints(QPointF(l.filterL, l.textY + (l.textHeight / 2.0f)), mouse);
         const float highDist = distanceBetweenPoints(QPointF(l.filterH, l.textY + (l.textHeight / 2.0f)), mouse);
@@ -2081,7 +2140,17 @@ bool FilterDisplayItem::handleWheel(QWheelEvent* event, int widgetW, int widgetH
     const ThetisLayout l = thetisLayout(widgetW, widgetH);
     const Hover hv = hoverAt(l, m_mousePoint);
 
-    if (hv.notchId == -1 && m_selectedNotchId == -1) {
+    if (!m_thetisLook && hv.notchId == -1 && m_selectedNotchId == -1) {
+        // The old look: the wheel acts only on a drawn edge under the
+        // pointer (and on a drawn notch, below).
+        if (hv.low) {
+            const float tmp = ctrl ? roundTo10(displayLowHz()) : displayLowHz();
+            requestLow(tmp + (sign * step), mods, true);
+        } else if (hv.high) {
+            const float tmp = ctrl ? roundTo10(displayHighHz()) : displayHighHz();
+            requestHigh(tmp + (sign * step), mods, true);
+        }
+    } else if (hv.notchId == -1 && m_selectedNotchId == -1) {
         if (hv.adjustLow) {
             const float tmp = ctrl ? roundTo10(displayLowHz()) : displayLowHz();
             requestLow(tmp + (sign * step), mods, true);

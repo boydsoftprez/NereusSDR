@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed host integration invariants.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2 (R2): a signal text unit chosen in the
+//                 editor, then changed by a click box, keeps the clicked unit
+//                 through the save and rebuild. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-16 - An unavailable applet is grayed with its reason, never
 //                 hidden, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -32,6 +36,10 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/presets/BarPresetItem.h"
+#include "gui/meters/ClickBoxItem.h"
+#include "gui/meters/SignalTextItem.h"
+#include "gui/containers/ContentPropertyEditor.h"
+#include <QComboBox>
 #include "gui/SMeterWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -570,6 +578,69 @@ private slots:
         }
         // Shown on receive: its transmit choice is the operator's still.
         QVERIFY(!store.snapshot().containers[3].config.value("showOnTx").toBool(true));
+    }
+    void clickedSignalUnitsSurviveSaveAndRebuild()
+    {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings); ContainerContentRegistry registry;
+        QWidget root; QSplitter splitter(&root); ContainerManager manager(&root,&splitter);
+        manager.setWorkspaceAdapter(&store,&registry);
+        // The editor sets S units: the entry keeps its record and takes
+        // overrides for the units and the set-here flag.
+        ContentEntry text;
+        {
+            ContentPropertyEditor editor(registry);
+            ContentEntry edited; connect(&editor,&ContentPropertyEditor::entryEdited,this,[&](const ContentEntry& e){ edited=e; });
+            editor.setEntry(registry.makeEntry("SIGNALTEXT"));
+            auto* units=editor.findChild<QComboBox*>("signalUnits"); QVERIFY(units);
+            units->setCurrentIndex(units->findData(int(SignalTextItem::Units::SUnits)));
+            QVERIFY(!edited.id.isEmpty()); text=edited;
+        }
+        const QJsonObject editorOverrides=text.config["overrides"].toObject();
+        QVERIFY(editorOverrides.contains("7")); QVERIFY(editorOverrides.contains("26"));
+        text.canvasRect=QRectF(0,0,1,1);
+        // A click box over it that steps the units.
+        auto box=registry.makeEntry("CLICKBOX");
+        {
+            std::unique_ptr<MeterItem> item(registry.createMeterItem(box,nullptr));
+            auto* click=qobject_cast<ClickBoxItem*>(item.get()); QVERIFY(click);
+            click->setAction(ClickBoxItem::Action::CycleUnits); click->setRect(0,0,1,1);
+            box=registry.captureMeterItem(*click,box);
+        }
+        box.canvasRect=QRectF(0,0,1,1);
+        ContainerDocument container; container.id="A"; container.layout=ContentLayout::LegacyCanvas;
+        container.contents={text,box};
+        WorkspaceDocument document; document.mainContainerId=container.id; document.containers={container};
+        QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);
+
+        const auto liveText=[&manager,&text]() -> SignalTextItem* {
+            ContainerContentHost* host=manager.contentHost("A");
+            if(!host) { return nullptr; }
+            for(const auto& row:host->entryRows()) {
+                if(row.entryId==text.id) { return qobject_cast<SignalTextItem*>(row.item.data()); }
+            }
+            return nullptr;
+        };
+        SignalTextItem* item=liveText(); QVERIFY(item);
+        QCOMPARE(item->units(),SignalTextItem::Units::SUnits); QVERIFY(item->unitsSetHere());
+        auto* meter=qobject_cast<MeterWidget*>(item->parent()); QVERIFY(meter);
+        meter->resize(200,100);
+        const QPointF centre(100,50);
+        QMouseEvent press(QEvent::MouseButtonPress,centre,meter->mapToGlobal(centre),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QCoreApplication::sendEvent(meter,&press);
+        // One click, one step (the host's rebuild re-added the box).
+        QCOMPARE(item->units(),SignalTextItem::Units::Uv);
+
+        // The queued save commits and the host rebuilds: the clicked unit stays.
+        QTRY_VERIFY(store.snapshot().containers.first().contents.first().config["overrides"].toObject().isEmpty());
+        QTRY_VERIFY(liveText() && liveText()->units()==SignalTextItem::Units::Uv);
+        QVERIFY(liveText()->unitsSetHere());
+        // And from the saved file.
+        ContainerWorkspaceStore reloaded(settings); const auto loaded=reloaded.load(); QVERIFY(loaded.ok);
+        std::unique_ptr<MeterItem> saved(registry.createMeterItem(loaded.document.containers.first().contents.first(),nullptr));
+        auto* savedText=qobject_cast<SignalTextItem*>(saved.get()); QVERIFY(savedText);
+        QCOMPARE(savedText->units(),SignalTextItem::Units::Uv); QVERIFY(savedText->unitsSetHere());
+        QCOMPARE(saved->x(),0.0f); QCOMPARE(saved->itemWidth(),1.0f);
     }
 };
 QTEST_MAIN(TstContainerContentHost)

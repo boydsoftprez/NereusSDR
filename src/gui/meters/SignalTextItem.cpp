@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2 (R2): a click box choice clears the
+//                 entry's overrides with the new record, so a rebuild keeps it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R2: units set on this item (its click box or the
 //                 editor) stay when the global unit setting changes; an
 //                 item with none set follows it. Appended record field 26.
@@ -168,10 +171,15 @@ void SignalTextItem::setOwnUnits(Units u)
     const bool changed = !m_unitsSetHere || m_units != u;
     m_units = u;
     m_unitsSetHere = true;
-    // The choice is saved with the layout.
+    // The choice is saved with the layout. The record now holds the item's
+    // whole state (the editor's overrides were applied when it was built),
+    // so the overrides go: kept, they would win again on the rebuild and
+    // undo the click. Geometry comes from the entry's canvas rect, and the
+    // reading from its context, so neither is lost.
     if (changed) {
         emit m_configNotifier->configEdited(
-            QJsonObject{{QStringLiteral("legacyRecord"), serialize()}});
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()},
+                        {QStringLiteral("overrides"), QJsonObject{}}});
     }
 }
 

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2: a click box added to the widget again is
+//                 connected once (it stepped twice after a host rebuild).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R2: a click box sets a signal text's own units
 //                 (SignalTextItem::setOwnUnits), kept when the global unit
 //                 setting changes. J.J. Boyd (KG4VCF), AI-assisted via
@@ -334,6 +337,9 @@ void MeterWidget::addItem(MeterItem* item)
     // holds it, never on another (a preview copy acts on its own widget).
     // From Thetis MeterManager.cs:29814-29848 [v2.10.3.15] (MouseUp).
     if (auto* box = qobject_cast<ClickBoxItem*>(item)) {
+        // A box taken out and added again (a host keeps an unchanged item
+        // across a rebuild) is connected once: one click, one step.
+        disconnect(box, &ClickBoxItem::actionRequested, this, nullptr);
         connect(box, &ClickBoxItem::actionRequested, this,
                 [this, box](ClickBoxItem::Action action, int value) {
             if (!m_items.contains(box)) { return; }
