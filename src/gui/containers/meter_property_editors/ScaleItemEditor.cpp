@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Low and high colour rows (clsScaleItem.LowColour /
+//                 HighColour). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -118,6 +121,12 @@ void ScaleItemEditor::setItem(MeterItem* item)
     m_btnTitleColor->setStyleSheet(
         QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
             .arg(scale->titleColour().name(QColor::HexArgb)));
+    m_btnLowColor->setStyleSheet(
+        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+            .arg(scale->lowColour().name(QColor::HexArgb)));
+    m_btnHighColor->setStyleSheet(
+        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+            .arg(scale->highColour().name(QColor::HexArgb)));
 
     endProgrammaticUpdate();
 }
@@ -263,6 +272,47 @@ void ScaleItemEditor::buildTypeSpecific()
         }
     });
     addRow(QStringLiteral("Title color"), m_btnTitleColor);
+
+    // Low / high colours: the two halves of the scale.
+    // From Thetis clsScaleItem.LowColour / HighColour (MeterManager.cs:16141-16150 [v2.10.3.15])
+    auto colourButton = [this](const QString& objectName) {
+        auto* btn = new QPushButton(this);
+        btn->setObjectName(objectName);
+        btn->setFixedSize(40, 18);
+        return btn;
+    };
+    auto applyBtn = [](QPushButton* btn, const QColor& c) {
+        btn->setStyleSheet(
+            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+                .arg(c.name(QColor::HexArgb)));
+    };
+    m_btnLowColor = colourButton(QStringLiteral("scaleLowColour"));
+    connect(m_btnLowColor, &QPushButton::clicked, this, [this, applyBtn]() {
+        ScaleItem* scale = qobject_cast<ScaleItem*>(m_item);
+        if (!scale) { return; }
+        const QColor chosen = QColorDialog::getColor(scale->lowColour(), this,
+                                                     QStringLiteral("Low color"));
+        if (chosen.isValid()) {
+            scale->setLowColour(chosen);
+            applyBtn(m_btnLowColor, chosen);
+            notifyChanged();
+        }
+    });
+    addRow(QStringLiteral("Low color"), m_btnLowColor);
+
+    m_btnHighColor = colourButton(QStringLiteral("scaleHighColour"));
+    connect(m_btnHighColor, &QPushButton::clicked, this, [this, applyBtn]() {
+        ScaleItem* scale = qobject_cast<ScaleItem*>(m_item);
+        if (!scale) { return; }
+        const QColor chosen = QColorDialog::getColor(scale->highColour(), this,
+                                                     QStringLiteral("High color"));
+        if (chosen.isValid()) {
+            scale->setHighColour(chosen);
+            applyBtn(m_btnHighColor, chosen);
+            notifyChanged();
+        }
+    });
+    addRow(QStringLiteral("High color"), m_btnHighColor);
 }
 
 } // namespace NereusSDR

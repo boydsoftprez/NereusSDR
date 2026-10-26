@@ -34,6 +34,14 @@
 //                 hook (no-op in the base), SolidColourItem override. Saved
 //                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - TEXT, SCALE and IMAGE building blocks: TextItem font
+//                 family, italic, centring and the %value%, %valueWithType%
+//                 and %group% tokens; ImageItem dark mode and the -dark,
+//                 -small and -large variant lookup (variantPath); the
+//                 clsText, clsScaleItem and clsImage new-item defaults
+//                 (kTextThetisDefaults, kScaleThetisDefaults,
+//                 kImageThetisDefaults). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - publishedReadings(): named values an item publishes for
 //                 data out and text overlay tokens (empty in the base).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -624,6 +632,12 @@ private:
 // ---------------------------------------------------------------------------
 // ImageItem — Static image
 // ---------------------------------------------------------------------------
+// Image variants by size: renderImage picks "-small" at or below this
+// diagonal (px) and "-large" at or above the next.
+// From Thetis MeterManager.cs:40644-40647 [v2.10.3.15] (renderImage)
+constexpr double kImageSmallDiagonalPx = 450.0;
+constexpr double kImageLargeDiagonalPx = 1200.0;
+
 class ImageItem : public MeterItem {
     Q_OBJECT
 public:
@@ -633,14 +647,39 @@ public:
     void setImagePath(const QString& path);
     QString imagePath() const { return m_imagePath; }
 
+    // Thetis clsImage.DarkMode: prefer the "-dark" file when it exists.
+    void setDarkMode(bool on) { m_darkMode = on; }
+    bool darkMode() const { return m_darkMode; }
+
+    // The file renderImage draws for basePath: the "-dark" file when dark
+    // mode is on and it exists, then that name with "-small" (diagonal at or
+    // below kImageSmallDiagonalPx) or "-large" (at or above
+    // kImageLargeDiagonalPx) when that file exists. The suffix goes before
+    // the extension (meter.png -> meter-dark-small.png). Only stats local
+    // files next to the one the user chose; returns basePath otherwise.
+    static QString variantPath(const QString& basePath, bool darkMode, double diagonalPx);
+
     Layer renderLayer() const override { return Layer::Background; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QImage   m_image;
     QString  m_imagePath;
+    bool     m_darkMode{false};
+    // The file m_image was last loaded from (runtime only).
+    QString  m_loadedPath;
+};
+
+// New IMAGE items (makeEntry) take the clsImage constructor's values.
+// From Thetis MeterManager.cs:16035-16046 [v2.10.3.15]
+struct ImageItemThetisDefaults {
+    bool darkMode;
+};
+inline constexpr ImageItemThetisDefaults kImageThetisDefaults{
+    false,                      // _darkMode = false
 };
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1105,7 @@ public:
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     Orientation m_orientation{Orientation::Horizontal};
@@ -1091,6 +1131,21 @@ private:
     int         m_lowIncrement{2};
     int         m_highIncrement{20};
     float       m_centrePerc{-1.0f};  // -1 = auto from tick counts
+};
+
+// New SCALE items (makeEntry) take the clsScaleItem constructor's values.
+// From Thetis MeterManager.cs:16118-16140 [v2.10.3.15]
+struct ScaleItemThetisDefaults {
+    QRgb lowColour;
+    QRgb highColour;
+    QRgb titleColour;
+    int  fontSize;
+};
+inline constexpr ScaleItemThetisDefaults kScaleThetisDefaults{
+    qRgb(0xff, 0xff, 0xff),     // _lowColour = System.Drawing.Color.White
+    qRgb(0xff, 0x00, 0x00),     // _highColour = System.Drawing.Color.Red
+    qRgb(0xa9, 0xa9, 0xa9),     // _fontColourMeterType = System.Drawing.Color.DarkGray
+    20,                         // _fontSize = 20f
 };
 
 // Forward-declare the private render helper called from ScaleItem::paint.
@@ -1128,14 +1183,45 @@ public:
     void setMinValidValue(double v) { m_minValidValue = v; }
     double minValidValue() const { return m_minValidValue; }
 
-    // The text paint() draws: the label, the idle text, the formatted
-    // value, or "--" with the unit when there is no reading (R-R3-13).
+    // Font family; empty draws the application font (records saved before
+    // the family was kept).
+    void setFontFamily(const QString& family) { m_fontFamily = family; }
+    QString fontFamily() const { return m_fontFamily; }
+
+    void setItalic(bool italic) { m_italic = italic; }
+    bool italic() const { return m_italic; }
+
+    // Thetis clsText.Centre: centred in the item, else drawn from its top
+    // left corner. Saved records without the field stay centred.
+    void setCentred(bool centred) { m_centred = centred; }
+    bool centred() const { return m_centred; }
+
+    // Text for the %group% token: the name of the container's display
+    // group (Thetis clsMeter.DisplayGroupText). Runtime only, not saved.
+    void setDisplayGroupText(const QString& text) { m_displayGroupText = text; }
+    QString displayGroupText() const { return m_displayGroupText; }
+
+    // Thetis clsText label tokens. %value% shows the reading to one
+    // decimal, %valueWithType% adds its unit, %group% (any case) the
+    // display group's name.
+    static QString valueToken()         { return QStringLiteral("%value%"); }
+    static QString valueWithTypeToken() { return QStringLiteral("%valueWithType%"); }
+    static QString groupToken()         { return QStringLiteral("%group%"); }
+
+    // The unit Thetis appends for %valueWithType% (ReadingUnits) for a
+    // MeterBinding id; empty when Thetis has none.
+    static QString readingUnits(int bindingId);
+
+    // The text paint() draws: a token's text, the label, the idle text, the
+    // formatted value, or "--" with the unit when there is no reading
+    // (R-R3-13).
     QString displayText() const;
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QString m_label;
@@ -1147,6 +1233,29 @@ private:
     int     m_decimals{1};
     QString m_idleText;
     double  m_minValidValue{-139.0};  // below default -140 = always show
+    QString m_fontFamily;             // empty = application font
+    bool    m_italic{false};
+    bool    m_centred{true};          // NereusSDR always centred before
+    QString m_displayGroupText;       // runtime only
+};
+
+// New TEXT items (makeEntry) take the clsText constructor's values.
+// From Thetis MeterManager.cs:22259-22267 [v2.10.3.15]
+struct TextItemThetisDefaults {
+    const char* fontFamily;
+    bool        bold;
+    bool        italic;
+    QRgb        colour;
+    bool        centred;
+    int         fontSize;
+};
+inline constexpr TextItemThetisDefaults kTextThetisDefaults{
+    "Trebuchet MS",             // _fontFamily = "Trebuchet MS"
+    false,                      // _fontStyle = FontStyle.Regular
+    false,                      // _fontStyle = FontStyle.Regular
+    qRgb(0xff, 0xff, 0xff),     // _color = System.Drawing.Color.White
+    false,                      // _centred = false
+    9,                          // _fontSize = 9f
 };
 
 // ---------------------------------------------------------------------------

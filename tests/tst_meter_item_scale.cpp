@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Low and high colours are saved and editable; new SCALE
+//                 items take the clsScaleItem defaults. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -56,6 +59,11 @@ mw0lge@grange-lane.co.uk
 #include <QImage>
 #include <QPainter>
 
+#include <QPushButton>
+#include <memory>
+
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/ScaleItemEditor.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 
@@ -311,6 +319,74 @@ private slots:
         const QRect leftBand(0, baselineY - 1, img.width() / 2, 3);
         const int greenInLeft = countMatching(img, leftBand, QColor(Qt::green), 60);
         QCOMPARE(greenInLeft, 0);
+    }
+
+    void low_high_colours_are_saved()
+    {
+        ScaleItem s;
+        s.setLowColour(QColor(Qt::green));
+        s.setHighColour(QColor(Qt::blue));
+        ScaleItem s2;
+        QVERIFY(s2.deserialize(s.serialize()));
+        QCOMPARE(s2.lowColour(), QColor(Qt::green));
+        QCOMPARE(s2.highColour(), QColor(Qt::blue));
+
+        // A container entry keeps the change as an override.
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("SCALE"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry, nullptr));
+        auto* scale = qobject_cast<ScaleItem*>(item.get());
+        QVERIFY(scale != nullptr);
+        scale->setLowColour(QColor(Qt::green));
+        scale->setHighColour(QColor(Qt::blue));
+        const ContentEntry captured = registry.captureMeterItem(*scale, entry);
+        std::unique_ptr<MeterItem> restored(registry.createMeterItem(captured, nullptr));
+        auto* again = qobject_cast<ScaleItem*>(restored.get());
+        QVERIFY(again != nullptr);
+        QCOMPARE(again->lowColour(), QColor(Qt::green));
+        QCOMPARE(again->highColour(), QColor(Qt::blue));
+    }
+
+    void editor_shows_low_high_colour_rows()
+    {
+        ScaleItemEditor editor;
+        ScaleItem s;
+        s.setLowColour(QColor(0x12, 0x34, 0x56));
+        s.setHighColour(QColor(0x65, 0x43, 0x21));
+        editor.setItem(&s);
+        auto* low = editor.findChild<QPushButton*>(QStringLiteral("scaleLowColour"));
+        auto* high = editor.findChild<QPushButton*>(QStringLiteral("scaleHighColour"));
+        QVERIFY(low != nullptr);
+        QVERIFY(high != nullptr);
+        QVERIFY(low->styleSheet().contains(QStringLiteral("#ff123456")));
+        QVERIFY(high->styleSheet().contains(QStringLiteral("#ff654321")));
+    }
+
+    void new_scale_takes_thetis_defaults()
+    {
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("SCALE"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry, nullptr));
+        auto* scale = qobject_cast<ScaleItem*>(item.get());
+        QVERIFY(scale != nullptr);
+        QCOMPARE(scale->lowColour(), QColor(Qt::white));
+        QCOMPARE(scale->highColour(), QColor(Qt::red));
+        QCOMPARE(scale->titleColour(), QColor(0xa9, 0xa9, 0xa9));  // DarkGray
+        QCOMPARE(scale->fontSize(), 20);
+        QCOMPARE(scale->fontSize(), kScaleThetisDefaults.fontSize);
+    }
+
+    void saved_scale_keeps_its_colours()
+    {
+        // A SCALE record as saved before new items took Thetis defaults.
+        const QString saved = QStringLiteral(
+            "SCALE|0|0|1|1|-1|0|H|-140|0|7|5|#ffc8d8e8|#ff8090a0|10");
+        ScaleItem s;
+        QVERIFY(s.deserialize(saved));
+        QCOMPARE(s.lowColour(), QColor(0xc8, 0xd8, 0xe8));
+        QCOMPARE(s.highColour(), QColor(0xff, 0x80, 0x40));
+        QCOMPARE(s.titleColour(), QColor(Qt::red));
+        QCOMPARE(s.fontSize(), 10);
     }
 };
 

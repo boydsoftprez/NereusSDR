@@ -25,6 +25,12 @@
 //   2026-10-25 - Per-item update interval (acceptsUpdate); new items take
 //                 kDefaultUpdateIntervalMs. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - TEXT, SCALE and IMAGE building blocks: TextItem font
+//                 family, italic, centring and the %value%, %valueWithType%
+//                 (ReadingUnits) and %group% tokens (renderText); ImageItem
+//                 dark mode and -dark/-small/-large variants (renderImage);
+//                 clsText, clsScaleItem and clsImage new-item defaults.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
 //                 hook (no-op in the base), SolidColourItem override. Saved
 //                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
@@ -216,6 +222,8 @@ mw0lge@grange-lane.co.uk
 #include <QMouseEvent>
 #include <QFont>
 #include <QFontMetrics>
+#include <QDir>
+#include <QFileInfo>
 #include <QStringList>
 #include <cmath>
 #include <algorithm>
@@ -593,29 +601,86 @@ bool SolidColourItem::deserialize(const QString& data)
 
 // ---------------------------------------------------------------------------
 // ImageItem
-// Format: IMAGE|x|y|w|h|bindingId|zOrder|path
+// Format: IMAGE|x|y|w|h|bindingId|zOrder|path[|darkMode(0/1)]
 // ---------------------------------------------------------------------------
 
 void ImageItem::setImagePath(const QString& path)
 {
     m_imagePath = path;
-    m_image.load(path);
+    // An empty path (a new item) has no image; QImage::load would warn.
+    if (path.isEmpty()) {
+        m_image = QImage();
+    } else {
+        m_image.load(path);
+    }
+    m_loadedPath = path;
+}
+
+namespace {
+// meter.png + "-dark" -> meter-dark.png, in the chosen file's folder.
+QString imageVariantName(const QString& path, const QString& suffix)
+{
+    const QFileInfo info(path);
+    const QString ext = info.suffix();
+    QString name = info.completeBaseName() + suffix;
+    if (!ext.isEmpty()) {
+        name += QLatin1Char('.') + ext;
+    }
+    return info.dir().filePath(name);
+}
+} // namespace
+
+// From Thetis MeterManager.cs:40641-40650 [v2.10.3.15] (renderImage)
+QString ImageItem::variantPath(const QString& basePath, bool darkMode, double diagonalPx)
+{
+    if (basePath.isEmpty()) {
+        return basePath;
+    }
+    QString image = basePath;
+    if (darkMode) {
+        const QString key = imageVariantName(image, QStringLiteral("-dark"));
+        if (QFileInfo::exists(key)) {
+            image = key;
+        }
+    }
+
+    QString sizeKey;
+    if (diagonalPx <= kImageSmallDiagonalPx) {
+        sizeKey = imageVariantName(image, QStringLiteral("-small"));
+    } else if (diagonalPx >= kImageLargeDiagonalPx) {
+        sizeKey = imageVariantName(image, QStringLiteral("-large"));
+    }
+
+    if (!sizeKey.isEmpty() && QFileInfo::exists(sizeKey)) {
+        image = sizeKey; // with size
+    }
+    return image;
 }
 
 void ImageItem::paint(QPainter& p, int widgetW, int widgetH)
 {
+    const QRect rect = pixelRect(widgetW, widgetH);
+    if (!m_imagePath.isEmpty()) {
+        const double diagonal = std::sqrt(static_cast<double>(rect.width()) * rect.width()
+                                          + static_cast<double>(rect.height()) * rect.height());
+        const QString wanted = variantPath(m_imagePath, m_darkMode, diagonal);
+        if (wanted != m_loadedPath) {
+            m_image.load(wanted);
+            m_loadedPath = wanted;
+        }
+    }
     if (m_image.isNull()) {
         return;
     }
-    const QRect rect = pixelRect(widgetW, widgetH);
     p.drawImage(rect, m_image);
 }
 
 QString ImageItem::serialize() const
 {
-    return QStringLiteral("IMAGE|%1|%2")
+    return QStringLiteral("IMAGE|%1|%2|%3")
         .arg(baseFields(*this))
-        .arg(m_imagePath);
+        .arg(m_imagePath)
+        .arg(m_darkMode ? 1 : 0);
 }
 
 bool ImageItem::deserialize(const QString& data)
@@ -628,7 +693,15 @@ bool ImageItem::deserialize(const QString& data)
         return false;
     }
     setImagePath(parts[7]);
+    // Appended field; records without it are not dark.
+    m_darkMode = parts.size() >= 9 && parts[8] == QLatin1String("1");
     return true;
+}
+
+void ImageItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    m_darkMode = kImageThetisDefaults.darkMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -1662,13 +1735,84 @@ bool ScaleItem::deserialize(const QString& data)
     return true;
 }
 
+void ScaleItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const ScaleItemThetisDefaults& d = kScaleThetisDefaults;
+    m_lowColour   = QColor::fromRgb(d.lowColour);
+    m_highColour  = QColor::fromRgb(d.highColour);
+    m_titleColour = QColor::fromRgb(d.titleColour);
+    m_fontSize    = d.fontSize;
+}
+
 // ---------------------------------------------------------------------------
 // TextItem
 // Format: TEXT|x|y|w|h|bindingId|zOrder|label|textColor|fontSize|bold(0/1)|suffix|decimals
+//         [|fontFamily|italic(0/1)|centred(0/1)]
 // ---------------------------------------------------------------------------
+
+// Thetis ReadingUnits for the readings a NereusSDR binding carries.
+// From Thetis MeterManager.cs:2322-2373 [v2.10.3.15] (ReadingUnits)
+QString TextItem::readingUnits(int bindingId)
+{
+    switch (bindingId) {
+        case MeterBinding::SignalPeak:     return QStringLiteral("dBm");   // SIGNAL_STRENGTH
+        case MeterBinding::SignalAvg:      return QStringLiteral("dBm");   // AVG_SIGNAL_STRENGTH
+        case MeterBinding::AdcPeak:        return QStringLiteral("dBFS");  // ADC_PK
+        case MeterBinding::AdcAvg:         return QStringLiteral("dBFS");  // ADC_AV
+        case MeterBinding::AgcGain:        return QStringLiteral("dB");    // AGC_GAIN
+        case MeterBinding::AgcPeak:        return QStringLiteral("dB");    // AGC_PK
+        case MeterBinding::AgcAvg:         return QStringLiteral("dB");    // AGC_AV
+        case MeterBinding::SignalMaxBin:   return QStringLiteral("dBm");   // SIGNAL_MAX_BIN
+        case MeterBinding::PbSnr:          return QStringLiteral("dB");    // ESTIMATED_PBSNR
+        case MeterBinding::TxPower:        return QStringLiteral("W");     // PWR
+        case MeterBinding::TxReversePower: return QStringLiteral("W");     // REVERSE_PWR
+        case MeterBinding::TxSwr:          return QStringLiteral(":1");    // SWR
+        case MeterBinding::TxMic:          return QStringLiteral("dB");    // MIC
+        case MeterBinding::TxComp:         return QStringLiteral("dB");    // COMP
+        case MeterBinding::TxAlc:          return QStringLiteral("dB");    // ALC
+        case MeterBinding::TxEq:           return QStringLiteral("dB");    // EQ
+        case MeterBinding::TxLeveler:      return QStringLiteral("dB");    // LEVELER
+        case MeterBinding::TxLevelerGain:  return QStringLiteral("dB");    // LVL_G
+        case MeterBinding::TxAlcGain:      return QStringLiteral("dB");    // ALC_G
+        case MeterBinding::TxAlcGroup:     return QStringLiteral("dB");    // ALC_GROUP
+        case MeterBinding::TxCfc:          return QStringLiteral("dB");    // CFC_AV
+        case MeterBinding::TxCfcGain:      return QStringLiteral("dB");    // CFC_G
+        case MeterBinding::TxMicPeak:      return QStringLiteral("dB");    // MIC_PK
+        case MeterBinding::TxAlcPeak:      return QStringLiteral("dB");    // ALC_PK
+        case MeterBinding::TxCompPeak:     return QStringLiteral("dB");    // COMP_PK
+        case MeterBinding::TxEqPeak:       return QStringLiteral("dB");    // EQ_PK
+        case MeterBinding::TxLevelerPeak:  return QStringLiteral("dB");    // LEVELER_PK
+        case MeterBinding::TxCfcPeak:      return QStringLiteral("dB");    // CFC_PK
+        case MeterBinding::HwVolts:        return QStringLiteral("V");     // VOLTS
+        case MeterBinding::HwAmps:         return QStringLiteral("A");     // AMPS
+        case MeterBinding::RotatorAz:      return QStringLiteral("\u00B0"); // AZ
+        case MeterBinding::RotatorEle:     return QStringLiteral("\u00B0"); // ELE
+    }
+    // NereusSDR: Thetis returns the Reading enum's name for a reading with
+    // no unit; a binding with no Thetis reading (temperature) shows none.
+    return QString();
+}
 
 QString TextItem::displayText() const
 {
+    // Thetis clsText tokens: %value% and %valueWithType% replace the text
+    // with the reading (updateReadingText, Text), %group% with the display
+    // group's name (renderText).
+    // From Thetis MeterManager.cs:22273-22290, 22305-22318 [v2.10.3.15]
+    if (m_label == valueToken() || m_label == valueWithTypeToken()) {
+        const QString units = m_label == valueWithTypeToken() ? readingUnits(m_bindingId) : QString();
+        // NereusSDR (R-R3-13): no reading shows "--".
+        if (isNoReading(m_value)) {
+            return QStringLiteral("--") + units;
+        }
+        return QString::number(m_value, 'f', 1) + units;
+    }
+    // From Thetis MeterManager.cs:37370-37381 [v2.10.3.15] (renderText)
+    if (m_label.toLower() == groupToken()) {
+        return m_displayGroupText;
+    }
+
     QString text;
     if (isNoReading(m_value)) {
         // NereusSDR (R-R3-13): no reading shows "--" with the unit the
@@ -1718,7 +1862,11 @@ void TextItem::paint(QPainter& p, int widgetW, int widgetH)
     int dynFontSize = qMax(minimumFontSize, static_cast<int>(pixH * 0.7f));
 
     QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    if (!m_fontFamily.isEmpty()) {
+        font.setFamily(m_fontFamily);
+    }
     font.setBold(m_bold);
+    font.setItalic(m_italic);
 
     const QString text = displayText();
 
@@ -1735,19 +1883,29 @@ void TextItem::paint(QPainter& p, int widgetW, int widgetH)
 
     p.setFont(font);
     p.setPen(m_textColor);
-    p.drawText(rect, Qt::AlignCenter, text);
+    // From Thetis MeterManager.cs:37383-37384 [v2.10.3.15] (renderText):
+    // centred about the item's middle, else from its top left.
+    const Qt::Alignment align = m_centred ? Qt::Alignment(Qt::AlignCenter)
+                                          : (Qt::AlignLeft | Qt::AlignTop);
+    p.drawText(rect, align, text);
 }
 
 QString TextItem::serialize() const
 {
-    return QStringLiteral("TEXT|%1|%2|%3|%4|%5|%6|%7")
-        .arg(baseFields(*this))
-        .arg(m_label)
-        .arg(m_textColor.name(QColor::HexArgb))
-        .arg(m_fontSize)
-        .arg(m_bold ? 1 : 0)
-        .arg(m_suffix)
-        .arg(m_decimals);
+    // Built in steps: QString::arg would substitute %1-style markers that a
+    // label or suffix contains.
+    QString out = QStringLiteral("TEXT|") + baseFields(*this);
+    out += QLatin1Char('|') + m_label;
+    out += QLatin1Char('|') + m_textColor.name(QColor::HexArgb);
+    out += QLatin1Char('|') + QString::number(m_fontSize);
+    out += QLatin1Char('|') + QString::number(m_bold ? 1 : 0);
+    out += QLatin1Char('|') + m_suffix;
+    out += QLatin1Char('|') + QString::number(m_decimals);
+    // Appended tail: fontFamily | italic | centred
+    out += QLatin1Char('|') + m_fontFamily;
+    out += QLatin1Char('|') + QString::number(m_italic ? 1 : 0);
+    out += QLatin1Char('|') + QString::number(m_centred ? 1 : 0);
+    return out;
 }
 
 bool TextItem::deserialize(const QString& data)
@@ -1770,7 +1928,25 @@ bool TextItem::deserialize(const QString& data)
     m_suffix    = parts[11];
     m_decimals  = parts[12].toInt(&ok); if (!ok) { return false; }
 
+    // Appended tail; records without it keep the application font, upright
+    // and centred, as they were drawn before.
+    m_fontFamily = parts.size() >= 14 ? parts[13] : QString();
+    m_italic     = parts.size() >= 15 && parts[14] == QLatin1String("1");
+    m_centred    = parts.size() < 16 || parts[15] != QLatin1String("0");
+
     return true;
+}
+
+void TextItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const TextItemThetisDefaults& d = kTextThetisDefaults;
+    m_fontFamily = QString::fromLatin1(d.fontFamily);
+    m_bold       = d.bold;
+    m_italic     = d.italic;
+    m_textColor  = QColor::fromRgb(d.colour);
+    m_centred    = d.centred;
+    m_fontSize   = d.fontSize;
 }
 
 // ---------------------------------------------------------------------------

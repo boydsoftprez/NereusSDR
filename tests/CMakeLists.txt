@@ -721,6 +721,8 @@ nereus_add_test(tst_container_window_monitors)
 # Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
 nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
+# ADC bars read the ADC behind their slice; the ADC maximum bar names why it is empty.
+nereus_add_test(tst_meter_adc_slice)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
 # A scrolled docked stack shows no black band over its GPU
@@ -821,6 +823,9 @@ nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
+# Container item parity Task 16: TEXT tokens, font and centring; IMAGE
+# dark and size variants; new-item defaults.
+nereus_add_test(tst_meter_item_text_image)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
