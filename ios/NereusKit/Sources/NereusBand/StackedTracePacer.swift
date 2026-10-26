@@ -118,6 +118,49 @@ public struct StackedTracePacer: Equatable, Sendable {
     }
 }
 
+/// Holds 3D draws to the pacer's least interval (recommendation 4). Each
+/// interval runs from when the last draw was due, not from when the view
+/// drew it: the view draws on the screen refresh after it is asked, so
+/// timing from the draw lost a refresh at every wait, and a band sent 30
+/// frames a second drew 16.6 on an iPhone 18 Pro Max (2026-10-24).
+///
+/// The clock is the caller's, so the tests drive it with their own.
+public struct StackedDrawThrottle: Equatable, Sendable {
+    public enum Decision: Equatable, Sendable {
+        /// Draw now.
+        case now
+        /// Draw after this many seconds.
+        case after(Double)
+        /// A draw is already waiting; it draws this change too.
+        case waiting
+    }
+
+    private var lastDue: Double?
+    private var isWaiting = false
+
+    public init() {}
+
+    /// A change at `now` (seconds) wants a 3D draw, at least `interval`
+    /// seconds after the last one was due.
+    public mutating func request(at now: Double, interval: Double) -> Decision {
+        if isWaiting {
+            return .waiting
+        }
+        let due = lastDue.map { max(now, $0 + interval) } ?? now
+        lastDue = due
+        guard due > now else {
+            return .now
+        }
+        isWaiting = true
+        return .after(due - now)
+    }
+
+    /// The waiting draw has been asked of the view.
+    public mutating func waited() {
+        isWaiting = false
+    }
+}
+
 /// Why a pan that has 3D chosen shows 2D, and the words it says.
 public enum StackedTraceHold: Equatable, Sendable {
     /// The Core offers no 3D view (below description 12, or its 3D gate).

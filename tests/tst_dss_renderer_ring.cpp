@@ -1,6 +1,11 @@
 #include <QTest>
 #include <QVector>
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <numbers>
+#include <random>
+#include <vector>
 
 #include "gui/DssRenderer.h"
 #include "gui/DssQuietOverhang.h"
@@ -14,6 +19,42 @@ QVector<float> flatRow(int n, float dbm)
 {
     QVector<float> v(n, dbm);
     return v;
+}
+
+// Gaussian noise from mt19937's standardized output (Box-Muller), so the
+// rows are the same on every standard library.
+class NoiseRows {
+public:
+    explicit NoiseRows(std::uint32_t seed) : m_gen(seed) {}
+    QVector<float> row(int n, float meanDbm, float sigmaDb)
+    {
+        QVector<float> v(n);
+        for (int i = 0; i < n; ++i) {
+            const double u1 = uniform();
+            const double u2 = uniform();
+            const double z = std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * std::numbers::pi * u2);
+            v[i] = meanDbm + static_cast<float>(sigmaDb * z);
+        }
+        return v;
+    }
+
+private:
+    // Open interval (0, 1), so log() never sees zero.
+    double uniform()
+    {
+        constexpr double kSpan = static_cast<double>(std::mt19937::max()) + 1.0;
+        return (static_cast<double>(m_gen()) + 0.5) / kSpan;
+    }
+
+    std::mt19937 m_gen;
+};
+
+// The floor/ceil window the reduction to kDssCols used before 2026-10-24:
+// [floor(c*step), ceil((c+1)*step)), three or four bins wide at 2270 bins.
+int oldWindowWidth(int n, int c)
+{
+    const double step = static_cast<double>(n) / kDssCols;
+    return static_cast<int>(std::ceil((c + 1) * step)) - static_cast<int>(std::floor(c * step));
 }
 
 }  // namespace
@@ -247,6 +288,87 @@ private slots:
         const quint64 before = r.rowGeneration();
         r.pushRow(flatRow(768, -130.0f), 14.2, 0.192);
         QVERIFY(r.rowGeneration() > before);
+    }
+
+    // A flat row at a bin count that is not a multiple of kDssCols stays
+    // flat in every column: 2270 bins (wider than the columns) and 500 (a
+    // pane narrower than 768 pixels, one bin spread over more than one
+    // column).
+    void flatRowAtAnUnevenBinCount_staysFlat() {
+        for (int n : {2270, 500}) {
+            DssRenderer r;
+            for (int i = 0; i < 3; ++i) {
+                r.pushRow(flatRow(n, -120.0f), 14.2, 0.192);
+            }
+            const float* row = r.rowDataRing(r.headRing());
+            for (int c = 0; c < kDssCols; ++c) {
+                QCOMPARE(row[c], -120.0f);
+            }
+        }
+    }
+
+    // Longpath's case: 2270 bins on 768 columns (step 2.956). The old
+    // floor/ceil windows were three bins wide at 36 columns and four at the
+    // rest, and the peak of three noise bins sits lower than the peak of
+    // four, on the same columns in every row: through the smoothing that
+    // stood as a fixed dip about every 21 columns, a ridge running back
+    // through the stack. Equal windows give every column the same mean.
+    void noiseRowsAtAnUnevenBinCount_giveEveryColumnTheSameMean() {
+        constexpr int n = 2270;
+        constexpr int rows = 2000;
+        DssRenderer r;
+        NoiseRows noise(20261024u);
+        std::vector<double> sum(kDssCols, 0.0);
+        for (int k = 0; k < rows; ++k) {
+            r.pushRow(noise.row(n, -120.0f, 3.0f), 14.2, 0.192);
+            if (k < 8) {
+                continue;
+            }
+            const float* row = r.rowDataRing(r.headRing());
+            for (int c = 0; c < kDssCols; ++c) {
+                sum[c] += row[c];
+            }
+        }
+        double narrow = 0.0;
+        double wide = 0.0;
+        int narrowCount = 0;
+        int wideCount = 0;
+        // Edge columns see the blur's clamp; leave them out.
+        for (int c = 2; c < kDssCols - 2; ++c) {
+            const double mean = sum[c] / (rows - 8);
+            if (oldWindowWidth(n, c) == 3) {
+                narrow += mean;
+                ++narrowCount;
+            } else {
+                wide += mean;
+                ++wideCount;
+            }
+        }
+        QVERIFY(narrowCount > 30);
+        const double dipDb = wide / wideCount - narrow / narrowCount;
+        QVERIFY2(std::abs(dipDb) < 0.05,
+                 qPrintable(QStringLiteral("the old three-bin columns sit %1 dB "
+                                           "below the rest").arg(dipDb, 0, 'f', 3)));
+    }
+
+    // Equal windows skip no bin: a one-bin carrier anywhere in a 2270-bin
+    // row, or in a 500-bin row from a narrow pane, stands out of the stack.
+    void everyBinOfAnUnevenRow_reachesAColumn() {
+        for (int n : {2270, 500}) {
+            for (int bin = 0; bin < n; ++bin) {
+                DssRenderer r;
+                QVector<float> bins = flatRow(n, -130.0f);
+                bins[bin] = -40.0f;
+                for (int i = 0; i < 3; ++i) {
+                    r.pushRow(bins, 14.2, 0.192);
+                }
+                const float* row = r.rowDataRing(r.headRing());
+                const float peak = *std::max_element(row, row + kDssCols);
+                QVERIFY2(peak > -100.0f,
+                         qPrintable(QStringLiteral("carrier at bin %1 of %2 lost, peak=%3")
+                                        .arg(bin).arg(n).arg(peak)));
+            }
+        }
     }
 };
 

@@ -26,6 +26,30 @@ public enum StackedTrace {
     public static let visibleRows = 96
     public static let keptRows = visibleRows + 1
 
+    /// The seconds between two waterfall lines: the Core's frames per line
+    /// at its frames a second, as the desktop times a remote pan
+    /// (`SpectrumWidget::waterfallRowPeriodMs`), or the Update period
+    /// setting (`fallbackMs`) before the Core has said. Timing the glide
+    /// from the 30 ms setting while the Core sent a line every 33.3 ms held
+    /// the stack still for a tenth of each row (2026-10-24).
+    public static func rowPeriodSeconds(fps: Int, framesPerLine: Int, fallbackMs: Int) -> Double {
+        guard fps > 0, framesPerLine > 0 else {
+            return Double(max(fallbackMs, 1)) / 1000
+        }
+        return Double(framesPerLine) / Double(fps)
+    }
+
+    /// How far the stack has glided toward its next row, `since` seconds
+    /// after the newest line, for rows of `divider` lines `rowPeriod`
+    /// seconds apart: 0 at the line, 1 when the next row is due.
+    public static func glide(since seconds: Double, rowPeriod: Double, divider: Int) -> Double {
+        let rowSeconds = rowPeriod * Double(max(divider, 1))
+        guard rowSeconds > 0 else {
+            return 0
+        }
+        return min(max(seconds / rowSeconds, 0), 1)
+    }
+
     /// Fade toward the background with depth, at the back row.
     public static let haze = 0.16
     /// Colour reads through a fixed 45 dB above the floor, so a high scale
