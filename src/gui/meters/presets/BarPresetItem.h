@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - setSecondaryValue: a second data source variable feeds the
+//                 average marker. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - setAboveS9Frequency overrides MeterItem's (VHF S9 rule
 //                 per slice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -71,6 +74,7 @@ public:
     QSet<int> readingBindings() const override;
     void pushBindingValue(int, double) override;
     void setValue(double value) override { pushBindingValue(bindingId(), value); }
+    void setSecondaryValue(int index, double value) override;
     void setBindingUnavailable(int, const QString&) override;
     bool advanceMeter(qint64) override;
     bool takeStaticPresentationChange() override { const bool dirty=m_staticDirty; m_staticDirty=false; return dirty; }

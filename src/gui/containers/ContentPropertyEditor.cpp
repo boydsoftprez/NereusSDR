@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - One data source row pair per variable the item type reads
+//                 (MeterItem::mmioVariableCount, Thetis MeterVariables):
+//                 variables 2 and up are stored in mmioVariables.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / Fade on TX rows for bar presets, composites
 //                 and waveform faces (addFadeRows); a composite's edit turns
 //                 its legacy fadeRx / fadeTx off. J.J. Boyd (KG4VCF),
@@ -125,7 +129,7 @@ void ContentPropertyEditor::captureRenderer()
     // another axis changed during this editor selection.
     if(captured.config==m_hydrated.config) {captured.config=m_original.config;}
     if(captured.canvasRect==m_hydrated.canvasRect) {captured.canvasRect=m_original.canvasRect;}
-    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
+    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("mmioVariables"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
         if(captured.context[key]==m_hydrated.context[key]) {
             if(m_original.context.contains(key)) {captured.context[key]=m_original.context[key];} else {captured.context.remove(key);}
         }
@@ -595,6 +599,39 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
             if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
             if(m_item && (key=="mmioGuid" || key=="mmioVariable")) {m_item->setMmioBinding(QUuid(m_entry.context["mmioGuid"].toString()),m_entry.context["mmioVariable"].toString());}
             publish(); });
+    }
+    // Variables 2 and up, one row pair per variable the type reads.
+    const bool readsDataSource=m_item && !applet && !declared && !qobject_cast<WaveformMeterItem*>(m_item.get());
+    const int variableCount=readsDataSource?MeterItem::mmioVariableCount(entry.typeId):0;
+    for(int index=1;index<variableCount && index<MeterItem::kMaxMmioVariables;++index) {
+        const QJsonObject stored=entry.context.value("mmioVariables").toArray().at(index-1).toObject();
+        for(const QString& field:{QStringLiteral("guid"),QStringLiteral("variable")}) {
+            const bool guidField=field=="guid";
+            auto* edit=new QLineEdit(stored.value(field).toString(),advanced);
+            edit->setObjectName((guidField?QStringLiteral("mmioGuid"):QStringLiteral("mmioVariable"))+QString::number(index));
+            edit->setPlaceholderText(tr("Unassigned"));
+            bindings->addRow(guidField?tr("MMIO source UUID, variable %1").arg(index+1):tr("MMIO variable %1").arg(index+1),edit);
+            if(guidField) {edit->setToolTip(tr("A data source's UUID or its 4-character ID"));}
+            connect(edit,&QLineEdit::editingFinished,this,[this,edit,index,field,guidField]{
+                // A 4-character data source ID is stored as that source's UUID.
+                if(guidField && edit->text().trimmed().size()==4 && QUuid(edit->text().trimmed()).isNull()) {
+                    if(MmioEndpoint* ep=ExternalVariableEngine::instance().endpointByFourChar(edit->text().trimmed())) {
+                        QSignalBlocker block(edit); edit->setText(ep->guid().toString(QUuid::WithoutBraces));
+                    }
+                }
+                QJsonArray variables=m_entry.context.value("mmioVariables").toArray();
+                while(variables.size()<index) {variables.append(QJsonObject{{"guid",QString()},{"variable",QString()}});}
+                QJsonObject variable=variables.at(index-1).toObject();
+                variable[field]=edit->text();
+                if(!variable.contains("guid")) {variable["guid"]=QString();}
+                if(!variable.contains("variable")) {variable["variable"]=QString();}
+                variables[index-1]=variable;
+                // Trailing unassigned variables are not stored.
+                while(!variables.isEmpty() && variables.last().toObject().value("guid").toString().isEmpty() && variables.last().toObject().value("variable").toString().isEmpty()) {variables.removeLast();}
+                if(variables.isEmpty()) {m_entry.context.remove("mmioVariables");} else {m_entry.context["mmioVariables"]=variables;}
+                if(m_item) {m_item->setMmioBinding(index,QUuid(variable.value("guid").toString()),variable.value("variable").toString());}
+                publish(); });
+        }
     }
     m_error=new QLabel(this);m_error->setWordWrap(true);m_error->setStyleSheet("color:#ffb0b0");root->addWidget(m_error);
     for(auto* group:findChildren<QGroupBox*>()) {if(auto* form=qobject_cast<QFormLayout*>(group->layout())) {form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);form->setFormAlignment(Qt::AlignLeft|Qt::AlignTop);form->setLabelAlignment(Qt::AlignLeft);}}

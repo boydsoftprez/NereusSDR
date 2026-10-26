@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Data source (MMIO) readings for every variable an item
+//                 reads: index 1 and up reach setSecondaryValue, cached and
+//                 replayed like index 0. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / TX: setItemTxState gives every item the
 //                 transmit state, and clears every item's history on a
 //                 change (Thetis OnMox / ZeroOut); clearItemHistory();
@@ -158,6 +162,7 @@ mw0lge@grange-lane.co.uk
 #include <QPaintEvent>
 #include <QToolTip>
 #include <QResizeEvent>
+#include <limits>
 #include <QMouseEvent>
 #include <QStringList>
 #include <chrono>
@@ -247,6 +252,11 @@ void MeterWidget::addItem(MeterItem* item)
     if (item->hasMmioBinding()) {
         const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey());
         if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, cached->value, cached->reason, cached->support); }
+    }
+    for (int index = 1; index < MeterItem::kMaxMmioVariables; ++index) {
+        if (!item->hasMmioBinding(index)) { continue; }
+        const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey(index));
+        if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, index, cached->value, cached->reason, cached->support); }
     }
     emit itemAdded(item);
 }
@@ -360,6 +370,17 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
         || (bar && bar->showHistory()) || (needle && needle->historyEnabled())) {
         invalidateItemLayers(item);
     }
+}
+
+void MeterWidget::updateMmioValue(MeterItem* item, int index, double value, const QString& unavailableReason,
+                                  MeterItem::BindingSupport support)
+{
+    if (index == 0) { updateMmioValue(item, value, unavailableReason, support); return; }
+    if (!item || !m_items.contains(item) || !item->hasMmioBinding(index)) { return; }
+    m_lastMmioReading[item->mmioSourceKey(index)] = {value, unavailableReason, support};
+    // A reading the source does not have hides the variable's marker.
+    item->setSecondaryValue(index, unavailableReason.isEmpty() ? value : std::numeric_limits<double>::quiet_NaN());
+    invalidateItemLayers(item);
 }
 
 void MeterWidget::invalidatePresentation(const MeterItem* item)

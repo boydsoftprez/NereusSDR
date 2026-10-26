@@ -795,6 +795,9 @@ nereus_add_test(tst_container_item_tx_state)
 # veil, persistence, legacy composite fade, fade cover, widget overlay,
 # preview transmit look, repaint and history clearing (offscreen).
 nereus_add_test(tst_meter_item_fade)
+# Several data source (MMIO) variables per item (Thetis MeterVariables):
+# the second variable's marker, the mmioVariables key and the editor rows.
+nereus_add_test(tst_meter_mmio_variables)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)

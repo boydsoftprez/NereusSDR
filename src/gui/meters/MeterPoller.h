@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - mmioReading(guid, variable) for each data source variable
+//                 an item reads. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -554,6 +557,7 @@ private:
     struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
     QHash<QString, MmioReading> m_mmioReadings;
     MmioReading mmioReading(const MeterItem* item) const;
+    MmioReading mmioReading(const QUuid& guid, const QString& variable) const;
     void replayMmioReading(MeterWidget* widget, MeterItem* item) const;
 #ifdef NEREUS_BUILD_TESTS
     std::function<MmioEndpoint*(const QUuid&)> m_mmioEndpointLookup;

@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Several data source (MMIO) variables per item
+//                 (setMmioBinding(index, ...)) and mmioVariableCount(), the
+//                 port of Thetis MeterVariables. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
 //                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
 //                 via ContentFade::nextValue), setForeignSession; a virtual
@@ -405,6 +409,81 @@ bool MeterItem::acceptsUpdate(qint64 monotonicMs)
     }
     m_lastAcceptedUpdateMs = monotonicMs;
     return true;
+}
+
+void MeterItem::setMmioBinding(int index, const QUuid& guid, const QString& variableName)
+{
+    if (index < 0 || index >= kMaxMmioVariables) { return; }
+    if (index == 0) { setMmioBinding(guid, variableName); return; }
+    if (m_extraMmio.size() < index) { m_extraMmio.resize(index); }
+    m_extraMmio[index - 1] = {guid, variableName};
+    // Trailing unset variables are dropped, so an item that never had a
+    // second variable compares and saves as it did before.
+    while (!m_extraMmio.isEmpty() && m_extraMmio.constLast().guid.isNull()
+           && m_extraMmio.constLast().variable.isEmpty()) {
+        m_extraMmio.removeLast();
+    }
+}
+
+QUuid MeterItem::mmioGuid(int index) const
+{
+    if (index == 0) { return m_mmioGuid; }
+    if (index < 1 || index > m_extraMmio.size()) { return {}; }
+    return m_extraMmio.at(index - 1).guid;
+}
+
+QString MeterItem::mmioVariable(int index) const
+{
+    if (index == 0) { return m_mmioVariable; }
+    if (index < 1 || index > m_extraMmio.size()) { return {}; }
+    return m_extraMmio.at(index - 1).variable;
+}
+
+bool MeterItem::hasMmioBinding(int index) const
+{
+    const QString variable = mmioVariable(index);
+    return !mmioGuid(index).isNull() && !variable.isEmpty()
+        && variable != QLatin1String("--DEFAULT--");
+}
+
+QString MeterItem::mmioSourceKey(int index) const
+{
+    return mmioGuid(index).toString(QUuid::WithoutBraces) + QChar(0) + mmioVariable(index);
+}
+
+bool MeterItem::hasAnyMmioBinding() const
+{
+    for (int index = 0; index < kMaxMmioVariables; ++index) {
+        if (hasMmioBinding(index)) { return true; }
+    }
+    return false;
+}
+
+// From Thetis MeterManager.cs:22684-22738 [v2.10.3.15] — MeterVariables,
+// keyed by the container item type that builds each Thetis MeterType.
+// Types Thetis does not list (and the building blocks) read one variable.
+int MeterItem::mmioVariableCount(const QString& typeId)
+{
+    // number of variables
+    static const QHash<QString, int> kVariables{
+        {QStringLiteral("meter.adc"), 2},          // MeterType.ADC
+        {QStringLiteral("meter.agc"), 2},          // MeterType.AGC
+        {QStringLiteral("meter.mic"), 2},          // MeterType.MIC
+        {QStringLiteral("meter.alc"), 2},          // MeterType.ALC
+        {QStringLiteral("meter.eq"), 2},           // MeterType.EQ
+        {QStringLiteral("meter.leveler"), 2},      // MeterType.LEVELER
+        {QStringLiteral("meter.comp"), 2},         // MeterType.COMP
+        //case MeterType.CPDR: break;
+        {QStringLiteral("meter.cfc"), 2},          // MeterType.CFC
+        {QStringLiteral("meter.ananMulti"), 7},    // MeterType.ANANMM
+        {QStringLiteral("meter.crossNeedle"), 2},  // MeterType.CROSS
+        {QStringLiteral("meter.vfoDisplay"), 0},   // MeterType.VFO_DISPLAY
+        {QStringLiteral("meter.clock"), 0},        // MeterType.CLOCK
+        {QStringLiteral("meter.spacer"), 0},       // MeterType.SPACER
+        {QStringLiteral("meter.historyGraph"), 2}, // MeterType.HISTORY
+        {QStringLiteral("meter.customBar"), 2},    // MeterType.CUSTOM_METER_BAR
+    };
+    return kVariables.value(typeId, 1);
 }
 
 // From Thetis MeterManager.cs:33159-33160 [v2.10.3.15]: the update
