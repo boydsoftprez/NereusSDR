@@ -4,8 +4,9 @@
 //                 SignalAvg, CfcGain, ...) takes the caption Thetis draws
 //                 over it, its reading's name ("Signal Max FFT Bin"),
 //                 instead of the upper-cased flavor ("SIGNALMAXBIN"). A
-//                 saved layout keeps its stored label. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//                 saved layout keeps its stored label. A caption too long
+//                 for its slot at the 11 px minimum ends in an ellipsis.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - txStage(), txStageOff() and applyTxStageState(): the EQ,
 //                 Leveler, Leveler Gain, CFC, CFC Gain and Compressor bars
 //                 dim while their TX stage is off, as Thetis's OnEQChanged,
@@ -388,7 +389,7 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         p.fillRect(g.face,backdrop); p.setPen(m_title);
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
         // From Thetis MeterManager.cs:28312 [v2.10.3.15] — scaleItem.ShowType.
-        if(m_showTitle) { drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
+        if(m_showTitle) { drawObjectTextElided(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.

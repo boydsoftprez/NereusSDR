@@ -8,7 +8,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26 - Bars whose flavor name joins words take Thetis's caption
-//                 (the reading name); a saved label is kept. J.J. Boyd
+//                 (the reading name); a saved label is kept; a long caption
+//                 ends in an ellipsis. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars: readings,
 //                 calibration, power limit, Thetis defaults, and the
@@ -281,6 +282,25 @@ private slots:
         BarPresetItem loaded;
         QVERIFY(loaded.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
         QCOMPARE(loaded.configuration()["label"].toString(), QStringLiteral("SIGNALMAXBIN"));
+    }
+    // A caption too long for its slot at the 11 px minimum ends in an
+    // ellipsis, never cut on both sides; one that fits is drawn whole.
+    void longCaptionEndsInAnEllipsis()
+    {
+        QImage image(400, 100, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        QPainter painter(&image);
+        const QString caption = QStringLiteral("Signal Max FFT Bin");
+        // At the 11 px minimum the caption is wider than a 60 px slot.
+        QFont floor = painter.font();
+        floor.setPixelSize(11);
+        const QRectF narrow(0, 0, 60, 22);
+        const QString cut = elideObjectText(floor, caption, narrow, painter.device());
+        QVERIFY2(cut.endsWith(QChar(0x2026)), qPrintable(cut));
+        QVERIFY2(cut.startsWith(QStringLiteral("Si")), qPrintable(cut));
+        QVERIFY(QFontMetricsF(floor, painter.device()).horizontalAdvance(cut) <= narrow.width());
+        QCOMPARE(elideObjectText(floor, caption, QRectF(0, 0, 390, 22), painter.device()), caption);
+        QCOMPARE(drawObjectTextElided(painter, QRectF(0, 30, 390, 22), caption, 16), caption);
     }
     void existingRecordsAreUnchanged()
     {
