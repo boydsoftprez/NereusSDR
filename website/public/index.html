@@ -545,6 +545,17 @@
           </article>
 
           <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Roundtable</h3></div>
+            <div class="applet__body">
+              <h4>See who hears you, on every mode.</h4>
+              <p>Each frequency with people on it is a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, and the room can post short messages on that frequency. Roundtable sits in a panel and on every VFO flag on the desktop, in a sheet on the iPhone and iPad, and on a public page at <a href="https://roundtable.nereussdr.com/">roundtable.nereussdr.com</a>. Nothing is sent until you answer its first question, and one switch hides your station.</p>
+              <ul class="chips">
+                <li class="is-blue">Rooms</li><li>S-meter readings</li><li>Turns</li><li>Messages</li><li>Every mode</li><li>Public page</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
             <div class="titlebar"><h3>Diagnostics</h3></div>
             <div class="applet__body">
               <h4>See what the station is doing.</h4>
@@ -619,7 +630,8 @@
           <p class="eyebrow">Status</p>
           <h2 id="status-title">A new chapter <strong>for your station.</strong></h2>
           <p>
-            2026.10.2 polishes the station of 2026.10.1. The iPhone and iPad app takes the workspace look, remote
+            2026.10.2 brings Roundtable, where every station on a frequency shows how well it hears whoever is
+            talking, and polishes the station of 2026.10.1. The iPhone and iPad app takes the workspace look, remote
             waterfalls hold up on lossy links and meters keep time with your audio, tuning on the pan gets easier,
             more of the RX and TX applets fit in containers, and transmit protection gets safer.
           </p>
@@ -629,7 +641,7 @@
           <ol class="releases" reversed data-reveal aria-label="Release history">
             <li class="is-latest">
               <div><span class="ver">v2026.10.2</span><time data-release-history datetime="2026-10">Oct 2026</time></div>
-              <p>The workspace look on iPhone and iPad, stand-alone remote waterfall rows, remote meters held to their audio, flag drag to tune, RX and TX rows in containers, and safer transmit. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2">Read the release notes →</a></p>
+              <p>Roundtable, the workspace look on iPhone and iPad, stand-alone remote waterfall rows, remote meters held to their audio, flag drag to tune, RX and TX rows in containers, and safer transmit. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2">Read the release notes →</a></p>
             </li>
             <li>
               <div><span class="ver">v2026.10.1</span><time datetime="2026-10-17T22:03:26Z">17 Oct 2026</time></div>
@@ -673,9 +685,10 @@
             <div class="next">
               <div class="titlebar"><h3>New in 2026.10.2</h3></div>
               <div class="next__body"><ol>
+                <li><b>Roundtable: see who hears you</b><span>Each frequency with people on it becomes a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, on the desktop, the iPhone and iPad, and the <a href="https://roundtable.nereussdr.com/">public Roundtable page</a>. Nothing is sent until you answer Roundtable's first question, and one switch hides your station. It needs a 2026.10.2 Core.</span></li>
                 <li><b>The workspace look, in your hand</b><span>The iPhone and iPad app takes the desktop's palette, panels, buttons and corners, with red kept for transmit. On a wide iPad, Setup lists its categories beside the page.</span></li>
                 <li><b>Steadier remote operation</b><span>Each waterfall row from a 2026.10.2 Core stands on its own, so a lost network message costs one row instead of a smear, and a remote window's meters move with what you hear. The waterfall no longer floods bright green after a Core restart, and a paired window or phone gets its own slice back when a desktop Core restarts. Connections race IPv6 and IPv4, a Mac, iPhone or iPad keeps audio and display on IPv6, and a saved Core on your LAN is tried directly.</span></li>
-                <li><b>Easier tuning, safer transmit</b><span>Drag a receiver's flag or its whole passband to tune, with trackpad steps that no longer coast. TUNE uses only the drive source chosen in Setup, SWR protection lowers the drive, an open antenna drops the key, and the ANAN-G2E has its own PA gain table. RX and TX applet rows, Nereus Band Buttons and a Frequency (Custom) readout can sit in containers.</span></li>
+                <li><b>Easier tuning, safer transmit</b><span>Drag a receiver's flag or its whole passband to tune, with trackpad steps that no longer coast. TUNE uses only the drive source chosen in Setup, SWR protection lowers the drive, an open antenna drops the key, the ANAN-G2E has its own PA gain table, and a web page can no longer key the radio through TCI. A TCI program that hangs while keyed loses the key within seconds. Receive filters stay within limits however they are set, with a new option to keep them on their own sideband. RX and TX applet rows, Nereus Band Buttons and a Frequency (Custom) readout can sit in containers.</span></li>
                 <li><b>A cleaner receiver</b><span>NB Blank hides electric-fence lines without freezing the waterfall when a loud station keys up, on the desktop and the phone. A lost I/Q packet no longer draws a false bright line, an S-meter no longer sticks after a sample-rate change, and the filter presets take standard widths, so CW F1 is now 1.0 kHz. Plus fixes for discovery, floating windows, CAT and TCI.</span></li>
               </ol></div>
             </div>
