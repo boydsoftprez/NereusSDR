@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Power limit row takes 0.1 W to 5000 W, as Thetis setup.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -305,8 +307,11 @@ void NeedleScalePwrItemEditor::buildTypeSpecific()
 
     addHeader(QStringLiteral("Power"));
 
-    // ---- Max power ----
-    m_spinMaxPower = makeDoubleRow(QStringLiteral("Max power (W)"), 1.0, 10000.0, 1.0, 1);
+    // ---- Power limit ----
+    // From Thetis setup.designer.cs:55300-55326 [v2.10.3.15] (nudMeterItemsPowerLimit)
+    m_spinMaxPower = makeDoubleRow(QStringLiteral("Power limit (W)"),
+                                   kMinBarPowerLimitW, kMaxBarPowerLimitW, 0.1, 1);
+    m_spinMaxPower->setToolTip(QStringLiteral("Power limit of the scale."));
     connect(m_spinMaxPower, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate() || !m_item) { return; }

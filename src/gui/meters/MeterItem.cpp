@@ -16,6 +16,15 @@
 //                 power bars, and the clsBarItem new-item defaults. Saved
 //                 bars keep their look. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - NEEDLE building block: shadow and peak hold switches, a
+//                 peak hold colour (peak needle on a calibrated face), the
+//                 history arc ported from renderNeedle, ignore history after
+//                 clearHistory(), the power limit (normalise to 100 W) and
+//                 the clsNeedleItem new-item defaults. paint() and
+//                 emitVertices() share one needle geometry, so the CPU
+//                 needle follows a calibrated face too. Saved needles keep
+//                 their look. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
 //                 aboveS9Frequency(), a formatValue overload taking the
 //                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
@@ -1959,6 +1968,201 @@ NeedleItem::NeedleItem(QObject* parent)
 {
 }
 
+void NeedleItem::setHistoryDuration(int ms)
+{
+    m_historyDuration = std::clamp(ms, kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+}
+
+void NeedleItem::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+// The reading interval the history is counted in: the item's update
+// interval, or Thetis's 100 ms default for an item that takes every poll.
+int NeedleItem::historyIntervalMs() const
+{
+    return updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+}
+
+void NeedleItem::clearHistory()
+{
+    // From Thetis MeterManager.cs:22131-22139 [v2.10.3.15] (ClearHistory)
+    m_history.clear();
+    m_ignoringNext = m_ignoreHistoryMs / historyIntervalMs();  // ignore next N readings to make up 2 second of ignore
+}
+
+// From Thetis MeterManager.cs:22109-22130 [v2.10.3.15] (MinHistory, MaxHistory)
+float NeedleItem::minHistory() const
+{
+    if (m_history.isEmpty()) { return m_smoothedDbm; }
+    return *std::min_element(m_history.cbegin(), m_history.cend());
+}
+
+float NeedleItem::maxHistory() const
+{
+    if (m_history.isEmpty()) { return m_smoothedDbm; }
+    return *std::max_element(m_history.cbegin(), m_history.cend());
+}
+
+float NeedleItem::peakValue() const
+{
+    // Thetis draws the peak hold needle at MaxHistory
+    // (MeterManager.cs:40800-40801 [v2.10.3.15]); a saved needle without
+    // the setting keeps the AetherSDR decaying peak.
+    return m_peakHold.has_value() ? maxHistory() : m_peakDbm;
+}
+
+void NeedleItem::setMaxPower(float p)
+{
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(static_cast<double>(p) >= kMinBarPowerLimitW)) {
+        m_maxPower = static_cast<float>(kDefaultBarPowerLimitW);
+        return;
+    }
+    m_maxPower = static_cast<float>(std::min(static_cast<double>(p), kMaxBarPowerLimitW));
+}
+
+// From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+float NeedleItem::scaleValue(float value) const
+{
+    if (m_bindingId == MeterBinding::SignalPeak || m_bindingId == MeterBinding::SignalAvg) {
+        return static_cast<float>(aboveS9Adjusted(m_bindingId, value, m_aboveS9Frequency));
+    }
+    if (m_normaliseTo100W && m_maxPower > 0.0f) {
+        return value * (100.0f / m_maxPower);
+    }
+    return value;
+}
+
+// A calibrated power face reads value * 100 / limit, so the needle travels
+// over limit / 100 times the calibration keys before it pins.
+float NeedleItem::rawCalibrationMin() const
+{
+    if (m_scaleCalibration.isEmpty()) { return kS0Dbm; }
+    return rawFromScale(m_scaleCalibration.firstKey());
+}
+
+float NeedleItem::rawCalibrationMax() const
+{
+    if (m_scaleCalibration.isEmpty()) { return kMaxDbm; }
+    return rawFromScale(m_scaleCalibration.lastKey());
+}
+
+// The inverse of the power limit step in scaleValue(). The S9 rule moves a
+// signal reading, not the needle's range, so a signal face is unchanged.
+float NeedleItem::rawFromScale(float key) const
+{
+    const bool signal = m_bindingId == MeterBinding::SignalPeak
+                     || m_bindingId == MeterBinding::SignalAvg;
+    if (!signal && m_normaliseTo100W && m_maxPower > 0.0f) {
+        return key * (m_maxPower / 100.0f);
+    }
+    return key;
+}
+
+void NeedleItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const NeedleItemThetisDefaults& d = kNeedleThetisDefaults;
+    m_shadow          = d.shadow;
+    m_peakHold        = d.peakHold;
+    m_peakHoldColour  = QColor::fromRgb(d.peakHoldColour);
+    m_historyEnabled  = d.showHistory;
+    m_historyDuration = d.historyDurationMs;
+    m_ignoreHistoryMs = d.ignoreHistoryMs;
+    m_needleColor     = QColor::fromRgb(d.colour);
+    m_strokeWidth     = d.strokeWidth;
+    m_attackRatio     = d.attackRatio;
+    m_decayRatio      = d.decayRatio;
+    m_historyColor    = QColor::fromRgba(d.historyColour);
+}
+
+NeedleItem::NeedleGeometry NeedleItem::needleGeometry(int widgetW, int widgetH) const
+{
+    const QRect rect = meterRect(widgetW, widgetH);
+    NeedleGeometry g;
+    g.calibrated = !m_scaleCalibration.isEmpty();
+    g.left = static_cast<float>(rect.left());
+    g.top  = static_cast<float>(rect.top());
+    g.pw   = static_cast<float>(rect.width());
+    g.ph   = static_cast<float>(rect.height());
+    if (g.calibrated) {
+        // Pivot = m_needleOffset * rect (normalized to pixels).
+        g.pivotX = g.left + g.pw * static_cast<float>(m_needleOffset.x());
+        g.pivotY = g.top  + g.ph * static_cast<float>(m_needleOffset.y());
+    } else {
+        // From AetherSDR: cx = width*0.5, radius = width*0.85
+        // cy = height + radius - height*0.65
+        g.arcCx = g.left + g.pw * 0.5f;
+        g.arcRadius = g.pw * kRadiusRatio;
+        g.arcCy = g.top + g.ph + g.arcRadius - g.ph * kCenterYRatio;
+        // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
+        g.pivotX = g.arcCx;
+        g.pivotY = g.top + g.ph + 6.0f;
+    }
+    return g;
+}
+
+QPointF NeedleItem::tipFor(const NeedleGeometry& g, float value) const
+{
+    if (g.calibrated) {
+        // Tip: calibrated normalized position for the value, then apply
+        // per-axis radius ratio and length factor as an offset from the
+        // pivot. A signal-strength face moves 20 dB at or above the S9
+        // frequency; a power face reads against its power limit.
+        // From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+        const QPointF tipNorm = calibratedPosition(scaleValue(value));
+        const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
+                        * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
+        const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
+                        * static_cast<float>(m_radiusRatio.y()) * m_lengthFactor;
+        return QPointF(g.pivotX + g.pw * dxN, g.pivotY + g.ph * dyN);
+    }
+    const float frac = arcFraction(value);
+    const float angleRad = qDegreesToRadians(kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg));
+    // From AetherSDR: needle tip at radius + 14
+    const float tipDist = g.arcRadius + 14.0f;
+    return QPointF(g.arcCx + tipDist * std::cos(angleRad),
+                   g.arcCy - tipDist * std::sin(angleRad));
+}
+
+// The filled history arc: from the pivot out to the MinHistory tip, along
+// the tips to the MaxHistory tip, and back. Thetis sweeps an elliptical arc
+// at needle length; NereusSDR follows the needle's own tips, so the arc
+// matches a calibrated face's path.
+// From Thetis MeterManager.cs:40785-40851 [v2.10.3.15] (renderNeedle)
+QVector<QPointF> NeedleItem::historyOutline(const NeedleGeometry& g) const
+{
+    QVector<QPointF> pts;
+    if (!m_historyEnabled || m_history.isEmpty() || m_historyColor.alpha() == 0) {
+        return pts;
+    }
+    constexpr int kSteps = 24;
+    const float lo = minHistory();
+    const float hi = maxHistory();
+    pts.reserve(kSteps + 2);
+    pts.append(QPointF(g.pivotX, g.pivotY));
+    for (int i = 0; i <= kSteps; ++i) {
+        const float v = lo + (hi - lo) * static_cast<float>(i) / static_cast<float>(kSteps);
+        pts.append(tipFor(g, v));
+    }
+    return pts;
+}
+
+QPointF NeedleItem::needleTipAt(float value, int widgetW, int widgetH) const
+{
+    return tipFor(needleGeometry(widgetW, widgetH), value);
+}
+
+QPointF NeedleItem::needlePivot(int widgetW, int widgetH) const
+{
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    return QPointF(g.pivotX, g.pivotY);
+}
+
 // From AetherSDR sizeHint 280x140: lock to 2:1 aspect ratio.
 // Centers the meter drawing area within the item's pixel rect.
 QRect NeedleItem::meterRect(int widgetW, int widgetH) const
@@ -1986,11 +2190,11 @@ void NeedleItem::setValue(double v)
     // minimum (S0, or the first calibration point for a calibrated face)
     // and the peak marker clears; the readouts show "--".
     if (isNoReading(v)) {
-        m_smoothedDbm = m_scaleCalibration.isEmpty()
-            ? kS0Dbm : m_scaleCalibration.firstKey();
+        m_smoothedDbm = rawCalibrationMin();
         m_peakDbm = m_smoothedDbm;
         m_peakHoldCounter = 0;
         m_peakResetCounter = 0;
+        m_history.clear();
         return;
     }
 
@@ -2008,13 +2212,8 @@ void NeedleItem::setValue(double v)
     // returns the first calibration point — the symptom was every
     // calibrated needle drawing as a near-horizontal line at the
     // offset row.
-    if (m_scaleCalibration.isEmpty()) {
-        m_smoothedDbm = std::clamp(m_smoothedDbm, kS0Dbm, kMaxDbm);
-    } else {
-        const float minKey = m_scaleCalibration.firstKey();
-        const float maxKey = m_scaleCalibration.lastKey();
-        m_smoothedDbm = std::clamp(m_smoothedDbm, minKey, maxKey);
-    }
+    // A power face reads against its power limit, so its range scales too.
+    m_smoothedDbm = std::clamp(m_smoothedDbm, rawCalibrationMin(), rawCalibrationMax());
 
     // Peak tracking (from AetherSDR Medium preset: 500ms hold, 10 dB/sec decay)
     if (m_smoothedDbm > m_peakDbm) {
@@ -2034,6 +2233,20 @@ void NeedleItem::setValue(double v)
     if (m_peakResetCounter >= kPeakResetFrames) {
         m_peakDbm = m_smoothedDbm;
         m_peakResetCounter = 0;
+    }
+
+    // From Thetis MeterManager.cs:22018-22029 [v2.10.3.15]
+    if (m_ignoringNext <= 0) {
+        // signal history
+        m_history.append(m_smoothedDbm); // adds to end of the list
+        // A duration under the interval keeps one reading.
+        // From Thetis MeterManager.cs:22106 [v2.10.3.15]
+        const int keep = std::max(1, m_historyDuration / historyIntervalMs());
+        const int numberToRemove = static_cast<int>(m_history.size()) - keep;
+        // the list is sized based on delay
+        if (numberToRemove > 0) { m_history.remove(0, numberToRemove); } // remove the oldest, the head of the list
+    } else {
+        --m_ignoringNext;
     }
 }
 
@@ -2163,32 +2376,52 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     paintBackground(p, widgetW, widgetH);
     paintOverlayStatic(p, widgetW, widgetH);
 
-    // CPU needle: draw as a simple line (no vertex geometry available)
-    const QRect rect = meterRect(widgetW, widgetH);
-    const float pw = static_cast<float>(rect.width());
-    const float ph = static_cast<float>(rect.height());
-    const float cx = rect.left() + pw * 0.5f;
-    const float radius = pw * kRadiusRatio;
-    const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
-    const float pivotY = rect.top() + ph + 6.0f;
+    // CPU needle: the same history arc, peak marker, shadow and needle as
+    // emitVertices(), drawn with QPainter.
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    const QPointF pivot(g.pivotX, g.pivotY);
+    const QPointF tip = tipFor(g, m_smoothedDbm);
 
-    const float frac = arcFraction(m_smoothedDbm);
-    const float angleRad = qDegreesToRadians(kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg));
-    const float tipDist = radius + 14.0f;
-    const float tipX = cx + tipDist * std::cos(angleRad);
-    const float tipY = cy - tipDist * std::sin(angleRad);
+    // History arc. From Thetis MeterManager.cs:40832-40851 [v2.10.3.15]
+    const QVector<QPointF> history = historyOutline(g);
+    if (history.size() >= 3) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_historyColor);
+        p.drawPolygon(history.constData(), static_cast<int>(history.size()));
+        p.setBrush(Qt::NoBrush);
+    }
 
-    // Shadow
-    QPen shadowPen(QColor(0, 0, 0, 80));
-    shadowPen.setWidthF(3.0f);
-    p.setPen(shadowPen);
-    p.drawLine(QPointF(cx + 1.0f, pivotY + 1.0f), QPointF(tipX + 1.0f, tipY + 1.0f));
+    // Peak hold needle on a calibrated face, under the live needle.
+    // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
+    if (g.calibrated && peakHold()) {
+        QPen peakPen(m_peakHoldColour);
+        peakPen.setWidthF(2.0f);
+        p.setPen(peakPen);
+        p.drawLine(pivot, tipFor(g, peakValue()));
+    }
+
+    // Shadow. From Thetis MeterManager.cs:40912-40913 [v2.10.3.15] (if (ni.Shadow))
+    if (m_shadow) {
+        QPen shadowPen(QColor(0, 0, 0, 80));
+        shadowPen.setWidthF(3.0f);
+        p.setPen(shadowPen);
+        p.drawLine(pivot + QPointF(1.0, 1.0), tip + QPointF(1.0, 1.0));
+    }
 
     // Needle
-    QPen needlePen(Qt::white);
+    QPen needlePen(m_needleColor);
     needlePen.setWidthF(2.0f);
     p.setPen(needlePen);
-    p.drawLine(QPointF(cx, pivotY), QPointF(tipX, tipY));
+    p.drawLine(pivot, tip);
+
+    // Peak marker triangle on the S-meter arc.
+    if (!g.calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
+        const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_peakHoldColour);
+        p.drawPolygon(marker.constData(), static_cast<int>(marker.size()));
+        p.setBrush(Qt::NoBrush);
+    }
 
     paintOverlayDynamic(p, widgetW, widgetH);
     p.restore();
@@ -2267,52 +2500,13 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
 // it isn't meaningful on a TX power/SWR gauge.
 void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 {
-    const QRect rect = meterRect(widgetW, widgetH);
-    const float pw = static_cast<float>(rect.width());
-    const float ph = static_cast<float>(rect.height());
-
-    const bool calibrated = !m_scaleCalibration.isEmpty();
-
-    float pivotX = 0.0f, pivotY = 0.0f, tipX = 0.0f, tipY = 0.0f;
-    // Arc-mode intermediates reused by the peak marker block below.
-    float arcCx = 0.0f, arcCy = 0.0f, arcRadius = 0.0f;
-
-    if (calibrated) {
-        // Pivot = m_needleOffset * rect (normalized to pixels).
-        pivotX = rect.left() + pw * static_cast<float>(m_needleOffset.x());
-        pivotY = rect.top()  + ph * static_cast<float>(m_needleOffset.y());
-
-        // Tip: calibrated normalized position for the current value,
-        // then apply per-axis radius ratio and length factor as an
-        // offset from the pivot.
-        // A signal-strength face moves 20 dB at or above the S9 frequency.
-        // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
-        const QPointF tipNorm = calibratedPosition(static_cast<float>(
-            aboveS9Adjusted(m_bindingId, m_smoothedDbm, m_aboveS9Frequency)));
-        const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
-                        * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
-        const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
-                        * static_cast<float>(m_radiusRatio.y()) * m_lengthFactor;
-        tipX = pivotX + pw * dxN;
-        tipY = pivotY + ph * dyN;
-    } else {
-        arcCx = rect.left() + pw * 0.5f;
-        arcRadius = pw * kRadiusRatio;
-        arcCy = rect.top() + ph + arcRadius - ph * kCenterYRatio;
-
-        // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
-        pivotX = arcCx;
-        pivotY = rect.top() + ph + 6.0f;
-
-        const float frac = arcFraction(m_smoothedDbm);
-        const float angleDeg = kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg);
-        const float angleRad = qDegreesToRadians(angleDeg);
-
-        // From AetherSDR: needle tip at radius + 14
-        const float tipDist = arcRadius + 14.0f;
-        tipX = arcCx + tipDist * std::cos(angleRad);
-        tipY = arcCy - tipDist * std::sin(angleRad);
-    }
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    const bool calibrated = g.calibrated;
+    const float pivotX = g.pivotX;
+    const float pivotY = g.pivotY;
+    const QPointF tip = tipFor(g, m_smoothedDbm);
+    const float tipX = static_cast<float>(tip.x());
+    const float tipY = static_cast<float>(tip.y());
 
     // Perpendicular direction for needle width
     const float dx = tipX - pivotX;
@@ -2333,23 +2527,60 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     const float invH = 2.0f / static_cast<float>(widgetH);
     auto ndcX = [invW](float px) { return px * invW - 1.0f; };
     auto ndcY = [invH](float py) { return 1.0f - py * invH; };
+    auto emitVertex = [&](const QPointF& pt, const QColor& c) {
+        verts << ndcX(static_cast<float>(pt.x())) << ndcY(static_cast<float>(pt.y()))
+              << static_cast<float>(c.redF()) << static_cast<float>(c.greenF())
+              << static_cast<float>(c.blueF()) << static_cast<float>(c.alphaF());
+    };
+    // A line from a to b, halfWidth either side, as two triangles.
+    auto emitLine = [&](const QPointF& a, const QPointF& b, float halfWidth, const QColor& c) {
+        const float lx = static_cast<float>(b.x() - a.x());
+        const float ly = static_cast<float>(b.y() - a.y());
+        const float l = std::sqrt(lx * lx + ly * ly);
+        if (l < 1.0f) { return; }
+        const QPointF n(-ly / l * halfWidth, lx / l * halfWidth);
+        emitVertex(a + n, c);
+        emitVertex(a - n, c);
+        emitVertex(b + n, c);
+        emitVertex(b + n, c);
+        emitVertex(a - n, c);
+        emitVertex(b - n, c);
+    };
+
+    // --- History arc (a fan from the pivot) ---
+    // From Thetis MeterManager.cs:40832-40851 [v2.10.3.15]
+    const QVector<QPointF> history = historyOutline(g);
+    for (int i = 1; i + 1 < history.size(); ++i) {
+        emitVertex(history[0], m_historyColor);
+        emitVertex(history[i], m_historyColor);
+        emitVertex(history[i + 1], m_historyColor);
+    }
+
+    // --- Peak hold needle on a calibrated face, under the live needle ---
+    // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
+    if (calibrated && peakHold()) {
+        emitLine(QPointF(pivotX, pivotY), tipFor(g, peakValue()), needleHW, m_peakHoldColour);
+    }
 
     // --- Shadow quad (black, offset +1px) ---
     // From AetherSDR SMeterWidget.cpp line 429: QPen(QColor(0,0,0,80), 3), offset (+1,+1)
-    const float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 80.0f / 255.0f;
-    const float sOff = 1.0f;
-    const float sp1x = pivotX + perpX * shadowHW + sOff, sp1y = pivotY + perpY * shadowHW + sOff;
-    const float sp2x = pivotX - perpX * shadowHW + sOff, sp2y = pivotY - perpY * shadowHW + sOff;
-    const float sp3x = tipX + perpX * shadowHW + sOff,   sp3y = tipY + perpY * shadowHW + sOff;
-    const float sp4x = tipX - perpX * shadowHW + sOff,   sp4y = tipY - perpY * shadowHW + sOff;
-    // Triangle 1
-    verts << ndcX(sp1x) << ndcY(sp1y) << sr << sg << sb << sa;
-    verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
-    verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
-    // Triangle 2
-    verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
-    verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
-    verts << ndcX(sp4x) << ndcY(sp4y) << sr << sg << sb << sa;
+    // From Thetis MeterManager.cs:40912-40913 [v2.10.3.15] (if (ni.Shadow))
+    if (m_shadow) {
+        const float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 80.0f / 255.0f;
+        const float sOff = 1.0f;
+        const float sp1x = pivotX + perpX * shadowHW + sOff, sp1y = pivotY + perpY * shadowHW + sOff;
+        const float sp2x = pivotX - perpX * shadowHW + sOff, sp2y = pivotY - perpY * shadowHW + sOff;
+        const float sp3x = tipX + perpX * shadowHW + sOff,   sp3y = tipY + perpY * shadowHW + sOff;
+        const float sp4x = tipX - perpX * shadowHW + sOff,   sp4y = tipY - perpY * shadowHW + sOff;
+        // Triangle 1
+        verts << ndcX(sp1x) << ndcY(sp1y) << sr << sg << sb << sa;
+        verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
+        verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
+        // Triangle 2
+        verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
+        verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
+        verts << ndcX(sp4x) << ndcY(sp4y) << sr << sg << sb << sa;
+    }
 
     // --- Needle quad (color from m_needleColor, uniform width) ---
     // From AetherSDR SMeterWidget.cpp line 433: QPen(#ffffff, 2).
@@ -2371,38 +2602,46 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     verts << ndcX(np2x) << ndcY(np2y) << nr << ng << nb << na;
     verts << ndcX(np4x) << ndcY(np4y) << nr << ng << nb << na;
 
-    // --- Peak marker triangle (amber, points INWARD toward center) ---
+    // --- Peak marker triangle (points INWARD toward center) ---
     // From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind.
-    // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) has no
-    // peak marker — skip emitting the triangle entirely.
-    if (!calibrated && m_peakDbm > m_smoothedDbm + 1.0f) {
-        const float peakFrac = arcFraction(m_peakDbm);
-        const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
-        const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
-
-        const float mr = 1.0f, mg = 0.667f, mb = 0.0f, ma = 1.0f;  // #ffaa00
-        const float cosA = std::cos(peakAngleRad);
-        const float sinA = std::sin(peakAngleRad);
-
-        // Tip at radius-2 (inside the arc), base 6px behind toward center
-        const float markerTipR = arcRadius - 2.0f;
-        const float markerBaseR = arcRadius - 8.0f;
-        const float markerHalf = 3.0f;
-
-        // Tip (inward, on arc inner edge)
-        const float mtx = arcCx + markerTipR * cosA;
-        const float mty = arcCy - markerTipR * sinA;
-        // Base center (further inward)
-        const float mbcx = arcCx + markerBaseR * cosA;
-        const float mbcy = arcCy - markerBaseR * sinA;
-        // Perpendicular at base — from AetherSDR: perpCos = -sinA, perpSin = cosA
-        const float mpx = -sinA * markerHalf;
-        const float mpy =  cosA * markerHalf;
-
-        verts << ndcX(mtx) << ndcY(mty) << mr << mg << mb << ma;
-        verts << ndcX(mbcx + mpx) << ndcY(mbcy + mpy) << mr << mg << mb << ma;
-        verts << ndcX(mbcx - mpx) << ndcY(mbcy - mpy) << mr << mg << mb << ma;
+    // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) draws the
+    // Thetis peak hold needle above instead of the triangle.
+    // NereusSDR draws it in the peak hold colour (saved needles: #ffaa00).
+    if (!calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
+        const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
+        for (const QPointF& pt : marker) {
+            emitVertex(pt, m_peakHoldColour);
+        }
     }
+}
+
+// The S-meter arc's peak marker: an inward-pointing triangle at the value.
+// From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind.
+QVector<QPointF> NeedleItem::arcPeakMarker(const NeedleGeometry& g, float value) const
+{
+    const float peakFrac = arcFraction(value);
+    const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
+    const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
+
+    const float cosA = std::cos(peakAngleRad);
+    const float sinA = std::sin(peakAngleRad);
+
+    // Tip at radius-2 (inside the arc), base 6px behind toward center
+    const float markerTipR = g.arcRadius - 2.0f;
+    const float markerBaseR = g.arcRadius - 8.0f;
+    const float markerHalf = 3.0f;
+
+    // Tip (inward, on arc inner edge)
+    const float mtx = g.arcCx + markerTipR * cosA;
+    const float mty = g.arcCy - markerTipR * sinA;
+    // Base center (further inward)
+    const float mbcx = g.arcCx + markerBaseR * cosA;
+    const float mbcy = g.arcCy - markerBaseR * sinA;
+    // Perpendicular at base — from AetherSDR: perpCos = -sinA, perpSin = cosA
+    const float mpx = -sinA * markerHalf;
+    const float mpy =  cosA * markerHalf;
+
+    return {QPointF(mtx, mty), QPointF(mbcx + mpx, mbcy + mpy), QPointF(mbcx - mpx, mbcy - mpy)};
 }
 
 // From AetherSDR SMeterWidget.cpp paintEvent() — tick drawing section
@@ -2550,6 +2789,9 @@ void NeedleItem::paintOverlayDynamic(QPainter& p, int widgetW, int widgetH)
 //     [|calCount|v:x:y|v:x:y|...]                      -- added block 2
 //     [|needleColor|offsetX|offsetY|radX|radY|lenFactor|direction|normalise100|maxPower|attack|decay]
 //                                                      -- added block 2
+//     [|shadow|peakHold|peakHoldColour|showHistory|historyMs|historyColour|ignoreHistoryMs|strokeWidth]
+//                                                      -- container item parity
+//       (peakHold empty: unset, the saved needle's own marker)
 // Each trailing group is optional for backward compatibility: older
 // serialized state deserializes cleanly with defaults for any missing
 // tail fields.
@@ -2585,6 +2827,17 @@ QString NeedleItem::serialize() const
         .arg(static_cast<double>(m_maxPower))
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio));
+
+    // Shadow, peak hold and history.
+    s += QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8")
+        .arg(m_shadow ? 1 : 0)
+        .arg(m_peakHold.has_value() ? QString::number(*m_peakHold ? 1 : 0) : QString())
+        .arg(m_peakHoldColour.name(QColor::HexArgb))
+        .arg(m_historyEnabled ? 1 : 0)
+        .arg(m_historyDuration)
+        .arg(m_historyColor.name(QColor::HexArgb))
+        .arg(m_ignoreHistoryMs)
+        .arg(static_cast<double>(m_strokeWidth));
 
     return s;
 }
@@ -2639,9 +2892,34 @@ bool NeedleItem::deserialize(const QString& data)
         m_lengthFactor    = parts[idx + 5].toFloat();
         m_direction       = static_cast<NeedleDirection>(parts[idx + 6].toInt());
         m_normaliseTo100W = (parts[idx + 7].toInt() != 0);
-        m_maxPower        = parts[idx + 8].toFloat();
+        setMaxPower(parts[idx + 8].toFloat());
         m_attackRatio     = parts[idx + 9].toFloat();
         m_decayRatio      = parts[idx + 10].toFloat();
+        idx += 11;
+    }
+
+    // Shadow, peak hold and history. A record without them keeps the
+    // saved look: shadow on, the needle's own peak marker, no history.
+    m_peakHold.reset();
+    if (parts.size() >= idx + 8) {
+        m_shadow = (parts[idx] != QLatin1String("0"));
+        if (parts[idx + 1] == QLatin1String("1") || parts[idx + 1] == QLatin1String("0")) {
+            m_peakHold = (parts[idx + 1] == QLatin1String("1"));
+        }
+        const QColor peakColour(parts[idx + 2]);
+        if (peakColour.isValid()) { m_peakHoldColour = peakColour; }
+        m_historyEnabled = (parts[idx + 3] == QLatin1String("1"));
+        bool okH = false;
+        const int historyMs = parts[idx + 4].toInt(&okH);
+        if (okH) { setHistoryDuration(historyMs); }
+        const QColor historyColour(parts[idx + 5]);
+        if (historyColour.isValid()) { m_historyColor = historyColour; }
+        bool okI = false;
+        const int ignoreMs = parts[idx + 6].toInt(&okI);
+        if (okI) { setIgnoreHistoryMs(ignoreMs); }
+        bool okS = false;
+        const float stroke = parts[idx + 7].toFloat(&okS);
+        if (okS && stroke > 0.0f) { m_strokeWidth = stroke; }
     }
 
     return true;

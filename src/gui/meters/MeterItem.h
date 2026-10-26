@@ -20,6 +20,12 @@
 //                 ignore history, power limit, marker stroke width and the
 //                 clsBarItem new-item defaults (kBarItemThetisDefaults).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - NEEDLE building block: shadow and peak hold switches, a
+//                 peak hold colour, the history arc with ignore history
+//                 after clearHistory(), the power limit (normalise to
+//                 100 W) and the clsNeedleItem new-item defaults
+//                 (kNeedleThetisDefaults). Saved needles keep their look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
 //                 aboveS9Frequency(), a formatValue overload taking the
 //                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
@@ -1321,9 +1327,46 @@ public:
 
     void setHistoryEnabled(bool v) { m_historyEnabled = v; }
     bool historyEnabled() const { return m_historyEnabled; }
+    // Thetis ShowHistory: draw the history arc.
+    void setShowHistory(bool v) { m_historyEnabled = v; }
+    bool showHistory() const { return m_historyEnabled; }
 
-    void setHistoryDuration(int ms) { m_historyDuration = ms; }
+    // How long the history arc and the peak hold look back. Clamped to
+    // kMinBarHistoryDurationMs..kMaxBarHistoryDurationMs (the same setup
+    // control serves every item). From Thetis MeterManager.cs:22100-22108,
+    // 22018-22025 [v2.10.3.15]
+    void setHistoryDuration(int ms);
     int historyDuration() const { return m_historyDuration; }
+    void setHistoryDurationMs(int ms) { setHistoryDuration(ms); }
+    int historyDurationMs() const { return m_historyDuration; }
+
+    // After clearHistory() the next IgnoreHistory ms of readings move the
+    // needle but do not reach the history or the peak.
+    // From Thetis MeterManager.cs:22018-22029, 22131-22139 [v2.10.3.15]
+    // Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setIgnoreHistoryMs(int ms);
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void clearHistory();
+    int ignoringReadings() const { return m_ignoringNext; }
+    int historySize() const { return static_cast<int>(m_history.size()); }
+    // MinHistory / MaxHistory: the live value with no history.
+    // From Thetis MeterManager.cs:22109-22130 [v2.10.3.15]
+    float minHistory() const;
+    float maxHistory() const;
+
+    // Thetis Shadow: the shadow under the needle. On for saved needles.
+    void setShadow(bool on) { m_shadow = on; }
+    bool shadow() const { return m_shadow; }
+
+    // Thetis PeakHold: a marker at the highest value in the history. A
+    // saved needle without the setting keeps NereusSDR's marker: on for
+    // the built-in S-meter arc, off for a calibrated face.
+    void setPeakHold(bool on) { m_peakHold = on; }
+    bool peakHold() const { return m_peakHold.value_or(m_scaleCalibration.isEmpty()); }
+    void setPeakHoldColour(const QColor& c) { m_peakHoldColour = c; }
+    QColor peakHoldColour() const { return m_peakHoldColour; }
+    // The value the peak hold marker shows.
+    float peakValue() const;
 
     void setHistoryColor(const QColor& c) { m_historyColor = c; }
     QColor historyColor() const { return m_historyColor; }
@@ -1331,8 +1374,27 @@ public:
     void setNormaliseTo100W(bool v) { m_normaliseTo100W = v; }
     bool normaliseTo100W() const { return m_normaliseTo100W; }
 
-    void setMaxPower(float p) { m_maxPower = p; }
+    // Power limit (W): with normalise to 100 W on, a reading is drawn at
+    // value * 100 / limit. From Thetis MeterManager.cs:41053-41056
+    // [v2.10.3.15] (getPerc). Clamped to kMinBarPowerLimitW..
+    // kMaxBarPowerLimitW; below the minimum recovers to the default.
+    void setMaxPower(float p);
     float maxPower() const { return m_maxPower; }
+    void setPowerLimit(double watts) { setMaxPower(static_cast<float>(watts)); }
+    double powerLimit() const { return static_cast<double>(m_maxPower); }
+
+    // The value the face is positioned by for a reading: the VHF S9 rule
+    // for signal strength, else the power limit.
+    // From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+    float scaleValue(float value) const;
+
+    // The needle tip for a value, in widget pixels, as paint() and
+    // emitVertices() draw it.
+    QPointF needleTipAt(float value, int widgetW, int widgetH) const;
+    QPointF needlePivot(int widgetW, int widgetH) const;
+
+    // New items (makeEntry) take the clsNeedleItem constructor's values.
+    void applyNewItemDefaults() override;
 
     void setNeedleColor(const QColor& c) { m_needleColor = c; }
     QColor needleColor() const { return m_needleColor; }
@@ -1391,6 +1453,33 @@ private:
     // centered within the item's pixel rect.
     QRect meterRect(int widgetW, int widgetH) const;
 
+    // Pivot and arc of the needle for one widget size, shared by paint()
+    // and emitVertices().
+    struct NeedleGeometry {
+        bool  calibrated{false};
+        float left{0.0f};
+        float top{0.0f};
+        float pw{0.0f};
+        float ph{0.0f};
+        float pivotX{0.0f};
+        float pivotY{0.0f};
+        float arcCx{0.0f};
+        float arcCy{0.0f};
+        float arcRadius{0.0f};
+    };
+    NeedleGeometry needleGeometry(int widgetW, int widgetH) const;
+    QPointF tipFor(const NeedleGeometry& g, float value) const;
+    // The history arc outline: the pivot, then tips from minHistory() to
+    // maxHistory(). Empty when there is nothing to draw.
+    QVector<QPointF> historyOutline(const NeedleGeometry& g) const;
+    // The peak marker triangle on the S-meter arc.
+    QVector<QPointF> arcPeakMarker(const NeedleGeometry& g, float value) const;
+    // The raw value range a calibrated face clamps the needle to.
+    float rawCalibrationMin() const;
+    float rawCalibrationMax() const;
+    float rawFromScale(float key) const;
+    int historyIntervalMs() const;
+
     QString m_sourceLabel{QStringLiteral("S-Meter")};
     float   m_smoothedDbm{kS0Dbm};
     float   m_peakDbm{kS0Dbm};
@@ -1416,6 +1505,15 @@ private:
     bool   m_historyEnabled{false};
     int    m_historyDuration{4000};  // ms
     QColor m_historyColor{Qt::transparent};
+    int    m_ignoreHistoryMs{0};     // saved needles never ignored
+    int    m_ignoringNext{0};
+    QVector<float> m_history;        // smoothed values, oldest first
+
+    // Shadow and peak hold. Saved needles: shadow on, NereusSDR's amber
+    // (#ffaa00) peak marker on the S-meter arc.
+    bool   m_shadow{true};
+    std::optional<bool> m_peakHold;  // unset = on for the arc, off calibrated
+    QColor m_peakHoldColour{0xff, 0xaa, 0x00};
 
     // Power normalisation
     bool  m_normaliseTo100W{false};
@@ -1427,6 +1525,36 @@ private:
     // Attack/decay smoothing ratios (defaults match S-meter behavior)
     float m_attackRatio{0.3f};   // kSmoothAlpha default
     float m_decayRatio{0.3f};    // kSmoothAlpha default
+};
+
+// New NEEDLE items (makeEntry) take the clsNeedleItem constructor's values.
+// From Thetis MeterManager.cs:21942-21973 [v2.10.3.15]; the history colour
+// from the clsMeterItem constructor, MeterManager.cs:6763 [v2.10.3.15].
+struct NeedleItemThetisDefaults {
+    bool  shadow;
+    bool  peakHold;
+    QRgb  peakHoldColour;
+    bool  showHistory;
+    int   historyDurationMs;
+    int   ignoreHistoryMs;
+    QRgb  colour;
+    float strokeWidth;
+    float attackRatio;
+    float decayRatio;
+    QRgb  historyColour;
+};
+inline constexpr NeedleItemThetisDefaults kNeedleThetisDefaults{
+    true,                           // _shadow = true
+    false,                          // _peakHold = false
+    qRgb(0xff, 0x00, 0x00),         // _peakHoldMarkerColour = Color.Red
+    false,                          // _showHistory = false
+    500,                            // _msHistoryDuration = 500
+    2000,                           // _msIgnoreHistoryDuration = 2000
+    qRgb(0xff, 0xff, 0xff),         // _colour = Color.White
+    3.0f,                           // _strokeWidth = 3f
+    0.8f,                           // AttackRatio = 0.8f
+    0.2f,                           // DecayRatio = 0.2f
+    qRgba(0xff, 0xff, 0xff, 128),   // _historyColour = FromArgb(128, 255, 255, 255)
 };
 
 } // namespace NereusSDR
