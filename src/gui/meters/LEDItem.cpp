@@ -35,6 +35,10 @@
 //                 stopTransmitForLed (StopAllTx locally, the window's
 //                 release at the Core remotely). Saved after the condition.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix round 1: No TX when false (Thetis NoTxFalse,
+//                 MeterManager.cs:21196-21199 [v2.10.3.15]), saved after
+//                 No TX; no stop while the condition has an error (:21179).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -340,6 +344,10 @@ bool LEDItem::evaluateCondition()
 //   {
 //       stopMox();
 //   }
+//   else if (!_result && _notxfalse && _console.MOX)
+//   {
+//       stopMox();
+//   }
 //
 // and stopMox, which BeginInvokes _console.StopAllTx("Led Indicator stopped
 // MOX") on the UI thread. Thetis tests it on every update while MOX is on;
@@ -352,6 +360,12 @@ bool LEDItem::evaluateCondition()
 void LEDItem::setNoTx(bool on)
 {
     m_noTx = on;
+    checkNoTx();
+}
+
+void LEDItem::setNoTxFalse(bool on)
+{
+    m_noTxFalse = on;
     checkNoTx();
 }
 
@@ -376,10 +390,19 @@ void LEDItem::checkNoTx()
     // An LED outside a meter has no hidden state.
     const MeterWidget* meter = hostMeter();
     const bool processed = m_processWhenHidden || meter == nullptr || meter->isVisible();
+    // Thetis updates an LED only while its script is valid:
+    // From Thetis MeterManager.cs:21179 [v2.10.3.15]:
+    //   if (_valid && !_busy)
+    // A condition with an error leaves the LED's state unknown, so neither
+    // No TX acts on it.
+    const bool known = !hasCondition() || m_conditionError.isEmpty();
+    const bool acting = m_stopEnabled && known && processed && effectiveTransmitting();
     // mox
-    const bool stop = m_stopEnabled && m_noTx && m_isTrue && effectiveTransmitting() && processed;
-    const bool rising = stop && !m_noTxLatched;
-    m_noTxLatched = stop;
+    const bool stopTrue = acting && m_noTx && m_isTrue;
+    const bool stopFalse = acting && m_noTxFalse && !m_isTrue;
+    const bool rising = (stopTrue && !m_noTxLatched) || (stopFalse && !m_noTxFalseLatched);
+    m_noTxLatched = stopTrue;
+    m_noTxFalseLatched = stopFalse;
     if (rising) {
         emit txStopRequested(QString::fromLatin1(kLedNoTxStopMessage));
     }
@@ -821,7 +844,9 @@ void LEDItem::drawShape(QPainter& p, const QRect& ledRect, const QColor& color)
 //             |condition          (base64 UTF-8, after the options; written
 //             when set or when No TX follows; absent or empty = the
 //             thresholds decide)
-//             |noTx               (written only when on; absent = off)
+//             |noTx               (No TX when true; written when on or
+//             when No TX when false follows; absent = off)
+//             |noTxFalse          (written only when on; absent = off)
 // ---------------------------------------------------------------------------
 
 static QString ledBaseFields(const MeterItem& item)
@@ -880,10 +905,14 @@ QString LEDItem::serialize() const
         // through .arg(), so neither '|' nor '%' can change the record.
         // Written only when set or when No TX follows it (then possibly
         // empty), so an LED without either saves as before.
-        + (hasCondition() || m_noTx
+        + (hasCondition() || m_noTx || m_noTxFalse
                ? QLatin1Char('|') + QString::fromLatin1(m_condition.toUtf8().toBase64())
                : QString())
-        + (m_noTx ? QStringLiteral("|1") : QString());
+        // Thetis led_notx_true / led_notx_false (MeterManager.cs:28721-28722
+        // [v2.10.3.15]), each written only when needed.
+        + (m_noTx || m_noTxFalse ? (m_noTx ? QStringLiteral("|1") : QStringLiteral("|0"))
+                                 : QString())
+        + (m_noTxFalse ? QStringLiteral("|1") : QString());
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +926,7 @@ QString LEDItem::serialize() const
 // Appended, each optional: [20]=placed [21]=offsetX [22]=offsetY
 // [23]=sizeX [24]=sizeY [25]=showTrue [26]=showFalse [27]=processWhenHidden
 // [28]=condition (base64; at opt + 8 when the old placeholders shift opt)
-// [29]=noTx (at opt + 9)
+// [29]=noTx (at opt + 9) [30]=noTxFalse (at opt + 10)
 // ---------------------------------------------------------------------------
 bool LEDItem::deserialize(const QString& data)
 {
@@ -993,8 +1022,11 @@ bool LEDItem::deserialize(const QString& data)
         }
         condition = QString::fromUtf8(*decoded);
     }
+    // From Thetis MeterManager.cs:27490-27491 [v2.10.3.15]: both default
+    // false.
     bool noTx = false;
-    if (!optFlag(opt + 9, false, &noTx)) {
+    bool noTxFalse = false;
+    if (!optFlag(opt + 9, false, &noTx) || !optFlag(opt + 10, false, &noTxFalse)) {
         return false;
     }
 
@@ -1021,6 +1053,7 @@ bool LEDItem::deserialize(const QString& data)
     m_processWhenHidden = processWhenHidden;
     m_condition         = condition;
     m_noTx              = noTx;
+    m_noTxFalse         = noTxFalse;
     m_conditionError.clear();
     m_lastConditionMs   = -1;
     if (hasCondition()) {

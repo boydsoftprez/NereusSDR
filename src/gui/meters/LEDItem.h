@@ -40,6 +40,11 @@
 //                 only ever stops; nothing here keys. Appended to the
 //                 record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Fix round 1: No TX when false (Thetis NoTxFalse), saved
+//                 after No TX; no stop while the condition has an error
+//                 (Thetis runs Update only for a valid script); the
+//                 warning the user sees in NereusSDR's words. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -141,10 +146,13 @@ namespace NereusSDR {
 class MeterWidget;
 class RadioModel;
 
-// The No TX stop's message, shown as the stop's warning.
+// The No TX stop's message, as LEDItem::txStopRequested carries it.
 // From Thetis MeterManager.cs:21210 [v2.10.3.15]:
 //   _console.StopAllTx("Led Indicator stopped MOX");
 inline constexpr char kLedNoTxStopMessage[] = "Led Indicator stopped MOX";
+// The warning the user sees for that stop (MainWindow passes it to the
+// stop), in NereusSDR's wording for a transmit stop.
+inline constexpr char kLedNoTxStopUserText[] = "An LED stopped transmitting.";
 
 // LED update interval range.
 // From Thetis setup.designer.cs:63735-63744 [v2.10.3.15] (nudLedIndicator_UpdateInterval)
@@ -268,9 +276,15 @@ public:
     // session's radio never asks (effectiveTransmitting), and neither
     // does a hidden meter's LED unless processWhenHidden is on (Thetis
     // updates a meter only while it is enabled or UpdateAlways,
-    // MeterManager.cs:2393 [v2.10.3.15]).
+    // MeterManager.cs:2393 [v2.10.3.15]), nor an LED whose condition has
+    // an error (Thetis runs Update only while _valid, :21179).
     void setNoTx(bool on);
     bool noTx() const { return m_noTx; }
+    // No TX when false (Thetis NoTxFalse, key led_notx_false,
+    // MeterManager.cs:21196-21199 [v2.10.3.15]): the same, for the LED
+    // turning false.
+    void setNoTxFalse(bool on);
+    bool noTxFalse() const { return m_noTxFalse; }
     // False for a copy that only shows the entry (ContentRenderMode
     // Preview or Validation): it never asks for a stop. True by default.
     void setStopEnabled(bool enabled);
@@ -396,12 +410,19 @@ private:
     QString  m_condition;
     QString  m_conditionError;
     qint64   m_lastConditionMs{-1};
-    // Appended after the condition; absent = off.
+    // Appended after the condition; absent = off. Thetis's constructor
+    // (MeterManager.cs:20854-20855 [v2.10.3.15]) reads
+    //   _notxtrue = false;
+    //   _notxtrue = false;
+    // setting _notxtrue twice and never _notxfalse, an upstream slip that
+    // C#'s default of false hides; both are initialised here.
     bool     m_noTx{false};
-    // Runtime (not saved): a preview copy's false, and the No TX state
+    bool     m_noTxFalse{false};
+    // Runtime (not saved): a preview copy's false, and each No TX state
     // last checked, so a stop is asked once per transition.
     bool     m_stopEnabled{true};
     bool     m_noTxLatched{false};
+    bool     m_noTxFalseLatched{false};
 
     // Threshold-based state
     double m_greenThreshold{0.0};

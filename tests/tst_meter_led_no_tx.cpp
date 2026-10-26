@@ -16,16 +16,25 @@
 //   - a remote window's stop reaches the Core over the loopback session
 //     (the window's own release) and the Core stops; nothing keys again;
 //   - No TX is saved after the condition; records without it are unchanged.
+//   - Fix round 1: No TX when false (Thetis NoTxFalse) mirrors it; neither
+//     acts while the condition has an error; the editor's two check boxes
+//     write their fields and survive a round trip; the user's warning is
+//     plain NereusSDR wording while the signal keeps Thetis's text.
 // No device: a mock connection and the in-process loopback Core.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26 - Created for Task 27. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Fix round 1: No TX when false, the condition error, the
+//                 editor check boxes and the user wording. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
+#include <QLabel>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -38,6 +47,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/LedItemEditor.h"
 #include "gui/meters/LEDItem.h"
 #include "gui/meters/MeterWidget.h"
 #include "models/RadioModel.h"
@@ -45,13 +55,16 @@
 #include "models/TransmitModel.h"
 
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "OperatorWording.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::RemoteAudioSessionHarness;
 
 namespace {
 
+// The signal's text (Thetis's) and the warning the user reads.
 const QString kStop = QStringLiteral("Led Indicator stopped MOX");
+const QString kShown = QStringLiteral("An LED stopped transmitting.");
 
 // A connection that records MOX writes; nothing reaches a radio.
 class MockConnection : public RadioConnection {
@@ -121,13 +134,17 @@ void makeThresholdLed(LEDItem& led)
 
 // MainWindow's forwarding (onContainerItemAdded), for a given context and
 // session: the session rule, then the stop's route.
+// The signal's text is Thetis's; the stop carries NereusSDR's wording.
 LedStopRoute forward(const QJsonObject& context, const QString& session, RadioModel& radio,
-                     const QString& message)
+                     const QString& signalMessage)
 {
+    if (signalMessage != QLatin1String(kLedNoTxStopMessage)) {
+        return LedStopRoute::None;
+    }
     if (!ledStopAppliesToSession(context, session)) {
         return LedStopRoute::None;
     }
-    return stopTransmitForLed(radio, message);
+    return stopTransmitForLed(radio, QString::fromLatin1(kLedNoTxStopUserText));
 }
 
 // The command.invoke messages of `verb` the Core received.
@@ -356,7 +373,7 @@ private slots:
         QTRY_VERIFY(!rig.model.isTransmitting());
         QVERIFY(!rig.model.mox());
         QCOMPARE(stopped.count(), 1);
-        QCOMPARE(stopped.at(0).at(0).toString(), kStop);
+        QCOMPARE(stopped.at(0).at(0).toString(), kShown);
         QVERIFY(rig.conn.log.contains(QStringLiteral("MOX off")));
         QVERIFY(!rig.conn.log.contains(QStringLiteral("MOX on")));
         QTest::qWait(50);
@@ -456,6 +473,148 @@ private slots:
         QVERIFY(!remote.isTransmitting());
     }
 
+    // ---- Fix round 1 --------------------------------------------------------
+
+    void noTxWhenFalseStopsOncePerTransitionToFalse()
+    {
+        LEDItem led;
+        led.setGreenThreshold(0.0);
+        led.setValue(1.0);
+        led.setNoTxFalse(true);
+        QVERIFY(!led.noTx());
+        led.setTransmitting(true);
+        QSignalSpy stops(&led, &LEDItem::txStopRequested);
+        QCOMPARE(stops.count(), 0);   // true: nothing
+        led.setValue(-1.0);
+        QCOMPARE(stops.count(), 1);
+        QCOMPARE(stops.at(0).at(0).toString(), kStop);
+        led.setValue(-2.0);
+        QCOMPARE(stops.count(), 1);
+        led.setValue(1.0);
+        QCOMPARE(stops.count(), 1);
+        led.setValue(-1.0);
+        QCOMPARE(stops.count(), 2);
+        // A key made while false is stopped, as Thetis's every-update test.
+        led.setTransmitting(false);
+        led.setTransmitting(true);
+        QCOMPARE(stops.count(), 3);
+        // Receiving: nothing.
+        led.setTransmitting(false);
+        led.setValue(1.0);
+        led.setValue(-1.0);
+        QCOMPARE(stops.count(), 3);
+    }
+
+    void bothOnStopOnEachTransition()
+    {
+        LEDItem led;
+        makeThresholdLed(led);   // No TX when true, false now
+        led.setValue(1.0);
+        led.setNoTxFalse(true);
+        QSignalSpy stops(&led, &LEDItem::txStopRequested);
+        led.setTransmitting(true);   // true: No TX when true
+        QCOMPARE(stops.count(), 1);
+        led.setValue(-1.0);          // false: No TX when false
+        QCOMPARE(stops.count(), 2);
+        led.setValue(1.0);
+        QCOMPARE(stops.count(), 3);
+    }
+
+    void noStopWhileTheConditionHasAnError()
+    {
+        // Thetis runs the LED's Update only for a valid script.
+        LEDItem led;
+        led.setNoTx(true);
+        led.setNoTxFalse(true);
+        led.setTransmitting(true);
+        QSignalSpy stops(&led, &LEDItem::txStopRequested);
+        led.setCondition(QStringLiteral("Math.Abs(1) > 0"));
+        QVERIFY(!led.conditionError().isEmpty());
+        QVERIFY(!led.isTrue());
+        QCOMPARE(stops.count(), 0);
+        led.setCondition(QStringLiteral("1 > 2"));   // valid and false
+        QCOMPARE(stops.count(), 1);
+    }
+
+    void noTxWhenFalseIsInertInAPreview()
+    {
+        LEDItem shape;
+        shape.setNoTxFalse(true);
+        ContainerContentRegistry registry;
+        ContentEntry entry;
+        entry.typeId = QStringLiteral("LED");
+        entry.config.insert(QStringLiteral("legacyRecord"), shape.serialize());
+        std::unique_ptr<MeterItem> item(
+            registry.createMeterItem(entry, nullptr, ContentRenderMode::Preview));
+        auto* copy = qobject_cast<LEDItem*>(item.get());
+        QVERIFY(copy && copy->noTxFalse());
+        QSignalSpy stops(copy, &LEDItem::txStopRequested);
+        copy->setTransmitting(true);
+        copy->setValue(-1.0);
+        QCOMPARE(stops.count(), 0);
+    }
+
+    void theEditorsCheckBoxesWriteAndRoundTrip()
+    {
+        LEDItem led;
+        LedItemEditor editor;
+        editor.setItem(&led);
+        auto* onBox = editor.findChild<QCheckBox*>(QStringLiteral("ledNoTxTrue"));
+        auto* offBox = editor.findChild<QCheckBox*>(QStringLiteral("ledNoTxFalse"));
+        QVERIFY(onBox);
+        QVERIFY(offBox);
+        QVERIFY(!onBox->isChecked());
+        QVERIFY(!offBox->isChecked());
+        // The rows' labels and the boxes' tooltips are plain words.
+        QStringList labels;
+        for (const QLabel* label : editor.findChildren<QLabel*>()) {
+            labels << label->text();
+        }
+        for (const QString& text : {QStringLiteral("Stop transmitting when the LED turns on"),
+                                    QStringLiteral("Stop transmitting when the LED turns off")}) {
+            QVERIFY2(labels.contains(text), qPrintable(text));
+            QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+        }
+        for (QCheckBox* box : {onBox, offBox}) {
+            QVERIFY2(OperatorWording::isPlain(box->toolTip()), qPrintable(box->toolTip()));
+        }
+
+        const QString plain = led.serialize();
+        onBox->click();
+        QVERIFY(led.noTx());
+        QVERIFY(!led.noTxFalse());
+        QCOMPARE(led.serialize(), plain + QStringLiteral("||1"));
+        offBox->click();
+        QVERIFY(led.noTxFalse());
+        QCOMPARE(led.serialize(), plain + QStringLiteral("||1|1"));
+        onBox->click();
+        QVERIFY(!led.noTx());
+        const QString offOnly = led.serialize();
+        QCOMPARE(offOnly, plain + QStringLiteral("||0|1"));
+
+        // A round trip, and a new editor shows what was saved.
+        LEDItem back;
+        QVERIFY(back.deserialize(offOnly));
+        QVERIFY(!back.noTx());
+        QVERIFY(back.noTxFalse());
+        QCOMPARE(back.serialize(), offOnly);
+        LedItemEditor again;
+        again.setItem(&back);
+        QVERIFY(!again.findChild<QCheckBox*>(QStringLiteral("ledNoTxTrue"))->isChecked());
+        QVERIFY(again.findChild<QCheckBox*>(QStringLiteral("ledNoTxFalse"))->isChecked());
+
+        offBox->click();
+        QVERIFY(!led.noTxFalse());
+        QCOMPARE(led.serialize(), plain);
+    }
+
+    void theUsersWarningIsPlain()
+    {
+        QCOMPARE(QString::fromLatin1(kLedNoTxStopMessage), kStop);
+        QCOMPARE(QString::fromLatin1(kLedNoTxStopUserText), kShown);
+        QVERIFY(OperatorWording::isPlain(kShown));
+    }
+
     // ---- The record ---------------------------------------------------------
 
     void noTxIsSavedAfterTheCondition()
@@ -488,7 +647,8 @@ private slots:
         QCOMPARE(back2.condition(), QStringLiteral("%swr% > 2"));
         QCOMPARE(back2.serialize(), both);
 
-        // A record without the field is off; a damaged field is refused.
+        // A record without the fields is off for both; a damaged field is
+        // refused.
         LEDItem old;
         QVERIFY(old.deserialize(condOnly));
         QVERIFY(!old.noTx());
@@ -496,6 +656,9 @@ private slots:
         QVERIFY(!old.noTx());
         LEDItem bad;
         QVERIFY(!bad.deserialize(plainRecord + QStringLiteral("||yes")));
+        QVERIFY(!bad.deserialize(plainRecord + QStringLiteral("||0|yes")));
+        QVERIFY(old.deserialize(both));
+        QVERIFY(!old.noTxFalse());
     }
 };
 

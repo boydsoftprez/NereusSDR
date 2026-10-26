@@ -16,7 +16,8 @@
 //                 (MeterManager.cs:21206-21211 [v2.10.3.15]); a stop for
 //                 this window's session goes to stopTransmitForLed
 //                 (StopAllTx locally, the window's release at the Core
-//                 remotely, with the warning shown). It never keys.
+//                 remotely, with the warning shown in NereusSDR's words,
+//                 kLedNoTxStopUserText). It never keys.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history trace 2 reads its own slice: each live
 //                 history face registers it as a reading consumer
@@ -15259,7 +15260,7 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
         if (led->property("ledNoTxWired").toBool()) { continue; }
         led->setProperty("ledNoTxWired", true);
         const QPointer<LEDItem> guard(led);
-        connect(led, &LEDItem::txStopRequested, this, [this, guard](const QString& message) {
+        connect(led, &LEDItem::txStopRequested, this, [this, guard](const QString&) {
             if (m_shuttingDown || !guard || !m_radioModel) { return; }
             // The entry's context: the item's own, else its meter's.
             QJsonObject context;
@@ -15268,7 +15269,9 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
                 if (v.isValid()) { context = v.toJsonObject(); break; }
             }
             if (!ledStopAppliesToSession(context, containerSessionId())) { return; }
+            // The signal carries Thetis's text; the user reads NereusSDR's.
             // A local stop's warning comes on RadioModel::transmitStopped.
+            const QString message = QString::fromLatin1(kLedNoTxStopUserText);
             if (stopTransmitForLed(*m_radioModel, message) == LedStopRoute::Remote) {
                 showToast(message, ToastSeverity::Warning, 10000);
             }
