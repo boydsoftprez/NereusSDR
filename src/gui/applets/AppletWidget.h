@@ -32,9 +32,17 @@
 //   2026-10-16 - setUnavailableReason: an applet whose feature is off is
 //                 grayed with its reason, never hidden. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - NEREUS_GUI_EXPORT, as on the applets that derive from it:
+//                 without it a test outside the GUI DLL took the address of
+//                 floatingWindowDocked through MinGW's auto-import thunk, so
+//                 QMetaMethod::fromSignal did not match it and a QSignalSpy
+//                 on it was not valid on Windows. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
+#include "gui/NereusGuiExport.h"
+
 #include <QWidget>
 #include <QIcon>
 #include <QLabel>
@@ -51,7 +59,7 @@ namespace NereusSDR {
 
 class RadioModel;
 
-class AppletWidget : public QWidget {
+class NEREUS_GUI_EXPORT AppletWidget : public QWidget {
     Q_OBJECT
 public:
     explicit AppletWidget(RadioModel* model, QWidget* parent = nullptr);

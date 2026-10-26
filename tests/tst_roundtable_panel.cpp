@@ -1797,6 +1797,9 @@ private slots:
         settle();
         RoundtablePanel* panel = applet->panel();
         QSignalSpy docked(applet, &AppletWidget::floatingWindowDocked);
+        // Not valid on Windows while AppletWidget was not exported from the
+        // GUI DLL: the signal's address here was MinGW's import thunk.
+        QVERIFY(docked.isValid());
 
         // No applet panel above it: Pop out opens the window directly.
         emit panel->popOutRequested();
