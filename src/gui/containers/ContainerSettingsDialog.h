@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - m_noControlsCheck. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -277,6 +279,7 @@ private:
     QCheckBox*   m_minimisesCheck{nullptr};
     QCheckBox*   m_autoHeightCheck{nullptr};
     QCheckBox*   m_hidesWhenRxNotUsedCheck{nullptr};
+    QCheckBox*   m_noControlsCheck{nullptr};
     QCheckBox*   m_highlightCheck{nullptr};
     QPushButton* m_btnDuplicate{nullptr};
     QPushButton* m_btnDelete{nullptr};

@@ -8918,6 +8918,17 @@ void MainWindow::buildUI()
     }
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
+    // Container Settings' Hide when slice not open hears each slice open
+    // and close (slice ids, as sliceAdded and sliceRemoved carry them), and
+    // Minimizes hears the window's state (eventFilter, WindowStateChange).
+    connect(m_radioModel, &RadioModel::sliceAdded, m_containerManager,
+            [this](int sliceId) { m_containerManager->onSliceOpenChanged(sliceId, true); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, m_containerManager,
+            [this](int sliceId) { m_containerManager->onSliceOpenChanged(sliceId, false); });
+    for (SliceModel* existing : m_radioModel->slices()) {
+        m_containerManager->onSliceOpenChanged(existing->sliceIndex(), true);
+    }
+    installEventFilter(this);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
         showToast(tr("Container layout is read-only: %1").arg(error), ToastSeverity::Warning, 6000);
     });
@@ -16547,6 +16558,12 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Container Settings' Minimizes: floating containers follow this
+    // window's minimize and restore.
+    if (watched == this && event->type() == QEvent::WindowStateChange && m_containerManager
+        && !m_shuttingDown) {
+        m_containerManager->onMainWindowStateChanged(windowState());
+    }
     if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
         // An explicit baseline minimum suppresses QLayout's automatic minimum
         // propagation. Retain the baseline, but follow the actual row/font
