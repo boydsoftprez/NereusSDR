@@ -9,6 +9,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QFormLayout>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QHBoxLayout>
 
 namespace NereusSDR {
 
@@ -76,6 +79,8 @@ void LedItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
 
+    m_lblId->setText(x->fourChar());
+
     const int shapeIdx = m_comboShape->findData(static_cast<int>(x->ledShape()));
     m_comboShape->setCurrentIndex(shapeIdx >= 0 ? shapeIdx : 0);
 
@@ -116,6 +121,29 @@ void LedItemEditor::setItem(MeterItem* item)
 void LedItemEditor::buildTypeSpecific()
 {
     addHeader(QStringLiteral("LED Item"));
+
+    // The LED's 4-character ID, which a text overlay names to show a line
+    // only while this LED is on.
+    auto* idRow = new QWidget(this);
+    auto* idLayout = new QHBoxLayout(idRow);
+    idLayout->setContentsMargins(0, 0, 0, 0);
+    m_lblId = new QLabel(idRow);
+    m_lblId->setObjectName(QStringLiteral("ledId"));
+    m_lblId->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_lblId->setToolTip(QStringLiteral(
+        "This LED's ID. A text overlay can show a line only while this LED is on."));
+    m_btnCopyId = new QPushButton(QStringLiteral("Copy"), idRow);
+    m_btnCopyId->setObjectName(QStringLiteral("ledCopyId"));
+    m_btnCopyId->setToolTip(QStringLiteral("Copy this LED's ID."));
+    idLayout->addWidget(m_lblId);
+    idLayout->addWidget(m_btnCopyId);
+    idLayout->addStretch(1);
+    addRow(QStringLiteral("ID"), idRow);
+    connect(m_btnCopyId, &QPushButton::clicked, this, [this]() {
+        if (QClipboard* clipboard = QGuiApplication::clipboard()) {
+            clipboard->setText(m_lblId->text());
+        }
+    });
 
     // Shape
     m_comboShape = new QComboBox(this);

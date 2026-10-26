@@ -5,8 +5,19 @@
 //                 panel's MOX flip fade; copy font 1 to 2; auto scroll
 //                 only when the text is wider than the item. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - RX and TX LED gates: the TX gate follows its own logic
+//                 flag (Thetis tests the RX one), an unknown ID hides
+//                 nothing, an LED's ID survives save and load, previews
+//                 never publish and a gone LED clears its result. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QColor>
 #include <QImage>
 #include <QPainter>
@@ -14,6 +25,10 @@
 
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentFade.h"
+#include "gui/containers/meter_property_editors/LedItemEditor.h"
+#include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
+#include "gui/meters/LEDItem.h"
+#include "gui/meters/LedResultRegistry.h"
 #include "gui/meters/TextOverlayItem.h"
 
 using namespace NereusSDR;
@@ -282,6 +297,235 @@ private slots:
         fits->advanceMeter(0);
         QVERIFY(!fits->advanceMeter(1000));
         QCOMPARE(fits->scrollXOffset1(), 0.0f);
+    }
+
+    // ---- LED gates -------------------------------------------------------
+
+    void init() { LedResultRegistry::instance().clear(); }
+    void cleanup() { LedResultRegistry::instance().clear(); }
+
+    // The divergence from Thetis (MeterManager.cs:20552-20559): its TX block
+    // tests the RX logic flag, so with TX logic on and RX logic off the TX
+    // gate never runs. NereusSDR's TX gate follows the TX flag.
+    void txGateFollowsItsOwnLogicFlag()
+    {
+        LedResultRegistry& results = LedResultRegistry::instance();
+        auto item = swapItem();
+        item->setTxFourChar(QStringLiteral("abcd"));
+        item->setTxLedLogic(true);
+        item->setRxLedLogic(false);
+        item->setTransmitting(true);
+
+        results.set(QStringLiteral("abcd"), true);
+        item->refreshLedGates();
+        QVERIFY(item->showTx());
+        QVERIFY2(paintAndCount(*item).line2 > 0, "TX line shows while abcd is true");
+
+        results.set(QStringLiteral("abcd"), false);
+        QVERIFY(item->refreshLedGates());
+        QVERIFY(!item->showTx());
+        QCOMPARE(paintAndCount(*item).line2, 0);
+
+        // RX logic on and TX logic off: the TX line ignores abcd (Thetis
+        // would read abcd through the RX flag and hide it).
+        auto other = swapItem();
+        other->setRxFourChar(QStringLiteral("wxyz"));
+        other->setTxFourChar(QStringLiteral("abcd"));
+        other->setRxLedLogic(true);
+        other->setTxLedLogic(false);
+        results.set(QStringLiteral("wxyz"), true);
+        other->setTransmitting(true);
+        other->advanceMeter(0);
+        QVERIFY(other->showTx());
+        QVERIFY(paintAndCount(*other).line2 > 0);
+
+        // Turning the TX logic off shows the line again.
+        item->setTxLedLogic(false);
+        QVERIFY(item->showTx());
+        QVERIFY(paintAndCount(*item).line2 > 0);
+    }
+
+    void rxGateWorksTheSameWay()
+    {
+        LedResultRegistry& results = LedResultRegistry::instance();
+        auto item = swapItem();
+        item->setRxFourChar(QStringLiteral("Rx01"));
+        item->setRxLedLogic(true);
+        results.set(QStringLiteral("Rx01"), true);
+        item->advanceMeter(0);
+        QVERIFY(paintAndCount(*item).line1 > 0);
+        results.set(QStringLiteral("Rx01"), false);
+        item->advanceMeter(100);
+        QCOMPARE(paintAndCount(*item).line1, 0);
+        // The TX gate is untouched by the RX one.
+        item->setTransmitting(true);
+        item->advanceMeter(200);
+        QVERIFY(paintAndCount(*item).line2 > 0);
+        item->setTransmitting(false);
+        item->setRxLedLogic(false);
+        QVERIFY(paintAndCount(*item).line1 > 0);
+    }
+
+    void unknownIdHidesNothing()
+    {
+        auto item = swapItem();
+        item->setRxFourChar(QStringLiteral("none"));
+        item->setTxFourChar(QStringLiteral("gone"));
+        item->setRxLedLogic(true);
+        item->setTxLedLogic(true);
+        item->refreshLedGates();
+        QVERIFY(paintAndCount(*item).line1 > 0);
+        item->setTransmitting(true);
+        item->refreshLedGates();
+        QVERIFY(paintAndCount(*item).line2 > 0);
+        // An empty ID hides nothing either.
+        item->setTxFourChar(QString());
+        item->refreshLedGates();
+        QVERIFY(item->showTx());
+    }
+
+    void liveLedGatesTheOverlay()
+    {
+        auto led = std::make_unique<LEDItem>();
+        const QString id = led->fourChar();
+        QCOMPARE(id.size(), 4);
+        auto item = swapItem();
+        item->setRxFourChar(id);
+        item->setRxLedLogic(true);
+
+        led->setValue(1.0);   // at or above the green threshold: true
+        QVERIFY(LedResultRegistry::instance().get(id) == std::optional<bool>(true));
+        item->refreshLedGates();
+        QVERIFY(item->showRx());
+        led->setValue(-1.0);
+        item->refreshLedGates();
+        QVERIFY(!item->showRx());
+
+        // The LED goes: its result goes with it, and the line shows.
+        led.reset();
+        QVERIFY(!LedResultRegistry::instance().get(id).has_value());
+        item->refreshLedGates();
+        QVERIFY(item->showRx());
+    }
+
+    void ledIdSurvivesSaveAndLoad()
+    {
+        LEDItem led;
+        const QString id = led.fourChar();
+        LEDItem back;
+        QVERIFY(back.deserialize(led.serialize()));
+        QCOMPARE(back.fourChar(), id);
+        QCOMPARE(back.guid(), led.guid());
+        QCOMPARE(back.serialize(), led.serialize());
+
+        // A record saved before the guid: the same ID on every load, and
+        // after it is saved again.
+        const QString oldRecord = QStringLiteral(
+            "LED|0|0|1|1|-1|0|1|0|#ff00ff88|#ff404040|#ff202020|#ff202020|0|0|0|2|0|1000|1000");
+        LEDItem first;
+        LEDItem second;
+        QVERIFY(first.deserialize(oldRecord));
+        QVERIFY(second.deserialize(oldRecord));
+        QCOMPARE(first.fourChar(), second.fourChar());
+        LEDItem resaved;
+        QVERIFY(resaved.deserialize(first.serialize()));
+        QCOMPARE(resaved.fourChar(), first.fourChar());
+    }
+
+    void previewAndRemovedLedsNeverGate()
+    {
+        LEDItem shape;
+        const QString id = shape.fourChar();
+        ContainerContentRegistry registry;
+        ContentEntry entry;
+        entry.typeId = QStringLiteral("LED");
+        entry.config.insert(QStringLiteral("legacyRecord"), shape.serialize());
+        LedResultRegistry::instance().clear();
+
+        for (ContentRenderMode mode : {ContentRenderMode::Preview, ContentRenderMode::Validation}) {
+            std::unique_ptr<MeterItem> made(registry.createMeterItem(entry, nullptr, mode));
+            auto* copy = qobject_cast<LEDItem*>(made.get());
+            QVERIFY(copy);
+            QVERIFY(!copy->publishEnabled());
+            QCOMPARE(copy->fourChar(), id);
+            copy->setValue(1.0);
+            QVERIFY(!LedResultRegistry::instance().get(id).has_value());
+        }
+
+        // The live copy publishes; replacing it with a rebuilt copy and then
+        // deleting the old one leaves the rebuilt copy's result.
+        std::unique_ptr<MeterItem> live(registry.createMeterItem(entry, nullptr, ContentRenderMode::Live));
+        auto* liveLed = qobject_cast<LEDItem*>(live.get());
+        QVERIFY(liveLed && liveLed->publishEnabled());
+        liveLed->setValue(1.0);
+        QVERIFY(LedResultRegistry::instance().get(id) == std::optional<bool>(true));
+        std::unique_ptr<MeterItem> rebuilt(registry.createMeterItem(entry, nullptr, ContentRenderMode::Live));
+        qobject_cast<LEDItem*>(rebuilt.get())->setValue(-1.0);
+        live.reset();
+        QVERIFY(LedResultRegistry::instance().get(id) == std::optional<bool>(false));
+
+        // Cleared on request (MeterWidget::removeItem).
+        qobject_cast<LEDItem*>(rebuilt.get())->clearPublishedResult();
+        QVERIFY(!LedResultRegistry::instance().get(id).has_value());
+    }
+
+    void editorsShowTheIdAndWriteTheGates()
+    {
+        LEDItem led;
+        LedItemEditor ledEditor;
+        ledEditor.setItem(&led);
+        auto* idLabel = ledEditor.findChild<QLabel*>(QStringLiteral("ledId"));
+        auto* copy = ledEditor.findChild<QPushButton*>(QStringLiteral("ledCopyId"));
+        QVERIFY(idLabel && copy);
+        QCOMPARE(idLabel->text(), led.fourChar());
+        copy->click();
+        QCOMPARE(QGuiApplication::clipboard()->text(), led.fourChar());
+
+        auto item = swapItem();
+        TextOverlayItemEditor editor;
+        editor.setItem(item.get());
+        auto* txLogic = editor.findChild<QCheckBox*>(QStringLiteral("overlayTxLedLogic"));
+        auto* txId = editor.findChild<QLineEdit*>(QStringLiteral("overlayTxLedId"));
+        auto* rxLogic = editor.findChild<QCheckBox*>(QStringLiteral("overlayRxLedLogic"));
+        auto* rxId = editor.findChild<QLineEdit*>(QStringLiteral("overlayRxLedId"));
+        QVERIFY(txLogic && txId && rxLogic && rxId);
+        txLogic->click();
+        QVERIFY(item->txLedLogic());
+        QVERIFY(!item->rxLedLogic());
+        txId->setText(led.fourChar());
+        emit txId->editingFinished();
+        QCOMPARE(item->txFourChar(), led.fourChar());
+        rxLogic->click();
+        QVERIFY(item->rxLedLogic());
+    }
+
+    void gateFieldsRoundTrip()
+    {
+        auto item = swapItem();
+        item->setRxLedLogic(true);
+        item->setTxLedLogic(true);
+        item->setRxFourChar(QStringLiteral("Ab|%x1"));   // kept to Abx1
+        item->setTxFourChar(QStringLiteral("Zz90"));
+        QCOMPARE(item->rxFourChar(), QStringLiteral("Abx1"));
+        const QString saved = item->serialize();
+        const QStringList parts = saved.split(QLatin1Char('|'));
+        QCOMPARE(parts.size(), 41);
+        QCOMPARE(parts.mid(37), QStringList({QStringLiteral("1"), QStringLiteral("1"),
+                                             QStringLiteral("Abx1"), QStringLiteral("Zz90")}));
+        TextOverlayItem restored;
+        QVERIFY(restored.deserialize(saved));
+        QVERIFY(restored.rxLedLogic());
+        QVERIFY(restored.txLedLogic());
+        QCOMPARE(restored.rxFourChar(), QStringLiteral("Abx1"));
+        QCOMPARE(restored.txFourChar(), QStringLiteral("Zz90"));
+        QCOMPARE(restored.serialize(), saved);
+
+        // A record from before the gates: logic off, no IDs.
+        TextOverlayItem old;
+        QVERIFY(old.deserialize(kOldRecord));
+        QVERIFY(!old.rxLedLogic());
+        QVERIFY(!old.txLedLogic());
+        QVERIFY(old.rxFourChar().isEmpty());
     }
 
     void scrollRunsOnceThenRests()

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - removeItem clears a removed LED's result from
+//                 LedResultRegistry, so it never gates a text overlay.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - leaveEvent tells items the pointer left (hover boxes);
 //                 unavailableReasonAt asks the item for a reason at the
 //                 point first (MeterItem::reasonAt). J.J. Boyd (KG4VCF),
@@ -376,6 +379,10 @@ void MeterWidget::removeItem(MeterItem* item)
 {
     if (m_items.removeOne(item)) {
         m_legacyRecords.removeIf([item](const LegacyRecord& record) { return record.item == item; });
+        // A removed LED's result no longer gates a text overlay.
+        if (auto* led = qobject_cast<LEDItem*>(item)) {
+            led->clearPublishedResult();
+        }
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
         m_bgDirty = true;

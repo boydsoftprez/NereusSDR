@@ -8,6 +8,9 @@
 // condition survives a save and load.
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - The LED record always writes the condition, No TX fields
+//                 and guid (32 fields). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 
@@ -450,8 +453,10 @@ private slots:
         led.setValue(-5.0);
         QVERIFY(!led.isTrue());
         QVERIFY(led.conditionError().isEmpty());
-        // The record is the one written before the condition existed.
-        QCOMPARE(led.serialize().split(QLatin1Char('|')).size(), 28);
+        // No condition: an empty condition field (the condition, No TX
+        // fields and guid are always written, so the guid has a fixed place).
+        QCOMPARE(led.serialize().split(QLatin1Char('|')).size(), 32);
+        QVERIFY(led.serialize().split(QLatin1Char('|')).at(28).isEmpty());
         LEDItem back;
         QVERIFY(back.deserialize(led.serialize()));
         QVERIFY(!back.hasCondition());
@@ -460,7 +465,8 @@ private slots:
         QVERIFY(!led.hasCondition());
         led.setValue(5.0);
         QVERIFY(led.isTrue());
-        QCOMPARE(led.serialize().split(QLatin1Char('|')).size(), 28);
+        QCOMPARE(led.serialize().split(QLatin1Char('|')).size(), 32);
+        QVERIFY(led.serialize().split(QLatin1Char('|')).at(28).isEmpty());
     }
 
     void conditionSurvivesSaveAndLoad()
@@ -469,7 +475,7 @@ private slots:
         const QString cond = QStringLiteral("%swr% > 1 || \"a|b%1%%\" == \"a|b%1%%\"");
         led.setCondition(cond);
         const QString record = led.serialize();
-        QCOMPARE(record.split(QLatin1Char('|')).size(), 29);
+        QCOMPARE(record.split(QLatin1Char('|')).size(), 32);
         LEDItem back;
         QVERIFY(back.deserialize(record));
         QCOMPARE(back.condition(), cond);
@@ -484,11 +490,15 @@ private slots:
         QCOMPARE(old.condition(), cond);
 
         // An empty field is no condition; a damaged one is refused.
+        QStringList emptied = parts;
+        emptied[28].clear();
         LEDItem empty;
-        QVERIFY(empty.deserialize(record.left(record.lastIndexOf(QLatin1Char('|')) + 1)));
+        QVERIFY(empty.deserialize(emptied.join(QLatin1Char('|'))));
         QVERIFY(!empty.hasCondition());
+        QStringList damagedParts = parts;
+        damagedParts[28] += QStringLiteral("*!");
         LEDItem damaged;
-        QVERIFY(!damaged.deserialize(record + QStringLiteral("*!")));
+        QVERIFY(!damaged.deserialize(damagedParts.join(QLatin1Char('|'))));
     }
 };
 

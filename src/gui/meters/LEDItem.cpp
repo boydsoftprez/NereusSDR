@@ -42,6 +42,14 @@
 //                 MeterManager.cs:21196-21199 [v2.10.3.15]), saved after
 //                 No TX; no stop while the condition has an error (:21179).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - 4-character ID from a guid kept in the record (Thetis
+//                 Common.FourChar("ledindicator", 0, guid),
+//                 MeterManager.cs:20829), a record without one deriving it
+//                 from its text; isTrue() published to LedResultRegistry
+//                 (Thetis _led_results, :21189) for the text overlay's LED
+//                 gates, never by a preview copy, and cleared when the LED
+//                 goes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -86,12 +94,14 @@ mw0lge@grange-lane.co.uk
 
 #include "LEDItem.h"
 #include "ClockItem.h"
+#include "LedResultRegistry.h"
 #include "MeterWidget.h"
 #include "ThetisReadingNames.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContentFade.h"
 #include "core/LogCategories.h"
+#include "core/mmio/FourChar.h"
 #include "models/RadioModel.h"
 
 // From Thetis clsLed (MeterManager.cs:19448+)
@@ -108,10 +118,80 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
+namespace {
+
+// NereusSDR: a record saved before the guid was kept gets one derived from
+// its own text, so its 4-character ID (and an overlay gate naming it) is
+// the same on every load until the next save writes it.
+const QUuid kLedOldRecordGuidNamespace(QStringLiteral("3c9e1a57-8f20-5b4d-a6e2-7d14b9c05f38"));
+
+} // namespace
+
 // From Thetis MeterManager.cs:19448 — clsLed constructor
+// From Thetis MeterManager.cs:20827-20829 [v2.10.3.15]:
+//   Guid guid;
+//   if (!Guid.TryParse(ig.ID, out guid)) guid = Guid.NewGuid();
+//   _four_char = Common.FourChar("ledindicator", 0, guid);
 LEDItem::LEDItem(QObject* parent)
     : MeterItem(parent)
+    , m_guid(QUuid::createUuid())
 {
+}
+
+LEDItem::~LEDItem()
+{
+    clearPublishedResult();
+}
+
+void LEDItem::setGuid(const QUuid& guid)
+{
+    if (guid.isNull() || guid == m_guid) {
+        return;
+    }
+    const bool wasPublished = !m_publishedId.isEmpty();
+    clearPublishedResult();
+    m_guid = guid;
+    if (wasPublished) {
+        publishResult();
+    }
+}
+
+QString LEDItem::fourChar() const
+{
+    // From Thetis MeterManager.cs:20829 [v2.10.3.15]
+    return NereusSDR::fourChar(QStringLiteral("ledindicator"), 0, m_guid);
+}
+
+void LEDItem::setPublishEnabled(bool enabled)
+{
+    m_publishEnabled = enabled;
+    if (!enabled) {
+        clearPublishedResult();
+    }
+}
+
+// From Thetis MeterManager.cs:21189 [v2.10.3.15]:
+//   _led_results.AddOrUpdate(_four_char, _result, (a, b) => _result);
+void LEDItem::publishResult()
+{
+    if (!m_publishEnabled) {
+        return;
+    }
+    const QString id = fourChar();
+    if (id != m_publishedId) {
+        clearPublishedResult();
+    }
+    LedResultRegistry::instance().set(id, m_isTrue, this);
+    m_publishedId = id;
+}
+
+void LEDItem::clearPublishedResult()
+{
+    if (m_publishedId.isEmpty()) {
+        return;
+    }
+    LedResultRegistry::instance().remove(m_publishedId, this);
+    m_publishedId.clear();
 }
 
 void LEDItem::applyNewItemDefaults()
@@ -205,6 +285,7 @@ void LEDItem::setValue(double v)
     // The fill look's blink toggles m_ledOn while painting; the true state
     // is kept apart.
     m_isTrue = m_ledOn;
+    publishResult();
     checkNoTx();
 }
 
@@ -341,6 +422,7 @@ bool LEDItem::evaluateCondition()
     m_conditionError = result.ok ? QString() : result.error;
     // The fill look's blink toggles m_ledOn while painting.
     m_ledOn = m_isTrue;
+    publishResult();
     checkNoTx();
     return m_isTrue != before || m_conditionError != errorBefore;
 }
@@ -856,7 +938,12 @@ void LEDItem::drawShape(QPainter& p, const QRect& ledRect, const QColor& color)
 //             thresholds decide)
 //             |noTx               (No TX when true; written when on or
 //             when No TX when false follows; absent = off)
-//             |noTxFalse          (written only when on; absent = off)
+//             |noTxFalse          (absent = off)
+//             |guid               (the 4-character ID's guid; absent = one
+//             derived from the record's text)
+//             The condition, No TX and No TX when false were written only
+//             when needed before the guid followed them; every field is
+//             written now so the guid has a fixed place.
 // ---------------------------------------------------------------------------
 
 static QString ledBaseFields(const MeterItem& item)
@@ -913,16 +1000,16 @@ QString LEDItem::serialize() const
             .arg(m_processWhenHidden ? 1 : 0)
         // The condition is user text: base64, joined rather than passed
         // through .arg(), so neither '|' nor '%' can change the record.
-        // Written only when set or when No TX follows it (then possibly
-        // empty), so an LED without either saves as before.
-        + (hasCondition() || m_noTx || m_noTxFalse
-               ? QLatin1Char('|') + QString::fromLatin1(m_condition.toUtf8().toBase64())
-               : QString())
+        // Empty when unset (a whitespace condition is no condition).
+        + QLatin1Char('|')
+        + (hasCondition() ? QString::fromLatin1(m_condition.toUtf8().toBase64()) : QString())
         // Thetis led_notx_true / led_notx_false (MeterManager.cs:28721-28722
-        // [v2.10.3.15]), each written only when needed.
-        + (m_noTx || m_noTxFalse ? (m_noTx ? QStringLiteral("|1") : QStringLiteral("|0"))
-                                 : QString())
-        + (m_noTxFalse ? QStringLiteral("|1") : QString());
+        // [v2.10.3.15]).
+        + (m_noTx ? QStringLiteral("|1") : QStringLiteral("|0"))
+        + (m_noTxFalse ? QStringLiteral("|1") : QStringLiteral("|0"))
+        // The guid behind fourChar() (Thetis keeps it as the item group's
+        // ID, MeterManager.cs:20827-20829 [v2.10.3.15]).
+        + QLatin1Char('|') + m_guid.toString(QUuid::WithoutBraces);
 }
 
 // ---------------------------------------------------------------------------
@@ -936,7 +1023,7 @@ QString LEDItem::serialize() const
 // Appended, each optional: [20]=placed [21]=offsetX [22]=offsetY
 // [23]=sizeX [24]=sizeY [25]=showTrue [26]=showFalse [27]=processWhenHidden
 // [28]=condition (base64; at opt + 8 when the old placeholders shift opt)
-// [29]=noTx (at opt + 9) [30]=noTxFalse (at opt + 10)
+// [29]=noTx (at opt + 9) [30]=noTxFalse (at opt + 10) [31]=guid (at opt + 11)
 // ---------------------------------------------------------------------------
 bool LEDItem::deserialize(const QString& data)
 {
@@ -1039,6 +1126,17 @@ bool LEDItem::deserialize(const QString& data)
     if (!optFlag(opt + 9, false, &noTx) || !optFlag(opt + 10, false, &noTxFalse)) {
         return false;
     }
+    // Absent or empty: derived from the record's text, the same on every
+    // load. Anything else must be a guid.
+    QUuid guid;
+    if (parts.size() > opt + 11 && !parts[opt + 11].isEmpty()) {
+        guid = QUuid(parts[opt + 11]);
+        if (guid.isNull()) {
+            return false;
+        }
+    } else {
+        guid = QUuid::createUuidV5(kLedOldRecordGuidNamespace, data.toUtf8());
+    }
 
     m_shape         = static_cast<LedShape>(shape);
     m_style         = static_cast<LedStyle>(style);
@@ -1066,9 +1164,13 @@ bool LEDItem::deserialize(const QString& data)
     m_noTxFalse         = noTxFalse;
     m_conditionError.clear();
     m_lastConditionMs   = -1;
+    // A new ID clears the entry published under the old one.
+    clearPublishedResult();
+    m_guid              = guid;
     if (hasCondition()) {
         evaluateCondition();
     } else {
+        publishResult();
         checkNoTx();
     }
 

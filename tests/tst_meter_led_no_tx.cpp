@@ -1,6 +1,10 @@
 // =================================================================
 // tests/tst_meter_led_no_tx.cpp  (NereusSDR)
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-26 - The LED record always writes the condition, No TX fields
+//                 and guid; assertions read the No TX fields by place.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // no-port-check: NereusSDR-original test.
 //
@@ -579,18 +583,20 @@ private slots:
             QVERIFY2(OperatorWording::isPlain(box->toolTip()), qPrintable(box->toolTip()));
         }
 
+        // [29] No TX, [30] No TX when false; the guid follows at [31].
         const QString plain = led.serialize();
+        QCOMPARE(plain.section(QLatin1Char('|'), 29, 30), QStringLiteral("0|0"));
         onBox->click();
         QVERIFY(led.noTx());
         QVERIFY(!led.noTxFalse());
-        QCOMPARE(led.serialize(), plain + QStringLiteral("||1"));
+        QCOMPARE(led.serialize().section(QLatin1Char('|'), 29, 30), QStringLiteral("1|0"));
         offBox->click();
         QVERIFY(led.noTxFalse());
-        QCOMPARE(led.serialize(), plain + QStringLiteral("||1|1"));
+        QCOMPARE(led.serialize().section(QLatin1Char('|'), 29, 30), QStringLiteral("1|1"));
         onBox->click();
         QVERIFY(!led.noTx());
         const QString offOnly = led.serialize();
-        QCOMPARE(offOnly, plain + QStringLiteral("||0|1"));
+        QCOMPARE(offOnly.section(QLatin1Char('|'), 29, 30), QStringLiteral("0|1"));
 
         // A round trip, and a new editor shows what was saved.
         LEDItem back;
@@ -627,7 +633,8 @@ private slots:
         LEDItem led;
         led.setNoTx(true);
         const QString record = led.serialize();
-        QCOMPARE(record, plainRecord + QStringLiteral("||1"));
+        QCOMPARE(record.section(QLatin1Char('|'), 0, 27), plainRecord.section(QLatin1Char('|'), 0, 27));
+        QCOMPARE(record.section(QLatin1Char('|'), 28, 30), QStringLiteral("|1|0"));
         LEDItem back;
         QVERIFY(back.deserialize(record));
         QVERIFY(back.noTx());
@@ -640,7 +647,8 @@ private slots:
         const QString condOnly = cond.serialize();
         cond.setNoTx(true);
         const QString both = cond.serialize();
-        QCOMPARE(both, condOnly + QStringLiteral("|1"));
+        QCOMPARE(condOnly.section(QLatin1Char('|'), 29, 30), QStringLiteral("0|0"));
+        QCOMPARE(both.section(QLatin1Char('|'), 29, 30), QStringLiteral("1|0"));
         LEDItem back2;
         QVERIFY(back2.deserialize(both));
         QVERIFY(back2.noTx());
@@ -655,8 +663,15 @@ private slots:
         QVERIFY(old.deserialize(plainRecord));
         QVERIFY(!old.noTx());
         LEDItem bad;
-        QVERIFY(!bad.deserialize(plainRecord + QStringLiteral("||yes")));
-        QVERIFY(!bad.deserialize(plainRecord + QStringLiteral("||0|yes")));
+        QStringList badNoTx = plainRecord.split(QLatin1Char('|'));
+        badNoTx[29] = QStringLiteral("yes");
+        QVERIFY(!bad.deserialize(badNoTx.join(QLatin1Char('|'))));
+        QStringList badNoTxFalse = plainRecord.split(QLatin1Char('|'));
+        badNoTxFalse[30] = QStringLiteral("yes");
+        QVERIFY(!bad.deserialize(badNoTxFalse.join(QLatin1Char('|'))));
+        // Without the fields at all (a record from before them).
+        QVERIFY(old.deserialize(plainRecord.section(QLatin1Char('|'), 0, 27)));
+        QVERIFY(!old.noTx());
         QVERIFY(old.deserialize(both));
         QVERIFY(!old.noTxFalse());
     }

@@ -45,6 +45,12 @@
 //                 (Thetis runs Update only for a valid script); the
 //                 warning the user sees in NereusSDR's words. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - 4-character ID (Thetis Common.FourChar("ledindicator", 0,
+//                 guid), MeterManager.cs:20829), the guid appended to the
+//                 record (a record without one derives it from its text),
+//                 and isTrue() published to LedResultRegistry for the text
+//                 overlay's LED gates; preview copies never publish.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -137,6 +143,7 @@ mw0lge@grange-lane.co.uk
 #include "core/LedConditionExpression.h"
 #include <QColor>
 #include <QJsonObject>
+#include <QUuid>
 #include <QVariant>
 
 #include <optional>
@@ -205,6 +212,8 @@ public:
     enum class LightMode { OnOff = 0, Blink = 1, Pulsate = 2 };
 
     explicit LEDItem(QObject* parent = nullptr);
+    // Clears this LED's entry in LedResultRegistry.
+    ~LEDItem() override;
 
     void setLedShape(LedShape s) { m_shape = s; }
     LedShape ledShape() const { return m_shape; }
@@ -290,6 +299,23 @@ public:
     void setStopEnabled(bool enabled);
     bool stopEnabled() const { return m_stopEnabled; }
 
+    // The guid kept in the record; fourChar() is derived from it. A null
+    // guid is ignored.
+    QUuid guid() const { return m_guid; }
+    void setGuid(const QUuid& guid);
+    // The LED's 4-character ID, as the text overlay's LED gates name it.
+    // From Thetis MeterManager.cs:20829 [v2.10.3.15]:
+    //   _four_char = Common.FourChar("ledindicator", 0, guid);
+    QString fourChar() const;
+    // False for a copy that only shows the entry (ContentRenderMode
+    // Preview or Validation): it never publishes its result to
+    // LedResultRegistry. True by default. Turning it off clears the entry.
+    void setPublishEnabled(bool enabled);
+    bool publishEnabled() const { return m_publishEnabled; }
+    // Removes this LED's entry from LedResultRegistry until it next
+    // publishes (destruction, and MeterWidget::removeItem).
+    void clearPublishedResult();
+
     // Threshold-based mode: value >= threshold activates that color
     void setGreenThreshold(double t) { m_greenThreshold = t; }
     double greenThreshold() const { return m_greenThreshold; }
@@ -362,6 +388,9 @@ signals:
     void txStopRequested(const QString& message);
 
 private:
+    // Publishes isTrue() under fourChar() (Thetis _led_results.AddOrUpdate,
+    // MeterManager.cs:21189 [v2.10.3.15]) when publishing is enabled.
+    void publishResult();
     // Emits txStopRequested on the No TX rising edge; called wherever the
     // true state, transmit state or No TX changes.
     void checkNoTx();
@@ -423,6 +452,12 @@ private:
     bool     m_stopEnabled{true};
     bool     m_noTxLatched{false};
     bool     m_noTxFalseLatched{false};
+    // Appended after No TX when false: the guid behind the 4-character ID.
+    QUuid    m_guid;
+    // Runtime (not saved): a preview copy's false, and the ID last
+    // published (so a guid change clears the old entry).
+    bool     m_publishEnabled{true};
+    QString  m_publishedId;
 
     // Threshold-based state
     double m_greenThreshold{0.0};

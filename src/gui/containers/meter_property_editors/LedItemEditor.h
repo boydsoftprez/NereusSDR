@@ -27,6 +27,8 @@ private:
     // no condition is set.
     void refreshConditionRows();
 
+    QLabel*         m_lblId{nullptr};
+    QPushButton*    m_btnCopyId{nullptr};
     QComboBox*      m_comboShape{nullptr};
     QComboBox*      m_comboStyle{nullptr};
     QPushButton*    m_btnTrueColour{nullptr};

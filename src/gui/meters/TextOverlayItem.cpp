@@ -36,6 +36,13 @@
 //                 font / offsets (setup.cs) and kTextOverlayThetisDefaults.
 //                 Fields appended after the older ones. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - RX and TX LED gates from Thetis clsTextOverlay
+//                 (MeterManager.cs:20232-20310, 20546-20559): logic flags
+//                 and 4-character IDs read from LedResultRegistry, appended
+//                 to the record after [36]. Upstream's TX block tests the RX
+//                 logic flag; NereusSDR uses the TX one. An unknown ID hides
+//                 nothing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -141,6 +148,7 @@ mw0lge@grange-lane.co.uk
 // From Thetis clsTextOverlay (MeterManager.cs:18746+)
 
 #include "gui/containers/ContentFade.h"
+#include "LedResultRegistry.h"
 
 #include <QPainter>
 #include <QFont>
@@ -568,14 +576,97 @@ void TextOverlayItem::setTransmitting(bool tx)
     }
 }
 
+namespace {
+
+// The 4-character ID alphabet (Thetis common.cs convertToFourChar: A-Z,
+// a-z, 0-9), at most four characters; anything else is dropped.
+constexpr int kLedFourCharLength = 4;
+
+QString cleanFourChar(const QString& id)
+{
+    QString out;
+    for (const QChar c : id) {
+        const char16_t u = c.unicode();
+        const bool ok = (u >= u'A' && u <= u'Z') || (u >= u'a' && u <= u'z') || (u >= u'0' && u <= u'9');
+        if (ok) {
+            out.append(c);
+            if (out.size() == kLedFourCharLength) {
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// From Thetis MeterManager.cs:20233-20254 [v2.10.3.15] (RXLedLogic). Thetis's
+// setter has the reset commented out:
+//        //if (!_rx_led_logic)
+//        //{
+//        //    _show_rx = true;
+//        //    _rxLed = null;
+//        //}
+// NereusSDR resets Show RX as the TX setter does, so a gate turned off
+// never leaves its line hidden.
+void TextOverlayItem::setRxLedLogic(bool on)
+{
+    m_rxLedLogic = on;
+    if (!m_rxLedLogic) {
+        m_showRx = true;
+    }
+}
+
+// From Thetis MeterManager.cs:20255-20276 [v2.10.3.15] (TXLedLogic)
+void TextOverlayItem::setTxLedLogic(bool on)
+{
+    m_txLedLogic = on;
+    if (!m_txLedLogic) {
+        m_showTx = true;
+    }
+}
+
+void TextOverlayItem::setRxFourChar(const QString& id)
+{
+    m_rxFourChar = cleanFourChar(id);
+}
+
+void TextOverlayItem::setTxFourChar(const QString& id)
+{
+    m_txFourChar = cleanFourChar(id);
+}
+
+// From Thetis MeterManager.cs:20546-20559 [v2.10.3.15] (clsTextOverlay
+// Update). Thetis's TryGetValue writes false for an ID it does not hold,
+// hiding the line; NereusSDR leaves the line shown for an unknown ID, so a
+// gate naming an LED that is gone (or not made yet) hides nothing.
+bool TextOverlayItem::refreshLedGates()
+{
+    const bool rxBefore = m_showRx;
+    const bool txBefore = m_showTx;
+    const LedResultRegistry& results = LedResultRegistry::instance();
+    if (m_rxLedLogic) {
+        m_showRx = results.get(m_rxFourChar).value_or(true);
+    }
+    // From Thetis MeterManager.cs:20552-20559 [v2.10.3.15]: upstream tests _rx_led_logic for the TX LED;
+    // NereusSDR uses the TX logic flag so the TX gate follows its own setting.
+    if (m_txLedLogic) {
+        m_showTx = results.get(m_txFourChar).value_or(true);
+    }
+    return m_showRx != rxBefore || m_showTx != txBefore;
+}
+
 // One Thetis frame per update interval (Thetis renders at the
 // container's quickest interval).
 bool TextOverlayItem::advanceMeter(qint64 monotonicMs)
 {
+    // The gates follow their LEDs in either line mode; only RxTxSwap draws
+    // by them.
+    const bool gatesChanged = refreshLedGates();
     if (m_lineMode != LineMode::RxTxSwap) {
         return false;
     }
-    bool changed = checkPanelFlip();
+    bool changed = checkPanelFlip() || gatesChanged;
     const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
     // The first call, or a clock that moved backwards, only takes the time.
     if (m_lastStepMs < 0 || monotonicMs < m_lastStepMs) {
@@ -682,7 +773,8 @@ void TextOverlayItem::applyNewItemDefaults()
 //         <base64(text1)>|<base64(text2)>|
 //         textBackColour1|textBackColour2|showTextBack1|showTextBack2|
 //         lineMode|xOffset1|yOffset1|xOffset2|yOffset2|
-//         italic1|underline1|strikeout1|italic2|underline2|strikeout2
+//         italic1|underline1|strikeout1|italic2|underline2|strikeout2|
+//         rxLedLogic|txLedLogic|rxFourChar|txFourChar
 //
 // text1/text2 are base64-encoded to avoid '|' collisions. The text back
 // fields, then the line mode, offsets and font styles, follow the older
@@ -737,7 +829,14 @@ QString TextOverlayItem::serialize() const
               .arg(m_fontStrikeout1 ? 1 : 0)
               .arg(m_fontItalic2 ? 1 : 0)
               .arg(m_fontUnderline2 ? 1 : 0)
-              .arg(m_fontStrikeout2 ? 1 : 0);
+              .arg(m_fontStrikeout2 ? 1 : 0)
+        + QStringLiteral("|%1|%2")
+              .arg(m_rxLedLogic ? 1 : 0)
+              .arg(m_txLedLogic ? 1 : 0)
+        // The IDs are joined, not substituted (user text); setRxFourChar
+        // and setTxFourChar keep them to letters and digits, so no '|'.
+        + QLatin1Char('|') + m_rxFourChar
+        + QLatin1Char('|') + m_txFourChar;
 }
 
 // ---------------------------------------------------------------------------
@@ -760,6 +859,8 @@ QString TextOverlayItem::serialize() const
 // [27] = xOffset1  [28] = yOffset1  [29] = xOffset2  [30] = yOffset2
 // [31] = italic1   [32] = underline1   [33] = strikeout1
 // [34] = italic2   [35] = underline2   [36] = strikeout2
+// [37] = rxLedLogic  [38] = txLedLogic  [39] = rxFourChar  [40] = txFourChar
+//        (absent = logic off, no ID)
 // ---------------------------------------------------------------------------
 bool TextOverlayItem::deserialize(const QString& data)
 {
@@ -873,6 +974,11 @@ bool TextOverlayItem::deserialize(const QString& data)
     m_fontItalic2    = flagAt(34);
     m_fontUnderline2 = flagAt(35);
     m_fontStrikeout2 = flagAt(36);
+    // From Thetis MeterManager.cs:27554-27558 [v2.10.3.15]
+    m_rxFourChar = parts.size() > 39 ? cleanFourChar(parts[39]) : QString();
+    m_txFourChar = parts.size() > 40 ? cleanFourChar(parts[40]) : QString();
+    setRxLedLogic(flagAt(37));
+    setTxLedLogic(flagAt(38));
 
     // Runtime state starts again.
     m_scrollXOffset1 = 0.0f;

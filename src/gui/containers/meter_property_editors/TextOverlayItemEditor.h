@@ -57,6 +57,12 @@ private:
     QPushButton*    m_btnCopyFont{nullptr};
     QPushButton*    m_btnCopyOffsets{nullptr};
 
+    // LED gates
+    QCheckBox*      m_chkRxLedLogic{nullptr};
+    QLineEdit*      m_editRxFourChar{nullptr};
+    QCheckBox*      m_chkTxLedLogic{nullptr};
+    QLineEdit*      m_editTxFourChar{nullptr};
+
     // Panel
     QCheckBox*      m_chkShowPanel{nullptr};
     QPushButton*    m_btnPanelBack1{nullptr};

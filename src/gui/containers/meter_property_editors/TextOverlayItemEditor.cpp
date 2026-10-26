@@ -100,6 +100,11 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_spinXOffset2->setValue(static_cast<double>(x->textXOffset2()));
     m_spinYOffset2->setValue(static_cast<double>(x->textYOffset2()));
 
+    m_chkRxLedLogic->setChecked(x->rxLedLogic());
+    m_editRxFourChar->setText(x->rxFourChar());
+    m_chkTxLedLogic->setChecked(x->txLedLogic());
+    m_editTxFourChar->setText(x->txFourChar());
+
     m_chkShowPanel->setChecked(x->showBackPanel());
     applyColor(m_btnPanelBack1, x->panelBackColour1());
     applyColor(m_btnPanelBack2, x->panelBackColour2());
@@ -323,6 +328,42 @@ void TextOverlayItemEditor::buildTypeSpecific()
         setItem(x);
         notifyChanged();
     });
+
+    // ---- LED gates ----
+    // The overlay's RX / TX LED gates (TextOverlayItem::setRxLedLogic and
+    // the rest), in plain words.
+    addHeader(QStringLiteral("Show by LED"));
+    const QString gateTip = QStringLiteral(
+        "When on, this line shows only while the LED with this ID is on. Copy the ID "
+        "from the LED's settings. An ID no LED has hides nothing. Used when line 1 "
+        "shows on RX and line 2 on TX.");
+    auto makeGate = [this, &gateTip](const QString& checkLabel, const QString& idLabel,
+                                     const QString& name, QCheckBox** check, QLineEdit** edit,
+                                     void (TextOverlayItem::*setLogic)(bool),
+                                     void (TextOverlayItem::*setId)(const QString&)) {
+        *check = makeFlagRow(checkLabel, setLogic);
+        (*check)->setObjectName(name + QStringLiteral("Logic"));
+        (*check)->setToolTip(gateTip);
+        *edit = new QLineEdit(this);
+        (*edit)->setObjectName(name + QStringLiteral("Id"));
+        (*edit)->setMaxLength(4);
+        (*edit)->setToolTip(gateTip);
+        addRow(idLabel, *edit);
+        QLineEdit* field = *edit;
+        connect(field, &QLineEdit::editingFinished, this, [this, field, setId]() {
+            if (isProgrammaticUpdate()) { return; }
+            TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+            if (!x) { return; }
+            (x->*setId)(field->text());
+            notifyChanged();
+        });
+    };
+    makeGate(QStringLiteral("Line 1 only while an LED is on"), QStringLiteral("LED ID for line 1"),
+             QStringLiteral("overlayRxLed"), &m_chkRxLedLogic, &m_editRxFourChar,
+             &TextOverlayItem::setRxLedLogic, &TextOverlayItem::setRxFourChar);
+    makeGate(QStringLiteral("Line 2 only while an LED is on"), QStringLiteral("LED ID for line 2"),
+             QStringLiteral("overlayTxLed"), &m_chkTxLedLogic, &m_editTxFourChar,
+             &TextOverlayItem::setTxLedLogic, &TextOverlayItem::setTxFourChar);
 
     // ---- Panel ----
     addHeader(QStringLiteral("Panel"));

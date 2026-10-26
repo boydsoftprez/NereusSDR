@@ -22,6 +22,12 @@
 //                 2 and offsets 1 to 2, the panel's MOX flip fade, auto
 //                 scroll and kTextOverlayThetisDefaults for new items.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - RX and TX LED gates (Thetis RXLedLogic / TXLedLogic,
+//                 RXFourChar / TXFourChar): an LED's 4-character ID per
+//                 state, read from LedResultRegistry; the TX gate follows
+//                 its own logic flag (Thetis tests the RX one). Appended to
+//                 the record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -189,6 +195,26 @@ public:
     void setShowTx(bool on) { m_showTx = on; }
     bool showTx() const { return m_showTx; }
 
+    // LED gates (Thetis RXLedLogic / TXLedLogic and RXFourChar /
+    // TXFourChar, MeterManager.cs:20232-20310 [v2.10.3.15]; setup keys
+    // textoverlay_rx_ledlogic, textoverlay_tx_ledlogic, textoverlay_rx_4char,
+    // textoverlay_tx_4char, :27554-27558). With a gate's logic on, its
+    // line shows only while the LED with that 4-character ID is true; an
+    // ID no LED holds hides nothing. Turning the logic off shows the line.
+    void setRxLedLogic(bool on);
+    bool rxLedLogic() const { return m_rxLedLogic; }
+    void setTxLedLogic(bool on);
+    bool txLedLogic() const { return m_txLedLogic; }
+    // Kept to the 4-character ID alphabet (A-Z, a-z, 0-9), at most four.
+    void setRxFourChar(const QString& id);
+    QString rxFourChar() const { return m_rxFourChar; }
+    void setTxFourChar(const QString& id);
+    QString txFourChar() const { return m_txFourChar; }
+    // Reads both gates' LEDs from LedResultRegistry into Show RX / Show TX
+    // (Thetis Update, MeterManager.cs:20546-20559 [v2.10.3.15]); true when
+    // either changed. advanceMeter calls it.
+    bool refreshLedGates();
+
     // RxTxSwap runtime state (not saved): the panel's MOX flip fade
     // (48..255), the panel colour drawn now with that alpha, and the
     // current line's scroll offset (item widths) and pass count.
@@ -289,6 +315,13 @@ private:
     // RxTxSwap runtime state (not saved)
     bool   m_showRx{true};
     bool   m_showTx{true};
+
+    // LED gates (saved). From Thetis MeterManager.cs:27554-27558
+    // [v2.10.3.15]: both logic flags default false, both IDs "".
+    bool    m_rxLedLogic{false};
+    bool    m_txLedLogic{false};
+    QString m_rxFourChar;
+    QString m_txFourChar;
     int    m_panelFadeValue{255};
     bool   m_moxFadeToggle{false};
     qint64 m_lastStepMs{-1};

@@ -3,6 +3,10 @@
 // =================================================================
 // tests/tst_meter_led_options.cpp  (NereusSDR)
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-26 - The appended options are read by place; the LED record
+//                 now ends with the condition, No TX fields and guid.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Container item parity Task 25: the LED building block. The placed look
 // (Thetis renderLed, MeterManager.cs:34010-34130 [v2.10.3.15]): the colour
@@ -349,7 +353,8 @@ private slots:
         led->setShowFalse(false);
         led->setProcessWhenHidden(true);
         const QString record = led->serialize();
-        QVERIFY(record.endsWith(QStringLiteral("|1|-1.5|2.25|0.125|3|0|0|1")));
+        // The options at [20]-[27]; the condition, No TX fields and guid follow.
+        QCOMPARE(record.section(QLatin1Char('|'), 20, 27), QStringLiteral("1|-1.5|2.25|0.125|3|0|0|1"));
 
         LEDItem back;
         QVERIFY(back.deserialize(record));

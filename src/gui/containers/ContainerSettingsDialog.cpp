@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Paste settings onto an LED keeps the target's own guid,
+//                 so its 4-character ID (named by text overlay gates) does
+//                 not change. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Copy settings and Paste settings work in the workspace
 //                 draft: shown there, disabled with a plain reason when they
 //                 cannot apply; a paste keeps the object's place. J.J. Boyd
@@ -2126,7 +2130,15 @@ bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized,
 {
     const QString toTypeId = pasteTypeId(target);
     if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
-    if (fromTypeId == toTypeId) { return target.deserialize(copiedSerialized); }
+    if (fromTypeId == toTypeId) {
+        // An LED keeps its own guid, so its 4-character ID stays (Thetis
+        // pastes settings into the target's item group, keeping its ID).
+        auto* led = qobject_cast<LEDItem*>(&target);
+        const QUuid ownGuid = led ? led->guid() : QUuid();
+        const bool pasted = target.deserialize(copiedSerialized);
+        if (pasted && led) { led->setGuid(ownGuid); }
+        return pasted;
+    }
 
     auto* bar = qobject_cast<BarPresetItem*>(&target);
     if (!bar) { return false; }
