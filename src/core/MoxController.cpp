@@ -220,6 +220,9 @@
 //   2026-10-14: onMicPttFromRadio asks the other-device hook only on a
 //               press edge. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-26: txToRxRemainingMaxMs, the walk's remaining phase bounds
+//               for a CAT TX held during it. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -515,6 +518,64 @@ bool MoxController::beginSendRingWait()
     m_sendRingCeilingTimer.start(m_sendRingCeilingMs);
     m_sendRingPollTimer.start();
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// txToRxRemainingMaxMs (2026-10-26). NereusSDR-original: the sum of the
+// walk's remaining phase bounds, read from the timers that enforce them.
+// ---------------------------------------------------------------------------
+namespace {
+// Qt::TimerType: "Coarse timers try to keep accuracy within 5% of the
+// desired interval" (Qt 6 documentation). A phase on a coarse timer can
+// end that much after its interval.
+constexpr int kCoarseTimerLatePercent = 5;
+
+int phaseBoundMs(const QTimer& timer)
+{
+    const int interval = std::max(0, timer.interval());
+    if (timer.timerType() != Qt::CoarseTimer) {
+        return interval;
+    }
+    return interval + (interval * kCoarseTimerLatePercent + 99) / 100;
+}
+} // namespace
+
+int MoxController::txToRxRemainingMaxMs() const
+{
+    if (m_state == MoxState::TxToRxFlush) {
+        return phaseBoundMs(m_pttOutDelayTimer);
+    }
+    if (m_state != MoxState::TxToRxInFlight) {
+        return 0;
+    }
+    // mox_delay/key_up_delay, then ptt_out_delay, end every walk.
+    int ms = phaseBoundMs(m_keyUpDelayTimer) + phaseBoundMs(m_pttOutDelayTimer);
+    if (m_keyUpDelayTimer.isActive()) {
+        return ms;
+    }
+    if (m_waitingForSendRing) {
+        return ms + phaseBoundMs(m_sendRingCeilingTimer);
+    }
+    // A send ring wait may still come: its bound is the ring's length,
+    // the ceiling beginSendRingWait would use.
+    if (m_sendRing.lengthMs) {
+        const double lengthMs = m_sendRing.lengthMs();
+        if (lengthMs > 0.0) {
+            ms += static_cast<int>(std::ceil(lengthMs));
+        }
+    }
+    if (m_waitingForTxDrain) {
+        return ms + phaseBoundMs(m_txDrainTimeoutTimer);
+    }
+    // An end-of-over tail runs before the drain, or nothing has started
+    // a timer yet: count every phase still ahead.
+    if (m_awaitTxDrain) {
+        ms += phaseBoundMs(m_txDrainTimeoutTimer);
+    }
+    if (m_waitingForEndOfOverTail) {
+        ms += phaseBoundMs(m_endOfOverTailTimer);
+    }
+    return ms;
 }
 
 void MoxController::onSendRingPoll()

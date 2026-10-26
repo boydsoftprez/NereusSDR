@@ -191,11 +191,13 @@ mw0lge@grange-lane.co.uk
 //              runs again at Rx, answered with nothing as Thetis answers a
 //              TX set (JJ's ruling). J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+// 2026-10-26 - The held TX's replay keeps its session alive for the call.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatTxCommands.h"
-#include "core/LogCategories.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
 #include "core/AppSettings.h"
+#include "core/LogCategories.h"
 #include "core/MoxController.h"
 #include "core/TwoToneController.h"
 #include "core/PureSignal.h"
@@ -336,7 +338,8 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
         // a fresh one would. Its reply now is a TX set's: nothing.
         const quint64 sessionId=context.sessionId;
         const auto replayAtRx=[this,service,sessionId,request]() {
-            CatSession* session=service ? service->session(sessionId) : nullptr;
+            // Shared for the call, as processFrame holds its session.
+            const std::shared_ptr<CatSession> session=service ? service->sessionHandle(sessionId) : nullptr;
             if (session && execute(request,session->context()).kind == CatResultKind::Error) {
                 qCInfo(lcCat) << "held CAT TX refused at receive";
             }

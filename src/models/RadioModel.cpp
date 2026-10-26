@@ -1381,6 +1381,11 @@
 //                so both come back as they were left on a restart. The AUTO
 //                tick still schedules no save. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26 - stopTransmitNow emits transmitStopBegan once the gate is
+//                closed and MOX off is queued, so a CAT TX held during
+//                the walk back to receive is dropped at the stop. J.J.
+//                Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -30052,6 +30057,11 @@ void RadioModel::stopTransmitNow(const QString& reason)
     }
 
     qCInfo(lcConnection).noquote() << "Transmit stopped at once:" << reason;
+
+    // A request held for the end of the walk back to receive (a CAT TX)
+    // never keys after a stop: its holder drops it here, before stopAllTx
+    // drops MOX. Last, so nothing it does delays the stop above.
+    emit transmitStopBegan();
 }
 
 // ---------------------------------------------------------------------------

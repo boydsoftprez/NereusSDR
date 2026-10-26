@@ -268,6 +268,10 @@
 //               lastAdmitTook() and tunerTakeFinished(). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-26: txToRxRemainingMaxMs, the longest the TX to RX walk can
+//               still run on its own phase bounds, for a CAT TX held
+//               during it. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -668,6 +672,19 @@ public:
     // The bound of the wait running now (or of the last one): the ring's
     // length rounded up to a whole millisecond.
     int sendRingWaitCeilingMs() const noexcept { return m_sendRingCeilingMs; }
+
+    // txToRxRemainingMaxMs: the longest the TX to RX walk running now can
+    // still take before it reaches Rx, as the sum of its remaining phases'
+    // own bounds: the end-of-over tail (when one runs), the TX channel's
+    // drain wait (when awaited), the send ring's wait (the ceiling of a
+    // wait running now, or the ring's length for one still to come),
+    // mox_delay/key_up_delay and ptt_out_delay. The phase running now
+    // counts in full. Each bound is its timer's interval, so the test
+    // seams above change it too. A phase on a Qt::CoarseTimer adds the 5%
+    // Qt allows such a timer to fire late (Qt::TimerType: "Coarse timers
+    // try to keep accuracy within 5% of the desired interval"). 0 outside
+    // TxToRxInFlight and TxToRxFlush.
+    int txToRxRemainingMaxMs() const;
 
     // ── Task 33: StopAllTx's _stop_all_tx latch ──────────────────────────────
     //

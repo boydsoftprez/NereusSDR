@@ -743,6 +743,10 @@
 //                option c, a gap within four windows of the last one let
 //                through. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Claude Code.
+//   2026-10-26 - transmitStopHeld() and transmitStopBegan(), so a CAT TX
+//                held during the walk back to receive is dropped by any
+//                stop and never keys after one. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5738,6 +5742,10 @@ public slots:
     // unkey then finishes on the lanes. It never waits for a RADE
     // end-of-over tail. `reason` goes to the log only.
     void stopTransmitNow(const QString& reason);
+    // stopTransmitNow's hold: true from a stop until the next key begins
+    // (MoxController::txAboutToBegin), so through a stop's whole walk back
+    // to receive.
+    bool transmitStopHeld() const noexcept { return m_transmitStopHold; }
 
     // stopAllTx: ported from Thetis console.cs StopAllTx
     // (console.cs:45324-45342 [v2.10.3.15]). When MOX, manual MOX, TUNE or
@@ -6337,6 +6345,11 @@ signals:
     // the operator (MainWindow shows it for 10 s, as Thetis's
     // infoBar.Warning(msg, false, 10000)).
     void transmitStopped(QString message);
+    // stopTransmitNow ran (Stop All TX, the time-out, the unkey gate's
+    // emergency stop): emitted at the stop, before stopAllTx drops MOX,
+    // TUNE and two-tone and long before transmitStopped. A CAT TX held for
+    // the end of the walk back to receive is dropped here.
+    void transmitStopBegan();
     // iPhone app plan Task 38: the Core stopped a transmission for a
     // reason of its own (lastTransmitStopReason()); emitted after
     // transmitStopped.
