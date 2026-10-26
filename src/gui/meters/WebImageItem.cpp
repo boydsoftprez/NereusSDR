@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - User text in the record (URL) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -210,11 +213,13 @@ void WebImageItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 QString WebImageItem::serialize() const
 {
-    return QStringLiteral("WEBIMAGE|%1|%2|%3|%4")
+    // The URL is joined, not substituted through .arg(), so a "%1" or
+    // "%20" in it can never be read as a placeholder.
+    return QStringLiteral("WEBIMAGE|%1|%2|%3")
         .arg(webImageBaseFields(*this))
         .arg(m_refreshInterval)
         .arg(m_fallbackColor.name(QColor::HexArgb))
-        .arg(m_url);
+        + QLatin1Char('|') + m_url;
 }
 
 // ---------------------------------------------------------------------------
