@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - Per-item update interval (acceptsUpdate); new items take
+//                 kDefaultUpdateIntervalMs. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
 //                 hook (no-op in the base), SolidColourItem override. Saved
 //                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
@@ -289,7 +292,29 @@ QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 // Format: x|y|w|h|bindingId|zOrder
 // ---------------------------------------------------------------------------
 
-void MeterItem::applyNewItemDefaults() {}
+void MeterItem::applyNewItemDefaults()
+{
+    // kDefaultUpdateIntervalMs: Thetis's nudMeterItemUpdateRate default.
+    setUpdateIntervalMs(kDefaultUpdateIntervalMs);
+}
+
+void MeterItem::setUpdateIntervalMs(int ms)
+{
+    m_updateIntervalMs = ms > 0 ? ms : 0;
+    m_lastAcceptedUpdateMs = -1;
+}
+
+bool MeterItem::acceptsUpdate(qint64 monotonicMs)
+{
+    if (m_updateIntervalMs <= 0) { return true; }
+    // A clock that moved backwards (a new time base) starts a new interval.
+    if (m_lastAcceptedUpdateMs >= 0 && monotonicMs >= m_lastAcceptedUpdateMs
+        && monotonicMs - m_lastAcceptedUpdateMs < m_updateIntervalMs) {
+        return false;
+    }
+    m_lastAcceptedUpdateMs = monotonicMs;
+    return true;
+}
 
 void MeterItem::resetForTxTransition(bool inTx)
 {

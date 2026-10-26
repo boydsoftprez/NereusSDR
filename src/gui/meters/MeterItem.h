@@ -7,9 +7,17 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs (update interval range
+//     and default): upstream source has no top-of-file GPL header, the
+//     setup.cs header below covers its partial class
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - Per-item update interval: setUpdateIntervalMs(),
+//                 updateIntervalMs() (0 = every poll), acceptsUpdate();
+//                 new items take Thetis's 100 ms. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
 //                 hook (no-op in the base), SolidColourItem override. Saved
 //                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
@@ -132,6 +140,52 @@ mw0lge@grange-lane.co.uk
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+// --- From setup.cs ---
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include <QObject>
 #include <QSet>
 #include <QHash>
@@ -192,6 +246,15 @@ inline bool isNoReadingBinding(int bindingId)
         || isSourceClampedPeakBinding(bindingId);
 }
 
+// Update interval (ms). Thetis sets one per item group
+// (igs.UpdateInterval = (int)nudMeterItemUpdateRate.Value, Thetis
+// setup.cs:25526 [v2.10.3.15]); NereusSDR keeps one per item.
+// From Thetis setup.designer.cs:55695-55699 [v2.10.3.15] (nudMeterItemUpdateRate.Value)
+constexpr int kDefaultUpdateIntervalMs = 100;
+// From Thetis setup.designer.cs:55685-55689 [v2.10.3.15] (nudMeterItemUpdateRate.Minimum)
+constexpr int kMinUpdateIntervalMs = 15;
+// From Thetis setup.designer.cs:55680-55684 [v2.10.3.15] (nudMeterItemUpdateRate.Maximum)
+constexpr int kMaxUpdateIntervalMs = 5000;
 
 class MeterItem : public QObject {
     Q_OBJECT
@@ -280,6 +343,15 @@ public:
     void setOnlyWhenTx(bool v) { m_onlyWhenTx = v; }
     int  displayGroup() const { return m_displayGroup; }
     void setDisplayGroup(int g) { m_displayGroup = g; }
+
+    // Per-item update interval in ms; 0 (the value of a saved item without
+    // one) takes every poll. MeterWidget::updateMeterValue asks
+    // acceptsUpdate() before delivering a reading: true when the interval
+    // has passed since the last accepted reading, which it then records.
+    // Negative values are stored as 0.
+    void setUpdateIntervalMs(int ms);
+    int updateIntervalMs() const { return m_updateIntervalMs; }
+    bool acceptsUpdate(qint64 monotonicMs);
 
     // Phase 3G-6 block 5 — MMIO binding. Null guid + empty (or
     // "--DEFAULT--") variable name means "no MMIO binding, fall back
@@ -417,6 +489,10 @@ protected:
     bool m_onlyWhenRx{false};
     bool m_onlyWhenTx{false};
     int  m_displayGroup{0};
+
+    // Update interval (see public accessors above); runtime only below.
+    int    m_updateIntervalMs{0};
+    qint64 m_lastAcceptedUpdateMs{-1};
 
     // MMIO identity is captured by ContainerContentRegistry (Task2);
     // the old pipe primitive record still has no MMIO fields.

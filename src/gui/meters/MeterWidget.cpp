@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - Per-item update interval: updateMeterValue skips an item
+//                 whose interval has not passed (MeterItem::acceptsUpdate).
+//                 Bar presets, composites and waveform faces keep their own
+//                 cadence and are not throttled here. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - setItemTxState gives fade covers, VFO displays and button
 //                 grids the transmit state, on change and when added.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -137,6 +142,9 @@ mw0lge@grange-lane.co.uk
 #include "ClockItem.h"
 #include "ClickBoxItem.h"
 #include "DataOutItem.h"
+#include "WaveformMeterItem.h"
+#include "presets/BarPresetItem.h"
+#include "presets/CompositePresetItem.h"
 
 #include <QHelpEvent>
 #include <QPainter>
@@ -145,6 +153,7 @@ mw0lge@grange-lane.co.uk
 #include <QResizeEvent>
 #include <QMouseEvent>
 #include <QStringList>
+#include <chrono>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QFile>
@@ -291,8 +300,17 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     m_lastBindingValue[bindingId] = value;
     // Delivery precedes repaint shortcuts: repeated primitive samples keep
     // smoothing, and composites retain input for the shared frame clock.
+    std::optional<qint64> now;
     for (MeterItem* item : m_items) {
         if (item->property("containerUnsupportedSource").toBool() || item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
+        // Per-item update interval. Bar presets, composites and waveform
+        // faces keep their own configured cadence.
+        const bool ownCadence = qobject_cast<BarPresetItem*>(item) || qobject_cast<CompositePresetItem*>(item)
+            || qobject_cast<WaveformMeterItem*>(item);
+        if (!ownCadence && item->updateIntervalMs() > 0) {
+            if (!now) { now = monotonicNowMs(); }
+            if (!item->acceptsUpdate(*now)) { continue; }
+        }
         const BarItem* bar = qobject_cast<BarItem*>(item);
         const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
         const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
@@ -305,6 +323,13 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
             || (bar && bar->showHistory()) || (needle && needle->historyEnabled());
         if (changed) { invalidateItemLayers(item); }
     }
+}
+
+qint64 MeterWidget::monotonicNowMs() const
+{
+    if (m_monotonicClock) { return m_monotonicClock(); }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& unavailableReason,

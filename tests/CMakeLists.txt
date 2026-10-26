@@ -774,6 +774,8 @@ nereus_add_test(tst_container_document)
 nereus_add_test(tst_container_item_persistence)
 # New container items take Thetis defaults; saved items keep their look.
 nereus_add_test(tst_meter_new_item_defaults)
+# Per-item update interval: throttle, saved entries, new-item default, editor.
+nereus_add_test(tst_meter_item_update_interval)
 # Transmit state reaches fade covers, VFO displays and button grids through ContainerManager (offscreen).
 nereus_add_test(tst_container_item_tx_state)
 nereus_add_test(tst_container_workspace_store)
