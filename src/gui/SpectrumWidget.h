@@ -180,6 +180,11 @@
 //                 spot menu's Turn beam (setSpotBeamTurner,
 //                 buildSpotContextMenu) and spotTuned for auto-turn.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 : setBackgroundImageOverride, a picture a web image item
+//                 supplies for this pan's spectrum background (container
+//                 item parity Task 42). With none set the spectrum looks
+//                 as it did. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 : Opt-in numeric diagnostics for actual waterfall rows and
 //                 applied Core extras. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. No display behavior changes.
@@ -1149,6 +1154,15 @@ public:
     void    setBackgroundOpacity(int pct);
     QColor  backgroundFillColor() const { return m_bgFillColor; }
     void    setBackgroundFillColor(const QColor& c);
+    // Container item parity Task 42: a picture a web image item supplies
+    // for this pan (Thetis sets the display's background image from a web
+    // image, MeterManager.cs:15620-15640). While set it takes the place of
+    // the chosen picture and is drawn even with the background off, then
+    // at full strength over the fill colour; with the background on, the
+    // pan's opacity applies. Never saved. A null image clears it, and the
+    // pan's own background is back exactly as before.
+    void    setBackgroundImageOverride(const QImage& image);
+    bool    hasBackgroundImageOverride() const { return !m_bgOverride.isNull(); }
 
     // ---- Waterfall renderer controls (Phase 3G-8 commit 4) ----
 
@@ -3806,6 +3820,8 @@ private:
     QColor  m_bgFillColor{QColor(0x0a, 0x0a, 0x14)};
     // NereusSDR: the background is drawn only while this is on (S6).
     bool    m_bgEnabled{false};
+    // Task 42: a web image's picture for this pan; null when none.
+    QImage  m_bgOverride;
     // Whether this frame gets the background: on, and the 2D spectrum.
     bool drawsSpectrumBackground() const;
     // The fill colour, then the picture over it. Shared by paintEvent() and

@@ -16,6 +16,10 @@
 //                 a slice band change clears container item history
 //                 (ContainerManager::clearItemHistory). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A live web image item's picture goes to the spectrum
+//                 background of the pan it names, and a pan made later
+//                 gets the picture it should show. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - refreshContainerMeter gives each data out item the slice
 //                 letter its entry's Source resolves to and the session id
 //                 (radio). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1252,6 +1256,7 @@ warren@wpratt.com
 #include "meters/BandButtonItem.h"
 #include "meters/RotatorItem.h"
 #include "meters/DataOutItem.h"
+#include "meters/WebImageItem.h"
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -8644,6 +8649,34 @@ void MainWindow::buildUI()
             refreshImdMeasurementForwarding();
         }
     });
+
+    // Container item parity Task 42: a live web image item supplies a pan's
+    // spectrum background (WebImageBackgrounds, pan N is "pan-N"). A pan
+    // made after the picture was set gets it when it appears; previews
+    // never write to WebImageBackgrounds.
+    connect(&WebImageBackgrounds::instance(), &WebImageBackgrounds::panImageChanged, this,
+            [this](int pan, const QImage& image) {
+        if (!m_panStack) { return; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(QStringLiteral("pan-%1").arg(pan))) {
+            sw->setBackgroundImageOverride(image);
+        }
+    });
+    const auto applyWebImageBackgrounds = [this]() {
+        if (!m_panStack) { return; }
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (!applet || !applet->spectrumWidget()) { continue; }
+            const QString panId = applet->panId();
+            bool ok = false;
+            const int pan = panId.startsWith(QStringLiteral("pan-")) ? panId.mid(4).toInt(&ok) : -1;
+            if (ok) {
+                applet->spectrumWidget()->setBackgroundImageOverride(
+                    WebImageBackgrounds::instance().image(pan));
+            }
+        }
+    };
+    connect(m_panStack, &PanadapterStack::countChanged, this,
+            [applyWebImageBackgrounds](int) { applyWebImageBackgrounds(); });
+    applyWebImageBackgrounds();
 
     // A stream's physical ADC can move without its stream index or its folded
     // chain index moving with it, so nothing that watches slice properties
