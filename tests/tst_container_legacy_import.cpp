@@ -4,6 +4,11 @@
 //                 clipboard paste and container file import paths; other bar
 //                 flavors still load live. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - A stored workspace's ADC maximum bar (BarPreset, flavor
+//                 AdcMax) loads unavailable with its reason and round-trips
+//                 unchanged; Container Settings shows its add entries
+//                 disabled with the reason and builds no bar. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QFile>
@@ -21,7 +26,13 @@
 #include "gui/meters/ItemGroup.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerSettingsDialog.h"
+#include "gui/containers/ContainerContentHost.h"
 #include <QPushButton>
+#include <QListWidget>
+#include <QMenu>
+#include <QAction>
+#include <QLabel>
+#include <QTimer>
 using namespace NereusSDR;
 class TstContainerLegacyImport : public QObject {
     Q_OBJECT
@@ -299,6 +310,116 @@ private slots:
         std::unique_ptr<MeterItem> face(registry.createMeterItem(entry,nullptr)); QVERIFY(face);
         MeterWidget widget; QVERIFY(widget.deserializeItems(raw)); QCOMPARE(widget.items().size(),1);
         QCOMPARE(widget.serializeItems(),raw);
+    }
+    // A workspace saved before the importer fix holds the ADC maximum bar as
+    // the importer then captured it: typeId BarPreset, flavor AdcMax.
+    static ContentEntry storedBarPreset(const QString& typeId) {
+        ContentEntry entry = ContainerContentRegistry().makeEntry(typeId);
+        entry.id = QStringLiteral("stored-bar"); entry.typeId = QStringLiteral("BarPreset");
+        entry.name = QStringLiteral("Stored bar");
+        return entry;
+    }
+    static WorkspaceDocument storedWorkspace(const ContentEntry& entry, ContentLayout layout) {
+        ContainerDocument container; container.id = QStringLiteral("main"); container.name = QStringLiteral("Main");
+        container.layout = layout; container.contents = {entry};
+        WorkspaceDocument document; document.mainContainerId = container.id; document.containers = {container};
+        return document;
+    }
+    void storedWorkspaceAdcMaxStaysUnavailable_data() {
+        QTest::addColumn<int>("layout");
+        QTest::newRow("stack") << int(ContentLayout::VerticalStack);
+        QTest::newRow("canvas") << int(ContentLayout::FreeCanvas);
+        QTest::newRow("legacy-canvas") << int(ContentLayout::LegacyCanvas);
+    }
+    void storedWorkspaceAdcMaxStaysUnavailable() {
+        QFETCH(int,layout);
+        const ContentEntry stored = storedBarPreset(QStringLiteral("meter.adcMax"));
+        QCOMPARE(stored.config.value("properties").toObject().value("flavor").toString(),QString("AdcMax"));
+        QTemporaryDir dir; const QString path = dir.filePath("settings.xml");
+        QByteArray savedBytes;
+        {
+            AppSettings settings(path); ContainerWorkspaceStore store(settings);
+            QCOMPARE(store.commit(storedWorkspace(stored,ContentLayout(layout)),0).status,CommitStatus::Saved);
+            savedBytes = ContainerDocumentCodec::exportContainer(store.snapshot().containers.first());
+        }
+        AppSettings settings(path); settings.load();
+        ContainerWorkspaceStore store(settings); QVERIFY(store.load().ok);
+        const ContainerDocument loaded = store.snapshot().containers.first();
+        QCOMPARE(loaded.contents.size(),1); QCOMPARE(loaded.contents.first(),stored);
+        ContainerContentRegistry registry;
+        QVERIFY(!registry.createMeterItem(loaded.contents.first(),nullptr));
+        QVERIFY(!registry.createMeterItem(loaded.contents.first(),nullptr,ContentRenderMode::Validation));
+        QVERIFY(registry.validateEntry(loaded.contents.first()).isEmpty());
+        // The live view builds no bar and shows the type's reason.
+        ContainerContentHost host(registry); host.reconcile(loaded);
+        QCOMPARE(host.meterSurfaces().size(),0);
+        QCOMPARE(host.entryRows().size(),1); QVERIFY(!host.entryRows().first().item);
+        auto* label = qobject_cast<QLabel*>(host.entryRows().first().widget.data()); QVERIFY(label);
+        QVERIFY2(label->text().contains(adcMaxReason()),qPrintable(label->text()));
+        // Saved again and reloaded, the record is unchanged byte for byte.
+        QCOMPARE(host.captureDocument().contents.first(),stored);
+        QCOMPARE(store.commit(store.snapshot(),store.snapshot().revision).status,CommitStatus::Saved);
+        AppSettings again(path); again.load(); ContainerWorkspaceStore reloaded(again); QVERIFY(reloaded.load().ok);
+        QCOMPARE(reloaded.snapshot().containers.first().contents.first(),stored);
+        QCOMPARE(ContainerDocumentCodec::exportContainer(reloaded.snapshot().containers.first()),savedBytes);
+    }
+    void storedWorkspaceOtherBarFlavorStillBuildsLive() {
+        const ContentEntry stored = storedBarPreset(QStringLiteral("meter.adc"));
+        QCOMPARE(stored.config.value("properties").toObject().value("flavor").toString(),QString("Adc"));
+        QTemporaryDir dir; AppSettings settings(dir.filePath("settings.xml")); ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(storedWorkspace(stored,ContentLayout::VerticalStack),0).status,CommitStatus::Saved);
+        ContainerContentRegistry registry; ContainerContentHost host(registry);
+        host.reconcile(store.snapshot().containers.first());
+        QCOMPARE(host.meterSurfaces().size(),1);
+        QCOMPARE(host.entryRows().size(),1); QVERIFY(host.entryRows().first().item);
+        QCOMPARE(host.captureDocument().contents.first().config.value("legacyRecord"),stored.config.value("legacyRecord"));
+    }
+    // Container Settings: Max ADC Magnitude is shown, disabled, with the
+    // registry's reason, in the Available list and in the Presets menu, and
+    // neither add path builds a bar.
+    void settingsDialogAdcMaxEntriesDisabledWithReason() {
+        ContainerWidget container;
+        auto* live = new MeterWidget(); container.setContent(live);
+        ContainerSettingsDialog dialog(&container);
+        auto* available = dialog.findChild<QListWidget*>("containerAvailableContents"); QVERIFY(available);
+        QListWidgetItem* adcMax = nullptr; QListWidgetItem* adc = nullptr;
+        for (int i = 0; i < available->count(); ++i) {
+            const QString tag = available->item(i)->data(Qt::UserRole).toString();
+            if (tag == "PRESET_AdcMaxMag") { adcMax = available->item(i); }
+            if (tag == "PRESET_AdcBar") { adc = available->item(i); }
+        }
+        QVERIFY(adcMax); QVERIFY(adc);
+        QVERIFY(!(adcMax->flags() & Qt::ItemIsEnabled));
+        QCOMPARE(adcMax->toolTip(),adcMaxReason());
+        QVERIFY(adc->flags() & Qt::ItemIsEnabled);
+        QPushButton* add = nullptr; QPushButton* apply = nullptr; QPushButton* presets = nullptr;
+        for (auto* button : dialog.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("Add \u2192")) { add = button; }
+            if (button->text() == "Apply") { apply = button; }
+            if (button->text() == QStringLiteral("Presets\u2026")) { presets = button; }
+        }
+        QVERIFY(add); QVERIFY(apply); QVERIFY(presets);
+        // Available list: selecting and adding the entry builds nothing.
+        available->setCurrentItem(adcMax); add->click();
+        // Presets menu: the entry is disabled with the reason; triggering it builds nothing.
+        bool menuFound = false; bool menuEnabled = true; QString menuToolTip;
+        QTimer::singleShot(0,&dialog,[&] {
+            for (auto* menu : dialog.findChildren<QMenu*>()) {
+                for (auto* action : menu->actions()) {
+                    if (action->text() != "ADC MaxMag") { continue; }
+                    menuFound = true; menuEnabled = action->isEnabled(); menuToolTip = action->toolTip();
+                    action->trigger();
+                }
+            }
+            for (auto* menu : dialog.findChildren<QMenu*>()) { if (menu->parentWidget() == &dialog) { menu->close(); } }
+        });
+        presets->click();
+        QVERIFY(menuFound); QVERIFY(!menuEnabled); QCOMPARE(menuToolTip,adcMaxReason());
+        apply->click();
+        QCOMPARE(live->items().size(),0);
+        // Guard: the ADC bar beside it still adds.
+        available->setCurrentItem(adc); QCOMPARE(available->currentItem(),adc); add->click(); apply->click();
+        QVERIFY(!live->items().isEmpty());
     }
     void rejectsFutureAndMalformedStructuredPayload() {
         QVERIFY(!LegacyContainerImporter::fromContainerFile("{\"schemaVersion\":999}").ok);

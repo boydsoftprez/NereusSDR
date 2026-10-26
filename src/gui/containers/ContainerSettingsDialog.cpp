@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Max ADC Magnitude follows the content registry: its
+//                 Available list entry and its Presets menu entry are shown
+//                 disabled with the registry's reason, and adding it builds
+//                 no bar. The object list judges availability on the entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
 //                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
@@ -283,6 +288,18 @@ namespace NereusSDR {
 // Style helpers (scoped to this translation unit)
 // ---------------------------------------------------------------------------
 namespace {
+
+// A bar-row preset whose bar type the content registry marks unavailable
+// (Max ADC Magnitude, meter.adcMax) is shown disabled with this reason, and
+// adding it builds nothing. Empty when the preset is available.
+QString presetUnavailableReason(const QString& presetName, const ContainerContentRegistry* registry)
+{
+    if (presetName != QLatin1String("AdcMaxMag")) { return {}; }
+    const QString type = QStringLiteral("meter.adcMax");
+    const ContainerContentRegistry fallback;
+    const ContainerContentRegistry& judge = registry ? *registry : fallback;
+    return judge.isAvailable(type) ? QString() : judge.unavailableReason(type);
+}
 
 constexpr const char* kBtnStyle =
     "QPushButton {"
@@ -777,11 +794,21 @@ void ContainerSettingsDialog::populateAvailableList()
         h->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
         h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
     };
-    auto addEntry = [this](const Entry& e) {
+    const ContainerContentRegistry* registry = m_manager ? m_manager->contentRegistry() : nullptr;
+    auto addEntry = [this, registry](const Entry& e) {
         auto* item = new QListWidgetItem(
             QStringLiteral("  ") + QString::fromLatin1(e.label),
             m_availableList);
         item->setData(Qt::UserRole, QString::fromLatin1(e.tag));
+        // Disabled, never hidden: an unavailable preset keeps its place
+        // with the registry's reason.
+        const QString tag = QString::fromLatin1(e.tag);
+        const QString reason = tag.startsWith(QLatin1String("PRESET_"))
+            ? presetUnavailableReason(tag.mid(7), registry) : QString();
+        if (!reason.isEmpty()) {
+            item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+            item->setToolTip(reason);
+        }
     };
 
     // High-level Thetis-style meter compositions first — these are
@@ -835,6 +862,9 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // to ~10 rows before the stack clamps at y=0.9. Mirrors Thetis's
     // Setup → Appearance → Meters/Gadgets right-arrow "Add to
     // Container" flow.
+    // An unavailable preset (Max ADC Magnitude) builds nothing.
+    if (!presetUnavailableReason(presetName, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
+
     ItemGroup* group = nullptr;
 
     // Accepts both the short loadPresetByName names (Adc, Agc, Pbsnr,
@@ -1783,7 +1813,7 @@ void ContainerSettingsDialog::refreshItemList()
                 QString title=entry.name.isEmpty()?m_manager->contentRegistry()->makeEntry(entry.typeId).name:entry.name;
                 if(title.startsWith('{')) { title=m_manager->contentRegistry()->makeEntry(entry.typeId).name; }
                 QString reason=entry.extensions.value("unavailableReason").toString();
-                if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry.typeId)) {reason=m_manager->contentRegistry()->unavailableReason(entry.typeId);}
+                if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry)) {reason=m_manager->contentRegistry()->unavailableReason(entry);}
                 auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" — unavailable")),m_itemList);
                 row->setData(Qt::UserRole,entry.id); row->setToolTip(reason);
             }
@@ -2349,7 +2379,13 @@ void ContainerSettingsDialog::onLoadPreset()
     QMenu* rxMenu = menu.addMenu(QStringLiteral("RX Meters"));
     rxMenu->setStyleSheet(QLatin1String(kMenuStyle));
     rxMenu->addAction(QStringLiteral("ADC"),         this, [this]{ loadPresetByName(QStringLiteral("Adc")); });
-    rxMenu->addAction(QStringLiteral("ADC MaxMag"),  this, [this]{ loadPresetByName(QStringLiteral("AdcMaxMag")); });
+    QAction* adcMaxMag = rxMenu->addAction(QStringLiteral("ADC MaxMag"),  this, [this]{ loadPresetByName(QStringLiteral("AdcMaxMag")); });
+    // Disabled, never hidden: the registry's reason is the tooltip.
+    if (const QString reason = presetUnavailableReason(QStringLiteral("AdcMaxMag"), m_manager ? m_manager->contentRegistry() : nullptr); !reason.isEmpty()) {
+        adcMaxMag->setEnabled(false);
+        adcMaxMag->setToolTip(reason);
+        rxMenu->setToolTipsVisible(true);
+    }
     rxMenu->addAction(QStringLiteral("AGC"),         this, [this]{ loadPresetByName(QStringLiteral("Agc")); });
     rxMenu->addAction(QStringLiteral("AGC Gain"),    this, [this]{ loadPresetByName(QStringLiteral("AgcGain")); });
     rxMenu->addAction(QStringLiteral("PBSNR"),       this, [this]{ loadPresetByName(QStringLiteral("Pbsnr")); });
@@ -2376,6 +2412,8 @@ void ContainerSettingsDialog::onLoadPreset()
 
 void ContainerSettingsDialog::loadPresetByName(const QString& name)
 {
+    // An unavailable preset (Max ADC Magnitude) builds nothing.
+    if (!presetUnavailableReason(name, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
     // Phase E — bar-row presets append to the current stack instead
     // of replacing. This matches Thetis's Appearance → Meters/Gadgets
     // flow where each meter type the user picks adds a new row below

@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-26 - Availability of a meter entry is judged on the entry (a
+//                 stored BarPreset ADC maximum bar shows unavailable with its
+//                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-09 - Workspace preview only: the preview paints the content
 //                 background the container paints in the window, through
 //                 ContainerWidget::contentBackground() and userBackground().
@@ -103,7 +107,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     for (const auto& entry : document.contents) {
         if (!entry.visible) { continue; }
         const auto context=ContainerContentHost::effectiveContext(document,entry);
-        if (document.layout==ContentLayout::LegacyCanvas && !entry.typeId.startsWith("applet:") && m_registry->isAvailable(entry.typeId)) {
+        if (document.layout==ContentLayout::LegacyCanvas && !entry.typeId.startsWith("applet:") && m_registry->isAvailable(entry)) {
             std::unique_ptr<MeterItem> item(m_registry->createMeterItem(entry,nullptr,ContentRenderMode::Preview));
             if(item) {
                 if (!canvas) { canvas=new MeterWidget(); canvas->setAttribute(Qt::WA_TransparentForMouseEvents); canvas->setParent(this); canvas->setMinimumHeight(220); m_layout->addWidget(canvas); m_surfaces.append({canvas,context}); }
@@ -181,7 +185,7 @@ ContainerDocument ContainerPreviewWidget::seededFromStack() const
     m_layout->activate();
     QRectF extent;
     for(auto& entry:result.contents) {
-        if(!entry.visible || !m_registry->isAvailable(entry.typeId)) {continue;}
+        if(!entry.visible || !m_registry->isAvailable(entry)) {continue;}
         if(!entry.typeId.startsWith("applet:") && !qobject_cast<MeterWidget*>(m_views.value(entry.id).data())) {continue;}
         const QRect boundary=entryBoundary(entry.id);if(boundary.isEmpty()) {continue;}
         entry.setFreeCanvasRect(boundary);extent=extent.united(boundary);
@@ -194,7 +198,7 @@ ContainerDocument ContainerPreviewWidget::convertedLegacyPositions() const
     ContainerDocument result=m_document;if(result.locked) {return result;}
     const QSizeF extent(qMax(320,width()),qMax(220,height()));
     for(auto& entry:result.contents) {
-        if(!entry.visible || !m_registry || !m_registry->isAvailable(entry.typeId)) {continue;}
+        if(!entry.visible || !m_registry || !m_registry->isAvailable(entry)) {continue;}
         const QRectF saved=entry.canvasRect;
         if(saved.isNull()) {continue;}
         entry.setFreeCanvasRect(QRectF(saved.x()*extent.width(),saved.y()*extent.height(),saved.width()*extent.width(),saved.height()*extent.height()));

@@ -55,6 +55,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - typeIdForFlavor: the one flavor-to-type conversion, shared
+//                 by typeId(), the content registry and the legacy importer.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "BarPresetItem.h"
 #include "PresetGeometry.h"
@@ -124,7 +127,12 @@ bool BarPresetItem::configureVariant(const QString& flavor) {
     if(flavor=="PbSnr") { m_lowFill=QColor(0,139,139); setBindingId(MeterBinding::PbSnr); m_minimum=0; m_middle=50; m_middlePosition=.8333; m_maximum=60; m_redThreshold=50; m_attack=.2; m_release=.05; m_historyMs=4000; m_showHistory=false; m_peakHold=true; m_style="Segments"; m_major={0,10,20,30,40,50,60}; m_minor={}; m_historyColor=QColor(238,130,238,128); }
     m_calMinimum=m_minimum; m_calMaximum=m_maximum; configureDynamics(); return true;
 }
-QString BarPresetItem::typeId() const { if(m_flavor=="Custom") { return "meter.customBar"; } QString name=m_flavor; name[0]=name[0].toLower(); return "meter."+name; }
+QString BarPresetItem::typeIdForFlavor(const QString& flavor) {
+    if(flavor=="Custom") { return "meter.customBar"; }
+    if(flavor!="Mic" && flavor!="Alc" && !variants().contains(flavor)) { return {}; }
+    QString name=flavor; name[0]=name[0].toLower(); return "meter."+name;
+}
+QString BarPresetItem::typeId() const { return typeIdForFlavor(m_flavor); }
 QSet<int> BarPresetItem::readingBindings() const { QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); } return result; }
 void BarPresetItem::pushBindingValue(int binding, double value) {
     const bool available=bindingUnavailableReason(binding).isEmpty() && std::isfinite(value) && (hasMmioBinding() || (m_flavor=="Custom" ? (!isNoReadingBinding(binding) || !isNoMeterReading(value)) : !isNoMeterReading(value)));

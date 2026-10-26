@@ -4,11 +4,14 @@
 //                 type (the ADC maximum bar, meter.adcMax) comes in as that
 //                 type with its reason, never as a live custom bar.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The flavor's type comes from BarPresetItem::typeIdForFlavor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "LegacyContainerImporter.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerDocumentCodec.h"
 #include "core/AppSettings.h"
 #include "gui/meters/MeterItem.h"
+#include "gui/meters/presets/BarPresetItem.h"
 #include <QJsonDocument>
 #include <QUuid>
 #include <algorithm>
@@ -71,10 +74,8 @@ ContainerDocument container(const QString& id, const QString& metadata, const QS
         // (meter.adcMax) keeps that type and its reason instead.
         QString variantReason;
         if (tag == QLatin1String("BarPreset")) {
-            QString flavor = legacyJson.value(QStringLiteral("flavor")).toString();
-            if (!flavor.isEmpty()) {
-                flavor[0] = flavor[0].toLower();
-                const QString variantType = QStringLiteral("meter.") + flavor;
+            const QString variantType = BarPresetItem::typeIdForFlavor(legacyJson.value(QStringLiteral("flavor")).toString());
+            if (!variantType.isEmpty()) {
                 for (const auto& descriptor : registry.descriptors()) {
                     if (descriptor.typeId == variantType && !descriptor.available) { tag = variantType; variantReason = descriptor.unavailableReason; break; }
                 }

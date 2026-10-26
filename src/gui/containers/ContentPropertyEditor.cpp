@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Availability of a meter entry is judged on the entry (a
+//                 stored BarPreset ADC maximum bar shows unavailable with its
+//                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: the declared-property group is
 //                 built only when it has rows (named declaredProperties), and
 //                 Advanced bindings are disabled while a declared type is
@@ -301,7 +305,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         auto* note=new QLabel(tr("The viewport scrolls when it is smaller than the objects. Resizing the window keeps saved object positions and sizes."),group);note->setWordWrap(true);fields->addRow(note);
     }
     QString reason=entry.extensions.value("unavailableReason").toString();
-    if(reason.isEmpty() && !m_registry.isAvailable(entry.typeId)) { reason=m_registry.unavailableReason(entry.typeId); }
+    if(reason.isEmpty() && !m_registry.isAvailable(entry)) { reason=m_registry.unavailableReason(entry); }
     // Workspace preview: a widget type with declared properties (no MeterItem).
     const QVector<ContentProperty> schema=m_item?QVector<ContentProperty>{}:m_registry.declaredProperties(entry.typeId);
     const bool declared=!schema.isEmpty();

@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - Availability of a meter entry is judged on the entry (a
+//                 stored BarPreset ADC maximum bar shows unavailable with its
+//                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-16 - An applet whose capability is off (Power Genius, Tuner
 //                 Genius, RF-Kit, RADE) stays in its place grayed, with its
 //                 reason, instead of being hidden: disabled, never hidden.
@@ -333,7 +337,7 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
             }
         }
         if (comparable!=previous || effectiveContext(document,entry) != effectiveContext(m_document,prior)) { return true; }
-        if (m_registry.isAvailable(entry.typeId) !=
+        if (m_registry.isAvailable(entry) !=
             std::any_of(m_rows.cbegin(),m_rows.cend(),[&](const EntryRow& row){ return row.entryId==entry.id && row.effectiveVisible; }) && entry.visible) { return true; }
     }
     return false;
@@ -438,7 +442,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     };
     for (const auto& entry : document.contents) {
         EntryRow row; row.entryId = entry.id; row.context = effectiveContext(document, entry);
-        row.effectiveVisible = entry.visible && m_registry.isAvailable(entry.typeId);
+        row.effectiveVisible = entry.visible && m_registry.isAvailable(entry);
         row.presentationVisible = row.effectiveVisible;
         if (entry.typeId.startsWith("applet:")) {
             finishRun();
@@ -467,7 +471,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         // A hidden/unavailable record is still an ordered insertion boundary.
         if (!row.effectiveVisible) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry.typeId), m_body);
+            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry), m_body);
             label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
             row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
@@ -568,7 +572,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
     m_canvas->show();
     for(const auto& entry:document.contents) {
         EntryRow row;row.entryId=entry.id;row.context=effectiveContext(document,entry);
-        row.effectiveVisible=entry.visible && m_registry.isAvailable(entry.typeId);
+        row.effectiveVisible=entry.visible && m_registry.isAvailable(entry);
         const EntryRow* old=nullptr;
         for(const auto& candidate:oldRows) {if(candidate.entryId==entry.id) {old=&candidate;break;}}
         if(entry.typeId.startsWith("applet:")) {
@@ -640,7 +644,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             // Workspace preview: as above, a factory widget is not the label.
             if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
-            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
+            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry));}
         }
         // A singleton view is grayed when unavailable, never hidden for it.
         if(!row.widget->property("singletonTypeId").toString().isEmpty()) {presentAvailability(row.widget,m_registry,entry.typeId);}
