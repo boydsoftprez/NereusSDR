@@ -73,3 +73,33 @@ final class TestLinkClock: LinkClock, @unchecked Sendable {
         }
     }
 }
+
+/// The real clock, except that the link's first heartbeat comes after
+/// `firstHeartbeat` instead of ``StationSession/heartbeatInterval``. A
+/// picture of the link chip's round trip needs one answered ping, and the
+/// first ping is otherwise 20 s after the link opens: nine pictures waited
+/// that out in real time, about 3 minutes of every run on the hosted
+/// simulator (CI logs, 2026-10-25). Every other timer, and every heartbeat
+/// after the first, keeps its own time, so liveness is judged as before.
+final class HeartbeatSoonLinkClock: LinkClock, @unchecked Sendable {
+    private let system = SystemLinkClock()
+    private let firstHeartbeat: Duration
+    private let lock = NSLock()
+    private var shortened = false
+
+    init(firstHeartbeat: Duration = .seconds(1)) {
+        self.firstHeartbeat = firstHeartbeat
+    }
+
+    func schedule(after delay: Duration, _ action: @escaping @Sendable () async -> Void) -> any LinkTimer {
+        var soon = false
+        if delay == StationSession.heartbeatInterval {
+            soon = lock.withLock { () -> Bool in
+                let first = !shortened
+                shortened = true
+                return first
+            }
+        }
+        return system.schedule(after: soon ? firstHeartbeat : delay, action)
+    }
+}

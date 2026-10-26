@@ -48,7 +48,7 @@ struct IPadShotTests {
         let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation()
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         // The board's reading: S8, -79 dBm, on slice A's flag and on the S-meter.
