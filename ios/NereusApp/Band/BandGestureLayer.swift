@@ -222,19 +222,12 @@ struct BandGestureLayer: View {
         let dialKind = tuning == nil ? DialKind.off : settings.dialKind
         let zoomAt = DialLayer.zoomOrigin(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
                                           trailingInset: trailingInset, uprightWidth: uprightWidth)
-        // The band's own controls, which the edge markers keep clear of.
-        var controls = [CGRect(origin: zoomAt, size: ZoomButtons.size),
-                        PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
-        switch dialKind {
-        case .waterfallKnob:
-            controls.append(DialLayer.knobFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                trailingInset: trailingInset))
-        case .thumbwheel:
-            controls.append(DialLayer.wheelFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                 uprightWidth: uprightWidth, trailingInset: trailingInset))
-        case .off, .sheetKnob:
-            break
-        }
+        // The band's own controls, which the edge markers keep clear of:
+        // zoom and the dial as DialLayer places them (the one list the keyed
+        // meters keep clear of too), and PTT.
+        let controls = DialLayer.controlFrames(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
+                                               trailingInset: trailingInset, uprightWidth: uprightWidth)
+            + [PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
                                           large: large, dbmArrows: arrows, controls: controls)

@@ -659,7 +659,8 @@ private struct PttPlace<Content: View>: View {
 
     @ViewBuilder
     private func placed(receive: CGRect, keyedRule: CGRect) -> some View {
-        let inputs = PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX, receive: receive, keyedRule: keyedRule)
+        let inputs = PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX, receive: receive, keyedRule: keyedRule,
+                                     column: PttLatch.columnFrames(boxes))
         let shown = PttLatch.shown(hold.latch, inputs)
         if updatesHold {
             content(shown, keyed && shown != keyedRule)

@@ -218,22 +218,11 @@ final class DisplayPillUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(bandMenu: true, spots: false, twoPans: true)
         let panButton = app.buttons["pan"]
-        XCTAssertTrue(panButton.waitForExistence(timeout: 30))
-        panButton.tap()
-        let add = app.buttons["panSheet.addPan"]
-        XCTAssertTrue(add.waitForExistence(timeout: 10), "The Pan sheet has no Add a pan")
-        add.tap()
-        let panFrames = [app.descendants(matching: .any)["pan.1"], app.descendants(matching: .any)["pan.2"]]
-        XCTAssertTrue(panFrames[1].waitForExistence(timeout: 10), "Add a pan opened no Pan 2")
-        app.buttons["Close the sheet"].firstMatch
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
-        XCTAssertTrue(app.descendants(matching: .any)["panSheet"].waitForNonExistence(timeout: 10))
-        let surfaces = app.descendants(matching: .any).matching(identifier: "bandSurface")
-        XCTAssertTrue(waitUntil { surfaces.count == 2 }, "The two pans have no touch surface each")
+        let (panFrames, surfaces) = openSecondPan(app)
 
         let menu = app.descendants(matching: .any)["bandMenu"]
         for (index, pan) in panFrames.enumerated() {
-            let surface = surfaces.allElementsBoundByIndex.first { pan.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }
+            let surface = surfaces.first { pan.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }
             guard let surface else {
                 XCTFail("Pan \(index + 1) has no touch surface")
                 return

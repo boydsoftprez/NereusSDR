@@ -203,7 +203,8 @@ enum BandColumnLayout {
     /// target; only where even that does not fit do they start at the
     /// band's top at `minHeight`, under the PTT, which draws on top and
     /// stays tappable (the controller's ruling for JJ's veto, the PR 653
-    /// re-review d, Minor 1).
+    /// re-review d, Minor 1). Moved left, they keep clear of `bandControls`
+    /// in their rows too (Minor A).
     static func keyedPlace(top: CGFloat, height: CGFloat, bandWidth: CGFloat, needed: CGFloat,
                            avoid: [CGRect], ptt: CGRect?, held: Bool = false, narrowest: CGFloat = .infinity,
                            leadingInset: CGFloat = 0, trailingInset: CGFloat = 0,
@@ -215,17 +216,22 @@ enum BandColumnLayout {
         }
         // Above the PTT, at its left: moved left as far as the meters must
         // to keep their full width (inside the insets when `insets`, as
-        // beside a held PTT), but never onto what is left of the PTT in
-        // their rows.
+        // beside a held PTT, and clear of the band's controls in their
+        // rows), but never onto what is left of the PTT in their rows.
         func above(_ ptt: CGRect, insets: Bool) -> KeyedPlace {
             // The room over the PTT: their own height, else cut to fit, never below `minHeight`.
             let room = ptt.minY - 6
             let shortest = min(height, minHeight ?? height)
             let shown = room >= height ? height : max(shortest, room)
+            let aboveTop = max(0, room - shown)
             let before = reaching.filter { $0 != ptt && $0.midX < ptt.midX }.map(\.maxX).max()
             let floor = max(0, insets ? leadingInset - 10 : 0, before.map { $0 + clearance - 10 } ?? 0)
-            let leading = max(floor, min(ptt.minX - 10, bandWidth - (insets ? trailingInset : 0) - needed - 20))
-            return KeyedPlace(top: max(0, room - shown), leading: leading, alignLeading: true,
+            // Where the gauges must end: inside the band (and its inset), short of a control right of the PTT.
+            let controls = bandControls.filter { $0.minY < aboveTop + shown && $0.maxY > aboveTop && $0.midX > ptt.midX }
+            let end = min(bandWidth - (insets ? trailingInset : 0) - 10,
+                          controls.map { $0.minX - clearance }.min() ?? .infinity)
+            let leading = max(floor, min(ptt.minX - 10, end - needed - 10))
+            return KeyedPlace(top: aboveTop, leading: leading, alignLeading: true,
                               shortened: shown < height ? shown : nil)
         }
         if held, let ptt, reaching.contains(ptt) {
@@ -269,7 +275,8 @@ enum BandColumnLayout {
 /// across the band and follows its home up or down as the band changes
 /// height (a rotation, Stage Manager, a row coming or going: the PR 653
 /// re-review, Minor 2), while that spot still stands on the band. Once it
-/// would not (past the band's right edge, or left of the PTT's home) the
+/// would not (past the band's right edge, left of the PTT's home, or on the
+/// band column grown from one column to two: re-review d, Minor B) the
 /// PTT takes its keyed place (DC15's, beside the column, over any flag)
 /// and holds that.
 struct PttLatch: Equatable {
@@ -285,13 +292,18 @@ struct PttLatch: Equatable {
         let receive: CGRect
         /// Its place keyed with nothing held: the same call with `keyed` (DC15's place).
         let keyedRule: CGRect
+        /// The band column's own frames (not its open menus), which the held
+        /// place must not cross: on a band that turns the column from one
+        /// column into two while keyed (the PR 653 re-review d, Minor B).
+        var column: [CGRect] = []
     }
 
     /// The held place for this layout: its x, on `home`'s row; nil when
-    /// that is no longer on the band (past `maxX`, or left of `home`).
-    func place(home: CGRect, maxX: CGFloat) -> CGRect? {
+    /// that is no longer on the band (past `maxX`, or left of `home`) or
+    /// would cross the band column (`column`).
+    func place(home: CGRect, maxX: CGFloat, column: [CGRect] = []) -> CGRect? {
         let held = CGRect(x: frame.minX, y: home.minY, width: frame.width, height: frame.height)
-        guard held.maxX <= maxX, held.minX >= home.minX else {
+        guard held.maxX <= maxX, held.minX >= home.minX, !column.contains(where: { $0.intersects(held) }) else {
             return nil
         }
         return held
@@ -302,7 +314,17 @@ struct PttLatch: Equatable {
         guard inputs.keyed else {
             return inputs.receive
         }
-        return latch?.place(home: inputs.home, maxX: inputs.maxX) ?? inputs.keyedRule
+        return latch?.place(home: inputs.home, maxX: inputs.maxX, column: inputs.column) ?? inputs.keyedRule
+    }
+
+    /// The band column's own frames among `boxes` (``BandColumnFrameKey``:
+    /// each pan's column and its open menu or pill): those at the band's
+    /// left, since a menu always opens right of its column.
+    static func columnFrames(_ boxes: [CGRect]) -> [CGRect] {
+        guard let left = boxes.map(\.minX).min() else {
+            return []
+        }
+        return boxes.filter { $0.minX < left + 0.5 }
     }
 
     /// The latch after a layout: receiving, the place the PTT is drawn at;
@@ -539,7 +561,8 @@ struct BandButtonColumn: View {
         let ptt = PttLatch.shown(pttHold?.latch, PttLatch.Inputs(
             keyed: keyed, home: home, maxX: maxX,
             receive: BandColumnLayout.pttFrame(home: home, avoid: avoid, flags: flags, maxX: maxX),
-            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: avoid, flags: flags, keyed: true, maxX: maxX)))
+            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: avoid, flags: flags, keyed: true, maxX: maxX),
+            column: [column]))
         return BandColumnLayout.notePlace(bandSize: bandSize, trailingInset: trailingInset, height: noteHeight,
                                           maxWidth: leadingInset > 0 ? Self.noteMaxWidthSideways
                                               : Self.noteMaxWidth,

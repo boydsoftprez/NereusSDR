@@ -368,6 +368,60 @@ struct BandButtonColumnTests {
         #expect(reasons.top == 0 && reasons.shortened == least)
     }
 
+    /// The PR 653 re-review d, Minor A: moved left above a held PTT, the
+    /// meters ran on to the band's right inset, over the tuning knob there.
+    @Test("moved left above a held PTT, the keyed meters keep clear of the band's controls in their rows")
+    func keyedMetersAboveAHeldPttKeepOffTheBandsControls() {
+        let needed = KeyedOverlay.gaugesWidth
+        let width: CGFloat = 667
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        let ptt = CGRect(x: 384, y: 162, width: 76, height: 76)
+        let knob = CGRect(x: 560, y: 40, width: 60, height: 60)
+        func place(_ controls: [CGRect]) -> BandColumnLayout.KeyedPlace {
+            BandColumnLayout.keyedPlace(top: 60, height: 104, bandWidth: width, needed: needed,
+                                        avoid: [column, ptt], ptt: ptt, held: true,
+                                        narrowest: KeyedOverlay.gaugesNarrowest, bandControls: controls)
+        }
+        let over = place([])
+        #expect(over.alignLeading && over.top + 104 <= ptt.minY - 6)
+        #expect(over.leading + 10 + needed > knob.minX, "the meters do not reach the knob: nothing to show")
+        let clear = place([knob])
+        #expect(clear.leading + 10 + needed <= knob.minX - BandColumnLayout.clearance)
+        #expect(clear.leading + 10 >= column.maxX + BandColumnLayout.clearance)
+        // A control below their rows changes nothing.
+        #expect(place([knob.offsetBy(dx: 0, dy: 200)]) == over)
+    }
+
+    /// The PR 653 re-review d, Minor B: a band that turns the column from
+    /// one column into two while keyed (an iPad's Stage Manager, a pan
+    /// opening) put the held PTT over the column's second column.
+    @Test("keyed, a held PTT the column grows onto takes DC15's place beside the column")
+    func keyedPttHeldClearOfAGrowingColumn() {
+        let home = CGRect(x: 76, y: 600, width: 76, height: 76)
+        let maxX: CGFloat = 1000
+        let one = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 1), height: 700)
+        let two = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 700)
+        func inputs(keyed: Bool, column: CGRect) -> PttLatch.Inputs {
+            PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX,
+                            receive: BandColumnLayout.pttFrame(home: home, avoid: [column], maxX: maxX),
+                            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: [column], keyed: true, maxX: maxX),
+                            column: PttLatch.columnFrames([column]))
+        }
+        var latch = PttLatch.next(nil, inputs(keyed: false, column: one))
+        let held = latch.frame
+        #expect(held.minX == one.maxX + BandColumnLayout.clearance)
+        latch = PttLatch.next(latch, inputs(keyed: true, column: one))
+        #expect(PttLatch.shown(latch, inputs(keyed: true, column: one)) == held)
+        // Two columns now reach the held spot: DC15's place, right of them.
+        let grown = inputs(keyed: true, column: two)
+        #expect(held.intersects(two))
+        #expect(PttLatch.shown(latch, grown) == grown.keyedRule)
+        #expect(!PttLatch.shown(latch, grown).intersects(two))
+        // The column's open menu is not the column: a held spot under it stays.
+        let menu = CGRect(x: one.maxX + BandColumnLayout.menuGap, y: 4, width: 340, height: 700)
+        #expect(PttLatch.columnFrames([menu, one]) == [one])
+    }
+
     /// The PR 653 re-review, Minor 4: right of a held PTT the meters ran to
     /// the band's right inset, over zoom and the tuning dial in their rows.
     @Test("beside a held PTT the keyed meters keep clear of zoom and the tuning dial")
