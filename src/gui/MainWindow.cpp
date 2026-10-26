@@ -999,6 +999,10 @@
 //   2026-10-26 - Container item parity Task 48: a mode grid click sets
 //                DSPMode (LSB + index), all twelve Thetis modes. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 49: a tune step grid click sets
+//                the entry's slice to kTuneStepList[index], all 26 steps,
+//                and the lit step is the slice's list index. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -15885,10 +15889,10 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         }
     }
 
-    int stepIndex = -1;
-    for (int i = 0; TuneStepButtonItem::stepHz(i) != 0; ++i) {
-        if (TuneStepButtonItem::stepHz(i) == slice->stepHz()) { stepIndex = i; break; }
-    }
+    // From Thetis MeterManager.cs:8090 [v2.10.3.15]:
+    //   SetOn(1, _console.TuneStepIndex, true);
+    // Button i is kTuneStepList[i]; a step off the list lights nothing.
+    const int stepIndex = tuneStepIndexForHz(slice->stepHz());
 
     const auto antIndex = [](const QString& ant) {
         if (ant == QLatin1String("ANT1")) { return 0; }
@@ -16136,12 +16140,17 @@ void MainWindow::onContainerAntennaSelected(ContainerWidget* c, int index)
 
 void MainWindow::onContainerTuneStepSelected(ContainerWidget* c, int index)
 {
+    // The entry's slice: containerSlice follows the clicked item's Source
+    // (ContainerWidget::wireInteractiveItem sets the dispatch context).
     SliceModel* slice = containerSlice(c);
-    const int hz = TuneStepButtonItem::stepHz(index);
-    if (!slice || hz <= 0) { return; }
-    // From Thetis MeterManager.cs:8242 [v2.10.3.15] (clsTunestepButtons.MouseUp):
-    //   _console.TuneStepIndex = index;
-    slice->setStepHz(hz);
+    if (!slice || index < 0 || index >= TuneStepButtonItem::kStepCount) { return; }
+    // From Thetis MeterManager.cs:8239-8242 [v2.10.3.15] (clsTunestepButtons.MouseUp):
+    //   _console.BeginInvoke(new MethodInvoker(() =>
+    //   {
+    //       _console.TuneStepIndex = index;
+    //   }));
+    // Button i is kTuneStepList[i] (MeterManager.cs:8040).
+    slice->setStepHz(TuneStepButtonItem::stepHz(index));
 }
 
 void MainWindow::onContainerFrequencyStep(ContainerWidget* c, int64_t deltaHz)

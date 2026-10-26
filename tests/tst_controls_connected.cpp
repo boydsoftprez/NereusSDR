@@ -42,6 +42,7 @@
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QFile>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
@@ -564,9 +565,15 @@ private slots:
         QCOMPARE(slice->filterHigh(), presets[2].high);
         QCOMPARE(filter->activeFilter(), 2);
 
-        emit container->tuneStepSelected(3);  // 1k
+        // The 26 buttons are kTuneStepList in order.
+        emit container->tuneStepSelected(8);  // 1k
         QCOMPARE(slice->stepHz(), 1000);
-        QCOMPARE(step->activeStep(), 3);
+        QCOMPARE(step->activeStep(), 8);
+        emit container->tuneStepSelected(10); // 2.5k
+        QCOMPARE(slice->stepHz(), 2500);
+        QCOMPARE(step->activeStep(), 10);
+        emit container->tuneStepSelected(26); // past the grid: nothing
+        QCOMPARE(slice->stepHz(), 2500);
 
         emit container->antennaSelected(1);   // ANT2
         QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT2"));
@@ -611,6 +618,47 @@ private slots:
         emit container->filterClicked(5);
         QCOMPARE(slice->filterLow(), low);
         QCOMPARE(slice->filterHigh(), high);
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // A tune step grid's click sets the step on its entry's slice only;
+    // another radio's entry changes nothing, and nothing keys.
+    void tuneStepGridActsOnItsEntrysSlice()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        RadioModel* model = window->radioModel();
+        SliceModel* a = ensureSlice(model);
+        QVERIFY(a != nullptr);
+        model->addSlice();
+        QCOMPARE(model->slices().size(), 2);
+        SliceModel* b = model->slices().at(1);
+        QVERIFY(b != nullptr && b != a);
+        a->setStepHz(100);
+        b->setStepHz(100);
+
+        ContainerManager* cm = model->containerManager();
+        ContainerWidget* container = cm->createContainer(1, DockMode::OverlayDocked);
+        QVERIFY(container != nullptr);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* step = new TuneStepButtonItem();
+        meter->addItem(step);
+        container->wireInteractiveItem(step);
+        QSignalSpy mox(&model->transmitModel(), &TransmitModel::moxChanged);
+
+        step->setProperty("containerSourceContext", QJsonObject{{"sliceId", b->sliceIndex()}});
+        emit step->tuneStepSelected(14);  // 10k
+        QCOMPARE(b->stepHz(), 10000);
+        QCOMPARE(a->stepHz(), 100);
+
+        step->setProperty("containerSourceContext",
+                          QJsonObject{{"sessionId", "another-radio"}, {"sliceId", a->sliceIndex()}});
+        emit step->tuneStepSelected(25);
+        QCOMPARE(a->stepHz(), 100);
+        QCOMPARE(b->stepHz(), 10000);
+        QCOMPARE(mox.count(), 0);
         QVERIFY(sessions.replace({}, false));
     }
 

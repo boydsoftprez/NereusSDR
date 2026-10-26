@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Thetis's 26 tuning steps (console.cs tune_step_list),
+//                 first ten shown on a new grid; old 7-step grids are
+//                 remapped on load. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -58,18 +62,25 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
-// Tuning step buttons: 1Hz, 10Hz, 100Hz, 1kHz, 10kHz, 100kHz, 1MHz.
-// Ported from Thetis clsTunestepButtons (MeterManager.cs:7999+).
+// Tuning step buttons: one per kTuneStepList entry (1 Hz .. 10 MHz).
+// Ported from Thetis clsTunestepButtons (MeterManager.cs:8026+).
 class TuneStepButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
 public:
     explicit TuneStepButtonItem(QObject* parent = nullptr);
 
+    // From Thetis MeterManager.cs:8040 [v2.10.3.15]: one button per
+    // TuneStepList entry (kTuneStepListSize, SliceModel.h).
+    static constexpr int kStepCount = 26;
+
     void setActiveStep(int index);
-    /// R-R3-21: the tuning step on button `index`, in Hz (1 Hz .. 1 MHz,
-    /// the button labels); 0 outside 0..kStepCount-1.
+    /// R-R3-21: the tuning step on button `index`, in Hz: kTuneStepList's
+    /// value (1 Hz .. 10 MHz); 0 outside 0..kStepCount-1.
     static int stepHz(int index);
+    /// The label on button `index`: the step's name without "Hz"; empty
+    /// outside 0..kStepCount-1.
+    static QString stepLabel(int index);
     int activeStep() const { return m_activeStep; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
@@ -85,7 +96,6 @@ signals:
 private:
     void onButtonClicked(int index, Qt::MouseButton button);
     int m_activeStep{-1};
-    static constexpr int kStepCount = 7;
 };
 
 } // namespace NereusSDR

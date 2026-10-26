@@ -76,6 +76,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include "gui/applets/RxApplet.h"
+#include "gui/meters/TuneStepButtonItem.h"
 #include "gui/widgets/TriBtn.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
@@ -306,6 +307,35 @@ private slots:
         SliceModel s;
         QCOMPARE(s.stepHz(), 100);
         QCOMPARE(tuneStepIndexForHz(100), 5);
+    }
+
+    // ── Container tune step grid ─────────────────────────────────────────────
+
+    // From Thetis MeterManager.cs:8040 and :8066 [v2.10.3.15]: one button per
+    // list entry, labelled with its name without "Hz".
+    void containerGridButtonsAreTheList() {
+        QCOMPARE(TuneStepButtonItem::kStepCount, kTuneStepListSize);
+        for (int i = 0; i < kTuneStepListSize; ++i) {
+            QCOMPARE(TuneStepButtonItem::stepHz(i), kTuneStepList[i].stepHz);
+            QCOMPARE(TuneStepButtonItem::stepLabel(i),
+                     QString::fromLatin1(kTuneStepList[i].name).remove(QStringLiteral("Hz")));
+            QVERIFY(!TuneStepButtonItem::stepLabel(i).contains(QStringLiteral("Hz")));
+        }
+        QCOMPARE(TuneStepButtonItem::stepHz(kTuneStepListSize), 0);
+    }
+
+    // The old grid's seven steps are on the list at 0, 2, 5, 8, 14, 21, 24,
+    // where a saved old grid's steps move to.
+    void oldGridStepsMapOntoTheList() {
+        const int oldHz[] = {1, 10, 100, 1000, 10000, 100000, 1000000};
+        const int index[] = {0, 2, 5, 8, 14, 21, 24};
+        for (int i = 0; i < 7; ++i) {
+            QCOMPARE(tuneStepIndexForHz(oldHz[i]), index[i]);
+            TuneStepButtonItem grid;
+            QVERIFY(grid.deserialize(QStringLiteral("TUNESTEPBTNS|0|0|1|1|0|0|4|%1|127").arg(i)));
+            QCOMPARE(grid.activeStep(), index[i]);
+            QCOMPARE(TuneStepButtonItem::stepHz(grid.activeStep()), oldHz[i]);
+        }
     }
 
     void oldStubValuesAreOnList() {

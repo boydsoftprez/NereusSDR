@@ -27,14 +27,18 @@
 #include <QtTest>
 #include <QCheckBox>
 #include <QColor>
+#include <QLabel>
 #include <QStringList>
+#include <algorithm>
 #include <functional>
+#include <iterator>
 #include <memory>
 
 #include "core/UnbuiltFeatureList.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/meter_property_editors/ModeButtonItemEditor.h"
+#include "gui/containers/meter_property_editors/TuneStepButtonItemEditor.h"
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ButtonBoxItem.h"
@@ -48,6 +52,7 @@
 #include "gui/meters/TuneStepButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/VoiceRecordPlayItem.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -276,6 +281,16 @@ void verifyDefaults(const MeterItem* item, const MeterItem* fresh)
     }
 }
 
+// The buttons a grid shows.
+int shownCount(const ButtonBoxItem& grid)
+{
+    int shown = 0;
+    for (int i = 0; i < grid.buttonCount(); ++i) {
+        if (grid.isButtonShown(i)) { ++shown; }
+    }
+    return shown;
+}
+
 } // namespace
 
 class TstContainerItemPersistence : public QObject {
@@ -303,7 +318,9 @@ class TstContainerItemPersistence : public QObject {
         // LSB to AM: buttons the old-order remap leaves where they were.
         QTest::newRow("MODEBTNS") << QStringLiteral("MODEBTNS") << QStringLiteral("MODEBTNS|0.1|0.2|0.3|0.4|5|6|3|2|127");
         QTest::newRow("FILTERBTNS") << QStringLiteral("FILTERBTNS") << QStringLiteral("FILTERBTNS|0.1|0.2|0.3|0.4|5|6|3|2|255");
-        QTest::newRow("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS|0.1|0.2|0.3|0.4|5|6|3|2|127");
+        // Only 1 Hz shown and active: the button the old seven-step remap
+        // leaves where it was.
+        QTest::newRow("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS|0.1|0.2|0.3|0.4|5|6|3|0|1");
         QTest::newRow("ANTENNABTNS") << QStringLiteral("ANTENNABTNS") << QStringLiteral("ANTENNABTNS|0.1|0.2|0.3|0.4|5|6|3|255");
         QTest::newRow("OTHERBTNS") << QStringLiteral("OTHERBTNS") << QStringLiteral("OTHERBTNS|0.1|0.2|0.3|0.4|5|6|3|254");
         QTest::newRow("VOICERECPLAY") << QStringLiteral("VOICERECPLAY") << QStringLiteral("VOICERECPLAY|0.1|0.2|0.3|0.4|5|6|3");
@@ -653,6 +670,137 @@ private slots:
         editor.findChild<QCheckBox*>(QStringLiteral("modeVisible_0"))->setChecked(false);
         QVERIFY(!grid.isButtonShown(0));
         QVERIFY(grid.isButtonShown(1));
+    }
+
+    // A new tune step grid has Thetis's 26 steps, labels without "Hz", and
+    // shows the first ten.
+    void tuneStepGridHasTwentySixSteps()
+    {
+        TuneStepButtonItem grid;
+        QCOMPARE(grid.buttonCount(), 26);
+        QCOMPARE(TuneStepButtonItem::kStepCount, kTuneStepListSize);
+        for (int i = 0; i < 26; ++i) {
+            QCOMPARE(grid.isButtonShown(i), i < 10);
+            QCOMPARE(TuneStepButtonItem::stepHz(i), kTuneStepList[i].stepHz);
+        }
+        QCOMPARE(grid.visibleBits(), uint32_t(1023));
+        QCOMPARE(TuneStepButtonItem::stepLabel(0), QStringLiteral("1"));
+        QCOMPARE(TuneStepButtonItem::stepLabel(8), QStringLiteral("1k"));
+        QCOMPARE(TuneStepButtonItem::stepLabel(10), QStringLiteral("2.5k"));
+        QCOMPARE(TuneStepButtonItem::stepLabel(12), QStringLiteral("6.25k"));
+        QCOMPARE(TuneStepButtonItem::stepLabel(24), QStringLiteral("1M"));
+        QCOMPARE(TuneStepButtonItem::stepLabel(25), QStringLiteral("10M"));
+        QVERIFY(TuneStepButtonItem::stepLabel(26).isEmpty());
+        QCOMPARE(TuneStepButtonItem::stepHz(26), 0);
+        QCOMPARE(TuneStepButtonItem::stepHz(-1), 0);
+        QCOMPARE(grid.columnRange(), std::make_pair(1, 10));
+    }
+
+    // A grid saved with the old seven steps (1, 10, 100, 1k, 10k, 100k, 1M)
+    // keeps its visible steps and active step at their 26-step places:
+    // 0, 2, 5, 8, 14, 21, 24.
+    void oldTuneStepGridRemapsToStepList()
+    {
+        // 1k active; 1, 100, 1k and 1M shown.
+        const QString oldRecord = QStringLiteral("TUNESTEPBTNS|0.1|0.2|0.3|0.4|5|6|4|3|77");
+        TuneStepButtonItem grid;
+        QVERIFY(grid.deserialize(oldRecord));
+        QCOMPARE(grid.activeStep(), 8);
+        QCOMPARE(TuneStepButtonItem::stepHz(grid.activeStep()), 1000);
+        QCOMPARE(grid.visibleBits(), uint32_t((1u << 0) | (1u << 5) | (1u << 8) | (1u << 24)));
+        QCOMPARE(grid.columns(), 4);
+
+        // Every old step shown, each old active index.
+        const int expected[] = {0, 2, 5, 8, 14, 21, 24};
+        for (int old = 0; old < 7; ++old) {
+            TuneStepButtonItem all;
+            QVERIFY(all.deserialize(QStringLiteral("TUNESTEPBTNS|0|0|1|1|0|0|4|%1|127").arg(old)));
+            QCOMPARE(all.activeStep(), expected[old]);
+            for (int i = 0; i < 26; ++i) {
+                QCOMPARE(all.isButtonShown(i), std::find(std::begin(expected), std::end(expected), i) != std::end(expected));
+            }
+        }
+        // No step active stays so.
+        TuneStepButtonItem none;
+        QVERIFY(none.deserialize(QStringLiteral("TUNESTEPBTNS|0|0|1|1|0|0|4|-1|127")));
+        QCOMPARE(none.activeStep(), -1);
+        // A record without the visible field showed all seven.
+        TuneStepButtonItem bare;
+        QVERIFY(bare.deserialize(QStringLiteral("TUNESTEPBTNS|0|0|1|1|0|0|4|6")));
+        QCOMPARE(bare.activeStep(), 24);
+        QCOMPARE(shownCount(bare), 7);
+        QVERIFY(bare.isButtonShown(14));
+        QVERIFY(!bare.isButtonShown(1));
+
+        // An old record with the grid styling and no marker is old too.
+        TuneStepButtonItem styled;
+        QVERIFY(styled.deserialize(QStringLiteral("TUNESTEPBTNS|0|0|1|1|0|0|4|3|4294967295|0.01|0.02|4|0.75|0|0")));
+        QCOMPARE(styled.activeStep(), 8);
+        QVERIFY(styled.isButtonShown(8));
+        QVERIFY(!styled.isButtonShown(3));
+
+        // The new record carries the marker and is never remapped again.
+        const QString saved = grid.serialize();
+        QVERIFY2(saved.endsWith(QStringLiteral("|STEPLIST")), qPrintable(saved));
+        TuneStepButtonItem reloaded;
+        QVERIFY(reloaded.deserialize(saved));
+        QCOMPARE(reloaded.activeStep(), 8);
+        QCOMPARE(reloaded.visibleBits(), grid.visibleBits());
+        QCOMPARE(reloaded.serialize(), saved);
+        TuneStepButtonItem fresh;
+        fresh.setActiveStep(3);
+        TuneStepButtonItem freshCopy;
+        QVERIFY(freshCopy.deserialize(fresh.serialize()));
+        QCOMPARE(freshCopy.activeStep(), 3);
+        QCOMPARE(freshCopy.visibleBits(), uint32_t(1023));
+    }
+
+    // The same remap through a saved layout's content entry.
+    void savedLayoutOldTuneStepGridRemaps()
+    {
+        ContainerContentRegistry registry;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("TUNESTEPBTNS"));
+        entry.config.insert(QStringLiteral("legacyRecord"), QStringLiteral("TUNESTEPBTNS|0.1|0.2|0.3|0.4|5|6|4|3|77"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry, nullptr));
+        auto* grid = qobject_cast<TuneStepButtonItem*>(item.get());
+        QVERIFY(grid);
+        QCOMPARE(grid->activeStep(), 8);
+        QCOMPARE(shownCount(*grid), 4);
+        QVERIFY(grid->isButtonShown(24));
+        // A new grid from the registry has 26 buttons with the first ten shown.
+        std::unique_ptr<MeterItem> fresh(registry.createMeterItem(registry.makeEntry(QStringLiteral("TUNESTEPBTNS")), nullptr));
+        auto* freshGrid = qobject_cast<TuneStepButtonItem*>(fresh.get());
+        QVERIFY(freshGrid);
+        QCOMPARE(freshGrid->buttonCount(), 26);
+        for (int i = 0; i < 26; ++i) { QCOMPARE(freshGrid->isButtonShown(i), i < 10); }
+    }
+
+    // The editor shows a row per step; ticking one shows it.
+    void tuneStepEditorShowsEachStep()
+    {
+        TuneStepButtonItem grid;
+        TuneStepButtonItemEditor editor;
+        editor.setItem(&grid);
+        QSignalSpy changed(&editor, &BaseItemEditor::propertyChanged);
+        for (int i = 0; i < TuneStepButtonItem::kStepCount; ++i) {
+            auto* check = editor.findChild<QCheckBox*>(QStringLiteral("stepVisible_%1").arg(i));
+            QVERIFY2(check, qPrintable(QString::number(i)));
+            QCOMPARE(check->isChecked(), i < 10);
+        }
+        // Each row is named as the step list names it.
+        QStringList labels;
+        for (const QLabel* label : editor.findChildren<QLabel*>()) { labels << label->text(); }
+        for (int i = 0; i < TuneStepButtonItem::kStepCount; ++i) {
+            QVERIFY2(labels.contains(QString::fromLatin1(kTuneStepList[i].name)), kTuneStepList[i].name);
+        }
+        QCOMPARE(changed.count(), 0);
+        editor.findChild<QCheckBox*>(QStringLiteral("stepVisible_25"))->setChecked(true);
+        QVERIFY(grid.isButtonShown(25));
+        QCOMPARE(changed.count(), 1);
+        editor.findChild<QCheckBox*>(QStringLiteral("stepVisible_0"))->setChecked(false);
+        QVERIFY(!grid.isButtonShown(0));
+        QVERIFY(grid.isButtonShown(1));
+        QCOMPARE(grid.columnRange(), std::make_pair(1, 10));
     }
 };
 
