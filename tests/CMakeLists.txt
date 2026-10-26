@@ -840,6 +840,10 @@ nereus_add_test(tst_meter_item_text_image)
 # ignore history and power limit; NEEDLESCALEPWR power limit; new-item
 # defaults.
 nereus_add_test(tst_meter_item_needle)
+# Container item parity Task 19: magic eye preset and building block:
+# attack and decay, eye and bezel size, bezel image, calibration and the
+# VHF S9 rule, history, saved records and new-item defaults.
+nereus_add_test(tst_meter_magic_eye)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.

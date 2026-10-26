@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Magic eye rows: eye size and bezel size (0.01 to 1) and a
+//                 bezel image with a file picker. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Rows for the ANAN, Cross and Power/SWR per-item options:
 //                 power limit (0 shows "Radio rating"), power scale, peak
 //                 hold, peak value and other needles colors (blank keeps
@@ -51,6 +54,7 @@
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
+#include "gui/meters/MagicEyeItem.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/applets/SectionParts.h"
@@ -68,6 +72,7 @@
 #include <QJsonArray>
 #include <QColor>
 #include <QColorDialog>
+#include <QFileDialog>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
@@ -201,6 +206,9 @@ QString fieldLabel(QString key)
     if(key=="peakValueColor") {return QObject::tr("Peak value color");}
     if(key=="subNeedleColor") {return QObject::tr("Other needles color");}
     if(key=="darkMode") {return QObject::tr("Dark mode");}
+    if(key=="eyeScale") {return QObject::tr("Eye size");}
+    if(key=="bezelScale") {return QObject::tr("Bezel size");}
+    if(key=="bezelImage") {return QObject::tr("Bezel image");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;
@@ -419,6 +427,8 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* spin=new QDoubleSpinBox(this);spin->setDecimals(4);spin->setRange(-1000000,1000000);
             if(key=="attack" || key=="decay") {spin->setRange(0,1);spin->setSingleStep(.05);}
             if(key.startsWith("radius") || key=="strokeWidth" || key=="lengthFactor") {spin->setRange(.0001,1000);spin->setSingleStep(.05);}
+            // Magic eye and bezel size: 1 fills the eye box.
+            if(key=="eyeScale" || key=="bezelScale") {spin->setDecimals(2);spin->setRange(MagicEyeItem::kMinEyeScale,MagicEyeItem::kMaxEyeScale);spin->setSingleStep(.05);}
             // 0 follows the radio's rating; the face rejects 0-0.1.
             if(key=="powerLimitW") {spin->setDecimals(1);spin->setRange(0,kMaxBarPowerLimitW);spin->setSingleStep(10);spin->setSuffix(tr(" W"));spin->setSpecialValueText(tr("Radio rating"));}
             spin->setValue(value.toDouble());connect(spin,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,key,channel,spin](double v){if(!property(key,v,channel)) {const QSignalBlocker block(spin);spin->setValue(effectiveProperty(key,channel).toDouble());spin->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=spin;
@@ -431,6 +441,12 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
                 :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
             connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
+        }
+        if(key=="bezelImage") {
+            // A bezel is a file the user picks (or a bundled resource); blank draws none.
+            edit->setPlaceholderText(tr("Blank draws no bezel"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            auto* browse=new QPushButton(tr("Browse…"),row);browse->setAutoDefault(false);layout->addWidget(browse);
+            connect(browse,&QPushButton::clicked,this,[this,key,channel,edit]{const QString path=QFileDialog::getOpenFileName(this,tr("Choose bezel image"),QString(),tr("Images (*.png *.jpg *.bmp *.svg)"));if(!path.isEmpty() && property(key,path,channel)) {edit->setText(path);}});widget=row;
         }
     }
     if(widget) {widget->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));}

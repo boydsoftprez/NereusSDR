@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Magic eye: eye size, bezel size and bezel image keys,
+//                 the bezel image cache. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - ANAN, Cross and Power/SWR per-item options (power limit,
 //                 power scale, peak hold and peak value colors, other
 //                 needles color, shadow, dark mode), their Thetis new-item
@@ -181,6 +184,8 @@ private:
     QString m_faceArtBase;
     QString m_faceArtLoaded;
     QImage m_faceArtImage;
+    QString m_bezelLoaded;
+    QImage m_bezelImage;
 };
 
 // New ANAN, Cross and Power/SWR items (makeEntry) take Thetis's values for

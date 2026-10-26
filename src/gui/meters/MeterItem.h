@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Magic eye and bezel size range (kMinMeterEyeScale,
+//                 kMaxMeterEyeScale, kDefaultMeterEyeScale). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Several data source (MMIO) variables per item: index 0 is
 //                 the existing pair, index 1 and up feed setSecondaryValue;
 //                 mmioVariableCount() ports Thetis MeterVariables.
@@ -780,6 +783,14 @@ constexpr int kMinBarIgnoreHistoryMs = 0;
 constexpr int kMaxBarIgnoreHistoryMs = 4000;
 // From Thetis setup.designer.cs:55161-55165 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Value)
 constexpr int kDefaultBarIgnoreHistoryMs = 2000;
+// Magic eye and bezel size (1.0 = the full width).
+// From Thetis setup.designer.cs:55523-55527 [v2.10.3.15] (nudMeterItemEyeScale.Minimum)
+constexpr float kMinMeterEyeScale = 0.01f;
+// From Thetis setup.designer.cs:55518-55522 [v2.10.3.15] (nudMeterItemEyeScale.Maximum)
+constexpr float kMaxMeterEyeScale = 1.0f;
+// From Thetis setup.designer.cs:55533-55537 [v2.10.3.15] (nudMeterItemEyeScale.Value;
+// nudMeterItemEyeBezelScale :55450-55469 has the same range and value)
+constexpr float kDefaultMeterEyeScale = 1.0f;
 // Power limit of the scale (W).
 // From Thetis setup.designer.cs:55313-55317 [v2.10.3.15] (nudMeterItemsPowerLimit.Minimum, 1 with scale 1)
 constexpr double kMinBarPowerLimitW = 0.1;

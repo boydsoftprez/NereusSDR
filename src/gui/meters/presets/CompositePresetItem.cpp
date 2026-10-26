@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Magic eye options: eye size, bezel size and bezel image
+//                 (a bundled resource or a file the user picked), the
+//                 history fields; new eyes take kMagicEyeThetisDefaults.
+//                 Saved eyes keep their look. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - ANAN, Cross and Power/SWR per-item options: power limit,
 //                 power scale color, peak hold and peak value colors, other
 //                 needles color, shadow and ANAN dark mode, with Thetis
@@ -145,6 +150,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/ClockItem.h"
+#include "gui/meters/MagicEyeItem.h"
 #include <QPainter>
 #include <QGuiApplication>
 #include <QPainterPath>
@@ -278,6 +284,8 @@ void CompositePresetItem::initialise() {
     if(m_face==Face::PowerSwr || m_face==Face::Anan) { m_config["peakValueColor"]=QString(); }
     if(m_face==Face::Anan || m_face==Face::Cross) { m_config["powerScaleColor"]=QString(); m_config["subNeedleColor"]=QString(); m_config["shadow"]=true; }
     if(m_face==Face::Anan) { m_config["darkMode"]=false; }
+    // Eye and bezel size 1 and no bezel: the eye as it painted before.
+    if(m_face==Face::Eye) { m_config["eyeScale"]=1.0; m_config["bezelScale"]=1.0; m_config["bezelImage"]=QString(); }
     m_faceArtBase=QStringLiteral(":/meters/anan-approved-clean.jpg");
     const auto add=[&](QString name,int binding,QString units,QMap<double,QPointF> calibration,QJsonObject c) {
         c["bindingId"]=binding; c["name"]=name; c["units"]=units; m_channels.append({name,units,binding,calibration,{},c});
@@ -448,6 +456,23 @@ QString CompositePresetItem::faceArtPath(double diagonalPx) const {
 }
 void CompositePresetItem::applyNewItemDefaults() {
     MeterItem::applyNewItemDefaults();
+    if(m_face==Face::Eye) {
+        // New magic eyes take Thetis's AddMagicEye / clsMagicEyeItem values
+        // (kMagicEyeThetisDefaults, MagicEyeItem.h). Thetis's "eye-bezel"
+        // art is not bundled, so a new eye starts with no bezel.
+        const MagicEyeItemThetisDefaults& d=kMagicEyeThetisDefaults;
+        QJsonArray channels=configuration()["channels"].toArray();
+        QJsonObject signal=channels.first().toObject();
+        signal["attack"]=double(d.attackRatio); signal["decay"]=double(d.decayRatio);
+        signal["color"]=QColor::fromRgb(d.colour).name(QColor::HexArgb);
+        signal["bindingId"]=d.bindingId; signal["showHistory"]=d.showHistory;
+        signal["historyMs"]=d.historyDurationMs; signal["ignoreHistoryMs"]=d.ignoreHistoryMs;
+        signal["historyColor"]=QColor::fromRgba(d.historyColour).name(QColor::HexArgb);
+        channels[0]=signal;
+        const QJsonObject edit{{"eyeScale",double(d.eyeScale)},{"bezelScale",double(d.bezelScale)},{"bezelImage",QString()},{"channels",channels}};
+        if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
     const CompositeFaceThetisDefaults* defaults=m_face==Face::Anan?&kAnanThetisDefaults:m_face==Face::Cross?&kCrossThetisDefaults:m_face==Face::PowerSwr?&kPowerSwrThetisDefaults:nullptr;
     if(!defaults) { return; }
     const auto name=[](QRgb rgb) { return rgb==0?QString():QColor::fromRgba(rgb).name(QColor::HexArgb); };
@@ -620,6 +645,8 @@ QStringList CompositePresetItem::editableChannelFields(int channel) const {
     if(channel<0 || channel>=m_channels.size()) { return {}; }
     QStringList fields{"bindingId","attack","decay","updateIntervalMs","ignoreHistoryMs","color"};
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross || m_face==Face::SignalText) { fields.append({"historyMs","showHistory","peakHold","historyColor"}); }
+    // Thetis applies the history fields to the eye (MeterManager.cs:27838-27840 [v2.10.3.15]).
+    if(m_face==Face::Eye) { fields.append({"historyMs","showHistory","historyColor"}); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append({"name","units","visible"}); }
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"shadow","offsetX","offsetY","radiusX","radiusY","lengthFactor","strokeWidth","onlyWhenRx","onlyWhenTx","displayGroup"}); }
     return fields;
@@ -636,6 +663,7 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face==Face::PowerSwr || m_face==Face::Anan) { fields.append("peakValueColor"); }
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerScaleColor","subNeedleColor","shadow"}); }
     if(m_face==Face::Anan) { fields.append("darkMode"); }
+    if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
     if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units"}); }
     if(m_clock) { fields.append({"clockMode","showDate","show24Hour","clockTimeColor","clockDateColor","clockTitleColor"}); }
     if(m_vfo) { fields.append({"vfo","vfoFrequencyColor","vfoModeColor","vfoFilterColor","vfoBandColor"}); }
@@ -647,7 +675,7 @@ QJsonObject CompositePresetItem::configuration() const {
     QJsonObject c=m_config;
     const QStringList fields=editableFields();
     const QStringList known{"title","showTitle","titleColor","backdropColor","lowColor","highColor","showReadout","showPeakValue","fontSize","displayGroup","clockMode","showDate","show24Hour","historyCapacity","historyMs","autoScale","minValue","maxValue","units",
-        "powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode"};
+        "powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode","eyeScale","bezelScale","bezelImage"};
     for(const QString& key:known) { if(!fields.contains(key)) { c.remove(key); } }
     if(m_vfo) { c["vfo"]=m_vfo->serialize(); c["vfoFrequencyColor"]=m_vfo->frequencyColour().name(QColor::HexArgb); c["vfoModeColor"]=m_vfo->modeColour().name(QColor::HexArgb); c["vfoFilterColor"]=m_vfo->filterColour().name(QColor::HexArgb); c["vfoBandColor"]=m_vfo->bandColour().name(QColor::HexArgb); }
     if(m_bands) { c["bands"]=m_bands->serialize(); c["modes"]=m_modes->serialize(); }
@@ -679,6 +707,11 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
         if(next.contains(key) && (!next[key].isString() || (!next[key].toString().isEmpty() && !QColor(next[key].toString()).isValid()))) { return false; }
     }
     for(const QString& key:{QStringLiteral("shadow"),QStringLiteral("darkMode")}) { if(next.contains(key) && !next[key].isBool()) { return false; } }
+    for(const QString& key:{QStringLiteral("eyeScale"),QStringLiteral("bezelScale")}) {
+        if(next.contains(key) && (!next[key].isDouble() || !(next[key].toDouble()>=MagicEyeItem::kMinEyeScale && next[key].toDouble()<=MagicEyeItem::kMaxEyeScale))) { return false; }
+    }
+    // A bezel is a bundled resource or a local file; never a URL to fetch.
+    if(next.contains("bezelImage") && (!next["bezelImage"].isString() || next["bezelImage"].toString().contains(QStringLiteral("://")))) { return false; }
     if(!next["title"].isString() || !next["units"].isString() || !QStringList{"Both","UTC","Local"}.contains(next["clockMode"].toString())) { return false; }
     const QJsonArray channels=next["channels"].toArray(); if(channels.size()!=m_channels.size()) { return false; }
     QVector<QJsonObject> checked;
@@ -1240,7 +1273,11 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
 }
 void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     const double scale=objectTextScale(outer,{260,180});
-    const QRectF r=outer.adjusted(outer.width()*.22,28*scale,-outer.width()*.22,-24*scale); const auto& channel=m_channels.first();
+    const QRectF box=outer.adjusted(outer.width()*.22,28*scale,-outer.width()*.22,-24*scale); const auto& channel=m_channels.first();
+    // Eye and bezel each sized by their scale, centred in the eye box; 1 fills it.
+    // From Thetis MeterManager.cs:27807-27880 [v2.10.3.15] (EyeScale, EyeBezelScale)
+    const auto centred=[&box](double s) { return s>=1.0?box:QRectF(box.center().x()-box.width()*s/2,box.center().y()-box.height()*s/2,box.width()*s,box.height()*s); };
+    const QRectF r=centred(m_config.value(QStringLiteral("eyeScale")).toDouble(1.0));
     const QColor bright=color(channel.config,"color"),closed(int(bright.red()*.35),int(bright.green()*.35),int(bright.blue()*.35)),dim(int(bright.red()*.75),int(bright.green()*.75),int(bright.blue()*.75));
     // From Thetis MeterManager.cs:37249-37368 [v2.10.3.15] — closed ellipse and bright above-S9 overlap.
     // scale percX for overlap hard coded for now
@@ -1257,6 +1294,11 @@ void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     // adds the closing line
     QPainterPath slit; slit.moveTo(r.center()+QPointF(0,r.height()*.03)); slit.lineTo(r.center()+QPointF(r.width()*.4,0)); slit.lineTo(r.center()-QPointF(0,r.height()*.03)); slit.lineTo(r.center()-QPointF(r.width()*.4,0)); slit.closeSubpath(); p.fillPath(slit,closed);
     p.setBrush(QColor(32,32,32)); p.setPen(Qt::NoPen); p.drawEllipse(r.center(),r.width()/6,r.width()/6);
+    // The bezel image sits over the eye (Thetis img.ZOrder 3 over me.ZOrder 2,
+    // MeterManager.cs:23583, 23601 [v2.10.3.15]).
+    const QString bezel=m_config.value(QStringLiteral("bezelImage")).toString();
+    if(bezel!=m_bezelLoaded) { m_bezelLoaded=bezel; m_bezelImage=bezel.isEmpty()?QImage():QImage(bezel); }
+    if(!m_bezelImage.isNull()) { p.drawImage(centred(m_config.value(QStringLiteral("bezelScale")).toDouble(1.0)),m_bezelImage); }
     if(m_config["showReadout"].toBool()) { p.setPen(color(m_config,"lowColor")); drawObjectText(p,QRectF(outer.left(),outer.bottom()-22*scale,outer.width(),20*scale),channel.dynamics.hasReading()?signalReadout(channel.dynamics.value()):QStringLiteral("--"),m_config["fontSize"].toInt()*scale*12/18); }
 }
 void CompositePresetItem::paintHistory(QPainter& p,const QRectF& outer) {
