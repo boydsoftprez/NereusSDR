@@ -33,6 +33,12 @@
 //                 power limit per copy (kPowerLimitKey); the VHF S9 rule
 //                 of the copy's slice. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Appearance and dynamics per copy: peak hold, needle,
+//                 transmit needle, power scale and history colours,
+//                 shadow, dark mode, update interval, attack and decay
+//                 ratios, history, and Fade on RX / TX; history and peak
+//                 hold clear on each transmit change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -67,6 +73,29 @@ inline constexpr auto kPeakHoldKey  = "peakHold";
 inline constexpr auto kPeakDecayKey = "peakDecay";
 inline constexpr auto kFaceKey      = "face";
 inline constexpr auto kPowerLimitKey = "powerLimitW";
+
+// Appearance and dynamics. An absent key is the dial as it was drawn
+// before these keys existed. Colours are "#rrggbb" (absent: the face's
+// own); kAttackRatioKey / kDecayRatioKey are numbers 0..1 (absent: the
+// built-in time constants); kUpdateIntervalKey, kHistoryDurationKey and
+// kIgnoreHistoryKey are whole milliseconds; kHistoryAlphaKey 0..255 is the
+// history colour's opacity; kShowHistoryKey, kShadowKey and kDarkModeKey
+// are true/false (absent: off, on, off). Fade on RX / TX are
+// ContentFade::kFadeOnRxKey / kFadeOnTxKey.
+inline constexpr auto kPeakHoldColorKey   = "peakHoldColor";
+inline constexpr auto kNeedleColorKey     = "needleColor";
+inline constexpr auto kSubNeedleColorKey  = "subNeedleColor";
+inline constexpr auto kShadowKey          = "shadow";
+inline constexpr auto kPowerScaleColorKey = "powerScaleColor";
+inline constexpr auto kDarkModeKey        = "darkMode";
+inline constexpr auto kUpdateIntervalKey  = "updateIntervalMs";
+inline constexpr auto kAttackRatioKey     = "attackRatio";
+inline constexpr auto kDecayRatioKey      = "decayRatio";
+inline constexpr auto kShowHistoryKey     = "showHistory";
+inline constexpr auto kHistoryColorKey    = "historyColor";
+inline constexpr auto kHistoryAlphaKey    = "historyAlpha";
+inline constexpr auto kHistoryDurationKey = "historyDurationMs";
+inline constexpr auto kIgnoreHistoryKey   = "ignoreHistoryMs";
 
 // Registers the type. Call only with the workspace preview on, after
 // LongpathContent::registerAll (the picker lists it after the Longpath

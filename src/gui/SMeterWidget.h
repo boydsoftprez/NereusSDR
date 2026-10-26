@@ -8,6 +8,10 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 section 5 requirements.
 // =================================================================
+// Ported from Thetis sources:
+//   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
+//     (ANANMM's needle scales and history defaults)
+// =================================================================
 // Modification history (NereusSDR):
 //   2026-10-12 - Add explicit display marker/top scale by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
@@ -113,13 +117,68 @@
 //                 the S scale by 20 dB at or above 30 MHz, so S9 reads at
 //                 -93 dBm there.  J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-26  Per-copy appearance and dynamics, the Thetis meter item
+//                 settings (setup.cs:25519-25577 [v2.10.3.15]) for a
+//                 container copy: peak hold colour, needle and transmit
+//                 needle colours, shadow, power scale colour, dark mode,
+//                 update interval, attack and decay ratios, and the
+//                 history wedge with its colour, duration and ignore time;
+//                 clearHistory() (Thetis ClearHistory).  Unset, each is the
+//                 dial as it was drawn before.  J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
+
+// --- From MeterManager.cs ---
+/*  MeterManager.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #pragma once
 
 #include "core/ControlRanges.h"
 
+#include <QColor>
+#include <QVector>
 #include <QWidget>
 #include <array>
+#include <optional>
+#include <utility>
 #include <QPixmap>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -256,6 +315,48 @@ public:
     // at -93 dBm; the dBm readout stays the reading.  Not saved.
     bool aboveS9Frequency() const { return m_aboveS9Frequency; }
 
+    // Per-copy appearance and dynamics (NereusSDR-native wiring of the
+    // Thetis meter item settings; a container copy keeps them in its entry,
+    // SMeterDialContent).  An invalid colour or an empty ratio is the face's
+    // own, as the dial was drawn before these settings existed.
+    QColor peakHoldColor() const { return m_peakHoldColor; }
+    // The receive needle (Thetis's primary needle) and the transmit needle
+    // (ANANMM's sub needles: power, SWR, ALC, volts, amps).
+    QColor needleColor() const { return m_needleColor; }
+    QColor subNeedleColor() const { return m_subNeedleColor; }
+    bool shadow() const { return m_shadow; }
+    // The power scale below its red zone (TX mode Power).
+    QColor powerScaleColor() const { return m_powerScaleColor; }
+    // A vintage face with a light card draws Blackface's card, ink and
+    // pointer; a dark face and the Classic face are already dark.
+    bool darkMode() const { return m_darkMode; }
+    int updateIntervalMs() const;
+    // Thetis ratios: each update moves the needle by this share of the way
+    // to the reading.  Empty: the built-in time constants.
+    std::optional<float> attackRatio() const { return m_attackRatio; }
+    std::optional<float> decayRatio() const { return m_decayRatio; }
+    bool showHistory() const { return m_showHistory; }
+    QColor historyColor() const { return m_historyColor; }
+    int historyDurationMs() const { return m_historyDurationMs; }
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+
+    // The colours a face draws when the copy has none of its own.
+    static QColor faceNeedleColor(FaceStyle face, bool darkMode);
+    static QColor facePeakHoldColor(FaceStyle face);
+    static QColor facePowerScaleColor(FaceStyle face, bool darkMode);
+
+    // Test-only: the history the wedge spans (needle fractions, lowest and
+    // highest; the needle itself when empty), its length, one sample (the
+    // history timer's tick), and whether a clear's ignore time is running.
+    std::pair<float, float> testHistoryRange() const { return historyRange(); }
+    int testHistorySize() const { return static_cast<int>(m_history.size()); }
+    void testSampleHistory() { sampleHistory(); }
+    bool testIgnoringHistory() const { return ignoringHistory(); }
+    // Test-only: one needle update `ms` after the last.
+    void testStepNeedle(int ms) { moveNeedle(static_cast<float>(ms) / 1000.0f); }
+    // Test-only: the needle colour drawn now (receive or transmit).
+    QColor testNeedleColorShown() const { return shownNeedleColor(faceNeedleColor(m_faceStyle, m_darkMode)); }
+
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
     float testPowerRedStart()  const { return m_powerRedStart; }
@@ -364,6 +465,31 @@ public slots:
     // NereusSDR-native; no upstream equivalent.
     void setFaceStyle(FaceStyle style);
 
+    // Per-copy appearance and dynamics (see peakHoldColor()).  None of
+    // these reads or writes an AppSettings key.  NereusSDR-native.
+    void setPeakHoldColor(const QColor& color);
+    void setNeedleColor(const QColor& color);
+    void setSubNeedleColor(const QColor& color);
+    void setShadow(bool on);
+    void setPowerScaleColor(const QColor& color);
+    void setDarkMode(bool on);
+    // Clamped to kMinUpdateIntervalMs..kMaxUpdateIntervalMs (MeterItem.h).
+    void setUpdateIntervalMs(int ms);
+    // Clamped to 0..1.
+    void setAttackRatio(std::optional<float> ratio);
+    void setDecayRatio(std::optional<float> ratio);
+    void setShowHistory(bool on);
+    void setHistoryColor(const QColor& color);
+    // Clamped to kMinBarHistoryDurationMs..kMaxBarHistoryDurationMs.
+    void setHistoryDurationMs(int ms);
+    // Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setIgnoreHistoryMs(int ms);
+    // Thetis ClearHistory: the history empties, the next ignoreHistoryMs()
+    // of readings reach neither the history nor the peak hold, and the
+    // peak hold drops to the reading.  A container copy calls it on each
+    // transmit change and on a band change, as Thetis's ZeroOut does.
+    void clearHistory();
+
     // R-R3-49 (remote-window parity Task 33): a TX mode this window has no
     // reading for (a remote window whose Core does not send it).  While
     // transmitting in that mode both faces show "--", the pointer rests at
@@ -402,6 +528,9 @@ private:
 
     void updateNeedleTarget();
     void animateNeedle();
+    // One step of the needle toward its target (NereusSDR: animateNeedle's
+    // body, so a test can take one update).  True when it is there.
+    bool moveNeedle(float elapsedSeconds);
     void updatePeakHoldValue();
 
     // RX readouts both faces draw: S-units ("S7", "S9+20") and dBm
@@ -421,6 +550,15 @@ private:
     // NereusSDR-native.
     bool peakMarkerVisible() const;
     bool peakHoldLineVisible() const;
+
+    // The history (NereusSDR-native port of Thetis clsNeedleItem's): one
+    // needle fraction per update interval while it is shown.
+    void sampleHistory();
+    std::pair<float, float> historyRange() const;
+    bool ignoringHistory() const;
+    // The needle colour now: the copy's own for receive or transmit, else
+    // `faceColor`.
+    QColor shownNeedleColor(const QColor& faceColor) const;
 
     // Connect to RadioModel's cross-vendor external-amp aggregator signals.
     // Called from the RadioModel* constructor overload only.
@@ -536,6 +674,26 @@ private:
     // updatePeakHoldValue(). Always 0 in production; testAdvanceTime() sets it.
     qint64         m_testTimeOffsetMs{0};
 
+    // Per-copy appearance and dynamics (setPeakHoldColor() and the rest).
+    // NereusSDR-native.
+    QColor m_peakHoldColor;
+    QColor m_needleColor;
+    QColor m_subNeedleColor;
+    bool   m_shadow{true};
+    QColor m_powerScaleColor;
+    bool   m_darkMode{false};
+    std::optional<float> m_attackRatio;
+    std::optional<float> m_decayRatio;
+    bool   m_showHistory{false};
+    QColor m_historyColor;              // set in the constructor
+    int    m_historyDurationMs{0};      // set in the constructor
+    int    m_ignoreHistoryMs{0};        // set in the constructor
+    QVector<float> m_history;
+    QTimer m_historyTimer;
+    // clearHistory()'s ignore time, and the synthetic offset at the clear.
+    QElapsedTimer m_ignoreTimer;
+    qint64 m_ignoreStartOffsetMs{0};
+
     // S-unit reference: S0 = -127 dBm, each S-unit = 6 dB. The values (with
     // their AetherSDR cite, src/gui/SMeterWidget.h:114-117 [@0cd4559]) live
     // in core/ControlRanges.h, which the Core's catalogue reads too.
@@ -591,6 +749,15 @@ public:
     static constexpr float kAmpsMin = 0.0f;
     static constexpr float kAmpsMax = 20.0f;
     static constexpr float kAmpsStep = 2.0f;
+
+    // The update interval a dial has with no setting of its own: the
+    // needle animation tick above (NereusSDR-native).
+    static constexpr int kDefaultUpdateIntervalMs = kNeedleAnimationIntervalMs;
+    // The history defaults: ANANMM's signal needle (AddAnanMM).
+    // From Thetis MeterManager.cs:23803 [v2.10.3.15] (ni.HistoryDuration = 4000;)
+    static constexpr int kDefaultHistoryDurationMs = 4000;
+    // From Thetis MeterManager.cs:23807 [v2.10.3.15] (ni.HistoryColour = FromArgb(64, 233, 51, 50))
+    static constexpr QRgb kDefaultHistoryRgba = qRgba(233, 51, 50, 64);
 };
 
 } // namespace NereusSDR

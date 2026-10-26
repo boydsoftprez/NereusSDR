@@ -22,6 +22,12 @@
 //                 limit" property (kPowerLimitKey); the VHF S9 rule of the
 //                 copy's slice (LongpathContent::followAboveS9Frequency).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Appearance and dynamics per copy (the Thetis meter item
+//                 settings, setup.cs:25519-25577 [v2.10.3.15]) and Fade on
+//                 RX / TX (ContentFade::properties); the history and peak
+//                 hold clear on each transmit change (Thetis OnMox /
+//                 ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -29,6 +35,7 @@
 
 #include "gui/SMeterWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "models/RadioModel.h"
@@ -39,12 +46,24 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <optional>
 
 namespace NereusSDR::SMeterDialContent {
 
 namespace {
+
+// Attack and decay ratios: 0..1 in steps of 0.05, three decimals.
+// From Thetis setup.designer.cs:55633-55649 [v2.10.3.15] (nudMeterItemAttackRate
+// DecimalPlaces 3, Increment 0.05, Maximum 1, Minimum 0; nudMeterItemDecayRate
+// :55592-55608 the same)
+constexpr double kRatioStep = 0.05;
+constexpr double kRatioMax = 1.0;
+constexpr double kRatioScale = 1000.0; // three decimals
+// History colour opacity.
+// From Thetis setup.designer.cs:55089 [v2.10.3.15] (tbMeterItemHistoryAlpha.Maximum = 255)
+constexpr int kHistoryAlphaMax = 255;
 
 // The right-click menu's names, in enum order (SMeterWidget::TxMode,
 // RxMode, DecayRate); the entry config stores these.
@@ -102,6 +121,91 @@ int powerLimitW(const QJsonObject& config)
     return std::clamp(limit, 0, static_cast<int>(kMaxBarPowerLimitW));
 }
 
+// A colour key: invalid when absent or not a colour (the face's own).
+QColor colorOf(const QJsonObject& config, const char* key)
+{
+    const QString text = config.value(QLatin1String(key)).toString();
+    return text.isEmpty() ? QColor() : QColor(text);
+}
+
+// A ratio key: empty when absent or not a number (the built-in time constants).
+std::optional<float> ratioOf(const QJsonObject& config, const char* key)
+{
+    const QJsonValue v = config.value(QLatin1String(key));
+    if (!v.isDouble()) { return std::nullopt; }
+    return static_cast<float>(std::clamp(v.toDouble(), 0.0, kRatioMax));
+}
+
+// The copy's appearance and dynamics; an absent key leaves the dial as it
+// was drawn before these keys existed.
+void applyAppearance(SMeterWidget& dial, const QJsonObject& config)
+{
+    dial.setPeakHoldColor(colorOf(config, kPeakHoldColorKey));
+    dial.setNeedleColor(colorOf(config, kNeedleColorKey));
+    dial.setSubNeedleColor(colorOf(config, kSubNeedleColorKey));
+    dial.setPowerScaleColor(colorOf(config, kPowerScaleColorKey));
+    dial.setShadow(config.value(QLatin1String(kShadowKey)).toBool(true));
+    dial.setDarkMode(config.value(QLatin1String(kDarkModeKey)).toBool(false));
+    dial.setUpdateIntervalMs(
+        config.value(QLatin1String(kUpdateIntervalKey)).toInt(SMeterWidget::kDefaultUpdateIntervalMs));
+    dial.setAttackRatio(ratioOf(config, kAttackRatioKey));
+    dial.setDecayRatio(ratioOf(config, kDecayRatioKey));
+    dial.setHistoryDurationMs(
+        config.value(QLatin1String(kHistoryDurationKey)).toInt(SMeterWidget::kDefaultHistoryDurationMs));
+    dial.setIgnoreHistoryMs(config.value(QLatin1String(kIgnoreHistoryKey)).toInt(kDefaultBarIgnoreHistoryMs));
+    QColor history = colorOf(config, kHistoryColorKey);
+    const QColor fallback = QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba);
+    if (!history.isValid()) { history = fallback; }
+    history.setAlpha(std::clamp(config.value(QLatin1String(kHistoryAlphaKey)).toInt(fallback.alpha()), 0,
+                                kHistoryAlphaMax));
+    dial.setHistoryColor(history);
+    dial.setShowHistory(config.value(QLatin1String(kShowHistoryKey)).toBool(false));
+}
+
+// The entry config with the dial's appearance and dynamics: a key for each
+// setting of the copy's own, none for one the dial draws as it did before.
+QJsonObject appearanceFrom(const SMeterWidget& dial, QJsonObject config)
+{
+    const auto putColor = [&config](const char* key, const QColor& color) {
+        if (color.isValid()) {
+            config.insert(QLatin1String(key), color.name(QColor::HexRgb));
+        } else {
+            config.remove(QLatin1String(key));
+        }
+    };
+    const auto putUnless = [&config](const char* key, const QJsonValue& value, const QJsonValue& absent) {
+        if (value == absent) {
+            config.remove(QLatin1String(key));
+        } else {
+            config.insert(QLatin1String(key), value);
+        }
+    };
+    const auto putRatio = [&config](const char* key, std::optional<float> ratio) {
+        if (ratio) {
+            config.insert(QLatin1String(key), std::round(static_cast<double>(*ratio) * kRatioScale) / kRatioScale);
+        } else {
+            config.remove(QLatin1String(key));
+        }
+    };
+    putColor(kPeakHoldColorKey, dial.peakHoldColor());
+    putColor(kNeedleColorKey, dial.needleColor());
+    putColor(kSubNeedleColorKey, dial.subNeedleColor());
+    putColor(kPowerScaleColorKey, dial.powerScaleColor());
+    putUnless(kShadowKey, dial.shadow(), true);
+    putUnless(kDarkModeKey, dial.darkMode(), false);
+    putUnless(kUpdateIntervalKey, dial.updateIntervalMs(), SMeterWidget::kDefaultUpdateIntervalMs);
+    putRatio(kAttackRatioKey, dial.attackRatio());
+    putRatio(kDecayRatioKey, dial.decayRatio());
+    putUnless(kShowHistoryKey, dial.showHistory(), false);
+    const QColor history = dial.historyColor();
+    const QColor fallback = QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba);
+    putUnless(kHistoryColorKey, history.name(QColor::HexRgb), fallback.name(QColor::HexRgb));
+    putUnless(kHistoryAlphaKey, history.alpha(), fallback.alpha());
+    putUnless(kHistoryDurationKey, dial.historyDurationMs(), SMeterWidget::kDefaultHistoryDurationMs);
+    putUnless(kIgnoreHistoryKey, dial.ignoreHistoryMs(), kDefaultBarIgnoreHistoryMs);
+    return config;
+}
+
 // Applies the copy's settings; an absent key keeps today's default (the
 // Instance constructor's).
 void applyConfig(SMeterWidget& dial, const QJsonObject& config)
@@ -131,9 +235,11 @@ void applyConfig(SMeterWidget& dial, const QJsonObject& config)
     if (const int limit = powerLimitW(config); limit > 0) {
         dial.setPowerDisplayScale(limit, limit);
     }
+    applyAppearance(dial, config);
 }
 
-// The entry config with the dial's five settings as it shows them now.
+// The entry config with the dial's five menu settings as it shows them
+// now, and its appearance and dynamics.
 QJsonObject configFrom(const SMeterWidget& dial, QJsonObject config)
 {
     config.insert(QLatin1String(kTxModeKey), txModeNames().at(static_cast<std::size_t>(dial.txMode())));
@@ -146,7 +252,101 @@ QJsonObject configFrom(const SMeterWidget& dial, QJsonObject config)
     } else {
         config.insert(QLatin1String(kFaceKey), SMeterWidget::faceStyleKey(dial.faceStyle()));
     }
-    return config;
+    return appearanceFrom(dial, config);
+}
+
+// The face a config draws: its own, or Setup's.
+SMeterWidget::FaceStyle faceOf(const QJsonObject& config)
+{
+    const QString face = config.value(QLatin1String(kFaceKey)).toString();
+    if (!face.isEmpty() && SMeterWidget::faceStyleKey(SMeterWidget::faceStyleFromKey(face)) == face) {
+        return SMeterWidget::faceStyleFromKey(face);
+    }
+    return static_cast<SMeterWidget::FaceStyle>(SMeterSetupFace::current());
+}
+
+bool darkOf(const QJsonObject& config)
+{
+    return config.value(QLatin1String(kDarkModeKey)).toBool(false);
+}
+
+// The appearance and dynamics rows, in the order of Thetis's meter item
+// settings. A colour with no key shows the face's own.
+QVector<ContentProperty> appearanceProperties()
+{
+    const auto color = [](const char* key, const QString& label,
+                          std::function<QColor(const QJsonObject&)> faceColor) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Color;
+        p.defaultValue = faceColor(QJsonObject()).name(QColor::HexRgb);
+        p.effectiveDefault = [faceColor](const QJsonObject& config) {
+            return QJsonValue(faceColor(config).name(QColor::HexRgb));
+        };
+        return p;
+    };
+    const auto toggle = [](const char* key, const QString& label, bool absent) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Toggle;
+        p.defaultValue = absent;
+        return p;
+    };
+    const auto integer = [](const char* key, const QString& label, int low, int high, int absent,
+                            const QString& suffix) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Integer;
+        p.minimum = low;
+        p.maximum = high;
+        p.defaultValue = absent;
+        p.suffix = suffix;
+        return p;
+    };
+    const auto ratio = [](const char* key, const QString& label) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Choice;
+        // Null removes the key: the built-in needle movement.
+        p.choices.append({QObject::tr("Standard"), QJsonValue(), true, {}});
+        const int steps = static_cast<int>(std::lround(kRatioMax / kRatioStep));
+        for (int i = 0; i <= steps; ++i) {
+            const double value = std::round(i * kRatioStep * kRatioScale) / kRatioScale;
+            p.choices.append({QString::number(value, 'f', 2), value, true, {}});
+        }
+        p.defaultValue = QJsonValue();
+        return p;
+    };
+    const QString ms = QObject::tr(" ms");
+    return {
+        color(kPeakHoldColorKey, QObject::tr("Peak hold color"),
+              [](const QJsonObject& c) { return SMeterWidget::facePeakHoldColor(faceOf(c)); }),
+        color(kNeedleColorKey, QObject::tr("Needle color"),
+              [](const QJsonObject& c) { return SMeterWidget::faceNeedleColor(faceOf(c), darkOf(c)); }),
+        color(kSubNeedleColorKey, QObject::tr("Transmit needle color"),
+              [](const QJsonObject& c) { return SMeterWidget::faceNeedleColor(faceOf(c), darkOf(c)); }),
+        toggle(kShadowKey, QObject::tr("Needle shadow"), true),
+        color(kPowerScaleColorKey, QObject::tr("Power scale color"),
+              [](const QJsonObject& c) { return SMeterWidget::facePowerScaleColor(faceOf(c), darkOf(c)); }),
+        toggle(kDarkModeKey, QObject::tr("Dark mode"), false),
+        integer(kUpdateIntervalKey, QObject::tr("Update interval"), kMinUpdateIntervalMs, kMaxUpdateIntervalMs,
+                SMeterWidget::kDefaultUpdateIntervalMs, ms),
+        ratio(kAttackRatioKey, QObject::tr("Needle attack ratio")),
+        ratio(kDecayRatioKey, QObject::tr("Needle decay ratio")),
+        toggle(kShowHistoryKey, QObject::tr("Show history"), false),
+        color(kHistoryColorKey, QObject::tr("History color"),
+              [](const QJsonObject&) { return QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba); }),
+        integer(kHistoryAlphaKey, QObject::tr("History opacity"), 0, kHistoryAlphaMax,
+                qAlpha(SMeterWidget::kDefaultHistoryRgba), QString()),
+        integer(kHistoryDurationKey, QObject::tr("History duration"), kMinBarHistoryDurationMs,
+                kMaxBarHistoryDurationMs, SMeterWidget::kDefaultHistoryDurationMs, ms),
+        integer(kIgnoreHistoryKey, QObject::tr("Ignore history after a change"), kMinBarIgnoreHistoryMs,
+                kMaxBarIgnoreHistoryMs, kDefaultBarIgnoreHistoryMs, ms),
+    };
 }
 
 QVector<ContentProperty> dialProperties()
@@ -198,7 +398,10 @@ QVector<ContentProperty> dialProperties()
     limit.maximum = static_cast<int>(kMaxBarPowerLimitW);
     limit.suffix = QObject::tr(" W");
     limit.defaultValue = 0;
-    return {tx, rx, peak, decay, face, limit};
+    QVector<ContentProperty> out{tx, rx, peak, decay, face, limit};
+    out += appearanceProperties();
+    out += ContentFade::properties();
+    return out;
 }
 
 // The same mirrored source as the main applet dial, including remote
@@ -346,6 +549,16 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     }
     if (sources.radio) {
         QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial, &SMeterWidget::setTransmitting);
+        // Thetis zeroes every meter, history included, on each MOX change
+        // (OnMox, MeterManager.cs:5252-5275 [v2.10.3.15], calling ZeroOut,
+        // MeterManager.cs:26398-26406, which calls mi.ClearHistory()).
+        auto wasTransmitting = std::make_shared<bool>(sources.radio->isTransmitting());
+        QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial,
+            [guard, wasTransmitting](bool transmitting) {
+                if (!guard || transmitting == *wasTransmitting) { return; }
+                *wasTransmitting = transmitting;
+                guard->clearHistory();
+            });
         followExternalAmp(dial, sources.radio, !poller, !ownScale);
     }
 
