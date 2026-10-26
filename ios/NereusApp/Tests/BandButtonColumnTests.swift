@@ -116,13 +116,56 @@ struct BandButtonColumnTests {
         #expect(PttLatch.shown(latch, after).minX == flag.maxX - 60 + BandColumnLayout.clearance)
         // Keyed with nothing held (the screen came up keyed): DC15's place.
         #expect(PttLatch.shown(nil, keyed) == home)
-        // A new home (the phone turned) or a band too narrow for the held spot: DC15's place, held from then.
+        // The phone turned with the held spot still on the band: there, on the new home's row.
         let turned = CGRect(x: 14, y: 786, width: 76, height: 76)
         let turnedKeyed = inputs(keyed: true, flags: [], home: turned, maxX: 388)
-        #expect(PttLatch.shown(latch, turnedKeyed) == turned)
-        #expect(PttLatch.next(latch, turnedKeyed) == PttLatch(frame: turned, home: turned))
+        #expect(PttLatch.shown(latch, turnedKeyed) == CGRect(x: past.minX, y: turned.minY, width: 76, height: 76))
+        // A band too narrow for the held spot, or a home right of it (a
+        // rounded edge coming in): DC15's place, held from then.
         let narrow = inputs(keyed: true, flags: [flag], maxX: past.maxX - 1)
         #expect(PttLatch.shown(latch, narrow) == home)
+        #expect(PttLatch.next(latch, narrow) == PttLatch(frame: home))
+        let inset = CGRect(x: past.minX + 1, y: 94, width: 76, height: 76)
+        let insetKeyed = inputs(keyed: true, flags: [], home: inset)
+        #expect(PttLatch.shown(latch, insetKeyed) == inset)
+    }
+
+    /// The PR 653 re-review, Minor 2: a band that changes height while keyed
+    /// (Stage Manager, a row coming or going) moved the PTT's home and so
+    /// dropped the hold: the PTT jumped to DC15's place over the flag, and a
+    /// second tap where it had been hit the flag and left the radio keyed.
+    @Test("keyed, a band that changes height keeps the held PTT's x and follows its home's y")
+    func keyedPttHeldThroughABandHeightChange() {
+        let home = CGRect(x: 76, y: 94, width: 76, height: 76)
+        let maxX: CGFloat = 874 - 62 - PttButton.inset
+        let flag = CGRect(x: 20, y: 0, width: 252, height: 157)
+        func inputs(keyed: Bool, home: CGRect) -> PttLatch.Inputs {
+            PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX,
+                            receive: BandColumnLayout.pttFrame(home: home, avoid: [], flags: [flag], maxX: maxX),
+                            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: [], flags: [flag], keyed: true,
+                                                                 maxX: maxX))
+        }
+        // Keyed where it had moved past the flag.
+        var latch = PttLatch.next(nil, inputs(keyed: false, home: home))
+        let past = latch.frame
+        #expect(past.minX == flag.maxX + BandColumnLayout.clearance)
+        latch = PttLatch.next(latch, inputs(keyed: true, home: home))
+        // The band 40 points shorter: its home 40 points higher, the flag still in its row.
+        let shorter = inputs(keyed: true, home: home.offsetBy(dx: 0, dy: -40))
+        #expect(shorter.keyedRule.minX == home.minX, "the flag no longer reaches the PTT's row")
+        let shown = PttLatch.shown(latch, shorter)
+        #expect(shown == past.offsetBy(dx: 0, dy: -40))
+        latch = PttLatch.next(latch, shorter)
+        #expect(latch.frame == shown)
+        // A tap at the held x on its new row lands on the PTT, not on the flag beside it.
+        let tap = CGPoint(x: past.midX, y: shown.midY)
+        #expect(shown.contains(tap) && !flag.contains(tap))
+        // Taller again: still there, on the new row.
+        let taller = inputs(keyed: true, home: home.offsetBy(dx: 0, dy: 30))
+        #expect(PttLatch.shown(latch, taller) == past.offsetBy(dx: 0, dy: 30))
+        // Unkeyed: its usual place on the band as it now stands.
+        #expect(PttLatch.shown(latch, inputs(keyed: false, home: home.offsetBy(dx: 0, dy: -40)))
+                == shorter.receive)
     }
 
     @Test("the PTT moving past flags stops at the band's right edge")

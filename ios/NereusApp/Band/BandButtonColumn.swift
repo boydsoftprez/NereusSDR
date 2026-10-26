@@ -231,15 +231,16 @@ enum BandColumnLayout {
 /// whole key (spec DC15 as amended after the PR 653 review: the manager's
 /// ruling, 2026-10-25, for JJ's veto): the tap that unkeys lands where
 /// the tap that keyed did, whatever the flags or the column do meanwhile.
-/// Receiving it follows the PTT's usual place; keyed it keeps that place
-/// while it still stands on the band: a rotation or a new band size moves
-/// the PTT's home or narrows the band past it, and then the PTT takes its
-/// keyed place (DC15's, beside the column, over any flag) and holds that.
+/// Receiving it follows the PTT's usual place; keyed it keeps its place
+/// across the band and follows its home up or down as the band changes
+/// height (a rotation, Stage Manager, a row coming or going: the PR 653
+/// re-review, Minor 2), while that spot still stands on the band. Once it
+/// would not (past the band's right edge, or left of the PTT's home) the
+/// PTT takes its keyed place (DC15's, beside the column, over any flag)
+/// and holds that.
 struct PttLatch: Equatable {
-    /// Where the PTT is held.
+    /// Where the PTT is held, on its home's row when it was last laid out.
     let frame: CGRect
-    /// The PTT's home when it was held.
-    let home: CGRect
 
     /// What the latch hangs on, for a view's `onChange`.
     struct Inputs: Equatable {
@@ -252,9 +253,14 @@ struct PttLatch: Equatable {
         let keyedRule: CGRect
     }
 
-    /// The latch holds for this layout: the same home, still on the band.
-    func holds(home: CGRect, maxX: CGFloat) -> Bool {
-        self.home == home && frame.maxX <= maxX
+    /// The held place for this layout: its x, on `home`'s row; nil when
+    /// that is no longer on the band (past `maxX`, or left of `home`).
+    func place(home: CGRect, maxX: CGFloat) -> CGRect? {
+        let held = CGRect(x: frame.minX, y: home.minY, width: frame.width, height: frame.height)
+        guard held.maxX <= maxX, held.minX >= home.minX else {
+            return nil
+        }
+        return held
     }
 
     /// Where the PTT is drawn.
@@ -262,16 +268,13 @@ struct PttLatch: Equatable {
         guard inputs.keyed else {
             return inputs.receive
         }
-        if let latch, latch.holds(home: inputs.home, maxX: inputs.maxX) {
-            return latch.frame
-        }
-        return inputs.keyedRule
+        return latch?.place(home: inputs.home, maxX: inputs.maxX) ?? inputs.keyedRule
     }
 
     /// The latch after a layout: receiving, the place the PTT is drawn at;
-    /// keyed, what it held while that holds, else the keyed place.
+    /// keyed, what it held while that stays on the band, else the keyed place.
     static func next(_ latch: PttLatch?, _ inputs: Inputs) -> PttLatch {
-        PttLatch(frame: shown(latch, inputs), home: inputs.home)
+        PttLatch(frame: shown(latch, inputs))
     }
 }
 

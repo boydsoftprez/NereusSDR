@@ -242,16 +242,22 @@ struct KeyedMeterOverlayShotTests {
         try await shoot("ptt-held-landscape", model: model, sideways: true, expectedKeyed: false) { window in
             // The receive rule in the band's points, put on the screen: where
             // the PTT goes for the flags as they stand.
+            // The band as it stands now: it changes height below.
             let bandView = try #require(descendants(window).compactMap { $0 as? MTKView }.first)
-            let band = window.convert(window.convert(bandView.bounds, from: bandView), to: window.screen.coordinateSpace)
-            let home = PttButton.frame(bandSize: band.size, leadingInset: 62)
-            // The button column down the band's left, which reaches the PTT's row here.
-            let column = CGRect(x: 62 + BandColumnLayout.origin, y: 0,
-                                width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: band.height)),
-                                height: band.height)
+            @MainActor func bandRect() -> CGRect {
+                window.convert(window.convert(bandView.bounds, from: bandView), to: window.screen.coordinateSpace)
+            }
+            let home = PttButton.frame(bandSize: bandRect().size, leadingInset: 62)
             @MainActor func usual() -> CGRect {
-                BandColumnLayout.pttFrame(home: home, avoid: [column], flags: model.main.slices.flagRects,
-                                          maxX: band.width - 62 - PttButton.inset)
+                let band = bandRect()
+                // The button column down the band's left, which reaches the PTT's row here.
+                let column = CGRect(x: 62 + BandColumnLayout.origin, y: 0,
+                                    width: BandColumnLayout.columnWidth(
+                                        columns: BandColumnLayout.columns(bandHeight: band.height)),
+                                    height: band.height)
+                return BandColumnLayout.pttFrame(home: PttButton.frame(bandSize: band.size, leadingInset: 62),
+                                                 avoid: [column], flags: model.main.slices.flagRects,
+                                                 maxX: band.width - 62 - PttButton.inset)
                     .offsetBy(dx: band.minX, dy: band.minY)
             }
             @MainActor func ptt() -> CGRect? { SetupTypedEntryTests.element("ptt", in: window)?.accessibilityFrame }
@@ -263,10 +269,10 @@ struct KeyedMeterOverlayShotTests {
             }, "the PTT did not move past flag A")
             await ShotWait.laidOut(window)
             let receive = try #require(await element("ptt", in: window)).accessibilityFrame
-            #expect(receive.minX > home.minX + band.minX + 100, "the PTT is not mid-band: \(receive)")
+            #expect(receive.minX > home.minX + bandRect().minX + 100, "the PTT is not mid-band: \(receive)")
             #expect(abs(receive.minX - usual().minX) < 0.5 && abs(receive.minY - usual().minY) < 0.5,
                     "the receive rule does not match the screen: \(receive) vs \(usual())")
-            let spot = CGPoint(x: receive.midX, y: receive.midY)
+            var spot = CGPoint(x: receive.midX, y: receive.midY)
 
             // Keyed (whatever keyed it): the PTT stays put.
             model.main.transmit.tapPtt()
@@ -301,6 +307,21 @@ struct KeyedMeterOverlayShotTests {
             #expect(face.red > 0.5 && face.red > 2 * face.green && face.red > 2 * face.blue,
                     "the keyed PTT is not on top at its spot: \(face)")
             try save(window, name: "ptt-held-landscape-keyed")
+
+            // The band grows 40 points shorter while keyed (a bar coming up
+            // at its foot, as Stage Manager or a row coming or going would):
+            // the PTT keeps its x and follows its home's y, so the next tap
+            // at that x still lands on it (the PR 653 re-review, Minor 2).
+            let host = try #require(window.rootViewController)
+            host.additionalSafeAreaInsets.bottom += 40
+            #expect(await settle { (ptt()?.minY ?? held.minY) < held.minY - 20 },
+                    "the band did not grow shorter: \(String(describing: ptt()))")
+            await ShotWait.laidOut(window)
+            let lowered = try #require(ptt())
+            #expect(lowered.minX == held.minX && lowered.size == held.size,
+                    "the PTT left where it was keyed when the band changed height: \(lowered), keyed at \(held)")
+            spot = CGPoint(x: lowered.midX, y: lowered.midY)
+            try save(window, name: "ptt-held-landscape-shorter")
 
             // A second tap at the same spot: the PTT takes it and unkeys.
             let button = try #require(SetupTypedEntryTests.element("ptt", in: window))
