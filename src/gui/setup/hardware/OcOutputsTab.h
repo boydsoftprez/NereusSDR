@@ -27,6 +27,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - setN2adrHintVisible. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-26 - Anvelina DX Outputs group (DX OUT 7..10, names, All on /
+//                All off) under User Dig Out, on an ANVELINAPRO3 only
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -73,6 +76,9 @@
 
 class QCheckBox;
 class QGroupBox;
+class QLabel;
+class QLineEdit;
+class QPushButton;
 class QTabWidget;
 
 namespace NereusSDR {
@@ -146,6 +152,15 @@ public:
     // setChecked which fires the same signal path as a user click).
     void toggleUserDigOutCheckboxForTest(int bit, bool checked);
 
+    // ── Test seams (Anvelina DX Outputs) ─────────────────────────────────
+    // out is 7..10. !isHidden(), as userDigOutGroupVisibleForTest.
+    bool dxGroupVisibleForTest() const;
+    QCheckBox* dxCheckboxForTest(int out) const;
+    QLineEdit* dxNameFieldForTest(int out) const;
+    QPushButton* dxAllOnButtonForTest() const { return m_dxAllOn; }
+    QPushButton* dxAllOffButtonForTest() const { return m_dxAllOff; }
+    bool dxReasonVisibleForTest() const;
+
 signals:
     // Present for HardwarePage API compatibility. OcOutputsTab routes all
     // state through OcMatrix (AppSettings), so this signal is never emitted
@@ -164,6 +179,18 @@ private:
     // signals don't write back to the model.
     void onModelUserDigOutChanged(int nibble);
 
+    // ── Anvelina DX Outputs ────────────────────────────────────────────────
+    void buildDxGroup();
+    // Mirror AnvelinaDxOutputs into the boxes and name fields, signals
+    // blocked (QSignalBlocker) so nothing writes back.
+    void syncDxFromModel();
+    // Running (connected and streaming) or stopped: the gateware holds the
+    // outputs low while the radio is stopped (Orion.v:920-923 [@8e86a61]).
+    void applyDxRunning();
+    // Shown on an Anvelina PRO III only (the model, not the board: the
+    // Anvelina's board is OrionMKII).
+    void applyDxVisibility();
+
     RadioModel*      m_model{nullptr};
     OcMatrix*        m_ocMatrix{nullptr};   // non-owning — owned by RadioModel (Phase 3P-D Task 3)
     QTabWidget*      m_subTabs{nullptr};
@@ -178,6 +205,18 @@ private:
     static constexpr int kUserDigOutBits = 4;
     QGroupBox*                                       m_userDigOutGroup{nullptr};
     std::array<QCheckBox*, kUserDigOutBits>          m_userDigOutChecks{};
+
+    // ── Anvelina DX Outputs (DX OUT 7..10) ─────────────────────────────────
+    // The section holds the group and the italic reason line under it; all
+    // state lives in RadioModel's AnvelinaDxOutputs.
+    static constexpr int kDxOutputs = 4;
+    QWidget*                                   m_dxSection{nullptr};
+    QGroupBox*                                 m_dxGroup{nullptr};
+    std::array<QCheckBox*, kDxOutputs>         m_dxChecks{};
+    std::array<QLineEdit*, kDxOutputs>         m_dxNames{};
+    QPushButton*                               m_dxAllOn{nullptr};
+    QPushButton*                               m_dxAllOff{nullptr};
+    QLabel*                                    m_dxReason{nullptr};
 
     // Echo-loop guard: when set, checkbox toggled() handlers skip the
     // write-back to TransmitModel.  Used during onModelUserDigOutChanged.

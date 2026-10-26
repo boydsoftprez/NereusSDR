@@ -8648,11 +8648,16 @@ namespace {
 // first tab). `path` names the tab from the outside in: a tab inside a tab
 // is {outer, inner}. The board is the identity the model is posed as (a
 // model value; nothing connects): the HL2 tabs show only for a board with
-// the HL2 I/O board (HardwarePage::onCurrentRadioChanged).
+// the HL2 I/O board (HardwarePage::onCurrentRadioChanged). A model other
+// than FIRST poses that exact model on the board (the Anvelina PRO III is
+// board OrionMKII, model ANVELINAPRO3, and its DX Outputs follow the
+// model), and `suffix` ends the scene's name.
 struct SetupTabSpec {
     QString page;   // the page scene's stem: dialog-setup-<page>
     QStringList path;
     HPSDRHW board{HPSDRHW::Saturn};
+    HPSDRModel model{HPSDRModel::FIRST};
+    QString suffix;
 };
 
 QVector<SetupTabSpec> setupTabSpecs()
@@ -8666,6 +8671,8 @@ QVector<SetupTabSpec> setupTabSpecs()
     const QString oc = QStringLiteral("OC Outputs");
     const QString hl2Oc = QStringLiteral("Hermes Lite Control");
     const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    const HPSDRHW anvelina = HPSDRHW::OrionMKII;
+    const QString anvelinaSuffix = QStringLiteral("--anvelina");
     return {
         // CoresSetupPage.cpp:157-159 (a QTabBar over a QStackedWidget).
         {cores, {QStringLiteral("Addresses")}},
@@ -8682,6 +8689,10 @@ QVector<SetupTabSpec> setupTabSpecs()
         {hardware, {hl2Oc, QStringLiteral("SWL")}, hl2},
         {hardware, {QStringLiteral("HL2 Options")}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
+        // The Anvelina PRO III: OC Outputs' DX Outputs group
+        // (OcOutputsTab::buildDxGroup) and Antenna / ALEX on that radio.
+        {hardware, {oc}, anvelina, HPSDRModel::ANVELINAPRO3, anvelinaSuffix},
+        {hardware, {alex}, anvelina, HPSDRModel::ANVELINAPRO3, anvelinaSuffix},
         // DspSetupPages.cpp:995-1722 (NR1 is the first tab).
         {nr, {QStringLiteral("NR2")}},
         {nr, {QStringLiteral("NR3")}},
@@ -8832,9 +8843,16 @@ QString setupTabStem(const QStringList& path)
 }
 
 // The test radios the connection panel scene shows (sampleRadio), one per
-// posed board.
-RadioInfo posedRadio(HPSDRHW board)
+// posed board, and an Anvelina PRO III for that posed model.
+RadioInfo posedRadio(HPSDRHW board, HPSDRModel model = HPSDRModel::FIRST)
 {
+    if (model == HPSDRModel::ANVELINAPRO3) {
+        RadioInfo info = sampleRadio(QStringLiteral("Anvelina PRO III"), QStringLiteral("00:1C:C0:A3:5E:17"),
+                                     QStringLiteral("192.168.1.66"), HPSDRHW::OrionMKII,
+                                     ProtocolVersion::Protocol2, 27);
+        info.modelOverride = HPSDRModel::ANVELINAPRO3;
+        return info;
+    }
     if (board == HPSDRHW::HermesLite) {
         return sampleRadio(QStringLiteral("Hermes Lite 2"), QStringLiteral("00:1C:C0:7B:90:3C"),
                            QStringLiteral("192.168.1.31"), HPSDRHW::HermesLite,
@@ -9014,10 +9032,13 @@ SetupDialog* openSetupPageScene(SceneContext& ctx, int index)
 // connect tells it (HardwarePage::onCurrentRadioChanged), so its tab strip
 // is the board's.
 SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page, const QStringList& path,
-                               HPSDRHW board)
+                               HPSDRHW board, HPSDRModel model = HPSDRModel::FIRST)
 {
     if (board != HPSDRHW::Saturn) {
         ctx.model->setBoardForTest(board);
+    }
+    if (model != HPSDRModel::FIRST) {
+        ctx.model->setHpsdrModelForTest(model);
     }
     SetupDialog* d = openSetupPageScene(ctx, index);
     if (d == nullptr) {
@@ -9029,15 +9050,17 @@ SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page
             ctx.failure = QStringLiteral("no HardwarePage");
             return nullptr;
         }
-        const RadioInfo radio = posedRadio(board);
+        const RadioInfo radio = posedRadio(board, model);
         hardware->onCurrentRadioChanged(radio);
         pump(kFinalSettleMs);
+        const QString posedAs = model == HPSDRModel::ANVELINAPRO3
+            ? QStringLiteral("OrionMKII, model ANVELINAPRO3 (RadioModel::setHpsdrModelForTest)")
+            : board == HPSDRHW::HermesLite ? QStringLiteral("Hermes Lite 2")
+                                           : QStringLiteral("Saturn (ANAN-G2)");
         ctx.notes.append(QStringLiteral("board posed as %1 (RadioModel::setBoardForTest); Hardware Config "
                                         "told the radio %2 through HardwarePage::onCurrentRadioChanged; "
                                         "nothing connects")
-                             .arg(board == HPSDRHW::HermesLite ? QStringLiteral("Hermes Lite 2")
-                                                               : QStringLiteral("Saturn (ANAN-G2)"),
-                                  radio.name));
+                             .arg(posedAs, radio.name));
     }
     if (!selectSetupTabs(ctx, d, path)) {
         return nullptr;
@@ -9258,10 +9281,10 @@ QVector<Scene> setupPageScenes(MainWindow* window)
             continue;
         }
         const SetupLeaf leaf = leafByStem.value(spec.page);
-        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path) + spec.suffix;
         const QString title = where(leaf, spec.path);
         scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
-            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board, spec.model);
             if (d == nullptr) {
                 return;
             }

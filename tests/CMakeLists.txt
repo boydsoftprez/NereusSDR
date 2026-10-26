@@ -2501,6 +2501,13 @@ target_compile_definitions(tst_anvelina_dx_outputs PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_oc_outputs_hf_tab)
 target_compile_definitions(tst_oc_outputs_hf_tab PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Anvelina DX Outputs group on OC Outputs (DX OUT 7..10) ───────────────────
+# Shown on an ANVELINAPRO3 only; boxes / All on / All off reach the model's
+# wire byte; model to UI sync without write-back; held with the reason while
+# the radio is stopped.
+nereus_add_test(tst_oc_outputs_dx_group)
+target_compile_definitions(tst_oc_outputs_dx_group PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3L: OC Outputs SWL sub-sub-tab UI + matrix wiring ──────────────────
 # Smoke-tests construction, row 0 ↔ Band120m and row 12 ↔ Band11m sync,
 # reset clears all 13 SWL bands × 7 pins (RX + TX), and HF amateur entries
