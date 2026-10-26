@@ -11,6 +11,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display clicks, wheel, keys and screens by slice:
+//                 onContainerItemAdded connects each live VFO display's
+//                 requests (wireVfoDisplayRequests); each acts on the slice
+//                 it names through the setters the other controls use
+//                 (setFrequency, onBandButtonClicked, setDspMode, the filter
+//                 presets, setStepHz, setLocked) after vfoRequestSlice
+//                 refuses an unsupported source, another radio's entry or a
+//                 slice the window may not change. TX is
+//                 requestTxHandoffToSlice only; it never keys. feedVfo gives
+//                 the filter preset names. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - VFO display by slice letter: refreshContainerMeter feeds
 //                 every VFO display a VfoSliceState for each open slice
 //                 (frequency, mode, filter, band, band-plan text, step,
@@ -15339,8 +15350,128 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
             }
         }, Qt::QueuedConnection);
     }
+    // Container item parity Task 36: a live VFO display's clicks, wheel and
+    // keys act on the slice each request names. Preview copies never get
+    // here (and their signals are blocked).
+    QList<VfoDisplayItem*> vfos = item->findChildren<VfoDisplayItem*>();
+    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { vfos.prepend(vfo); }
+    if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
+        for (MeterItem* inner : face->internalItems()) {
+            auto* vfo = qobject_cast<VfoDisplayItem*>(inner);
+            if (vfo && !vfos.contains(vfo)) { vfos.append(vfo); }
+        }
+    }
+    for (VfoDisplayItem* vfo : std::as_const(vfos)) { wireVfoDisplayRequests(vfo); }
     refreshContainerControls(item);
     reconcileMiniDisplays();
+}
+
+SliceModel* MainWindow::vfoRequestSlice(const VfoDisplayItem* vfo, int sliceId)
+{
+    if (m_shuttingDown || !vfo || !m_radioModel || !m_containerButtons) { return nullptr; }
+    // As ContainerWidget relays a control's click: an entry whose source
+    // its canvas cannot read says so and does nothing.
+    if (vfo->property("containerUnsupportedSource").toBool()) {
+        QString reason = vfo->property("unsupportedSourceReason").toString();
+        if (reason.isEmpty()) { reason = tr("This control has an unsupported source"); }
+        showContainerButtonReason(reason);
+        return nullptr;
+    }
+    // An entry of another radio or Core never drives this window's radio
+    // (the entry's context: the item's own, else its meter's).
+    for (const QObject* o = vfo; o; o = o->parent()) {
+        const QVariant v = o->property("containerSourceContext");
+        if (!v.isValid()) { continue; }
+        if (v.metaType() != QMetaType::fromType<QJsonObject>()) {
+            showContainerButtonReason(tr("This control has an invalid source context"));
+            return nullptr;
+        }
+        const QString scopeReason = containerFunctionScopeReason(v.toJsonObject(), containerSessionId());
+        if (!scopeReason.isEmpty()) {
+            showContainerButtonReason(scopeReason);
+            return nullptr;
+        }
+        break;
+    }
+    // The slice the request names, as the container's buttons find theirs
+    // (a slice this window only listens to is refused, with its reason).
+    const int rxSource = sliceId + 1;
+    SliceModel* slice = m_containerButtons->sliceFor(rxSource);
+    if (!slice) { showContainerButtonReason(m_containerButtons->sliceUnavailableReason(rxSource)); }
+    return slice;
+}
+
+void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
+{
+    if (!vfo || vfo->property("vfoRequestsWired").toBool()) { return; }
+    vfo->setProperty("vfoRequestsWired", true);
+    const QPointer<VfoDisplayItem> guard(vfo);
+    // From Thetis MeterManager.cs:14572-14583 [v2.10.3.15] (MouseWheel,
+    // adjustVfo) and :14638-14655 (a digit's left / right click).
+    connect(vfo, &VfoDisplayItem::frequencyChangeRequested, this,
+            [this, guard](int sliceId, qint64 deltaHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        // if (abortForLockedVFO()) return; (SliceModel::setFrequency
+        // refuses a locked slice too.)
+        if (!slice || deltaHz == 0 || slice->locked()) { return; }
+        slice->setFrequency(slice->frequency() + static_cast<double>(deltaHz));
+    });
+    // From Thetis MeterManager.cs:14527-14559 [v2.10.3.15] (KeyDown, setVfo).
+    connect(vfo, &VfoDisplayItem::frequencySetRequested, this,
+            [this, guard](int sliceId, qint64 hz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || hz <= 0 || slice->locked()) { return; }
+        slice->setFrequency(static_cast<double>(hz));
+    });
+    // From Thetis MeterManager.cs:15030-15210 [v2.10.3.15] (setBand:
+    // BandPreChangeHandlers, the band button's path).
+    connect(vfo, &VfoDisplayItem::bandRequested, this,
+            [this, guard](int sliceId, Band band) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || slice->locked()) { return; }
+        m_radioModel->onBandButtonClicked(slice, band);
+    });
+    // From Thetis MeterManager.cs:14991-15028 [v2.10.3.15] (setMode).
+    connect(vfo, &VfoDisplayItem::modeRequested, this,
+            [this, guard](int sliceId, DSPMode mode) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || slice->locked()) { return; }
+        slice->setDspMode(mode);
+    });
+    // From Thetis MeterManager.cs:14948-14990 [v2.10.3.15] (setFilter:
+    // Filter.F1 + index), applied as onContainerFilterClicked applies a
+    // filter button's preset.
+    connect(vfo, &VfoDisplayItem::filterRequested, this,
+            [this, guard](int sliceId, int index) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        FilterPresetStore* store = m_radioModel ? m_radioModel->filterPresetStore() : nullptr;
+        if (!slice || !store) { return; }
+        const QList<FilterPreset> presets = store->presetsForMode(slice->dspMode());
+        if (index < 0 || index >= presets.size()) { return; }
+        slice->setFilter(presets[index].low, presets[index].high);
+    });
+    // From Thetis MeterManager.cs:14809-14877 [v2.10.3.15] (setTuneStep).
+    connect(vfo, &VfoDisplayItem::tuneStepRequested, this,
+            [this, guard](int sliceId, int stepHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || tuneStepIndexForHz(stepHz) < 0) { return; }
+        slice->setStepHz(stepHz);
+    });
+    // From Thetis MeterManager.cs:14905-14932 [v2.10.3.15] (setTX:
+    // _console.VFOATX = true). Transmit moves to the slice through the
+    // handoff alone; no MOX or TUNE setter is ever called here.
+    connect(vfo, &VfoDisplayItem::txRequested, this,
+            [this, guard](int sliceId) {
+        if (!vfoRequestSlice(guard, sliceId)) { return; }
+        m_radioModel->requestTxHandoffToSlice(sliceId);
+    });
+    // From Thetis MeterManager.cs:14879-14896 [v2.10.3.15] (setLock).
+    connect(vfo, &VfoDisplayItem::lockToggleRequested, this,
+            [this, guard](int sliceId) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice) { return; }
+        slice->setLocked(!slice->locked());
+    });
 }
 
 QString MainWindow::containerSessionId() const
@@ -15566,6 +15697,18 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 if (mhz >= segment.lowMhz && mhz <= segment.highMhz) { state.bandText = segment.label; break; }
             }
             state.stepHz = s->stepHz();
+            // The FILTER screen's names, and the preset the filter is on
+            // (RxApplet::updateFilterButtons tolerance: 50 Hz per edge).
+            if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
+                const QList<FilterPreset> presets = store->presetsForMode(s->dspMode());
+                for (int i = 0; i < presets.size(); ++i) {
+                    state.filterNames.append(presets[i].name);
+                    if (state.filterIndex < 0 && qAbs(s->filterLow() - presets[i].low) <= 50
+                        && qAbs(s->filterHigh() - presets[i].high) <= 50) {
+                        state.filterIndex = i;
+                    }
+                }
+            }
             state.locked = s->locked();
             state.transmitting = s->txSliceMarked();
             state.active = s == active;

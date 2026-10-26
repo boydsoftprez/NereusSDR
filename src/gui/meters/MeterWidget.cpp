@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Click focus; keyPressEvent sends a key to the item last
+//                 under the pointer (MeterItem::handleKeyPress), and moving
+//                 off an item or leaving the meter tells that item the
+//                 pointer left; a VFO display's screens ask for a repaint.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - removeItem clears a removed LED's result from
 //                 LedResultRegistry, so it never gates a text overlay.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -181,6 +186,7 @@ mw0lge@grange-lane.co.uk
 #include <algorithm>
 #include <limits>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QStringList>
 #include <chrono>
 
@@ -258,6 +264,10 @@ MeterWidget::MeterWidget(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
     setMouseTracking(true);
+    // Keys reach the item under the pointer once the meter has been
+    // clicked (Thetis needs only the pointer over the VFO display; a Qt
+    // widget needs focus to get keys).
+    setFocusPolicy(Qt::ClickFocus);
 
 #ifdef NEREUS_GPU_SPECTRUM
     // Platform-specific QRhi backend selection.
@@ -306,6 +316,12 @@ void MeterWidget::addItem(MeterItem* item)
     if (auto* rotator = qobject_cast<RotatorItem*>(item)) {
         connect(rotator, &RotatorItem::repaintRequested, this,
                 [this, rotator]() { invalidatePresentation(rotator); });
+    }
+    // A VFO display's band, mode, filter and tune step screens open on a
+    // long press and close on a timer, outside the meter poller.
+    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
+        connect(vfo, &VfoDisplayItem::repaintRequested, this,
+                [this, vfo]() { invalidatePresentation(vfo); });
     }
     // Container item parity Task 47: a click box acts on the widget that
     // holds it, never on another (a preview copy acts on its own widget).
@@ -859,6 +875,21 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
     const int h = height();
     const QPointF pos = event->position();
 
+    // The item now under the pointer; the one it left hears so.
+    MeterItem* hovered = nullptr;
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        if (itemFeatureBuilt(m_items[i]) && m_items[i]->hitTest(pos, w, h)) {
+            hovered = m_items[i];
+            break;
+        }
+    }
+    if (m_hoverItem && m_hoverItem != hovered && m_items.contains(m_hoverItem.data())) {
+        if (m_hoverItem->handleMouseLeave()) {
+            invalidatePresentation(m_hoverItem);
+        }
+    }
+    m_hoverItem = hovered;
+
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
@@ -879,7 +910,20 @@ void MeterWidget::leaveEvent(QEvent* event)
             invalidatePresentation(item);
         }
     }
+    m_hoverItem.clear();
     MeterBaseClass::leaveEvent(event);
+}
+
+void MeterWidget::keyPressEvent(QKeyEvent* event)
+{
+    // The key goes to the item last under the pointer.
+    MeterItem* item = m_hoverItem.data();
+    if (item && m_items.contains(item) && itemFeatureBuilt(item) && item->handleKeyPress(event)) {
+        event->accept();
+        invalidatePresentation(item);
+        return;
+    }
+    MeterBaseClass::keyPressEvent(event);
 }
 
 void MeterWidget::wheelEvent(QWheelEvent* event)

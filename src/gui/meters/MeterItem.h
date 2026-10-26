@@ -74,6 +74,9 @@
 //                 (kTextThetisDefaults, kScaleThetisDefaults,
 //                 kImageThetisDefaults). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - handleKeyPress(): a key the meter forwards to the item
+//                 under the pointer (the VFO display's typed digits).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - handleMouseLeave() and reasonAt(): hover state cleared
 //                 when the pointer leaves the meter, and a tooltip reason
 //                 for a part of an item (the VFO display's split box).
@@ -309,6 +312,7 @@ mw0lge@grange-lane.co.uk
 class QPainter;
 class QMouseEvent;
 class QWheelEvent;
+class QKeyEvent;
 
 namespace NereusSDR {
 
@@ -614,6 +618,10 @@ public:
     // The pointer left the meter (MeterWidget::leaveEvent); true when the
     // item drew something for it (a hover box) and must repaint.
     virtual bool handleMouseLeave() { return false; }
+    // A key pressed while the pointer is over the item (MeterWidget sends
+    // it to the item it last saw under the pointer); false when the item
+    // does not handle it.
+    virtual bool handleKeyPress(QKeyEvent* event) { Q_UNUSED(event); return false; }
     // A plain reason for a part of the item that cannot act (shown as the
     // meter's tooltip, MeterWidget::unavailableReasonAt); empty for none.
     virtual QString reasonAt(const QPointF& pos, int widgetW, int widgetH) const

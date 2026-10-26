@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original actual native inert draft preview regressions.
 // Modification history (NereusSDR):
+//   2026-10-26 - The VFO display's frequency request names its slice
+//                 (Task 36). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - An OTHERBTNS record edited through field 8 is cut to the
 //                 earlier record (fields 0-14), so field 8 is the one read.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -642,7 +645,8 @@ private slots:
         auto* meter=preview->findChild<MeterWidget*>(); QVERIFY(meter); auto* composite=qobject_cast<CompositePresetItem*>(meter->items()[0]); QVERIFY(composite);
         QCOMPARE(composite->vfoDisplay()->frequency(),int64_t(7074100)); QCOMPARE(poller->targetCountForTest(),targets);
         QSignalSpy frequency(b,&SliceModel::frequencyChanged),mode(b,&SliceModel::dspModeChanged);
-        composite->vfoDisplay()->frequencyChangeRequested(100); composite->modeButtons()->modeClicked(0); QCOMPARE(frequency.count(),0); QCOMPARE(mode.count(),0);
+        QSignalSpy handoff(model,&RadioModel::txSliceSelected);
+        composite->vfoDisplay()->frequencyChangeRequested(1,100); composite->vfoDisplay()->txRequested(1); composite->modeButtons()->modeClicked(0); QCOMPARE(frequency.count(),0); QCOMPARE(mode.count(),0); QCOMPARE(handoff.count(),0);
         dialog.resize(1200,850); dialog.show();
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000)); QVERIFY(!meter->grabFramebuffer().isNull());

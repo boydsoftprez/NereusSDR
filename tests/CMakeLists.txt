@@ -934,6 +934,11 @@ nereus_add_test(tst_vfo_display_item_tx_badge)
 # new-item colours, inactive slice fade, band text, split box, sliceX_*
 # readings and editor wording.
 nereus_add_test(tst_vfo_display_item_modes)
+# VFO display Task 36: wheel, clicks and typed digits by slice, the lock,
+# the long press, the BAND / MODE / FILTER / TUNE_STEP screens and their
+# close, the meter's key and hover-leave dispatch, and MainWindow's routing
+# (TX is a handoff, never MOX).
+nereus_add_test(tst_vfo_display_item_input)
 
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)

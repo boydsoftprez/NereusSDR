@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Click focus and keyPressEvent: a key goes to the item last
+//                 under the pointer (MeterItem::handleKeyPress); moving off
+//                 an item tells it the pointer left (handleMouseLeave).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - updateMmioValue(item, index, ...): a data source reading
 //                 for each of an item's variables. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -278,6 +282,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
 
 private:
@@ -291,6 +296,9 @@ private:
     QHash<int, QString> m_unavailableBindings;
     QHash<int, MeterItem::BindingSupport> m_bindingSupport;
     QVector<MeterItem*> m_items;
+    // The item last under the pointer: keys go to it, and it hears that
+    // the pointer left when the pointer moves off it or leaves the meter.
+    QPointer<MeterItem> m_hoverItem;
     struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
     QVector<LegacyRecord> m_legacyRecords;
 

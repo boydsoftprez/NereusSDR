@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
+//               display's clicks, wheel and keys act on the slice they
+//               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -289,6 +293,7 @@ enum class ToastSeverity : int;
 
 class RadioModel;
 class MeterItem;
+class VfoDisplayItem;
 class ContainerButtonDispatcher;
 class ConnectionPanel;
 class SupportDialog;
@@ -1148,6 +1153,12 @@ private slots:
     void refreshContainerFrequency(SliceModel* slice);
     void watchContainerItems(QWidget* content);
     void onContainerItemAdded(MeterItem* item);
+    // Task 36: a live VFO display's requests act on the slice each names.
+    void wireVfoDisplayRequests(VfoDisplayItem* vfo);
+    // The slice a VFO display's request may act on, or null after saying
+    // why (an unsupported source, another radio's entry, a slice that is
+    // not open or that this window only listens to).
+    SliceModel* vfoRequestSlice(const VfoDisplayItem* vfo, int sliceId);
     void reconcileMiniDisplays();
     void presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                           const QVector<float>& waterfallDbm, double centreHz,

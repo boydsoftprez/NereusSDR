@@ -144,6 +144,9 @@
 //                 resize in height turns auto height off; the window is
 //                 never shorter than its content needs (JJ, 2026-10-11).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Task 36: the VFO display's frequency requests name their
+//                 slice and go to MainWindow directly (no relay here).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -1952,8 +1955,8 @@ void ContainerWidget::wireInteractiveItem(MeterItem* item)
         connect(voice, &VoiceRecordPlayItem::voiceAction,
                 this, [this,forward](int value) { forward([&] { emit voiceAction(value); }); });
     } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
-        connect(vfo, &VfoDisplayItem::frequencyChangeRequested,
-                this, [this,forward](int64_t value) { forward([&] { emit frequencyChangeRequested(value); }); });
+        // Task 36: the VFO display's tuning and its other requests name
+        // their slice; MainWindow::onContainerItemAdded hears them.
         connect(vfo, &VfoDisplayItem::bandStackRequested,
                 this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
         connect(vfo, &VfoDisplayItem::filterContextRequested,

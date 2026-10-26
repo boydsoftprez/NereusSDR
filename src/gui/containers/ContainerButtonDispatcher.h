@@ -97,6 +97,10 @@
 //                                    openSetup, openDiversity, openLinearity,
 //                                    linearityRefusal); none keys.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 36:
+//                                    sliceUnavailableReason is public, for
+//                                    the VFO display's requests.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -207,6 +211,9 @@ public:
     SliceModel* sliceFor(int rxSource) const;
     // Why a container set to a slice that is not open does nothing.
     static QString noSliceReason(int rxSource);
+    // Why sliceFor(rxSource) is null: the slice is not open, or this window
+    // only listens to it (Task 36: the VFO display's requests say so).
+    QString sliceUnavailableReason(int rxSource) const;
 
     // The lit and available state of one function button.
     State stateOf(Id id, int rxSource) const;
@@ -240,7 +247,6 @@ public:
     static void showSpotsOnPans(bool on, const QList<SpectrumWidget*>& pans);
 
 private:
-    QString sliceUnavailableReason(int rxSource) const;
     bool transmitBlockedRemotely() const;
     // A receive button's click on the container's open slice.
     QString clickSlice(Id id, SliceModel* slice);
