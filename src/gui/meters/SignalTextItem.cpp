@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: topRightLayout(); the peak text at the
+//                 right of the top row ends left of the type glyph.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave round 2 (R2): a click box choice clears the
 //                 entry's overrides with the new record, so a rebuild keeps it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -148,6 +151,7 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QFont>
 #include <QFontMetrics>
+#include <QFontMetricsF>
 #include <QJsonObject>
 #include <QLinearGradient>
 #include <QStringList>
@@ -155,6 +159,26 @@ mw0lge@grange-lane.co.uk
 #include <cmath>
 
 namespace NereusSDR {
+
+namespace {
+
+// From Thetis MeterManager.cs:40554-40555 [v2.10.3.15]
+constexpr double kGlyphDiagonal = 450.0;
+constexpr double kGlyphStroke = 1.5;
+// From Thetis MeterManager.cs:40567 [v2.10.3.15]
+constexpr double kCircleRadiusStrokes = 2.5;
+// From Thetis MeterManager.cs:40563 [v2.10.3.15] — FontSize * 0.32
+constexpr float kGlyphTextRatio = 0.32f;
+// From Thetis MeterManager.cs:40592-40601 [v2.10.3.15] — FontSize * 0.55
+constexpr float kSubTextRatio = 0.55f;
+// From Thetis MeterManager.cs:40603-40626 [v2.10.3.15] — FontSize * 0.35
+constexpr float kPeakSubTextRatio = 0.35f;
+// NereusSDR: the peak text at the right of the top row ends this far
+// (of the item's width) left of the type glyph; Thetis has no peak in
+// that row. The same margin the rows keep from the item's edges.
+constexpr double kGlyphGapRatio = 0.02;
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Constructor
@@ -340,12 +364,6 @@ void SignalTextItem::paintReadingTypeGlyph(QPainter& p, const QRectF& rect, int 
     if (text.isEmpty() || rect.isEmpty()) {
         return;
     }
-    // From Thetis MeterManager.cs:40554-40555 [v2.10.3.15]
-    constexpr double kGlyphDiagonal = 450.0;
-    constexpr double kGlyphStroke = 1.5;
-    // From Thetis MeterManager.cs:40567 [v2.10.3.15]
-    constexpr double kCircleRadiusStrokes = 2.5;
-
     const double x = rect.left();
     const double y = rect.top();
     const double w = rect.width();
@@ -392,6 +410,95 @@ void SignalTextItem::paintReadingTypeGlyph(QPainter& p, const QRectF& rect, int 
     p.setPen(colour);
     p.drawText(textBox, Qt::AlignRight | Qt::AlignTop, text);
     p.restore();
+}
+
+// What paintReadingTypeGlyph covers: its text and its symbol, from the
+// same Thetis positions (MeterManager.cs:40550-40578 [v2.10.3.15]).
+QRectF SignalTextItem::readingTypeGlyphBounds(const QRectF& rect, int bindingId, const QString& fontFamily,
+                                              double fontPixels, QPaintDevice* device)
+{
+    const QString text = readingTypeGlyph(bindingId);
+    if (text.isEmpty() || rect.isEmpty()) {
+        return {};
+    }
+    const double x = rect.left();
+    const double y = rect.top();
+    const double w = rect.width();
+    const double h = rect.height();
+    const double fStrokeWidth = kGlyphStroke * (std::sqrt((w * w) + (h * h)) / kGlyphDiagonal);
+    QRectF mark(QPointF(x + (w * 0.95), y + (h * 0.09)), QPointF(x + (w * 0.98), y + (h * 0.2)));
+    if (bindingId == MeterBinding::SignalAvg) {
+        const double circ_rad = fStrokeWidth * kCircleRadiusStrokes;
+        mark = QRectF(x + (w * 0.965) - circ_rad, y + (h * 0.16) - circ_rad, 2 * circ_rad, 2 * circ_rad);
+    }
+    const double halfStroke = fStrokeWidth / 2.0;
+    mark.adjust(-halfStroke, -halfStroke, halfStroke, halfStroke);
+    const QRectF textBox(x, y + (h * 0.025), w * 0.94, std::max(1.0, h * 0.15));
+    QFont font(fontFamily);
+    font.setPixelSize(std::max(1, static_cast<int>(std::lround(fontPixels))));
+    font = fitObjectText(font, fontPixels, text, textBox, false, Qt::TextSingleLine, device);
+    const QRectF ink = QFontMetricsF(font, device).boundingRect(textBox, Qt::AlignRight | Qt::AlignTop
+                                                                    | Qt::TextSingleLine, text);
+    return ink.united(mark);
+}
+
+double SignalTextItem::rowHeight(const QRect& rect) const
+{
+    // Rows: the peak on top, the value, then the sub line and the units
+    // label. Without the sub line the rows are thirds, as a saved record
+    // drew them.
+    const bool unitsLabel = m_showType && m_typeStyle == TypeStyle::UnitsLabel;
+    const int auxRows = int(peakValueShown()) + int(unitsLabel) + int(m_showSubMarker);
+    return m_showSubMarker
+        ? rect.height() / static_cast<double>(std::max(3, auxRows + 1))
+        : rect.height() / 3.0;
+}
+
+SignalTextItem::TopRightLayout SignalTextItem::topRightLayout(int widgetW, int widgetH, QPaintDevice* device) const
+{
+    TopRightLayout out;
+    const QRect rect = pixelRect(widgetW, widgetH);
+    if (rect.isEmpty()) {
+        return out;
+    }
+    const float clampedSize = std::max(6.0f, m_fontSize * (static_cast<float>(rect.height()) / 100.0f));
+    if (m_showType && m_typeStyle == TypeStyle::ReadingGlyph) {
+        out.glyph = readingTypeGlyphBounds(QRectF(rect), bindingId(), m_fontFamily,
+                                           std::max(6.0f, clampedSize * kGlyphTextRatio), device);
+    }
+    if (!peakValueShown()) {
+        return out;
+    }
+    QRectF box;
+    QFont font;
+    QString text;
+    if (!m_showSubMarker) {
+        const float peakSize = std::max(6.0f, clampedSize * 0.5f);
+        font = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(peakSize)), device);
+        font.setBold(true);
+        text = peakValueText();
+        box = QRectF(QRect(rect.left(), rect.top(), rect.width(), rect.height() / 3));
+        if (!out.glyph.isEmpty()) {
+            box.setRight(std::max(box.left(), out.glyph.left() - rect.width() * kGlyphGapRatio));
+        }
+        font = fitObjectText(font, peakSize, text, box, true, Qt::TextSingleLine, device);
+    } else {
+        const float subSize = std::max(6.0f, clampedSize * kPeakSubTextRatio);
+        font = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(subSize)), device);
+        text = peakSubUvText();
+        const double third = rect.width() / 3.0;
+        box = QRectF(rect.left() + 2 * third, rect.top(), third - rect.width() * 0.02, rowHeight(rect));
+        if (!out.glyph.isEmpty()) {
+            box.setRight(std::max(box.left(), std::min(box.right(), out.glyph.left() - rect.width() * kGlyphGapRatio)));
+        }
+        font = fitObjectText(font, subSize, text, box, true, Qt::TextSingleLine, device);
+    }
+    out.peakBox = box;
+    // paint() draws it right aligned: at the top, or centred in the row
+    // with the sub line.
+    const int vertical = m_showSubMarker ? int(Qt::AlignVCenter) : int(Qt::AlignTop);
+    out.peak = QFontMetricsF(font, device).boundingRect(box, Qt::AlignRight | vertical | Qt::TextSingleLine, text);
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,20 +633,12 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
-    // Rows: the peak on top, the value, then the sub line and the units
-    // label. Without the sub line the rows are thirds, as a saved record
-    // drew them.
     const bool peakShown = peakValueShown();
     const bool unitsLabel = m_showType && m_typeStyle == TypeStyle::UnitsLabel;
-    const int auxRows = int(peakShown) + int(unitsLabel) + int(m_showSubMarker);
-    const double rowH = m_showSubMarker
-        ? rect.height() / static_cast<double>(std::max(3, auxRows + 1))
-        : rect.height() / 3.0;
+    const double rowH = rowHeight(rect);
 
     // Step 2b: the reading type glyph, top right (Thetis ShowType)
     if (m_showType && m_typeStyle == TypeStyle::ReadingGlyph) {
-        // From Thetis MeterManager.cs:40563 [v2.10.3.15] — FontSize * 0.32
-        constexpr float kGlyphTextRatio = 0.32f;
         paintReadingTypeGlyph(p, QRectF(rect), bindingId(), m_typeColour, m_fontFamily,
                               std::max(6.0f, clampedSize * kGlyphTextRatio));
     }
@@ -563,7 +662,6 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Step 3b: the uV and dBm sub line under the value, in the sub color
     // From Thetis MeterManager.cs:40592-40601 [v2.10.3.15] — FontSize * 0.55
-    constexpr float kSubTextRatio = 0.55f;
     if (m_showSubMarker) {
         const float subSize = std::max(6.0f, clampedSize * kSubTextRatio);
         const QFont subFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(subSize)), p.device());
@@ -611,20 +709,20 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         p.setPen(m_peakColour);
 
         const QString peakText = peakValueText();
+        // The peak text at the right ends left of the type glyph.
+        const TopRightLayout topRight = topRightLayout(widgetW, widgetH, p.device());
         if (!m_showSubMarker) {
-            const QRect peakRect(rect.left(), rect.top(),
-                                  rect.width(), rect.height() / 3);
+            const QRectF peakRect = topRight.peakBox;
             p.setFont(fitObjectText(peakFont,peakSize,peakText,peakRect,true,Qt::TextSingleLine,p.device()));
             p.drawText(peakRect, Qt::AlignRight | Qt::AlignTop, peakText);
         } else {
             // With the sub line, Thetis draws the peak's dBm left, the peak
             // centred and its uV right, all in the peak value color.
             // From Thetis MeterManager.cs:40603-40626 [v2.10.3.15] — FontSize * 0.35
-            constexpr float kPeakSubTextRatio = 0.35f;
             const double third = rect.width() / 3.0;
             const QRectF left(rect.left() + rect.width() * 0.02, rect.top(), third - rect.width() * 0.02, rowH);
             const QRectF centre(rect.left() + third, rect.top(), third, rowH);
-            const QRectF right(rect.left() + 2 * third, rect.top(), third - rect.width() * 0.02, rowH);
+            const QRectF right = topRight.peakBox;
             p.setFont(fitObjectText(peakFont,peakSize,peakText,centre,true,Qt::TextSingleLine,p.device()));
             p.drawText(centre, Qt::AlignHCenter | Qt::AlignVCenter, peakText);
             const float subSize = std::max(6.0f, clampedSize * kPeakSubTextRatio);

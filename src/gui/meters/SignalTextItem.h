@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: topRightLayout(); the peak text at the
+//                 right of the top row ends left of the type glyph, so
+//                 "AVG" no longer draws over it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R2: units set on this item (its click box or the
 //                 editor) stay when the global unit setting changes; an
 //                 item with none set follows it. Appended record field 26.
@@ -127,6 +131,8 @@ mw0lge@grange-lane.co.uk
 #include <QColor>
 #include <QRectF>
 #include <QVector>
+
+class QPaintDevice;
 
 namespace NereusSDR {
 
@@ -262,6 +268,23 @@ public:
     static void paintReadingTypeGlyph(QPainter& p, const QRectF& rect, int bindingId,
                                       const QColor& colour, const QString& fontFamily,
                                       double fontPixels);
+    // What that glyph covers (its text and its symbol) for the same
+    // arguments; empty for other readings.
+    static QRectF readingTypeGlyphBounds(const QRectF& rect, int bindingId, const QString& fontFamily,
+                                         double fontPixels, QPaintDevice* device = nullptr);
+
+    // The top right of the item as paint() lays it out at this size: the
+    // type glyph's bounds (empty when it is not drawn) and the text bounds
+    // of the peak text drawn at the right of the top row (the peak's uV
+    // with the sub line, else the peak value; empty when the peak is not
+    // shown). The peak text ends left of the glyph.
+    struct TopRightLayout {
+        QRectF glyph;
+        QRectF peak;
+        // The box the peak text is drawn in (right aligned).
+        QRectF peakBox;
+    };
+    TopRightLayout topRightLayout(int widgetW, int widgetH, QPaintDevice* device = nullptr) const;
 
     // The sub line texts: dBm and uV for the smoothed value and for the
     // peak the peak value shows; "--" with the unit with no reading.
@@ -295,6 +318,8 @@ private:
     float peakValueDbm() const;
     int historyIntervalMs() const;
     void appendHistory();
+    // The row height paint() gives the peak, sub line and units rows.
+    double rowHeight(const QRect& rect) const;
 
     // From Thetis Common.UVfromDBM
     static double uvFromDbm(double dbm);

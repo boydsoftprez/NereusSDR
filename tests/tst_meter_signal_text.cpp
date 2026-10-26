@@ -1,6 +1,10 @@
 // no-port-check: NereusSDR-original tests for the signal text options; the
 // expected values are Thetis's, cited beside each check.
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: the peak text at the top right ends left
+//                 of the type glyph (AVG drew over "10.72 uV" on a 72 px
+//                 row). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Fix wave R2: units set on an item stay when the global
 //                 setting changes; others and old records follow it; the
 //                 editor's Follow global. J.J. Boyd (KG4VCF), AI-assisted
@@ -19,6 +23,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPainter>
+#include <QScopeGuard>
+#include <QtMath>
 
 #include <memory>
 
@@ -28,6 +34,7 @@
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/SignalTextItem.h"
 #include "gui/meters/presets/SignalTextPresetItem.h"
+#include "gui/styles/WorkspacePreview.h"
 
 using namespace NereusSDR;
 
@@ -202,6 +209,45 @@ private slots:
         QVERIFY(!old.peakValueShown());
         old.setPeakHold(true);
         QVERIFY(old.peakValueShown());
+    }
+
+    // The new item's peak text at the top right (its uV with the sub line,
+    // else the peak value) ends left of the type glyph. At the scene's
+    // 408 x 72 stack row "AVG" and its circle drew over "10.72 uV".
+    void peakTextClearsTheTypeGlyph()
+    {
+        const bool wasEnabled = WorkspacePreview::enabled();
+        WorkspacePreview::setEnabledForTest(true);
+        const auto restore = qScopeGuard([wasEnabled] { WorkspacePreview::setEnabledForTest(wasEnabled); });
+        const int bindings[3] = {MeterBinding::SignalPeak, MeterBinding::SignalAvg, MeterBinding::SignalMaxBin};
+        for (const bool sub : {true, false}) {
+            for (const QSize size : {QSize(408, 72), QSize(260, 72), QSize(620, 72), QSize(408, 144), QSize(kW, kH)}) {
+                for (const int binding : bindings) {
+                    auto text = makeText(true, binding);
+                    text->setShowSubMarker(sub);
+                    text->setPeakValueColour(kProbe);
+                    text->setTypeColour(Qt::white);
+                    settle(*text, -86.4);
+                    QImage img(size, QImage::Format_ARGB32_Premultiplied);
+                    img.fill(Qt::transparent);
+                    const SignalTextItem::TopRightLayout layout =
+                        text->topRightLayout(size.width(), size.height(), &img);
+                    const QString where = QStringLiteral("%1 at %2x%3, sub line %4")
+                        .arg(SignalTextItem::readingTypeGlyph(binding)).arg(size.width()).arg(size.height())
+                        .arg(sub ? QStringLiteral("on") : QStringLiteral("off"));
+                    QVERIFY2(!layout.glyph.isEmpty(), qPrintable(where));
+                    QVERIFY2(!layout.peak.isEmpty(), qPrintable(where));
+                    QVERIFY2(!layout.glyph.intersects(layout.peak), qPrintable(where));
+                    // What paint() draws: no peak ink beside or under the glyph.
+                    QPainter p(&img);
+                    text->paint(p, size.width(), size.height());
+                    p.end();
+                    const QRect glyphColumn(qFloor(layout.glyph.left()), qFloor(layout.glyph.top()),
+                                            size.width(), qCeil(layout.glyph.height()));
+                    QVERIFY2(countNear(img, kProbe, glyphColumn) == 0, qPrintable(where));
+                }
+            }
+        }
     }
 
     void historyHonoursDurationAndIgnore()
