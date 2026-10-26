@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Bars whose flavor name joins words take Thetis's caption
+//                 (the reading name); a saved label is kept. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars: readings,
 //                 calibration, power limit, Thetis defaults, and the
 //                 meter.adcMax bar created in a container. J.J. Boyd
@@ -58,6 +61,7 @@ mw0lge@grange-lane.co.uk
 #include <QtTest/QtTest>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
 #include <memory>
@@ -248,6 +252,35 @@ private slots:
         // The styles and segment colours apply to these bars too.
         QVERIFY(swr->applyConfiguration({{"style", "Segments"}, {"segLowColor", "#ff00ff00"}}));
         QCOMPARE(swr->configuration()["style"].toString(), QStringLiteral("Segments"));
+    }
+    // A new bar whose flavor name joins words takes the caption Thetis draws
+    // over it, its reading's name (From Thetis MeterManager.cs:2269-2313,
+    // 33413-33420 [v2.10.3.15]); a saved layout keeps its stored label.
+    void joinedFlavorsTakeThetisCaptions()
+    {
+        const QList<QPair<QString, QString>> captions{
+            {"SignalAvg", "Signal Average"}, {"SignalMaxBin", "Signal Max FFT Bin"},
+            {"CfcGain", "CFC Compression"}, {"LevelerGain", "Leveler Gain"},
+            {"AlcGain", "ALC Compression"}, {"AlcGroup", "ALC Group"},
+            {"AgcGain", "AGC Gain"}, {"AdcMax", "ADC Max Magnitude"},
+            {"PbSnr", "Estimated PBSNR"}, {"ReversePwr", "Reverse Power"}};
+        for (const auto& [flavor, caption] : captions) {
+            BarPresetItem bar;
+            QVERIFY2(bar.configureVariant(flavor), qPrintable(flavor));
+            QCOMPARE(bar.configuration()["label"].toString(), caption);
+        }
+        // Single-word flavors keep their upper-case caption.
+        BarPresetItem comp;
+        QVERIFY(comp.configureVariant("Comp"));
+        QCOMPARE(comp.configuration()["label"].toString(), QStringLiteral("COMP"));
+        // A layout saved before keeps the label it stored.
+        BarPresetItem saved;
+        QVERIFY(saved.configureVariant("SignalMaxBin"));
+        QJsonObject record = saved.configuration();
+        record["label"] = QStringLiteral("SIGNALMAXBIN");
+        BarPresetItem loaded;
+        QVERIFY(loaded.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
+        QCOMPARE(loaded.configuration()["label"].toString(), QStringLiteral("SIGNALMAXBIN"));
     }
     void existingRecordsAreUnchanged()
     {

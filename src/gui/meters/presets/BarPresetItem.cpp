@@ -1,5 +1,11 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - A new bar whose flavor name joins words (SignalMaxBin,
+//                 SignalAvg, CfcGain, ...) takes the caption Thetis draws
+//                 over it, its reading's name ("Signal Max FFT Bin"),
+//                 instead of the upper-cased flavor ("SIGNALMAXBIN"). A
+//                 saved layout keeps its stored label. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - txStage(), txStageOff() and applyTxStageState(): the EQ,
 //                 Leveler, Leveler Gain, CFC, CFC Gain and Compressor bars
 //                 dim while their TX stage is off, as Thetis's OnEQChanged,
@@ -108,6 +114,40 @@ bool adcMaxWithoutProvider(const BarPresetItem& item)
 {
     return item.typeId()==QStringLiteral("meter.adcMax") && item.bindingId()<0 && !item.hasMmioBinding();
 }
+// The caption Thetis draws over a bar is its scale's reading name: each
+// AddXxxBar sets cs.ReadingSource = cb.ReadingSource and cs.ShowType = true,
+// and the H_SCALE paint draws scale.ReadingName (From Thetis
+// MeterManager.cs:33413-33420 [v2.10.3.15]), which is
+// MeterManager.ReadingName(reading) (:7012). Only the flavors whose
+// upper-cased name would join words take it; the others keep theirs.
+struct BarCaption { const char* flavor; const char* caption; };
+constexpr BarCaption kThetisBarCaptions[] = {
+    // From Thetis MeterManager.cs:22828,22857,22884-22886 and :2277 [v2.10.3.15]
+    {"SignalAvg", "Signal Average"},
+    // From Thetis MeterManager.cs:22832,22857,22884-22886 and :2311 [v2.10.3.15]
+    {"SignalMaxBin", "Signal Max FFT Bin"},
+    // From Thetis MeterManager.cs:24954 and :2279 [v2.10.3.15]
+    {"CfcGain", "CFC Compression"},
+    // From Thetis MeterManager.cs:24599 and :2294 [v2.10.3.15]
+    {"LevelerGain", "Leveler Gain"},
+    // From Thetis MeterManager.cs:24746 and :2272 [v2.10.3.15]
+    {"AlcGain", "ALC Compression"},
+    // From Thetis MeterManager.cs:24807 and :2273 [v2.10.3.15]
+    {"AlcGroup", "ALC Group"},
+    // From Thetis MeterManager.cs:23233 and :2269 [v2.10.3.15]
+    {"AgcGain", "AGC Gain"},
+    // From Thetis MeterManager.cs:22951 and :2313 [v2.10.3.15]
+    {"AdcMax", "ADC Max Magnitude"},
+    // From Thetis MeterManager.cs:23162 and :2274 [v2.10.3.15]
+    {"PbSnr", "Estimated PBSNR"},
+};
+QString variantCaption(const QString& flavor)
+{
+    for (const BarCaption& c : kThetisBarCaptions) {
+        if (flavor == QLatin1String(c.flavor)) { return QString::fromLatin1(c.caption); }
+    }
+    return flavor.toUpper();
+}
 // From Thetis MeterManager.cs:33385-33392 [v2.10.3.15] (tidyPower)
 QString tidyPower(double power)
 {
@@ -152,7 +192,7 @@ void BarPresetItem::configureAsCustom(int binding, double minimum, double maximu
 QStringList BarPresetItem::variants() { return {"Comp","Eq","Leveler","Cfc","CfcGain","LevelerGain","AlcGain","AlcGroup","Agc","AgcGain","Signal","SignalAvg","SignalMaxBin","Adc","AdcMax","PbSnr","Pwr","ReversePwr","Swr"}; }
 bool BarPresetItem::configureVariant(const QString& flavor) {
     if(!variants().contains(flavor)) { return false; }
-    configureAsMic(); m_flavor=flavor; m_label=flavor.toUpper(); m_secondary=-1;
+    configureAsMic(); m_flavor=flavor; m_label=variantCaption(flavor); m_secondary=-1;
     // From Thetis MeterManager.cs:24414-25090 [v2.10.3.15] — independent stage channels.
     if(flavor=="Comp") { setBindingId(MeterBinding::TxCompPeak); m_secondary=MeterBinding::TxComp; m_historyColor=QColor(255,218,185,128); }
     if(flavor=="Eq") { setBindingId(MeterBinding::TxEqPeak); m_secondary=MeterBinding::TxEq; m_historyColor=QColor(100,149,237,128); }
