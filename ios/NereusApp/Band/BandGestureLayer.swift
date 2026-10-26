@@ -106,9 +106,6 @@ struct BandGestureLayer: View {
     @State private var flagHeights: [Int: CGFloat] = [:]
     /// Moves on whenever the take changes, so each badge redraws.
     @State private var badgeTick = 0
-    /// The press that may become a hold, until the finger lifts.
-    @State private var press: BandMenuHit.Press?
-    @State private var pressGeneration = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -514,12 +511,15 @@ struct BandGestureLayer: View {
 
     // MARK: Touches
 
+    /// The band's own surface: the taps and the pinch, and under them the
+    /// hold (``BandHoldSurface``), which opens the band menu.
     private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
-        Color.clear
+        BandHoldSurface(enabled: bandMenu != nil) { point in
+            held(at: point, geometry: geometry, emptyBand: emptyBand)
+        }
             .contentShape(Rectangle())
             .gesture(taps(geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
-            .simultaneousGesture(hold(geometry: geometry, emptyBand: emptyBand), including: bandMenu == nil ? .none : .all)
             .accessibilityElement()
             .accessibilityIdentifier("bandSurface")
             .accessibilityLabel("Band")
@@ -567,47 +567,18 @@ struct BandGestureLayer: View {
     /// The band menu is open.
     private var menuOpen: Bool { bandMenu?.wrappedValue != nil }
 
-    /// The hold: a finger down on empty band that stays within the drag
-    /// threshold for ``BandMenuHit/holdSeconds`` opens the band menu where
-    /// it came down, after a light tap. Moving past the threshold, lifting,
-    /// or a pinch beginning first leaves the touch to the drag, the tap or
-    /// the pinch, as before.
-    private func hold(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                // A press whose end was never seen (a cancelled touch) is
-                // over once a finger comes down somewhere else.
-                if let current = press, current.start == value.startLocation {
-                    if current.live, !BandMenuHit.isHold(from: current.start, to: value.location) {
-                        press?.live = false
-                    }
-                    return
-                }
-                guard !pinching, !menuOpen else {
-                    press = BandMenuHit.Press(start: value.startLocation, generation: pressGeneration, live: false)
-                    return
-                }
-                pressGeneration &+= 1
-                let generation = pressGeneration
-                press = BandMenuHit.Press(start: value.startLocation, generation: generation)
-                // As DialHaptics' detent: a light impact, woken at once so it is not late.
-                let haptic = UIImpactFeedbackGenerator(style: .light)
-                haptic.prepare()
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(BandMenuHit.holdSeconds))
-                    guard let held = press, held.generation == generation, held.live, !pinching, !menuOpen,
-                          dragger.target == nil, emptyBand(held.start) else {
-                        return
-                    }
-                    press?.live = false
-                    haptic.impactOccurred()
-                    bandMenu?.wrappedValue = BandMenuAnchor(point: held.start,
-                                                            frequencyHz: geometry.hz(forX: Double(held.start.x)))
-                }
-            }
-            .onEnded { _ in
-                press = nil
-            }
+    /// The hold has fired: a finger down for ``BandMenuHit/holdSeconds``
+    /// that stayed within the drag threshold. On empty band, with no
+    /// pinch, drag or menu under way, it opens the band menu where the
+    /// finger came down, after a light tap; elsewhere the touch is left
+    /// to the flag, spot or label under it, the drag, the tap or the pinch,
+    /// as before.
+    private func held(at point: CGPoint, geometry: BandGeometry, emptyBand: (CGPoint) -> Bool) -> Bool {
+        guard !pinching, !menuOpen, dragger.target == nil, emptyBand(point) else {
+            return false
+        }
+        bandMenu?.wrappedValue = BandMenuAnchor(point: point, frequencyHz: geometry.hz(forX: Double(point.x)))
+        return true
     }
 
     /// A tap tunes at once whenever a double tap would do the same thing;
@@ -635,8 +606,7 @@ struct BandGestureLayer: View {
     private func pinch(geometry: BandGeometry) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                // Two fingers are a pinch, never a hold.
-                press?.live = false
+                // Two fingers are a pinch, never a hold (``held(at:geometry:emptyBand:)``).
                 let start = pinchStart ?? geometry
                 pinchStart = start
                 pinching = true
@@ -708,6 +678,75 @@ struct BandGestureLayer: View {
 
     private var spanLimits: ClosedRange<Double> {
         band.spanLimits(sampleRateHz: slices.active?.sampleRateHz)
+    }
+}
+
+/// The band's touch surface, which times the hold that opens the band
+/// menu (R-IOS-57, DC6) with UIKit's long press: a finger down for
+/// ``BandMenuHit/holdSeconds`` that moves less than
+/// ``BandMenuHit/moveLimitPoints``. A SwiftUI drag cannot time it: a drag
+/// reports nothing while the finger is still, so on the iPad a still
+/// finger's hold was first seen as it lifted, too late to open anything
+/// (no menu on any iPad pan). The long press fires at the half second
+/// whether the finger moves or not, alongside the band's taps, pinch and
+/// drags, and never takes their touches.
+private struct BandHoldSurface: UIViewRepresentable {
+    /// Off while the band has no band menu (the flag pictures).
+    var enabled: Bool
+    /// The hold fired at this point on the band; true when it opened the
+    /// band menu, which then gets the light tap.
+    let held: (CGPoint) -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.fired(_:)))
+        hold.minimumPressDuration = BandMenuHit.holdSeconds
+        hold.allowableMovement = BandMenuHit.moveLimitPoints
+        // The band's own taps, pinch and drags keep every touch.
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.delaysTouchesEnded = false
+        hold.delegate = context.coordinator
+        view.addGestureRecognizer(hold)
+        context.coordinator.hold = hold
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.held = held
+        context.coordinator.hold?.isEnabled = enabled
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var held: ((CGPoint) -> Bool)?
+        weak var hold: UILongPressGestureRecognizer?
+        /// As DialHaptics' detent: a light impact, woken at the touch so it is not late.
+        private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+        @objc func fired(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began, let view = recognizer.view else {
+                return
+            }
+            if held?(recognizer.location(in: view)) == true {
+                haptic.impactOccurred()
+            }
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            haptic.prepare()
+            return true
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
     }
 }
 

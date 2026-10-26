@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Display pill's Setup defaults link opens each tab's Setup page on its pan, NB Blank agrees between the two, and the band menu a hold opens
+// NereusSDR for iOS: the Display pill's Setup defaults link opens each tab's Setup page on its pan, NB Blank agrees between the two, and the band menu a hold opens, on each iPad pan too
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import XCTest
@@ -206,6 +206,54 @@ final class DisplayPillUITests: XCTestCase {
         XCTAssertTrue(menu.waitForNonExistence(timeout: 5), "A tap off the band menu did not close it")
     }
 
+    /// R-IOS-57, DC6, DC9: on the iPad with two pans stacked, a hold on
+    /// each pan's empty band opens the band menu on that pan and acts on
+    /// it: the toolbar follows the pan, and Add notch here sends
+    /// `notch.add` for that pan's slice (A on Pan 1, B on Pan 2) at the
+    /// finger. A finger held still: the hold must not wait for it to move.
+    @MainActor
+    func testHoldOnEmptyBandOpensTheBandMenuOnEachIPadPan() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad,
+                      "Two pans are the iPad's: run DisplayPillUITests on an iPad Pro 13-inch for this one")
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(bandMenu: true, spots: false, twoPans: true)
+        let panButton = app.buttons["pan"]
+        XCTAssertTrue(panButton.waitForExistence(timeout: 30))
+        panButton.tap()
+        let add = app.buttons["panSheet.addPan"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "The Pan sheet has no Add a pan")
+        add.tap()
+        let panFrames = [app.descendants(matching: .any)["pan.1"], app.descendants(matching: .any)["pan.2"]]
+        XCTAssertTrue(panFrames[1].waitForExistence(timeout: 10), "Add a pan opened no Pan 2")
+        app.buttons["Close the sheet"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["panSheet"].waitForNonExistence(timeout: 10))
+        let surfaces = app.descendants(matching: .any).matching(identifier: "bandSurface")
+        XCTAssertTrue(waitUntil { surfaces.count == 2 }, "The two pans have no touch surface each")
+
+        let menu = app.descendants(matching: .any)["bandMenu"]
+        for (index, pan) in panFrames.enumerated() {
+            let surface = surfaces.allElementsBoundByIndex.first { pan.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }
+            guard let surface else {
+                XCTFail("Pan \(index + 1) has no touch surface")
+                return
+            }
+            surface.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.7)).press(forDuration: 0.8)
+            XCTAssertTrue(menu.waitForExistence(timeout: 5), "A hold on Pan \(index + 1)'s empty band did not open the band menu")
+            XCTAssertTrue(pan.frame.contains(CGPoint(x: menu.frame.minX + 1, y: menu.frame.minY + 1)),
+                          "Pan \(index + 1)'s band menu opened at \(menu.frame), off the pan at \(pan.frame)")
+            XCTAssertTrue(waitUntil { panButton.label == "Pan \(index + 1)" }, "The toolbar did not follow Pan \(index + 1)")
+            let hz = app.staticTexts["bandMenuNotchHz"].label
+            XCTAssertTrue(hz.hasSuffix(" MHz") && hz.hasPrefix("7.2"), "Pan \(index + 1)'s notch row shows \(hz)")
+            app.buttons["bandMenuAddNotch"].tap()
+            let sent = app.staticTexts["bandMenuNotchReason"]
+            XCTAssertTrue(sent.waitForExistence(timeout: 10), "Add notch here on Pan \(index + 1) sent nothing")
+            XCTAssertEqual(sent.label, "UI fixture: notch.add at \(hz), 200 Hz wide, slice \(index)")
+            app.descendants(matching: .any)["bandMenuClose"].coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.1)).tap()
+            XCTAssertTrue(menu.waitForNonExistence(timeout: 5), "A tap off Pan \(index + 1)'s band menu did not close it")
+        }
+    }
+
     /// Holds a finger still on the band at `offset` for longer than the band menu's half second.
     @MainActor
     private func holdOnBand(_ app: XCUIApplication, at offset: CGVector) {
@@ -261,13 +309,14 @@ final class DisplayPillUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(bandMenu: Bool = false) -> XCUIApplication {
+    private func launch(bandMenu: Bool = false, spots: Bool = true, twoPans: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The band with the Core's catalogue and its version 29 Display
         // description, with no Core (a debug build's launch arguments); for
         // the band menu, with the spots and the menu's Core as well.
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand"]
-            + (bandMenu ? ["-NereusSpotFixture", "-NereusBandMenuFixture"] : [])
+            + (bandMenu ? ["-NereusBandMenuFixture"] + (spots ? ["-NereusSpotFixture"] : []) : [])
+            + (twoPans ? ["-NereusTwoPansFixture"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

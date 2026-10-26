@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 #if DEBUG
+import Combine
 import Foundation
 import NereusLink
 import NereusMedia
@@ -168,10 +169,36 @@ enum UITestBand {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
                                                       upserts: spotRecords, removes: []))
         }
-        let band = app.main.band
-        band.endpointId = 1
+        showContext(app.main.band, endpointId: 1, centreHz: centreHz)
+        if twoPans {
+            // Each pan Add a pan opens gets its band's view as the Core's
+            // context would give it, centred on slice B, so the pan has a
+            // band to touch.
+            let stack = app.main.panStack
+            secondPans = stack.$open.sink { [weak stack] open in
+                DispatchQueue.main.async {
+                    guard let stack else { return }
+                    for pan in open where pan != .first {
+                        let band = stack.band(for: pan).band
+                        if band.endpointId == nil {
+                            showContext(band, endpointId: UInt32(pan.number), centreHz: secondSliceHz)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// With ``twoPans``: the watch on the pans Add a pan opens.
+    @MainActor
+    private static var secondPans: AnyCancellable?
+
+    /// The Core's view of the band, centred on `centreHz` in the fixture's span.
+    @MainActor
+    private static func showContext(_ band: BandModel, endpointId: UInt32, centreHz: Double) {
+        band.endpointId = endpointId
         let payload: [String: LinkJSON] = [
-            "op": .string("context"), "connectionId": .string("uitest"), "endpointId": .number(1),
+            "op": .string("context"), "connectionId": .string("uitest"), "endpointId": .number(Double(endpointId)),
             "revision": .number(1), "contextGeneration": .number(1), "sourceStream": .number(0),
             "sourceCentreHz": .number(centreHz), "sampleRateHz": .number(192_000), "centreHz": .number(centreHz),
             "spanHz": .number(spanHz), "wideCentreHz": .number(0), "wideSpanHz": .number(0),
