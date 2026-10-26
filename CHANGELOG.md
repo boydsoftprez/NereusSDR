@@ -114,7 +114,8 @@ still connect to each other as before.
   receiver's offset from the receiver's own center, not from the center of the
   view. Before, once the view had moved off the receiver's center (for example
   after the phone tuned a slice past the desktop's zoomed view), the receiver
-  could play a different frequency from the one on the flag.
+  could play a different frequency from the one on the flag. Checked on a
+  radio.
   ([#663](https://github.com/boydsoftprez/NereusSDR/pull/663))
 
 ### Transmit
