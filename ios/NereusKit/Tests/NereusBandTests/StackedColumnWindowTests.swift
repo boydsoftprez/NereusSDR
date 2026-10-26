@@ -155,7 +155,8 @@ import Testing
     /// skipped: a one-sample carrier there stands in the row.
     @Test(arguments: [1320, 500])
     func everySampleBetweenTheColumnsReachesOne(samples: Int) throws {
-        var history = StackedTraceHistory()
+        // Each carrier one row alone: the columns as taken, not smoothed.
+        var history = StackedTraceHistory(smoothsRows: false)
         history.append(frame: Self.frame([Float](repeating: -130, count: samples)),
                        coverage: Self.coverage, wide: nil, time: 0)
         let columns = Self.panColumns(history)

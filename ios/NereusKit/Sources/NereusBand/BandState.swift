@@ -504,12 +504,13 @@ public struct BandState: Equatable, Sendable {
     /// At a key and an unkey on this band: the peak hold starts afresh and
     /// the waterfall's held levels are forgotten, so nothing blends from
     /// the receiver into the transmit display or back (the desktop clears
-    /// its averaging and resets its waterfall AGC at both edges). The
-    /// waterfall's lines stay.
+    /// its averaging and resets its waterfall AGC at both edges), and the
+    /// 3D rows smooth afresh. The waterfall's lines stay.
     public mutating func resetSmoothing() {
         // The lines from before the edge go in before it, as they came.
         flushLines()
         stackFold.clear()
+        stack.resetSmoothing()
         peakHold = nil
         history.forgetLevels()
     }

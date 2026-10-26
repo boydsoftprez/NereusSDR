@@ -224,7 +224,8 @@ import Testing
     // MARK: The rows
 
     @Test func eachWaterfallLineBecomesARowWithTheSpectrumBesideIt() {
-        var stack = StackedTraceHistory()
+        // The levels as taken; StackedRowSmoothingTests smooth them.
+        var stack = StackedTraceHistory(smoothsRows: false)
         let pan = BandCoverage(centerHz: 7_200_000, spanHz: 40_000)
         let wide = BandCoverage(centerHz: 7_200_000, spanHz: 100_000)
         var line = [Float](repeating: -130, count: 100)
@@ -339,7 +340,7 @@ import Testing
     }
 
     @Test func theStackKeepsNinetySevenRows() {
-        var stack = StackedTraceHistory()
+        var stack = StackedTraceHistory(smoothsRows: false)
         let pan = BandCoverage(centerHz: 7_200_000, spanHz: 40_000)
         for sequence in 1...120 {
             stack.append(frame: BandFixtures.frame(trace: [Float](repeating: Float(-sequence), count: 20),
@@ -605,10 +606,11 @@ import Testing
         for _ in 0..<8 {
             add(flat)
         }
-        let beforeSignal = try render(glide: 0.999)
-        // Until a row stands well over the floor at the centre (one line,
-        // unless the rows are smoothed as they go in).
+        // Until a row stands well over the floor at the centre: two lines,
+        // as a row's level must hold for two to pass the middle of three.
+        var beforeSignal = try render(glide: 0.999)
         while centre(age: 0) < -100 && sequence < 20 {
+            beforeSignal = try render(glide: 0.999)
             add(signal)
         }
         #expect(centre(age: 1) < -110, "the row before it is still flat")
