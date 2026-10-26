@@ -683,6 +683,17 @@ private slots:
         QCOMPARE(f.pan->centerFrequency(), kCtunPanCentreHz - halfWindow + halfView);
         QVERIFY(std::abs(f.slice->frequency() - f.pan->centerFrequency()) <= halfView);
         QVERIFY(f.pan->ctunEnabled());
+
+        // The next tune stays on the view, which no longer sits on the DDC.
+        // Its shift is still measured from the DDC: the view centre would
+        // put the receiver off the flag by the distance between the two.
+        const double nextHz = kTunedHz + 1'000.0;
+        QVERIFY(std::abs(nextHz - f.pan->centerFrequency()) < halfView);
+        QVERIFY(f.pan->centerFrequency() != f.pan->ddcCenterFrequency());
+        f.slice->setFrequency(nextHz);
+        QCOMPARE(hardwareHz(f), kCtunPanCentreHz);
+        QCOMPARE(f.slice->shiftOffsetHz(), nextHz - kCtunPanCentreHz);
+        QCOMPARE(hardwareHz(f) + f.slice->shiftOffsetHz(), f.slice->frequency());
     }
 
     void stack_starts_with_layout_single()

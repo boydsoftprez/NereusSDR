@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: A CTUN tune that stays on the view takes its shift from
+//               the pan's DDC centre, not the view's centre, which the
+//               refused off-view move leaves off the DDC. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: A remote window's slice access changes reach the container
 //               instruments (sliceAccessChanged, watchSliceAccess). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -5751,8 +5755,16 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             // CTUN, still on-screen: the DDC stays put and WDSP shifts.
             // Written to the model and WDSP together (R-R3-49), so the
             // slice's shiftOffsetHz names the centre the demodulator uses.
+            //
+            // Measured from the DDC, not from the view: the view can sit off
+            // the DDC (a refused off-view move above clamps it there), and a
+            // shift from the view's centre puts the receiver off the flag by
+            // the distance between the two. From Thetis console.cs:31408
+            // [v2.10.3.15]: rx1_osc = -(freq - CentreFrequency), the DDC
+            // centre; the zoomed display window never enters it.
             m_radioModel->applySliceStreamCentre(
-                slice, foreignHost ? m_radioModel->streamCentreHz(slice->streamIndex()) : center);
+                slice, foreignHost ? m_radioModel->streamCentreHz(slice->streamIndex())
+                                   : host->ddcCenterFrequency());
         }
         host->setVfoFrequency(hz);
     };
