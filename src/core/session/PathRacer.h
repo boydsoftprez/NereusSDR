@@ -56,6 +56,9 @@
 //   2026-10-15: PR 524 review: rankForPath()'s doc gives the rule for a
 //               pair not known yet, and that it does not log. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: PathRung::endDetail(): what a direct attempt met (its
+//               socket error), for the attempt's log line only. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -121,6 +124,10 @@ public:
     virtual PathKind kind() const = 0;
     /// host:port, or the service's host, as the operator would read it.
     virtual QString address() const = 0;
+    /// For the log only, once ended(): what the connection met, in Qt's
+    /// own terms (a socket error and its text). Empty when there is
+    /// nothing more to say; never shown to the operator.
+    virtual QString endDetail() const { return QString(); }
 signals:
     void opened(NereusSDR::SessionTransport* transport);
     void ended(NereusSDR::PathOutcome outcome, const QString& reason);
@@ -315,6 +322,7 @@ public:
     int rank() const override { return m_rank; }
     PathRacer::PathKind kind() const override;
     QString address() const override;
+    QString endDetail() const override { return m_endDetail; }
     QUrl url() const { return m_url; }
 
 private:
@@ -323,6 +331,7 @@ private:
     int m_rank = PathRacer::Direct;
     QPointer<SessionTransport> m_transport;
     bool m_done = false;
+    QString m_endDetail;
 };
 
 /// The rendezvous introduction (link section 21.1, ranks 2 and 3): a

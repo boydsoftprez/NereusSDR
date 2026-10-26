@@ -31,7 +31,7 @@ struct DialShotTests {
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
         let station = try FakeStation(additions: .all)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [

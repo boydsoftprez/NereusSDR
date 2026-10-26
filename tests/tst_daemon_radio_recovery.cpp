@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original daemon lifecycle regression tests.
+// 2026-10-26 CI load round: five ctest entries, each function in one by its
+// place in the list. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest/QtTest>
+#include "TestFunctionGroups.h"
+#include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QPointer>
@@ -1680,5 +1684,29 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestDaemonRadioRecovery)
+// CI load round, 2026-10-26: the whole run took 78 to 81 s on a quiet
+// Linux runner and timed out in a busy one (PR 657, run 40260509791).
+// 5 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3, _part4, _part5 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestDaemonRadioRecovery test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 5;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}, {QStringLiteral("part5"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 5 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_DAEMON_RADIO_RECOVERY_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_daemon_radio_recovery.moc"

@@ -28,6 +28,9 @@
 //   2026-10-24: engineWindowResetsSkipped's doc names the engine's rule as
 //               it now stands (JJ's ruling, option i). J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Claude Code.
+//   2026-10-26: setEngineFrameGapClockForTest, the engine's 5 ms minimum
+//               frame gap on a test's clock. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -283,6 +286,13 @@ public:
     std::optional<qint64> publishSampledFrameForTest(const MediaSourceKey& key,
                                                      qint64 inputPosition,
                                                      qint64 publishedAtNs);
+
+    /// Test seam: key's engine reads its 5 ms minimum frame gap from
+    /// `clockMs` (FFTEngine::setFrameGapClockForTest). Call it after
+    /// activate() and before any I/Q is fed. False for an unknown source,
+    /// or once the engine has taken input.
+    bool setEngineFrameGapClockForTest(const MediaSourceKey& key,
+                                       std::function<qint64()> clockMs);
 
     /// Test seam: whether a published frame waits in key's latest-frame
     /// slot, not yet taken.

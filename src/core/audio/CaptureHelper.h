@@ -52,8 +52,9 @@ class IAsioDriver;
 // Reads protocol records on stdin, writes protocol records on stdout and
 // logs on stderr.  Sends Hello first.  A stdin reader thread parses the
 // parent's records; stdin EOF, a read error or a protocol error ends the
-// process at once with std::_Exit(0), even while the main thread is inside
-// a native audio call.  The main thread runs Configure / AttachRing / Open /
+// process at once with code 0 (TerminateProcess on Windows, std::_Exit
+// elsewhere; neither runs a static destructor), even while the main thread
+// is inside a native audio call.  The main thread runs Configure / AttachRing / Open /
 // Stop / Shutdown in order.  R-AUD-17: the microphone opens on the saved
 // engine, and its input callback writes the clock matcher in the window's
 // shared ring (AttachRing) and posts the ring's wake; every 10 ms the main
@@ -133,6 +134,12 @@ bool writeRecord(const QByteArray& record);
 // Blocking read from stdin.  Returns the byte count, or 0 / -1 on EOF or
 // error.
 qint64 readInput(char* buffer, qint64 size);
+
+// 2026-10-23: ends the process at once with this code, from any thread,
+// running no static destructor: TerminateProcess on Windows (std::_Exit
+// there is ExitProcess, which runs every DLL's DLL_PROCESS_DETACH and its
+// static destructors on the calling thread), std::_Exit elsewhere.
+[[noreturn]] void exitProcessNow(int code);
 
 } // namespace CaptureHelperIo
 

@@ -94,18 +94,32 @@ public struct StackedTraceHistory: Equatable, Sendable {
         return true
     }
 
-    /// The highest level of `samples` (covering `coverage`) from `low` to
-    /// `high` hertz: at least the one sample under the middle.
+    /// The highest level of `samples` (covering `coverage`) in the column
+    /// from `low` to `high` hertz: at least one sample.
+    ///
+    /// Every column takes the same number of samples, its width in samples
+    /// rounded up, from the sample nearest its low edge. Windows from the
+    /// column's edges (floor of the low edge to ceiling of the high one)
+    /// were one sample wider at some columns than at the rest, the same
+    /// columns on every row, and the peak of more noise samples sits
+    /// higher, so those columns stood as ridges through the stack. The
+    /// desktop 3D takes the same windows (DssRenderer.cpp
+    /// resampledRawRow), where the same ridges showed first. Two
+    /// neighbouring windows start at most a window apart, so no sample
+    /// between them is skipped.
     static func peak(_ samples: [Float], over coverage: BandCoverage, from low: Double, to high: Double) -> Float {
+        guard !samples.isEmpty, coverage.spanHz > 0 else {
+            return .nan
+        }
         let binHz = coverage.spanHz / Double(samples.count)
-        let first = min(max(Int(((low - coverage.lowHz) / binHz).rounded(.down)), 0), samples.count - 1)
-        // Keep every source-bin interval overlapping this retained column.
-        // The upper index is exclusive: flooring it discarded a carrier in
-        // a partially overlapping final bin. Native DssRenderer.cpp:125–128
-        // uses floor/ceil bounds for the same captured peak reduction.
-        let last = min(max(Int(((high - coverage.lowHz) / binHz).rounded(.up)), first + 1), samples.count)
+        // `high - low` differs in its last bits from column to column; the
+        // small allowance keeps a whole number of samples from rounding up
+        // at some columns and not others.
+        let width = min(max(Int(((high - low) / binHz - 1e-6).rounded(.up)), 1), samples.count)
+        let start = ((low - coverage.lowHz) / binHz).rounded()
+        let first = min(max(Int(start), 0), samples.count - width)
         var best = -Float.infinity
-        for index in first..<last where samples[index].isFinite && samples[index] > best {
+        for index in first..<(first + width) where samples[index].isFinite && samples[index] > best {
             best = samples[index]
         }
         return best.isFinite ? best : .nan

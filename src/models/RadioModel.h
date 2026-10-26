@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - governNnrLoadForTest: the first call takes the governor
+//                from the load sampler's tick for the model's life;
+//                dspLoadTickForTest runs one tick of that timer.
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
 //                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
 //                Core's setting LimitFiltersToSidebands, applied to every
@@ -2355,8 +2360,16 @@ public:
 
     /// Test seam for governNnrLoad: the same check with the given loads in
     /// place of receiverDspLoad (a missing slice, or nullopt, is not
-    /// measured).
+    /// measured). The first call takes the governor over for this model's
+    /// life: the load sampler's tick stops calling governNnrLoad, so the
+    /// caller's nowMs is the governor's only clock.
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
+
+    /// Test seam: one tick of the load sampler's timer, its three slots in
+    /// order (sampleReceiverDspLoad, the governor, reportDspDiagnostics),
+    /// on the real clock and the measured loads. Nothing on a model with
+    /// no load sampler (Role::Remote).
+    void dspLoadTickForTest();
 
     /// 2026-10-22: the Core's DSP diagnostics on the load sampler's tick,
     /// main thread, measures only. For every slice whose channel ran a
@@ -5201,6 +5214,9 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    // The connect-time restore of a slice's last band, for the antenna
+    // table tests (a radio switched off and on again).
+    void loadSliceStateForTest(SliceModel* slice) { loadSliceState(slice); }
     // iPhone app Task 73: the frequency the FreeDV Reporter lists (the
     // station-level active slice's), whether or not it is connected.
     quint64 freedvWantedFrequencyHzForTest() const { return m_freedvWantedHz; }
@@ -7009,6 +7025,14 @@ private:
     // per-band Alex state. Called at every authority boundary (slice edit,
     // TX handoff, and immediately before MOX routing).
     void applyTxAntennaFromBoundSlice();
+    /// Name the slice's RX and TX antennas from Setup's per-band antenna
+    /// table for the band its frequency is in. The table is the only store
+    /// of a band's antennas; a slice keeps no copy of its own.
+    void refreshSliceAntennasFromAlex(SliceModel* slice);
+    // A slice tuned onto the station's current band (no crossing) takes
+    // that band's antenna labels; while the receive antenna is kept, the
+    // transmit label only.
+    void refreshSliceLabelsOnStationBand(SliceModel* slice, Band band);
 
     void connectToRadioImpl(const RadioInfo& info, bool preserveSlices);
     void wireConnectionSignals(int wdspInSize);
@@ -7281,6 +7305,9 @@ private:
     void wireNnrSettings(SliceModel* slice);
     void applyNnrStateToChannel(SliceModel* slice, RxChannel* channel);
     // R-R3-40: the runtime NNR limit (see governNnrLoad).
+    // The governor's slot on the load sampler's tick: governNnrLoad on
+    // m_nnrGovernorClock, unless a test has taken the governor over.
+    void governNnrLoadOnTick();
     void governNnrLoadWith(qint64 nowMs,
                            const std::function<std::optional<double>(int)>& load);
     void applyNnrLimit(SliceModel* slice, NnrLimit limit);
@@ -7970,6 +7997,9 @@ private:
     // two blocks after a step (slice id -> worker block count at the step).
     NnrLoadGovernor m_nnrGovernor;
     QElapsedTimer m_nnrGovernorClock;
+    // Set by governNnrLoadForTest: the sampler's tick leaves the governor
+    // to the test.
+    bool m_nnrGovernorDrivenByTest{false};
     QHash<int, qint64> m_nnrLimitReadbackPending;
     // 2026-10-22: per slice, non-finite WDSP output samples not yet logged
     // and when the slice's last such line was logged (reportDspDiagnostics).

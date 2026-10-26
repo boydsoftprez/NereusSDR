@@ -1,7 +1,15 @@
 // no-port-check: NereusSDR-original production CAT registry and corpus verification.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-26 CI load round: the fixture rows in four ctest entries (84 s of
+//            ctest's 120 s on a quiet Linux runner). J.J. Boyd (KG4VCF),
+//            AI-assisted via Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
+#include "TestFunctionGroups.h"
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "core/cat/CatService.h"
 #include "models/RadioModel.h"
 using namespace NereusSDR;
@@ -31,5 +39,31 @@ private slots:
   QCOMPARE(rows.size(),419); QCOMPARE(active,349); QCOMPARE(inactive,70);
  }
 };
-QTEST_GUILESS_MAIN(TstCatCoverage)
+// CI load round, 2026-10-26: 783 fixture rows, each on a model of its own,
+// took 84 s on a quiet Linux runner and timed out on a busy one.
+// allCurrentFixtures's rows go in turn to 4 entries, _fixtures1 to
+// _fixtures4, built from the same list its _data function reads, so
+// a new fixture lands in one with no list to edit; the rest runs the other
+// functions (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    TstCatCoverage test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    QFile file(QFINDTESTDATA("data/cat/requests.json"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCritical("tests/data/cat/requests.json not found");
+        return 1;
+    }
+    constexpr int kFixtureEntries = 4;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("fixtures1"), {}}, {QStringLiteral("fixtures2"), {}}, {QStringLiteral("fixtures3"), {}}, {QStringLiteral("fixtures4"), {}}};
+    int index = 0;
+    for (const QJsonValue& record : QJsonDocument::fromJson(file.readAll()).array()) {
+        groups[index++ % kFixtureEntries].entries.append(
+            QStringLiteral("allCurrentFixtures:") + record.toObject().value(QStringLiteral("id")).toString());
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_CAT_COVERAGE_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_cat_coverage.moc"

@@ -228,6 +228,12 @@ let package = Package(
             cSettings: sodiumConfiguration + [
                 .headerSearchPath("src/libsodium/include/sodium"),
                 .unsafeFlags(["-w", "-fno-modules", "-fno-strict-aliasing", "-fno-strict-overflow", "-fwrapv"]),
+                // Debug builds compile the rest of the package unoptimized,
+                // which made each pairing's Argon2id hash (64 MiB) take about
+                // a second: every pairing test paid it twice. libsodium is
+                // compiled optimized in debug builds too; release builds
+                // keep the package's own optimization.
+                .unsafeFlags(["-O2"], .when(configuration: .debug)),
             ]
         ),
         .target(
