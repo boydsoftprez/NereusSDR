@@ -44,6 +44,11 @@ Older Cores, windows and phone apps still connect to each other.
   **High SWR condition detected. Please check your antenna connection.**, and
   a microphone PTT or VOX key that is still held stays off until you release
   it. Check this into a dummy load before relying on it on the air.
+- **Check your antenna table rows.** Setup's antenna table is now the only
+  per-band antenna memory, and a slice no longer carries its own. Open
+  **Hardware Config > Antenna / ALEX > Antenna Control** and check the rows for
+  your bands before you transmit. A row that an older version changed by mistake
+  stays as it is until you set it once.
 
 ## What else you will notice
 

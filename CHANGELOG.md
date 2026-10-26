@@ -235,6 +235,16 @@ still connect to each other as before.
   discovery broadcasts. The Connection panel therefore fills in about 3
   seconds after you connect, as it already did after a disconnect.
   ([#621](https://github.com/boydsoftprez/NereusSDR/pull/621))
+- Setup's antenna table (**Hardware Config > Antenna / ALEX > Antenna Control**)
+  is now the only per-band antenna memory. Before, a band's row could change
+  after a radio power cycle, and going from 80 m to 20 m and back lost 80 m's
+  antennas, because each slice also kept an antenna of its own. A slice now
+  takes its antennas from the row for its band, and a pick on a slice (desktop,
+  remote window or phone) writes that band's row. The old per-slice memory is
+  dropped, not read. A row the old bug already changed stays as it is until you
+  set it once. This touches the receive path at connect and has not been
+  checked on a radio. Thanks to Ben (OZ1CT) for the report.
+  ([#637](https://github.com/boydsoftprez/NereusSDR/pull/637))
 
 ### CAT
 
