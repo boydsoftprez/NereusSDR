@@ -22,6 +22,10 @@
 //                 as before (no marker but while dragged, top-left lit, no
 //                 centre letter) and starts a drag from a press and a move.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Screenshot fix: captionLayout(); ACCEL and LOCK that
+//                 cannot fit in their corners at the readable text size
+//                 sit under the dial, a space apart. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -206,6 +210,11 @@ constexpr double kThetisFontSize = 38.0;
 constexpr double kThetisFontEmDivisor = 16.0;
 constexpr double kThetisFontWidthDivisor = 52.0;
 constexpr float kInnerDiscRatio = kRingDiameterRatio / 2.0f - kMarkerRadiusRatio;
+// The saved look's caption: 9 px on a 120 px dial.
+constexpr double kSavedCaptionPixels = 9.0;
+constexpr double kSavedCaptionDial = 120.0;
+// NereusSDR: the gap between the dial and captions drawn under it.
+constexpr int kCaptionGapPx = 2;
 
 constexpr int kTopLeft = 0;
 constexpr int kTopRight = 1;
@@ -795,13 +804,105 @@ bool DialItem::participatesIn(Layer layer) const
 // ---------------------------------------------------------------------------
 QRect DialItem::squareRect(int widgetW, int widgetH) const
 {
+    return captionLayout(widgetW, widgetH).dial;
+}
+
+// ---------------------------------------------------------------------------
+// captionPixels()
+// The Thetis look: MeterManager.cs:35425-35426 [v2.10.3.15]:
+//   float font_size_scaled = 38f * dial.FontScale;
+//   float fontSizeEmScaled = (font_size_scaled / 16f) * (rect.Width / 52f);
+// rect is the whole meter's width, so the text does not shrink with the
+// dial's size. The saved look scales 9 px with a 120 px dial.
+// ---------------------------------------------------------------------------
+double DialItem::captionPixels(const QRect& dialRect, int meterWidth) const
+{
+    if (m_thetisLook) {
+        return (kThetisFontSize * static_cast<double>(m_fontScale) / kThetisFontEmDivisor)
+            * (static_cast<double>(meterWidth) / kThetisFontWidthDivisor);
+    }
+    return kSavedCaptionPixels * objectTextScale(dialRect, {kSavedCaptionDial, kSavedCaptionDial})
+        * static_cast<double>(m_fontScale);
+}
+
+// ---------------------------------------------------------------------------
+// captionLayout()
+// NereusSDR: the readable text size can make ACCEL and LOCK wider than
+// their corners on a small dial (a 72 px stack row), where they ran into
+// each other and over the ring. Then they sit under the dial instead.
+// ---------------------------------------------------------------------------
+DialItem::CaptionLayout DialItem::captionLayout(int widgetW, int widgetH) const
+{
     const QRect pr = pixelRect(widgetW, widgetH);
-    const int full = std::min(pr.width(), pr.height());
-    const int side = m_verticalRatio >= kVerticalRatioMax
-        ? full : std::max(1, static_cast<int>(std::lround(full * static_cast<double>(m_verticalRatio))));
-    return QRect(pr.left() + (pr.width()  - side) / 2,
-                 pr.top()  + (pr.height() - side) / 2,
-                 side, side);
+    // Compute a square centered within `area`, scaled by the vertical
+    // ratio (Thetis dial.Size = (VScale, VScale), centred,
+    // MeterManager.cs:27776-27777 [v2.10.3.15]).
+    const auto squareIn = [this](const QRect& area) {
+        const int full = std::min(area.width(), area.height());
+        const int side = m_verticalRatio >= kVerticalRatioMax
+            ? full : std::max(1, static_cast<int>(std::lround(full * static_cast<double>(m_verticalRatio))));
+        return QRect(area.left() + (area.width()  - side) / 2,
+                     area.top()  + (area.height() - side) / 2,
+                     side, side);
+    };
+    CaptionLayout layout;
+    layout.dial = squareIn(pr);
+    const QRect& d = layout.dial;
+    const double size = captionPixels(d, pr.width());
+    const QString accel = m_thetisLook ? QStringLiteral(" ACCEL ") : QStringLiteral("ACCEL");
+    const QString lock = m_thetisLook ? QStringLiteral(" LOCK ") : QStringLiteral("LOCK");
+    const int hw = d.width() / 2;
+    const int hh = d.height() / 2;
+    const QRectF accelZone = m_thetisLook ? QRectF(d.left(), d.top() + d.height() / 2.0, d.width() / 2.0, d.height() / 2.0)
+                                          : QRectF(QRect(d.left(), d.top() + hh, hw, hh));
+    const QRectF lockZone = m_thetisLook ? QRectF(d.left() + d.width() / 2.0, d.top() + d.height() / 2.0,
+                                                  d.width() / 2.0, d.height() / 2.0)
+                                         : QRectF(QRect(d.left() + hw, d.top() + hh, hw, hh));
+    const int accelAlign = m_thetisLook ? int(Qt::AlignLeft | Qt::AlignBottom) : int(Qt::AlignCenter);
+    const int lockAlign = m_thetisLook ? int(Qt::AlignRight | Qt::AlignBottom) : int(Qt::AlignCenter);
+    // In its corner, as paintStatic / paintThetis draw it there.
+    bool fits = true;
+    const auto inCorner = [&](const QString& text, const QRectF& zone, int align) {
+        layout.font = fitObjectText(QFont(), size, text, zone, false, Qt::TextSingleLine);
+        const QFontMetricsF metrics(layout.font);
+        const QRectF ink = metrics.boundingRect(zone, align | Qt::TextSingleLine, text);
+        fits = fits && ink.width() <= zone.width() && metrics.height() <= zone.height();
+        return ink;
+    };
+    layout.accel = inCorner(accel, accelZone, accelAlign);
+    layout.lock = inCorner(lock, lockZone, lockAlign);
+    if (fits) {
+        return layout;
+    }
+    // Under the dial: no larger than the saved look's size for this dial
+    // (the Thetis size follows the meter's width, too large for a dial
+    // this small) and at least the readable size, a space either side of
+    // the centre, and the dial shrunk by the caption's height.
+    const double belowSize = std::min(size, kSavedCaptionPixels
+        * objectTextScale(d, {kSavedCaptionDial, kSavedCaptionDial}) * static_cast<double>(m_fontScale));
+    QFont font;
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(1, static_cast<int>(std::floor(belowSize)))));
+    const QFontMetricsF metrics(font);
+    const int captionH = static_cast<int>(std::ceil(metrics.height()));
+    const QRect area = pr.adjusted(0, 0, 0, -(captionH + kCaptionGapPx));
+    if (area.height() < captionH) {
+        return layout;
+    }
+    const QRect dial = squareIn(area);
+    const double centre = dial.left() + dial.width() / 2.0;
+    const double space = metrics.horizontalAdvance(QLatin1Char(' '));
+    const double accelW = metrics.horizontalAdvance(accel.trimmed());
+    const double lockW = metrics.horizontalAdvance(lock.trimmed());
+    if (centre - space - accelW < pr.left() || centre + space + lockW > pr.left() + pr.width()) {
+        return layout;
+    }
+    const double top = dial.bottom() + 1 + kCaptionGapPx;
+    layout.dial = dial;
+    layout.below = true;
+    layout.font = font;
+    layout.accel = QRectF(centre - space - accelW, top, accelW, captionH);
+    layout.lock = QRectF(centre + space, top, lockW, captionH);
+    return layout;
 }
 
 // ---------------------------------------------------------------------------
@@ -809,8 +910,9 @@ QRect DialItem::squareRect(int widgetW, int widgetH) const
 // From Thetis renderDialDisplay() (MeterManager.cs:35284-35460 [v2.10.3.15])
 // Draws: main circle fill, dashed ring, quadrant dividers, ACCEL and LOCK.
 // ---------------------------------------------------------------------------
-void DialItem::paintStatic(QPainter& p, const QRect& dialRect)
+void DialItem::paintStatic(QPainter& p, const CaptionLayout& layout)
 {
+    const QRect& dialRect = layout.dial;
     p.setRenderHint(QPainter::Antialiasing, true);
 
     //large circle
@@ -838,11 +940,18 @@ void DialItem::paintStatic(QPainter& p, const QRect& dialRect)
     // Step 4: bottom labels; the font scale is Thetis's
     // (font_size_scaled = 38f * dial.FontScale, MeterManager.cs:35425 [v2.10.3.15]).
     QFont labelFont;
-    const double size = 9 * objectTextScale(dialRect, {120, 120}) * static_cast<double>(m_fontScale);
+    const double size = captionPixels(dialRect, 0);
     labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
     p.setFont(labelFont);
     p.setPen(m_textColour);
     p.setBrush(Qt::NoBrush);
+
+    if (layout.below) {
+        p.setFont(layout.font);
+        p.drawText(layout.accel, Qt::AlignCenter, QStringLiteral("ACCEL"));
+        p.drawText(layout.lock, Qt::AlignCenter, QStringLiteral("LOCK"));
+        return;
+    }
 
     const int hw = dialRect.width()  / 2;
     const int hh = dialRect.height() / 2;
@@ -972,8 +1081,9 @@ void DialItem::paintMarker(QPainter& p, const QRect& dialRect)
 // the four corner zones, the large circle, the speed ring while
 // accelerating, the dotted ring, the corner labels and the marker.
 // ---------------------------------------------------------------------------
-void DialItem::paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int widgetH)
+void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW, int widgetH)
 {
+    const QRect& dialRect = layout.dial;
     p.setRenderHint(QPainter::Antialiasing, true);
     const QRectF r(dialRect);
     const double x = r.left();
@@ -1038,9 +1148,7 @@ void DialItem::paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int 
     //   float fontSizeEmScaled = (font_size_scaled / 16f) * (rect.Width / 52f);
     // rect is the whole meter's width, so the text does not shrink with the
     // dial's size.
-    const double meterWidth = pixelRect(widgetW, widgetH).width();
-    const double size = (kThetisFontSize * static_cast<double>(m_fontScale) / kThetisFontEmDivisor)
-        * (meterWidth / kThetisFontWidthDivisor);
+    const double size = captionPixels(dialRect, pixelRect(widgetW, widgetH).width());
     QFont font;
     font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
     p.setFont(font);
@@ -1056,8 +1164,17 @@ void DialItem::paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int 
           Qt::AlignLeft | Qt::AlignTop, previous >= 0);
     label(1, next >= 0 ? QStringLiteral(" ") + sliceLetter(next) + QStringLiteral(" > ") : QStringLiteral(" > "),
           Qt::AlignRight | Qt::AlignTop, next >= 0);
-    label(2, QStringLiteral(" ACCEL "), Qt::AlignLeft | Qt::AlignBottom, true);
-    label(3, QStringLiteral(" LOCK "), Qt::AlignRight | Qt::AlignBottom, tunedSlice() >= 0);
+    if (layout.below) {
+        // NereusSDR: under the dial (captionLayout), a space apart.
+        p.setFont(layout.font);
+        p.setPen(m_textColour);
+        p.drawText(layout.accel, Qt::AlignCenter, QStringLiteral("ACCEL"));
+        p.setPen(tunedSlice() >= 0 ? m_textColour : dimText);
+        p.drawText(layout.lock, Qt::AlignCenter, QStringLiteral("LOCK"));
+    } else {
+        label(2, QStringLiteral(" ACCEL "), Qt::AlignLeft | Qt::AlignBottom, true);
+        label(3, QStringLiteral(" LOCK "), Qt::AlignRight | Qt::AlignBottom, tunedSlice() >= 0);
+    }
 
     paintMarker(p, dialRect);
 }
@@ -1069,15 +1186,15 @@ void DialItem::paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int 
 // ---------------------------------------------------------------------------
 void DialItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
 {
-    const QRect dr = squareRect(widgetW, widgetH);
+    const CaptionLayout layout = captionLayout(widgetW, widgetH);
     if (m_thetisLook) {
-        if (layer == Layer::OverlayDynamic) { paintThetis(p, dr, widgetW, widgetH); }
+        if (layer == Layer::OverlayDynamic) { paintThetis(p, layout, widgetW, widgetH); }
         return;
     }
     if (layer == Layer::OverlayStatic) {
-        paintStatic(p, dr);
+        paintStatic(p, layout);
     } else if (layer == Layer::OverlayDynamic) {
-        paintDynamic(p, dr);
+        paintDynamic(p, layout.dial);
     }
 }
 
@@ -1087,13 +1204,13 @@ void DialItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
 // ---------------------------------------------------------------------------
 void DialItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    const QRect dr = squareRect(widgetW, widgetH);
+    const CaptionLayout layout = captionLayout(widgetW, widgetH);
     if (m_thetisLook) {
-        paintThetis(p, dr, widgetW, widgetH);
+        paintThetis(p, layout, widgetW, widgetH);
         return;
     }
-    paintStatic(p, dr);
-    paintDynamic(p, dr);
+    paintStatic(p, layout);
+    paintDynamic(p, layout.dial);
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,10 @@
 //                 no marker but while dragged, no centre letter) and still
 //                 tunes by drag; a new dial draws Thetis's look.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Screenshot fix: on a 72 px stack row ACCEL and LOCK sit
+//                 under the dial, a space apart; a large dial keeps them
+//                 in its corners. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest>
 #include <QApplication>
@@ -33,6 +37,7 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/DialItem.h"
 #include "gui/meters/MeterWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -533,6 +538,47 @@ private slots:
         QVERIFY(!dial.accelEnabled());
         click(dial, kBottomLeft);
         QVERIFY(dial.accelEnabled());
+    }
+
+    // A dial on a 72 px stack row (the scene's 408 x 72) is too small for
+    // ACCEL and LOCK in its corners at the readable text size: they sit
+    // under it, a space apart, clear of the dial and of each other. A
+    // 200 px dial keeps them in its corners and its whole square.
+    void captionsSitClearOfASmallDial()
+    {
+        const bool wasEnabled = WorkspacePreview::enabled();
+        WorkspacePreview::setEnabledForTest(true);
+        const auto restore = qScopeGuard([wasEnabled] { WorkspacePreview::setEnabledForTest(wasEnabled); });
+        for (const bool thetis : {true, false}) {
+            DialItem dial;
+            if (thetis) {
+                dial.applyNewItemDefaults();
+            }
+            dial.setRect(0, 0, 1, 1);
+            QCOMPARE(dial.thetisLook(), thetis);
+            for (const QSize size : {QSize(408, 72), QSize(260, 72), QSize(620, 72)}) {
+                const DialItem::CaptionLayout small = dial.captionLayout(size.width(), size.height());
+                const QString where = QStringLiteral("%1 look at %2x%3")
+                    .arg(thetis ? QStringLiteral("Thetis") : QStringLiteral("saved"))
+                    .arg(size.width()).arg(size.height());
+                QVERIFY2(small.below, qPrintable(where));
+                QVERIFY2(!small.accel.intersects(small.lock), qPrintable(where));
+                QVERIFY2(small.lock.left() - small.accel.right() > 0.0, qPrintable(where));
+                QVERIFY2(small.accel.top() > small.dial.bottom(), qPrintable(where));
+                QVERIFY2(small.lock.top() > small.dial.bottom(), qPrintable(where));
+                QVERIFY2(small.accel.bottom() <= size.height() && small.lock.bottom() <= size.height(),
+                         qPrintable(where));
+                QVERIFY2(small.dial.height() > 0 && small.dial.width() == small.dial.height(), qPrintable(where));
+                QVERIFY2(small.font.pixelSize() >= 11, qPrintable(where));
+                // The words are drawn at the dial's centre line.
+                const double centre = small.dial.left() + small.dial.width() / 2.0;
+                QVERIFY2(small.accel.right() <= centre && small.lock.left() >= centre, qPrintable(where));
+            }
+            const DialItem::CaptionLayout large = dial.captionLayout(kW, kH);
+            QVERIFY(!large.below);
+            QCOMPARE(large.dial, QRect(0, 0, kW, kH));
+            QVERIFY(!large.accel.intersects(large.lock));
+        }
     }
 
     // MainWindow: each request acts on the slice it names; Align rounds;

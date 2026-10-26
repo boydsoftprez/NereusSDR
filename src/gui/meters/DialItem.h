@@ -21,6 +21,11 @@
 //                 (the marker shows only while it is dragged, which starts
 //                 from a press and a move). The look is saved.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Screenshot fix: captionLayout(). When ACCEL and LOCK
+//                 cannot fit in their corners at the readable text size,
+//                 they sit under the dial, a space apart, and the dial
+//                 shrinks to leave them room. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -68,6 +73,8 @@ mw0lge@grange-lane.co.uk
 
 #include "MeterItem.h"
 #include <QColor>
+#include <QFont>
+#include <QRectF>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QRgb>
@@ -224,6 +231,21 @@ public:
     // Whether the marker is drawn now.
     bool drawsMarker() const { return m_thetisLook || m_pressed; }
 
+    // The dial's square and where its ACCEL and LOCK captions are drawn.
+    // The captions sit in the bottom corners (Thetis's place) when they
+    // fit there. When they cannot fit at the readable text size, they sit
+    // under the dial, a space either side of its centre, and the dial
+    // shrinks to leave them room. accel and lock are the captions' text
+    // bounds.
+    struct CaptionLayout {
+        QRect dial;
+        bool below{false};
+        QFont font;
+        QRectF accel;
+        QRectF lock;
+    };
+    CaptionLayout captionLayout(int widgetW, int widgetH) const;
+
     // Multi-layer
     bool participatesIn(Layer layer) const override;
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
@@ -253,9 +275,12 @@ signals:
     void lockToggleRequested(int slice);
 
 private:
-    void paintStatic(QPainter& p, const QRect& dialRect);
+    void paintStatic(QPainter& p, const CaptionLayout& layout);
     void paintDynamic(QPainter& p, const QRect& dialRect);
-    void paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int widgetH);
+    void paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW, int widgetH);
+    // The caption size in pixels before fitting: Thetis's for the Thetis
+    // look, the saved look's own otherwise.
+    double captionPixels(const QRect& dialRect, int meterWidth) const;
     void paintMarker(QPainter& p, const QRect& dialRect);
     QRect squareRect(int widgetW, int widgetH) const;
     // 0 top left, 1 top right, 2 bottom left, 3 bottom right; -1 outside
