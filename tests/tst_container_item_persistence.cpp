@@ -9,6 +9,10 @@
 //                 save; a new filter display takes the Thetis values and a
 //                 saved one keeps its look. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - Clock layout and background fill survive a save; a new
+//                 clock takes the Thetis look and a saved one keeps its
+//                 own. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 #include <QtTest>
 #include <QColor>
@@ -50,6 +54,7 @@ const QColor kTx(0x10, 0x11, 0x12);
 const QColor kBack1(0x12, 0x34, 0x56);
 const QColor kBack2(0x65, 0x43, 0x21, 0x80);   // alpha kept
 const QColor kFilterText(0x33, 0x66, 0x99);
+const QColor kClockBack(0x21, 0x43, 0x65, 0x90);
 constexpr float kBorder = 0.07f;
 constexpr float kMargin = 0.2f;
 constexpr float kRadius = 9.5f;
@@ -79,6 +84,9 @@ void setNonDefaults(MeterItem* item)
         clock->setTimeColour(kTime);
         clock->setDateColour(kDate);
         clock->setTypeTitleColour(kTitle);
+        clock->setLayout(ClockItem::Layout::Thetis);
+        clock->setBackColour(kClockBack);
+        clock->setBackEnabled(true);
     }
     if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
         vfo->setFrequencyColour(kFreq);
@@ -113,6 +121,9 @@ void verifyNonDefaults(const MeterItem* item)
         QCOMPARE(clock->timeColour(), kTime);
         QCOMPARE(clock->dateColour(), kDate);
         QCOMPARE(clock->typeTitleColour(), kTitle);
+        QCOMPARE(clock->layout(), ClockItem::Layout::Thetis);
+        QCOMPARE(clock->backColour(), kClockBack);
+        QVERIFY(clock->backEnabled());
     }
     if (const auto* vfo = qobject_cast<const VfoDisplayItem*>(item)) {
         QCOMPARE(vfo->frequencyColour(), kFreq);
@@ -149,6 +160,9 @@ void verifyDefaults(const MeterItem* item, const MeterItem* fresh)
         QCOMPARE(clock->timeColour(), f->timeColour());
         QCOMPARE(clock->dateColour(), f->dateColour());
         QCOMPARE(clock->typeTitleColour(), f->typeTitleColour());
+        QCOMPARE(clock->layout(), f->layout());
+        QCOMPARE(clock->backColour(), f->backColour());
+        QCOMPARE(clock->backEnabled(), f->backEnabled());
     }
     if (const auto* vfo = qobject_cast<const VfoDisplayItem*>(item)) {
         const auto* f = qobject_cast<const VfoDisplayItem*>(fresh);
@@ -408,6 +422,34 @@ private slots:
         QCOMPARE(o->buttonHighlightColour(), fresh.buttonHighlightColour());
         QCOMPARE(o->waterfallFrameInterval(), 6);
         QCOMPARE(o->waterfallPalette(), FilterDisplayItem::WaterfallPalette::Spectran);
+    }
+
+    // A new clock takes the Thetis look; one saved before the layout
+    // existed keeps the NereusSDR layout, its colours and no fill.
+    void clockNewItemThetisOldItemUnchanged()
+    {
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("CLOCK"));
+        std::unique_ptr<MeterItem> made(registry.createMeterItem(entry, nullptr));
+        const auto* c = qobject_cast<const ClockItem*>(made.get());
+        QVERIFY(c);
+        QCOMPARE(c->layout(), ClockItem::Layout::Thetis);
+        QCOMPARE(c->timeColour(), QColor::fromRgb(kClockThetisDefaults.timeColour));
+        QCOMPARE(c->backColour(), QColor::fromRgb(kClockThetisDefaults.backColour));
+        QVERIFY(c->backEnabled());
+
+        const QString oldRecord = QStringLiteral("CLOCK|0.1|0.2|0.3|0.4|5|6|0|1|#ff112233|#ff445566|#ff778899");
+        ContentEntry saved = registry.makeEntry(QStringLiteral("CLOCK"));
+        saved.config.insert(QStringLiteral("legacyRecord"), oldRecord);
+        std::unique_ptr<MeterItem> restored(registry.createMeterItem(saved, nullptr));
+        const auto* o = qobject_cast<const ClockItem*>(restored.get());
+        QVERIFY(o);
+        const QStringList oldParts = oldRecord.split(QLatin1Char('|'));
+        const QStringList newParts = restored->serialize().split(QLatin1Char('|'));
+        QCOMPARE(newParts.mid(7, oldParts.size() - 7), oldParts.mid(7));
+        QCOMPARE(o->layout(), ClockItem::Layout::NereusSDR);
+        QCOMPARE(o->timeColour(), QColor(0x11, 0x22, 0x33));
+        QVERIFY(!o->backEnabled());
     }
 };
 

@@ -774,6 +774,8 @@ nereus_add_test(tst_container_document)
 # Container item colours and button grid styling survive a save and reload;
 # records saved before those fields existed still load.
 nereus_add_test(tst_container_item_persistence)
+# CLOCK: Thetis layout and defaults for new clocks; saved clocks keep theirs.
+nereus_add_test(tst_clock_item_layout)
 # Every meter item record fills every field it declares and round-trips.
 nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.

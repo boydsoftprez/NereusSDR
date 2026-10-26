@@ -23,6 +23,13 @@
 //                 statics (thetisTime, thetisAmPm, thetisDate) so the
 //                 composite clock face draws them too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Ported renderClock as the Thetis layout (layout 1, new
+//                 items) beside the NereusSDR layout (0, older records);
+//                 background halves from AddClock with an enable flag;
+//                 applyNewItemDefaults() takes kClockThetisDefaults. The
+//                 layout, back colour and enable follow the colours in the
+//                 record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -69,7 +76,11 @@ mw0lge@grange-lane.co.uk
 #include "ResponsiveText.h"
 #include <QPainter>
 #include <QDateTime>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QLocale>
+#include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -86,13 +97,167 @@ bool ClockItem::advanceMeter(qint64 monotonicMs)
     return changed;
 }
 
+namespace {
+
+// Thetis layout (renderClock). From Thetis MeterManager.cs:40474-40537 [v2.10.3.15]
+// From Thetis MeterManager.cs:40495, :40507 [v2.10.3.15]: if (sLoc.Length == 7) fPadLoc = w * 0.03f;
+constexpr int kThetisPadTimeLength = 7;
+constexpr float kThetisTimePad = 0.03f;
+// From Thetis MeterManager.cs:40515 [v2.10.3.15]: plotText("local", x + (w * 0.01f), y + (h * 0.03f), ...)
+constexpr float kThetisLocalTitleX = 0.01f;
+// From Thetis MeterManager.cs:40516 [v2.10.3.15]: plotText("utc", x + (w * 0.52f), y + (h * 0.03f), ...)
+constexpr float kThetisUtcTitleX = 0.52f;
+constexpr float kThetisTitleY = 0.03f;
+// From Thetis MeterManager.cs:40522 [v2.10.3.15]: new SharpDX.RectangleF(x + (w * 0.12f), y + (h * 0.02f), w, h)
+constexpr float kThetisTimeX = 0.12f;
+constexpr float kThetisTimeY = 0.02f;
+// The UTC half sits w * 0.52f to the right. From Thetis MeterManager.cs:40527, :40534 [v2.10.3.15]
+constexpr float kThetisUtcOffsetX = 0.52f;
+// From Thetis MeterManager.cs:40523 [v2.10.3.15]: clk.FontSize * 1.9f
+constexpr float kThetisTimeFontScale = 1.9f;
+// From Thetis MeterManager.cs:40525 [v2.10.3.15]: rct.X + (w * 0.228f), rct.Y + (h * 0.285f), clk.FontSize * 0.8f
+constexpr float kThetisAmPmX = 0.228f;
+constexpr float kThetisAmPmY = 0.285f;
+constexpr float kThetisAmPmFontScale = 0.8f;
+// From Thetis MeterManager.cs:40532-40533 [v2.10.3.15]: x + (w * 0.132f), y + (h * 0.6f), clk.FontSize * 0.9f
+constexpr float kThetisDateX = 0.132f;
+constexpr float kThetisDateY = 0.6f;
+constexpr float kThetisDateFontScale = 0.9f;
+// plotText sizes text by the container width.
+// From Thetis MeterManager.cs:37863 [v2.10.3.15]: float em_scale = containerWidth / 52f / 16f;
+constexpr float kPlotTextEmWidth = 52.0f;
+constexpr float kPlotTextEmSize = 16.0f;
+// AddClock's pad around the background halves and the clock.
+// From Thetis MeterManager.cs:22583 [v2.10.3.15]: _fPadX = 0.004f;
+constexpr float kAddClockPadX = 0.004f;
+// AddClock's half: 0.5f - _fPadX - (_fPadX * 0.5f) wide, the second at
+// 0.5f + (_fPadX * 0.5f); the clock is 1f - _fPadX * 2f wide at _fPadX.
+// From Thetis MeterManager.cs:25823-25824, :25831-25832, :25840-25841 [v2.10.3.15]
+constexpr float kAddClockHalf = 0.5f;
+
+// NereusSDR layout: each half 48% wide with a 4% gap.
+constexpr int kNereusHalfPercent = 48;
+constexpr int kNereusGapPercent = 4;
+
+} // namespace
+
+void ClockItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const ClockItemThetisDefaults& d = kClockThetisDefaults;
+    m_timeColour      = QColor::fromRgb(d.timeColour);
+    m_dateColour      = QColor::fromRgb(d.dateColour);
+    m_typeTitleColour = QColor::fromRgb(d.typeTitleColour);
+    m_show24Hour      = d.show24Hour;
+    m_showType        = d.showType;
+    m_backColour      = QColor::fromRgb(d.backColour);
+    m_backEnabled     = d.backEnabled;
+    m_layout          = d.layout;
+}
+
+QVector<QRectF> ClockItem::backRects(int widgetW, int widgetH) const
+{
+    const QRect rect = pixelRect(widgetW, widgetH);
+    if (m_layout == Layout::NereusSDR) {
+        const int halfW = rect.width() * kNereusHalfPercent / 100;
+        const int gap = rect.width() * kNereusGapPercent / 100;
+        return {QRectF(rect.left(), rect.top(), halfW, rect.height()),
+                QRectF(rect.left() + halfW + gap, rect.top(), halfW, rect.height())};
+    }
+    // The clock spans both halves, so place them relative to its width.
+    const double clockSpan = 1.0 - kAddClockPadX * 2.0f;
+    const double halfW = (kAddClockHalf - kAddClockPadX - (kAddClockPadX * 0.5f)) / clockSpan;
+    const double secondX = (kAddClockHalf + (kAddClockPadX * 0.5f) - kAddClockPadX) / clockSpan;
+    const double w = rect.width();
+    return {QRectF(rect.left(), rect.top(), w * halfW, rect.height()),
+            QRectF(rect.left() + w * secondX, rect.top(), w * halfW, rect.height())};
+}
+
+QVector<ClockItem::TextRun> ClockItem::thetisRuns(int widgetW, int widgetH) const
+{
+    const QRect rect = pixelRect(widgetW, widgetH);
+    const double x = rect.left();
+    const double y = rect.top();
+    const double w = rect.width();
+    const double h = rect.height();
+    const double emScale = double(widgetW) / kPlotTextEmWidth / kPlotTextEmSize;
+    const double fontSize = kClockThetisDefaults.fontSize;
+
+    const QDateTime now = currentLocalTime();
+    const QDateTime utcNow = now.toUTC();
+
+    const QString sUtc = thetisTime(utcNow, m_show24Hour);
+    const QString sUtcAmPm = m_show24Hour ? QString() : thetisAmPm(utcNow);
+    double fPadUtc = 0;
+    if (!m_show24Hour && sUtc.length() == kThetisPadTimeLength) { fPadUtc = w * kThetisTimePad; }
+
+    const QString sLoc = thetisTime(now, m_show24Hour);
+    const QString sLocAmPm = m_show24Hour ? QString() : thetisAmPm(now);
+    double fPadLoc = 0;
+    if (!m_show24Hour && sLoc.length() == kThetisPadTimeLength) { fPadLoc = w * kThetisTimePad; }
+
+    const QString sUtcDate = thetisDate(utcNow);
+    const QString sLocDate = thetisDate(now);
+
+    QVector<TextRun> runs;
+    const auto plot = [&](const QString& text, double px, double py, double size, const QColor& colour) {
+        runs.append({text, QPointF(px, py), size * emScale, colour});
+    };
+
+    if (m_showType) {
+        plot(QStringLiteral("local"), x + (w * kThetisLocalTitleX), y + (h * kThetisTitleY), fontSize, m_typeTitleColour);
+        plot(QStringLiteral("utc"), x + (w * kThetisUtcTitleX), y + (h * kThetisTitleY), fontSize, m_typeTitleColour);
+    }
+
+    //time
+    double rctX = x + (w * kThetisTimeX);
+    const double rctY = y + (h * kThetisTimeY);
+    plot(sLoc, rctX + fPadLoc, rctY, fontSize * kThetisTimeFontScale, m_timeColour);
+    if (!m_show24Hour) {
+        plot(sLocAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, m_timeColour);
+    }
+
+    rctX = x + (w * kThetisTimeX) + (w * kThetisUtcOffsetX);
+    plot(sUtc, rctX + fPadUtc, rctY, fontSize * kThetisTimeFontScale, m_timeColour);
+    if (!m_show24Hour) {
+        plot(sUtcAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, m_timeColour);
+    }
+
+    //date
+    const double dateY = y + (h * kThetisDateY);
+    plot(sLocDate, x + (w * kThetisDateX), dateY, fontSize * kThetisDateFontScale, m_dateColour);
+    plot(sUtcDate, x + (w * kThetisDateX) + (w * kThetisUtcOffsetX), dateY, fontSize * kThetisDateFontScale, m_dateColour);
+    return runs;
+}
+
 void ClockItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect rect = pixelRect(widgetW, widgetH);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    const int halfW = rect.width() * 48 / 100;
-    const int gap = rect.width() * 4 / 100;
+    if (m_backEnabled) {
+        for (const QRectF& half : backRects(widgetW, widgetH)) { p.fillRect(half, m_backColour); }
+    }
+
+    if (m_layout == Layout::Thetis) {
+        // plotText: left and top aligned at the run's point, in the
+        // em-scaled size (DirectWrite sizes are device-independent pixels).
+        // From Thetis MeterManager.cs:37858-37920 [v2.10.3.15]
+        QFont font(QString::fromLatin1(kClockThetisDefaults.fontFamily));
+        for (const TextRun& run : thetisRuns(widgetW, widgetH)) {
+            if (run.text.isEmpty() || run.fontSize <= 0.0) { continue; }
+            font.setPixelSize(std::max(1, int(std::lround(run.fontSize))));
+            const QFontMetricsF fm(font, p.device());
+            const QRectF box(run.topLeft, QSizeF(fm.horizontalAdvance(run.text), fm.height()));
+            p.setFont(font);
+            p.setPen(run.colour);
+            p.drawText(box, Qt::AlignLeft | Qt::AlignTop | Qt::TextDontClip, run.text);
+        }
+        return;
+    }
+
+    const int halfW = rect.width() * kNereusHalfPercent / 100;
+    const int gap = rect.width() * kNereusGapPercent / 100;
     const QRect localRect(rect.left(), rect.top(), halfW, rect.height());
     const QRect utcRect(rect.left() + halfW + gap, rect.top(), halfW, rect.height());
 
@@ -203,7 +368,12 @@ QString ClockItem::serialize() const
         + QStringLiteral("|%1|%2|%3")
               .arg(m_timeColour.name(QColor::HexArgb))
               .arg(m_dateColour.name(QColor::HexArgb))
-              .arg(m_typeTitleColour.name(QColor::HexArgb));
+              .arg(m_typeTitleColour.name(QColor::HexArgb))
+        // Layout (12), back colour (13) and back enable (14) follow, so an
+        // older record loads with the NereusSDR layout and no fill.
+        + QLatin1Char('|') + QString::number(static_cast<int>(m_layout))
+        + QLatin1Char('|') + m_backColour.name(QColor::HexArgb)
+        + QLatin1Char('|') + QString::number(m_backEnabled ? 1 : 0);
 }
 
 bool ClockItem::deserialize(const QString& data)
@@ -223,6 +393,11 @@ bool ClockItem::deserialize(const QString& data)
     readColour(9, m_timeColour);
     readColour(10, m_dateColour);
     readColour(11, m_typeTitleColour);
+    if (parts.size() > 12) {
+        m_layout = parts[12].toInt() == static_cast<int>(Layout::Thetis) ? Layout::Thetis : Layout::NereusSDR;
+    }
+    readColour(13, m_backColour);
+    if (parts.size() > 14) { m_backEnabled = parts[14].toInt() != 0; }
     return true;
 }
 
