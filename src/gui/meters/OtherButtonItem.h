@@ -27,6 +27,10 @@
 //                 button order saved; earlier records load through the old
 //                 numbering. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Reorder: Alt-drag a button onto another to move it there,
+//                 with Shift to swap the two; the order is saved. The
+//                 dragged button follows the pointer in NereusSDR colours.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -117,6 +121,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/NereusGuiExport.h"
 #include "gui/UnbuiltFeatures.h"
 
+#include <QPointF>
 #include <QVector>
 
 #include <optional>
@@ -216,6 +221,15 @@ public:
     MacroSettings& macroSettings(int macroIndex);
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
+    void paint(QPainter& p, int widgetW, int widgetH) override;
+
+    // Reorder (MeterManager.cs:9322-9390 [v2.10.3.15]): Alt held at the
+    // press starts a drag and clicks nothing; released over another
+    // button, the dragged one moves there (Shift held: the two swap).
+    bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH) override;
+
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
@@ -239,6 +253,13 @@ private:
     QVector<short> m_map;        // slot -> id
     QVector<int> m_slotOfId;     // id -> slot
     QVector<MacroSettings> m_macroSettings;
+
+    // The slot being dragged and the slot under the pointer, or -1
+    // (Thetis _dragging_index, _last_draged_to).
+    int m_dragIndex{-1};
+    int m_dragTarget{-1};
+    QPointF m_dragPoint;
+    bool m_dragMoved{false};
 };
 
 } // namespace NereusSDR

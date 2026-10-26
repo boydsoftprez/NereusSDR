@@ -9159,6 +9159,9 @@ target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 58: other buttons use Thetis button numbers
 # and every button's visibility is saved; older records still load.
 nereus_add_test(tst_other_button_ids)
+# Container item parity Task 59: Alt-drag reorders the other buttons (Shift
+# swaps), the order is saved, and the editor lists every offered button.
+nereus_add_test(tst_other_button_reorder)
 # R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
 # builds, local or remote, carries a not-yet-implemented mark or tooltip,
 # including the surfaces hidden until their feature is built.
