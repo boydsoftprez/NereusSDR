@@ -250,6 +250,10 @@ private:
     void onCopyItemSettings();
     void onPasteItemSettings();
     void updateCopyPasteButtonState();
+    // Workspace draft: the selected object (false when none) and, when it
+    // is a meter item, a copy of it built from its record.
+    bool selectedDraftEntry(ContentEntry& entry) const;
+    std::unique_ptr<MeterItem> draftMeterItem(const ContentEntry& entry) const;
     QPushButton* m_btnCopySettings{nullptr};
     QPushButton* m_btnPasteSettings{nullptr};
 

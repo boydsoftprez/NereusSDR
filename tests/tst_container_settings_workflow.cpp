@@ -6,6 +6,10 @@
 #include <QPainter>
 #include "gui/meters/OtherButtonCatalog.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "gui/meters/ButtonBoxItem.h"
+#include "gui/meters/AntennaButtonItem.h"
+#include "gui/meters/ModeButtonItem.h"
+#include "gui/meters/TuneStepButtonItem.h"
 #include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerControlCatalog.h"
@@ -259,7 +263,8 @@ private slots:
     preview.setDocument(document);preview.resize(420,240);preview.show();QCoreApplication::processEvents();
     QCOMPARE(preview.entryBoundary(document.contents[0].id).height(),44);
     QCOMPARE(preview.entryBoundary(document.contents[1].id).height(),44);
-    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),132);
+    // A new other-buttons grid has Thetis's 3 columns: its shown buttons take 5 rows of 44.
+    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),220);
  }
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
@@ -366,6 +371,74 @@ private slots:
     auto primitive=registry.makeEntry("BAR");editor.setEntry(primitive);auto* guid=editor.findChild<QLineEdit*>("mmioGuid");auto* variable=editor.findChild<QLineEdit*>("mmioVariable");const QString id="00112233-4455-6677-8899-aabbccddeeff";guid->setText(id);guid->editingFinished();variable->setText("alpha");variable->editingFinished();
     auto* adapter=editor.findChild<BaseItemEditor*>();QVERIFY(adapter);auto* bar=qobject_cast<BarItem*>(adapter->item());bar->setBarColor(Qt::green);adapter->propertyChanged();QCOMPARE(edited.context["mmioGuid"].toString(),id);QCOMPARE(edited.context["mmioVariable"].toString(),QString("alpha"));
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);WorkspaceDocument d;ContainerDocument c;c.id="A";d.mainContainerId=c.id;c.contents={edited};d.containers={c};QCOMPARE(store.commit(d,0).status,CommitStatus::Saved);ContainerWorkspaceStore reload(settings);const auto restored=reload.load().document.containers[0].contents[0];std::unique_ptr<MeterItem> item(registry.createMeterItem(restored,nullptr,ContentRenderMode::Preview));QVERIFY(item);QCOMPARE(item->mmioGuid(),QUuid(id));QCOMPARE(item->mmioVariable(),QString("alpha"));QCOMPARE(qobject_cast<BarItem*>(item.get())->barColor(),QColor(Qt::green));
+ }
+ void buttonGridColumnRangesAndNewGridColumns() {
+    ContainerContentRegistry registry;
+    const auto grid=[&](const ContentEntry& entry) {return std::unique_ptr<MeterItem>(registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));};
+    // Fixed ranges (Thetis setup.cs); a Nereus band grid takes the band range.
+    const QVector<QPair<QString,int>> fixed={{"BANDBTNS",15},{"NEREUSBAND",15},{"MODEBTNS",12},{"FILTERBTNS",12}};
+    for(const auto& type:fixed) {
+        const auto item=grid(registry.makeEntry(type.first));auto* box=qobject_cast<ButtonBoxItem*>(item.get());QVERIFY2(box,qPrintable(type.first));
+        QCOMPARE(box->columns(),3);QCOMPARE(box->columnRange(),std::make_pair(1,type.second));
+    }
+    // Ranges that follow the checked buttons, at least one column.
+    for(const QString type:{QStringLiteral("ANTENNABTNS"),QStringLiteral("TUNESTEPBTNS"),QStringLiteral("OTHERBTNS")}) {
+        const auto item=grid(registry.makeEntry(type));auto* box=qobject_cast<ButtonBoxItem*>(item.get());QVERIFY2(box,qPrintable(type));
+        QCOMPARE(box->columns(),3);QCOMPARE(box->columnRange().first,1);QVERIFY(box->columnRange().second>=1);
+    }
+    AntennaButtonItem antenna;QCOMPARE(antenna.columnRange(),std::make_pair(1,10));antenna.setVisibleBits(0b111);QCOMPARE(antenna.columnRange(),std::make_pair(1,3));antenna.setVisibleBits(0);QCOMPARE(antenna.columnRange(),std::make_pair(1,1));
+    TuneStepButtonItem steps;steps.setVisibleBits(0b11);QCOMPARE(steps.columnRange(),std::make_pair(1,2));
+    OtherButtonItem other;other.setOnlyVisible(OtherButtonItem::ButtonId::Mox);QCOMPARE(other.columnRange(),std::make_pair(1,1));
+    // A saved grid keeps its count, even one outside the range.
+    for(const int saved:{5,20}) {
+        auto entry=registry.makeEntry("MODEBTNS");entry.config["legacyRecord"]=QString("MODEBTNS|0|0|1|1|0|0|%1|0|1023").arg(saved);
+        const auto item=grid(entry);QCOMPARE(qobject_cast<ButtonBoxItem*>(item.get())->columns(),saved);
+    }
+ }
+ void buttonGridEditorClampsColumns() {
+    ModeButtonItem mode;mode.setColumns(5);
+    std::unique_ptr<QWidget> editor(ContainerSettingsDialog::buildTypeSpecificEditor(&mode,nullptr));QVERIFY(editor);
+    auto* spin=editor->findChild<QSpinBox*>("buttonBoxColumns");QVERIFY(spin);
+    QCOMPARE(spin->minimum(),1);QCOMPARE(spin->maximum(),12);QCOMPARE(spin->value(),5);
+    spin->setValue(20);QCOMPARE(spin->value(),12);QCOMPARE(mode.columns(),12);
+    // Hiding antenna buttons lowers the range and a count above it.
+    AntennaButtonItem antenna;antenna.setColumns(5);
+    std::unique_ptr<QWidget> antennaEditor(ContainerSettingsDialog::buildTypeSpecificEditor(&antenna,nullptr));QVERIFY(antennaEditor);
+    auto* antennaSpin=antennaEditor->findChild<QSpinBox*>("buttonBoxColumns");QVERIFY(antennaSpin);QCOMPARE(antennaSpin->maximum(),10);
+    auto* base=qobject_cast<BaseItemEditor*>(antennaEditor.get());QVERIFY(base);QSignalSpy changed(base,&BaseItemEditor::propertyChanged);
+    antenna.setVisibleBits(0b111);emit base->propertyChanged();
+    QCOMPARE(antennaSpin->maximum(),3);QCOMPARE(antennaSpin->value(),3);QCOMPARE(antenna.columns(),3);QCOMPARE(changed.count(),2);
+ }
+ void draftCopyPasteItemSettings() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument c;c.id="A";c.layout=ContentLayout::VerticalStack;
+    auto source=registry.makeEntry("MODEBTNS");source.config["legacyRecord"]=QString("MODEBTNS|0.1|0.2|0.5|0.3|0|0|5|0|1023|0.01|0.02|4|0.75|0|0");
+    auto target=registry.makeEntry("MODEBTNS");target.name="Second modes";
+    c.contents={source,target,registry.makeEntry("BANDBTNS"),registry.makeEntry("DISCORDBTNS")};d.containers={c};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);const auto saved=store.snapshot();
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QVERIFY(list);
+    QPushButton* copy=nullptr;QPushButton* paste=nullptr;
+    for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()=="Copy settings") {copy=button;} if(button->text()=="Paste settings") {paste=button;}}
+    // Disabled, never hidden: each says why it cannot act.
+    QVERIFY(copy);QVERIFY(paste);QVERIFY(!copy->isHidden());QVERIFY(!paste->isHidden());
+    list->setCurrentRow(3);QVERIFY(!copy->isEnabled());QVERIFY(!copy->toolTip().isEmpty());QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    list->setCurrentRow(0);QVERIFY(copy->isEnabled());QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    copy->click();QVERIFY(paste->isEnabled());
+    list->setCurrentRow(2);QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    list->setCurrentRow(1);QVERIFY(paste->isEnabled());QVERIFY(paste->toolTip().isEmpty());
+    const auto before=dialog.editSession()->draft().containers[0].contents[1];
+    std::unique_ptr<MeterItem> beforeItem(registry.createMeterItem(before,nullptr,ContentRenderMode::Preview));QVERIFY(beforeItem);
+    paste->click();QCOMPARE(list->currentRow(),1);
+    const auto after=dialog.editSession()->draft().containers[0].contents[1];
+    QCOMPARE(after.id,before.id);QCOMPARE(after.name,before.name);QCOMPARE(after.canvasRect,before.canvasRect);
+    std::unique_ptr<MeterItem> pasted(registry.createMeterItem(after,nullptr,ContentRenderMode::Preview));auto* box=qobject_cast<ButtonBoxItem*>(pasted.get());QVERIFY(box);
+    QCOMPARE(box->columns(),5);QCOMPARE(box->cornerRadius(),4.0f);QCOMPARE(box->heightRatio(),0.75f);
+    // The object keeps its place.
+    QCOMPARE(box->x(),beforeItem->x());QCOMPARE(box->y(),beforeItem->y());QCOMPARE(box->itemWidth(),beforeItem->itemWidth());QCOMPARE(box->itemHeight(),beforeItem->itemHeight());
+    // Draft only until Apply.
+    QCOMPARE(store.snapshot(),saved);QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+    ContainerWorkspaceStore reloaded(settings);QVERIFY(reloaded.load().ok);
+    std::unique_ptr<MeterItem> applied(registry.createMeterItem(reloaded.snapshot().containers[0].contents[1],nullptr,ContentRenderMode::Preview));QCOMPARE(qobject_cast<ButtonBoxItem*>(applied.get())->columns(),5);
  }
  void duplicateInvalidLegacyEntryLeavesDraftUnchanged() {
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;

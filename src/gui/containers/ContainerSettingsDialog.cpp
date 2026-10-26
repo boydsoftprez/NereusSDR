@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Copy settings and Paste settings work in the workspace
+//                 draft: shown there, disabled with a plain reason when they
+//                 cannot apply; a paste keeps the object's place. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Paste settings between compatible bar meters, ported from
 //                 Thetis setup.cs canPasteSettings and the paste body: the
 //                 target keeps its reading, title, scale and units, and its
@@ -518,7 +522,7 @@ void ContainerSettingsDialog::buildLayout()
     // --- Button bar (bottom) ---
     buildButtonBar();
     if (m_editSession) {
-        m_btnPreset->hide();m_btnCopySettings->hide();m_btnPasteSettings->hide();
+        m_btnPreset->hide();updateCopyPasteButtonState();
         m_highlightCheck->setEnabled(false);m_highlightCheck->setToolTip(tr("Highlight is a live arrangement aid; drafts use the preview."));
         m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit meter data sources in application settings."));
         for (auto* edit : findChildren<QLineEdit*>()) { connect(edit,&QLineEdit::textChanged,this,[this]{ updatePreview(); }); }
@@ -1351,6 +1355,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
     if(m_editSession) {
         if(!m_propertyStack) {return;}
         if(m_currentTypeEditor) { m_propertyStack->removeWidget(m_currentTypeEditor); delete m_currentTypeEditor; m_currentTypeEditor=nullptr; m_contentEditor=nullptr; }
+        updateCopyPasteButtonState();
         const int row=m_itemList->currentRow();
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
             const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
@@ -2165,8 +2170,37 @@ bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized,
     return bar->deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
 }
 
+bool ContainerSettingsDialog::selectedDraftEntry(ContentEntry& entry) const
+{
+    if (!m_editSession || !m_itemList) { return false; }
+    const int row = m_itemList->currentRow();
+    for (const auto& c : m_editSession->draft().containers) {
+        if (c.id != m_selectedId || row < 0 || row >= c.contents.size()) { continue; }
+        entry = c.contents[row];
+        return true;
+    }
+    return false;
+}
+
+std::unique_ptr<MeterItem> ContainerSettingsDialog::draftMeterItem(const ContentEntry& entry) const
+{
+    if (!m_manager || !m_manager->contentRegistry()) { return {}; }
+    return std::unique_ptr<MeterItem>(
+        m_manager->contentRegistry()->createMeterItem(entry, nullptr, ContentRenderMode::Preview));
+}
+
 void ContainerSettingsDialog::onCopyItemSettings()
 {
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        m_clipboardSerialized = item->serialize();
+        m_clipboardTypeTag = pasteTypeId(*item);
+        updateCopyPasteButtonState();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
@@ -2180,6 +2214,33 @@ void ContainerSettingsDialog::onCopyItemSettings()
 void ContainerSettingsDialog::onPasteItemSettings()
 {
     if (m_clipboardSerialized.isEmpty()) { return; }
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        // The object keeps its place: settings paste, the place does not.
+        const float x = item->x();
+        const float y = item->y();
+        const float w = item->itemWidth();
+        const float h = item->itemHeight();
+        if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
+        item->setRect(x, y, w, h);
+        const ContentEntry pasted = m_manager->contentRegistry()->captureMeterItem(*item, entry);
+        auto draft = m_editSession->draft();
+        for (auto& c : draft.containers) {
+            if (c.id != m_selectedId) { continue; }
+            for (auto& e : c.contents) {
+                if (e.id == entry.id) { e = pasted; }
+            }
+        }
+        m_editSession->setDraft(draft);
+        updatePreview();
+        updateDraftStatus();
+        // Rebuild the editor so its fields read the pasted settings.
+        onItemSelectionChanged();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
@@ -2199,6 +2260,31 @@ void ContainerSettingsDialog::onPasteItemSettings()
 
 void ContainerSettingsDialog::updateCopyPasteButtonState()
 {
+    if (m_editSession) {
+        // Disabled, never hidden: each button says why it cannot act.
+        ContentEntry entry;
+        const bool haveSelection = selectedDraftEntry(entry);
+        const std::unique_ptr<MeterItem> item = haveSelection ? draftMeterItem(entry) : nullptr;
+        QString copyReason;
+        if (!haveSelection) { copyReason = tr("Select an object to copy its settings."); }
+        else if (!item) { copyReason = tr("This object has no settings to copy."); }
+        QString pasteReason = copyReason;
+        if (pasteReason.isEmpty()) {
+            if (m_clipboardTypeTag.isEmpty()) { pasteReason = tr("Copy an object's settings first."); }
+            else if (!canPasteSettings(m_clipboardTypeTag, pasteTypeId(*item))) {
+                pasteReason = tr("The copied settings do not fit this object.");
+            }
+        }
+        if (m_btnCopySettings) {
+            m_btnCopySettings->setEnabled(copyReason.isEmpty());
+            m_btnCopySettings->setToolTip(copyReason);
+        }
+        if (m_btnPasteSettings) {
+            m_btnPasteSettings->setEnabled(pasteReason.isEmpty());
+            m_btnPasteSettings->setToolTip(pasteReason);
+        }
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     const bool haveSelection = (row >= 0 && row < m_workingItems.size());
     if (m_btnCopySettings) {

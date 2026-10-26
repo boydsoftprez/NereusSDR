@@ -35,6 +35,10 @@
 //   2026-10-26 - The fade click guard and a shown button's rectangle are
 //                 open to a subclass (other buttons' reorder drag).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Each grid type has its column range (columnRange, the
+//                 editor clamps to it), and new grids get Thetis's 3
+//                 columns. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -86,6 +90,8 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QVector>
 
+#include <utility>
+
 class QMouseEvent;
 
 namespace NereusSDR {
@@ -112,6 +118,22 @@ public:
     // Grid configuration
     void setColumns(int cols) { m_columns = cols; }
     int columns() const { return m_columns; }
+
+    // The column counts this grid type offers, {minimum, maximum}. Each grid
+    // type gives its Thetis range; the editor clamps to it. A saved grid
+    // keeps its count until it is edited.
+    virtual std::pair<int, int> columnRange() const;
+
+    // New grids get Thetis's column count (kNewGridColumns).
+    void applyNewItemDefaults() override;
+
+    // From Thetis MeterManager.cs:25390, :25462, :25563, :25628, :25664,
+    // :25700 [v2.10.3.15]: every new band, mode, filter, antenna, tune step
+    // and other buttons grid is made with bb.Columns = 3.
+    static constexpr int kNewGridColumns = 3;
+    // NereusSDR: the editor's range for a grid type that gives none.
+    static constexpr int kDefaultMinColumns = 1;
+    static constexpr int kDefaultMaxColumns = 32;
 
     void setBorderWidth(float w) { m_borderWidth = w; }
     float borderWidth() const { return m_borderWidth; }
@@ -242,6 +264,10 @@ protected:
     // A subclass that changes m_buttons[i].visible or hiddenUntilBuilt
     // directly calls this so the grid positions are worked out again.
     void invalidateShownLayout() { m_shownDirty = true; }
+
+    // How many buttons the saved visibility shows (Thetis's checked count
+    // in the grid's options).
+    int checkedButtonCount() const;
 
     int m_buttonCount{0};
     QVector<ButtonState> m_buttons;
