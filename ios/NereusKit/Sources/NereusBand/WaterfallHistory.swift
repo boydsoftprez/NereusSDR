@@ -217,6 +217,13 @@ public struct WaterfallHistory: Equatable, Sendable {
         storage[(row * columns)..<((row + 1) * columns)]
     }
 
+    /// Calls `body` with the whole storage, `columns` bytes a row from row
+    /// 0, rows that hold no line yet all zeros: the renderer uploads it in
+    /// one copy after a layout change.
+    func withStorageBytes<Result>(_ body: (UnsafeRawBufferPointer) throws -> Result) rethrows -> Result {
+        try storage.withUnsafeBytes(body)
+    }
+
     /// The frequencies storage row `row` covers, nil when not known.
     public func coverage(storageRow row: Int) -> BandCoverage? {
         row >= 0 && row < coverages.count ? coverages[row] : nil
@@ -252,6 +259,11 @@ public struct WaterfallHistory: Equatable, Sendable {
     /// takes the strongest of the old samples it covers, so a narrower
     /// line keeps its signals; a wider one repeats them. The rows stay
     /// where they are in storage, with their coverage.
+    ///
+    /// Turning the phone re-maps a full history of thousands of lines on
+    /// the main thread, so the old samples each new sample covers are
+    /// worked out once for every line, and the lines are read and written
+    /// through pointers rather than array subscripts.
     private mutating func remap(columns newColumns: Int) {
         let oldColumns = columns
         guard oldColumns > 0, count > 0 else {
@@ -259,19 +271,55 @@ public struct WaterfallHistory: Equatable, Sendable {
             restart()
             return
         }
+        // Each new sample covers the old samples from starts[column] up to,
+        // not including, ends[column]: always at least one.
+        var starts = [Int](repeating: 0, count: newColumns)
+        var ends = [Int](repeating: 0, count: newColumns)
+        for column in 0..<newColumns {
+            let start = column * oldColumns / newColumns
+            starts[column] = start
+            ends[column] = min(max(start + 1, (column + 1) * oldColumns / newColumns), oldColumns)
+        }
+        let held = count
+        let rows = capacity
+        let newest = head - 1
         var remapped = [UInt8](repeating: 0, count: capacity * newColumns)
-        for age in 0..<count {
-            let row = storageRow(age: age)
-            let source = row * oldColumns
-            let target = row * newColumns
-            for column in 0..<newColumns {
-                let start = column * oldColumns / newColumns
-                let end = max(start + 1, (column + 1) * oldColumns / newColumns)
-                var strongest: UInt8 = 0
-                for index in start..<min(end, oldColumns) {
-                    strongest = max(strongest, storage[source + index])
+        // The loop below reads and writes through raw pointers: a storage of
+        // any other size would take it outside both buffers.
+        precondition(storage.count == capacity * oldColumns, "the waterfall's storage is not its capacity of lines")
+        storage.withUnsafeBufferPointer { oldBuffer in
+            remapped.withUnsafeMutableBufferPointer { newBuffer in
+                starts.withUnsafeBufferPointer { startBuffer in
+                    ends.withUnsafeBufferPointer { endBuffer in
+                        guard let old = oldBuffer.baseAddress, let new = newBuffer.baseAddress,
+                              let first = startBuffer.baseAddress, let last = endBuffer.baseAddress else {
+                            return
+                        }
+                        var age = 0
+                        while age < held {
+                            // The same row as storageRow(age:).
+                            let row = ((newest - age) % rows + rows) % rows
+                            let source = old + row * oldColumns
+                            let target = new + row * newColumns
+                            var column = 0
+                            while column < newColumns {
+                                var index = first[column]
+                                let end = last[column]
+                                var strongest: UInt8 = 0
+                                while index < end {
+                                    let sample = source[index]
+                                    if sample > strongest {
+                                        strongest = sample
+                                    }
+                                    index += 1
+                                }
+                                target[column] = strongest
+                                column += 1
+                            }
+                            age += 1
+                        }
+                    }
                 }
-                remapped[target + column] = strongest
             }
         }
         columns = newColumns

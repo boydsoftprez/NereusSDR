@@ -639,8 +639,11 @@ public:
     //   Slice<N>/XitHz      — int Hz
     //   Slice<N>/AfGain     — int 0-100
     //   Slice<N>/RfGain     — int -20..120 (AGC-T, WDSP AGC top)
-    //   Slice<N>/RxAntenna  — string (e.g. "ANT1")
-    //   Slice<N>/TxAntenna  — string (e.g. "ANT1")
+    //   (No antenna keys: Setup's per-band antenna table under
+    //   hardware/<mac>/alex/antenna/ is the only antenna store. Older builds
+    //   wrote Slice<N>/RxAntenna and TxAntenna; nothing reads them now.
+    //   SliceModel::migrateLegacyKeys still writes them from the legacy
+    //   VfoRxAntenna / VfoTxAntenna, and they stay unread.)
     //   Slice<N>/SnbEnabled — "True"/"False"           — default "False" (session-level)
     //   Slice<N>/SsqlEnabled: "True"/"False", voice squelch (Thetis VSQL)
     //   Slice<N>/SsqlThresh:  double, slider value, 0..100

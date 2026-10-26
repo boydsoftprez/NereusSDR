@@ -61,17 +61,27 @@
 //   2026-10-15: Windows: the closed address may be stopped because the
 //               service's path won first. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-24: an attempt that gets no answer says, in its log line, how
+//               long after its dial and what it met: a refused connect, a
+//               connection closed during TLS, a WebSocket that dropped with
+//               no close frame before the Core's hello, or one the far end
+//               closed with a code and a reason, quoted and escaped. Each
+//               case matches one whole line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
 
 #include <QPointer>
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QSet>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QWebSocket>
+#include <QWebSocketServer>
 
 #include <atomic>
 #include <memory>
@@ -88,6 +98,7 @@
 #include "core/MoxController.h"
 #include "core/session/RendezvousDialer.h"
 #include "core/session/SessionMessages.h"
+#include "core/session/SessionTransport.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationRendezvous.h"
 #include "core/settings/SettingsProxy.h"
@@ -151,6 +162,35 @@ private:
     QString m_peer;
     PathOutcome m_outcome;
     QString m_reason;
+};
+
+// A rung of the test's own that opens a plain WebSocket to `url` and hands
+// it over, as a direct rung does once its TLS and upgrade are done; the far
+// end then decides what the Core would have said.
+class WebSocketRung final : public PathRung {
+public:
+    explicit WebSocketRung(const QUrl& url) : m_url(url) {}
+    void start() override
+    {
+        auto* socket = new QWebSocket();
+        auto* transport = new WebSocketTransport(socket, StationClient::kMaxIncomingMessageBytes, this);
+        connect(socket, &QWebSocket::connected, this, [this, transport] {
+            if (m_stopped) {
+                return;
+            }
+            transport->setParent(nullptr);
+            emit opened(transport);
+        });
+        socket->open(m_url);
+    }
+    void stop() override { m_stopped = true; }
+    int rank() const override { return PathRacer::ThisNetwork; }
+    PathKind kind() const override { return PathKind::ThisNetwork; }
+    QString address() const override { return m_url.authority(); }
+
+private:
+    QUrl m_url;
+    bool m_stopped = false;
 };
 
 PathRacer::Vetter vetByPeerName()
@@ -335,7 +375,25 @@ struct RacerLines {
         }
         return false;
     }
+    bool matches(const QRegularExpression& pattern) const
+    {
+        for (const QString& line : lines) {
+            if (pattern.match(line).hasMatch()) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
+
+// An attempt's whole no-answer line: its address, the time after its dial
+// and what it met, so a detail from another line cannot pass.
+QRegularExpression noAnswerLine(const QString& address, const QString& detailPattern)
+{
+    return QRegularExpression(
+        QStringLiteral("^Attempt at %1 ended: no answer \\[after \\d+ ms: %2\\]$")
+            .arg(QRegularExpression::escape(address), detailPattern));
+}
 
 } // namespace
 
@@ -679,6 +737,104 @@ private slots:
             QTRY_VERIFY2(log.has(QStringLiteral("All 1 attempt(s) failed, any rank")),
                          qPrintable(log.lines.join(QLatin1Char('\n'))));
             QVERIFY2(!log.has(QStringLiteral("No path reached the Core")), qPrintable(joined));
+        }
+    }
+
+    // An attempt that gets no answer says in its log line how long after
+    // its dial it ended and what it met, so a log can tell a refused
+    // connect from a connection closed during TLS, a link that dropped with
+    // no close frame, or one the far end closed before the Core's hello.
+    // The operator's words are unchanged.
+    void anAttemptWithNoAnswerSaysWhatItMet()
+    {
+        {
+            // Nothing listening: the connect is refused.
+            RacerLines log;
+            PathRacer racer;
+            const quint16 port = closedPort();
+            racer.addDirectUrls({QUrl(QStringLiteral("wss://127.0.0.1:%1").arg(port))},
+                                StationClient::kMaxIncomingMessageBytes);
+            racer.start();
+            QTRY_VERIFY2(log.matches(noAnswerLine(QStringLiteral("127.0.0.1:%1").arg(port),
+                                                  QStringLiteral("socket error ConnectionRefusedError, .+"))),
+                         qPrintable(log.lines.join(QLatin1Char('\n'))));
+        }
+        {
+            // Something accepts and closes at once, before TLS is done. The
+            // TLS backends differ in how they name that (Secure Transport and
+            // OpenSSL see the remote close; Schannel may fail the handshake).
+            QTcpServer closing;
+            QVERIFY(closing.listen(QHostAddress::LocalHost));
+            connect(&closing, &QTcpServer::newConnection, &closing, [&closing] {
+                while (QTcpSocket* accepted = closing.nextPendingConnection()) {
+                    accepted->abort();
+                    accepted->deleteLater();
+                }
+            });
+            RacerLines log;
+            PathRacer racer;
+            racer.addDirectUrls({QUrl(QStringLiteral("wss://127.0.0.1:%1").arg(closing.serverPort()))},
+                                StationClient::kMaxIncomingMessageBytes);
+            racer.start();
+            QTRY_VERIFY2(log.matches(noAnswerLine(
+                             QStringLiteral("127.0.0.1:%1").arg(closing.serverPort()),
+                             QStringLiteral("socket error (RemoteHostClosedError|SslHandshakeFailedError), .+"))),
+                         qPrintable(log.lines.join(QLatin1Char('\n'))));
+        }
+        {
+            // The far end opens the WebSocket and drops the link before any
+            // hello, with no close frame: Qt's close code would read 1000.
+            QWebSocketServer far(QStringLiteral("drops-before-hello"),
+                                 QWebSocketServer::NonSecureMode);
+            QVERIFY(far.listen(QHostAddress::LocalHost, 0));
+            connect(&far, &QWebSocketServer::newConnection, &far, [&far] {
+                while (QWebSocket* accepted = far.nextPendingConnection()) {
+                    accepted->setParent(&far);
+                    accepted->flush();
+                    accepted->abort();
+                }
+            });
+            RacerLines log;
+            PathRacer racer;
+            const QUrl url(QStringLiteral("ws://127.0.0.1:%1").arg(far.serverPort()));
+            racer.addRung(new WebSocketRung(url));
+            QSignalSpy failed(&racer, &PathRacer::failed);
+            racer.start();
+            QTRY_COMPARE(failed.count(), 1);
+            QVERIFY2(log.matches(noAnswerLine(
+                         url.authority(),
+                         QStringLiteral("closed before the Core's hello, no close frame(, socket error \\w+, .+)?"))),
+                     qPrintable(log.lines.join(QLatin1Char('\n'))));
+        }
+        {
+            // The far end opens the WebSocket and closes it with a code
+            // before any hello. Its reason is quoted and escaped, so a line
+            // break in it cannot start a line of its own.
+            QWebSocketServer far(QStringLiteral("closes-before-hello"),
+                                 QWebSocketServer::NonSecureMode);
+            QVERIFY(far.listen(QHostAddress::LocalHost, 0));
+            connect(&far, &QWebSocketServer::newConnection, &far, [&far] {
+                while (QWebSocket* accepted = far.nextPendingConnection()) {
+                    accepted->setParent(&far);
+                    accepted->close(QWebSocketProtocol::CloseCodePolicyViolated,
+                                    QStringLiteral("full\nAttempt at forged \"x\""));
+                }
+            });
+            RacerLines log;
+            PathRacer racer;
+            const QUrl url(QStringLiteral("ws://127.0.0.1:%1").arg(far.serverPort()));
+            racer.addRung(new WebSocketRung(url));
+            QSignalSpy failed(&racer, &PathRacer::failed);
+            racer.start();
+            QTRY_COMPARE(failed.count(), 1);
+            QVERIFY2(log.matches(noAnswerLine(
+                         url.authority(),
+                         QRegularExpression::escape(QStringLiteral(
+                             "closed before the Core's hello, close code 1008, "
+                             "reason \"full\\u000aAttempt at forged \\\"x\\\"\"")))),
+                     qPrintable(log.lines.join(QLatin1Char('\n'))));
+            // The operator's words do not carry it.
+            QVERIFY(!failed.first().first().toString().contains(QStringLiteral("close code")));
         }
     }
 

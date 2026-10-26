@@ -1329,38 +1329,74 @@ public final class BandRenderer {
         guard let texture = waterfallTexture else {
             return
         }
-        let fresh = uploadAll ? UInt64(history.count)
-            : min(history.linesAppended &- uploadedLines, UInt64(history.capacity))
+        if uploadAll {
+            // A texture made this frame: no frame in flight reads it.
+            Self.uploadWhole(history, referenceHz: waterfallReferenceHz, to: texture, coverage: coverageTexture)
+            uploadedLines = history.linesAppended
+            return
+        }
+        let fresh = min(history.linesAppended &- uploadedLines, UInt64(history.capacity))
         for age in 0..<Int(min(fresh, UInt64(history.count))) {
             let row = history.storageRow(age: age)
-            var span = SIMD2<Float>(0, 0)
-            if let coverage = history.coverage(storageRow: row), coverage.spanHz > 0 {
-                span = SIMD2(Float(coverage.lowHz - waterfallReferenceHz), Float(coverage.spanHz))
+            let span = Self.coverageSpan(history.coverage(storageRow: row), referenceHz: waterfallReferenceHz)
+            // A row a frame still in flight may be drawing: the copy goes
+            // through this frame's command buffer, after those frames.
+            history.storageLine(row).withUnsafeBytes { raw in
+                rowUploads.add(raw, to: texture, row: row, width: history.columns, device: device)
             }
-            if uploadAll {
-                // A texture made this frame: no frame in flight reads it.
-                Array(history.storageLine(row)).withUnsafeBytes { raw in
-                    if let base = raw.baseAddress {
-                        texture.replace(region: MTLRegionMake2D(0, row, history.columns, 1), mipmapLevel: 0,
-                                        withBytes: base, bytesPerRow: history.columns)
-                    }
-                }
-                coverageTexture?.replace(region: MTLRegionMake2D(0, row, 1, 1), mipmapLevel: 0, withBytes: &span,
-                                         bytesPerRow: MemoryLayout<SIMD2<Float>>.stride)
-            } else {
-                // A row a frame still in flight may be drawing: the copy goes
-                // through this frame's command buffer, after those frames.
-                history.storageLine(row).withUnsafeBytes { raw in
-                    rowUploads.add(raw, to: texture, row: row, width: history.columns, device: device)
-                }
-                if let coverageTexture {
-                    withUnsafeBytes(of: span) { raw in
-                        rowUploads.add(raw, to: coverageTexture, row: row, width: 1, device: device)
-                    }
+            if let coverageTexture {
+                withUnsafeBytes(of: span) { raw in
+                    rowUploads.add(raw, to: coverageTexture, row: row, width: 1, device: device)
                 }
             }
         }
         uploadedLines = history.linesAppended
+    }
+
+    /// A waterfall row's coverage as the shader reads it: its low edge from
+    /// `referenceHz` and its span, 0 and 0 where it is not known.
+    static func coverageSpan(_ coverage: BandCoverage?, referenceHz: Double) -> SIMD2<Float> {
+        guard let coverage, coverage.spanHz > 0 else {
+            return SIMD2(0, 0)
+        }
+        return SIMD2(Float(coverage.lowHz - referenceHz), Float(coverage.spanHz))
+    }
+
+    /// Fills a waterfall texture made for `history` (its columns wide, its
+    /// capacity tall) with one copy of the whole storage, whose rows are the
+    /// texture's rows, and its coverage texture with one copy of every row's
+    /// coverage. Turning the phone re-uploads the whole history, and a copy
+    /// a row at a time took 16,384 copies into the textures.
+    ///
+    /// A history with no lines uploads nothing. Rows that hold no line yet
+    /// are zero in storage and have no coverage, so they upload zeros.
+    static func uploadWhole(_ history: WaterfallHistory, referenceHz: Double, to texture: any MTLTexture,
+                            coverage coverageTexture: (any MTLTexture)?) {
+        let columns = history.columns
+        let rows = history.capacity
+        guard history.count > 0, columns > 0, texture.width == columns, texture.height == rows else {
+            return
+        }
+        history.withStorageBytes { raw in
+            if raw.count == columns * rows, let base = raw.baseAddress {
+                texture.replace(region: MTLRegionMake2D(0, 0, columns, rows), mipmapLevel: 0,
+                                withBytes: base, bytesPerRow: columns)
+            }
+        }
+        guard let coverageTexture, coverageTexture.height == rows else {
+            return
+        }
+        var spans = [SIMD2<Float>](repeating: SIMD2(0, 0), count: rows)
+        for age in 0..<history.count {
+            let row = history.storageRow(age: age)
+            spans[row] = coverageSpan(history.coverage(storageRow: row), referenceHz: referenceHz)
+        }
+        spans.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                coverageTexture.replace(region: MTLRegionMake2D(0, 0, 1, rows), mipmapLevel: 0, withBytes: base,
+                                        bytesPerRow: MemoryLayout<SIMD2<Float>>.stride)
+            }
+        }
     }
 
     /// This phone's own gradient as the waterfall's palette.

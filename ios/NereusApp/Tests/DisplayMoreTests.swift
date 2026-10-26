@@ -96,13 +96,16 @@ struct DisplayMoreTests {
         #expect(display.lookBackSeconds == 0)
         #expect(DisplaySheetModel.lookBackText(0) == "Live")
         #expect(display.lookBackRange.max >= 5)
+        // A line is the Core's frames per line over its frames a second
+        // (30 fps, a line a frame), as the desktop times a remote pan, not
+        // the 30 ms Update period: 3 s is 90 lines.
         display.setLookBack(seconds: 3)
-        #expect(band.lookBackLines == 100)
+        #expect(band.lookBackLines == 90)
         #expect(DisplaySheetModel.lookBackText(display.lookBackSeconds) == "-0:03")
         // Ten more lines: still on the same ones, ten further back.
         feed(band, lines: 10, from: visible + 201)
-        #expect(band.lookBackLines == 110)
-        #expect(band.overlays(scale: 3).lookBackLines == 110)
+        #expect(band.lookBackLines == 100)
+        #expect(band.overlays(scale: 3).lookBackLines == 100)
         // Never past what it holds less a screen.
         display.setLookBack(seconds: 10_000)
         #expect(band.lookBackLines == band.state.history.count - visible)
