@@ -1991,6 +1991,8 @@ set(GUI_SOURCES
     src/gui/containers/ContainerDocument.cpp
     src/gui/containers/ContainerDocumentCodec.h
     src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContentEntryMigration.h
+    src/gui/containers/ContentEntryMigration.cpp
     src/gui/containers/ContainerContentRegistry.h
     src/gui/containers/ContainerContentRegistry.cpp
     src/gui/containers/ContainerArrangeController.h

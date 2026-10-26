@@ -43,9 +43,16 @@
 //                 editorListsEveryScaledReading and
 //                 alreadyScaledReadingsAreUnchanged. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The second frequency line shows the transmit slice by
+//                 default or the slice picked in "Second line":
+//                 secondLinePicksItsSlice, secondLineFollowsTheTransmitSlice,
+//                 frequencyEditorsNameSlices; the slice-letter, follow and
+//                 Custom cases set a transmit slice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <optional>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -792,6 +799,9 @@ private slots:
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
         sliceA->setFrequency(7185000.0);
         sliceB->setFrequency(14225000.0);
+        // The second line shows the transmit slice (the default).
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
 
         SliceModel* target = sliceB;
         LongpathContent::Sources sources;
@@ -812,6 +822,9 @@ private slots:
         QVERIFY2(rowB.contains(QStringLiteral(">A 7.185.000<")), qPrintable(rowB));
         QVERIFY(rowB.indexOf(QStringLiteral(">B ")) < rowB.indexOf(QStringLiteral(">A ")));
 
+        // On A, B transmitting: A's own letter first, then B.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         target = sliceA;
         std::unique_ptr<QWidget> onA(registry.createWidget(entry, &parent));
         auto* freqA = qobject_cast<FrequencyInstrument*>(onA.get());
@@ -834,6 +847,7 @@ private slots:
         QCOMPARE(model.slices().size(), 1);
         SliceModel* sliceA = model.slices().at(0);
         sliceA->setFrequency(7185000.0);
+        sliceA->setTxSlice(false);
 
         LongpathContent::Sources sources;
         sources.radio = &model;
@@ -852,6 +866,10 @@ private slots:
         QCOMPARE(model.slices().size(), 2);
         SliceModel* sliceB = model.slices().at(1);
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
+        // B transmits, so the second line shows it.
+        // The transmit arbiter binds A again when B is added.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         sliceB->setFrequency(14225000.0);
         QCOMPARE(freq->otherFrequency(), 14225000.0);
         QCOMPARE(freq->ownLetter(), QLatin1Char('A'));
@@ -868,6 +886,154 @@ private slots:
         // The own slice's binding survives the refreshes.
         sliceA->setFrequency(7190000.0);
         QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
+    void secondLineFollowsTheTransmitSlice()
+    {
+        // Slices A and B, the item on B. The second line shows the
+        // transmit slice while that is not B, and nothing otherwise.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14225000.0);
+        model.setActiveSlice(0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            sliceA->setTxSlice(true);
+            sliceB->setTxSlice(false);
+            const ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            QWidget parent;
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+            QVERIFY(freq);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(freq->otherSliceLineVisible());
+            QCOMPARE(freq->otherLetter(), QLatin1Char('A'));
+            QCOMPARE(freq->otherFrequency(), 7185000.0);
+            const QString row = vfoRowText(*freq);
+            QVERIFY2(row.contains(QStringLiteral(">A 7.185.000<")), qPrintable(row));
+            // A is active and shown, so this line is the dim one.
+            QVERIFY(!freq->activeIsThis());
+
+            // B becomes the transmit slice: it is the item's own slice.
+            sliceA->setTxSlice(false);
+            sliceB->setTxSlice(true);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(!freq->otherSliceLineVisible());
+            // The active marker compares with the slice shown: none.
+            QVERIFY(freq->activeIsThis());
+
+            // No transmit slice: hidden.
+            sliceB->setTxSlice(false);
+            QVERIFY(!freq->otherSliceLineVisible());
+
+            // A transmits again: shown, and it follows A's frequency.
+            sliceA->setTxSlice(true);
+            QVERIFY(freq->otherSliceLineVisible());
+            sliceA->setFrequency(7190000.0);
+            QCOMPARE(freq->otherFrequency(), 7190000.0);
+            sliceA->setFrequency(7185000.0);
+        }
+    }
+
+    void secondLinePicksItsSlice()
+    {
+        // Slices A, B and C, the item on B, A transmitting.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        SliceModel* sliceC = model.slices().at(2);
+        QCOMPARE(sliceC->sliceLetter(), QLatin1Char('C'));
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        sliceC->setTxSlice(false);
+        sliceC->setFrequency(21300000.0);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+        QCOMPARE(key, QStringLiteral("secondSlice"));
+        QWidget parent;
+        const auto build = [&](const char* type, const QJsonObject& extra) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            for (auto it = extra.constBegin(); it != extra.constEnd(); ++it) { entry.config.insert(it.key(), it.value()); }
+            return std::unique_ptr<QWidget>(registry.createWidget(entry, &parent));
+        };
+
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            // "Slice C" with C open shows C, not the transmit slice.
+            std::unique_ptr<QWidget> onC = build(type, {{key, QStringLiteral("C")}});
+            auto* freqC = qobject_cast<FrequencyInstrument*>(onC.get());
+            QVERIFY(freqC);
+            QVERIFY(freqC->otherSliceLineVisible());
+            QCOMPARE(freqC->otherLetter(), QLatin1Char('C'));
+            QCOMPARE(freqC->otherFrequency(), 21300000.0);
+
+            // The item's own letter hides the line.
+            std::unique_ptr<QWidget> onOwn = build(type, {{key, QStringLiteral("B")}});
+            auto* freqOwn = qobject_cast<FrequencyInstrument*>(onOwn.get());
+            QVERIFY(freqOwn);
+            QVERIFY(freqOwn->ownSliceLineVisible());
+            QVERIFY(!freqOwn->otherSliceLineVisible());
+
+            // "None" hides it.
+            std::unique_ptr<QWidget> none = build(type, {{key, QStringLiteral("none")}});
+            auto* freqNone = qobject_cast<FrequencyInstrument*>(none.get());
+            QVERIFY(freqNone);
+            QVERIFY(!freqNone->otherSliceLineVisible());
+
+            // A slice that is not open hides it.
+            std::unique_ptr<QWidget> onD = build(type, {{key, QStringLiteral("D")}});
+            auto* freqD = qobject_cast<FrequencyInstrument*>(onD.get());
+            QVERIFY(freqD);
+            QVERIFY(!freqD->otherSliceLineVisible());
+        }
+
+        // Custom: "Show the second line" off hides it whatever the picker says.
+        for (const QJsonValue pick : {QJsonValue(QStringLiteral("C")), QJsonValue(QJsonValue::Undefined)}) {
+            QJsonObject extra{{QString::fromLatin1(LongpathContent::kShowOtherKey), false}};
+            if (!pick.isUndefined()) { extra.insert(key, pick); }
+            std::unique_ptr<QWidget> off = build(LongpathContent::kFrequencyCustomType, extra);
+            auto* freqOff = qobject_cast<FrequencyInstrument*>(off.get());
+            QVERIFY(freqOff);
+            QVERIFY(freqOff->ownSliceLineVisible());
+            QVERIFY(!freqOff->otherSliceLineVisible());
+        }
+
+        // C closes: hidden; C opens again: shown.
+        std::unique_ptr<QWidget> follows = build(LongpathContent::kFrequencyType, {{key, QStringLiteral("C")}});
+        auto* freq = qobject_cast<FrequencyInstrument*>(follows.get());
+        QVERIFY(freq);
+        QVERIFY(freq->otherSliceLineVisible());
+        model.removeSlice(2);
+        QCOMPARE(model.slices().size(), 2);
+        QVERIFY(!freq->otherSliceLineVisible());
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        QCOMPARE(model.slices().at(2)->sliceLetter(), QLatin1Char('C'));
+        QVERIFY(freq->otherSliceLineVisible());
+        QCOMPARE(freq->otherLetter(), QLatin1Char('C'));
     }
 
     void frequencyShowsAfterTheStationAdoptsTheSlice()
@@ -1467,10 +1633,76 @@ private slots:
         QVERIFY(!editor.findChild<QCheckBox*>(QStringLiteral("property_center")));
     }
 
-    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    void frequencyEditorsNameSlices()
     {
         ContainerContentRegistry registry;
         LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            editor.setEntry(registry.makeEntry(QString::fromLatin1(type)));
+            auto* second = editor.findChild<QComboBox*>(QStringLiteral("property_secondSlice"));
+            QVERIFY(second);
+            QStringList items;
+            for (int i = 0; i < second->count(); ++i) { items.append(second->itemText(i)); }
+            QCOMPARE(items, (QStringList{QStringLiteral("Transmit slice"), QStringLiteral("None"),
+                                         QStringLiteral("Slice A"), QStringLiteral("Slice B"),
+                                         QStringLiteral("Slice C"), QStringLiteral("Slice D")}));
+            QCOMPARE(second->currentIndex(), 0);
+
+            edited.clear();
+            second->setCurrentIndex(second->findText(QStringLiteral("Slice C")));
+            QCOMPARE(edited.size(), 1);
+            auto entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("C"));
+            second->setCurrentIndex(second->findText(QStringLiteral("None")));
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("none"));
+            // Back to the transmit slice: the key goes away.
+            second->setCurrentIndex(0);
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kSecondSliceKey)));
+
+            QStringList texts = items;
+            for (const QLabel* l : editor.findChildren<QLabel*>()) { texts.append(l->text()); }
+            for (const QAbstractButton* b : editor.findChildren<QAbstractButton*>()) { texts.append(b->text()); }
+            for (const QComboBox* c : editor.findChildren<QComboBox*>()) {
+                for (int i = 0; i < c->count(); ++i) { texts.append(c->itemText(i)); }
+            }
+            for (const QString& text : std::as_const(texts)) {
+                for (const char* banned : {"A/B", "VFO A", "VFO B", "RX1", "RX2"}) {
+                    QVERIFY2(!text.contains(QLatin1String(banned)), qPrintable(text));
+                }
+            }
+            if (QLatin1String(type) == QLatin1String(LongpathContent::kFrequencyCustomType)) {
+                QVERIFY2(texts.contains(QStringLiteral("Show this slice's line")), qPrintable(texts.join('|')));
+                QVERIFY2(texts.contains(QStringLiteral("Show the second line")), qPrintable(texts.join('|')));
+            }
+        }
+    }
+
+    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    {
+        // The item is on slice B and A transmits, so both lines have a
+        // slice to show (the second line is the transmit slice).
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14200000.0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
         QWidget parent;
 
         ContentEntry plain = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
@@ -1513,6 +1745,9 @@ private slots:
         freq->show();
         settle();
         QVERIFY(freq->vfoRowVisible());
+        // The slice's frequency built the digit row before the font size
+        // rebuilt it; drop the replaced labels (deleteLater) first.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
         QLabel* digit = nullptr;
         QString row;
@@ -1527,8 +1762,9 @@ private slots:
         QVERIFY(digit);
         QCOMPARE(digit->font().pixelSize(), 36);
         QVERIFY(digit->styleSheet().contains(QStringLiteral("#44aaff")));
-        QVERIFY2(row.contains(QStringLiteral(">B ")), qPrintable(row));
-        QVERIFY2(!row.contains(QStringLiteral(">A ")), qPrintable(row));
+        // This slice's line (B) is off; the second line shows A.
+        QVERIFY2(row.contains(QStringLiteral(">A ")), qPrintable(row));
+        QVERIFY2(!row.contains(QStringLiteral(">B ")), qPrintable(row));
 
         freq->setParent(nullptr);
         freq->resize(720, 260);

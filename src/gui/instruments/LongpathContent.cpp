@@ -87,6 +87,12 @@
 //                 power scale and follows MainPowerMeter::scaleChanged, as
 //                 forward power does. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - The frequency types' second line shows the slice picked
+//                 in "Second line" (secondSlice): the transmit slice by
+//                 default, none, or Slice A to D; hidden when that slice is
+//                 not open or is the item's own. It follows txSliceChanged.
+//                 The Custom line toggles are named for slices.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -207,6 +213,10 @@ private:
     }
 
 public:
+    // Runs the refresh again (the own slice is looked up too, as on any
+    // slice change), for a change the three RadioModel signals do not
+    // carry, such as the transmit slice moving.
+    void refreshNow() { rebind(); }
     // A connection that belongs to the own-slice binding.
     void track(const QMetaObject::Connection& c) { m_connections.append(c); }
     // A connection that belongs to the refresh (other slice, active state).
@@ -223,11 +233,29 @@ private:
     bool m_bound = false;
 };
 
-SliceModel* otherSlice(const Sources& sources, const SliceModel* slice)
+// Whether the entry's second line follows the transmit slice (the
+// default: "secondSlice" absent).
+bool secondLineIsTxSlice(const QJsonObject& config)
+{
+    const QJsonValue pick = config.value(QLatin1String(kSecondSliceKey));
+    return pick.isUndefined() || pick.isNull();
+}
+
+// The slice the second line shows (config "secondSlice"): absent, the
+// slice SliceModel::isTxSlice() marks (the arbiter's binding); "none",
+// nothing; "A" to "D", the open slice with that letter. nullptr when that
+// slice is not open or is the item's own slice, and when the item has no
+// slice.
+SliceModel* secondSlice(const Sources& sources, const SliceModel* slice, const QJsonObject& config)
 {
     if (!sources.radio || !slice) { return nullptr; }
+    const bool tx = secondLineIsTxSlice(config);
+    const QString letter = tx ? QString() : config.value(QLatin1String(kSecondSliceKey)).toString();
+    if (!tx && letter.size() != 1) { return nullptr; }
     for (SliceModel* s : sources.radio->slices()) {
-        if (s && s != slice) { return s; }
+        if (!s) { continue; }
+        const bool picked = tx ? s->isTxSlice() : s->sliceLetter() == letter.at(0);
+        if (picked) { return s == slice ? nullptr : s; }
     }
     return nullptr;
 }
@@ -246,6 +274,12 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
     if (form == QLatin1String("bandStrip")) { w->setForm(FrequencyInstrument::Form::BandStrip); }
     else if (form == QLatin1String("flatArc")) { w->setForm(FrequencyInstrument::Form::FlatArc); }
     QPointer<FrequencyInstrument> guard(w);
+    // Frequency (Custom)'s line toggles; hiding through a toggle wins
+    // over the second-line pick. Absent keys show both lines.
+    const bool custom = entry.typeId == QLatin1String(kFrequencyCustomType);
+    const bool showOwn = !custom || entry.config.value(QLatin1String(kShowOwnKey)).toBool(true);
+    const bool showOther = !custom || entry.config.value(QLatin1String(kShowOtherKey)).toBool(true);
+    const QJsonObject config = entry.config;
     SliceFollower* follower = preview ? nullptr : new SliceFollower(w, sources, entry.context);
     auto bind = [guard, follower](SliceModel* slice) {
         if (!guard) { return; }
@@ -261,22 +295,35 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
             if (target) { target->setFrequency(hz); }
         }));
     };
-    auto refresh = [guard, follower, sources](SliceModel* slice) {
+    auto refresh = [guard, follower, sources, config, showOwn, showOther](SliceModel* slice) {
         if (!guard) { return; }
-        SliceModel* other = otherSlice(sources, slice);
+        SliceModel* other = secondSlice(sources, slice, config);
         guard->setOtherFrequency(other ? other->frequency() : 0.0);
-        // The bound slice's own letter first, then the other slice's.
-        // "Other" is otherSlice(): the first slice in RadioModel::slices()
-        // that is not this one. With no other slice the second letter is
-        // B for slice A and A otherwise (no slice keeps upstream "A"/"B").
+        // The bound slice's own letter first, then the second line's.
+        // "Second" is secondSlice(): the transmit slice by default, or the
+        // slice the entry picks. With no second slice the line is hidden;
+        // its letter stays B for slice A and A otherwise (no slice keeps
+        // upstream "A"/"B").
         const QChar own = slice ? slice->sliceLetter() : QLatin1Char('A');
         const QChar fallbackOther = own == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
         guard->setSliceLetters(own, other ? other->sliceLetter() : fallbackOther);
+        // The active marker compares this slice with the slice shown.
         guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
-        if (slice && other && follower) {
+        guard->setSliceLinesVisible(showOwn, showOther && other != nullptr);
+        if (!follower) { return; }
+        if (slice && other) {
             follower->trackRefresh(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
                 if (guard) { guard->setOtherFrequency(hz); }
             }));
+        }
+        // The transmit slice moves without a slice being added, removed
+        // or made active; slice add and remove already refresh.
+        if (sources.radio && secondLineIsTxSlice(config)) {
+            for (SliceModel* s : sources.radio->slices()) {
+                if (!s) { continue; }
+                follower->trackRefresh(QObject::connect(s, &SliceModel::txSliceChanged, follower,
+                                                        [follower](bool) { follower->refreshNow(); }));
+            }
         }
     };
     if (follower) {
@@ -290,7 +337,8 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
 }
 
 // Frequency (Custom). Absent keys are the defaults: 26 px, locked to
-// that size, the amber reading colour, top-left, both slice lines.
+// that size, the amber reading colour, top-left. The slice line toggles
+// are applied with the second-line pick in makeFrequency's refresh.
 void applyFrequencyDisplay(FrequencyInstrument* frequency, const QJsonObject& config)
 {
     const int fontPx = config.value(QLatin1String(kFontSizeKey)).toInt(26);
@@ -305,11 +353,6 @@ void applyFrequencyDisplay(FrequencyInstrument* frequency, const QJsonObject& co
     }
     if (config.value(QLatin1String(kCenterKey)).toBool(false)) {
         frequency->setContentCentered(true);
-    }
-    const bool own = config.value(QLatin1String(kShowOwnKey)).toBool(true);
-    const bool other = config.value(QLatin1String(kShowOtherKey)).toBool(true);
-    if (!own || !other) {
-        frequency->setSliceLinesVisible(own, other);
     }
 }
 
@@ -390,7 +433,21 @@ QVector<ContentProperty> frequencyProperties()
                     {QObject::tr("Band strip"), QStringLiteral("bandStrip"), true, {}},
                     {QObject::tr("Flat arc"), QStringLiteral("flatArc"), true, {}}};
     form.defaultValue = QStringLiteral("numberOnly");
-    return {form};
+
+    // The slice the second line shows. The transmit slice is the default
+    // and is stored as no key.
+    ContentProperty second;
+    second.key = QLatin1String(kSecondSliceKey);
+    second.label = QObject::tr("Second line");
+    second.kind = ContentProperty::Kind::Choice;
+    second.choices = {{QObject::tr("Transmit slice"), QJsonValue(QJsonValue::Null), true, {}},
+                      {QObject::tr("None"), QStringLiteral("none"), true, {}},
+                      {QObject::tr("Slice A"), QStringLiteral("A"), true, {}},
+                      {QObject::tr("Slice B"), QStringLiteral("B"), true, {}},
+                      {QObject::tr("Slice C"), QStringLiteral("C"), true, {}},
+                      {QObject::tr("Slice D"), QStringLiteral("D"), true, {}}};
+    second.defaultValue = QJsonValue(QJsonValue::Null);
+    return {form, second};
 }
 
 QVector<ContentProperty> frequencyDisplayProperties()
@@ -426,13 +483,13 @@ QVector<ContentProperty> frequencyDisplayProperties()
 
     ContentProperty own;
     own.key = QLatin1String(kShowOwnKey);
-    own.label = QObject::tr("A/B line: this slice");
+    own.label = QObject::tr("Show this slice's line");
     own.kind = ContentProperty::Kind::Toggle;
     own.defaultValue = true;
 
     ContentProperty other;
     other.key = QLatin1String(kShowOtherKey);
-    other.label = QObject::tr("A/B line: other slice");
+    other.label = QObject::tr("Show the second line");
     other.kind = ContentProperty::Kind::Toggle;
     other.defaultValue = true;
 
