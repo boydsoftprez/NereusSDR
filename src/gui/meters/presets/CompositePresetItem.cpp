@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Contest face: its mode grid shows the ten modes it showed
+//                 before the twelve-mode grid (SPEC and DRM hidden), so the
+//                 face keeps its two rows of mode buttons. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - VFO display face: displayMode (Source slice, All slices,
 //                 Slice A and on), vfoLayout, vfoShowBandText and the
 //                 clsVfoDisplay colour keys (title, small digits, band text,
@@ -401,6 +405,10 @@ void CompositePresetItem::initialise() {
     }
     if(m_face==Face::Contest) {
         m_bands=new BandButtonItem(this); m_bands->setColumns(5); m_modes=new ModeButtonItem(this); m_modes->setColumns(5);
+        // The face lays out two rows of five mode buttons (layoutChildren).
+        // The mode grid's SPEC and DRM stay hidden here, so the face keeps
+        // the ten modes it showed before the twelve-mode grid.
+        m_modes->setVisibleBits(m_modes->visibleBits() & ~((1u<<int(DSPMode::SPEC))|(1u<<int(DSPMode::DRM))));
         m_bands->setAllButtonsAvailable(false,"No live slice is attached"); m_modes->setAllButtonsAvailable(false,"No live slice is attached");
     }
     if(m_face==Face::Clock || m_face==Face::Contest) { m_clock=new ClockItem(this,false); }

@@ -1,4 +1,8 @@
 // no-port-check: Independent numeric oracles and real native rendering fixtures.
+// Modification history (NereusSDR):
+//   2026-10-26 - A new Contest face's mode grid shows ten modes in two rows
+//                 (SPEC and DRM hidden), and keeps them through a save.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
 #include <QPainterPath>
@@ -1134,6 +1138,15 @@ private slots:
             VfoDisplayPresetItem loaded; QVERIFY(loaded.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
             QCOMPARE(loaded.vfoDisplay()->displayModeValue(),expected);
         }
+    }
+    void contestFaceModeGridKeepsTenModes() {
+        ContestPresetItem contest; ModeButtonItem* modes=contest.modeButtons(); QVERIFY(modes);
+        QCOMPARE(modes->buttonCount(),12);
+        for(int i=0;i<ModeButtonItem::kModeCount;++i) { QCOMPARE(modes->isButtonShown(i),i!=int(DSPMode::SPEC)&&i!=int(DSPMode::DRM)); }
+        QCOMPARE(modes->shownButtonCount(),10);
+        ContestPresetItem copy; QVERIFY(copy.deserialize(contest.serialize()));
+        QVERIFY(!copy.modeButtons()->isButtonShown(int(DSPMode::SPEC))); QVERIFY(!copy.modeButtons()->isButtonShown(int(DSPMode::DRM)));
+        QCOMPARE(copy.modeButtons()->shownButtonCount(),10);
     }
     void newVfoFaceTakesThetisDefaults() {
         ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.vfoDisplay"));
