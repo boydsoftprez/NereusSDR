@@ -137,7 +137,7 @@ final class SoundPanelUITests: XCTestCase {
         let tools = app.otherElements["Sections"].buttons["Tools"]
         XCTAssertTrue(tools.waitForExistence(timeout: 10))
         XCTAssertTrue(tools.isSelected)
-        XCTAssertTrue(app.scrollViews["connectionPerformance.page"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["connectionPerformance.page"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["connectionPerformance.section"].exists)
         let radio = app.otherElements["Sections"].buttons["Radio"]
         radio.tap()
@@ -152,7 +152,7 @@ final class SoundPanelUITests: XCTestCase {
         XCTAssertTrue(toolbar.waitForExistence(timeout: 20))
         toolbar.buttons["link"].tap()
         XCTAssertTrue(app.otherElements["Sections"].buttons["Tools"].isSelected)
-        XCTAssertTrue(app.scrollViews["connectionPerformance.page"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["connectionPerformance.page"].exists)
         XCTAssertTrue(app.buttons["connectionPerformance.section"].exists)
     }
 

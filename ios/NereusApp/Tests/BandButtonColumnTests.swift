@@ -391,6 +391,10 @@ struct BandButtonColumnTests {
             window.isHidden = true
             window.rootViewController = nil
         }
+        // Laid out before its accessibility tree is walked: a walk of a hosted scroll view before its
+        // first layout, with application accessibility just switched on, leaves SwiftUI's platform
+        // scroll views reporting no identifier for the rest of the test process.
+        await ShotWait.laidOut(window)
         // What of the column shows: the band's top, from the column's margin to the cap.
         let top = window.frame.minY + BandColumnLayout.origin
         let shown = top...(top + BandColumnLayout.menuMaxHeight(bandHeight: band.height))
