@@ -112,7 +112,11 @@ final class KeyedPttUITests: XCTestCase {
 
         let flagTab = app.buttons["flagTabAudioA"]
         XCTAssertTrue(flagTab.waitForExistence(timeout: 10), "Slice A's flag has no Audio tab")
-        flagTab.tap()
+        // Keyed, the meters' top runs over the tab's lower half (the tab at
+        // y 181 to 225, the meters from 199, on this phone): a finger opens
+        // it on its upper part, clear of them.
+        print("KeyedPttUITests N3: Audio tab \(flagTab.frame)")
+        flagTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
         let panel = app.descendants(matching: .any)["flagPanelAudio"]
         XCTAssertTrue(panel.waitForExistence(timeout: 10), "Slice A's Audio panel did not open")
         print("KeyedPttUITests N3: Audio panel \(panel.frame), held PTT \(ptt.frame)")
