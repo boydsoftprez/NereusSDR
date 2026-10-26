@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
+//                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - The Reading list offers the six TX stage peak readings
 //                 (Mic, EQ, Leveler, ALC, Compressor, CFC). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -338,6 +341,11 @@ void BaseItemEditor::setGeometryEditable(bool editable)
 void BaseItemEditor::populateBindingCombo()
 {
     populateReadingCombo(m_comboBinding);
+}
+
+QString BaseItemEditor::noArtworkReason()
+{
+    return QStringLiteral("No artwork is available for this option");
 }
 
 void BaseItemEditor::populateReadingCombo(QComboBox* combo)

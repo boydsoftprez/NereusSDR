@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original tests for the magic eye options; the
 // expected values are Thetis's, cited beside each check.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: the built-in bezel option is shown disabled,
+//                 with its reason, in both editors. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Magic eye preset and building block: attack and decay,
 //                 eye and bezel size, the bezel image, calibration and the
 //                 VHF S9 rule, history, the saved record and new-item
@@ -8,6 +11,7 @@
 //                 Claude Code.
 
 #include <QtTest/QtTest>
+#include <QCheckBox>
 #include <QColor>
 #include <QImage>
 #include <QJsonArray>
@@ -19,6 +23,8 @@
 #include <memory>
 
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentPropertyEditor.h"
+#include "gui/containers/meter_property_editors/BaseItemEditor.h"
 #include "gui/containers/meter_property_editors/MagicEyeItemEditor.h"
 #include "gui/meters/AboveS9Frequency.h"
 #include "gui/meters/MagicEyeItem.h"
@@ -391,6 +397,31 @@ private slots:
         QCOMPARE(QColor(signal[QStringLiteral("historyColor")].toString()), QColor(255, 255, 255, 128));
         QVERIFY(eye->editableChannelFields(0).contains(QStringLiteral("showHistory")));
         QVERIFY(eye->editableFields().contains(QStringLiteral("bezelImage")));
+    }
+    // Fix wave R1: the built-in bezel art is not bundled; the option stays
+    // visible, disabled, with the reason, and the bezel image path still
+    // works.
+    void builtInBezelIsShownDisabledWithItsReason()
+    {
+        const QString reason = QStringLiteral("No artwork is available for this option");
+        QCOMPARE(BaseItemEditor::noArtworkReason(), reason);
+
+        ContainerContentRegistry registry;
+        ContentPropertyEditor editor(registry);
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.magicEye")));
+        auto* live = editor.findChild<QCheckBox*>(QStringLiteral("builtInBezel"));
+        QVERIFY(live);
+        QVERIFY(!live->isEnabled());
+        QCOMPARE(live->toolTip(), reason);
+        QVERIFY(editor.findChild<QLineEdit*>(QStringLiteral("bezelImage")));
+
+        MagicEyeItem item;
+        MagicEyeItemEditor legacy;
+        legacy.setItem(&item);
+        auto* old = legacy.findChild<QCheckBox*>(QStringLiteral("builtInBezel"));
+        QVERIFY(old);
+        QVERIFY(!old->isEnabled());
+        QCOMPARE(old->toolTip(), reason);
     }
 };
 

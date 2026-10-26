@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - selectDraftWebImage: Show next in the live editor searches
+//                 every draft container. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - canPasteSettings, pasteItemSettings and pasteTypeId:
 //                 copied settings paste between compatible bar meters
 //                 (Thetis setup.cs canPasteSettings). J.J. Boyd (KG4VCF),
@@ -118,6 +121,9 @@ public:
     ContainerEditSession* editSession() const { return m_editSession.get(); }
     CommitResult applyDraft();
     void selectDraftContainer(const QString& id);
+    // Show next: selects the draft web image whose 4-char ID is fourChar,
+    // in the current container first, then in any other. False if none.
+    bool selectDraftWebImage(const QString& fourChar);
     void refreshDraftView();
     void reject() override;
     bool importPortableContainer(const QByteArray& bytes);

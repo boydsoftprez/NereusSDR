@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: units set on this item (its click box or the
+//                 editor) stay when the global unit setting changes; an
+//                 item with none set follows it. Appended record field 26.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -126,6 +130,8 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
+class ContentConfigNotifier;
+
 // From Thetis clsSignalText (MeterManager.cs:20286+)
 // Large text signal display with S-units/dBm/uV format switching.
 class SignalTextItem : public MeterItem {
@@ -147,14 +153,28 @@ public:
     // Thetis-faithful per-item Units enum when the MultimeterPage combo
     // broadcasts to all MeterItems via ContainerManager::forEachMeterItem().
     // MeterUnit ↔ Units mapping: S↔SUnits, dBm↔Dbm, uV↔Uv (1:1).
+    // An item whose units were set on it keeps them (fix wave R2); the
+    // base unit mode still records the global setting, for Follow global.
     void setUnitMode(MeterUnit u) override {
         MeterItem::setUnitMode(u);
+        if (m_unitsSetHere) { return; }
+        m_units = unitsFor(u);
+    }
+    static Units unitsFor(MeterUnit u) {
         switch (u) {
-            case MeterUnit::S:   m_units = Units::SUnits; break;
-            case MeterUnit::uV:  m_units = Units::Uv;     break;
-            default:             m_units = Units::Dbm;    break;
+            case MeterUnit::S:   return Units::SUnits;
+            case MeterUnit::uV:  return Units::Uv;
+            default:             return Units::Dbm;
         }
     }
+
+    // Units set on this item, through its click box or the editor: kept
+    // when the global unit setting changes, and saved (record field 26).
+    // A live item's choice reaches its entry through its config notifier.
+    void setOwnUnits(Units u);
+    // Back to the global unit setting (the last one broadcast).
+    void followGlobalUnits();
+    bool unitsSetHere() const { return m_unitsSetHere; }
 
     void setShowValue(bool s) { m_showValue = s; }
     bool showValue() const { return m_showValue; }
@@ -280,6 +300,10 @@ private:
     static double uvFromDbm(double dbm);
 
     Units    m_units{Units::Dbm};
+    // Fix wave R2: units set on this item. False (and every record saved
+    // before the field) follows the global unit setting.
+    bool     m_unitsSetHere{false};
+    ContentConfigNotifier* m_configNotifier{nullptr};
     bool     m_showValue{true};
     bool     m_showPeakValue{false};
     bool     m_showType{true};

@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: darkFaceArtAvailable, for the editor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (M2): trace 2's veil shows why it has
+//                 no reading instead of "--". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Contest face: its mode grid shows the ten modes it showed
 //                 before the twelve-mode grid (SPEC and DRM hidden), so the
 //                 face keeps its two rows of mode buttons. J.J. Boyd
@@ -553,6 +558,14 @@ void CompositePresetItem::setTrace2Unavailable(const QString& reason) {
     m_trace2Unavailable=reason;
     if(!reason.isEmpty() && !trace2FromDataSource()) { m_channels[1].dynamics.push(0,false); }
     markPresentationDirty(true);
+}
+bool CompositePresetItem::darkFaceArtAvailable() const {
+    return !m_faceArtBase.isEmpty() && ImageItem::variantPath(m_faceArtBase,true,0.0)!=ImageItem::variantPath(m_faceArtBase,false,0.0);
+}
+QString CompositePresetItem::trace2ReadoutText() const {
+    if(!m_trace2Unavailable.isEmpty()) { return m_trace2Unavailable; }
+    if(m_channels.size()<2 || !m_channels[1].dynamics.hasReading()) { return QStringLiteral("--"); }
+    return QString::number(m_channels[1].dynamics.value(),'f',1)+QLatin1Char(' ')+m_config["units"].toString();
 }
 QRectF CompositePresetItem::trace2ReadoutRect(int width,int height) const {
     // Bottom right, beside the "Recent" line: paintHistory's arithmetic.
@@ -1553,7 +1566,7 @@ void CompositePresetItem::paintHistory(QPainter& p,const QRectF& outer) {
         const Channel& trace=m_channels[1];
         if(!m_trace2Unavailable.isEmpty()) { p.fillRect(trace2Cell,QColor(0x0f,0x0f,0x1a,170)); }
         p.setPen(color(trace.config,"color"));
-        if(m_config["showReadout"].toBool() || !m_trace2Unavailable.isEmpty()) { drawObjectText(p,trace2Cell,m_trace2Unavailable.isEmpty() && trace.dynamics.hasReading()?QString::number(trace.dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
+        if(m_config["showReadout"].toBool() || !m_trace2Unavailable.isEmpty()) { drawObjectText(p,trace2Cell,trace2ReadoutText(),size,Qt::AlignRight|Qt::AlignVCenter); }
     }
     if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*.66,outer.top()+2*scale,outer.width()*.34-4*scale,22*scale),m_channels.first().dynamics.hasReading()?QString::number(m_channels.first().dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
 }

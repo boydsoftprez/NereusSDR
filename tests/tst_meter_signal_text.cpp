@@ -1,6 +1,10 @@
 // no-port-check: NereusSDR-original tests for the signal text options; the
 // expected values are Thetis's, cited beside each check.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: units set on an item stay when the global
+//                 setting changes; others and old records follow it; the
+//                 editor's Follow global. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Signal text preset and building block: the PK / AVG / FFT
 //                 type glyph, the uV and dBm sub lines, the peak value
 //                 without peak hold, the background, history, the saved
@@ -21,6 +25,7 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/meter_property_editors/SignalTextItemEditor.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
 #include "gui/meters/SignalTextItem.h"
 #include "gui/meters/presets/SignalTextPresetItem.h"
 
@@ -265,6 +270,83 @@ private slots:
         QCOMPARE(again.typeStyle(), SignalTextItem::TypeStyle::UnitsLabel);
         QVERIFY(again.peakValueNeedsPeakHold());
         QCOMPARE(again.backgroundColour(), QColor(0x0a, 0x0a, 0x18));
+    }
+
+    // Fix wave R2: an item with no unit set on it follows the global unit
+    // setting; one set to dBm stays dBm.
+    void unitsFollowGlobalUnlessSetOnTheItem()
+    {
+        MeterWidget widget;
+        auto* follows = new SignalTextItem();
+        auto* setHere = new SignalTextItem();
+        widget.addItem(follows);
+        widget.addItem(setHere);
+        setHere->setOwnUnits(SignalTextItem::Units::Dbm);
+        QVERIFY(!follows->unitsSetHere());
+        QVERIFY(setHere->unitsSetHere());
+
+        widget.setUnitMode(MeterItem::MeterUnit::S);
+        QCOMPARE(follows->units(), SignalTextItem::Units::SUnits);
+        QCOMPARE(setHere->units(), SignalTextItem::Units::Dbm);
+        widget.setUnitMode(MeterItem::MeterUnit::uV);
+        QCOMPARE(follows->units(), SignalTextItem::Units::Uv);
+        QCOMPARE(setHere->units(), SignalTextItem::Units::Dbm);
+
+        // Back to Follow global: the last global setting.
+        setHere->followGlobalUnits();
+        QCOMPARE(setHere->units(), SignalTextItem::Units::Uv);
+        widget.setUnitMode(MeterItem::MeterUnit::S);
+        QCOMPARE(setHere->units(), SignalTextItem::Units::SUnits);
+
+        // A set unit is saved and comes back set.
+        SignalTextItem saved;
+        saved.setOwnUnits(SignalTextItem::Units::Dbm);
+        SignalTextItem reloaded;
+        QVERIFY(reloaded.deserialize(saved.serialize()));
+        QVERIFY(reloaded.unitsSetHere());
+        reloaded.setUnitMode(MeterItem::MeterUnit::S);
+        QCOMPARE(reloaded.units(), SignalTextItem::Units::Dbm);
+    }
+
+    // An old record (no field 26) loads as before and follows the global
+    // setting; written again it keeps every field and appends a 0.
+    void oldRecordFollowsGlobalAndRoundTrips()
+    {
+        SignalTextItem old;
+        QVERIFY(old.deserialize(kOldRecord));
+        QCOMPARE(old.units(), SignalTextItem::Units::Dbm);
+        QVERIFY(!old.unitsSetHere());
+        const QString written = old.serialize();
+        QCOMPARE(written.split(QLatin1Char('|')).mid(0, 18), kOldRecord.split(QLatin1Char('|')));
+        QVERIFY(written.endsWith(QStringLiteral("|0")));
+        SignalTextItem again;
+        QVERIFY(again.deserialize(written));
+        QCOMPARE(again.serialize(), written);
+        again.setUnitMode(MeterItem::MeterUnit::S);
+        QCOMPARE(again.units(), SignalTextItem::Units::SUnits);
+    }
+
+    // The editor's Units row: Follow global, then each unit.
+    void editorOffersFollowGlobal()
+    {
+        SignalTextItem item;
+        SignalTextItemEditor editor;
+        editor.setItem(&item);
+        auto* units = editor.findChild<QComboBox*>(QStringLiteral("signalUnits"));
+        QVERIFY(units);
+        QVERIFY(units->isEnabled());
+        QCOMPARE(units->count(), 4);
+        QCOMPARE(units->itemText(0), QStringLiteral("Follow global"));
+        QCOMPARE(units->currentIndex(), 0);
+        units->setCurrentIndex(units->findData(static_cast<int>(SignalTextItem::Units::Dbm)));
+        QVERIFY(item.unitsSetHere());
+        item.setUnitMode(MeterItem::MeterUnit::S);
+        QCOMPARE(item.units(), SignalTextItem::Units::Dbm);
+        units->setCurrentIndex(0);
+        QVERIFY(!item.unitsSetHere());
+        QCOMPARE(item.units(), SignalTextItem::Units::SUnits);
+        editor.setItem(&item);
+        QCOMPARE(units->currentIndex(), 0);
     }
 
     void newFieldsRoundTrip()

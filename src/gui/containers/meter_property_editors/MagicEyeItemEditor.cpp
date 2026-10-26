@@ -88,6 +88,13 @@ void MagicEyeItemEditor::buildTypeSpecific()
 
     addRow(QStringLiteral("Bezel image"), bezelRow);
 
+    // The built-in eye bezel art Thetis draws is not bundled: the option
+    // stays visible, disabled, with the reason.
+    QCheckBox* builtInBezel = makeCheckRow(QStringLiteral("Built-in bezel"));
+    builtInBezel->setObjectName(QStringLiteral("builtInBezel"));
+    builtInBezel->setEnabled(false);
+    builtInBezel->setToolTip(noArtworkReason());
+
     connect(m_editBezelPath, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         MagicEyeItem* x = qobject_cast<MagicEyeItem*>(m_item);

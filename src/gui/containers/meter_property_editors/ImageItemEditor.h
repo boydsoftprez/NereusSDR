@@ -18,6 +18,7 @@ public:
 
 private:
     void buildTypeSpecific() override;
+    void refreshDarkModeAvailability();
 
     QLineEdit*   m_editPath{nullptr};
     QPushButton* m_btnBrowse{nullptr};

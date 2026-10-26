@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: units set on this item (its click box or the
+//                 editor) stay when the global unit setting changes; an
+//                 item with none set follows it. Appended record field 26.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis signal text options (renderSignalTextDisplay,
 //                 MeterManager.cs:40538-40628): the PK / AVG / FFT type
 //                 glyph, the uV and dBm sub lines, the background color, the
@@ -134,12 +138,14 @@ mw0lge@grange-lane.co.uk
 #include "gui/styles/WorkspacePreview.h"
 #include "SignalTextItem.h"
 #include "ResponsiveText.h"
+#include "gui/containers/ContainerContentRegistry.h"
 
 // From Thetis clsSignalText (MeterManager.cs:20286-20540)
 
 #include <QPainter>
 #include <QFont>
 #include <QFontMetrics>
+#include <QJsonObject>
 #include <QLinearGradient>
 #include <QStringList>
 #include <algorithm>
@@ -154,6 +160,25 @@ namespace NereusSDR {
 SignalTextItem::SignalTextItem(QObject* parent)
     : MeterItem(parent)
 {
+    m_configNotifier = new ContentConfigNotifier(this);
+}
+
+void SignalTextItem::setOwnUnits(Units u)
+{
+    const bool changed = !m_unitsSetHere || m_units != u;
+    m_units = u;
+    m_unitsSetHere = true;
+    // The choice is saved with the layout.
+    if (changed) {
+        emit m_configNotifier->configEdited(
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()}});
+    }
+}
+
+void SignalTextItem::followGlobalUnits()
+{
+    m_unitsSetHere = false;
+    m_units = unitsFor(unitMode());
 }
 
 // ---------------------------------------------------------------------------
@@ -676,7 +701,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 //                    fontFamily|fontSize|barStyle
 //                    |typeStyle|typeColour|showSubMarker|subMarkerColour
 //                    |backgroundColour|peakValueNeedsPeakHold|historyMs
-//                    |ignoreHistoryMs
+//                    |ignoreHistoryMs|unitsSetHere
 // ---------------------------------------------------------------------------
 QString SignalTextItem::serialize() const
 {
@@ -707,7 +732,8 @@ QString SignalTextItem::serialize() const
         .arg(m_backgroundColour.name(QColor::HexArgb))
         .arg(m_peakValueNeedsPeakHold ? 1 : 0)
         .arg(m_historyDurationMs)
-        .arg(m_ignoreHistoryMs);
+        .arg(m_ignoreHistoryMs)
+        + QStringLiteral("|%1").arg(m_unitsSetHere ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +745,10 @@ QString SignalTextItem::serialize() const
 // [18..25] (optional; a record without them keeps the look it had):
 // typeStyle, typeColour, showSubMarker, subMarkerColour, backgroundColour,
 // peakValueNeedsPeakHold, historyMs, ignoreHistoryMs
+// [26] (optional) unitsSetHere: 1 keeps the record's units when the global
+// unit setting changes. A record without it follows the global setting: it
+// cannot show that someone chose its units, since every record writes a
+// unit and the global setting overwrote it at each change.
 // ---------------------------------------------------------------------------
 bool SignalTextItem::deserialize(const QString& data)
 {
@@ -804,6 +834,7 @@ bool SignalTextItem::deserialize(const QString& data)
     m_peakValueNeedsPeakHold = flag(23, true);
     setHistoryDurationMs(integer(24, 2000));
     setIgnoreHistoryMs(integer(25, 2000));
+    m_unitsSetHere = flag(26, false);
 
     return true;
 }

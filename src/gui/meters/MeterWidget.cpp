@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: a click box sets a signal text's own units
+//                 (SignalTextItem::setOwnUnits), kept when the global unit
+//                 setting changes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Click focus; keyPressEvent sends a key to the item last
 //                 under the pointer (MeterItem::handleKeyPress), and moving
 //                 off an item or leaving the meter tells that item the
@@ -352,8 +356,14 @@ void MeterWidget::addItem(MeterItem* item)
                         if (target == box || !ClickBoxItem::supportsUnits(target) || !shouldRender(target)) { continue; }
                         const QRectF rect(target->x(), target->y(), target->itemWidth(), target->itemHeight());
                         if (!rect.intersects(boxRect)) { continue; }
-                        target->setUnitMode(ClickBoxItem::steppedUnit(
-                            shownUnit(target), value, target->bindingId() == MeterBinding::PbSnr));
+                        const MeterItem::MeterUnit next = ClickBoxItem::steppedUnit(
+                            shownUnit(target), value, target->bindingId() == MeterBinding::PbSnr);
+                        // A signal text keeps a unit set on it (fix wave R2).
+                        if (auto* text = qobject_cast<SignalTextItem*>(target)) {
+                            text->setOwnUnits(SignalTextItem::unitsFor(next));
+                        } else {
+                            target->setUnitMode(next);
+                        }
                         invalidateReadingLayers(true);
                         update();
                         break;

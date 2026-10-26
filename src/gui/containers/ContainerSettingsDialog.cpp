@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I3): Show next in the live editor
+//                 selects the named web image in any draft container
+//                 (selectDraftWebImage). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I4, M4): a same-type paste keeps a
 //                 web image's own guid as an LED's, so its 4-char ID stays;
 //                 the legacy paste keeps the item's place as the draft
@@ -1406,6 +1410,9 @@ void ContainerSettingsDialog::onItemSelectionChanged()
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);
             m_btnRemove->setText(entry.typeId.startsWith("applet:")?tr("Return / hide view"):tr("Remove object"));
+            // Queued: selecting a row replaces this editor.
+            connect(m_contentEditor,&ContentPropertyEditor::showWebImageRequested,this,
+                    [this](const QString& fourChar){ selectDraftWebImage(fourChar); },Qt::QueuedConnection);
             connect(m_contentEditor,&ContentPropertyEditor::entryEdited,this,[this](const ContentEntry& edited){
                 auto draft=m_editSession->draft();
                 for(auto& c:draft.containers) { for(auto& e:c.contents) {if(e.id==edited.id) {e=edited;}} }
@@ -1495,25 +1502,44 @@ void ContainerSettingsDialog::onItemSelectionChanged()
                     return;
                 }
             }
-            if (!m_editSession) { return; }
-            const ContainerContentRegistry registry;
-            for (const auto& c : m_editSession->draft().containers) {
-                if (c.id == m_selectedId) { continue; }
-                for (int row = 0; row < c.contents.size(); ++row) {
-                    if (c.contents[row].typeId != QLatin1String("WEBIMAGE")) { continue; }
-                    std::unique_ptr<MeterItem> probe(registry.createMeterItem(
-                        c.contents[row], nullptr, ContentRenderMode::Preview));
-                    const auto* item = qobject_cast<const WebImageItem*>(probe.get());
-                    if (item && item->fourChar() == fourChar) {
-                        const QString id = c.id;
-                        selectDraftContainer(id);
-                        m_itemList->setCurrentRow(row);
-                        return;
-                    }
-                }
-            }
+            selectDraftWebImage(fourChar);
         }, Qt::QueuedConnection);
     }
+}
+
+// From Thetis setup.cs:33240-33260 [v2.10.3.15] (btnWebImage_goto_next_Click):
+// the web image the 4-char ID names, in the current container first, then
+// in any other, switching the dialog to that container.
+bool ContainerSettingsDialog::selectDraftWebImage(const QString& fourChar)
+{
+    if (!m_editSession || fourChar.isEmpty()) { return false; }
+    const ContainerContentRegistry registry;
+    const auto rowOf = [&registry, &fourChar](const ContainerDocument& c) {
+        for (int row = 0; row < c.contents.size(); ++row) {
+            if (c.contents[row].typeId != QLatin1String("WEBIMAGE")) { continue; }
+            std::unique_ptr<MeterItem> probe(registry.createMeterItem(
+                c.contents[row], nullptr, ContentRenderMode::Preview));
+            const auto* item = qobject_cast<const WebImageItem*>(probe.get());
+            if (item && item->fourChar() == fourChar) { return row; }
+        }
+        return -1;
+    };
+    const auto containers = m_editSession->draft().containers;
+    for (const auto& c : containers) {
+        if (c.id != m_selectedId) { continue; }
+        const int row = rowOf(c);
+        if (row >= 0) { m_itemList->setCurrentRow(row); return true; }
+    }
+    for (const auto& c : containers) {
+        if (c.id == m_selectedId) { continue; }
+        const int row = rowOf(c);
+        if (row >= 0) {
+            selectDraftContainer(c.id);
+            m_itemList->setCurrentRow(row);
+            return true;
+        }
+    }
+    return false;
 }
 
 void ContainerSettingsDialog::onAddItem()

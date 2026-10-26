@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
+//                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - populateReadingCombo(): the Reading row's list for other
 //                 reading rows (the history graph's axis 1). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -103,6 +106,10 @@ class BaseItemEditor : public QWidget {
     Q_OBJECT
 
 public:
+    // The reason an option whose artwork NereusSDR does not bundle (the
+    // ANAN dark face, the built-in magic eye bezel) is shown disabled.
+    static QString noArtworkReason();
+
     explicit BaseItemEditor(QWidget* parent = nullptr);
     ~BaseItemEditor() override = default;
 

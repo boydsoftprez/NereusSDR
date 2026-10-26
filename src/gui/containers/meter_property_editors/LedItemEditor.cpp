@@ -343,16 +343,16 @@ void LedItemEditor::buildTypeSpecific()
         return spin;
     };
     m_spinOffsetX = offsetSizeRow(QStringLiteral("Offset X"),
-        QStringLiteral("Centre of the light from the left, as a ratio of the width."),
+        QStringLiteral("Center of the light from the left, as a ratio of the item's width."),
         &LEDItem::setOffsetX);
     m_spinOffsetY = offsetSizeRow(QStringLiteral("Offset Y"),
-        QStringLiteral("Centre of the light from the top, as a ratio of the width."),
+        QStringLiteral("Center of the light from the top, as a ratio of the item's width."),
         &LEDItem::setOffsetY);
     m_spinSizeX = offsetSizeRow(QStringLiteral("Size X"),
-        QStringLiteral("Width of the light as a ratio of the width."),
+        QStringLiteral("Width of the light as a ratio of the item's width."),
         &LEDItem::setSizeX);
     m_spinSizeY = offsetSizeRow(QStringLiteral("Size Y"),
-        QStringLiteral("Height of the light as a ratio of the width."),
+        QStringLiteral("Height of the light as a ratio of the item's width."),
         &LEDItem::setSizeY);
 
     m_chkShowTrue = makeCheckRow(QStringLiteral("Show when true"));

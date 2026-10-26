@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and the magic eye's
+//                 Built-in bezel are visible and disabled, "No artwork is
+//                 available for this option". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave: a web image's Show next reaches the
+//                 dialog (showWebImageRequested); the clock's format row is
+//                 "Classic time and date format". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - VFO display face: Display mode (Source slice, All slices,
 //                 Slice A to E) and Layout (Compact, Detailed) rows, and
 //                 plain labels for its colour rows. J.J. Boyd (KG4VCF),
@@ -70,6 +78,7 @@
 #include "ContainerSettingsDialog.h"
 #include "meter_property_editors/BaseItemEditor.h"
 #include "meter_property_editors/SignalTextItemEditor.h"
+#include "meter_property_editors/WebImageItemEditor.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
@@ -229,7 +238,7 @@ QString fieldLabel(QString key)
     if(key=="eyeScale") {return QObject::tr("Eye size");}
     if(key=="bezelScale") {return QObject::tr("Bezel size");}
     if(key=="bezelImage") {return QObject::tr("Bezel image");}
-    if(key=="thetisFormat") {return QObject::tr("Thetis time and date format");}
+    if(key=="thetisFormat") {return QObject::tr("Classic time and date format");}
     // The VFO display face's rows, named as the VFO display item's editor
     // names them.
     if(key=="displayMode") {return QObject::tr("Display mode");}
@@ -478,6 +487,12 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         connect(combo,&QComboBox::currentTextChanged,this,[this,key,channel](const QString& text){property(key,text,channel);});widget=combo;
     } else if(value.isBool()) {
         auto* check=new QCheckBox(this);check->setChecked(value.toBool());connect(check,&QCheckBox::toggled,this,[this,key,channel](bool v){property(key,v,channel);});widget=check;
+        // The ANAN face has no dark art: Dark mode stays visible, disabled,
+        // with the reason; a saved value is kept and shown.
+        if(key=="darkMode") {
+            const auto* face=qobject_cast<const CompositePresetItem*>(m_item.get());
+            if(face && !face->darkFaceArtAvailable()) {check->setEnabled(false);check->setToolTip(BaseItemEditor::noArtworkReason());}
+        }
     } else if(value.isDouble()) {
         const bool integral=key.endsWith("Ms") || QStringList{"rowHeight","faceHeight","fontSize","displayGroup","historyCapacity"}.contains(key);
         if(integral) {
@@ -511,6 +526,8 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             edit->setPlaceholderText(tr("Blank draws no bezel"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
             auto* browse=new QPushButton(tr("Browse…"),row);browse->setAutoDefault(false);layout->addWidget(browse);
             connect(browse,&QPushButton::clicked,this,[this,key,channel,edit]{const QString path=QFileDialog::getOpenFileName(this,tr("Choose bezel image"),QString(),tr("Images (*.png *.jpg *.bmp *.svg)"));if(!path.isEmpty() && property(key,path,channel)) {edit->setText(path);}});widget=row;
+            // The built-in eye bezel art is not bundled: visible, disabled, with the reason.
+            auto* builtIn=new QCheckBox(tr("Built-in bezel"),row);builtIn->setObjectName("builtInBezel");builtIn->setEnabled(false);builtIn->setToolTip(BaseItemEditor::noArtworkReason());layout->addWidget(builtIn);
         }
     }
     if(widget) {widget->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));}
@@ -631,6 +648,10 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         if(auto* adapter=ContainerSettingsDialog::buildTypeSpecificEditor(m_item.get(),this)) {
             root->addWidget(adapter);
             if(auto* signal=qobject_cast<SignalTextItemEditor*>(adapter)) {signal->useGlobalUnits();}
+            // Show next: the dialog finds the named web image in the draft.
+            if(auto* web=qobject_cast<WebImageItemEditor*>(adapter)) {
+                connect(web,&WebImageItemEditor::showNextRequested,this,&ContentPropertyEditor::showWebImageRequested);
+            }
             qobject_cast<BaseItemEditor*>(adapter)->setGeometryEditable(m_policy==ContentLayout::LegacyCanvas);
             connect(qobject_cast<BaseItemEditor*>(adapter),&BaseItemEditor::propertyChanged,this,[this]{
                 captureRenderer(); publish();

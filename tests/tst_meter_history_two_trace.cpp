@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original tests for the two-trace signal history.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave M2: trace 2's veil names its reason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history trace 2 on its own slice (D2), the saved
 //                 one-trace face, data source variable 2, the HISTORY axis
 //                 1 reading beside a data source. J.J. Boyd (KG4VCF),
@@ -225,14 +227,18 @@ private slots:
         QVERIFY(face->bindingUnavailableReason(MeterBinding::SignalAvg).isEmpty());
         const QImage image = renderOverlay(*face);
         const QRect cell = face->trace2ReadoutRect(640, 240).toAlignedRect();
-        const QPoint probe(cell.left() + 2, cell.center().y());
+        // A corner of the cell: the reason's text sits on the middle row.
+        const QPoint probe(cell.left() + 1, cell.top() + 1);
         const QColor veil = image.pixelColor(probe);
         QVERIFY2(veil.alpha() >= 150 && veil.red() < 40 && veil.blue() < 60, "Trace 2's readout takes the unavailable veil");
+        // The veil says why (fix wave M2), not a bare "--".
+        QCOMPARE(face->trace2ReadoutText(), HistoryGraphPresetItem::otherRadioText());
         // Trace 1 keeps drawing its line.
         QVERIFY(pixelsLike(image, QColor(Qt::yellow)) > 50);
         // The same trace on this window's radio reads again, unveiled.
         face->updateTrace2Session(entryContext, QStringLiteral("other-radio"));
         QVERIFY(face->trace2UnavailableReason().isEmpty());
+        QVERIFY(face->trace2ReadoutText() != HistoryGraphPresetItem::otherRadioText());
         QCOMPARE(renderOverlay(*face).pixelColor(probe).alpha(), 0);
     }
     void dataSourceVariableTwoFeedsTraceTwo()

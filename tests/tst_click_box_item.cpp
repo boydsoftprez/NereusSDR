@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: a clicked unit is the item's own and stays
+//                 when the global setting changes. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  Created (container item parity, Task
 //                                    47). AI-assisted via Anthropic
 //                                    Claude Code.
@@ -185,15 +188,17 @@ private slots:
 
         press(widget, Qt::LeftButton);
         QCOMPARE(text->units(), SignalTextItem::Units::SUnits);
-        QCOMPARE(text->unitMode(), MeterItem::MeterUnit::S);
+        // Fix wave R2: a click box sets the item's own units.
+        QVERIFY(text->unitsSetHere());
         press(widget, Qt::LeftButton);
         QCOMPARE(text->units(), SignalTextItem::Units::Uv);
-        QCOMPARE(text->unitMode(), MeterItem::MeterUnit::uV);
         press(widget, Qt::LeftButton);
         QCOMPARE(text->units(), SignalTextItem::Units::Dbm);
-        QCOMPARE(text->unitMode(), MeterItem::MeterUnit::dBm);
         // Right steps back, wrapping from dBm to uV.
         press(widget, Qt::RightButton);
+        QCOMPARE(text->units(), SignalTextItem::Units::Uv);
+        // A global unit change leaves the clicked unit alone.
+        widget.setUnitMode(MeterItem::MeterUnit::S);
         QCOMPARE(text->units(), SignalTextItem::Units::Uv);
         // The display group is untouched.
         QCOMPARE(widget.displayGroup(), 0);

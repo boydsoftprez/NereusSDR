@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: darkFaceArtAvailable, for the editor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (M2): trace 2's veil shows why it has
+//                 no reading (trace2ReadoutText). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - VFO display: displayMode, vfoLayout, vfoShowBandText and
 //                 the clsVfoDisplay colour keys, and kVfoPresetThetisDefaults
 //                 for new VFO display faces. J.J. Boyd (KG4VCF), AI-assisted
@@ -135,6 +140,12 @@ public:
     QString trace2UnavailableReason() const { return m_trace2Unavailable; }
     // Where trace 2's readout and veil are drawn in a face of this size.
     QRectF trace2ReadoutRect(int width,int height) const;
+    // The text in trace 2's readout: the reason under the veil, else the
+    // reading with its units, else "--".
+    QString trace2ReadoutText() const;
+    // True when the face's art has a "-dark" file (Dark mode can show it).
+    // The ANAN face's art has none today.
+    bool darkFaceArtAvailable() const;
 #ifdef NEREUS_BUILD_TESTS
     int historySampleCountForTest() const { return m_samples.size(); }
     int trace2SampleCountForTest() const { return m_samples2.size(); }

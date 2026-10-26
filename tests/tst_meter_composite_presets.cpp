@@ -1,5 +1,8 @@
 // no-port-check: Independent numeric oracles and real native rendering fixtures.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and a legacy image's
+//                 Dark mode are shown disabled when no dark art exists.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A new Contest face's mode grid shows ten modes in two rows
 //                 (SPEC and DRM hidden), and keeps them through a save.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -19,6 +22,9 @@
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QLabel>
+#include <QCheckBox>
+#include "gui/meters/MeterItem.h"
+#include "gui/containers/meter_property_editors/ImageItemEditor.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CrossNeedleItem.h"
@@ -928,6 +934,35 @@ private slots:
         editor.setEntry(registry.makeEntry(QStringLiteral("meter.powerSwr")));
         QVERIFY(editor.findChild<QDoubleSpinBox*>(QStringLiteral("powerLimitW"))); QVERIFY(editor.findChild<QWidget*>(QStringLiteral("peakValueColor")));
         QVERIFY(!editor.findChild<QWidget*>(QStringLiteral("subNeedleColor")));
+    }
+    // Fix wave R1: the ANAN face has no dark art, so Dark mode is shown
+    // disabled with the reason; a saved Dark mode still loads and draws as
+    // before. The legacy image item's Dark mode does the same when its image
+    // has no -dark file.
+    void ananDarkModeIsShownDisabledWithItsReason() {
+        const QString reason=QStringLiteral("No artwork is available for this option");
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        auto entry=registry.makeEntry(QStringLiteral("meter.ananMulti"));
+        editor.setEntry(entry);
+        auto* dark=editor.findChild<QCheckBox*>(QStringLiteral("darkMode")); QVERIFY(dark);
+        QVERIFY(!dark->isEnabled()); QCOMPARE(dark->toolTip(),reason);
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
+        auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QVERIFY(!face->darkFaceArtAvailable());
+        auto config=face->configuration(); config["darkMode"]=true; QVERIFY(face->applyConfiguration(config));
+        AnanMultiMeterItem copy; QVERIFY(copy.deserialize(face->serialize()));
+        QVERIFY(copy.configuration()["darkMode"].toBool());
+        // With dark art beside the face's art, the option is live.
+        QTemporaryDir dir; QImage art(8,8,QImage::Format_RGB32); art.fill(Qt::gray);
+        QVERIFY(art.save(dir.filePath("face.png"))); QVERIFY(art.save(dir.filePath("face-dark.png")));
+        face->setFaceArtBaseForTest(dir.filePath("face.png")); QVERIFY(face->darkFaceArtAvailable());
+
+        ImageItem anan; anan.setImagePath(QStringLiteral(":/meters/ananMM.png"));
+        ImageItemEditor imageEditor; imageEditor.setItem(&anan);
+        auto* imageDark=imageEditor.findChild<QCheckBox*>(QStringLiteral("imageDarkMode")); QVERIFY(imageDark);
+        QVERIFY(!imageDark->isEnabled()); QCOMPARE(imageDark->toolTip(),reason);
+        ImageItem own; own.setImagePath(dir.filePath("face.png")); imageEditor.setItem(&own);
+        QVERIFY(imageDark->isEnabled()); QVERIFY(imageDark->toolTip()!=reason);
     }
     void paletteRoundtrips() {
         ContainerContentRegistry registry; int complete=0;

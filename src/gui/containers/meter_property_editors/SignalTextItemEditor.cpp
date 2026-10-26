@@ -1,4 +1,8 @@
-// no-port-check: NereusSDR-original Qt property adapter; global-unit control disabled in container drafts.
+// no-port-check: NereusSDR-original Qt property adapter.
+// Modification history (NereusSDR):
+//   2026-10-26 - Fix wave R2: Units offers Follow global and each unit; a
+//                 unit chosen here stays when the global setting changes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "SignalTextItemEditor.h"
 #include "../../meters/SignalTextItem.h"
 
@@ -13,6 +17,11 @@
 
 namespace NereusSDR {
 
+namespace {
+// The Units row's Follow global choice (no unit has the value -1).
+constexpr int kFollowGlobalUnits = -1;
+} // namespace
+
 SignalTextItemEditor::SignalTextItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
 {
@@ -21,9 +30,8 @@ SignalTextItemEditor::SignalTextItemEditor(QWidget* parent)
 
 void SignalTextItemEditor::useGlobalUnits()
 {
-    m_comboUnits->setEnabled(false);
-    m_comboUnits->setToolTip(tr("Signal units and decimal precision follow the global multimeter preferences."));
-    auto* note = new QLabel(m_comboUnits->toolTip(), this);
+    auto* note = new QLabel(tr("Decimal precision follows the global multimeter preferences. "
+                               "Units follow them too unless a unit is chosen above."), this);
     note->setWordWrap(true);
     addRow(tr("Global preferences"), note);
 }
@@ -42,7 +50,8 @@ void SignalTextItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
 
-    const int unitsIdx = m_comboUnits->findData(static_cast<int>(x->units()));
+    const int unitsIdx = m_comboUnits->findData(
+        x->unitsSetHere() ? static_cast<int>(x->units()) : kFollowGlobalUnits);
     m_comboUnits->setCurrentIndex(unitsIdx >= 0 ? unitsIdx : 0);
 
     m_chkShowValue->setChecked(x->showValue());
@@ -79,7 +88,10 @@ void SignalTextItemEditor::buildTypeSpecific()
 
     // Units
     m_comboUnits = new QComboBox(this);
-    m_comboUnits->setObjectName("signalGlobalUnits");
+    m_comboUnits->setObjectName("signalUnits");
+    m_comboUnits->setToolTip(tr("Follow global uses the global multimeter units; "
+                                "a unit chosen here stays when that setting changes."));
+    m_comboUnits->addItem(tr("Follow global"), kFollowGlobalUnits);
     m_comboUnits->addItem(QStringLiteral("dBm"),    static_cast<int>(SignalTextItem::Units::Dbm));
     m_comboUnits->addItem(QStringLiteral("S-Units"), static_cast<int>(SignalTextItem::Units::SUnits));
     m_comboUnits->addItem(QStringLiteral("μV"),      static_cast<int>(SignalTextItem::Units::Uv));
@@ -88,7 +100,12 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (isProgrammaticUpdate()) { return; }
         SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
         if (!x) { return; }
-        x->setUnits(static_cast<SignalTextItem::Units>(m_comboUnits->currentData().toInt()));
+        const int choice = m_comboUnits->currentData().toInt();
+        if (choice == kFollowGlobalUnits) {
+            x->followGlobalUnits();
+        } else {
+            x->setOwnUnits(static_cast<SignalTextItem::Units>(choice));
+        }
         notifyChanged();
     });
 

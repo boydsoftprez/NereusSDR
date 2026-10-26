@@ -21,6 +21,8 @@ public:
     void setContainerDefaults(const QJsonObject& defaults);
 signals:
     void entryEdited(const ContentEntry& entry);
+    // A web image's Show next: the 4-char ID of the web image to open.
+    void showWebImageRequested(const QString& fourChar);
 private:
     QWidget* control(const QString& key, const QJsonValue& value, int channel=-1);
     // Workspace preview: a control for a declared ContentProperty.

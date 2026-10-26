@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original complete-entry draft workflow regressions.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave I3: Show next in the live editor finds the named
+//                 web image in any draft container. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - A control shortcut is checked by Thetis button number.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
@@ -50,6 +53,8 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/meters/WebImageItem.h"
+#include "gui/containers/meter_property_editors/WebImageItemEditor.h"
 #include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
@@ -576,9 +581,12 @@ private slots:
     auto* check=legacyDialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check);check->click();
     QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.noControls());
  }
+ // Fix wave R2: the Units row offers Follow global (a new item's choice)
+ // and each unit.
  void legacySignalUnitsUseGlobalPreferences() {
     ContainerContentRegistry registry;ContentPropertyEditor editor(registry);editor.setEntry(registry.makeEntry("SIGNALTEXT"));
-    auto* units=editor.findChild<QComboBox*>("signalGlobalUnits");QVERIFY(units);QVERIFY(!units->isEnabled());QVERIFY(units->toolTip().contains("global multimeter"));
+    auto* units=editor.findChild<QComboBox*>("signalUnits");QVERIFY(units);QVERIFY(units->isEnabled());QVERIFY(units->toolTip().contains("global multimeter"));
+    QCOMPARE(units->itemText(0),QString("Follow global"));QCOMPARE(units->currentIndex(),0);
  }
  void retainedReturnOrderAndLockedAtomicFailure() {
     WorkspaceDocument d;d.mainContainerId="main";ContainerDocument main,home,shell;main.id="main";home.id="home";shell.id="shell";ContentEntry before,after,returned,unknown;before.id="before";after.id="after";returned.id="returned";unknown.id="unknown";before.typeId=after.typeId=returned.typeId="TEXT";unknown.typeId="future";unknown.config["raw"]="opaque";returned.returnLocation=ReturnLocation{"home","before","after",{}};unknown.returnLocation=ReturnLocation{"missing",{},{},{}};home.contents={before,after};shell.contents={returned,unknown};d.containers={main,home,shell};
@@ -628,6 +636,39 @@ private slots:
     QPushButton* remove=nullptr;for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()=="Remove / return contents") {remove=button;break;}}QVERIFY(remove);remove->click();QCOMPARE(dialog.editSession()->draft(),beforeFailed);
  }
 
+ // Fix wave I3: Show next in the live editor (ContentPropertyEditor's web
+ // image editor) selects the named web image, in this container first, then
+ // in another draft container (Thetis btnWebImage_goto_next_Click).
+ void showNextInTheLiveEditorFindsTheNamedWebImage() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    const auto webImage=[&registry](const QString& name) {
+        auto entry=registry.makeEntry("WEBIMAGE");entry.name=name;
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
+        auto* web=qobject_cast<WebImageItem*>(item.get());web->setGuid(QUuid::createUuid());
+        const QString id=web->fourChar();return std::make_pair(registry.captureMeterItem(*web,entry),id);
+    };
+    const auto [first,firstId]=webImage("First");const auto [second,secondId]=webImage("Second");const auto [other,otherId]=webImage("Other");
+    QVERIFY(firstId!=secondId && secondId!=otherId && firstId!=otherId);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a,b;a.id="A";a.name="Images";a.layout=ContentLayout::VerticalStack;b.id="B";b.name="More images";b.layout=ContentLayout::VerticalStack;
+    a.contents={first,second};b.contents={other};d.containers={a,b};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QCOMPARE(list->count(),2);
+    const auto showNext=[&dialog](const QString& id) {
+        auto* editor=dialog.findChild<ContentPropertyEditor*>();QVERIFY(editor);
+        auto* web=editor->findChild<WebImageItemEditor*>();QVERIFY(web);emit web->showNextRequested(id);
+    };
+    // In this container.
+    list->setCurrentRow(0);showNext(secondId);QTRY_COMPARE(list->currentRow(),1);
+    // In another container: the dialog switches to it.
+    showNext(otherId);
+    auto* selection=dialog.findChild<QComboBox*>("containerDraftSelection");
+    QTRY_COMPARE(selection->currentData().toString(),QString("B"));QTRY_COMPARE(list->currentRow(),0);QCOMPARE(list->item(0)->text(),QString("Other"));
+    // And back again.
+    showNext(firstId);QTRY_COMPARE(selection->currentData().toString(),QString("A"));QTRY_COMPARE(list->currentRow(),0);
+    // An ID no draft holds changes nothing.
+    QVERIFY(!dialog.selectDraftWebImage(QStringLiteral("ZZZZ")));QCOMPARE(list->currentRow(),0);
+    dialog.reject();
+ }
 };
 QTEST_MAIN(TstContainerSettingsWorkflow)
 #include "tst_container_settings_workflow.moc"
