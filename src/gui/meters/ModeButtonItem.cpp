@@ -18,6 +18,11 @@
 //   2026-10-26 - Column range from Thetis setup.cs (columnRange), which
 //                 the editor clamps to. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Twelve modes in DSPMode order (modeForIndex), as Thetis's
+//                 clsModeButtonBox. A record in that order ends with an
+//                 order marker; one without it (the earlier ten-button
+//                 order) is remapped on load. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -109,12 +114,47 @@ mw0lge@grange-lane.co.uk
 
 #include "ModeButtonItem.h"
 
+#include <array>
+
 namespace NereusSDR {
 
-// From Thetis clsModeButtonBox (MeterManager.cs:9951+)
+// From Thetis MeterManager.cs:10140-10152 [v2.10.3.15] (clsModeButtonBox
+// setupButtons): button i shows DSPMode (LSB + i) by its name, LSB to DRM.
 static const char* const kModeLabels[] = {
-    "LSB", "USB", "DSB", "CWL", "CWU", "FM", "AM", "SAM", "DIGL", "DIGU"
+    "LSB", "USB", "DSB", "CWL", "CWU", "FM", "AM", "DIGU", "SPEC", "DIGL", "SAM", "DRM"
 };
+static_assert(std::size(kModeLabels) == ModeButtonItem::kModeCount);
+
+namespace {
+// Grids saved before the DSPMode order had ten buttons: LSB, USB, DSB, CWL,
+// CWU, FM, AM, SAM, DIGL, DIGU. A record in DSPMode order ends with this
+// marker after the grid style fields; one without it is in the old order.
+constexpr int kOrderMarkerField = 16;
+constexpr const char* kDspModeOrderMarker = "DSPORDER";
+constexpr int kOldModeCount = 10;
+// The DSPMode-order button of each old button: SAM 7 -> 10, DIGL 8 -> 9,
+// DIGU 9 -> 7; the first seven keep their place.
+constexpr std::array<int, kOldModeCount> kOldToNewIndex{0, 1, 2, 3, 4, 5, 6, 10, 9, 7};
+constexpr uint32_t kSpecBit = 1u << static_cast<int>(DSPMode::SPEC);
+constexpr uint32_t kDrmBit = 1u << static_cast<int>(DSPMode::DRM);
+
+int remapOldIndex(int index)
+{
+    return index >= 0 && index < kOldModeCount ? kOldToNewIndex[index] : index;
+}
+
+// Moves each old button's visible bit to its DSPMode place. SPEC and DRM
+// were not on the old grid, so they start hidden; bits past the twelve
+// buttons are kept as saved.
+uint32_t remapOldBits(uint32_t bits)
+{
+    uint32_t mapped = bits & ~((1u << ModeButtonItem::kModeCount) - 1u);
+    for (int i = 0; i < kOldModeCount; ++i) {
+        if ((bits >> i) & 1u) { mapped |= 1u << kOldToNewIndex[i]; }
+    }
+    return mapped;
+}
+} // namespace
 
 ModeButtonItem::ModeButtonItem(QObject* parent)
     : ButtonBoxItem(parent)
@@ -136,6 +176,14 @@ QString ModeButtonItem::modeLabel(int index)
 {
     if (index < 0 || index >= kModeCount) { return QString(); }
     return QString::fromLatin1(kModeLabels[index]);
+}
+
+// From Thetis MeterManager.cs:10258 [v2.10.3.15] (clsModeButtonBox.MouseUp):
+//   DSPMode m = (DSPMode)((int)DSPMode.LSB + index);
+DSPMode ModeButtonItem::modeForIndex(int index)
+{
+    if (index < 0 || index >= kModeCount) { return DSPMode::LSB; }
+    return static_cast<DSPMode>(static_cast<int>(DSPMode::LSB) + index);
 }
 
 void ModeButtonItem::setActiveMode(int index)
@@ -163,7 +211,8 @@ QString ModeButtonItem::serialize() const
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
         .arg(columns()).arg(m_activeMode).arg(visibleBits())
-        + serializeGridStyle();
+        + serializeGridStyle()
+        + QLatin1Char('|') + QLatin1String(kDspModeOrderMarker);
 }
 
 bool ModeButtonItem::deserialize(const QString& data)
@@ -176,9 +225,21 @@ bool ModeButtonItem::deserialize(const QString& data)
     m_h = parts[4].toFloat();
     m_bindingId = parts[5].toInt();
     m_zOrder = parts[6].toInt();
+    // A record without the order marker is in the old ten-button order:
+    // its active button and visible buttons move to their DSPMode places.
+    const bool dspModeOrder = parts.size() > kOrderMarkerField
+        && parts[kOrderMarkerField] == QLatin1String(kDspModeOrderMarker);
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
-    if (parts.size() > 8) { setActiveMode(parts[8].toInt()); }
-    if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
+    if (parts.size() > 8) {
+        const int saved = parts[8].toInt();
+        setActiveMode(dspModeOrder ? saved : remapOldIndex(saved));
+    }
+    if (parts.size() > 9) {
+        const uint32_t saved = parts[9].toUInt();
+        setVisibleBits(dspModeOrder ? saved : remapOldBits(saved));
+    } else if (!dspModeOrder) {
+        setVisibleBits(visibleBits() & ~(kSpecBit | kDrmBit));
+    }
     deserializeGridStyle(parts, 10);
     return true;
 }

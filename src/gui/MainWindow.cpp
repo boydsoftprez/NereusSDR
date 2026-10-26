@@ -970,6 +970,12 @@
 //                the band's number, so the GEN group's SWL bands reach the
 //                slice too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - A VFO display face on a fixed slice or All slices redraws
+//                when any slice it shows tunes, as a VFO display does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 48: a mode grid click sets
+//                DSPMode (LSB + index), all twelve Thetis modes. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -15719,8 +15725,9 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                     (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
                 // A VFO display on a fixed slice or on All slices shows
                 // slices other than its Source, so any slice's tuning
-                // reaches it.
-                const auto* vfo = qobject_cast<const VfoDisplayItem*>(root);
+                // reaches it. A VFO display face shows its own VFO display.
+                const auto* face = qobject_cast<const CompositePresetItem*>(root);
+                const auto* vfo = face ? face->vfoDisplay() : qobject_cast<const VfoDisplayItem*>(root);
                 const bool showsOtherSlices = vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice;
                 if (containerSourceSlice(context) == slice || showsOtherSlices) {
                     refreshContainerMeter(c, meter, root, context, true);
@@ -15764,9 +15771,11 @@ void MainWindow::onContainerModeClicked(ContainerWidget* c, int index)
     // From Thetis MeterManager.cs:10277 [v2.10.3.15] (clsModeButtonBox.setMode):
     //   if (abortForLockedVFO()) return;
     if (slice->locked()) { return; }
-    const QString label = ModeButtonItem::modeLabel(index);
-    if (label.isEmpty()) { return; }
-    slice->setDspMode(SliceModel::modeFromName(label));
+    if (index < 0 || index >= ModeButtonItem::kModeCount) { return; }
+    // From Thetis MeterManager.cs:10258 [v2.10.3.15]: the button's index is
+    // its DSPMode. A slice a remote window only listens to refuses the
+    // change and announces its own reason (sliceRequestHeldForListener).
+    slice->setDspMode(ModeButtonItem::modeForIndex(index));
 }
 
 void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)

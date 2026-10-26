@@ -26,6 +26,12 @@
 //                                    (TestFunctionGroups), past the 120 s
 //                                    limit as one under load.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  A VFO display face on All slices
+//                                    redraws when Slice B tunes.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Mode grid clicks set DSPMode
+//                                    (LSB + index): index 10 SAM, 8 SPEC.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -79,6 +85,7 @@
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/TuneStepButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/presets/VfoDisplayPresetItem.h"
 #include "gui/setup/HardwarePage.h"
 #include "gui/widgets/RxDashboard.h"
 #include "gui/widgets/StatusBadge.h"
@@ -536,6 +543,15 @@ private slots:
         }
 
         slice->setFrequency(14074000.0);
+        // The twelve buttons are in DSPMode order.
+        emit container->modeClicked(10);  // SAM
+        QCOMPARE(slice->dspMode(), DSPMode::SAM);
+        QCOMPARE(mode->activeMode(), 10);
+        emit container->modeClicked(8);   // SPEC
+        QCOMPARE(slice->dspMode(), DSPMode::SPEC);
+        QCOMPARE(mode->activeMode(), 8);
+        emit container->modeClicked(12);  // past the grid: nothing
+        QCOMPARE(slice->dspMode(), DSPMode::SPEC);
         emit container->modeClicked(1);   // USB
         QCOMPARE(slice->dspMode(), DSPMode::USB);
         QCOMPARE(mode->activeMode(), 1);
@@ -595,6 +611,40 @@ private slots:
         emit container->filterClicked(5);
         QCOMPARE(slice->filterLow(), low);
         QCOMPARE(slice->filterHigh(), high);
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // A VFO display face on All slices shows every slice, so tuning
+    // Slice B redraws it even though its Source is Slice A.
+    void vfoFaceOnAllSlicesFollowsEverySlice()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        RadioModel* model = window->radioModel();
+        SliceModel* a = ensureSlice(model);
+        QVERIFY(a != nullptr);
+        model->addSlice();
+        QCOMPARE(model->slices().size(), 2);
+        SliceModel* b = model->slices().at(1);
+        QVERIFY(b != nullptr && b != a);
+
+        ContainerManager* cm = model->containerManager();
+        ContainerWidget* container = cm->createContainer(1, DockMode::OverlayDocked);
+        QVERIFY(container != nullptr);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* face = new VfoDisplayPresetItem();
+        QVERIFY(face->applyConfiguration(
+            {{"displayMode", int(VfoDisplayItem::DisplayMode::AllSlices)}}));
+        meter->addItem(face);
+
+        a->setFrequency(14074000.0);
+        b->setFrequency(7074000.0);
+        QCOMPARE(face->vfoDisplay()->sliceState(b->sliceIndex()).frequencyHz, qint64{7074000});
+        b->setFrequency(7150000.0);
+        QCOMPARE(face->vfoDisplay()->sliceState(b->sliceIndex()).frequencyHz, qint64{7150000});
+        QCOMPARE(face->vfoDisplay()->sliceState(a->sliceIndex()).frequencyHz, qint64{14074000});
         QVERIFY(sessions.replace({}, false));
     }
 

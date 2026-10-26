@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Twelve modes in DSPMode order (modeForIndex), as Thetis's
+//                 clsModeButtonBox; older ten-button grids are remapped on
+//                 load. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -55,21 +59,30 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ButtonBoxItem.h"
+#include "core/WdspTypes.h"
 
 namespace NereusSDR {
 
-// Mode selection buttons: LSB, USB, DSB, CWL, CWU, FM, AM, SAM, DIGL, DIGU.
-// Ported from Thetis clsModeButtonBox (MeterManager.cs:9951+).
+// Mode selection buttons in DSPMode order: LSB, USB, DSB, CWL, CWU, FM, AM,
+// DIGU, SPEC, DIGL, SAM, DRM.
+// Ported from Thetis clsModeButtonBox (MeterManager.cs:10071+ [v2.10.3.15]).
 class ModeButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
 public:
+    // From Thetis MeterManager.cs:10093 [v2.10.3.15] (Buttons = 12).
+    static constexpr int kModeCount = 12;
+
     explicit ModeButtonItem(QObject* parent = nullptr);
 
     void setActiveMode(int index);
-    /// R-R3-21: the mode name on button `index` ("LSB" .. "DIGU"), empty
-    /// outside 0..kModeCount-1. MainWindow maps it to the slice's mode.
+    /// R-R3-21: the mode name on button `index` ("LSB" .. "DRM"), empty
+    /// outside 0..kModeCount-1.
     static QString modeLabel(int index);
+    /// The mode button `index` sets: DSPMode::LSB + index. Valid for
+    /// 0..kModeCount-1 only; callers check the range first (outside it
+    /// this returns DSPMode::LSB).
+    static DSPMode modeForIndex(int index);
     int activeMode() const { return m_activeMode; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
@@ -85,7 +98,6 @@ signals:
 private:
     void onButtonClicked(int index, Qt::MouseButton button);
     int m_activeMode{-1};
-    static constexpr int kModeCount = 10;
 };
 
 } // namespace NereusSDR
