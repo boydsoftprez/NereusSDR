@@ -22,6 +22,9 @@
 //                 Multimeter history duration applies only to graphs that
 //                 never set one (followGlobalDurationMs). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - kMaxCapacity: deserialize clamps a loaded capacity to the
+//                 largest one NereusSDR produces. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -117,6 +120,13 @@ class HistoryGraphItem : public MeterItem {
 public:
     // From Thetis clsHistoryItem (MeterManager.cs:16149+)
     static constexpr int kDefaultCapacity = 300;  // 30s at 100ms poll
+    // NereusSDR: the largest capacity NereusSDR itself produces.
+    // setDurationMs at the Multimeter history duration's maximum
+    // (600000 ms, MultimeterPage.cpp spinner range 1000..600000) gives
+    // 600000 / 100 + 1 = 6001, above the item editor's Capacity range
+    // (HistoryGraphItemEditor.cpp, 10..3000). deserialize clamps a loaded
+    // capacity to it, so a pasted record cannot ask for a huge buffer.
+    static constexpr int kMaxCapacity = 6001;
 
     explicit HistoryGraphItem(QObject* parent = nullptr);
 

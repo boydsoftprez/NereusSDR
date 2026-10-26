@@ -769,6 +769,9 @@ nereus_add_test(tst_longpath_instruments)
 # Workspace preview: added copies of the SIGNAL STRENGTH dial (per-copy settings, own source).
 nereus_add_test(tst_smeter_dial_content)
 nereus_add_test(tst_container_document)
+# A saved meter.adcMax entry is kept and shown unavailable; Image and Magic
+# eye records with an empty image path load without a file warning.
+nereus_add_test(tst_container_item_load)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)
