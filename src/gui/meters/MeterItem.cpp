@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - BAR building block: Segments and Solid styles ported from
+//                 renderHBar, a peak hold marker separate from the live
+//                 marker, marker stroke width, ignore history after
+//                 clearHistory(), power limit normalisation for calibrated
+//                 power bars, and the clsBarItem new-item defaults. Saved
+//                 bars keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
 //                 aboveS9Frequency(), a formatValue overload taking the
 //                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
@@ -644,6 +651,20 @@ bool ImageItem::deserialize(const QString& data)
 // From Thetis clsBarItem (MeterManager.cs:20192 field, 21547-21549 addSMeterBar
 // 3-point S-meter calibration, 21638-21640 AddADCMaxMag 3-point ADC curve).
 // ---------------------------------------------------------------------------
+namespace {
+QString barStyleName(BarItem::BarStyle style)
+{
+    switch (style) {
+        case BarItem::BarStyle::Edge:     return QStringLiteral("Edge");
+        case BarItem::BarStyle::Line:     return QStringLiteral("Line");
+        case BarItem::BarStyle::Segments: return QStringLiteral("Segments");
+        case BarItem::BarStyle::Solid:    return QStringLiteral("Solid");
+        case BarItem::BarStyle::Filled:   break;
+    }
+    return QStringLiteral("Filled");
+}
+} // namespace
+
 void BarItem::addScaleCalibration(double value, float normalizedX)
 {
     m_scaleCalibration.insert(value, normalizedX);
@@ -664,6 +685,13 @@ float BarItem::valueToNormalizedX(double value) const
     // raised 20 dB, so the calibrated S9 point (-73) reads -93 dBm.
     // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
     value = aboveS9Adjusted(m_bindingId, value, m_aboveS9Frequency);
+    // A calibrated forward or reverse power bar reads against its power
+    // limit. From Thetis MeterManager.cs:41053-41056 [v2.10.3.15] (getPerc;
+    // MaxPower only for PWR / REVERSE_PWR, MeterManager.cs:28292)
+    if ((m_bindingId == MeterBinding::TxPower || m_bindingId == MeterBinding::TxReversePower)
+        && m_powerLimit > 0.0) {
+        value *= 100.0 / m_powerLimit;
+    }
 
     // Clamp below the first waypoint.
     auto itFirst = m_scaleCalibration.constBegin();
@@ -689,6 +717,67 @@ float BarItem::valueToNormalizedX(double value) const
     return static_cast<float>(x0 + (x1 - x0) * t);
 }
 
+BarItem::SegmentGeometry BarItem::segmentGeometry(float w, float h)
+{
+    // From Thetis MeterManager.cs:37458-37470 [v2.10.3.15]
+    float fBarHeight = h * 0.85f; // same as base line % in render scale
+
+    int segmentBlockSize = static_cast<int>(w * 0.02f);
+    if (segmentBlockSize < 7) { segmentBlockSize = 7; } // minimum 7 pixels
+    const int segmentGapSize = static_cast<int>(static_cast<float>(segmentBlockSize) * 0.2f);
+    if (segmentBlockSize < 2) { segmentBlockSize = 2; } // minimum 2 pixels
+
+    const int segmentStep = segmentBlockSize + segmentGapSize; // step, to include block + gap
+    return SegmentGeometry{segmentBlockSize, segmentGapSize, segmentStep, fBarHeight};
+}
+
+void BarItem::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+void BarItem::setPowerLimit(double watts)
+{
+    // From Thetis MeterManager.cs:7136-7137 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(watts >= kMinBarPowerLimitW)) {
+        m_powerLimit = kDefaultBarPowerLimitW;
+        return;
+    }
+    m_powerLimit = std::min(watts, kMaxBarPowerLimitW);
+}
+
+void BarItem::clearHistory()
+{
+    // From Thetis MeterManager.cs:21450-21457 [v2.10.3.15] (ClearHistory)
+    m_history.clear();
+    // With no history Thetis's peak (MaxHistory) is the live value.
+    m_peakValue = m_smoothedValue;
+    const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+    m_ignoringNext = m_ignoreHistoryMs / interval;  // ignore next N readings to make up 2 second of ignore
+}
+
+void BarItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const BarItemThetisDefaults& d = kBarItemThetisDefaults;
+    m_historyDurationMs    = d.historyDurationMs;
+    m_ignoreHistoryMs      = d.ignoreHistoryMs;
+    m_showHistory          = d.showHistory;
+    m_showValue            = d.showValue;
+    m_showPeakValue        = d.showPeakValue;
+    m_barStyle             = d.style;
+    m_barColor             = QColor::fromRgb(d.colour);
+    m_barRedColor          = QColor::fromRgb(d.colourHigh);
+    m_markerColour         = QColor::fromRgb(d.markerColour);
+    m_peakHoldMarkerColour = QColor::fromRgb(d.peakHoldMarkerColour);
+    m_peakFontColour       = QColor::fromRgb(d.peakValueColour);
+    m_strokeWidth          = d.strokeWidth;
+    m_peakHold             = d.peakHold;
+    m_showMarker           = d.showMarker;
+}
+
 void BarItem::setValue(double v)
 {
     MeterItem::setValue(v);
@@ -708,6 +797,12 @@ void BarItem::setValue(double v)
     } else {
         m_smoothedValue = static_cast<double>(m_decayRatio) * v
                         + (1.0 - static_cast<double>(m_decayRatio)) * m_smoothedValue;
+    }
+    // After clearHistory() the next readings move the bar but not the
+    // history or the peak. From Thetis MeterManager.cs:21367-21378 [v2.10.3.15]
+    if (m_ignoringNext > 0) {
+        --m_ignoringNext;
+        return;
     }
     // Phase A1/A3 — peak-hold tracking. When PeakHoldDecayRatio == 0 the
     // peak sticks at the highest value ever seen (A1 behavior). When > 0,
@@ -806,7 +901,9 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // of the bar rect instead of a filled quad. Matches Thetis
     // BarStyle.Line where the "bar" is really a baseline + markers +
     // labels composition.
-    if (m_barStyle == BarStyle::Line) {
+    if (m_barStyle == BarStyle::Segments || m_barStyle == BarStyle::Solid) {
+        paintSegmentsOrSolid(p, rect, fracLive);
+    } else if (m_barStyle == BarStyle::Line) {
         p.setPen(QPen(fillColor, 2));
         const int baselineY = rect.bottom() - 2;
         p.drawLine(rect.left(), baselineY,
@@ -822,18 +919,20 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Phase A3 — live value marker + peak-hold marker (Thetis
     // MeterManager.cs:21543-21544). Thin vertical lines at the live
-    // smoothed X and the separate peak X.
+    // smoothed X and the separate peak X. Each has its own switch
+    // (ShowMarker, PeakHold; MeterManager.cs:37600-37606 [v2.10.3.15]) and
+    // both use StrokeWidth. The live marker is drawn first, as NereusSDR
+    // always has, so a saved bar paints as before.
     if (m_showMarker) {
-        p.setPen(QPen(m_markerColour, 2));
+        p.setPen(QPen(m_markerColour, static_cast<double>(m_strokeWidth)));
         const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
         p.drawLine(liveX, rect.top(), liveX, rect.bottom());
-
-        if (std::isfinite(m_peakValue)) {
-            p.setPen(QPen(m_peakHoldMarkerColour, 2));
-            const float fracPeak = valueToNormalizedX(m_peakValue);
-            const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
-            p.drawLine(peakX, rect.top(), peakX, rect.bottom());
-        }
+    }
+    if (peakHold() && std::isfinite(m_peakValue)) {
+        p.setPen(QPen(m_peakHoldMarkerColour, static_cast<double>(m_strokeWidth)));
+        const float fracPeak = valueToNormalizedX(m_peakValue);
+        const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
+        p.drawLine(peakX, rect.top(), peakX, rect.bottom());
     }
 
     // Phase A1 / E — ShowValue / ShowPeakValue text labels. ShowValue
@@ -868,6 +967,81 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
             p.drawText(rect.right() - w - 2,
                        rect.top() + fm.ascent(),
                        s);
+        }
+    }
+}
+
+// Segments and SolidFilled bodies.
+// From Thetis MeterManager.cs:37458-37598 [v2.10.3.15] (renderHBar). The
+// low colour is barColor(), the high colour barRedColor(); the high
+// transition is redThreshold() on the bar's scale (Thetis HighPoint).
+void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLive)
+{
+    const float x = static_cast<float>(rect.left());
+    const float y = static_cast<float>(rect.top());
+    const float w = static_cast<float>(rect.width());
+    const float h = static_cast<float>(rect.height());
+    const float xPos = x + fracLive * w;
+
+    const SegmentGeometry g = segmentGeometry(w, h);
+    const float segmentBlockSize = static_cast<float>(g.blockSize);
+    const float segmentStep = static_cast<float>(g.step);
+    const float fBarHeight = g.barHeight;
+
+    float fHighXPosTransition = std::numeric_limits<float>::max();
+    const double scaleTop = m_scaleCalibration.isEmpty()
+        ? m_maxVal : std::prev(m_scaleCalibration.constEnd()).key();
+    if (m_redThreshold < scaleTop) {
+        // From Thetis MeterManager.cs:37482 [v2.10.3.15]
+        fHighXPosTransition = x + (w * valueToNormalizedX(m_redThreshold));
+    }
+
+    const auto fill = [&p, y, fBarHeight](float left, float width, const QColor& c) {
+        if (width > 0.0f) {
+            p.fillRect(QRectF(left, y, width, fBarHeight), c);
+        }
+    };
+
+    if (m_barStyle == BarStyle::Solid) {
+        // From Thetis MeterManager.cs:37532-37547 [v2.10.3.15]
+        const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
+        fill(x, fEnd - x, m_barColor);
+        if (fEnd < xPos) // the area in the high range
+        {
+            // complete the bar
+            fill(fEnd, xPos - fEnd, m_barRedColor);
+        }
+        return;
+    }
+
+    // Segments. From Thetis MeterManager.cs:37553-37597 [v2.10.3.15]
+    float i;
+    const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
+
+    for (i = x; i < fEnd - segmentStep; i += segmentStep) {
+        fill(i, segmentBlockSize, m_barColor);
+    }
+
+    // complete the end sliver up to the high transition
+    if (i < fEnd) {
+        fill(i, fEnd - i, m_barColor);
+    }
+
+    if (xPos > fHighXPosTransition) // the area in the high range
+    {
+        // sliver to complete block at high transition
+        if (i < fEnd) {
+            fill(fEnd, i + segmentBlockSize - fEnd, m_barRedColor);
+        }
+
+        float j;
+        for (j = i + segmentStep; j < xPos - segmentStep; j += segmentStep) {
+            fill(j, segmentBlockSize, m_barRedColor);
+        }
+
+        // complete the end sliver
+        if (j < xPos) {
+            fill(j, xPos - j, m_barRedColor);
         }
     }
 }
@@ -975,9 +1149,7 @@ QString BarItem::serialize() const
         .arg(m_redThreshold)
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio))
-        .arg(m_barStyle == BarStyle::Edge ? QStringLiteral("Edge")
-            : (m_barStyle == BarStyle::Line ? QStringLiteral("Line")
-                                            : QStringLiteral("Filled")))
+        .arg(barStyleName(m_barStyle))
         .arg(m_edgeBgColor.name(QColor::HexArgb))
         .arg(m_edgeLowColor.name(QColor::HexArgb))
         .arg(m_edgeHighColor.name(QColor::HexArgb))
@@ -1017,6 +1189,12 @@ QString BarItem::serialize() const
     if (m_peakFontColour.isValid()) {
         base += m_peakFontColour.name(QColor::HexArgb);
     }
+    // Tail fields 32-35: peakHold | ignoreHistoryMs | powerLimit | strokeWidth.
+    // Readers before these stop at field 31.
+    base += QLatin1Char('|') + (peakHold() ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + QString::number(m_ignoreHistoryMs);
+    base += QLatin1Char('|') + QString::number(m_powerLimit);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_strokeWidth));
     return base;
 }
 
@@ -1050,6 +1228,10 @@ bool BarItem::deserialize(const QString& data)
             m_barStyle = BarStyle::Edge;
         } else if (parts[15] == QLatin1String("Line")) {
             m_barStyle = BarStyle::Line;
+        } else if (parts[15] == QLatin1String("Segments")) {
+            m_barStyle = BarStyle::Segments;
+        } else if (parts[15] == QLatin1String("Solid")) {
+            m_barStyle = BarStyle::Solid;
         } else {
             m_barStyle = BarStyle::Filled;
         }
@@ -1126,6 +1308,30 @@ bool BarItem::deserialize(const QString& data)
             QColor pfc(pfcStr);
             if (pfc.isValid()) { m_peakFontColour = pfc; }
         }
+    }
+
+    // Fields 32-35. A record without them keeps the legacy look: the
+    // peak hold marker follows showMarker, nothing is ignored, the power
+    // limit is 100 W (no scaling) and markers are 2 px.
+    m_peakHold.reset();
+    if (parts.size() >= 33
+        && (parts[32] == QLatin1String("1") || parts[32] == QLatin1String("0"))) {
+        m_peakHold = (parts[32] == QLatin1String("1"));
+    }
+    if (parts.size() >= 34) {
+        bool okI = true;
+        const int ms = parts[33].toInt(&okI);
+        if (okI) { setIgnoreHistoryMs(ms); }
+    }
+    if (parts.size() >= 35) {
+        bool okP = true;
+        const double watts = parts[34].toDouble(&okP);
+        if (okP) { setPowerLimit(watts); }
+    }
+    if (parts.size() >= 36) {
+        bool okS = true;
+        const float sw = parts[35].toFloat(&okS);
+        if (okS) { setStrokeWidth(sw); }
     }
 
     return true;

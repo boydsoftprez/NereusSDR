@@ -572,6 +572,10 @@ private slots:
         model.radioStatus().setPowerReadings(50,2,1.5); poller.handOutTxReadingForTest(MeterBinding::TxMic,7);
         const auto entryFor=[&](int binding,const QString& session) {
             auto entry=registry.makeEntry("TEXT"); entry.context["bindingId"]=binding; entry.context["sliceId"]=999;
+            // New items take the 100 ms update interval (per-item update
+            // interval task); this test polls twice within it, so its items
+            // take every reading, as a saved item without the key does.
+            entry.context.remove(QStringLiteral("updateIntervalMs"));
             if(!session.isEmpty()) { entry.context["sessionId"]=session; } return entry;
         };
         for(int binding:{MeterBinding::TxPower,MeterBinding::TxMic,MeterBinding::HwVolts}) {

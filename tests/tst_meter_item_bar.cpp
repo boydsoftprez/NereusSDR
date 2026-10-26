@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - BAR building block: Segments and Solid geometry, peak hold
+//                 marker on its own, peak value colour, power limit, ignore
+//                 history, a 32-field saved record and the new-item
+//                 defaults. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -57,10 +62,29 @@ mw0lge@grange-lane.co.uk
 #include <QImage>
 #include <QPainter>
 
+#include "gui/containers/ContainerContentRegistry.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"  // MeterBinding namespace
 
+#include <memory>
+
 using namespace NereusSDR;
+
+namespace {
+
+// A BAR record as serialize() wrote it before the BAR options were
+// appended: 32 fields (0-31), live marker on, Line style.
+const QString kSavedBar32 = QStringLiteral(
+    "BAR|0|0|1|1|-1|0|H|-140|0"
+    "|#ff00b4d8|#ffff4444|1000|0.5|0.25"
+    "|Line|#ff000000|#ffffffff|#ffff0000|#ffffff00"
+    "|1|1|#ffffff00"
+    "|0|#80ff0000|4000"
+    "|1|#ff00ff00|#ffff00ff|0"
+    "|"
+    "|");
+
+} // namespace
 
 class TstMeterItemBar : public QObject
 {
@@ -507,6 +531,340 @@ private slots:
         BarItem d;
         QVERIFY(d.deserialize(c.serialize()));
         QCOMPARE(d.peakFontColour(), QColor(Qt::yellow));
+    }
+
+    // ---- BAR building block: styles, peak hold, power limit, defaults ----
+
+    void saved32FieldRecord_keepsLegacyValues()
+    {
+        QCOMPARE(kSavedBar32.split(QLatin1Char('|')).size(), 32);
+        BarItem b;
+        QVERIFY(b.deserialize(kSavedBar32));
+        // The literal is today's format: it serializes back unchanged.
+        QCOMPARE(b.serialize().section(QLatin1Char('|'), 0, 31), kSavedBar32);
+        QCOMPARE(b.barStyle(), BarItem::BarStyle::Line);
+        QCOMPARE(b.showMarker(), true);
+        QCOMPARE(b.peakHold(), true);   // followed showMarker before
+        QCOMPARE(b.ignoreHistoryMs(), 0);
+        QCOMPARE(b.powerLimit(), 100.0);
+        QCOMPARE(b.strokeWidth(), 2.0f);
+        QCOMPARE(b.peakValueColour(), QColor(0xff, 0xff, 0x00));  // falls back to font colour
+
+        // Live marker off in a saved record: no peak marker either.
+        QString noMarker = kSavedBar32;
+        QStringList parts = noMarker.split(QLatin1Char('|'));
+        parts[26] = QStringLiteral("0");
+        BarItem c;
+        QVERIFY(c.deserialize(parts.join(QLatin1Char('|'))));
+        QCOMPARE(c.peakHold(), false);
+
+        // An unrecognised field 32 is not a peak hold choice.
+        BarItem d;
+        QVERIFY(d.deserialize(kSavedBar32 + QStringLiteral("|future")));
+        QCOMPARE(d.peakHold(), true);
+    }
+
+    void saved32FieldRecord_paintsBothMarkers()
+    {
+        QImage img(200, 40, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            QVERIFY(b.deserialize(kSavedBar32));
+            b.setShowValue(false);
+            b.setShowPeakValue(false);
+            for (int i = 0; i < 20; ++i) { b.setValue(-20.0); }
+            for (int i = 0; i < 20; ++i) { b.setValue(-100.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        QVERIFY(countMatching(img, img.rect(), QColor(Qt::green), 60) > 0);
+        QVERIFY(countMatching(img, img.rect(), QColor(Qt::magenta), 60) > 0);
+        // 2 px markers: the live marker covers two columns.
+        int greenColumns = 0;
+        for (int x = 0; x < img.width(); ++x) {
+            if (countMatching(img, QRect(x, 20, 1, 1), QColor(Qt::green), 60) > 0) { ++greenColumns; }
+        }
+        QCOMPARE(greenColumns, 2);
+    }
+
+    void segmentGeometry_matchesThetisOn200x20()
+    {
+        const BarItem::SegmentGeometry g = BarItem::segmentGeometry(200.0f, 20.0f);
+        QCOMPARE(g.blockSize, 7);     // max(7, int(200 * 0.02) = 4)
+        QCOMPARE(g.gapSize, 1);       // int(7 * 0.2)
+        QCOMPARE(g.step, 8);
+        QCOMPARE(g.barHeight, 17.0f); // 20 * 0.85
+        const BarItem::SegmentGeometry wide = BarItem::segmentGeometry(1000.0f, 40.0f);
+        QCOMPARE(wide.blockSize, 20);
+        QCOMPARE(wide.gapSize, 4);
+        QCOMPARE(wide.step, 24);
+    }
+
+    static BarItem* fullBar(BarItem& b, BarItem::BarStyle style)
+    {
+        b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        b.setRange(0.0, 100.0);
+        b.setBarStyle(style);
+        b.setBarColor(QColor(Qt::cyan));
+        b.setBarRedColor(QColor(Qt::magenta));
+        b.setAttackRatio(1.0f);
+        b.setValue(100.0);
+        return &b;
+    }
+
+    void segments_paintBlocksGapsAndHeight()
+    {
+        QImage img(200, 20, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            fullBar(b, BarItem::BarStyle::Segments)->paint(p, img.width(), img.height());
+        }
+        QCOMPARE(img.pixelColor(0, 5), QColor(Qt::cyan));
+        QCOMPARE(img.pixelColor(6, 5), QColor(Qt::cyan));
+        QCOMPARE(img.pixelColor(7, 5), QColor(Qt::black));   // gap
+        QCOMPARE(img.pixelColor(8, 5), QColor(Qt::cyan));    // next block
+        QCOMPARE(img.pixelColor(15, 5), QColor(Qt::black));  // gap
+        QCOMPARE(img.pixelColor(3, 16), QColor(Qt::cyan));   // last bar row
+        QCOMPARE(img.pixelColor(3, 17), QColor(Qt::black));  // bar is 17 high
+        QCOMPARE(countMatching(img, img.rect(), QColor(Qt::magenta), 10), 0);
+    }
+
+    void solid_fillsLowBelowAndHighAboveTransition()
+    {
+        QImage img(200, 20, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRedThreshold(50.0);
+            fullBar(b, BarItem::BarStyle::Solid)->paint(p, img.width(), img.height());
+        }
+        QCOMPARE(img.pixelColor(7, 5), QColor(Qt::cyan));     // no gaps
+        QCOMPARE(img.pixelColor(99, 5), QColor(Qt::cyan));
+        QCOMPARE(img.pixelColor(100, 5), QColor(Qt::magenta));
+        QCOMPARE(img.pixelColor(199, 5), QColor(Qt::magenta));
+        QCOMPARE(img.pixelColor(50, 17), QColor(Qt::black));
+    }
+
+    void segments_switchToHighColourAboveTransition()
+    {
+        QImage img(200, 20, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRedThreshold(50.0);
+            fullBar(b, BarItem::BarStyle::Segments)->paint(p, img.width(), img.height());
+        }
+        QCOMPARE(img.pixelColor(0, 5), QColor(Qt::cyan));
+        QCOMPARE(img.pixelColor(160, 5), QColor(Qt::magenta));
+        QCOMPARE(img.pixelColor(167, 5), QColor(Qt::black));  // gap stays in the high range
+    }
+
+    void newStyles_roundTrip()
+    {
+        for (BarItem::BarStyle style : {BarItem::BarStyle::Segments, BarItem::BarStyle::Solid}) {
+            BarItem a;
+            a.setBarStyle(style);
+            BarItem b;
+            QVERIFY(b.deserialize(a.serialize()));
+            QCOMPARE(b.barStyle(), style);
+        }
+        // Existing values keep their numbers.
+        QCOMPARE(static_cast<int>(BarItem::BarStyle::Filled), 0);
+        QCOMPARE(static_cast<int>(BarItem::BarStyle::Edge), 1);
+        QCOMPARE(static_cast<int>(BarItem::BarStyle::Line), 2);
+    }
+
+    void peakHoldMarker_drawsWithLiveMarkerOff()
+    {
+        QImage img(200, 40, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setBarColor(QColor(Qt::darkGray));
+            b.setRange(-140.0, 0.0);
+            b.setShowMarker(false);
+            b.setPeakHold(true);
+            b.setMarkerColour(QColor(Qt::green));
+            b.setPeakHoldMarkerColour(QColor(Qt::magenta));
+            QCOMPARE(b.showMarker(), false);
+            QCOMPARE(b.peakHold(), true);
+            for (int i = 0; i < 20; ++i) { b.setValue(-20.0); }
+            for (int i = 0; i < 20; ++i) { b.setValue(-100.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        QVERIFY(countMatching(img, img.rect(), QColor(Qt::magenta), 60) > 0);
+        QCOMPARE(countMatching(img, img.rect(), QColor(Qt::green), 60), 0);
+    }
+
+    void liveMarker_withoutPeakHold()
+    {
+        QImage img(200, 40, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setBarColor(QColor(Qt::darkGray));
+            b.setRange(-140.0, 0.0);
+            b.setShowMarker(true);
+            b.setPeakHold(false);
+            b.setMarkerColour(QColor(Qt::green));
+            b.setPeakHoldMarkerColour(QColor(Qt::magenta));
+            for (int i = 0; i < 20; ++i) { b.setValue(-20.0); }
+            for (int i = 0; i < 20; ++i) { b.setValue(-100.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        QVERIFY(countMatching(img, img.rect(), QColor(Qt::green), 60) > 0);
+        QCOMPARE(countMatching(img, img.rect(), QColor(Qt::magenta), 60), 0);
+    }
+
+    void peakText_usesPeakValueColour()
+    {
+        QImage img(240, 60, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setBarColor(QColor(Qt::darkGray));
+            b.setRange(-140.0, 0.0);
+            b.setShowValue(false);
+            b.setShowPeakValue(true);
+            b.setFontColour(QColor(Qt::yellow));
+            b.setPeakValueColour(QColor(Qt::green));
+            QCOMPARE(b.peakValueColour(), QColor(Qt::green));
+            QCOMPARE(b.peakFontColour(), QColor(Qt::green));
+            for (int i = 0; i < 20; ++i) { b.setValue(-50.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        const QRect topRight(img.width() / 2, 0, img.width() / 2, img.height() / 2);
+        QVERIFY(countMatching(img, topRight, QColor(Qt::green), 50) > 0);
+        QCOMPARE(countMatching(img, img.rect(), QColor(Qt::yellow), 30), 0);
+    }
+
+    void powerLimit_normalisesCalibratedPowerBar()
+    {
+        BarItem b;
+        b.setBindingId(MeterBinding::TxPower);
+        b.addScaleCalibration(0.0, 0.0f);
+        b.addScaleCalibration(50.0, 0.5f);
+        b.addScaleCalibration(100.0, 1.0f);
+        QCOMPARE(b.powerLimit(), 100.0);
+        QCOMPARE(b.valueToNormalizedX(25.0), 0.25f);
+        b.setPowerLimit(50.0);
+        QCOMPARE(b.valueToNormalizedX(25.0), 0.5f);   // the 50% calibration point
+
+        // Reverse power too; other readings are not scaled.
+        b.setBindingId(MeterBinding::TxReversePower);
+        QCOMPARE(b.valueToNormalizedX(25.0), 0.5f);
+        b.setBindingId(MeterBinding::TxAlc);
+        QCOMPARE(b.valueToNormalizedX(25.0), 0.25f);
+    }
+
+    void powerLimit_clampsToSetupRange()
+    {
+        BarItem b;
+        b.setPowerLimit(9000.0);
+        QCOMPARE(b.powerLimit(), 5000.0);
+        b.setPowerLimit(0.1);
+        QCOMPARE(b.powerLimit(), 0.1);
+        b.setPowerLimit(0.0);
+        QCOMPARE(b.powerLimit(), 100.0);  // 0 recovers
+    }
+
+    void ignoreHistory_skipsReadingsAfterClearHistory()
+    {
+        BarItem b;
+        b.setRange(-140.0, 0.0);
+        b.setShowHistory(true);
+        b.setUpdateIntervalMs(100);
+        b.setIgnoreHistoryMs(5000);
+        QCOMPARE(b.ignoreHistoryMs(), 4000);
+        b.setIgnoreHistoryMs(-1);
+        QCOMPARE(b.ignoreHistoryMs(), 0);
+        b.setIgnoreHistoryMs(300);
+        b.setValue(-80.0);
+        QCOMPARE(b.historySampleCount(), 1);
+
+        b.clearHistory();
+        QCOMPARE(b.historySampleCount(), 0);
+        QCOMPARE(b.ignoringReadings(), 3);
+        for (int i = 0; i < 3; ++i) { b.setValue(-10.0); }
+        QCOMPARE(b.historySampleCount(), 0);
+        QVERIFY(b.peakValue() < -10.0);          // the peak waited too
+        b.setValue(-10.0);
+        QCOMPARE(b.historySampleCount(), 1);
+        QCOMPARE(b.peakValue(), -10.0);
+    }
+
+    void newFields_roundTrip()
+    {
+        BarItem a;
+        a.setShowMarker(true);
+        a.setPeakHold(false);
+        a.setIgnoreHistoryMs(1500);
+        a.setPowerLimit(400.0);
+        a.setStrokeWidth(3.0f);
+        a.setPeakValueColour(QColor(0x12, 0x34, 0x56));
+        BarItem b;
+        QVERIFY(b.deserialize(a.serialize()));
+        QCOMPARE(a.serialize().split(QLatin1Char('|')).size(), 36);
+        QCOMPARE(b.peakHold(), false);
+        QCOMPARE(b.ignoreHistoryMs(), 1500);
+        QCOMPARE(b.powerLimit(), 400.0);
+        QCOMPARE(b.strokeWidth(), 3.0f);
+        QCOMPARE(b.peakValueColour(), QColor(0x12, 0x34, 0x56));
+    }
+
+    void makeEntryBar_takesThetisDefaults()
+    {
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("BAR"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry, nullptr));
+        auto* bar = qobject_cast<BarItem*>(item.get());
+        QVERIFY(bar != nullptr);
+        QCOMPARE(bar->historyDurationMs(), 2000);
+        QCOMPARE(bar->ignoreHistoryMs(), 2000);
+        QCOMPARE(bar->showHistory(), false);
+        QCOMPARE(bar->showValue(), true);
+        QCOMPARE(bar->showPeakValue(), true);
+        QCOMPARE(bar->barStyle(), BarItem::BarStyle::Line);
+        QCOMPARE(bar->barColor(), QColor(Qt::red));
+        QCOMPARE(bar->barRedColor(), QColor(0xff, 0xa5, 0x00));   // Orange
+        QCOMPARE(bar->markerColour(), QColor(Qt::yellow));
+        QCOMPARE(bar->peakHoldMarkerColour(), QColor(Qt::red));
+        QCOMPARE(bar->peakValueColour(), QColor(Qt::red));
+        QCOMPARE(bar->strokeWidth(), 3.0f);
+        QCOMPARE(bar->peakHold(), false);
+        QCOMPARE(bar->showMarker(), true);
+        QCOMPARE(bar->updateIntervalMs(), 100);
+        // The table itself.
+        QCOMPARE(kBarItemThetisDefaults.historyDurationMs, 2000);
+        QCOMPARE(kBarItemThetisDefaults.ignoreHistoryMs, 2000);
+        QCOMPARE(QColor::fromRgb(kBarItemThetisDefaults.colourHigh), QColor(0xff, 0xa5, 0x00));
+    }
+
+    void plainBar_keepsLegacyLook()
+    {
+        // A bar built in code (presets) keeps NereusSDR's constructor
+        // values; only makeEntry applies the Thetis defaults.
+        BarItem b;
+        QCOMPARE(b.barStyle(), BarItem::BarStyle::Filled);
+        QCOMPARE(b.ignoreHistoryMs(), 0);
+        QCOMPARE(b.strokeWidth(), 2.0f);
+        QCOMPARE(b.powerLimit(), 100.0);
+        b.setShowMarker(true);
+        QCOMPARE(b.peakHold(), true);
     }
 
     void deserialize_garbled_calibration_field_is_tolerated()
