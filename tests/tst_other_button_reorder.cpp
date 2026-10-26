@@ -19,11 +19,18 @@
 //     the editor restores the first order.
 //   - A copy of the grid (a preview) never reorders another.
 //   - The editor lists every offered button under its Thetis heading,
-//     "Tuning" for "VFOs", with no VFO A / B or RX1 / RX2 in any row.
+//     "Tuning" for "VFOs", with no VFO A / B or RX1 / RX2 in any row; a
+//     row whose feature is not built is disabled with the reason.
+//   - Fix round 1: a reorder on a container's grid is committed to the
+//     workspace document and survives a restart.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 59.
+//                                    AI-assisted via Anthropic Claude
+//                                    Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Task 59 fix round 1: a live reorder
+//                                    is saved; unbuilt rows disabled.
 //                                    AI-assisted via Anthropic Claude
 //                                    Code.
 // =================================================================
@@ -46,6 +53,8 @@
 
 #include "core/AppSettings.h"
 #include "gui/containers/ArrangeHoldFilter.h"
+#include "gui/UnbuiltFeatures.h"
+#include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
@@ -145,6 +154,9 @@ class TstOtherButtonReorder : public QObject {
     Q_OBJECT
 
 private slots:
+    void init() { UnbuiltFeatures::resetForTest(); }
+    void cleanup() { UnbuiltFeatures::resetForTest(); }
+
     // ── Input path ─────────────────────────────────────────────────────
 
     // An Alt press on a grid inside a container reaches the item through
@@ -388,6 +400,91 @@ private slots:
         QVERIFY(loaded.serialize().split(QLatin1Char('|'))[28].isEmpty());
     }
 
+    // Fix round 1: a reorder on a container's grid is written to the
+    // workspace document; saved and loaded again, the order is the same.
+    void aLiveReorderSurvivesARestart()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("reorder-live.xml"));
+        QVector<short> dragged;
+        {
+            AppSettings settings{path};
+            ContainerWorkspaceStore store{settings};
+            QWidget dock;
+            QSplitter splitter;
+            ContainerContentRegistry registry;
+            ContainerManager manager{&dock, &splitter};
+            manager.setWorkspaceAdapter(&store, &registry);
+            dock.resize(1200, 900);
+
+            ContainerDocument container;
+            container.id = QStringLiteral("grid");
+            container.name = QStringLiteral("grid");
+            container.layout = ContentLayout::VerticalStack;
+            container.geometry = QRect(10, 20, 600, 600);
+            ContentEntry entry = registry.makeEntry(QStringLiteral("OTHERBTNS"));
+            entry.id = QStringLiteral("grid-buttons");
+            container.contents.append(entry);
+            WorkspaceDocument document;
+            document.containers.append(container);
+            document.mainContainerId = container.id;
+            QCOMPARE(manager.commitWorkspace(document, 0).status, CommitStatus::Saved);
+
+            const auto liveGrid = [&manager]() -> OtherButtonItem* {
+                ContainerContentHost* host = manager.contentHost(QStringLiteral("grid"));
+                if (!host) { return nullptr; }
+                for (MeterWidget* meter : host->meterSurfaces()) {
+                    for (MeterItem* item : meter->items()) {
+                        if (auto* other = qobject_cast<OtherButtonItem*>(item)) { return other; }
+                    }
+                }
+                return nullptr;
+            };
+            QVERIFY(QTest::qWaitFor([&] { return liveGrid() != nullptr; }, 5000));
+            OtherButtonItem* item = liveGrid();
+            drag(*item, pointOf(*item, Id::Mon), pointOf(*item, Id::Bin), Qt::AltModifier, Qt::NoModifier);
+            dragged = item->buttonMap();
+            QVERIFY(dragged != identityMap());
+
+            const auto savedRecord = [&store] {
+                for (const auto& c : store.snapshot().containers) {
+                    for (const auto& e : c.contents) {
+                        if (e.id == QStringLiteral("grid-buttons")) {
+                            return e.config.value(QStringLiteral("legacyRecord")).toString();
+                        }
+                    }
+                }
+                return QString();
+            };
+            QVERIFY(QTest::qWaitFor([&] {
+                const QStringList fields = savedRecord().split(QLatin1Char('|'));
+                return fields.size() > 28 && !fields[28].isEmpty();
+            }, 5000));
+            // The grid rebuilt from the committed record shows the new order.
+            QVERIFY(QTest::qWaitFor([&] { return liveGrid() && liveGrid()->buttonMap() == dragged; }, 5000));
+            QVERIFY(settings.save());
+        }
+
+        AppSettings reopened{path};
+        reopened.load();
+        ContainerWorkspaceStore store{reopened};
+        QVERIFY(store.loadError().isEmpty());
+        ContainerContentRegistry registry;
+        bool found = false;
+        for (const auto& c : store.snapshot().containers) {
+            for (const auto& e : c.contents) {
+                if (e.id != QStringLiteral("grid-buttons")) { continue; }
+                found = true;
+                std::unique_ptr<MeterItem> loaded(registry.createMeterItem(e, nullptr, ContentRenderMode::Live));
+                auto* other = qobject_cast<OtherButtonItem*>(loaded.get());
+                QVERIFY(other);
+                QCOMPARE(other->buttonMap(), dragged);
+            }
+        }
+        QVERIFY(found);
+    }
+
     // A copy (the settings preview) and the grid it was made from reorder
     // independently.
     void aCopyNeverReordersTheGridItCameFrom()
@@ -449,6 +546,35 @@ private slots:
             headings << section;
         }
         QVERIFY(!texts.contains(QStringLiteral("VFOs")));
+        // Disabled, never hidden: a row whose button's feature is not built
+        // is shown disabled with the reason; the rest are enabled.
+        for (int value = 0; value < OtherButtonItem::kSlotCount; ++value) {
+            auto* check = editor.findChild<QCheckBox*>(QStringLiteral("otherVisible_%1").arg(value));
+            if (!check) { continue; }
+            const auto feature = OtherButtonItem::unbuiltFeatureFor(Id(value));
+            const bool built = !feature || UnbuiltFeatures::isBuilt(*feature);
+            QCOMPARE(check->isEnabled(), built);
+            QCOMPARE(check->toolTip().contains(UnbuiltFeatures::notBuiltReason()), !built);
+            QVERIFY2(OperatorWording::isPlain(check->toolTip()), qPrintable(check->toolTip()));
+        }
+        for (const Id id : {Id::Rx2, Id::Play, Id::Avg, Id::Spectrum, Id::SubRx, Id::Macro0}) {
+            auto* check = editor.findChild<QCheckBox*>(QStringLiteral("otherVisible_%1").arg(int(id)));
+            QVERIFY(check && !check->isEnabled());
+        }
+        for (const Id id : kShown) {
+            auto* check = editor.findChild<QCheckBox*>(QStringLiteral("otherVisible_%1").arg(int(id)));
+            QVERIFY(check && check->isEnabled());
+            QCOMPARE(check->toolTip().contains(UnbuiltFeatures::notBuiltReason()), false);
+        }
+        {
+            // Built, the macro rows come on.
+            UnbuiltFeatures::setBuiltForTest(UnbuiltFeature::MacroButtons, true);
+            OtherButtonItemEditor built;
+            auto* macro = built.findChild<QCheckBox*>(QStringLiteral("otherVisible_%1").arg(int(Id::Macro0)));
+            QVERIFY(macro && macro->isEnabled());
+            UnbuiltFeatures::resetForTest();
+        }
+
         // RX2's row is a slice; VAC is VAX.
         QVERIFY(texts.contains(QStringLiteral("Slice B")));
         QVERIFY(texts.contains(QStringLiteral("VAX 1 on/off")));

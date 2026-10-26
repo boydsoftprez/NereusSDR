@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original editor for existing native action visibility.
 // Modification history (NereusSDR):
+//   2026-10-26 - A row whose button's feature is not built is shown
+//                 disabled with the reason (disabled, never hidden).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Lists every button NereusSDR offers under the Thetis
 //                 options-grid headings, and a Reset layout button.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -11,6 +14,7 @@
 //                 AI-assisted via OpenAI Codex.
 #include "OtherButtonItemEditor.h"
 #include "../ContainerControlCatalog.h"
+#include "gui/UnbuiltFeatures.h"
 #include "gui/meters/OtherButtonCatalog.h"
 #include <QComboBox>
 #include <QCheckBox>
@@ -158,11 +162,19 @@ void OtherButtonItemEditor::buildOtherSpecific()
         }
         auto* check = makeCheckRow(row.caption);
         check->setObjectName(QStringLiteral("otherVisible_%1").arg(int(row.id)));
-        check->setToolTip(row.tooltip);
+        // A button whose feature is not built is never drawn: its row is
+        // shown disabled with the reason (disabled, never hidden).
+        const auto feature = OtherButtonItem::unbuiltFeatureFor(row.id);
+        const bool built = !feature || UnbuiltFeatures::isBuilt(*feature);
+        const QString tooltip = built ? row.tooltip
+            : row.tooltip + QLatin1Char('\n') + UnbuiltFeatures::notBuiltReason();
+        check->setEnabled(built);
+        check->setToolTip(tooltip);
         if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(check))) {
             // Captions such as "A <> B" are words, never markup.
             label->setTextFormat(Qt::PlainText);
-            label->setToolTip(row.tooltip);
+            label->setToolTip(tooltip);
+            label->setEnabled(built);
         }
         m_visibility.append({row.id, check});
         connect(check, &QCheckBox::toggled, this, [this, id = row.id](bool visible) {

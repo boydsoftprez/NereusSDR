@@ -128,6 +128,8 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
+class ContentConfigNotifier;
+
 // Miscellaneous control buttons + 31 macro slots.
 // Ported from Thetis clsOtherButtons (MeterManager.cs:8225+).
 //
@@ -260,6 +262,9 @@ private:
     int m_dragTarget{-1};
     QPointF m_dragPoint;
     bool m_dragMoved{false};
+    // A reorder is saved through this: its container commits the new
+    // record to the layout (ContainerContentHost).
+    ContentConfigNotifier* m_configNotifier{nullptr};
 };
 
 } // namespace NereusSDR

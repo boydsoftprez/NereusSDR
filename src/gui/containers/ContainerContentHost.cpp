@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - A meter item's own config edits (ContentConfigNotifier,
+//                 the other buttons' reorder) are committed to its entry
+//                 the same way. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 - An applet whose capability is off (Power Genius, Tuner
 //                 Genius, RF-Kit, RADE) stays in its place grayed, with its
 //                 reason, instead of being hidden: disabled, never hidden.
@@ -510,6 +514,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         }
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
+        connectItemConfigNotifier(item, entry.id);
         int height = isSingleContainerControl(item) ? singleContainerControlSize().height() : 72;
         const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
         item->setProperty("containerStackGrid",!stackSize.isEmpty());
@@ -618,6 +623,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 if(auto* item=m_registry.createMeterItem(entry,meter.get())) {
                     item->clearStackMetadata();item->setRect(0,0,1,1);
                     item->setProperty("containerEntryId",entry.id);item->setProperty("containerSourceContext",row.context);
+                    connectItemConfigNotifier(item,entry.id);
                     QSize minimum = isSingleContainerControl(item) ? singleContainerControlMinimum() : QSize(24,24);
                     if(auto* face=qobject_cast<BarPresetItem*>(item)) {minimum=face->minimumFaceSize();}
                     if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
@@ -675,6 +681,26 @@ void ContainerContentHost::connectConfigNotifier(QWidget* widget, const QString&
         const QJsonObject config = applied.isValid() ? applied.toJsonObject() : edited;
         const ArrangeResult result = m_arrange->setEntryConfig(entryId, config);
         if (!result.ok) { qCWarning(lcContainer) << "entry" << entryId << "config not saved:" << result.error; }
+    }, Qt::QueuedConnection);
+}
+void ContainerContentHost::connectItemConfigNotifier(MeterItem* item, const QString& entryId)
+{
+    auto* notifier = item->findChild<ContentConfigNotifier*>(QString(), Qt::FindDirectChildrenOnly);
+    if (!notifier) { return; }
+    // Queued, as for a widget: the commit reconciles this host, which
+    // rebuilds the item, and must not run inside the item's own mouse
+    // handling. A host with no arrange controller holds a copy (a
+    // settings preview): the edit stays on that copy.
+    connect(notifier, &ContentConfigNotifier::configEdited, this, [this, entryId](const QJsonObject& edited) {
+        if (!m_arrange) { return; }
+        for (const ContentEntry& entry : std::as_const(m_document.contents)) {
+            if (entry.id != entryId) { continue; }
+            QJsonObject config = entry.config;
+            for (auto it = edited.constBegin(); it != edited.constEnd(); ++it) { config.insert(it.key(), it.value()); }
+            const ArrangeResult result = m_arrange->setEntryConfig(entryId, config);
+            if (!result.ok) { qCWarning(lcContainer) << "entry" << entryId << "config not saved:" << result.error; }
+            return;
+        }
     }, Qt::QueuedConnection);
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const

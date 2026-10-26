@@ -1,6 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-26 - A meter item's own config edits (ContentConfigNotifier,
+//                 the other buttons' reorder) are committed to its entry
+//                 the same way. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - The container header mode is Shown or Hidden. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: setTopOverlayInset keeps overlaid
@@ -106,6 +110,9 @@ protected:
 private:
     void reconcileFreeCanvas(const ContainerDocument&);
     void connectConfigNotifier(QWidget* widget, const QString& entryId);
+    // A meter item with a ContentConfigNotifier child: the keys it emits
+    // replace those of its entry's config, committed like a widget's.
+    void connectItemConfigNotifier(MeterItem* item, const QString& entryId);
     void updateGrips();
     void scheduleStackProjection();
     void projectStackRows();

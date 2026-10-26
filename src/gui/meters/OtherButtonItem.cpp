@@ -127,6 +127,9 @@ mw0lge@grange-lane.co.uk
 
 #include "OtherButtonCatalog.h"
 #include "core/LogCategories.h"
+#include "gui/containers/ContainerContentRegistry.h"
+
+#include <QJsonObject>
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -214,6 +217,7 @@ OtherButtonItem::OtherButtonItem(QObject* parent)
     applyAllSlots();
 
     connect(this, &ButtonBoxItem::buttonClicked, this, &OtherButtonItem::onButtonClicked);
+    m_configNotifier = new ContentConfigNotifier(this);
 }
 
 bool OtherButtonItem::isValidId(int id)
@@ -564,6 +568,9 @@ bool OtherButtonItem::handleMouseRelease(QMouseEvent* event, int widgetW, int wi
         //Debug.Print($"{_dragging_index} to {_last_draged_to}");
         // [original inline comment from MeterManager.cs:9381]
         setButtonMap(map);
+        // The new order is saved with the layout.
+        emit m_configNotifier->configEdited(
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()}});
     }
     return true;
 }
