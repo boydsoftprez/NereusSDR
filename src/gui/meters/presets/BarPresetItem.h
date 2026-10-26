@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - typeIdForFlavor, the one flavor-to-type conversion.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - TxStage and txStage(): the TX stage an EQ, Leveler,
 //                 Leveler Gain, CFC, CFC Gain or Compressor bar shows;
 //                 applyTxStageState() dims those bars while their stage is
@@ -91,6 +93,10 @@ public:
     void configureAsAlc();
     void configureAsCustom(int bindingId, double minV, double maxV, const QString& label);
     QString typeId() const;
+    // The container type a flavor names: Custom is meter.customBar, every
+    // other known flavor meter.<flavor> with its first letter lowercased
+    // (AdcMax: meter.adcMax). Empty for an unknown flavor.
+    static QString typeIdForFlavor(const QString& flavor);
     static QStringList variants();
     bool configureVariant(const QString& flavor);
     // New items (makeEntry) take the kBarPresetThetisDefaults row for their

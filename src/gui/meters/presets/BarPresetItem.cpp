@@ -92,6 +92,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - typeIdForFlavor: the one flavor-to-type conversion, shared
+//                 by typeId(), the content registry and the legacy importer.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "BarPresetItem.h"
 #include "PresetGeometry.h"
@@ -316,7 +319,12 @@ void BarPresetItem::setPowerScale(int limitWatts, double topWatts) {
     m_radioRatingW=limitWatts;
     if(isPowerFlavor() && m_powerLimitW<kMinBarPowerLimitW) { updatePowerScale(); }
 }
-QString BarPresetItem::typeId() const { if(m_flavor=="Custom") { return "meter.customBar"; } QString name=m_flavor; name[0]=name[0].toLower(); return "meter."+name; }
+QString BarPresetItem::typeIdForFlavor(const QString& flavor) {
+    if(flavor=="Custom") { return "meter.customBar"; }
+    if(flavor!="Mic" && flavor!="Alc" && !variants().contains(flavor)) { return {}; }
+    QString name=flavor; name[0]=name[0].toLower(); return "meter."+name;
+}
+QString BarPresetItem::typeId() const { return typeIdForFlavor(m_flavor); }
 QSet<int> BarPresetItem::readingBindings() const {
     QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); }
     // The provider-less ADC maximum bar keeps its reason channel, so the

@@ -1,5 +1,15 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - A BarPreset entry is judged on the bar its flavor names:
+//                 a stored ADC maximum bar (BarPreset, flavor AdcMax) is
+//                 unavailable with its reason and is never built live. One
+//                 flavor-to-type helper (BarPresetItem::typeIdForFlavor).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - meter.adcMax stays available here (its bar veils itself
+//                 with its reason), so the entry check builds a stored ADC
+//                 maximum bar as that veiled bar; the check still holds for
+//                 any bar type marked unavailable. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I5, I9): withNewItemIdentity; a new
 //                 frequency instrument's second line is the transmit slice
 //                 ("tx"). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -138,7 +148,7 @@ std::unique_ptr<MeterItem> allocate(const QString& type) {
     if(type=="meter.contest" || type=="ContestPreset") { return std::make_unique<ContestPresetItem>(); }
     if(type=="meter.sMeter" || type=="SMeterPreset") { return std::make_unique<SMeterPresetItem>(); }
     if(type=="meter.spacer") { return std::make_unique<SpacerItem>(); }
-    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); if(type=="meter."+name) { auto face=std::make_unique<BarPresetItem>(); face->configureVariant(variant); return face; } }
+    for(const QString& variant:BarPresetItem::variants()) { if(type==BarPresetItem::typeIdForFlavor(variant)) { auto face=std::make_unique<BarPresetItem>(); face->configureVariant(variant); return face; } }
     if (type == QLatin1String("meter.mic") || type == QLatin1String("meter.alc") || type == QLatin1String("meter.customBar") || type == QLatin1String("BarPreset")) {
         auto face=std::make_unique<BarPresetItem>();
         if(type==QLatin1String("meter.mic")) { face->configureAsMic(); }
@@ -193,6 +203,21 @@ QString catalogType(const QString& type)
 {
     const QHash<QString,QString> aliases{{"BarPreset","meter.customBar"},{"PowerSwrPreset","meter.powerSwr"},{"AnanMM","meter.ananMulti"},{"CrossNeedle","meter.crossNeedle"},{"MagicEyePreset","meter.magicEye"},{"SignalTextPreset","meter.signalText"},{"HistoryGraphPreset","meter.historyGraph"},{"VfoDisplayPreset","meter.vfoDisplay"},{"ClockPreset","meter.clock"},{"ContestPreset","meter.contest"},{"SMeterPreset","meter.sMeter"}};
     return aliases.value(type,type);
+}
+// The type an entry's content resolves to. BarPreset (and its catalog type,
+// the custom bar) is the bar the record's flavor names; the properties win
+// over the legacy record, as createMeterItem applies them. An unknown
+// flavor keeps the entry's own type.
+QString resolvedType(const ContentEntry& entry)
+{
+    if (catalogType(entry.typeId) != QLatin1String("meter.customBar")) { return entry.typeId; }
+    QString flavor = entry.config.value(QStringLiteral("properties")).toObject().value(QStringLiteral("flavor")).toString();
+    if (flavor.isEmpty()) {
+        const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
+        flavor = QJsonDocument::fromJson(raw.toUtf8()).object().value(QStringLiteral("flavor")).toString();
+    }
+    const QString type = BarPresetItem::typeIdForFlavor(flavor);
+    return type.isEmpty() ? entry.typeId : type;
 }
 const char* kEntryProperty = "containerContentEntry";
 }
@@ -304,6 +329,14 @@ QString ContainerContentRegistry::groupTitle(ContentGroup group)
     }
     return {};
 }
+bool ContainerContentRegistry::isAvailable(const ContentEntry& entry) const
+{
+    return isAvailable(resolvedType(entry));
+}
+QString ContainerContentRegistry::unavailableReason(const ContentEntry& entry) const
+{
+    return unavailableReason(resolvedType(entry));
+}
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
     // Every type is listed under one heading (ContentGroup); the titles are
@@ -349,9 +382,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
         {QStringLiteral("ReversePwr"), QStringLiteral("Reverse power bar")},
         {QStringLiteral("Swr"), QStringLiteral("SWR bar")}};
     for (const QString& variant : BarPresetItem::variants()) {
-        QString name = variant;
-        name[0] = name[0].toLower();
-        add(QStringLiteral("meter.") + name, barTitles.value(variant, variant + QStringLiteral(" bar")),
+        add(BarPresetItem::typeIdForFlavor(variant), barTitles.value(variant, variant + QStringLiteral(" bar")),
             ContentGroup::ReadyMadeMeters);
     }
     add(QStringLiteral("meter.mic"), QStringLiteral("Mic bar"), ContentGroup::ReadyMadeMeters);
@@ -464,7 +495,8 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
 QString ContainerContentRegistry::validateEntry(const ContentEntry& entry) const {
     // Unavailable records are valid recoverable data, never editing failures.
     if (entry.extensions.contains(QStringLiteral("unavailableReason"))) { return {}; }
-    for (const auto& descriptor : descriptors()) { if (descriptor.typeId == catalogType(entry.typeId) && !descriptor.available) { return {}; } }
+    const QString type = catalogType(resolvedType(entry));
+    for (const auto& descriptor : descriptors()) { if (descriptor.typeId == type && !descriptor.available) { return {}; } }
     if (!allocate(entry.typeId)) { return {}; }
     std::unique_ptr<MeterItem> item(createMeterItem(entry, nullptr, ContentRenderMode::Validation));
     return item ? QString() : QStringLiteral("Invalid legacy %1 record").arg(entry.typeId);
@@ -472,8 +504,10 @@ QString ContainerContentRegistry::validateEntry(const ContentEntry& entry) const
 MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, QObject* parent,
                                                    ContentRenderMode mode) const {
     // Re-evaluate current support; a stored explanation is not a permanent veto.
+    // Judged on the resolved type: a BarPreset entry is the bar its flavor names.
+    const QString type = catalogType(resolvedType(entry));
     for (const auto& descriptor : descriptors()) {
-        if (descriptor.typeId == catalogType(entry.typeId) && !descriptor.available) { return nullptr; }
+        if (descriptor.typeId == type && !descriptor.available) { return nullptr; }
     }
     auto item = allocate(entry.typeId);
     if (!item) { return nullptr; }
@@ -625,7 +659,7 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
             return view;
         }
     }
-    if (!entry.typeId.startsWith("applet:") && isAvailable(entry.typeId)) {
+    if (!entry.typeId.startsWith("applet:") && isAvailable(entry)) {
         auto meter=std::make_unique<MeterWidget>();
         if (auto* item=createMeterItem(entry,meter.get(),ContentRenderMode::Preview)) {
             meter->addItem(item); meter->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -638,7 +672,7 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
         // The container's background (ContainerPreviewWidget) shows through.
         tile->setStyleSheet("background:transparent;color:#c8d8e8;border:1px solid #203040;");
     }
-    const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
+    const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry) ? unavailableReason(entry)
         : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("This applet keeps its current radio and slice. Preview controls are disabled."))
         : tr("Unsupported configuration; original data retained."));
     auto* title=new QLabel(entry.name+QStringLiteral(" — ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);

@@ -5,6 +5,10 @@
 //                 records with an empty image path load without a file
 //                 warning. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - meter.adcMax is available on the container parity branch:
+//                 the saved entry is kept with its record and its bar is
+//                 built and veiled with its reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QColor>
 #include <QImage>
@@ -27,8 +31,9 @@
 using namespace NereusSDR;
 
 namespace {
-const QString kAdcMaxReason =
-    QStringLiteral("ADC maximum magnitude has no sanctioned reading provider");
+// The reason the provider-less ADC maximum bar veils itself with
+// (BarPresetItem.cpp adcMaxUnavailableText).
+const QString kAdcMaxReason = QStringLiteral("ADC magnitude is not available");
 
 QStringList typeIds(const QVector<ContentEntry>& contents)
 {
@@ -43,21 +48,20 @@ class TstContainerItemLoad : public QObject
     Q_OBJECT
 
 private slots:
-    // The ADC maximum magnitude bar is registered unavailable. A saved
-    // entry of that type is kept through a save and a reload, keeps its
-    // record, and shows as unavailable with its reason, like any other
-    // unavailable type.
-    void savedAdcMaxEntryIsKeptAndShownUnavailable()
+    // The ADC maximum magnitude bar has no reading yet. It is placed like
+    // its siblings and its bar veils itself with the reason. A saved entry
+    // of that type is kept through a save and a reload, keeps its record,
+    // and is built as that veiled bar.
+    void savedAdcMaxEntryIsKeptAndVeiled()
     {
         ContainerContentRegistry registry;
-        QVERIFY(!registry.isAvailable(QStringLiteral("meter.adcMax")));
-        QCOMPARE(registry.unavailableReason(QStringLiteral("meter.adcMax")), kAdcMaxReason);
+        QVERIFY(registry.isAvailable(QStringLiteral("meter.adcMax")));
 
         const ContentEntry adcMax = registry.makeEntry(QStringLiteral("meter.adcMax"));
         const ContentEntry signal = registry.makeEntry(QStringLiteral("meter.signal"));
         const QString adcRecord = adcMax.config.value(QStringLiteral("legacyRecord")).toString();
         QVERIFY(adcRecord.contains(QStringLiteral("\"flavor\":\"AdcMax\"")));
-        QCOMPARE(adcMax.name, QStringLiteral("AdcMax bar"));
+        QCOMPARE(adcMax.name, QStringLiteral("ADC maximum bar"));
 
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -89,7 +93,8 @@ private slots:
         QCOMPARE(contents[0].id, adcMax.id);
         QCOMPARE(contents[0].config.value(QStringLiteral("legacyRecord")).toString(), adcRecord);
 
-        // Shown: the live host keeps the row and labels it with the reason.
+        // Shown: the live host keeps the row and builds the bar, veiled with
+        // the reason.
         QWidget root;
         QSplitter splitter(&root);
         ContainerManager manager(&root, &splitter);
@@ -100,11 +105,9 @@ private slots:
         const auto& rows = host->entryRows();
         QCOMPARE(rows.size(), 2);
         QCOMPARE(rows[0].entryId, adcMax.id);
-        QVERIFY(!rows[0].item);
-        QVERIFY(!rows[0].effectiveVisible);
-        auto* label = qobject_cast<QLabel*>(rows[0].widget.data());
-        QVERIFY(label);
-        QCOMPARE(label->text(), QStringLiteral("AdcMax bar — ") + kAdcMaxReason);
+        QVERIFY(rows[0].item);
+        QVERIFY(rows[0].effectiveVisible);
+        QCOMPARE(rows[0].item->bindingUnavailableReason(rows[0].item->bindingId()), kAdcMaxReason);
         QCOMPARE(rows[1].entryId, signal.id);
         QVERIFY(rows[1].item);
 

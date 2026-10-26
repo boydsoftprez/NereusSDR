@@ -26,6 +26,10 @@
 //   2026-10-25 - Order property kind: the order of a TX section row's
 //                 parts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - isAvailable / unavailableReason for an entry, judged on the
+//                 type its content resolves to (a BarPreset entry is the bar
+//                 its flavor names). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -107,6 +111,10 @@ public:
     void setAvailable(const QString& typeId, bool available, const QString& reason = {});
     bool isAvailable(const QString& typeId) const;
     QString unavailableReason(const QString& typeId) const;
+    // As above, for an entry: judged on the type its content resolves to. A
+    // BarPreset entry is the bar its flavor names (AdcMax: meter.adcMax).
+    bool isAvailable(const ContentEntry& entry) const;
+    QString unavailableReason(const ContentEntry& entry) const;
     void parkSingleton(QWidget* widget);
     void returnBorrowedView(QWidget* widget);
     void setSingletonPlacements(const QHash<QString, QString>& placements);
