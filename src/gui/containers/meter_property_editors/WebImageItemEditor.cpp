@@ -1,15 +1,51 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - Web image settings after the Thetis setup page: preset
+//                 lists (HamQSL, BSDWorld with Dark Mode, NASA, NOAA),
+//                 refresh 1-7200 s, width scale, bypass cache, the
+//                 known-host lock (interval and bypass disabled), the
+//                 fetch state and the 4-char ID with a Copy button. The
+//                 rules live in WebImageItem; this page only shows them.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "WebImageItemEditor.h"
 #include "../../meters/WebImageItem.h"
+#include "core/AppSettings.h"
 
-#include <QLineEdit>
-#include <QSpinBox>
-#include <QPushButton>
+#include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
 #include <QColorDialog>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QSpinBox>
 
 namespace NereusSDR {
 
 namespace {
+// The BSDWorld Dark Mode choice, kept across sessions.
+constexpr const char* kBsdDarkKey = "WebImageBsdWorldDarkMode";
+
+constexpr const char* kLineStyle =
+    "QLineEdit { background: #0a0a18; color: #c8d8e8;"
+    " border: 1px solid #1e2e3e; border-radius: 3px;"
+    " padding: 1px 4px; min-height: 18px; }";
+
+constexpr const char* kComboStyle =
+    "QComboBox {"
+    "  background: #0a0a18; color: #c8d8e8;"
+    "  border: 1px solid #1e2e3e; border-radius: 3px;"
+    "  padding: 2px 4px; min-height: 18px;"
+    "}"
+    "QComboBox QAbstractItemView {"
+    "  background: #0a0a18; color: #c8d8e8;"
+    "  border: 1px solid #205070;"
+    "  selection-background-color: #00b4d8;"
+    "}";
+
 void applyBtnColor(QPushButton* btn, const QColor& c)
 {
     btn->setStyleSheet(
@@ -27,14 +63,65 @@ WebImageItemEditor::WebImageItemEditor(QWidget* parent)
 void WebImageItemEditor::setItem(MeterItem* item)
 {
     BaseItemEditor::setItem(item);
+    QObject::disconnect(m_stateConnection);
     WebImageItem* w = qobject_cast<WebImageItem*>(item);
     if (!w) { return; }
+
+    m_stateConnection = connect(w, &WebImageItem::stateChanged,
+                                this, &WebImageItemEditor::refreshState);
 
     beginProgrammaticUpdate();
     m_editUrl->setText(w->url());
     m_spinRefresh->setValue(w->refreshInterval());
+    m_spinWidthScale->setValue(w->widthScale());
+    m_chkBypassCache->setChecked(w->bypassCache());
+    m_editFourChar->setText(w->fourChar());
     applyBtnColor(m_btnFallback, w->fallbackColor());
     endProgrammaticUpdate();
+    refreshLockedControls();
+    refreshState();
+}
+
+void WebImageItemEditor::applyUrl(const QString& text)
+{
+    WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+    if (!w) { return; }
+    QString url = text.trimmed();
+    // An old BSDWorld preset URL gets -light or -dark inserted.
+    const QString bsd = WebImageItem::fixBsdWorldUrl(url, m_chkBsdDark->isChecked());
+    if (!bsd.isEmpty()) { url = bsd; }
+    if (m_editUrl->text() != url) {
+        beginProgrammaticUpdate();
+        m_editUrl->setText(url);
+        endProgrammaticUpdate();
+    }
+    w->setUrl(url); // also fetches
+    refreshLockedControls();
+    notifyChanged();
+}
+
+void WebImageItemEditor::refreshLockedControls()
+{
+    WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+    if (!w) { return; }
+    const bool locked = WebImageItem::isLockedHost(w->url());
+    beginProgrammaticUpdate();
+    m_spinRefresh->setValue(w->refreshInterval());
+    m_chkBypassCache->setChecked(w->bypassCache());
+    endProgrammaticUpdate();
+    m_spinRefresh->setEnabled(!locked);
+    m_chkBypassCache->setEnabled(!locked);
+    const QString why = locked
+        ? QStringLiteral("Fixed at 600 s with no cache bypass for this site")
+        : QString();
+    m_spinRefresh->setToolTip(why);
+    m_chkBypassCache->setToolTip(why);
+}
+
+void WebImageItemEditor::refreshState()
+{
+    WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+    m_lblState->setText(w ? w->stateText() : QString());
 }
 
 void WebImageItemEditor::buildTypeSpecific()
@@ -48,10 +135,8 @@ void WebImageItemEditor::buildTypeSpecific()
     rowLayout->setSpacing(4);
 
     m_editUrl = new QLineEdit(rowWidget);
-    m_editUrl->setStyleSheet(
-        QStringLiteral("QLineEdit { background: #0a0a18; color: #c8d8e8;"
-                       " border: 1px solid #1e2e3e; border-radius: 3px;"
-                       " padding: 1px 4px; min-height: 18px; }"));
+    m_editUrl->setStyleSheet(QString::fromLatin1(kLineStyle));
+    m_editUrl->setToolTip(QStringLiteral("An image URL, or a file:// path to a local image"));
     rowLayout->addWidget(m_editUrl, 1);
 
     auto* btnReload = new QPushButton(QStringLiteral("Reload"), rowWidget);
@@ -62,20 +147,53 @@ void WebImageItemEditor::buildTypeSpecific()
 
     connect(m_editUrl, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
-        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
-        if (!w) { return; }
-        w->setUrl(m_editUrl->text());
-        notifyChanged();
+        applyUrl(m_editUrl->text());
     });
     connect(btnReload, &QPushButton::clicked, this, [this]() {
-        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
-        if (!w) { return; }
-        w->setUrl(m_editUrl->text()); // triggers a fetch
-        notifyChanged();
+        applyUrl(m_editUrl->text()); // triggers a fetch
     });
 
+    // Preset lists: picking one sets the URL, then the list returns to
+    // "select one".
+    m_chkBsdDark = new QCheckBox(QStringLiteral("Dark Mode"), this);
+    m_chkBsdDark->setChecked(
+        AppSettings::instance().value(QString::fromLatin1(kBsdDarkKey), QStringLiteral("False"))
+            .toString() == QLatin1String("True"));
+    connect(m_chkBsdDark, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QString::fromLatin1(kBsdDarkKey),
+                                         on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    for (const WebImagePresetGroup& group : WebImageItem::presetGroups()) {
+        auto* combo = new QComboBox(this);
+        combo->setStyleSheet(QString::fromLatin1(kComboStyle));
+        combo->addItem(QStringLiteral("select one"));
+        for (const WebImagePreset& preset : group.presets) {
+            combo->addItem(preset.name, preset.url);
+        }
+        connect(combo, qOverload<int>(&QComboBox::activated), this, [this, combo](int index) {
+            if (index <= 0) { return; }
+            const QString url = WebImageItem::resolveLightMode(
+                combo->itemData(index).toString(), m_chkBsdDark->isChecked());
+            combo->setCurrentIndex(0);
+            applyUrl(url);
+        });
+        m_presetCombos.append(combo);
+        if (group.name == QLatin1String("BSDWorld")) {
+            auto* bsdRow = new QWidget(this);
+            auto* bsdLayout = new QHBoxLayout(bsdRow);
+            bsdLayout->setContentsMargins(0, 0, 0, 0);
+            bsdLayout->setSpacing(4);
+            bsdLayout->addWidget(combo, 1);
+            bsdLayout->addWidget(m_chkBsdDark);
+            addRow(group.name, bsdRow);
+        } else {
+            addRow(group.name, combo);
+        }
+    }
+
     // Refresh interval
-    m_spinRefresh = makeIntRow(QStringLiteral("Refresh (s)"), 1, 3600);
+    m_spinRefresh = makeIntRow(QStringLiteral("Refresh (s)"),
+                               kWebImageMinIntervalSecs, kWebImageMaxIntervalSecs);
     connect(m_spinRefresh, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (isProgrammaticUpdate()) { return; }
@@ -83,6 +201,56 @@ void WebImageItemEditor::buildTypeSpecific()
         if (!w) { return; }
         w->setRefreshInterval(v);
         notifyChanged();
+    });
+
+    // Width scale: 1.0 fills the item width.
+    m_spinWidthScale = makeDoubleRow(QStringLiteral("Width scale"),
+                                     kWebImageMinWidthScale, kWebImageMaxWidthScale,
+                                     kWebImageWidthScaleStep, kWebImageWidthScaleDecimals);
+    m_spinWidthScale->setToolTip(QStringLiteral("1.0 fills the item width"));
+    connect(m_spinWidthScale, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+        if (isProgrammaticUpdate()) { return; }
+        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+        if (!w) { return; }
+        w->setWidthScale(v);
+        notifyChanged();
+    });
+
+    // Bypass cache
+    m_chkBypassCache = makeCheckRow(QStringLiteral("Bypass cache"));
+    connect(m_chkBypassCache, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+        if (!w) { return; }
+        w->setBypassCache(on);
+        notifyChanged();
+    });
+
+    // Fetch state
+    m_lblState = new QLabel(this);
+    m_lblState->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; }"));
+    addRow(QStringLiteral("State"), m_lblState);
+
+    // 4-char ID, read only, with Copy
+    auto* idRow = new QWidget(this);
+    auto* idLayout = new QHBoxLayout(idRow);
+    idLayout->setContentsMargins(0, 0, 0, 0);
+    idLayout->setSpacing(4);
+    m_editFourChar = new QLineEdit(idRow);
+    m_editFourChar->setReadOnly(true);
+    m_editFourChar->setMaxLength(4);
+    m_editFourChar->setFixedWidth(52);
+    m_editFourChar->setStyleSheet(QString::fromLatin1(kLineStyle));
+    m_editFourChar->setToolTip(QStringLiteral("The four character code for this web image"));
+    idLayout->addWidget(m_editFourChar);
+    auto* btnCopy = new QPushButton(QStringLiteral("Copy"), idRow);
+    btnCopy->setFixedWidth(48);
+    idLayout->addWidget(btnCopy);
+    idLayout->addStretch(1);
+    addRow(QStringLiteral("4-char ID"), idRow);
+    connect(btnCopy, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText(m_editFourChar->text());
     });
 
     // Fallback color
