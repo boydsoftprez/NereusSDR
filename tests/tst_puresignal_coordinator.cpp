@@ -40,7 +40,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-25 — Single Cal leaves PS-A off while PSEnabled is on (the
-//                 ATT-on-TX gates follow PS-A).  J.J. Boyd (KG4VCF),
+//                 ATT-on-TX gates follow PS-A); auto-attenuate steps from
+//                 the forced key's 31.  J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-05-06 — New test file for Phase 3M-4 Task 7: PureSignal
 //                 coordinator unit tests.  J.J. Boyd (KG4VCF), with
@@ -58,6 +59,8 @@
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TxChannel.h"
+#include "core/WdspTypes.h"
+#include "models/Band.h"
 
 using namespace NereusSDR;
 
@@ -659,6 +662,66 @@ private slots:
         ps.autoAttentionTick();
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
+    }
+
+    // ── Single Cal from a forced key: auto-attenuate starts from 31 ────────
+    //
+    // From Thetis console.cs:29619 [v2.10.3.15] the key-down stores its TX
+    // ATT through the ATTOnTX setter:
+    //   SetupForm.ATTOnTX = txAtt; //[2.10.3.6]MW0LGE att_fixes NOTE: this will eventually call Display.TXAttenuatorOffset with the value
+    // and PSForm.cs:766-773 [v2.10.3.15] steps from it:
+    //   int oldAtten = console.SetupForm.ATTOnTX;
+    //   if ((oldAtten + _deltadB) > 0) newAtten = oldAtten + _deltadB; else newAtten = 0;
+    // Single Cal keeps PS-A off, so the key forces 31.  Band value 5,
+    // feedback 20 -> deltadB -18 -> 31 - 18 = 13 (not max(5 - 18, 0) = 0).
+    void autoAttentionTick_singleCalFromForcedKey_stepsFrom31()
+    {
+        TxChannel tx(kTxChannelId);
+        StepAttenuatorController stepAtt;
+        stepAtt.setTickTimerEnabled(false);
+        stepAtt.setIsHpsdrBoard(false);
+        stepAtt.setAttOnTxEnabled(true);
+        stepAtt.setForceAttWhenPsOff(true);
+        stepAtt.setCurrentDspMode(DSPMode::USB);
+        stepAtt.setBand(Band::Band20m);
+        stepAtt.setTxAttenuationForBand(Band::Band20m, 5);
+        MoxController mox;
+        PureSignal ps(nullptr, &tx, nullptr, &mox, &stepAtt, nullptr);
+        ps.setEnabled(true);
+        ps.setTimersEnabled(false);
+        ps.setAutoAttenuate(true);
+        PureSignal::connectAttOnTxPsActive(&ps, &stepAtt);
+
+        // Single Cal, waiting in SingleCalibrate with PS-A off.
+        ps.singleCalibrate();
+        int info[16] = {};
+        info[5] = 1;
+        ps.processNewInfo(info);   // Off -> TurnOnSingleCalibrate
+        info[5] = 2;
+        ps.processNewInfo(info);   // TurnOnSingleCalibrate -> SingleCalibrate
+        QVERIFY(ps.isPsEnabled());
+        QVERIFY(!stepAtt.psActive());
+
+        // Key: forced 31, stored into the band.
+        mox.setMox(true);
+        stepAtt.onMoxHardwareFlipped(true);
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+
+        // One calibration attempt with feedback 20 (deltadB -18), no
+        // correction applied yet, so the cmd-state stays in SingleCalibrate.
+        info[4]  = 20;
+        info[5]  = 3;
+        info[7]  = 1;
+        info[14] = 0;
+        info[15] = 6;   // LCALC
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();   // Monitor -> SetNewValues
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::SetNewValues);
+
+        info[15] = 0;   // native reset acknowledged
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+        ps.autoAttentionTick();   // SetNewValues: 31 + (-18)
+        QCOMPARE(stepAtt.attOnTxValue(), 13);
     }
 
     void autoAttentionTick_waitsForResetAndDiscardsDrainedCalibration()

@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — connectAttOnTxPsActive: the PS-A -> StepAttenuatorController
+//                 setPsActive wire (console.cs:29612-29616 [v2.10.3.15]),
+//                 shared by RadioModel and the tests. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -236,6 +240,27 @@ bool PureSignal::canActuate() const
 bool PureSignal::isAutoCalEnabled() const noexcept
 {
     return m_settings && m_settings->autoCalEnabled();
+}
+
+void PureSignal::connectAttOnTxPsActive(PureSignal* ps,
+                                        StepAttenuatorController* stepAtt)
+{
+    // The key-down force-31 dB gate follows PS-A.
+    // From Thetis console.cs:29612-29616 [v2.10.3.15]:
+    //   //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+    //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) || ... ) txAtt = 31;
+    // chkFWCATUBypass is the PS-A button; its handler drives AutoCalEnabled
+    // (console.cs:43782-43787 [v2.10.3.15]).  See RadioModel's call site for
+    // why PSEnabled is the wrong signal here.
+    if (!ps || !stepAtt) {
+        return;
+    }
+    QObject::connect(ps, &PureSignal::autoCalEnabledChanged,
+                     stepAtt, &StepAttenuatorController::setPsActive,
+                     Qt::UniqueConnection);
+    // autoCalEnabledChanged fires only on a change, and the preference may
+    // already be on, so sync the controller from the current PS-A state.
+    stepAtt->setPsActive(ps->isAutoCalEnabled());
 }
 
 bool PureSignal::autoAttenuate() const noexcept

@@ -202,12 +202,17 @@ the PureSignal feedback path. It needs a bench Single Cal (JJ keys) to confirm
 auto-attenuate walks the value down from 31 and the cal converges.
 `autoAttentionTick` is not gated on PS-A, matching Thetis, so it should.
 
-## Noticed in passing (not investigated)
+## Key-down store-through (ported with the fix)
 
-When Thetis forces 31 at key-down it goes through `SetupForm.ATTOnTX` →
-`TxAttenData`, which also stores 31 as that band's TX ATT
-(`console.cs:10613-10625`, `setTXstepAttenuatorForBand`). NereusSDR sends 31
-to the radio but leaves `m_txAttByBand` unchanged
-(`StepAttenuatorController.cpp:1137-1201`). So after a forced key, Thetis shows
-and keeps 31 for that band while NereusSDR keeps the earlier value. That is a
-separate question from the gates and should be checked on its own.
+When Thetis forces 31 at key-down it goes through `SetupForm.ATTOnTX`
+(`console.cs:29619` [v2.10.3.15]) → `TxAttenData`, which also stores 31 as
+that band's TX ATT (`console.cs:10613-10625`, `setTXstepAttenuatorForBand`).
+Auto-attenuate then starts from that value (`PSForm.cs:766`,
+`int oldAtten = console.SetupForm.ATTOnTX;`). NereusSDR used to send 31 to the
+radio and leave `m_txAttByBand` unchanged, so auto-attenuate stepped from the
+old band value. Since the gate fix makes every Single Cal and Restore key go
+the forced way, this is now ported on the same branch:
+`StepAttenuatorController::onMoxHardwareFlipped` stores the key's TX ATT
+through `setAttOnTxValue` (`src/core/StepAttenuatorController.cpp`, the
+non-HPSDR key-down branch). After a forced key the band keeps 31, as in
+Thetis.

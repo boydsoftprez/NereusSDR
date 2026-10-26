@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — Key-down store-through: onMoxHardwareFlipped writes the
+//                 key's TX ATT (31 when forced) to the TX band's slot via
+//                 setAttOnTxValue, as Thetis console.cs:29619 [v2.10.3.15]
+//                 SetupForm.ATTOnTX = txAtt does, so auto-attenuate starts
+//                 from it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-16 — Issue #434 follow-up: a band change while keyed (RX1 or
 //                 RX2) keeps the RX S-ATT and preamp for the band left and
 //                 restores the band entered's at the unkey.
@@ -1046,7 +1052,7 @@ void StepAttenuatorController::restoreRxPreampMode()
 
 bool StepAttenuatorController::shouldForce31Db(DSPMode dspMode, bool isPsOff) const
 {
-    // From Thetis console.cs:29561 [v2.10.3.13]:
+    // From Thetis console.cs:29612 [v2.10.3.15]:
     //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
     if (!m_attOnTxEnabled) {
         // ATT-on-TX is disabled — never force.
@@ -1057,12 +1063,12 @@ bool StepAttenuatorController::shouldForce31Db(DSPMode dspMode, bool isPsOff) co
         return true;  //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
     }
     // CW modes always force 31 dB (prevent PA damage via TX ATT).
-    // From Thetis console.cs:29565-29566 [v2.10.3.13]: CWL || CWU → txAtt = 31
+    // From Thetis console.cs:29615-29616 [v2.10.3.15]: CWL || CWU → txAtt = 31
     return (dspMode == DSPMode::CWL || dspMode == DSPMode::CWU);
 }
 
 // --- onMoxHardwareFlipped slot (F.2) ---
-// From Thetis console.cs:29546-29576 [v2.10.3.13] (§6.2-§6.4)
+// From Thetis console.cs:29597-29628 [v2.10.3.15] (§6.2-§6.4)
 
 void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
 {
@@ -1186,18 +1192,23 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
                 emit attenuationChanged(txAtt);
             }
 
-            // Marshalled to connection thread — m_connection is connection-thread owned.
-            if (m_connection) {
-                RadioConnection* conn = m_connection.get();
-                QMetaObject::invokeMethod(conn, [conn, txAtt]() {
-                    conn->setTxStepAttenuation(txAtt); //[2.10.3.6]MW0LGE att_fixes
-                });
-            }
+            // From Thetis console.cs:29619 [v2.10.3.15]:
             // SetupForm.ATTOnTX = txAtt; //[2.10.3.6]MW0LGE att_fixes NOTE: this will eventually call Display.TXAttenuatorOffset with the value
-            setTxAttenuatorOffset(txAtt);
-#ifdef NEREUS_BUILD_TESTS
-            m_lastTxStepAttDb = txAtt;
-#endif
+            // The ATTOnTX setter (setup.cs:3990-4010 [v2.10.3.15]) feeds
+            // udATTOnTX_ValueChanged -> console.TxAttenData
+            // (console.cs:10613-10637 [v2.10.3.15]), which stores the value
+            // in the TX band's slot before it sends it:
+            //   setTXstepAttenuatorForBand(_tx_band, _tx_attenuator_data); //[2.10.3.6]MW0LGE att_fixes #399
+            // So a forced 31 becomes the band's TX ATT, and PureSignal's
+            // auto-attenuate starts from it (PSForm.cs:766 [v2.10.3.15]
+            // `int oldAtten = console.SetupForm.ATTOnTX;`).  setAttOnTxValue
+            // is the port of that setter chain: it stores into m_txBand's
+            // slot (the band read above), emits attOnTxValueChanged on a
+            // change, sends to the radio once (marshalled to the connection
+            // thread; m_attOnTxEnabled is true on this branch) and sets the
+            // TX attenuator offset.  scheduleSave skips it, as m_isMox is
+            // already set above.
+            setAttOnTxValue(txAtt);
         }
     } else {
         // TX→RX transition: restore RX state.

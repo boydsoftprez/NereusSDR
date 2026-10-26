@@ -20711,19 +20711,16 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             // setPuresignalRun) stay: they mirror the PSEnabled setter body
             // (PSForm.cs:235-269 [v2.10.3.15]), which touches no attenuator.
             //
-            // Pointer-to-member slot, not a lambda: Qt::UniqueConnection
-            // needs one (see the refreshDdcAssignmentForRadioState note).
+            // PureSignal::connectAttOnTxPsActive makes the connection
+            // (autoCalEnabledChanged -> StepAttenuatorController::setPsActive,
+            // pointer-to-member slot, Qt::UniqueConnection; see the
+            // refreshDdcAssignmentForRadioState note for why not a lambda)
+            // and pushes the current PS-A state, as the preference may
+            // already be on here (initializeAutoCalPreference above).  The
+            // tests call the same helper.
             if (m_stepAttController) {
-                connect(m_pureSignal.get(),
-                        &PureSignal::autoCalEnabledChanged,
-                        m_stepAttController,
-                        &StepAttenuatorController::setPsActive,
-                        Qt::UniqueConnection);
-                // Initial state push: autoCalEnabledChanged fires only on a
-                // change, and the preference may already be on here
-                // (initializeAutoCalPreference above), so sync the
-                // controller from the current PS-A state.
-                m_stepAttController->setPsActive(m_pureSignal->isAutoCalEnabled());
+                PureSignal::connectAttOnTxPsActive(m_pureSignal.get(),
+                                                   m_stepAttController);
             }
 
             // ── Task 17 chunk C/D/E — pscc() driver (PsccPump) ─────────────────
