@@ -1031,6 +1031,10 @@ target_compile_definitions(tst_p1_wire_format PRIVATE NEREUS_BUILD_TESTS)
 # ── Phase 3P-A AlexFilterMap shared freq→bits helpers (Task 3+4) ──
 nereus_add_test(tst_alex_filter_map)
 
+# CW transmit (R-CW-11, R-CW-13, R-CW-16, R-CW-38): the CW wire state, its
+# clamps and the hang, RF delay, sidetone level and P2 mode-control helpers.
+nereus_add_test(tst_cw_wire_state)
+
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 

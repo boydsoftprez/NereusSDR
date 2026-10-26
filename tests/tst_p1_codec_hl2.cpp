@@ -1,4 +1,8 @@
 // no-port-check: test fixture cites Thetis source for expected values, not a port itself
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CW bank 12-14 cases (R-CW-11). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest/QtTest>
 #include <array>
 #include "core/codec/P1CodecHl2.h"
@@ -7,12 +11,20 @@
 #include "core/P1RadioConnection.h"
 #include "core/HpsdrModel.h"
 #include "core/codec/P1CodecStandard.h"
+#include "P1CodecCwCases.h"
 
 using namespace NereusSDR;
 
 class TestP1CodecHl2 : public QObject {
     Q_OBJECT
 private slots:
+    // CW transmit (R-CW-11): banks 12-14 carry the radio keyer's settings.
+    // From mi0bot networkproto1.c:1112-1140 [v2.10.3.13-beta2]
+    void cwBanks_carryTheKeyerSettings() {
+        P1CodecHl2 codec;
+        P1CwCases::runAll(codec);
+    }
+
     void maxBank_is_18() {
         P1CodecHl2 codec;
         QCOMPARE(codec.maxBank(), 18);

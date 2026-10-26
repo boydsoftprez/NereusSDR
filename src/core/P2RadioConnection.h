@@ -136,6 +136,9 @@
 //                Longpath src/core/P2RadioConnection.h:449 [@383f058] (PR 62).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-26 - CW transmit, CwState::edgeLength 9 (Thetis setup.cs:29327
+//                [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                Code.
 // =================================================================
 
 /*
@@ -1084,7 +1087,8 @@ private:
         int keyerWeight{0};
         int hangDelay{0};
         int rfDelay{0};
-        int edgeLength{7};           // From create_rnet:1454
+        // Upstream comment preserved verbatim (setup.cs:29326): // for DL1YCF CW Edge
+        int edgeLength{9};           // From Thetis setup.cs:29327 [v2.10.3.15] (create_rnet:1454 seeds 7)
         unsigned char modeControl{0};
     };
     CwState m_cw;

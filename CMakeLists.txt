@@ -1066,6 +1066,9 @@ set(CORE_SOURCES
     src/core/TciBinaryFrame.cpp
     src/core/TciServer.cpp
     src/core/codec/AlexFilterMap.cpp
+    # CW transmit (R-CW-11, R-CW-13): the CW wire state and its helpers.
+    src/core/codec/CwWireState.cpp
+    src/core/codec/CwWireState.h
     src/core/codec/P1CodecStandard.cpp
     src/core/codec/P1CodecAnvelinaPro3.cpp
     src/core/codec/P1CodecRedPitaya.cpp

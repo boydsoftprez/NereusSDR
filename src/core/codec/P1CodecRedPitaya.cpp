@@ -12,6 +12,10 @@
 //                Claude Code. Extends P1CodecStandard by overriding
 //                bank12() to skip the under-MOX 0x1F force that all
 //                other boards apply (DH1KLM RedPitaya contribution).
+//   2026-10-26: CW transmit, bank12 carries the CW keyer half (C2 bit 6,
+//               C3, C4, networkproto1.c:618-628 [v2.10.3.15]) through
+//               P1CodecStandard::bank12CwKeyer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -55,8 +59,9 @@ void P1CodecRedPitaya::bank12(const CodecContext& ctx, quint8 out[5]) const
     // RedPitaya: ADC1 always uses user attn, masked to 5 bits.
     out[1] = quint8((ctx.rxStepAttn[1] & 0x1F) | 0x20);
     out[2] = quint8((ctx.rxStepAttn[2] & 0x1F) | 0x20);
-    out[3] = 0;
-    out[4] = 0;
+    // CW keyer half, as every Protocol 1 board.
+    // From Thetis networkproto1.c:618-628 [v2.10.3.15]
+    bank12CwKeyer(ctx, out);
 }
 
 // =================================================================
