@@ -49,6 +49,13 @@ nereussdr.com {
 	encode zstd gzip
 	import site_headers
 
+	# Roundtable has its own host. Only its protocol page and test files
+	# are published under /roundtable/ here, so the folder itself sends
+	# visitors to the Roundtable page. A temporary redirect, so browsers
+	# do not keep it if this folder ever gets a page of its own.
+	redir /roundtable https://roundtable.nereussdr.com/
+	redir /roundtable/ https://roundtable.nereussdr.com/
+
 	# Pages, CSS and JS are revalidated on every visit, so a deploy shows
 	# up at once and a page never runs with the previous deploy's script
 	# or styles. file_server's ETag and Last-Modified keep that cheap.
