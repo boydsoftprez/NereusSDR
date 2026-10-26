@@ -825,6 +825,9 @@ nereus_add_test(tst_meter_tx_stage_disabled)
 # Several data source (MMIO) variables per item (Thetis MeterVariables):
 # the second variable's marker, the mmioVariables key and the editor rows.
 nereus_add_test(tst_meter_mmio_variables)
+# A saved meter.adcMax entry is kept and shown unavailable; Image and Magic
+# eye records with an empty image path load without a file warning.
+nereus_add_test(tst_container_item_load)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)

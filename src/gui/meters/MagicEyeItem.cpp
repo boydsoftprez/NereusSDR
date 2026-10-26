@@ -21,6 +21,9 @@
 //   2026-10-26 - User text in the record (bezel image path) is joined, not substituted
 //                 by chained QString::arg, so a "%1" or "%20" in it survives.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - An empty bezel path clears the image without a file
+//                 read. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -84,6 +87,7 @@ namespace NereusSDR {
 void MagicEyeItem::setBezelImagePath(const QString& path)
 {
     m_bezelPath = path;
+    // An empty path is no bezel; it never reaches a file API.
     m_bezelImage = QImage();
     if (!path.isEmpty()) {
         m_bezelImage.load(path);

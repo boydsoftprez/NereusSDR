@@ -27,6 +27,12 @@
 //   2026-10-26 - kMinHistoryKeepForMs / kMaxHistoryKeepForMs (1-1800 s);
 //                 readingBindingsBesideMmio for axis 1. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - kMaxCapacity: deserialize clamps a loaded capacity to the
+//                 largest one NereusSDR produces. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - kMaxCapacity follows the 1800 s Keep For maximum
+//                 (18001), so a long graph reloads at its saved length.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -189,6 +195,14 @@ class HistoryGraphItem : public MeterItem {
 public:
     // From Thetis clsHistoryItem (MeterManager.cs:16149+)
     static constexpr int kDefaultCapacity = 300;  // 30s at 100ms poll
+    // NereusSDR: the largest capacity NereusSDR itself produces.
+    // setDurationMs at the Keep For maximum (kMaxHistoryKeepForMs,
+    // 1800000 ms) gives 1800000 / 100 + 1 = 18001, above the Multimeter
+    // history duration's 600000 ms (6001) and the item editor's Capacity
+    // range (HistoryGraphItemEditor.cpp, 10..3000). deserialize clamps a
+    // loaded capacity to it, so a pasted record cannot ask for a huge
+    // buffer.
+    static constexpr int kMaxCapacity = kMaxHistoryKeepForMs / 100 + 1;
 
     explicit HistoryGraphItem(QObject* parent = nullptr);
 
