@@ -25,6 +25,11 @@ but nothing calls `SetOCExtraBits` and there is no UI.
 - Source first: read the Thetis lines before writing; quote them in a `// From Thetis <file>:<line> [v2.10.3.15]`
   cite above each ported block. Keep constants exact as named `constexpr` with the cite. Gateware facts cite
   `// Gateware n1gp-Anvelina_PROIII <file>:<line> [@8e86a61]` (facts only, no Verilog logic ported).
+  Primary reference (JJ, 2026-10-26): Yuri's Thetis, cited
+  `// From Thetis-Enhanced (EU2AV) <file>:<line> [@567a7ec]` next to the stock cite. Read it with
+  `git -C /Users/j.j.boyd/eu2av-Thetis-Enhanced show origin/main:'Project Files/Source/<path>'` (never pull). Files
+  identical to stock (Penny.cs, Alex.cs, ChannelMaster/*) share line numbers; console.cs, setup.cs and
+  setup.designer.cs do not, so look the line up in Yuri's file.
   The spec cites as `// Spec: Open_Collector_Anvelina_DX for Thetis (EU2AV, 2026-05-21), <section>`.
 - A file that ports new upstream code gets that upstream file's header byte-for-byte (every Copyright line, the
   GPL block, the Samphire dual-licence block when present) under `// --- From <file> ---`, plus a
@@ -89,25 +94,13 @@ Acceptance (unit, on `OcMatrix`):
 
 Verification: the new test plus `tst_oc_outputs_hf_tab` and `tst_oc_outputs_live_pins`. Model tier: opus.
 
-## Task 2: Hide "Disable RX Bypass relay" on Mk II band-pass models (M12)
+## Task 2: Dropped (M12 already matches)
 
-Thetis hides `chkDisableRXOut` for ANAN8000D, ANAN7000D, ANAN_G2, ANAN_G2_1K, ANVELINAPRO3 and REDPITAYA:
-`setup.cs:6194-6207` `chkDisableRXOut.Visible = false;` inside the model test that starts at `setup.cs:6190`
-(read the block and quote it). NereusSDR shows it on every Alex board
-(`src/gui/setup/hardware/AntennaAlexAntennaControlTab.cpp:741-767`, `m_chkRxOutOverride`). Hide it on those six
-models (the board has no separate RX Bypass Out override), and stop applying a saved `rxOutOverride` on them so a
-value saved on another radio cannot change their relays (Thetis's hidden box keeps its saved state but read how
-`Alex.cs:368-375` uses it and match Thetis exactly: if Thetis still applies a hidden checked box, keep applying it
-and only hide). Use the existing SKU/board profile mechanism the tab already uses (`applySkuProfile`).
-
-Files: `AntennaAlexAntennaControlTab.cpp`, the SKU profile source it reads (`src/core/SkuUiProfile.cpp` or
-`BoardCapabilities`), a test (extend `tests/tst_pa_setup_per_sku_visibility.cpp` or the antenna tab's existing
-test).
-
-Acceptance: on ANVELINAPRO3, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2_1K and REDPITAYA the box is hidden; on
-ANAN100D / ORIONMKII / HERMES it is shown. Wire behaviour matches what Thetis does with the hidden box.
-
-Verification: the touched visibility test. Model tier: opus.
+The review draft listed "Disable RX Bypass relay" as shown on Mk II models. It is already hidden there:
+`src/core/SkuUiProfile.cpp:146-151` sets `hasRxBypassUi = false` for ANAN7000D and ANVELINAPRO3 (and the G2 rows),
+and `AntennaAlexAntennaControlTab.cpp:939` applies it; the value is stored per MAC
+(`AlexController.cpp:588`), so another radio's setting cannot reach these. Nothing to build; Task 6 records it as a
+match.
 
 ## Task 3: Anvelina DX outputs, model and wire (M5)
 
@@ -120,13 +113,16 @@ Add the four DX outputs as their own state, separate from the band OC byte.
   `QString label(int out) const`, `void setLabel(int out, const QString&)`, `quint8 wireByte() const`,
   `setMacAddress`, `load`, `save`, signal `changed()`.
 - Wire byte: out7 -> bit 1, out8 -> bit 2, out9 -> bit 3, out10 -> bit 4; bit 0 and bits 5-7 always 0.
-  Mask: **pending JJ** (question 2): either the spec and gateware (`kDxWireMask = 0x1E`, all four outputs work) or
-  Thetis's `& 0x0f` (out10 never reaches the radio). The controller writes JJ's answer here before dispatch.
+  Mask: `kDxWireMask = 0x1E` (bits 1-4). JJ's answer to question 2 (2026-10-26, "yes"): follow the spec and the
+  gateware so all four outputs work. This is a deliberate deviation from Thetis's `& 0x0f` (network.c:1019,
+  networkproto1.c:670), which never sends bit 4 although its own comment says `// [4:0]`. The code comment marks it
+  `NereusSDR-divergence` and cites the spec (page 2, "Structure of Byte 1397") and `Orion.v:923`
+  (`assign USEROUT10 = run ? Open_Collector_Anvelina_DX[4] : 1'b0;`); the PR body says so too.
 - Codec: `CodecContext::ocExtrasByte` (new, default 0). `P2CodecOrionMkII` writes `buf[1397]` from it only when
   `ctx.model == HPSDRModel::ANVELINAPRO3`, ported from `network.c:1016-1020` (quote the block verbatim, including
   `//1397 - Open_Collector_Anvelina_DX` and `// [4:0]`). `P1CodecAnvelinaPro3` bank 17 sends `ctx.ocExtrasByte`
-  instead of `ctx.ocByte` (`networkproto1.c:668-674`, `C1 = prn->oc_output_extras & 0x0f;`); the P1 mask follows
-  the same answer.
+  instead of `ctx.ocByte` (`networkproto1.c:668-674`, `C1 = prn->oc_output_extras & 0x0f;`); the P1 mask is the same
+  `kDxWireMask`.
 - Both connections fill `ctx.ocExtrasByte` from the model. Sent every high-priority packet like byte 1401; the
   gateware already holds the pins low while `run` is 0, so nothing extra gates the wire.
 - Remote: the `hardware/<mac>/oc/dx/...` keys reach a remote Core and apply at once, keyed or not (they are not
@@ -138,11 +134,10 @@ Files: the new class, `RadioModel.{h,cpp}`, `CodecContext.h`, `P2CodecOrionMkII.
 codec test that checks the high-priority packet.
 
 Acceptance:
-- Model: all off -> `wireByte() == 0x00`; out7 on -> `0x02`; out7 and out9 on -> `0x0A`; all on -> `0x1E` (or
-  `0x0E` if JJ picks Thetis's mask); persistence round-trips per MAC; a second MAC keeps its own values.
+- Model: all off -> `wireByte() == 0x00`; out7 on -> `0x02`; out7 and out9 on -> `0x0A`; all on -> `0x1E`; persistence round-trips per MAC; a second MAC keeps its own values.
 - P2: ANVELINAPRO3 with `ocExtrasByte = 0x0A` -> byte 1397 = `0x0A`; ANAN7000D with the same value -> `0x00`;
   byte 1401 unchanged by the extras.
-- P1: bank 17 C1 equals `ocExtrasByte` masked, and no longer the band OC byte (band OC `0x05`, extras `0x00`
+- P1: bank 17 C1 equals `ocExtrasByte & 0x1E`, and no longer the band OC byte (band OC `0x05`, extras `0x00`
   -> C1 `0x00`).
 
 Verification: the three tests. Model tier: opus.
@@ -157,12 +152,11 @@ Acceptance and verification: written from the signed-off mockup. Model tier: opu
 
 ## Task 5: "Gnd BPF2 on Tx" setting (M1) **TX**
 
-Pending JJ (question 1, the default). Thetis: `console.cs:29091` `if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);`, the
+JJ's answer to question 1 (2026-10-26, "match thetis"): default unticked, as on a fresh Thetis install (the designer gives `chkBPF2Gnd` no `Checked` line and `ForceAllEvents` pushes the unchecked state at startup, `setup.cs:579`, `:2867`). This is a behaviour change for JJ's radios: keyed Alex1 bit 8 goes clear until the box is ticked; the PR body says so. Thetis: `console.cs:29091` `if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);`, the
 property at `console.cs:10903`, the Setup box `chkBPF2Gnd` "Gnd BPF2 on Tx" (`setup.designer.cs:5736-5745`, shown
 on the Mk II models at `setup.cs:6208`), its handler `setup.cs:18214-18218`. NereusSDR hard-codes Alex1 bit 8 on
 while keyed (`src/core/codec/P2CodecOrionMkII.cpp:600-615`). Add the box on Antenna / ALEX beside the other
-"on TX" boxes, shown on the models where Thetis shows it, persisted per MAC, carried in `CodecContext`, default
-from JJ's answer. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
+"on TX" boxes, shown on the models where Thetis shows it, persisted per MAC (`"False"` default), carried in `CodecContext`. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
 
 ## Task 6: The mapping document and provenance
 
@@ -173,10 +167,34 @@ v2.10.3.15 file:line, and Yuri's fork (`567a7ec`) file:line (identical files sha
 Each mismatch says fixed (task and commit) or flagged (why, and whose call). Add THETIS-PROVENANCE rows for any
 new port that Tasks 1-5 did not add. Model tier: sonnet.
 
+## Task 7: Input 2's band-pass follows Slice B when no slice uses input 2 (M2)
+
+JJ's standing rule (2026-10-26): Yuri's Thetis (EU2AV `567a7ec`) is the primary reference, stock Thetis v2.10.3.15 the
+cross-check; cite both. Yuri's `console.cs:15470` (stock `console.cs:15435-15444`), in `UpdateRX2DDSFreq`, calls
+`setAlex2HPF(rx2_dds_freq_mhz)` for ANVELINAPRO3 (and the other Mk II models) with no `rx2_enabled` test, and
+`RX2DDSFreq` follows VFO B whether RX2 is on or not (stock `console.cs:32906`, `:32921`). So Alex1's receive half
+always carries the input-2 filter row for VFO B's frequency. NereusSDR maps Thetis RX2 / VFO B to Slice B (project
+slice policy: Slice A = trx:0, Slice B = trx:1). Today, with no slice on input 2, NereusSDR mirrors Alex0's
+selection into Alex1 (`src/core/codec/P2CodecOrionMkII.cpp:691-705`, `src/core/P2RadioConnection.cpp:4451-4454`,
+`RadioModel.cpp:26643` returns -1 for an empty chain).
+
+Change: when no slice is on input 2 and Slice B exists, Alex1's receive half takes the input-2 (Alex-2 / BPF2) row
+for Slice B's frequency, through the same Alex-2 filter table and edges the input-2 path already uses. When Slice B
+does not exist, keep today's mirror. A slice on input 2 keeps its current rule (unchanged). Keyed behaviour: read
+`setAlex2HPF` callers in Yuri's tree (`console.cs:18760-19063`) and the keyed PureSignal bypass path before changing
+anything keyed; if Thetis keeps following VFO B while keyed, match it, and say in the report what changed on the wire
+keyed (receive half of Alex1 only; Alex1 bits 0-15).
+
+Files: `RadioModel.cpp` (the input-2 chain), `P2RadioConnection.cpp`, `P2CodecOrionMkII.cpp` as needed, a test
+(extend the existing Alex-2 / BPF2 selection test, or `tests/tst_anvelina_input2_follows_slice_b.cpp`, new).
+
+Acceptance: Anvelina, Slice A 7.1 MHz on input 1, Slice B 14.2 MHz on input 1, nothing on input 2: Alex1 receive half
+is the 11-22 MHz row (`0x0002`), not Alex0's `0x0010`. Slice B absent: Alex1 receive half equals today's mirror.
+Slice on input 2: unchanged from today. Verification: the touched test. Model tier: opus.
+
 ## Flagged, not built (JJ's call or another owner)
 
-- M2: input 2's band-pass when no slice uses input 2 (Thetis follows VFO B; NereusSDR has no VFO B).
-- M4: under click-tune Thetis selects the band-pass from the display centre; NereusSDR from the slice's VFO.
+- M4, deliberate difference (JJ, 2026-10-26, "yes keep the nereus way"): under click-tune Thetis (Yuri's and stock) selects the band-pass from the display centre; NereusSDR keeps selecting from each slice's own frequency, combined across the slices on one input, so the filter always passes the frequency being listened to. Task 6's table and the PR body record it as a deliberate deviation.
 - M3: Alex1 low-pass while unkeyed holds TX, not RX; inert on this gateware (`Orion.v:2346-2348`). No change.
 - M6, M8: Protocol 1 Mk II relay split (bank 0) and input-2 bits (bank 16). The Anvelina gateware is Protocol 2
   only; these matter for Mk II boards on Protocol 1 firmware. Separate work.
