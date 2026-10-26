@@ -70,6 +70,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - A saved capacity loads as written; deserialize no longer
+//                 lets the saved duration recompute it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "HistoryGraphItem.h"
@@ -422,7 +425,6 @@ bool HistoryGraphItem::deserialize(const QString& data)
     setRect(x, y, w, h);
     setBindingId(bindingId);
     setZOrder(zOrder);
-    setCapacity(capacity);
 
     m_lineColor0 = lineColor0;
     m_lineColor1 = lineColor1;
@@ -435,6 +437,9 @@ bool HistoryGraphItem::deserialize(const QString& data)
 
     // Task 3.3: apply duration (which updates capacity via setDurationMs)
     setDurationMs(durationMs);
+    // The saved capacity is applied after the duration, so it loads as
+    // written rather than as the capacity the duration implies.
+    setCapacity(capacity);
 
     return true;
 }

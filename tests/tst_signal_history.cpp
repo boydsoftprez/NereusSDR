@@ -150,6 +150,46 @@ private slots:
         QVERIFY(item.durationMs() > 0);
     }
 
+    void saved_capacity_reloads_unchanged()
+    {
+        // A saved capacity (field 7) loads as written. Loading used to
+        // apply the saved duration last, which recomputed the capacity
+        // from it (60000 ms -> 601) and dropped the saved value.
+        HistoryGraphItem fresh;
+        const QString created = fresh.serialize();
+        QCOMPARE(created.split(QLatin1Char('|')).value(7), QStringLiteral("300"));
+        QCOMPARE(created.split(QLatin1Char('|')).value(16), QStringLiteral("60000"));
+
+        HistoryGraphItem reloaded;
+        QVERIFY(reloaded.deserialize(created));
+        QCOMPARE(reloaded.capacity(), 300);
+        QCOMPARE(reloaded.durationMs(), 60000);
+        QCOMPARE(reloaded.serialize(), created);
+
+        // A capacity edited in the item editor survives too.
+        HistoryGraphItem edited;
+        edited.setCapacity(1000);
+        HistoryGraphItem editedReloaded;
+        QVERIFY(editedReloaded.deserialize(edited.serialize()));
+        QCOMPARE(editedReloaded.capacity(), 1000);
+        QCOMPARE(editedReloaded.durationMs(), 60000);
+        QCOMPARE(editedReloaded.serialize(), edited.serialize());
+
+        // A record saved after a reload on the old code (601) keeps 601.
+        QStringList resaved = created.split(QLatin1Char('|'));
+        resaved[7] = QStringLiteral("601");
+        HistoryGraphItem old;
+        QVERIFY(old.deserialize(resaved.join(QLatin1Char('|'))));
+        QCOMPARE(old.capacity(), 601);
+
+        // A v1 record (no duration field) keeps its capacity as well.
+        HistoryGraphItem v1;
+        QVERIFY(v1.deserialize(QStringLiteral(
+            "HISTORY|10|20|100|50|5|2|300|#00b4d8ff|#ffb800ff|1|1|1|1|0|7")));
+        QCOMPARE(v1.capacity(), 300);
+        QCOMPARE(v1.durationMs(), 60000);
+    }
+
     void appsettings_persistence()
     {
         // Task 3.3: AppSettings should persist MultimeterSignalHistoryDurationMs
