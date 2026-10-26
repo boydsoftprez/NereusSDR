@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - BAR building block: Segments and Solid styles, a peak hold
+//                 marker separate from the live marker, peak value colour,
+//                 ignore history, power limit, marker stroke width and the
+//                 clsBarItem new-item defaults (kBarItemThetisDefaults).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
 //                 aboveS9Frequency(), a formatValue overload taking the
 //                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
@@ -255,6 +260,7 @@ mw0lge@grange-lane.co.uk
 #include <QVariant>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 class QPainter;
 class QMouseEvent;
@@ -640,16 +646,48 @@ private:
 // ---------------------------------------------------------------------------
 // BarItem — Horizontal or vertical bar meter
 // ---------------------------------------------------------------------------
+// History duration range (ms).
+// From Thetis setup.designer.cs:55011-55015 [v2.10.3.15] (nudMeterItemHistoryDuration.Minimum)
+constexpr int kMinBarHistoryDurationMs = 50;
+// From Thetis setup.designer.cs:55006-55010 [v2.10.3.15] (nudMeterItemHistoryDuration.Maximum)
+constexpr int kMaxBarHistoryDurationMs = 30000;
+// Ignore history after a transition (ms).
+// From Thetis setup.designer.cs:55150-55154 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Minimum)
+constexpr int kMinBarIgnoreHistoryMs = 0;
+// From Thetis setup.designer.cs:55145-55149 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Maximum)
+constexpr int kMaxBarIgnoreHistoryMs = 4000;
+// From Thetis setup.designer.cs:55161-55165 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Value)
+constexpr int kDefaultBarIgnoreHistoryMs = 2000;
+// Power limit of the scale (W).
+// From Thetis setup.designer.cs:55313-55317 [v2.10.3.15] (nudMeterItemsPowerLimit.Minimum, 1 with scale 1)
+constexpr double kMinBarPowerLimitW = 0.1;
+// From Thetis setup.designer.cs:55308-55312 [v2.10.3.15] (nudMeterItemsPowerLimit.Maximum)
+constexpr double kMaxBarPowerLimitW = 5000.0;
+// From Thetis setup.designer.cs:55323-55327 [v2.10.3.15] (nudMeterItemsPowerLimit.Value)
+constexpr double kDefaultBarPowerLimitW = 100.0;
+
 class BarItem : public MeterItem {
     Q_OBJECT
 public:
     enum class Orientation { Horizontal, Vertical };
-    // From Thetis clsBarItem.BarStyle (MeterManager.cs:19927-19934):
+    // From Thetis clsBarItem.BarStyle (MeterManager.cs:21247-21254 [v2.10.3.15]):
     //   None, Line, SolidFilled, GradientFilled, Segments.
-    // NereusSDR maps SolidFilled -> Filled for back-compat with pre-A4
-    // presets and adds Line. Edge is a NereusSDR extension (mapped from
-    // Thetis console.cs edge meters).
-    enum class BarStyle { Filled, Edge, Line };
+    // Filled is NereusSDR's original full-height bar; Edge is a NereusSDR
+    // extension (mapped from Thetis console.cs edge meters). Segments and
+    // Solid are renderHBar's Segments and SolidFilled
+    // (MeterManager.cs:37424-37673 [v2.10.3.15]). Appended so saved values
+    // keep their meaning.
+    enum class BarStyle { Filled, Edge, Line, Segments, Solid };
+
+    // Segments / Solid geometry for a bar w x h pixels.
+    // From Thetis MeterManager.cs:37458-37470 [v2.10.3.15] (renderHBar)
+    struct SegmentGeometry {
+        int   blockSize;
+        int   gapSize;
+        int   step;
+        float barHeight;
+    };
+    static SegmentGeometry segmentGeometry(float w, float h);
 
     explicit BarItem(QObject* parent = nullptr) : MeterItem(parent) {}
 
@@ -776,6 +814,38 @@ public:
     void setPeakHoldDecayRatio(float r) { m_peakHoldDecayRatio = r; }
     float peakHoldDecayRatio() const { return m_peakHoldDecayRatio; }
 
+    // Peak hold marker, drawn at the peak independently of the live marker.
+    // From Thetis MeterManager.cs:21497-21501, 37600-37602 [v2.10.3.15]
+    // (PeakHold). Unset (records saved before the option existed, and
+    // bars built in code) follows showMarker(), which drew both markers.
+    void setPeakHold(bool on) { m_peakHold = on; }
+    bool peakHold() const { return m_peakHold.value_or(m_showMarker); }
+
+    // Peak value text colour (Thetis PeakValueColour,
+    // MeterManager.cs:21492-21496 [v2.10.3.15]); the same slot as
+    // peakFontColour().
+    void setPeakValueColour(const QColor& c) { setPeakFontColour(c); }
+    QColor peakValueColour() const { return peakFontColour(); }
+
+    // Marker line width (Thetis StrokeWidth). NereusSDR drew 2 px markers.
+    void setStrokeWidth(float w) { m_strokeWidth = w > 0.0f ? w : 1.0f; }
+    float strokeWidth() const { return m_strokeWidth; }
+
+    // After a transition the next IgnoreHistory ms of readings do not
+    // reach the history or the peak. From Thetis MeterManager.cs:21367-21378,
+    // 21422-21426, 21450-21457 [v2.10.3.15] (IgnoreHistoryDuration,
+    // ClearHistory). Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setIgnoreHistoryMs(int ms);
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void clearHistory();
+    int ignoringReadings() const { return m_ignoringNext; }
+
+    // Power limit (W): a calibrated forward or reverse power bar reads
+    // value * 100 / limit. From Thetis MeterManager.cs:41053-41056,
+    // 28292 [v2.10.3.15]. Clamped to kMinBarPowerLimitW..kMaxBarPowerLimitW.
+    void setPowerLimit(double watts);
+    double powerLimit() const { return m_powerLimit; }
+
     // --- Phase A4: ScaleCalibration (non-linear value → X map) ---
     // From Thetis clsBarItem.ScaleCalibration (MeterManager.cs:20192,
     // 21547-21549 addSMeterBar, 21638-21640 AddADCMaxMag). When calibration
@@ -785,6 +855,7 @@ public:
     // BarItem falls back to linear range mapping (pre-A4 behavior).
     void addScaleCalibration(double value, float normalizedX);
     void clearScaleCalibration() { m_scaleCalibration.clear(); }
+    QMap<double, float> scaleCalibration() const { return m_scaleCalibration; }
     int scaleCalibrationSize() const
     {
         return static_cast<int>(m_scaleCalibration.size());
@@ -820,9 +891,11 @@ public:
     void emitVertices(QVector<float>& verts, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     void paintEdge(QPainter& p, int widgetW, int widgetH);
+    void paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLive);
 
     Orientation m_orientation{Orientation::Horizontal};
     double      m_minVal{-140.0};
@@ -856,10 +929,50 @@ private:
     QColor      m_markerColour{Qt::yellow};
     QColor      m_peakHoldMarkerColour{Qt::red};
     float       m_peakHoldDecayRatio{0.0f};        // 0 = hold forever
+    std::optional<bool> m_peakHold;                // unset = follows m_showMarker
+    float       m_strokeWidth{2.0f};               // NereusSDR's 2 px markers
+    int         m_ignoreHistoryMs{0};              // saved bars never ignored
+    int         m_ignoringNext{0};
+    double      m_powerLimit{kDefaultBarPowerLimitW};
     // Phase A4 — non-linear value→X calibration waypoints.
     // QMap keeps entries sorted by key (value) which is what the
     // interpolation in valueToNormalizedX() relies on.
     QMap<double, float> m_scaleCalibration;
+};
+
+// New BAR items (makeEntry) take the clsBarItem constructor's values.
+// From Thetis MeterManager.cs:21284-21302 [v2.10.3.15]
+struct BarItemThetisDefaults {
+    int                historyDurationMs;
+    int                ignoreHistoryMs;
+    bool               showHistory;
+    bool               showValue;
+    bool               showPeakValue;
+    BarItem::BarStyle  style;
+    QRgb               colour;
+    QRgb               colourHigh;
+    QRgb               markerColour;
+    QRgb               peakHoldMarkerColour;
+    QRgb               peakValueColour;
+    float              strokeWidth;
+    bool               peakHold;
+    bool               showMarker;
+};
+inline constexpr BarItemThetisDefaults kBarItemThetisDefaults{
+    2000,                       // _msHistoryDuration = 2000
+    2000,                       // _msIgnoreHistoryDuration = 2000
+    false,                      // _showHistory = false
+    true,                       // _showValue = true
+    true,                       // _showPeakValue = true
+    BarItem::BarStyle::Line,    // _style = BarStyle.Line
+    qRgb(0xff, 0x00, 0x00),     // _colour = Color.Red
+    qRgb(0xff, 0xa5, 0x00),     // _colourHigh = Color.Orange
+    qRgb(0xff, 0xff, 0x00),     // _markerColour = Color.Yellow
+    qRgb(0xff, 0x00, 0x00),     // _peakHoldMarkerColour = Color.Red
+    qRgb(0xff, 0x00, 0x00),     // _peakValueColour = Color.Red
+    3.0f,                       // _strokeWidth = 3f
+    false,                      // _peakHold = false
+    true,                       // _showMarker = true
 };
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,19 @@
+// Modification history (NereusSDR):
+//   2026-10-25 - Rows for the BAR options: style (adds Line, Segments,
+//                 Solid), value and peak text, markers, peak hold, history,
+//                 ignore history, power limit and calibration. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "BarItemEditor.h"
 #include "../../meters/MeterItem.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QColorDialog>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -61,7 +70,173 @@ void BarItemEditor::setItem(MeterItem* item)
         QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
             .arg(bar->edgeAvgColor().name(QColor::HexArgb)));
 
+    // Options
+    m_chkShowValue->setChecked(bar->showValue());
+    m_chkShowPeakValue->setChecked(bar->showPeakValue());
+    m_chkShowMarker->setChecked(bar->showMarker());
+    m_chkPeakHold->setChecked(bar->peakHold());
+    m_chkShowHistory->setChecked(bar->showHistory());
+    m_spinHistoryMs->setValue(bar->historyDurationMs());
+    m_spinIgnoreHistoryMs->setValue(bar->ignoreHistoryMs());
+    m_spinPowerLimit->setValue(bar->powerLimit());
+    QStringList cal;
+    const QMap<double, float> points = bar->scaleCalibration();
+    for (auto it = points.constBegin(); it != points.constEnd(); ++it) {
+        cal << QStringLiteral("%1=%2").arg(it.key()).arg(static_cast<double>(it.value()));
+    }
+    m_editCalibration->setText(cal.join(QStringLiteral("; ")));
+    for (const auto& refresh : m_swatchRefreshers) { refresh(*bar); }
+
     endProgrammaticUpdate();
+}
+
+void BarItemEditor::paintSwatch(QPushButton* button, const QColor& colour)
+{
+    button->setStyleSheet(
+        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+            .arg(colour.name(QColor::HexArgb)));
+}
+
+QPushButton* BarItemEditor::makeColourRow(const QString& label,
+                                          std::function<QColor(const BarItem&)> get,
+                                          std::function<void(BarItem&, const QColor&)> set)
+{
+    auto* button = new QPushButton(this);
+    button->setFixedSize(40, 18);
+    connect(button, &QPushButton::clicked, this, [this, button, label, get, set]() {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (!bar) { return; }
+        const QColor chosen = QColorDialog::getColor(get(*bar), this, label,
+                                                     QColorDialog::ShowAlphaChannel);
+        if (chosen.isValid()) {
+            set(*bar, chosen);
+            paintSwatch(button, chosen);
+            notifyChanged();
+        }
+    });
+    m_swatchRefreshers.append([button, get](const BarItem& bar) { paintSwatch(button, get(bar)); });
+    addRow(label, button);
+    return button;
+}
+
+void BarItemEditor::buildOptionRows()
+{
+    // --- Value and peak text ---
+    addHeader(QStringLiteral("Readout"));
+    m_chkShowValue = makeCheckRow(QStringLiteral("Show value"));
+    connect(m_chkShowValue, &QCheckBox::toggled, this, [this](bool on) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setShowValue(on);
+        notifyChanged();
+    });
+    m_btnFontColour = makeColourRow(QStringLiteral("Value color"),
+        [](const BarItem& b) { return b.fontColour(); },
+        [](BarItem& b, const QColor& c) { b.setFontColour(c); });
+    m_chkShowPeakValue = makeCheckRow(QStringLiteral("Show peak value"));
+    connect(m_chkShowPeakValue, &QCheckBox::toggled, this, [this](bool on) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setShowPeakValue(on);
+        notifyChanged();
+    });
+    m_btnPeakValueColour = makeColourRow(QStringLiteral("Peak value color"),
+        [](const BarItem& b) { return b.peakValueColour(); },
+        [](BarItem& b, const QColor& c) { b.setPeakValueColour(c); });
+
+    // --- Markers ---
+    addHeader(QStringLiteral("Markers"));
+    m_chkShowMarker = makeCheckRow(QStringLiteral("Show marker"));
+    connect(m_chkShowMarker, &QCheckBox::toggled, this, [this](bool on) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        // Pin the peak hold marker so it no longer follows this box.
+        bar->setPeakHold(bar->peakHold());
+        bar->setShowMarker(on);
+        notifyChanged();
+    });
+    m_btnMarkerColour = makeColourRow(QStringLiteral("Marker color"),
+        [](const BarItem& b) { return b.markerColour(); },
+        [](BarItem& b, const QColor& c) { b.setMarkerColour(c); });
+    m_chkPeakHold = makeCheckRow(QStringLiteral("Peak hold"));
+    connect(m_chkPeakHold, &QCheckBox::toggled, this, [this](bool on) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setPeakHold(on);
+        notifyChanged();
+    });
+    m_btnPeakHoldColour = makeColourRow(QStringLiteral("Peak hold color"),
+        [](const BarItem& b) { return b.peakHoldMarkerColour(); },
+        [](BarItem& b, const QColor& c) { b.setPeakHoldMarkerColour(c); });
+
+    // --- History ---
+    addHeader(QStringLiteral("History"));
+    m_chkShowHistory = makeCheckRow(QStringLiteral("Show history"));
+    connect(m_chkShowHistory, &QCheckBox::toggled, this, [this](bool on) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setShowHistory(on);
+        notifyChanged();
+    });
+    m_btnHistoryColour = makeColourRow(QStringLiteral("History color"),
+        [](const BarItem& b) { return b.historyColour(); },
+        [](BarItem& b, const QColor& c) { b.setHistoryColour(c); });
+    m_spinHistoryMs = makeIntRow(QStringLiteral("History (ms)"),
+                                 kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+    m_spinHistoryMs->setToolTip(QStringLiteral(
+        "How long the history and the peak value look back."));
+    connect(m_spinHistoryMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setHistoryDurationMs(v);
+        notifyChanged();
+    });
+    m_spinIgnoreHistoryMs = makeIntRow(QStringLiteral("Ignore history (ms)"),
+                                       kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+    m_spinIgnoreHistoryMs->setToolTip(QStringLiteral(
+        "After switching between receive and transmit, or changing band, let "
+        "the meter settle this long before it gathers history and peak values."));
+    connect(m_spinIgnoreHistoryMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setIgnoreHistoryMs(v);
+        notifyChanged();
+    });
+
+    // --- Scale ---
+    addHeader(QStringLiteral("Scale"));
+    m_spinPowerLimit = makeDoubleRow(QStringLiteral("Power limit (W)"),
+                                     kMinBarPowerLimitW, kMaxBarPowerLimitW, 0.1, 1);
+    m_spinPowerLimit->setToolTip(QStringLiteral(
+        "Power limit of the scale on a forward or reverse power bar."));
+    connect(m_spinPowerLimit, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->setPowerLimit(v);
+        notifyChanged();
+    });
+    m_editCalibration = new QLineEdit(this);
+    m_editCalibration->setPlaceholderText(QStringLiteral("value=position; ..."));
+    m_editCalibration->setToolTip(QStringLiteral(
+        "Scale points as value=position pairs, position 0 to 1 across the bar. "
+        "Empty: the bar runs from Min value to Max value."));
+    addRow(QStringLiteral("Calibration"), m_editCalibration);
+    connect(m_editCalibration, &QLineEdit::editingFinished, this, [this]() {
+        BarItem* bar = qobject_cast<BarItem*>(m_item);
+        if (isProgrammaticUpdate() || !bar) { return; }
+        bar->clearScaleCalibration();
+        const QStringList pairs = m_editCalibration->text().split(QLatin1Char(';'), Qt::SkipEmptyParts);
+        for (const QString& pair : pairs) {
+            const int eq = pair.indexOf(QLatin1Char('='));
+            if (eq <= 0) { continue; }
+            bool okK = true;
+            bool okV = true;
+            const double key = pair.left(eq).trimmed().toDouble(&okK);
+            const float pos = pair.mid(eq + 1).trimmed().toFloat(&okV);
+            if (okK && okV) { bar->addScaleCalibration(key, pos); }
+        }
+        notifyChanged();
+    });
 }
 
 void BarItemEditor::buildTypeSpecific()
@@ -146,6 +321,12 @@ void BarItemEditor::buildTypeSpecific()
                              static_cast<int>(BarItem::BarStyle::Filled));
     m_comboBarStyle->addItem(QStringLiteral("Edge"),
                              static_cast<int>(BarItem::BarStyle::Edge));
+    m_comboBarStyle->addItem(QStringLiteral("Line"),
+                             static_cast<int>(BarItem::BarStyle::Line));
+    m_comboBarStyle->addItem(QStringLiteral("Segments"),
+                             static_cast<int>(BarItem::BarStyle::Segments));
+    m_comboBarStyle->addItem(QStringLiteral("Solid"),
+                             static_cast<int>(BarItem::BarStyle::Solid));
     addRow(QStringLiteral("Bar style"), m_comboBarStyle);
     connect(m_comboBarStyle, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -269,6 +450,8 @@ void BarItemEditor::buildTypeSpecific()
         }
     });
     addRow(QStringLiteral("Edge avg color"), m_btnEdgeAvg);
+
+    buildOptionRows();
 }
 
 } // namespace NereusSDR
