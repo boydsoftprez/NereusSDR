@@ -317,8 +317,8 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | src/gui/meters/ButtonBoxItem.h | Project Files/Source/Console/MeterManager.cs | 12307+; 12309-12327 | port | thetis-samphire | clsButtonBox, IndicatorType enum |
 | src/gui/meters/ClickBoxItem.h | Project Files/Source/Console/MeterManager.cs | 7571+ | port | thetis-samphire | clsClickBox |
 | src/gui/meters/ClickBoxItem.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | clsClickBoxItem implementation; pairs with ClickBoxItem.h |
-| src/gui/meters/ClockItem.h | Project Files/Source/Console/MeterManager.cs | 14075+ | port | thetis-samphire | clsClock |
-| src/gui/meters/ClockItem.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | clsClockItem implementation; pairs with ClockItem.h |
+| src/gui/meters/ClockItem.h | Project Files/Source/Console/MeterManager.cs | 14075+; 31065-31099 | port | thetis-samphire | clsClock; clock readings (time_utc, time_loc, date_utc, date_loc) [v2.10.3.15] |
+| src/gui/meters/ClockItem.cpp | Project Files/Source/Console/MeterManager.cs | full; 31073-31099 | port | thetis-samphire | clsClockItem implementation; pairs with ClockItem.h; publishedReadings ports the clock readings with am/pm and ddd d MMM yyyy [v2.10.3.15] |
 | src/gui/meters/DataOutItem.h | Project Files/Source/Console/MeterManager.cs | 16047+ | port | thetis-samphire | clsDataOut |
 | src/gui/meters/DataOutItem.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | clsDataOutItem implementation; pairs with DataOutItem.h |
 | src/gui/meters/DialItem.cpp | Project Files/Source/Console/MeterManager.cs | 15399+; 33750-33899 | port | thetis-samphire | clsDialDisplay, renderDialDisplay |
@@ -369,6 +369,8 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | src/gui/meters/SpacerItem.h | Project Files/Source/Console/MeterManager.cs | 16116; 16121-16143 | port | thetis-samphire | clsSpacerItem |
 | src/gui/meters/TextOverlayItem.cpp | Project Files/Source/Console/MeterManager.cs | 18746+; 19267-19395; 18800+ | port | thetis-samphire | clsTextOverlay, parseText, render |
 | src/gui/meters/TextOverlayItem.h | Project Files/Source/Console/MeterManager.cs | 18746+; 19267+ | port | thetis-samphire | clsTextOverlay, parseText |
+| src/gui/meters/ThetisReadingNames.cpp | Project Files/Source/Console/MeterManager.cs | 83-133; 170; 17391 | port | thetis-samphire | MeterBinding id to lowercase Reading enum name table, each entry cited to its enum line [v2.10.3.15] |
+| src/gui/meters/ThetisReadingNames.h | Project Files/Source/Console/MeterManager.cs | 79-175; 17391 | port | thetis-samphire | Reading enum names lowercased as data out writes them [v2.10.3.15] |
 | src/gui/meters/TuneStepButtonItem.cpp | Project Files/Source/Console/MeterManager.cs | 7999+ | port | thetis-samphire | TuneStepList |
 | src/gui/meters/TuneStepButtonItem.h | Project Files/Source/Console/MeterManager.cs | 7999+ | port | thetis-samphire | clsTunestepButtons |
 | src/gui/meters/VfoDisplayItem.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | clsVfoDisplay digit handling |

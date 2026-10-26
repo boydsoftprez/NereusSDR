@@ -29,6 +29,9 @@
 //                 hook (no-op in the base), SolidColourItem override. Saved
 //                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - publishedReadings(): named values an item publishes for
+//                 data out and text overlay tokens (empty in the base).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -249,6 +252,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointF>
 #include <QString>
 #include <QUuid>
+#include <QVariant>
 #include <cmath>
 #include <limits>
 
@@ -472,6 +476,13 @@ public:
     // Constructors keep the older values, so a saved record (or one with
     // fields missing) restores exactly as before. No-op in the base.
     virtual void applyNewItemDefaults();
+
+    // Named values this item publishes for data out and text overlay
+    // tokens, keyed by lowercase Thetis reading name (see
+    // ThetisReadingNames.h), as Thetis copies clock and VFO display
+    // readings into all_readings (MeterManager.cs:31057-31099
+    // [v2.10.3.15]). Empty in the base.
+    virtual QHash<QString, QVariant> publishedReadings() const { return {}; }
 
     // --- Mouse interaction (Phase 3G-5) ---
     virtual bool hitTest(const QPointF& pos, int widgetW, int widgetH) const;

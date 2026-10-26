@@ -2101,6 +2101,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterDynamics.cpp
     src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
+    src/gui/meters/ThetisReadingNames.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/WaveformMeterItem.cpp
     src/gui/meters/MeterPoller.cpp
