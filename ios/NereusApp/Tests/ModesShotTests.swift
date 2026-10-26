@@ -28,7 +28,7 @@ struct ModesShotTests {
             let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
             let station = try FakeStation(additions: [.remoteTx])
             await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                                transportFactory: station.transportFactory)
+                                transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
             #expect(await station.waitUntilLive())
             let json = try #require(ModesTabBindingTests.catalogueJSON(fixture))
             await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
@@ -57,7 +57,8 @@ struct ModesShotTests {
                 model.main.modes.sliceChoices.count == 2 && model.main.modes.attenuationDb != nil
                     && model.main.transmit.settingsEditable && model.main.modes.modeLabel == "LSB"
             })
-            // The link's round trip is timed at its first heartbeat, 20 s in.
+            // The link's round trip is timed at its first heartbeat, which the
+            // test clock brings to 1 s in (20 s in the app).
             _ = await settle(seconds: 30) { model.roundTripMs != nil }
 
             try await shoot("modes-\(name)", model: model, size: CGSize(width: 402, height: 874), whole: false)

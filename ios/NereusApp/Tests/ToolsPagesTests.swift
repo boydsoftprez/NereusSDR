@@ -1203,6 +1203,11 @@ struct ToolsPagesTests {
         let (model, station) = try await connected(additions: [.spots, .supportBundle])
         let log = CoreLogModel(mirror: model.mirror, commands: model.commands, records: model.records)
         #expect(await settle { log.reason == nil })
+        // The spots list asks for its stream as the link comes up, on a task
+        // of its own; the refusal below is for the log's, so that ask has to
+        // reach the Core first, or it takes the refusal and the log's note
+        // never shows, as happened once on CI's runner (2026-10-25).
+        #expect(await settle { station.messages.contains { Self.asksFor($0, RecordStreamClient.spotsStream) } })
         station.refuseNext("records.subscribe", reason: "The Core is busy. Try again.")
         log.setOpen(true)
         #expect(await settle { log.note == "The Core is busy. Try again." })

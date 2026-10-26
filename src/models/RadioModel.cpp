@@ -14111,7 +14111,18 @@ bool RadioModel::requestStreamCentre(int sliceId, double centreHz)
         }
     }
 
-    if (m_streamAllocator.streamCentreHz(stream) == centreHz) {
+    // Already there only when the radio is too. A CTUN pan drag moves the
+    // hardware without the allocator, so an allocator centre that matches can
+    // be stale; then the move still has to run (issue #648).
+    const bool hardwareThere = [&]() {
+        if (m_receiverManager == nullptr) {
+            return true;
+        }
+        const ReceiverConfig config = m_receiverManager->receiverConfig(stream);
+        return config.receiverIndex < 0
+            || config.frequencyHz == static_cast<quint64>(centreHz);
+    }();
+    if (m_streamAllocator.streamCentreHz(stream) == centreHz && hardwareThere) {
         return true;
     }
     m_streamAllocator.activateStream(stream, centreHz, rateHz);

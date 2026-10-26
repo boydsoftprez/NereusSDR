@@ -5,11 +5,12 @@
 # peer helpers and nereusd, and runs the app's media peer against the Core's
 # own media transport and its pairing against the Core's own pairing, by
 # the helper and by a scratch nereusd kept off the network. The app job
-# (plan Task 51) generates the Xcode project, builds the app for the
-# simulator and for devices, and runs the app's tests and NereusKit's on an
-# iPhone 17 simulator: it builds the tests first, then boots the simulator
-# and waits for the runner to go quiet (ios/scripts/sim-settle.sh), then
-# tests. They run on
+# (plan Task 51) generates the Xcode project, builds the app for devices,
+# and runs the app's tests and NereusKit's on an iPhone 17 simulator, in
+# two parts on two runners at once (see the app job): each builds the app
+# and its tests for the simulator, then boots the simulator and waits for
+# the runner to go quiet (ios/scripts/sim-settle.sh), then runs its part
+# of the tests. They run on
 # changes to the app, to the conformance fixtures the app's tests read, to
 # the station's media transport, pairing and console and the helpers, and
 # to this workflow. On a pull request the app job runs only when the PR
@@ -67,8 +68,8 @@ concurrency:
 
 jobs:
   scope:
-    # Decides whether this pull request runs the app job, which holds a
-    # macOS runner for over an hour. Pushes to main always run it. Fails
+    # Decides whether this pull request runs the app job, which holds two
+    # macOS runners for over half an hour. Pushes to main always run it. Fails
     # closed: if the diff can't be read, the app job runs.
     runs-on: ubuntu-latest
     name: Which iOS jobs run
@@ -184,7 +185,29 @@ jobs:
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27
-    name: The app on the iOS simulator
+    name: The app on the iOS simulator (${{ matrix.part }} of 2)
+    # One runner took 75 to 90 minutes for this job (2026-10-17 to
+    # 2026-10-25): 31 for the app's unit tests, 22 for its UI tests, 3 for
+    # NereusKit's, all one after another, after 5 to 7 minutes of building
+    # and 10 to 16 of the simulator's first boot. Most of the unit tests'
+    # time went to making the same synthetic band lines again for every
+    # picture and to waiting 20 s for a heartbeat (both fixed in the
+    # tests), so the parts are now:
+    #
+    #   1. the app's unit tests and NereusKit's, and the build for devices,
+    #   2. the app's UI tests (NereusSDRUITests).
+    #
+    # Each part pays about 13 minutes to build and to wait out the first
+    # boot before its first test, so a third part would cost more runner
+    # time than it saves. Part 1 skips the UI test bundle and part 2 runs
+    # only it, so every test runs in exactly one part with no lists to
+    # keep, and a part that runs no tests fails. With the package and
+    # interop jobs, and ci.yml's Apple Silicon build on a pull request that
+    # touches ios/, that is five macOS jobs, the account's limit.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -208,20 +231,19 @@ jobs:
       - name: Generate the Xcode project
         run: ios/scripts/generate-project.sh
 
-      - name: Build for the simulator
-        run: |
-          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
-            -destination 'generic/platform=iOS Simulator' \
-            build
+      # No separate build for 'generic/platform=iOS Simulator': building the
+      # tests below builds the same app for the simulator, and the generic
+      # build compiled every file again (for arm64 and x86_64) to no use.
 
       - name: Build for devices
-        # Unsigned: CI holds no signing identity.
+        # Unsigned: CI holds no signing identity. Once, in part 1.
+        if: matrix.part == 1
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO build
 
-      - name: Build the tests
+      - name: Build the app and its tests for the simulator
         # Before any simulator boots: a build beside a simulator's first
         # boot took three times as long.
         run: |
@@ -236,7 +258,30 @@ jobs:
         run: ios/scripts/sim-settle.sh 'iPhone 17'
 
       - name: Test on an iPhone 17 simulator
+        shell: bash
+        env:
+          PART: ${{ matrix.part }}
         run: |
+          case "$PART" in
+            1) selection=(-skip-testing:NereusSDRUITests) ;;
+            2) selection=(-only-testing:NereusSDRUITests) ;;
+            *)
+              echo "Unknown part $PART" >&2
+              exit 1
+              ;;
+          esac
+          echo "Part $PART of 2: ${selection[*]}"
+          result="$RUNNER_TEMP/part-$PART.xcresult"
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -resultBundlePath "$result" \
+            "${selection[@]}" \
             test-without-building
+          # A selection that matches nothing still passes in xcodebuild.
+          count=$(xcrun xcresulttool get test-results summary --path "$result" |
+            python3 -c 'import json, sys; print(json.load(sys.stdin).get("totalTestCount", 0))')
+          echo "Part $PART ran $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=iOS test parts::Part $PART ran no tests"
+            exit 1
+          fi
