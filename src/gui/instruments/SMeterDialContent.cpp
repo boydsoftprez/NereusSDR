@@ -17,6 +17,11 @@
 //   2026-10-08 - Copies follow the external amplifier as the Main Panel's
 //                 dial does; a copy with no face key follows Setup's face.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - TX modes ALC Compression, ALC Group, Volts and Amps
+//                 (TxAlcGain, TxAlcGroup, HwVolts, HwAmps); the "Power
+//                 limit" property (kPowerLimitKey); the VHF S9 rule of the
+//                 copy's slice (LongpathContent::followAboveS9Frequency).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -43,10 +48,12 @@ namespace {
 
 // The right-click menu's names, in enum order (SMeterWidget::TxMode,
 // RxMode, DecayRate); the entry config stores these.
-const std::array<QString, 4>& txModeNames()
+const std::array<QString, SMeterWidget::kTxModeCount>& txModeNames()
 {
-    static const std::array<QString, 4> names{QStringLiteral("Power"), QStringLiteral("SWR"),
-                                              QStringLiteral("Level"), QStringLiteral("Compression")};
+    static const std::array<QString, SMeterWidget::kTxModeCount> names{
+        QStringLiteral("Power"), QStringLiteral("SWR"), QStringLiteral("Level"), QStringLiteral("Compression"),
+        QStringLiteral("ALC Compression"), QStringLiteral("ALC Group"), QStringLiteral("Volts"),
+        QStringLiteral("Amps")};
     return names;
 }
 const std::array<QString, 4>& rxModeNames()
@@ -73,6 +80,10 @@ std::optional<SMeterWidget::TxMode> txModeForBinding(int binding)
     case MeterBinding::TxSwr: return SMeterWidget::TxMode::SWR;
     case MeterBinding::TxMic: return SMeterWidget::TxMode::Level;
     case MeterBinding::TxComp: return SMeterWidget::TxMode::Compression;
+    case MeterBinding::TxAlcGain: return SMeterWidget::TxMode::Alc;
+    case MeterBinding::TxAlcGroup: return SMeterWidget::TxMode::AlcGroup;
+    case MeterBinding::HwVolts: return SMeterWidget::TxMode::Volts;
+    case MeterBinding::HwAmps: return SMeterWidget::TxMode::Amps;
     default: return std::nullopt;
     }
 }
@@ -81,6 +92,14 @@ bool isRxBinding(int binding)
 {
     return binding == MeterBinding::SignalPeak || binding == MeterBinding::SignalAvg
         || binding == MeterBinding::SignalMaxBin;
+}
+
+// The copy's power limit in whole watts (kPowerLimitKey), up to the
+// meter items' limit; 0 when absent or not positive (the radio's scale).
+int powerLimitW(const QJsonObject& config)
+{
+    const int limit = config.value(QLatin1String(kPowerLimitKey)).toInt(0);
+    return std::clamp(limit, 0, static_cast<int>(kMaxBarPowerLimitW));
 }
 
 // Applies the copy's settings; an absent key keeps today's default (the
@@ -107,6 +126,10 @@ void applyConfig(SMeterWidget& dial, const QJsonObject& config)
         dial.setFaceStyle(SMeterWidget::faceStyleFromKey(face));
     } else {
         dial.setFollowsSetupFace(true);
+    }
+    // A power limit of the copy's own: red from it, full scale at it.
+    if (const int limit = powerLimitW(config); limit > 0) {
+        dial.setPowerDisplayScale(limit, limit);
     }
 }
 
@@ -167,17 +190,28 @@ QVector<ContentProperty> dialProperties()
         face.choices.append({SMeterWidget::faceStyleLabel(style), SMeterWidget::faceStyleKey(style), true, {}});
     }
     face.defaultValue = QJsonValue();
-    return {tx, rx, peak, decay, face};
+    ContentProperty limit;
+    limit.key = QLatin1String(kPowerLimitKey);
+    limit.label = QObject::tr("Power limit (0 follows the radio)");
+    limit.kind = ContentProperty::Kind::Integer;
+    limit.minimum = 0;
+    limit.maximum = static_cast<int>(kMaxBarPowerLimitW);
+    limit.suffix = QObject::tr(" W");
+    limit.defaultValue = 0;
+    return {tx, rx, peak, decay, face, limit};
 }
 
 // The same mirrored source as the main applet dial, including remote
 // windows. A copy without a poller still follows its model's readings.
-void followExternalAmp(SMeterWidget* dial, RadioModel* radio, bool directReadings)
+// A copy with a power limit of its own keeps its scale (followScale false).
+void followExternalAmp(SMeterWidget* dial, RadioModel* radio, bool directReadings, bool followScale)
 {
     MainPowerMeter* meter = radio->mainPowerMeter();
-    const auto scale = [dial, meter] { dial->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
-    QObject::connect(meter, &MainPowerMeter::scaleChanged, dial, scale);
-    scale();
+    if (followScale) {
+        const auto scale = [dial, meter] { dial->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
+        QObject::connect(meter, &MainPowerMeter::scaleChanged, dial, scale);
+        scale();
+    }
     if (directReadings) {
         const auto reading = [dial, meter] {
             dial->setTxMeters(static_cast<float>(meter->forwardW()), static_cast<float>(meter->swr()));
@@ -193,6 +227,12 @@ struct TxValues {
     float swr = 1.0f;
     float mic = -50.0f;
     float comp = 0.0f;
+    // The appended modes, at the reading Thetis shows with none
+    // (MeterManager.cs:2077-2086, 2124-2133 [v2.10.3.15]).
+    float alcGain = 0.0f;
+    float alcGroup = -30.0f;
+    float volts = 0.0f;
+    float amps = 0.0f;
 };
 
 QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathContent::Sources& sources,
@@ -207,12 +247,15 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     // No reading until the first one arrives: "--", as a Longpath needle
     // is offline until its first reading.
     dial->setLevel(static_cast<float>(kNoMeterReadingDbm));
+    const bool ownScale = powerLimitW(entry.config) > 0;
     if (sources.radio) {
         dial->setTransmitting(sources.radio->isTransmitting());
         // The amplifier's scale now, as ampStateChanged last set the Main
-        // Panel's dial.
-        dial->setPowerDisplayScale(sources.radio->mainPowerMeter()->visualLimitW(),
-                                   sources.radio->mainPowerMeter()->scaleTopW());
+        // Panel's dial. A copy with its own power limit keeps that.
+        if (!ownScale) {
+            dial->setPowerDisplayScale(sources.radio->mainPowerMeter()->visualLimitW(),
+                                       sources.radio->mainPowerMeter()->scaleTopW());
+        }
     }
 
     QPointer<SMeterWidget> guard(dial);
@@ -233,10 +276,18 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
         case MeterBinding::TxSwr: tx->swr = none ? 1.0f : static_cast<float>(value); break;
         case MeterBinding::TxMic: tx->mic = none ? -50.0f : static_cast<float>(value); break;
         case MeterBinding::TxComp: tx->comp = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::TxAlcGain: tx->alcGain = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::TxAlcGroup: tx->alcGroup = none ? -30.0f : static_cast<float>(value); break;
+        case MeterBinding::HwVolts: tx->volts = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::HwAmps: tx->amps = none ? 0.0f : static_cast<float>(value); break;
         default: return;
         }
         if (binding == MeterBinding::TxPower || binding == MeterBinding::TxSwr) {
             guard->setTxMeters(tx->power, tx->swr);
+        } else if (binding == MeterBinding::TxAlcGain || binding == MeterBinding::TxAlcGroup) {
+            guard->setAlcMeters(tx->alcGain, tx->alcGroup);
+        } else if (binding == MeterBinding::HwVolts || binding == MeterBinding::HwAmps) {
+            guard->setSupplyMeters(tx->volts, tx->amps);
         } else {
             // MeterPoller feeds the Main Panel's dial the same way.
             guard->setMicMeters(tx->mic, tx->comp, tx->mic, tx->comp);
@@ -251,6 +302,12 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
             if (isRxBinding(binding) && !reason.isEmpty()) { rxUnavailable->insert(binding); }
         }
     }
+    // The VHF S9 rule follows the copy's slice, as a Longpath needle's does
+    // (an inert preview reads the slice once).
+    LongpathContent::followAboveS9Frequency(dial, sources, context, mode == ContentRenderMode::Preview,
+        [guard](bool above) {
+            if (guard) { guard->setAboveS9Frequency(above); }
+        });
     if (mode == ContentRenderMode::Preview) {
         // Inert preview: the cached readings once, nothing registered.
         if (poller) {
@@ -289,7 +346,7 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     }
     if (sources.radio) {
         QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial, &SMeterWidget::setTransmitting);
-        followExternalAmp(dial, sources.radio, !poller);
+        followExternalAmp(dial, sources.radio, !poller, !ownScale);
     }
 
     // The right-click menu changed a setting: the copy keeps it in its
@@ -326,7 +383,8 @@ int rxBindingForMode(const QString& rxMode)
 QList<int> registeredBindings()
 {
     return {MeterBinding::SignalPeak, MeterBinding::SignalAvg, MeterBinding::SignalMaxBin,
-            MeterBinding::TxPower, MeterBinding::TxSwr, MeterBinding::TxMic, MeterBinding::TxComp};
+            MeterBinding::TxPower, MeterBinding::TxSwr, MeterBinding::TxMic, MeterBinding::TxComp,
+            MeterBinding::TxAlcGain, MeterBinding::TxAlcGroup, MeterBinding::HwVolts, MeterBinding::HwAmps};
 }
 
 void registerDial(ContainerContentRegistry& registry, const LongpathContent::Sources& sources)

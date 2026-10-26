@@ -104,6 +104,15 @@
 //                 vintage faces leave the widget clear, so the container
 //                 behind shows (updatePaintOpacity()).
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-26  Four more TX modes, appended without renumbering (saved
+//                 layouts store the value): Alc (ANANMM's ALC_G "alc_comp"),
+//                 AlcGroup (ALC_GROUP), Volts and Amps, with their scales
+//                 from Thetis MeterManager.cs (AddAnanMM) [v2.10.3.15];
+//                 setAlcMeters() / setSupplyMeters() feed them.  The VHF S9
+//                 rule per slice: setAboveS9Frequency() raises a reading on
+//                 the S scale by 20 dB at or above 30 MHz, so S9 reads at
+//                 -93 dBm there.  J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -189,7 +198,12 @@ public:
     QString sUnitsText() const;
 
     // From AetherSDR src/gui/SMeterWidget.h:32-34 [@0cd4559]
-    enum class TxMode { Power, SWR, Level, Compression };
+    // NereusSDR appends Alc, AlcGroup, Volts and Amps (Thetis ANANMM's
+    // ALC_G, ALC_GROUP, VOLTS and AMPS needles, MeterManager.cs:23837-23894,
+    // 24029-24084 [v2.10.3.15]).  Append only: a saved dial stores the
+    // value (SMeter_TxSelect) or its name.
+    enum class TxMode { Power, SWR, Level, Compression, Alc, AlcGroup, Volts, Amps };
+    static constexpr int kTxModeCount = 8;
     // RxMode expanded from AetherSDR's 2-entry enum (SMeter, SMeterPeak) to
     // 4 entries per design doc ss5.4.1.
     // SignalAverage -> WDSP RXA_S_AV (Task 31 WdspEngine::getRxaSignalAverage).
@@ -234,6 +248,13 @@ public:
     // Peak hold state, as the right-click menu shows it.  NereusSDR-native.
     bool peakHoldEnabled() const { return m_peakHoldEnabled; }
     DecayRate peakDecayRate() const;
+
+    // VHF S9 rule (NereusSDR-native wiring of Thetis's): whether the slice
+    // the dial reads is at or above the S9 frequency (isAboveS9Frequency,
+    // gui/meters/AboveS9Frequency.h).  When it is, a reading is raised by
+    // kAboveS9OffsetDb on the S scale and in the S-unit readout, so S9 sits
+    // at -93 dBm; the dBm readout stays the reading.  Not saved.
+    bool aboveS9Frequency() const { return m_aboveS9Frequency; }
 
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
@@ -303,6 +324,17 @@ public slots:
     // Update mic/compression meter values.
     // From AetherSDR src/gui/SMeterWidget.h:44 [@0cd4559]
     void setMicMeters(float micLevel, float compLevel, float micPeak, float compPeak);
+
+    // ALC compression (TxAlcGain, dB) and ALC group (TxAlcGroup, dB), for
+    // TxMode::Alc and TxMode::AlcGroup.  NereusSDR-native.
+    void setAlcMeters(float alcGain, float alcGroup);
+
+    // PA supply voltage (HwVolts, V) and current (HwAmps, A), for
+    // TxMode::Volts and TxMode::Amps.  NereusSDR-native.
+    void setSupplyMeters(float volts, float amps);
+
+    // The VHF S9 rule for the slice the dial reads (see aboveS9Frequency()).
+    void setAboveS9Frequency(bool above);
 
     // Switch between RX and TX needle source.
     // From AetherSDR src/gui/SMeterWidget.h:47 [@0cd4559]
@@ -412,6 +444,13 @@ private:
     // From AetherSDR src/gui/SMeterWidget.h:71-72 [@0cd4559]
     float dbmToFraction(float dbm) const;
 
+    // A reading as the S scale positions it: raised by the VHF S9 offset
+    // at or above the S9 frequency.  rxFraction() is dbmToFraction() of
+    // that.  The scale's ticks use dbmToFraction() directly.
+    // NereusSDR-native.
+    float sScaleDbm(float dbm) const;
+    float rxFraction(float dbm) const { return dbmToFraction(sScaleDbm(dbm)); }
+
     // Map TX value to fraction based on current TX mode
     // From AetherSDR src/gui/SMeterWidget.h:75 [@0cd4559]
     float txValueToFraction(float value) const;
@@ -442,6 +481,15 @@ private:
     float   m_txSwr{1.0f};
     float   m_micLevel{-50.0f};
     float   m_compLevel{0.0f};
+    // NereusSDR: the appended TX modes' values, at the reading Thetis
+    // shows with none (MeterManager.cs:2077-2086, 2124-2133 [v2.10.3.15]).
+    float   m_alcGain{0.0f};
+    float   m_alcGroup{-30.0f};
+    float   m_volts{0.0f};
+    float   m_amps{0.0f};
+
+    // VHF S9 rule (setAboveS9Frequency).  NereusSDR-native.
+    bool    m_aboveS9Frequency{false};
 
     // Global (the AppSettings keys) or Instance (no AppSettings).
     // NereusSDR-native.
@@ -454,7 +502,7 @@ private:
     // From AetherSDR src/gui/SMeterWidget.h:92-94 [@0cd4559]
     TxMode  m_txMode{TxMode::Power};
     // Parity Task 33: why each TX mode has no reading here (by TxMode).
-    std::array<QString, 4> m_txUnavailable;
+    std::array<QString, kTxModeCount> m_txUnavailable;
     RxMode  m_rxMode{RxMode::SMeter};
     bool    m_transmitting{false};
 
@@ -522,6 +570,27 @@ private:
     // From AetherSDR src/gui/SMeterWidget.h:129-130 [@0cd4559]
     static constexpr float ARC_START_DEG = 55.0f;   // right end (degrees from +X axis)
     static constexpr float ARC_END_DEG   = 125.0f;  // left end
+
+public:
+    // Scales of the appended TX modes: the calibration range of Thetis
+    // ANANMM's needle for each reading (linear here; no red zone, as
+    // Thetis's needles carry no HighPoint).
+    // From Thetis MeterManager.cs:24048-24054 [v2.10.3.15] (ni6, ALC_G "alc_comp")
+    static constexpr float kAlcMinDb = 0.0f;
+    static constexpr float kAlcMaxDb = 30.0f;
+    static constexpr float kAlcStepDb = 5.0f;
+    // From Thetis MeterManager.cs:24082-24084 [v2.10.3.15] (ni7, ALC_GROUP)
+    static constexpr float kAlcGroupMinDb = -30.0f;
+    static constexpr float kAlcGroupMidDb = 0.0f;
+    static constexpr float kAlcGroupMaxDb = 25.0f;
+    // From Thetis MeterManager.cs:23855-23857 [v2.10.3.15] (ni2, VOLTS)
+    static constexpr float kVoltsMin = 10.0f;
+    static constexpr float kVoltsMid = 12.5f;
+    static constexpr float kVoltsMax = 15.0f;
+    // From Thetis MeterManager.cs:23884-23894 [v2.10.3.15] (ni3, AMPS)
+    static constexpr float kAmpsMin = 0.0f;
+    static constexpr float kAmpsMax = 20.0f;
+    static constexpr float kAmpsStep = 2.0f;
 };
 
 } // namespace NereusSDR

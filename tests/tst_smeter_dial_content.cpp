@@ -13,12 +13,18 @@
 //                 locked stays locked with the look off and is stored
 //                 unlocked with it on, and its menu commits in both.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The appended TX modes read their bindings and are saved
+//                 by name, a saved Compression dial loads unchanged, the
+//                 power limit property, and the VHF S9 rule of the copy's
+//                 slice at 30 MHz. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLabel>
 #include <QSplitter>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -35,6 +41,8 @@
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/AboveS9Frequency.h"
+#include "models/SliceModel.h"
 #include "gui/styles/WorkspacePreview.h"
 
 using namespace NereusSDR;
@@ -755,6 +763,234 @@ private slots:
         QVERIFY(!showsDuplicateLabel(*host));
         QCOMPARE(store.snapshot(), original);
         QCOMPARE(settings.value(key).toString(), rawBefore);
+    }
+
+    // ALC Compression reads TxAlcGain, ALC Group TxAlcGroup, Volts HwVolts
+    // and Amps HwAmps; each is kept in the entry by its menu name.
+    void appendedTxModesReadTheirBindings()
+    {
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        SMeterDialContent::registerDial(registry, sources);
+        ContentEntry entry = dialEntry(registry, QStringLiteral("dial-alc"),
+                                       QJsonObject{{QLatin1String(SMeterDialContent::kTxModeKey),
+                                                    QStringLiteral("ALC Compression")}});
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* dial = qobject_cast<SMeterWidget*>(widget.get());
+        QVERIFY(dial);
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::Alc);
+        dial->setTransmitting(true);
+
+        emit poller.readingUpdated(entry.context, MeterBinding::TxAlcGain, 12.0);
+        emit poller.readingUpdated(entry.context, MeterBinding::TxAlcGroup, -6.0);
+        emit poller.readingUpdated(entry.context, MeterBinding::HwVolts, 13.8);
+        emit poller.readingUpdated(entry.context, MeterBinding::HwAmps, 10.0);
+        // Another context's reading reaches nothing.
+        emit poller.readingUpdated(QJsonObject{{QStringLiteral("rxSource"), 2}}, MeterBinding::TxAlcGain, 29.0);
+        QCOMPARE(dial->testTxValue(), 12.0f);
+        QCOMPARE(dial->testTxReadout(), QStringLiteral("12 dB"));
+        QCOMPARE(dial->testNeedleTarget(), 0.4f);
+
+        const auto savedTxMode = [dial] {
+            return dial->property(ContentConfigNotifier::kAppliedConfigProperty).toJsonObject()
+                .value(QLatin1String(SMeterDialContent::kTxModeKey)).toString();
+        };
+        dial->setTxMode(QStringLiteral("ALC Group"));
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::AlcGroup);
+        QCOMPARE(dial->testTxValue(), -6.0f);
+        QCOMPARE(savedTxMode(), QStringLiteral("ALC Group"));
+        dial->setTxMode(QStringLiteral("Volts"));
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::Volts);
+        QVERIFY(qAbs(dial->testTxValue() - 13.8f) < 1e-4f);
+        QCOMPARE(dial->testTxReadout(), QStringLiteral("13.8 V"));
+        QCOMPARE(savedTxMode(), QStringLiteral("Volts"));
+        dial->setTxMode(QStringLiteral("Amps"));
+        QCOMPARE(dial->testTxValue(), 10.0f);
+        QCOMPARE(dial->testTxReadout(), QStringLiteral("10.0 A"));
+        QCOMPARE(dial->testNeedleTarget(), 0.5f);
+        QCOMPARE(savedTxMode(), QStringLiteral("Amps"));
+
+        // No reading: the reading Thetis shows with none (0 A).
+        emit poller.readingUpdated(entry.context, MeterBinding::HwAmps, kNoMeterReadingDbm);
+        QCOMPARE(dial->testTxValue(), 0.0f);
+        // A board without the reading: "--" with the reason.
+        emit poller.bindingAvailabilityChanged(MeterBinding::HwAmps, QStringLiteral("No current reading"));
+        QCOMPARE(dial->txModeUnavailableReason(SMeterWidget::TxMode::Amps), QStringLiteral("No current reading"));
+        QCOMPARE(dial->testTxReadout(), QStringLiteral("--"));
+
+        // The copy registers the four bindings with the poller.
+        const QList<int> bindings = SMeterDialContent::registeredBindings();
+        for (int b : {MeterBinding::TxAlcGain, MeterBinding::TxAlcGroup, MeterBinding::HwVolts,
+                      MeterBinding::HwAmps}) {
+            QVERIFY(bindings.contains(b));
+        }
+    }
+
+    // The copy's right-click menu offers the appended modes in sections;
+    // the Main Panel's dial keeps its four.
+    void copyMenuOffersTheAppendedModes()
+    {
+        ContainerContentRegistry registry;
+        SMeterDialContent::registerDial(registry, {});
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(dialEntry(registry, QStringLiteral("dial-menu")), &parent));
+        auto* dial = qobject_cast<SMeterWidget*>(widget.get());
+        QVERIFY(dial);
+        std::unique_ptr<QMenu> menu(dial->buildContextMenuForTesting());
+        QMenu* txMenu = menu->actions().at(0)->menu();
+        QVERIFY(txMenu);
+        QStringList labels;
+        for (QAction* a : txMenu->actions()) {
+            labels.append(a->isSeparator() ? QStringLiteral("|") : a->text());
+        }
+        QCOMPARE(labels, (QStringList{QStringLiteral("Power"), QStringLiteral("SWR"), QStringLiteral("|"),
+                                      QStringLiteral("Level"), QStringLiteral("Compression"),
+                                      QStringLiteral("ALC Compression"), QStringLiteral("|"),
+                                      QStringLiteral("ALC Group"), QStringLiteral("|"),
+                                      QStringLiteral("Volts"), QStringLiteral("Amps")}));
+        QAction* volts = menuAction(menu.get(), QStringLiteral("Volts"));
+        QVERIFY(volts);
+        volts->trigger();
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::Volts);
+
+        // The property editor offers the same names.
+        const QVector<ContentProperty> properties =
+            registry.declaredProperties(QString::fromLatin1(SMeterDialContent::kDialType));
+        QStringList choices;
+        for (const ContentProperty& p : properties) {
+            if (p.key == QLatin1String(SMeterDialContent::kTxModeKey)) {
+                for (const ContentPropertyChoice& c : p.choices) { choices.append(c.value.toString()); }
+            }
+        }
+        QCOMPARE(choices, (QStringList{QStringLiteral("Power"), QStringLiteral("SWR"), QStringLiteral("Level"),
+                                       QStringLiteral("Compression"), QStringLiteral("ALC Compression"),
+                                       QStringLiteral("ALC Group"), QStringLiteral("Volts"), QStringLiteral("Amps")}));
+    }
+
+    // A dial saved with TX mode Compression, before the modes were
+    // appended, loads as it was.
+    void savedCompressionDialLoadsUnchanged()
+    {
+        QCOMPARE(static_cast<int>(SMeterWidget::TxMode::Power), 0);
+        QCOMPARE(static_cast<int>(SMeterWidget::TxMode::SWR), 1);
+        QCOMPARE(static_cast<int>(SMeterWidget::TxMode::Level), 2);
+        QCOMPARE(static_cast<int>(SMeterWidget::TxMode::Compression), 3);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        SMeterDialContent::registerDial(registry, sources);
+        const QJsonObject saved{{QLatin1String(SMeterDialContent::kTxModeKey), QStringLiteral("Compression")},
+                                {QLatin1String(SMeterDialContent::kRxModeKey), QStringLiteral("Sig Avg")}};
+        DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-comp"), saved)});
+        QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
+        QVERIFY(station.exposed);
+        SMeterWidget* dial = dialFor(*station.host(), QStringLiteral("dial-comp"));
+        QVERIFY(dial);
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::Compression);
+        QCOMPARE(dial->rxMode(), SMeterWidget::RxMode::SignalAverage);
+        QCOMPARE(station.entry(QStringLiteral("dial-comp")).config, saved);
+    }
+
+    // "Power limit" 50 W: red from 50 W and full scale at it, so 25 W sits
+    // at mid-scale; the radio's scale no longer moves this copy's.
+    void powerLimitPutsHalfOfItAtMidScale()
+    {
+        MeterPoller poller;
+        RadioModel radio;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &radio;
+        SMeterDialContent::registerDial(registry, sources);
+        bool declared = false;
+        for (const ContentProperty& p : registry.declaredProperties(QString::fromLatin1(SMeterDialContent::kDialType))) {
+            if (p.key == QLatin1String(SMeterDialContent::kPowerLimitKey)) {
+                declared = true;
+                QCOMPARE(p.kind, ContentProperty::Kind::Integer);
+                QCOMPARE(p.minimum, 0);
+                QCOMPARE(p.maximum, 5000);
+                QCOMPARE(p.defaultValue.toInt(), 0);
+            }
+        }
+        QVERIFY(declared);
+
+        ContentEntry entry = dialEntry(registry, QStringLiteral("dial-50w"),
+                                       QJsonObject{{QLatin1String(SMeterDialContent::kPowerLimitKey), 50}});
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* dial = qobject_cast<SMeterWidget*>(widget.get());
+        QVERIFY(dial);
+        QCOMPARE(dial->testPowerScaleMax(), 50.0f);
+        QCOMPARE(dial->testPowerRedStart(), 50.0f);
+        dial->setTransmitting(true);
+        emit poller.readingUpdated(entry.context, MeterBinding::TxPower, 25.0);
+        QCOMPARE(dial->testTxValue(), 25.0f);
+        QCOMPARE(dial->testNeedleTarget(), 0.5f);
+        // The radio's scale changes; this copy keeps its own.
+        radio.mainPowerMeter()->setHardwareModel(HPSDRModel::HERMESLITE);
+        QCOMPARE(dial->testPowerScaleMax(), 50.0f);
+
+        // Absent (or 0), the copy follows the radio's scale.
+        std::unique_ptr<QWidget> follows(registry.createWidget(dialEntry(registry, QStringLiteral("dial-radio")), &parent));
+        auto* radioDial = qobject_cast<SMeterWidget*>(follows.get());
+        QVERIFY(radioDial);
+        QCOMPARE(radioDial->testPowerScaleMax(), static_cast<float>(radio.mainPowerMeter()->scaleTopW()));
+    }
+
+    // S9 is -93 dBm when the copy's slice is at or above 30 MHz, -73 dBm
+    // below, and follows the slice across the boundary.
+    void vhfS9FollowsTheCopysSliceAt30MHz()
+    {
+        // No radio connection: a slice's frequency change warns that the
+        // TX frequency is not pushed. Expected, so kept out of the output.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(30000000.0);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        SMeterDialContent::registerDial(registry, sources);
+        ContentEntry entry = dialEntry(registry, QStringLiteral("dial-vhf"));
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* dial = qobject_cast<SMeterWidget*>(widget.get());
+        QVERIFY(dial);
+        QVERIFY(dial->aboveS9Frequency());
+        emit poller.readingUpdated(entry.context, MeterBinding::SignalPeak, -93.0);
+        QCOMPARE(dial->sUnitsText(), QStringLiteral("S9"));
+        QCOMPARE(dial->testDbmReadout(), QStringLiteral("-93 dBm"));
+        QCOMPARE(dial->testNeedleTarget(), 0.6f);
+
+        slice->setFrequency(29999000.0);
+        QVERIFY(!dial->aboveS9Frequency());
+        QCOMPARE(dial->sUnitsText(), QStringLiteral("S6"));
+        emit poller.readingUpdated(entry.context, MeterBinding::SignalPeak, -73.0);
+        QCOMPARE(dial->sUnitsText(), QStringLiteral("S9"));
+        QCOMPARE(dial->testNeedleTarget(), 0.6f);
+
+        // An inert preview reads the slice once.
+        slice->setFrequency(144200000.0);
+        QVERIFY(dial->aboveS9Frequency());
+        std::unique_ptr<QWidget> preview(registry.createWidget(entry, &parent, ContentRenderMode::Preview));
+        auto* previewDial = qobject_cast<SMeterWidget*>(preview.get());
+        QVERIFY(previewDial);
+        QVERIFY(previewDial->aboveS9Frequency());
+        slice->setFrequency(14200000.0);
+        QVERIFY(previewDial->aboveS9Frequency());
+        QVERIFY(!dial->aboveS9Frequency());
     }
 };
 

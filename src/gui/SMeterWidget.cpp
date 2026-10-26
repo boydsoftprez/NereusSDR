@@ -116,6 +116,13 @@
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - TX modes Alc, AlcGroup, Volts and Amps (setAlcMeters,
+//                 setSupplyMeters): scales, readouts and both faces' TX
+//                 scales from Thetis ANANMM's needles (MeterManager.cs
+//                 [v2.10.3.15]); a container copy's menu offers them.  The
+//                 VHF S9 rule (setAboveS9Frequency, sScaleDbm/rxFraction):
+//                 S9 at -93 dBm at or above 30 MHz.  J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 
 #include "SMeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -134,6 +141,7 @@
 
 #include "core/AppSettings.h"
 #include "gui/VintageMeterFace.h"
+#include "gui/meters/AboveS9Frequency.h"
 #include "models/RadioModel.h"
 
 namespace NereusSDR {
@@ -386,6 +394,47 @@ void SMeterWidget::setMicMeters(float micLevel, float compLevel, float micPeak, 
     }
 }
 
+// NereusSDR-native: the appended TX modes' readings.
+void SMeterWidget::setAlcMeters(float alcGain, float alcGroup)
+{
+    m_alcGain = alcGain;
+    m_alcGroup = alcGroup;
+    updateNeedleTarget();
+    if (m_transmitting && (m_txMode == TxMode::Alc || m_txMode == TxMode::AlcGroup)) {
+        update();
+    }
+}
+
+void SMeterWidget::setSupplyMeters(float volts, float amps)
+{
+    m_volts = volts;
+    m_amps = amps;
+    updateNeedleTarget();
+    if (m_transmitting && (m_txMode == TxMode::Volts || m_txMode == TxMode::Amps)) {
+        update();
+    }
+}
+
+// The VHF S9 rule for the dial's slice.  NereusSDR-native.
+void SMeterWidget::setAboveS9Frequency(bool above)
+{
+    if (m_aboveS9Frequency == above) {
+        return;
+    }
+    m_aboveS9Frequency = above;
+    updateNeedleTarget();
+    update();
+}
+
+// A reading on the S scale: Thetis raises a signal-strength reading by
+// dbmOffsetForAboveS9Frequency at or above the S9 frequency, so a scale
+// with S9 at -73 dBm shows S9 at -93 dBm (kAboveS9OffsetDb,
+// AboveS9Frequency.h).
+float SMeterWidget::sScaleDbm(float dbm) const
+{
+    return m_aboveS9Frequency ? dbm + static_cast<float>(kAboveS9OffsetDb) : dbm;
+}
+
 void SMeterWidget::setTransmitting(bool tx)
 {
     m_transmitting = tx;
@@ -406,6 +455,12 @@ void SMeterWidget::setTxMode(const QString& mode)
     else if (mode == "SWR")         m_txMode = TxMode::SWR;
     else if (mode == "Level")       m_txMode = TxMode::Level;
     else if (mode == "Compression") m_txMode = TxMode::Compression;
+    // NereusSDR: the appended modes, by txModeToLabel()'s names.
+    for (TxMode appended : {TxMode::Alc, TxMode::AlcGroup, TxMode::Volts, TxMode::Amps}) {
+        if (mode == txModeToLabel(appended)) {
+            m_txMode = appended;
+        }
+    }
 
     // Persist TX mode selection.
     // Key SMeter_TxSelect (int 0..3): Power=0, SWR=1, Level=2, Compression=3.
@@ -474,11 +529,11 @@ void SMeterWidget::updateNeedleTarget()
     } else if (m_transmitting) {
         m_targetNeedleFraction = txValueToFraction(currentTxValue());
     } else if (m_rxMode == RxMode::SMeterPeak) {
-        m_targetNeedleFraction = dbmToFraction(m_peakDbm);
+        m_targetNeedleFraction = rxFraction(m_peakDbm);
     } else {
         // SMeter, SignalAverage, and MaxBin all use m_levelDbm as target;
         // the *source* of that value differs (caller feeds the right WDSP meter).
-        m_targetNeedleFraction = dbmToFraction(m_levelDbm);
+        m_targetNeedleFraction = rxFraction(m_levelDbm);
     }
 
     const bool needleAtTarget = qAbs(m_targetNeedleFraction - m_needleFraction) <= kNeedleSnapEpsilon;
@@ -587,12 +642,14 @@ QString SMeterWidget::sUnitsText() const
     if (m_noReading) {
         return QStringLiteral("--");
     }
-    if (m_levelDbm <= S0_DBM) return "S0";
-    if (m_levelDbm <= S9_DBM) {
-        const int s = qRound((m_levelDbm - S0_DBM) / DB_PER_S);
+    // NereusSDR: on the S scale (the VHF S9 rule).
+    const float level = sScaleDbm(m_levelDbm);
+    if (level <= S0_DBM) return "S0";
+    if (level <= S9_DBM) {
+        const int s = qRound((level - S0_DBM) / DB_PER_S);
         return QString("S%1").arg(qBound(0, s, 9));
     }
-    const int over = qRound(m_levelDbm - S9_DBM);
+    const int over = qRound(level - S9_DBM);
     return QString("S9+%1").arg(over);
 }
 
@@ -607,7 +664,8 @@ QString SMeterWidget::rxSUnitsReadout() const
     if (m_noReading) {
         return QStringLiteral("--");
     }
-    const float displayDbm = (m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm;
+    // NereusSDR: on the S scale (the VHF S9 rule); the dBm readout is not.
+    const float displayDbm = sScaleDbm((m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm);
     if (displayDbm <= S0_DBM) {
         return QStringLiteral("S0");
     }
@@ -637,7 +695,7 @@ bool SMeterWidget::peakMarkerVisible() const
 bool SMeterWidget::peakHoldLineVisible() const
 {
     return !m_noReading && m_peakHoldEnabled && !m_transmitting
-        && m_peakHoldDbm > S0_DBM + 1.0f;
+        && sScaleDbm(m_peakHoldDbm) > S0_DBM + 1.0f;
 }
 
 // --- Mapping -----------------------------------------------------------------
@@ -672,6 +730,15 @@ float SMeterWidget::txValueToFraction(float value) const
     case TxMode::Compression:
         // Gain reduction: 0 = none, -25 = heavy compression
         return qBound(0.0f, (value + 25.0f) / 25.0f, 1.0f);
+    // NereusSDR: the appended modes, linear over Thetis's calibration range.
+    case TxMode::Alc:
+        return qBound(0.0f, (value - kAlcMinDb) / (kAlcMaxDb - kAlcMinDb), 1.0f);
+    case TxMode::AlcGroup:
+        return qBound(0.0f, (value - kAlcGroupMinDb) / (kAlcGroupMaxDb - kAlcGroupMinDb), 1.0f);
+    case TxMode::Volts:
+        return qBound(0.0f, (value - kVoltsMin) / (kVoltsMax - kVoltsMin), 1.0f);
+    case TxMode::Amps:
+        return qBound(0.0f, (value - kAmpsMin) / (kAmpsMax - kAmpsMin), 1.0f);
     }
     return 0.0f;
 }
@@ -690,6 +757,11 @@ QString SMeterWidget::txReadout(bool swrRatio) const
                                               : QString("%1").arg(m_txSwr, 0, 'f', 1);
     case TxMode::Level:       return QString("%1 dB").arg(m_micLevel, 0, 'f', 0);
     case TxMode::Compression: return QString("%1 dB").arg(m_compLevel, 0, 'f', 0);
+    // Units from Thetis MeterManager.cs:2333-2334, 2337, 2366 [v2.10.3.15] (ReadingUnits)
+    case TxMode::Alc:         return QString("%1 dB").arg(m_alcGain, 0, 'f', 0);
+    case TxMode::AlcGroup:    return QString("%1 dB").arg(m_alcGroup, 0, 'f', 0);
+    case TxMode::Volts:       return QString("%1 V").arg(m_volts, 0, 'f', 1);
+    case TxMode::Amps:        return QString("%1 A").arg(m_amps, 0, 'f', 1);
     }
     return QString();
 }
@@ -730,6 +802,10 @@ float SMeterWidget::currentTxValue() const
     case TxMode::SWR:         return m_txSwr;
     case TxMode::Level:       return m_micLevel;
     case TxMode::Compression: return m_compLevel;
+    case TxMode::Alc:         return m_alcGain;
+    case TxMode::AlcGroup:    return m_alcGroup;
+    case TxMode::Volts:       return m_volts;
+    case TxMode::Amps:        return m_amps;
     }
     return 0.0f;
 }
@@ -812,6 +888,11 @@ void SMeterWidget::paintClassic(QPainter& p)
         case TxMode::SWR:         redFrac = (2.5f - 1.0f) / 2.0f; break; // 0.75
         case TxMode::Level:       redFrac = (0.0f + 40.0f) / 45.0f; break; // ~0.89
         case TxMode::Compression: redFrac = -1.0f; break; // all blue
+        // NereusSDR: Thetis's needles for these carry no red zone.
+        case TxMode::Alc:
+        case TxMode::AlcGroup:
+        case TxMode::Volts:
+        case TxMode::Amps:        redFrac = -1.0f; break;
         }
 
         if (redFrac < 0.0f) {
@@ -969,6 +1050,38 @@ void SMeterWidget::paintClassic(QPainter& p)
         }
         break;
     }
+    // NereusSDR: the appended modes, ticks at Thetis's calibration keys
+    // (all blue, no red zone).
+    case TxMode::Alc: {
+        for (float db = kAlcMinDb; db <= kAlcMaxDb; db += kAlcStepDb) {
+            drawInsideTick(txValueToFraction(db), QString::number(static_cast<int>(db)),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::AlcGroup: {
+        for (float db : {kAlcGroupMinDb, kAlcGroupMidDb, kAlcGroupMaxDb}) {
+            drawInsideTick(txValueToFraction(db), QString::number(static_cast<int>(db)),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::Volts: {
+        for (float v : {kVoltsMin, kVoltsMid, kVoltsMax}) {
+            drawInsideTick(txValueToFraction(v), QString::number(static_cast<double>(v), 'g', 3),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::Amps: {
+        // Every key ticked, every second one labelled.
+        for (float a = kAmpsMin; a <= kAmpsMax; a += kAmpsStep) {
+            const bool labelled = std::fmod(a - kAmpsMin, 2.0f * kAmpsStep) == 0.0f;
+            drawInsideTick(txValueToFraction(a), QString::number(static_cast<int>(a)),
+                           blueColor, whiteColor, labelled);
+        }
+        break;
+    }
     }
 
     // -- Draw needle ----------------------------------------------------------
@@ -994,7 +1107,7 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     // Draw peak marker (small triangle) - only in RX S-Meter Peak mode
     if (peakMarkerVisible()) {
-        const float frac = dbmToFraction(m_peakDbm);
+        const float frac = rxFraction(m_peakDbm);
         const float angle = fractionToAngle(frac);
         const float markerR = radius - 2;
 
@@ -1020,7 +1133,7 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     // -- Draw peak hold line (configurable overlay, independent of RX mode) ---
     if (peakHoldLineVisible()) {
-        float frac = dbmToFraction(m_peakHoldDbm);
+        float frac = rxFraction(m_peakHoldDbm);
         if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
             frac = m_needleFraction;
         } else {
@@ -1052,8 +1165,8 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     if (m_transmitting) {
         // TX mode: show TX source label (center), mode name (left), value (right)
-        static const char* txLabels[] = {"Power", "SWR", "Level", "Compression"};
-        const QString srcLabel = txLabels[static_cast<int>(m_txMode)];
+        // NereusSDR: txModeToLabel(), which names the appended modes too.
+        const QString srcLabel = txModeToLabel(m_txMode);
         p.setFont(srcFont);
         p.setPen(QColor(0x80, 0x90, 0xa0));
         p.drawText((w - sfm.horizontalAdvance(srcLabel)) / 2, topY, srcLabel);
@@ -1200,6 +1313,47 @@ void SMeterWidget::paintVintage(QPainter& p)
                     tick((db + 25.0f) / 25.0f, major, major ? QString::number(db) : QString());
                 }
                 break;
+            // NereusSDR: the appended modes.  Titles from Thetis
+            // MeterManager.cs:2272-2273, 2276, 2305 [v2.10.3.15] (ReadingName);
+            // majors at the calibration keys, no red zone.
+            case TxMode::Alc:
+                title  = QStringLiteral("ALC COMPRESSION");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = static_cast<int>(kAlcMinDb); db <= static_cast<int>(kAlcMaxDb); ++db) {
+                    const bool major = (db % static_cast<int>(kAlcStepDb)) == 0;
+                    tick(txValueToFraction(static_cast<float>(db)), major,
+                         major ? QString::number(db) : QString());
+                }
+                break;
+            case TxMode::AlcGroup:
+                title  = QStringLiteral("ALC GROUP");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = static_cast<int>(kAlcGroupMinDb); db <= static_cast<int>(kAlcGroupMaxDb); db += 5) {
+                    const bool major = db == static_cast<int>(kAlcGroupMinDb)
+                        || db == static_cast<int>(kAlcGroupMidDb) || db == static_cast<int>(kAlcGroupMaxDb);
+                    tick(txValueToFraction(static_cast<float>(db)), major,
+                         major ? QString::number(db) : QString());
+                }
+                break;
+            case TxMode::Volts:
+                title  = QStringLiteral("VOLTS");
+                legend = QStringLiteral("VOLTS DC");
+                for (int tenths = static_cast<int>(kVoltsMin * 10.0f); tenths <= static_cast<int>(kVoltsMax * 10.0f);
+                     tenths += 5) {
+                    const bool major = (tenths % 25) == 0;
+                    tick(txValueToFraction(tenths / 10.0f), major,
+                         major ? QString::number(tenths / 10.0, 'f', (tenths % 10) ? 1 : 0) : QString());
+                }
+                break;
+            case TxMode::Amps:
+                title  = QStringLiteral("AMPS");
+                legend = QStringLiteral("AMPERES");
+                for (int a = static_cast<int>(kAmpsMin); a <= static_cast<int>(kAmpsMax); a += static_cast<int>(kAmpsStep)) {
+                    const bool major = (a % (2 * static_cast<int>(kAmpsStep))) == 0;
+                    tick(txValueToFraction(static_cast<float>(a)), major,
+                         major ? QString::number(a) : QString());
+                }
+                break;
             }
         }
 
@@ -1251,7 +1405,7 @@ void SMeterWidget::paintVintage(QPainter& p)
 
     // -- Peak marker (RX Signal Peak mode): wedge riding outside the arc ------
     if (peakMarkerVisible()) {
-        const float frac = dbmToFraction(m_peakDbm);
+        const float frac = rxFraction(m_peakDbm);
         const double a = qDegreesToRadians(VintageMeterFace::angleDeg(frac));
         const QPointF radial(std::sin(a), -std::cos(a));
         const QPointF across(std::cos(a), std::sin(a));
@@ -1270,7 +1424,7 @@ void SMeterWidget::paintVintage(QPainter& p)
 
     // -- Peak hold line (same rules as the classic face) ----------------------
     if (peakHoldLineVisible()) {
-        float frac = dbmToFraction(m_peakHoldDbm);
+        float frac = rxFraction(m_peakHoldDbm);
         if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
             frac = m_needleFraction;
         } else {
@@ -1512,8 +1666,31 @@ QMenu* SMeterWidget::buildContextMenu(QObject* parent)
         {"Level",       TxMode::Level},
         {"Compression", TxMode::Compression},
     };
+    // NereusSDR: a container copy (SettingsStore::Instance), whose owner
+    // feeds every TX reading, also offers the appended modes.  Its menu is
+    // sectioned by Thetis ANANMM's display groups (MeterManager.cs:
+    // 24131-24135 [v2.10.3.15]: PWR/SWR, Comp, ALC, Volts/Amps), with Level
+    // and Compression in the Comp section.  The Main Panel's dial offers
+    // the four modes it is fed, unsectioned, as before.
+    struct TxSection { QString label; TxMode mode; int group; };
+    QVector<TxSection> txOrder;
     for (const auto& e : txEntries) {
-        auto* a = txMenu->addAction(QLatin1String(e.label));
+        txOrder.append({QLatin1String(e.label), e.mode,
+                        (e.mode == TxMode::Power || e.mode == TxMode::SWR) ? 1 : 2});
+    }
+    if (m_settingsStore == SettingsStore::Instance) {
+        txOrder.append({txModeToLabel(TxMode::Alc), TxMode::Alc, 2});
+        txOrder.append({txModeToLabel(TxMode::AlcGroup), TxMode::AlcGroup, 3});
+        txOrder.append({txModeToLabel(TxMode::Volts), TxMode::Volts, 4});
+        txOrder.append({txModeToLabel(TxMode::Amps), TxMode::Amps, 4});
+    }
+    int lastGroup = 0;
+    for (const TxSection& e : txOrder) {
+        if (m_settingsStore == SettingsStore::Instance && lastGroup != 0 && e.group != lastGroup) {
+            txMenu->addSeparator();
+        }
+        lastGroup = e.group;
+        auto* a = txMenu->addAction(e.label);
         a->setCheckable(true);
         a->setChecked(m_txMode == e.mode);
         txGroup->addAction(a);
@@ -1619,6 +1796,11 @@ QString SMeterWidget::txModeToLabel(TxMode mode)
     case TxMode::SWR:         return "SWR";
     case TxMode::Level:       return "Level";
     case TxMode::Compression: return "Compression";
+    // Thetis MeterManager.cs:2272-2273, 2276, 2305 [v2.10.3.15] (ReadingName)
+    case TxMode::Alc:         return "ALC Compression";
+    case TxMode::AlcGroup:    return "ALC Group";
+    case TxMode::Volts:       return "Volts";
+    case TxMode::Amps:        return "Amps";
     }
     return "Power";
 }
