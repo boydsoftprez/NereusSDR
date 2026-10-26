@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - lastBindingValues(): the latest value of each binding, for
+//                 data out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - Per-item update interval: updateMeterValue delivers a
 //                 reading to an item only when its interval has passed
 //                 (MeterItem::acceptsUpdate), on a monotonic clock a test
@@ -122,6 +125,9 @@ public:
     QVector<MeterItem*> items() const { return m_items; }
 
     void updateMeterValue(int bindingId, double value);
+    // The latest value of each binding this meter has received (data out
+    // sends them).
+    QHash<int, double> lastBindingValues() const { return m_lastBindingValue; }
     // MMIO remains an individual item's cached endpoint source.
     void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {},
                          MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
