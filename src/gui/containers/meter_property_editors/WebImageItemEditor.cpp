@@ -6,6 +6,10 @@
 //                 fetch state and the 4-char ID with a Copy button. The
 //                 rules live in WebImageItem; this page only shows them.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Background: the pan the image is shown on, how long it
+//                 stays, the next web image's 4-char ID and Show next,
+//                 after the Thetis setup page. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 
 #include "WebImageItemEditor.h"
 #include "../../meters/WebImageItem.h"
@@ -22,6 +26,8 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -77,9 +83,22 @@ void WebImageItemEditor::setItem(MeterItem* item)
     m_chkBypassCache->setChecked(w->bypassCache());
     m_editFourChar->setText(w->fourChar());
     applyBtnColor(m_btnFallback, w->fallbackColor());
+    m_comboPan->setCurrentIndex(std::max(0, m_comboPan->findData(w->targetPan())));
+    m_spinBackgroundSecs->setValue(w->backgroundIntervalSecs());
+    m_editNextFourChar->setText(w->backgroundFourChar());
     endProgrammaticUpdate();
     refreshLockedControls();
     refreshState();
+    refreshBackgroundControls();
+}
+
+// The interval, next ID and Show next apply only while a pan is chosen.
+void WebImageItemEditor::refreshBackgroundControls()
+{
+    const bool on = m_comboPan->currentData().toInt() != kWebImageNoPan;
+    m_spinBackgroundSecs->setEnabled(on);
+    m_editNextFourChar->setEnabled(on);
+    m_btnShowNext->setEnabled(on && !m_editNextFourChar->text().trimmed().isEmpty());
 }
 
 void WebImageItemEditor::applyUrl(const QString& text)
@@ -268,6 +287,69 @@ void WebImageItemEditor::buildTypeSpecific()
         }
     });
     addRow(QStringLiteral("Fallback color"), m_btnFallback);
+
+    // Background: the pan whose spectrum shows this image.
+    addHeader(QStringLiteral("Background"));
+    m_comboPan = new QComboBox(this);
+    m_comboPan->setStyleSheet(QString::fromLatin1(kComboStyle));
+    m_comboPan->addItem(QStringLiteral("None"), kWebImageNoPan);
+    for (int pan = 0; pan < kWebImageMaxPans; ++pan) {
+        m_comboPan->addItem(QStringLiteral("Pan %1").arg(pan + 1), pan);
+    }
+    m_comboPan->setToolTip(QStringLiteral("Show this image behind the spectrum of a pan"));
+    addRow(QStringLiteral("Show on"), m_comboPan);
+    connect(m_comboPan, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        refreshBackgroundControls();
+        if (isProgrammaticUpdate()) { return; }
+        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+        if (!w) { return; }
+        w->setTargetPan(m_comboPan->currentData().toInt());
+        notifyChanged();
+    });
+
+    m_spinBackgroundSecs = makeIntRow(QStringLiteral("Next after (s)"),
+                                      kWebImageMinBackgroundSecs, kWebImageMaxBackgroundSecs);
+    m_spinBackgroundSecs->setToolTip(
+        QStringLiteral("How long this image stays before the next one is shown"));
+    connect(m_spinBackgroundSecs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        if (isProgrammaticUpdate()) { return; }
+        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+        if (!w) { return; }
+        w->setBackgroundIntervalSecs(v);
+        notifyChanged();
+    });
+
+    auto* nextRow = new QWidget(this);
+    auto* nextLayout = new QHBoxLayout(nextRow);
+    nextLayout->setContentsMargins(0, 0, 0, 0);
+    nextLayout->setSpacing(4);
+    m_editNextFourChar = new QLineEdit(nextRow);
+    m_editNextFourChar->setMaxLength(4);
+    m_editNextFourChar->setFixedWidth(52);
+    m_editNextFourChar->setStyleSheet(QString::fromLatin1(kLineStyle));
+    m_editNextFourChar->setToolTip(
+        QStringLiteral("The 4-char ID of the web image shown next on this pan"));
+    nextLayout->addWidget(m_editNextFourChar);
+    m_btnShowNext = new QPushButton(QStringLiteral("Show next"), nextRow);
+    m_btnShowNext->setToolTip(QStringLiteral("Open the settings of the next web image"));
+    nextLayout->addWidget(m_btnShowNext);
+    nextLayout->addStretch(1);
+    addRow(QStringLiteral("Next 4-char ID"), nextRow);
+    connect(m_editNextFourChar, &QLineEdit::textChanged, this, [this](const QString&) {
+        refreshBackgroundControls();
+    });
+    connect(m_editNextFourChar, &QLineEdit::editingFinished, this, [this]() {
+        if (isProgrammaticUpdate()) { return; }
+        WebImageItem* w = qobject_cast<WebImageItem*>(m_item);
+        if (!w) { return; }
+        w->setBackgroundFourChar(m_editNextFourChar->text());
+        notifyChanged();
+    });
+    connect(m_btnShowNext, &QPushButton::clicked, this, [this]() {
+        const QString next = m_editNextFourChar->text().trimmed();
+        if (!next.isEmpty()) { emit showNextRequested(next); }
+    });
+    refreshBackgroundControls();
 }
 
 } // namespace NereusSDR

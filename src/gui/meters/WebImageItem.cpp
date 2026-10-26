@@ -21,6 +21,10 @@
 //                 aspect-kept drawing with "No Image", and file:// URLs
 //                 read locally with no network request. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Background rotation per pan (Thetis clsWebImage
+//                 background chain) and a guid derived from the record
+//                 text for a record saved without one. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -181,8 +185,16 @@ namespace {
 constexpr QLatin1StringView kBsdWorldHost{"bsdworld.org"};
 constexpr QLatin1StringView kLightModePlaceholder{"<light_mode>"};
 
-// Serialized tail fields (after the URL): width scale, bypass, guid.
+// Serialized tail fields (after the URL): width scale, bypass, guid; then
+// target pan, background interval and next 4-char ID.
 constexpr int kTailFieldCount = 3;
+constexpr int kBackgroundTailFieldCount = 6;
+constexpr int kFourCharLength = 4;
+
+// NereusSDR: a record saved before the guid was kept gets one derived from
+// its own text, so its 4-char ID (and a rotation naming it) is the same on
+// every load until the next save writes it.
+const QUuid kOldRecordGuidNamespace(QStringLiteral("6b1f4c3e-2d8a-5e90-9c47-a1d3e5f70b22"));
 constexpr int kUrlField = 9;
 
 // From Thetis MeterManager.cs:36668 [v2.10.3.15]
@@ -194,6 +206,22 @@ const QColor kNoImageColour(0xa9, 0xa9, 0xa9);
 // ---------------------------------------------------------------------------
 // Local serialization helpers (mirror pattern from SpacerItem.cpp)
 // ---------------------------------------------------------------------------
+
+WebImageBackgrounds& WebImageBackgrounds::instance()
+{
+    static WebImageBackgrounds hub;
+    return hub;
+}
+
+void WebImageBackgrounds::setImage(int pan, const QImage& image)
+{
+    const QImage before = m_images.value(pan);
+    if (before.isNull() && image.isNull()) { return; }
+    if (!before.isNull() && !image.isNull() && before.cacheKey() == image.cacheKey()) { return; }
+    if (image.isNull()) { m_images.remove(pan); }
+    else { m_images.insert(pan, image); }
+    emit panImageChanged(pan, image);
+}
 
 static QString webImageBaseFields(const MeterItem& item)
 {
@@ -232,12 +260,33 @@ WebImageItem::WebImageItem(QObject* parent)
 
     m_refreshTimer.setSingleShot(false);
     // Timer is not started until a URL is set.
+
+    // From Thetis MeterManager.cs:15648-15670 [v2.10.3.15] (timerCallback):
+    // after the background interval, the next image takes the pan.
+    m_backgroundTimer.setSingleShot(true);
+    connect(&m_backgroundTimer, &QTimer::timeout, this, [this]() {
+        //tell the next web image to show
+        showOnPan(m_targetPan, m_backgroundFourChar);
+    });
+    liveItems().append(this);
 }
 
 // ---------------------------------------------------------------------------
 // Destructor — QObject parent ownership handles m_nam and timer.
+// From Thetis MeterManager.cs:15766-15784 [v2.10.3.15] (Removing).
 // ---------------------------------------------------------------------------
-WebImageItem::~WebImageItem() = default;
+WebImageItem::~WebImageItem()
+{
+    liveItems().removeAll(this);
+    // if removed, and we were being shown, then null image
+    leavePan();
+}
+
+QList<WebImageItem*>& WebImageItem::liveItems()
+{
+    static QList<WebImageItem*> items;
+    return items;
+}
 
 // From Thetis MeterManager.cs:15523-15561 [v2.10.3.15]: a new item fetches
 // every 120 s at full width. Saved records keep their own interval.
@@ -258,8 +307,144 @@ void WebImageItem::setFetchEnabled(bool enabled)
 {
     if (m_fetchEnabled == enabled) { return; }
     m_fetchEnabled = enabled;
-    if (!enabled) { m_refreshTimer.stop(); }
-    else { setUrl(m_url); }
+    if (!enabled) {
+        m_refreshTimer.stop();
+        // A copy that does not fetch (a preview) never takes part in a
+        // background rotation.
+        liveItems().removeAll(this);
+        leavePan();
+    } else {
+        if (!liveItems().contains(this)) { liveItems().append(this); }
+        setUrl(m_url);
+        backgroundDetailsUpdated();
+    }
+}
+
+void WebImageItem::setTargetPan(int pan)
+{
+    const int clamped = (pan < 0 || pan >= kWebImageMaxPans) ? kWebImageNoPan : pan;
+    if (m_targetPan == clamped) { return; }
+    leavePan();
+    m_targetPan = clamped;
+    backgroundDetailsUpdated();
+}
+
+// From Thetis MeterManager.cs:15718-15736 [v2.10.3.15]
+void WebImageItem::setBackgroundIntervalSecs(int seconds)
+{
+    const int clamped = std::clamp(seconds, kWebImageMinBackgroundSecs, kWebImageMaxBackgroundSecs);
+    if (m_backgroundIntervalSecs == clamped) { return; }
+    m_backgroundIntervalSecs = clamped;
+    // Thetis compares the time shown with the interval every second
+    // (timerCallback), so a new interval applies to the image now shown.
+    if (m_showBackground) {
+        const qint64 remaining = static_cast<qint64>(m_backgroundIntervalSecs) * 1000
+                                 - m_backgroundStarted.elapsed();
+        m_backgroundTimer.start(static_cast<int>(std::max<qint64>(0, remaining)));
+    }
+    backgroundDetailsUpdated();
+}
+
+// From Thetis MeterManager.cs:15744-15762 [v2.10.3.15]
+void WebImageItem::setBackgroundFourChar(const QString& fourChar)
+{
+    const QString trimmed = fourChar.trimmed().left(kFourCharLength);
+    if (m_backgroundFourChar == trimmed) { return; }
+    m_backgroundFourChar = trimmed;
+    backgroundDetailsUpdated();
+}
+
+// From Thetis MeterManager.cs:15666-15679 [v2.10.3.15] (Update): when the
+// background details change, a background item starts the rotation if no
+// web image is shown yet (here: on its pan).
+void WebImageItem::backgroundDetailsUpdated()
+{
+    if (!m_fetchEnabled || m_targetPan == kWebImageNoPan) { return; }
+    if (!isBackgroundShown(m_targetPan)) {
+        showOnPan(m_targetPan, fourChar());
+    }
+}
+
+// From Thetis MeterManager.cs:25966-25980 and 647-660 [v2.10.3.15]
+// (IsWebImageBackgroundShown), for one pan.
+bool WebImageItem::isBackgroundShown(int pan)
+{
+    if (pan == kWebImageNoPan) { return false; }
+    for (const WebImageItem* item : liveItems()) {
+        if (item->m_targetPan == pan && item->m_showBackground) { return true; }
+    }
+    return false;
+}
+
+// From Thetis MeterManager.cs:15578-15600 [v2.10.3.15]
+// (OnShowWebImageBackground): the item with the 4-char ID shows and starts
+// its interval; every other item stops showing and stops its timer. The
+// pan's image is not cleared, so an ID that names nothing leaves the last
+// image up with no rotation running, as in Thetis. NereusSDR: the turn
+// stays on its pan; an ID on another pan, or on an item that is not a
+// background, ends the rotation the same way.
+void WebImageItem::showOnPan(int pan, const QString& fourChar)
+{
+    if (pan == kWebImageNoPan) { return; }
+    WebImageItem* next = nullptr;
+    const QList<WebImageItem*> items = liveItems();
+    for (WebImageItem* item : items) {
+        if (item->m_targetPan == pan && !fourChar.isEmpty() && item->fourChar() == fourChar) {
+            next = item;
+            break;
+        }
+    }
+    for (WebImageItem* item : items) {
+        if (item->m_targetPan == pan && item != next) { item->stopBackground(); }
+    }
+    if (next) { next->startBackground(); }
+}
+
+// From Thetis MeterManager.cs:15606-15644 [v2.10.3.15] (ShowBackground):
+// the start time is now, and the image (when there is one) goes to the
+// display.
+void WebImageItem::startBackground()
+{
+    m_showBackground = true;
+    m_backgroundStarted.start();
+    m_backgroundTimer.start(m_backgroundIntervalSecs * 1000);
+    imageUpdated();
+}
+
+void WebImageItem::stopBackground()
+{
+    m_showBackground = false;
+    m_backgroundTimer.stop();
+}
+
+// NereusSDR: the item stops being its pan's background (pan changed, the
+// copy stopped fetching, or it is destroyed). If it was the one shown, the
+// pan gets its own background back, and another live item on the pan
+// starts the rotation again so a rebuilt container keeps it running.
+void WebImageItem::leavePan()
+{
+    const int pan = m_targetPan;
+    const bool wasShown = m_showBackground;
+    stopBackground();
+    if (!wasShown || pan == kWebImageNoPan) { return; }
+    WebImageBackgrounds::instance().setImage(pan, QImage());
+    for (WebImageItem* item : liveItems()) {
+        if (item != this && item->m_targetPan == pan) {
+            showOnPan(pan, item->fourChar());
+            break;
+        }
+    }
+}
+
+// A new image reaches the pan while this item is shown. NereusSDR: Thetis
+// sends the image only when ShowBackground turns on (MeterManager.cs:
+// 15620-15640), so an image that arrives after its turn starts waits for
+// the next turn; here it goes to the pan at once.
+void WebImageItem::imageUpdated()
+{
+    if (m_showBackground && !m_image.isNull() && m_targetPan != kWebImageNoPan) {
+        WebImageBackgrounds::instance().setImage(m_targetPan, m_image);
+    }
 }
 
 void WebImageItem::setUrl(const QString& url)
@@ -497,6 +682,7 @@ void WebImageItem::loadLocalFile()
     }
     m_image = img;
     setState(State::Ok);
+    imageUpdated();
 }
 
 // ---------------------------------------------------------------------------
@@ -559,6 +745,7 @@ void WebImageItem::onFetchFinished(QNetworkReply* reply)
 
     m_image = img;
     setState(State::Ok);
+    imageUpdated();
 }
 
 // ---------------------------------------------------------------------------
@@ -613,11 +800,12 @@ void WebImageItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 // serialize()
 // Format: WEBIMAGE|x|y|w|h|bindingId|zOrder|refreshInterval|fallbackColor|url
-//         |widthScale|bypassCache|guid
+//         |widthScale|bypassCache|guid|targetPan|backgroundSecs|nextFourChar
 //         [0]      [1-6]             [7]            [8]           [9]
-//         [10]       [11]        [12]  (the last three were added later;
-//         a record without them loads with scale 1, bypass off and a new
-//         guid)
+//         [10]       [11]        [12]  [13]      [14]           [15]
+//         (10-12 were added later; a record without them loads with
+//         scale 1, bypass off and a guid derived from its text. 13-15
+//         came after them; a record without them is no background.)
 // ---------------------------------------------------------------------------
 QString WebImageItem::serialize() const
 {
@@ -630,13 +818,16 @@ QString WebImageItem::serialize() const
         m_url,
         QString::number(m_widthScale),
         m_bypassCache ? QStringLiteral("1") : QStringLiteral("0"),
-        m_guid.toString(QUuid::WithoutBraces)}.join(QLatin1Char('|'));
+        m_guid.toString(QUuid::WithoutBraces),
+        QString::number(m_targetPan),
+        QString::number(m_backgroundIntervalSecs),
+        m_backgroundFourChar}.join(QLatin1Char('|'));
 }
 
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected: WEBIMAGE|x|y|w|h|bindingId|zOrder|refreshInterval|fallbackColor|url
-//           [|widthScale|bypassCache|guid]
+//           [|widthScale|bypassCache|guid[|targetPan|backgroundSecs|nextFourChar]]
 // ---------------------------------------------------------------------------
 bool WebImageItem::deserialize(const QString& data)
 {
@@ -666,8 +857,27 @@ bool WebImageItem::deserialize(const QString& data)
     double widthScale = kWebImageThetisDefaults.widthScale;
     bool bypass = false;
     QUuid guid;
-    if (parts.size() >= kUrlField + 1 + kTailFieldCount) {
-        const int n = static_cast<int>(parts.size());
+    int targetPan = kWebImageNoPan;
+    int backgroundSecs = kWebImageThetisDefaults.backgroundIntervalSecs;
+    QString nextFourChar;
+    int n = static_cast<int>(parts.size());
+    // The background fields come last; a record with them ends in a pan
+    // number, an interval and a short (possibly empty) ID.
+    if (n >= kUrlField + 1 + kBackgroundTailFieldCount) {
+        bool panOk = false;
+        bool secsOk = false;
+        const int pan = parts[n - 3].toInt(&panOk);
+        const int secs = parts[n - 2].toInt(&secsOk);
+        const QString& next = parts[n - 1];
+        const QUuid tailGuid(parts[n - 4]);
+        if (panOk && secsOk && next.size() <= kFourCharLength && !tailGuid.isNull()) {
+            targetPan = pan;
+            backgroundSecs = secs;
+            nextFourChar = next;
+            n -= kBackgroundTailFieldCount - kTailFieldCount;
+        }
+    }
+    if (n >= kUrlField + 1 + kTailFieldCount) {
         bool scaleOk = false;
         const double scale = parts[n - 3].toDouble(&scaleOk);
         const QString& bypassField = parts[n - 2];
@@ -685,9 +895,21 @@ bool WebImageItem::deserialize(const QString& data)
     m_fallbackColor = fallbackColor;
     m_widthScale = std::clamp(widthScale, kWebImageMinWidthScale, kWebImageMaxWidthScale);
     m_bypassCache = bypass;
+    if (guid.isNull()) {
+        guid = QUuid::createUuidV5(kOldRecordGuidNamespace, data.toUtf8());
+    }
     setGuid(guid);
     // Use setUrl() so the host lock, timer and fetch are applied correctly.
     setUrl(url);
+    m_backgroundIntervalSecs = std::clamp(backgroundSecs, kWebImageMinBackgroundSecs,
+                                          kWebImageMaxBackgroundSecs);
+    m_backgroundFourChar = nextFourChar;
+    if (targetPan < 0 || targetPan >= kWebImageMaxPans) { targetPan = kWebImageNoPan; }
+    if (targetPan != m_targetPan) {
+        leavePan();
+        m_targetPan = targetPan;
+    }
+    backgroundDetailsUpdated();
 
     return true;
 }

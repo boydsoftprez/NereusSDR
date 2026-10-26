@@ -22,6 +22,14 @@
 //                 kept in the record, aspect-kept drawing with "No Image",
 //                 and file:// URLs read locally. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A web image can be a pan's spectrum background, and
+//                 background images rotate per pan: each shows for its
+//                 background interval (5 s default) and then hands the
+//                 pan to the next item named by its 4-char ID (Thetis
+//                 clsWebImage background chain). A record saved without
+//                 a guid gets one derived from its text, so its 4-char
+//                 ID is the same on every load. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -154,6 +162,8 @@ mw0lge@grange-lane.co.uk
 
 #include "MeterItem.h"
 #include <QColor>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QImage>
 #include <QList>
 #include <QPair>
@@ -205,6 +215,37 @@ struct WebImagePresetGroup {
 
 // From Thetis clsWebImage (MeterManager.cs:15485+)
 // Displays an image fetched from a URL with periodic refresh.
+// From Thetis MeterManager.cs:27259 [v2.10.3.15]
+// (webimage_background_interval: 5..3600 s, default 5) and the setup
+// page's nudWebImage_background_time (setup.cs:25946).
+constexpr int kWebImageMinBackgroundSecs = 5;
+constexpr int kWebImageMaxBackgroundSecs = 3600;
+
+// No pan: the item is not a background (Thetis Background off).
+constexpr int kWebImageNoPan = -1;
+// Pans a web image can name: the app shows at most eight
+// (DisplayLoadGovernor::kCeilingPans).
+constexpr int kWebImageMaxPans = 8;
+
+// NereusSDR: what each pan's spectrum background shows from a web image
+// (Thetis has one display and sets console.PnlDisplayBackgroundImage,
+// MeterManager.cs:15620-15640). A null image means the pan's own
+// background. Only live items write here; previews never do.
+class WebImageBackgrounds : public QObject {
+    Q_OBJECT
+public:
+    static WebImageBackgrounds& instance();
+    QImage image(int pan) const { return m_images.value(pan); }
+    void setImage(int pan, const QImage& image);
+
+signals:
+    void panImageChanged(int pan, const QImage& image);
+
+private:
+    WebImageBackgrounds() = default;
+    QHash<int, QImage> m_images;
+};
+
 class WebImageItem : public MeterItem {
     Q_OBJECT
 
@@ -257,6 +298,33 @@ public:
     QString fourChar() const;
 
     QImage currentImage() const { return m_image; }
+
+    // The pan whose spectrum background this item supplies, 0-based, or
+    // kWebImageNoPan (Thetis Background, MeterManager.cs:15707-15716).
+    void setTargetPan(int pan);
+    int targetPan() const { return m_targetPan; }
+    // Seconds this image stays on the pan before the next one takes over,
+    // kWebImageMinBackgroundSecs..kWebImageMaxBackgroundSecs (Thetis
+    // BackgroundInterval, MeterManager.cs:15718-15736).
+    void setBackgroundIntervalSecs(int seconds);
+    int backgroundIntervalSecs() const { return m_backgroundIntervalSecs; }
+    // The 4-char ID of the web image that follows this one on the pan;
+    // empty ends the rotation (Thetis BackgroundFourChar,
+    // MeterManager.cs:15744-15762).
+    void setBackgroundFourChar(const QString& fourChar);
+    QString backgroundFourChar() const { return m_backgroundFourChar; }
+    // Whether this item's image is the one its pan shows now (Thetis
+    // ShowBackground). Only a live item (fetch enabled) ever shows.
+    bool showsBackground() const { return m_showBackground; }
+
+    // Whether a live web image is shown on the pan (Thetis
+    // IsWebImageBackgroundShown, MeterManager.cs:647-660, per pan here).
+    static bool isBackgroundShown(int pan);
+    // Hands the pan to the live item on it whose 4-char ID is fourChar;
+    // every other item on the pan stops showing. An ID that names no item
+    // on the pan stops the rotation and the pan keeps the last image
+    // (Thetis ShowWebImageBackground, MeterManager.cs:15578-15600).
+    static void showOnPan(int pan, const QString& fourChar);
     State state() const { return m_state; }
     // Thetis lblWebImage_state text for state() (setup.cs:31607-31650).
     QString stateText() const;
@@ -295,6 +363,13 @@ private slots:
 
 private:
     void setState(State state);
+    void imageUpdated();
+    // Rotation (live items only).
+    void backgroundDetailsUpdated();
+    void startBackground();
+    void stopBackground();
+    void leavePan();
+    static QList<WebImageItem*>& liveItems();
     void applyHostLock();
     void restartFetching();
     bool isFileUrl() const;
@@ -311,9 +386,15 @@ private:
     bool    m_fetchEnabled{true};
     bool    m_fetchInProgress{false};
     int     m_networkRequestCount{0};
+    int     m_targetPan{kWebImageNoPan};
+    int     m_backgroundIntervalSecs{kWebImageThetisDefaults.backgroundIntervalSecs};
+    QString m_backgroundFourChar;
+    bool    m_showBackground{false};
 
     QNetworkAccessManager* m_nam{nullptr};
     QTimer m_refreshTimer;
+    QTimer m_backgroundTimer;
+    QElapsedTimer m_backgroundStarted;
 };
 
 } // namespace NereusSDR

@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - A web image's Show next selects the web image with that
+//                 4-char ID, in whichever container holds it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The Slice combo offers Active slice (saved as rxSourceMode
 //                 followSelectedRx, as the workspace header's source menu
 //                 does); Minimizes and Hide when slice not open are
@@ -1425,6 +1428,38 @@ void ContainerSettingsDialog::onItemSelectionChanged()
     if (auto* base = qobject_cast<BaseItemEditor*>(editor)) {
         connect(base, &BaseItemEditor::propertyChanged,
                 this, &ContainerSettingsDialog::updatePreview);
+    }
+    // From Thetis setup.cs:33240-33260 [v2.10.3.15]
+    // (btnWebImage_goto_next_Click): select the web image the 4-char ID
+    // names, switching container when another holds it. Queued: selecting
+    // a row replaces this editor.
+    if (auto* web = qobject_cast<WebImageItemEditor*>(editor)) {
+        connect(web, &WebImageItemEditor::showNextRequested, this, [this](const QString& fourChar) {
+            for (int row = 0; row < m_workingItems.size(); ++row) {
+                const auto* item = qobject_cast<const WebImageItem*>(m_workingItems[row]);
+                if (item && item->fourChar() == fourChar) {
+                    m_itemList->setCurrentRow(row);
+                    return;
+                }
+            }
+            if (!m_editSession) { return; }
+            const ContainerContentRegistry registry;
+            for (const auto& c : m_editSession->draft().containers) {
+                if (c.id == m_selectedId) { continue; }
+                for (int row = 0; row < c.contents.size(); ++row) {
+                    if (c.contents[row].typeId != QLatin1String("WEBIMAGE")) { continue; }
+                    std::unique_ptr<MeterItem> probe(registry.createMeterItem(
+                        c.contents[row], nullptr, ContentRenderMode::Preview));
+                    const auto* item = qobject_cast<const WebImageItem*>(probe.get());
+                    if (item && item->fourChar() == fourChar) {
+                        const QString id = c.id;
+                        selectDraftContainer(id);
+                        m_itemList->setCurrentRow(row);
+                        return;
+                    }
+                }
+            }
+        }, Qt::QueuedConnection);
     }
 }
 
