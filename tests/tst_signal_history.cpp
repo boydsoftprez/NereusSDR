@@ -32,7 +32,9 @@ private slots:
 
     void duration_clamped_to_valid_range()
     {
-        // Task 3.3: duration should be clamped to [1000, 600000] ms
+        // Duration is clamped to Thetis's Keep For range, 1 s to 1800 s
+        // (setup.designer.cs:62510-62519 [v2.10.3.15]). The cap was 600 s
+        // (10 min) until the HISTORY item matched Thetis; 1800 s is kept.
         HistoryGraphItem item;
 
         item.setDurationMs(0);
@@ -45,10 +47,13 @@ private slots:
         QVERIFY(item.durationMs() >= 1000);
 
         item.setDurationMs(700000);
-        QVERIFY(item.durationMs() <= 600000);
+        QCOMPARE(item.durationMs(), 700000);
 
-        item.setDurationMs(1000000);
-        QVERIFY(item.durationMs() <= 600000);
+        item.setDurationMs(1800000);
+        QCOMPARE(item.durationMs(), 1800000);
+
+        item.setDurationMs(2000000);
+        QCOMPARE(item.durationMs(), 1800000);
     }
 
     void capacity_computed_from_duration()

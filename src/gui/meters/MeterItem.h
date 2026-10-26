@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - readingBindingsBesideMmio(): the readings an item still
+//                 takes while data source variable 1 feeds it (a HISTORY
+//                 item's axis 1). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - acceptsUpdate() is virtual: the HISTORY item keeps the
 //                 update interval per axis. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -415,6 +419,11 @@ public:
     virtual void setValue(double v) { m_value = v; }
     virtual QSet<int> readingBindings() const { return m_bindingId >= 0 ? QSet<int>{m_bindingId} : QSet<int>{}; }
     virtual void pushBindingValue(int binding, double value) { if (binding == m_bindingId) { setValue(value); } }
+    // The readings an item still takes from the radio while data source
+    // variable 1 (index 0) feeds its main reading: none by default. Thetis
+    // reads each HISTORY axis on its own (MeterManager.cs:18096-18165
+    // [v2.10.3.15]), so a HISTORY item's axis 1 keeps its reading.
+    virtual QSet<int> readingBindingsBesideMmio() const { return {}; }
     virtual bool takeStaticPresentationChange() { return false; }
     virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
     virtual void resetForTxTransition(bool inTx);

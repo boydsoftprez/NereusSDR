@@ -24,6 +24,9 @@
 //                 lines and time colours, manual min/max per axis appended
 //                 to the record; kHistoryThetisDefaults for new items.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - kMinHistoryKeepForMs / kMaxHistoryKeepForMs (1-1800 s);
+//                 readingBindingsBesideMmio for axis 1. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -91,6 +94,10 @@ constexpr float kMaxHistoryAxisMax = 40000.0f;
 constexpr double kHistoryAxisStep = 0.1;
 // From Thetis setup.designer.cs:62565-62569 [v2.10.3.15] (nudHistory_vertical_ratio.Increment, 1 scale 3; DecimalPlaces = 3)
 constexpr double kHistoryVerticalRatioStep = 0.001;
+// Keep For, 1 s to 1800 s.
+// From Thetis setup.designer.cs:62510-62519 [v2.10.3.15] (nudHistory_keep_for)
+constexpr int kMinHistoryKeepForMs = 1 * 1000;
+constexpr int kMaxHistoryKeepForMs = 1800 * 1000;
 
 // New HISTORY items (makeEntry) take the clsHistoryItem constructor's values.
 // From Thetis MeterManager.cs:17528-17555 [v2.10.3.15]; the update interval
@@ -258,6 +265,9 @@ public:
     // MeterWidget delivers at, and pushBindingValue() drops a sample that
     // arrives within the interval of that axis's last one.
     QSet<int> readingBindings() const override;
+    // Data source variable 1 feeds axis 0 alone: axis 1 keeps its own
+    // reading (bindingId1()) unless variable 2 feeds it.
+    QSet<int> readingBindingsBesideMmio() const override;
     void pushBindingValue(int binding, double value) override;
     bool acceptsUpdate(qint64 monotonicMs) override;
     // Data source variable 2 (index 1) feeds axis 1; a non-finite value

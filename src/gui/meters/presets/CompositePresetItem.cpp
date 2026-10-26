@@ -1,5 +1,12 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal history: trace 2 (a second channel) reads its own
+//                 source (trace2Context, a slice per trace) or data source
+//                 variable 2, keeps its own samples and draws its own line,
+//                 readout and unavailable veil; a saved one-trace face loads
+//                 padded with trace 2 off; new faces take the Thetis trace
+//                 colors. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Signal text options: show type (the PK / AVG / FFT glyph)
 //                 and type color, the uV and dBm sub lines and their color,
 //                 and the peak value color; new faces take
@@ -340,6 +347,9 @@ void CompositePresetItem::initialise() {
         const bool eye=m_face==Face::Eye;
         add("Signal",MeterBinding::SignalAvg,"dBm",eye ? QMap<double,QPointF>{{-127,{0,0}},{-73,{.85,0}},{-13,{1,0}}} : QMap<double,QPointF>{{-133,{0,0}},{-73,{.5,0}},{-13,{.99,0}}},channelConfig(eye?.2:.8,eye?.05:.2,4000,!eye,eye?QColor(Qt::green):QColor(Qt::yellow),QColor(255,0,0,128)));
         if(m_face==Face::SignalText) { m_config["fontSize"]=56; }
+        // Trace 2: the same reading on its own source, off until it has one
+        // (no trace2Context). Red sets it apart from trace 1's yellow.
+        if(m_face==Face::History) { add("Trace 2",MeterBinding::SignalAvg,"dBm",{{-133,{0,0}},{-73,{.5,0}},{-13,{.99,0}}},channelConfig(.8,.2,4000,true,QColor(Qt::red),QColor(255,0,0,128))); }
     }
     if(m_face==Face::Vfo || m_face==Face::Contest) {
         m_vfo=new VfoDisplayItem(this); m_vfo->setModeLabel({}); m_vfo->setBandLabel({}); m_vfo->setFilterLabel({}); m_vfo->setFrequency(0); m_vfo->setUnavailableText("No live slice reading");
@@ -357,12 +367,13 @@ QString CompositePresetItem::typeId() const {
 void CompositePresetItem::configureDynamics() {
     for(Channel& channel:m_channels) { const QJsonObject& c=channel.config; channel.dynamics.configure(c["attack"].toDouble(),c["decay"].toDouble(),c["updateIntervalMs"].toInt(),c["historyMs"].toInt(),c["ignoreHistoryMs"].toInt()); channel.dynamics.reset(channel.calibration.firstKey()-(m_aboveS9 && isReceiveSignalBinding(channel.binding)?20:0)); }
     m_samples.clear(); m_lastFrame=-1; m_lastHistorySample=-1;
+    m_samples2.clear(); m_lastHistorySample2=-1;
 }
-QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
+QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { if(readsOwnSource(i)) { continue; } const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
 void CompositePresetItem::pushBindingValue(int binding,double reading) {
     const bool available=bindingSupport(binding)!=BindingSupport::Unsupported && bindingUnavailableReason(binding).isEmpty() && std::isfinite(reading) && (hasMmioBinding() || !isNoMeterReading(reading));
     for(int i=0;i<m_channels.size();++i) {
-        if(channelFromMmio(i)) { continue; }
+        if(channelFromMmio(i) || readsOwnSource(i)) { continue; }
         if(binding==(i==0?bindingId():m_channels[i].binding)) {
             const bool hadReading=m_channels[i].dynamics.hasReading();
             m_channels[i].dynamics.push(reading,available);
@@ -375,7 +386,7 @@ void CompositePresetItem::setBindingUnavailable(int binding,const QString& reaso
     MeterItem::setBindingUnavailable(binding,reason);
     if(!reason.isEmpty()) {
         for(int i=0;i<m_channels.size();++i) {
-            if(channelFromMmio(i)) { continue; }
+            if(channelFromMmio(i) || readsOwnSource(i)) { continue; }
             if(binding==(i==0?bindingId():m_channels[i].binding)) {
                 const bool hadReading=m_channels[i].dynamics.hasReading();
                 m_channels[i].dynamics.push(0,false);
@@ -388,6 +399,7 @@ void CompositePresetItem::setBindingSupport(int binding,BindingSupport support) 
     if(bindingSupport(binding)==support) { return; }
     MeterItem::setBindingSupport(binding,support);
     for(int i=0;i<m_channels.size();++i) {
+        if(readsOwnSource(i)) { continue; }
         if(binding==(i==0?bindingId():m_channels[i].binding)) { m_channels[i].dynamics.push(0,false); }
     }
     markPresentationDirty(true);
@@ -397,13 +409,20 @@ bool CompositePresetItem::advanceMeter(qint64 now) {
     // A restarted presentation clock cannot retain samples from its future.
     // Channel dynamics keep their independent sampling/reset policy.
     if(m_face==Face::History && m_lastFrame>=0 && now<m_lastFrame) {
-        changed=!m_samples.isEmpty(); m_samples.clear(); m_lastHistorySample=-1;
+        changed=!m_samples.isEmpty() || !m_samples2.isEmpty(); m_samples.clear(); m_lastHistorySample=-1;
+        m_samples2.clear(); m_lastHistorySample2=-1;
     }
     const auto oldSize=m_samples.size(); m_samples.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=(m_samples.size()!=oldSize) || changed;
+    const auto oldSize2=m_samples2.size(); m_samples2.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=(m_samples2.size()!=oldSize2) || changed;
     for(Channel& channel:m_channels) { changed=channel.dynamics.advance(now) || changed; }
     if(m_face==Face::History && !m_channels.isEmpty() && m_channels[0].dynamics.hasReading() && (m_lastHistorySample<0 || now-m_lastHistorySample>=m_channels[0].config["updateIntervalMs"].toInt())) {
         m_samples.append({now,m_channels[0].dynamics.value()}); m_lastHistorySample=now; const int duration=m_config["historyMs"].toInt(); m_samples.removeIf([&](const Sample& s) { return now-s.time>=duration; });
         const int extra=m_samples.size()-m_config["historyCapacity"].toInt(); if(extra>0) { m_samples.remove(0,extra); } changed=true;
+    }
+    // Trace 2 samples its own reading on its own clock.
+    if(m_face==Face::History && trace2Shown() && m_channels[1].dynamics.hasReading() && (m_lastHistorySample2<0 || now-m_lastHistorySample2>=m_channels[1].config["updateIntervalMs"].toInt())) {
+        m_samples2.append({now,m_channels[1].dynamics.value()}); m_lastHistorySample2=now;
+        const int extra=m_samples2.size()-m_config["historyCapacity"].toInt(); if(extra>0) { m_samples2.remove(0,extra); } changed=true;
     }
     const bool clock=m_clock && (m_lastFrame<0 || now/250!=m_lastFrame/250); m_lastFrame=now; const bool dirty=m_presentationDirty; m_presentationDirty=false; return changed || clock || dirty;
 }
@@ -415,7 +434,7 @@ void CompositePresetItem::resetRxSource()
     for (int i = 0; i < m_channels.size(); ++i) {
         const int binding = i == 0 ? bindingId() : m_channels[i].binding;
         if (binding < MeterBinding::SignalPeak || binding > MeterBinding::PbSnr) { continue; }
-        if (channelFromMmio(i)) { continue; }
+        if (channelFromMmio(i) || readsOwnSource(i)) { continue; }
         Channel& channel = m_channels[i];
         channel.dynamics.reset(channel.calibration.firstKey() - (m_aboveS9 && isReceiveSignalBinding(binding) ? 20 : 0));
         if (i == 0) {
@@ -435,8 +454,11 @@ int CompositePresetItem::mmioChannel(int index) const {
     //TODO ananmm not done yet [original inline comment from MeterManager.cs:27906]
     // Cross: variable 0 is Forward (PWR), 1 is Reflected (REVERSE_PWR).
     // From Thetis MeterManager.cs:22656,24152,24222,27906-27918 [v2.10.3.15]
+    // Signal history: variable 2 is the right axis, trace 2.
+    // From Thetis MeterManager.cs:22670,26952-26955,18132-18163 [v2.10.3.15]
     if(index<0 || index>=m_channels.size()) { return -1; }
     if(m_face==Face::Anan || m_face==Face::Cross) { return index; }
+    if(m_face==Face::History && index==1) { return 1; }
     return -1;
 }
 void CompositePresetItem::setSecondaryValue(int index,double value) {
@@ -446,6 +468,41 @@ void CompositePresetItem::setSecondaryValue(int index,double value) {
     const bool hadReading=m_channels[i].dynamics.hasReading();
     m_channels[i].dynamics.push(value,std::isfinite(value));
     if(m_face==Face::Anan && bindingSupport(binding)!=BindingSupport::Supported && hadReading!=m_channels[i].dynamics.hasReading()) { markPresentationDirty(true); }
+}
+bool CompositePresetItem::trace2Shown() const {
+    return m_face==Face::History && m_channels.size()>1 && (m_config.value(QStringLiteral("trace2Context")).isObject() || channelFromMmio(1));
+}
+QJsonObject CompositePresetItem::trace2SourceContext(const QJsonObject& entryContext) const {
+    if(!trace2Shown() || !m_config.value(QStringLiteral("trace2Context")).isObject()) { return {}; }
+    QJsonObject context=trace2Context();
+    // A trace that names no radio session reads the entry's.
+    const QString session=entryContext.value(QStringLiteral("sessionId")).toString();
+    if(!context.contains(QStringLiteral("sessionId")) && !session.isEmpty()) { context[QStringLiteral("sessionId")]=session; }
+    return context;
+}
+void CompositePresetItem::pushTrace2Value(double reading) {
+    if(!trace2Shown() || trace2FromDataSource()) { return; }
+    const bool available=m_trace2Unavailable.isEmpty() && std::isfinite(reading) && !isNoMeterReading(reading);
+    m_channels[1].dynamics.push(reading,available);
+}
+void CompositePresetItem::resetTrace2() {
+    if(m_face!=Face::History || m_channels.size()<2) { return; }
+    Channel& channel=m_channels[1];
+    channel.dynamics.reset(channel.calibration.firstKey()-(m_aboveS9 && isReceiveSignalBinding(channel.binding)?20:0));
+    m_samples2.clear(); m_lastHistorySample2=-1; markPresentationDirty();
+}
+void CompositePresetItem::setTrace2Unavailable(const QString& reason) {
+    if(m_face!=Face::History || m_channels.size()<2 || m_trace2Unavailable==reason) { return; }
+    m_trace2Unavailable=reason;
+    if(!reason.isEmpty() && !trace2FromDataSource()) { m_channels[1].dynamics.push(0,false); }
+    markPresentationDirty(true);
+}
+QRectF CompositePresetItem::trace2ReadoutRect(int width,int height) const {
+    // Bottom right, beside the "Recent" line: paintHistory's arithmetic.
+    const QRectF outer=pixelRect(width,height);
+    const double scale=objectTextScale(outer,{260,120});
+    const QRectF r=outer.adjusted(44*scale,28*scale,-14*scale,-22*scale);
+    return {outer.left()+outer.width()*.66,r.bottom()+3*scale,outer.width()*.34-4*scale,18*scale};
 }
 bool CompositePresetItem::primaryNeedle(int channel) const {
     // From Thetis MeterManager.cs:23793,23933,24148 [v2.10.3.15] — ni.Primary:
@@ -498,6 +555,16 @@ void CompositePresetItem::applyNewItemDefaults() {
             {"showPeakValue",d.showPeakValue},{"peakValueColor",name(d.peakValueColour)},{"showSubMarker",d.showSubMarker},
             {"subMarkerColor",name(d.subMarkerColour)},{"showType",d.showType},{"typeColor",name(d.typeColour)},{"channels",channels}};
         if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    if(m_face==Face::History) {
+        // New signal history faces take Thetis's trace colors: axis 0 Red,
+        // axis 1 Yellow. Trace 2 starts off, as Thetis's _show_scale_1.
+        // From Thetis MeterManager.cs:17530-17531 [v2.10.3.15]
+        QJsonArray channels=configuration()["channels"].toArray();
+        QJsonObject first=channels[0].toObject(); first["color"]=QColor(Qt::red).name(QColor::HexArgb); channels[0]=first;
+        QJsonObject second=channels[1].toObject(); second["color"]=QColor(Qt::yellow).name(QColor::HexArgb); channels[1]=second;
+        if(!applyConfiguration({{"channels",channels}})) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
         return;
     }
     const CompositeFaceThetisDefaults* defaults=m_face==Face::Anan?&kAnanThetisDefaults:m_face==Face::Cross?&kCrossThetisDefaults:m_face==Face::PowerSwr?&kPowerSwrThetisDefaults:nullptr;
@@ -699,7 +766,7 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerScaleColor","subNeedleColor","shadow"}); }
     if(m_face==Face::Anan) { fields.append("darkMode"); }
     if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
-    if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units"}); }
+    if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units","trace2Context"}); }
     if(m_clock) { fields.append({"clockMode","showDate","show24Hour","clockTimeColor","clockDateColor","clockTitleColor"}); }
     if(m_vfo) { fields.append({"vfo","vfoFrequencyColor","vfoModeColor","vfoFilterColor","vfoBandColor"}); }
     if(m_bands) { fields.append({"bands","modes"}); }
@@ -711,7 +778,7 @@ QJsonObject CompositePresetItem::configuration() const {
     const QStringList fields=editableFields();
     const QStringList known{"title","showTitle","titleColor","backdropColor","lowColor","highColor","showReadout","showPeakValue","fontSize","displayGroup","clockMode","showDate","show24Hour","historyCapacity","historyMs","autoScale","minValue","maxValue","units",
         "powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode","eyeScale","bezelScale","bezelImage",
-        "showType","typeColor","showSubMarker","subMarkerColor"};
+        "showType","typeColor","showSubMarker","subMarkerColor","trace2Context"};
     for(const QString& key:known) { if(!fields.contains(key)) { c.remove(key); } }
     if(m_vfo) { c["vfo"]=m_vfo->serialize(); c["vfoFrequencyColor"]=m_vfo->frequencyColour().name(QColor::HexArgb); c["vfoModeColor"]=m_vfo->modeColour().name(QColor::HexArgb); c["vfoFilterColor"]=m_vfo->filterColour().name(QColor::HexArgb); c["vfoBandColor"]=m_vfo->bandColour().name(QColor::HexArgb); }
     if(m_bands) { c["bands"]=m_bands->serialize(); c["modes"]=m_modes->serialize(); }
@@ -752,6 +819,27 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
     // A bezel is a bundled resource or a local file; never a URL to fetch.
     if(next.contains("bezelImage") && (!next["bezelImage"].isString() || next["bezelImage"].toString().contains(QStringLiteral("://")))) { return false; }
     if(!next["title"].isString() || !next["units"].isString() || !QStringList{"Both","UTC","Local"}.contains(next["clockMode"].toString())) { return false; }
+    // Signal history saved before trace 2 carries one channel: it loads
+    // padded with trace 2's own channel and trace 2 off, so it looks the same.
+    if(m_face==Face::History && m_channels.size()==2 && next["channels"].toArray().size()==1) {
+        QJsonArray padded=next["channels"].toArray(); padded.append(m_channels[1].config); next["channels"]=padded;
+        if(!edit.contains("trace2Context")) { next.remove("trace2Context"); }
+    }
+    // Trace 2's source: null (or absent) turns it off; otherwise a slice
+    // (sliceId, or the older 1-based rxSource) or Follow selected RX, and
+    // optionally a radio session.
+    if(next.contains("trace2Context") && next["trace2Context"].isNull()) { next.remove("trace2Context"); }
+    if(next.contains("trace2Context")) {
+        if(m_face!=Face::History || !next["trace2Context"].isObject()) { return false; }
+        const QJsonObject source=next["trace2Context"].toObject();
+        const bool follow=source.contains("rxSourceMode");
+        if(follow && source["rxSourceMode"]!=QStringLiteral("followSelectedRx")) { return false; }
+        for(const QString& key:{QStringLiteral("sliceId"),QStringLiteral("rxSource")}) {
+            if(source.contains(key) && (!source[key].isDouble() || source[key].toDouble()!=std::floor(source[key].toDouble()) || source[key].toDouble()<(key==QStringLiteral("rxSource")?1:0) || source[key].toDouble()>1000000)) { return false; }
+        }
+        if(!follow && !source.contains("sliceId") && !source.contains("rxSource")) { return false; }
+        if(source.contains("sessionId") && !source["sessionId"].isString()) { return false; }
+    }
     const QJsonArray channels=next["channels"].toArray(); if(channels.size()!=m_channels.size()) { return false; }
     QVector<QJsonObject> checked;
     for(int i=0;i<channels.size();++i) {
@@ -1343,13 +1431,30 @@ void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
 void CompositePresetItem::paintHistory(QPainter& p,const QRectF& outer) {
     const double scale=objectTextScale(outer,{260,120}),size=m_config["fontSize"].toInt()*scale*11/18;
     const QRectF r=outer.adjusted(44*scale,28*scale,-14*scale,-22*scale); double low=m_config["minValue"].toDouble(),high=m_config["maxValue"].toDouble();
-    if(m_config["autoScale"].toBool() && !m_samples.isEmpty()) { low=m_samples.first().value; high=low; for(const Sample& s:m_samples) { low=qMin(low,s.value); high=qMax(high,s.value); } low-=3; high+=3; }
+    // Both traces share the scale, so two slices compare on one axis.
+    const bool second=trace2Shown();
+    QVector<Sample> scaled=m_samples; if(second && m_trace2Unavailable.isEmpty()) { scaled+=m_samples2; }
+    if(m_config["autoScale"].toBool() && !scaled.isEmpty()) { low=scaled.first().value; high=low; for(const Sample& s:scaled) { low=qMin(low,s.value); high=qMax(high,s.value); } low-=3; high+=3; }
     p.setPen(color(m_config,"lowColor"));
     for(int n=0;n<=4;++n) { const double y=r.bottom()-r.height()*n/4; p.drawLine(QPointF(r.left(),y),QPointF(r.right(),y)); drawObjectText(p,QRectF(outer.left(),y-8*scale,40*scale,16*scale),QString::number(low+(high-low)*n/4,'f',0),size,Qt::AlignRight|Qt::AlignVCenter); }
-    drawObjectText(p,QRectF(r.left(),r.bottom()+3*scale,r.width(),18*scale),QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()),size);
-    QPainterPath path; bool first=true; const qint64 latest=m_samples.isEmpty()?0:m_samples.last().time;
-    for(const Sample& s:m_samples) { QPointF point(r.right()-(latest-s.time)*r.width()/m_config["historyMs"].toDouble(),r.bottom()-qBound(0.0,(s.value-low)/(high-low),1.0)*r.height()); if(first) { path.moveTo(point); first=false; } else { path.lineTo(point); } }
-    p.setPen(QPen(color(m_channels.first().config,"color"),2)); p.drawPath(path);
+    const QRectF trace2Cell(outer.left()+outer.width()*.66,r.bottom()+3*scale,outer.width()*.34-4*scale,18*scale);
+    drawObjectText(p,QRectF(r.left(),r.bottom()+3*scale,second?trace2Cell.left()-r.left()-4*scale:r.width(),18*scale),QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()),size);
+    const qint64 latest=qMax(m_samples.isEmpty()?qint64(0):m_samples.last().time,second && !m_samples2.isEmpty()?m_samples2.last().time:qint64(0));
+    const auto drawTrace=[&](const QVector<Sample>& samples,const QColor& ink) {
+        QPainterPath path; bool first=true;
+        for(const Sample& s:samples) { QPointF point(r.right()-(latest-s.time)*r.width()/m_config["historyMs"].toDouble(),r.bottom()-qBound(0.0,(s.value-low)/(high-low),1.0)*r.height()); if(first) { path.moveTo(point); first=false; } else { path.lineTo(point); } }
+        p.setPen(QPen(ink,2)); p.drawPath(path);
+    };
+    if(second && m_trace2Unavailable.isEmpty()) { drawTrace(m_samples2,color(m_channels[1].config,"color")); }
+    drawTrace(m_samples,color(m_channels.first().config,"color"));
+    if(second) {
+        // Trace 2's readout; with no reading here it takes the unavailable
+        // veil (MeterWidget's) alone, and trace 1 keeps drawing.
+        const Channel& trace=m_channels[1];
+        if(!m_trace2Unavailable.isEmpty()) { p.fillRect(trace2Cell,QColor(0x0f,0x0f,0x1a,170)); }
+        p.setPen(color(trace.config,"color"));
+        if(m_config["showReadout"].toBool() || !m_trace2Unavailable.isEmpty()) { drawObjectText(p,trace2Cell,m_trace2Unavailable.isEmpty() && trace.dynamics.hasReading()?QString::number(trace.dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
+    }
     if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*.66,outer.top()+2*scale,outer.width()*.34-4*scale,22*scale),m_channels.first().dynamics.hasReading()?QString::number(m_channels.first().dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::layoutChildren(int width,int height) {

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - An item whose variable 1 reads a data source still gets
+//                 the readings it takes beside it (readingBindingsBesideMmio:
+//                 a HISTORY item's axis 1). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Data source (MMIO) readings for every variable an item
 //                 reads: index 1 and up reach setSecondaryValue, cached and
 //                 replayed like index 0. J.J. Boyd (KG4VCF), AI-assisted via
@@ -239,10 +243,13 @@ void MeterWidget::addItem(MeterItem* item)
     item->resetForTxTransition(m_mox);
     applyItemTxState(item, m_itemTxState);
     for (int binding : item->readingBindings()) {
-        if (!item->hasMmioBinding()) { item->setBindingSupport(binding, bindingSupport(binding)); }
-        if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
+        // With variable 1 on a data source, only the readings the item
+        // takes beside it come from the radio.
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(binding);
+        if (radio) { item->setBindingSupport(binding, bindingSupport(binding)); }
+        if (radio) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
         const auto cached = m_lastBindingValue.constFind(binding);
-        if (!item->property("containerUnsupportedSource").toBool() && !item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
+        if (!item->property("containerUnsupportedSource").toBool() && radio && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
     }
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
@@ -319,7 +326,11 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     // smoothing, and composites retain input for the shared frame clock.
     std::optional<qint64> now;
     for (MeterItem* item : m_items) {
-        if (item->property("containerUnsupportedSource").toBool() || item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
+        if (item->property("containerUnsupportedSource").toBool() || !item->readingBindings().contains(bindingId)) { continue; }
+        // Variable 1 on a data source replaces the main reading only: a
+        // reading the item takes beside it still arrives (each Thetis
+        // HISTORY axis reads on its own, MeterManager.cs:18101-18165 [v2.10.3.15]).
+        if (item->hasMmioBinding() && !item->readingBindingsBesideMmio().contains(bindingId)) { continue; }
         // Per-item update interval. Bar presets, composites and waveform
         // faces keep their own configured cadence.
         const bool ownCadence = qobject_cast<BarPresetItem*>(item) || qobject_cast<CompositePresetItem*>(item)
@@ -360,7 +371,7 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
     const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != unavailableReason;
     const bool supportChanged = item->bindingSupport(item->bindingId()) != support;
     m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason, support};
-    QSet<int> bindings = item->readingBindings(); bindings.insert(item->bindingId());
+    QSet<int> bindings = item->readingBindings(); bindings.subtract(item->readingBindingsBesideMmio()); bindings.insert(item->bindingId());
     for (int binding : bindings) { item->setBindingSupport(binding, support); item->setBindingUnavailable(binding, unavailableReason); }
     const bool inputChanged = item->value() != value;
     item->setValue(value);
@@ -827,7 +838,8 @@ void MeterWidget::drawUnavailableVeils(QPainter& p) const
 void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
 {
     for (MeterItem* item : m_items) {
-        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(bindingId);
+        if (radio && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
     }
     const auto it = m_unavailableBindings.constFind(bindingId);
     const bool unavailable = it != m_unavailableBindings.constEnd();
@@ -852,7 +864,8 @@ void MeterWidget::setBindingSupport(int bindingId, MeterItem::BindingSupport sup
     m_bindingSupport[bindingId] = support;
     if (changed) { m_lastBindingValue.remove(bindingId); }
     for (MeterItem* item : m_items) {
-        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingSupport(bindingId, support); }
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(bindingId);
+        if (radio && item->readingBindings().contains(bindingId)) { item->setBindingSupport(bindingId, support); }
     }
     if (changed) { invalidateReadingLayers(true); }
 }
