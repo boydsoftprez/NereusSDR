@@ -8,7 +8,6 @@
 
 import Foundation
 import NereusMedia
-import QuartzCore
 
 /// One band's state between the Core's display events and the renderer.
 ///
@@ -135,6 +134,10 @@ public struct BandState: Equatable, Sendable {
     }
     /// Now, in seconds since 1970, for each line's time.
     public var clock: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+    /// Now on the steady clock the display link keeps, in seconds, for a
+    /// line put in outside a screen frame (``flushLines(at:)``); the tests
+    /// set their own.
+    public var steadyClock: @Sendable () -> Double = { BandState.steadyNow() }
 
     // MARK: Lines on the row clock
 
@@ -175,7 +178,12 @@ public struct BandState: Equatable, Sendable {
     /// The frame time the clock last advanced at, so two views of one band
     /// advance it once a frame.
     private var lastAdvanceNs: Int64?
-    /// Waterfall lines put in since the 3D stack's newest row.
+    /// Waterfall lines put in since the 3D stack's newest row. Like the
+    /// desktop's glide (`m_dssScrollProgressRows`, zeroed in `pushDssRow`
+    /// and when the whole stack clears), it starts again only when a row
+    /// goes in: a fold cleared at a key edge leaves it, so the glide goes
+    /// on to the full row and rests there until the next row, never
+    /// stepping back.
     public private(set) var linesSinceStackRow = 0
     /// Lines wait for the clock now: the screen drives the band and the
     /// Core has said its line period.
@@ -247,14 +255,16 @@ public struct BandState: Equatable, Sendable {
         return count
     }
 
-    /// Puts every waiting line in at once, in order, and starts the grid again.
-    public mutating func flushLines() {
+    /// Puts every waiting line in at once, in order, and starts the grid
+    /// again; `now` is the steady time they go in at (``steadyClock`` when
+    /// nil).
+    public mutating func flushLines(at now: Double? = nil) {
         guard !waitingLines.isEmpty || rowClock.anchored else {
             return
         }
         let lines = waitingLines
         waitingLines.removeAll()
-        let now = lines.isEmpty ? 0 : Self.steadyNow()
+        let now = lines.isEmpty ? 0 : (now ?? steadyClock())
         for line in lines {
             put(line, at: now)
         }
@@ -308,9 +318,11 @@ public struct BandState: Equatable, Sendable {
         Int64((seconds * 1_000_000_000).rounded())
     }
 
-    /// Now on the steady clock the display link keeps, in seconds.
+    /// Now on the steady clock the display link keeps, in seconds: the
+    /// system's uptime, the base of `CACurrentMediaTime` and the display
+    /// link's timestamps.
     public static func steadyNow() -> Double {
-        CACurrentMediaTime()
+        ProcessInfo.processInfo.systemUptime
     }
 
     public static func == (lhs: BandState, rhs: BandState) -> Bool {

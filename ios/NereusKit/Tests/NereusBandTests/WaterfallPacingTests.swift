@@ -62,7 +62,7 @@ struct WaterfallPacingTests {
     /// The lines arrive at `arrivals`; a frame every 1/60 s advances the
     /// clock, except inside `stall` (seconds after the first frame).
     static func run(_ arrivals: [Double], paced: Bool, stall: Range<Double>? = nil, stacks: Bool = false,
-                    divider: Int = 1) -> Run {
+                    divider: Int = 1, beforeFrame: (Int, inout BandState) -> Void = { _, _ in }) -> Run {
         let wall = Wall()
         var run = Run(state: state(paced: paced, stacks: stacks, divider: divider, wall: wall))
         var next = 0
@@ -88,6 +88,7 @@ struct WaterfallPacingTests {
                 continue
             }
             wall.now = now
+            beforeFrame(number, &run.state)
             let rows = run.state.stack.rowsAppended
             run.state.advanceLines(at: now, frameSeconds: frame)
             for _ in 0 ..< Int(run.state.history.linesAppended - lines) {
@@ -191,7 +192,7 @@ struct WaterfallPacingTests {
     }
 
     @Test("the 3D glide reads the clock: it moves on every frame, and a row's fold is stamped when it went in")
-    func glideAndFoldReadTheClock() throws {
+    func glideAndFoldReadTheClock() {
         let arrivals = Self.arrivals(lines: 300, phase: 0.004, jitter: 0.008)
         let run = Self.run(arrivals, paced: true, stacks: true, divider: 4)
         #expect(run.state.stack.rowsAppended == 75)
@@ -207,21 +208,170 @@ struct WaterfallPacingTests {
         for stamp in run.rowStamps {
             #expect(stamp.stamped == stamp.frame)
         }
-        // Held still, the glide rests where the clock left it.
-        let state = run.state
-        let glide = try #require(state.pacedStackGlide)
-        #expect(glide == StackedTrace.glide(lines: state.linesSinceStackRow, progress: state.rowClock.progress,
-                                            divider: 4))
     }
 
-    @Test("a row completes at the depth the stack glided to: the glide is continuous across a fold")
-    func glideIsContinuousAcrossAFold() {
-        // A row of four lines: three in, the fourth's slide done, then the
-        // fourth in. Rows plus glide is the same either side.
-        #expect(StackedTrace.glide(lines: 3, progress: 1, divider: 4) == 1)
-        #expect(StackedTrace.glide(lines: 0, progress: 0, divider: 4) == 0)
-        #expect(StackedTrace.glide(lines: 1, progress: 0, divider: 4) == StackedTrace.glide(lines: 0, progress: 1, divider: 4))
-        #expect(StackedTrace.glide(lines: 9, progress: 1, divider: 4) == 1)
+    @Test("a key edge mid-row: the glide goes on to the full row and rests until the next, never stepping back")
+    func keyEdgeMidRowRestsTheGlide() {
+        // As the desktop's: its glide starts again only when a row goes in
+        // (pushDssRow), and a fold restarted at a key edge leaves it.
+        let arrivals = Self.arrivals(lines: 300, phase: 0.004, jitter: 0.008)
+        var edgeFrame: Int?
+        let run = Self.run(arrivals, paced: true, stacks: true, divider: 4) { number, state in
+            if edgeFrame == nil, number >= 240, state.linesSinceStackRow == 2 {
+                edgeFrame = number
+                state.resetSmoothing()
+            }
+        }
+        #expect(edgeFrame != nil, "the edge came mid-row")
+        guard let edge = edgeFrame else {
+            return
+        }
+        let positions = Array(run.stackPositions.dropFirst(120).prefix(run.putFrames.count * 2 - 240))
+        let steps = zip(positions, positions.dropFirst()).map { $1 - $0 }
+        #expect(steps.allSatisfy { $0 >= 0 }, "\(steps.map { ($0 * 1000).rounded() / 1000 })")
+        // The stack rested a while after the edge, and two seconds on it
+        // moves an eighth of a row a frame again.
+        let after = Array(steps.dropFirst(edge - 120))
+        #expect(after.prefix(24).contains(0))
+        let steady = 1.0 / 8
+        #expect(after.dropFirst(120).allSatisfy { $0 > 0 && abs($0 - steady) < steady * 0.25 },
+                "\(after.dropFirst(120).map { ($0 * 1000).rounded() / 1000 })")
+    }
+
+    @Test("two views of one band advance the clock once a frame: a drawn frame takes at most two lines")
+    func twoViewsTakeAtMostTwoLinesAFrame() {
+        // The desktop's aDrawnFrameTakesAtMostTwoRows: there the ticker and
+        // the drawn frame share a frame's two rows; here two views of one
+        // band (two display links on one screen) do.
+        var state = Self.state(paced: true)
+        for sequence in 0 ..< 20 {
+            state.receive(frame: BandFixtures.frame(trace: [-80], sequence: UInt32(sequence + 1)),
+                          manualLevels: Self.manual, at: Self.base + 0.1 + Double(sequence) * Self.period)
+        }
+        let start = Self.base + 0.1 + Self.period
+        let first = state.advanceLines(at: start, frameSeconds: Self.frame)
+        #expect(first >= 1)
+        // The other view, on the same frame or a stale one, takes none.
+        #expect(state.advanceLines(at: start, frameSeconds: Self.frame) == 0)
+        #expect(state.advanceLines(at: start - Self.frame, frameSeconds: Self.frame) == 0)
+        // Six line periods with no frame: the lines are far behind the grid,
+        // and the first view's frame takes two.
+        let behind = start + 6 * Self.period
+        #expect(state.advanceLines(at: behind, frameSeconds: Self.frame) == 2)
+        #expect(state.advanceLines(at: behind, frameSeconds: Self.frame) == 0)
+        // The frame after takes its own two.
+        #expect(state.advanceLines(at: behind + Self.frame, frameSeconds: Self.frame) == 2)
+        #expect(state.advanceLines(at: behind + Self.frame, frameSeconds: Self.frame) == 0)
+    }
+
+    /// Runs the band's draws as the view's display link does in 2D (the
+    /// link's step: the clock first, then ``BandLineDraws``), with a change
+    /// the screens show on every `urgentEvery`th frame. Returns the frame
+    /// each line went in on and the frame each was first drawn on.
+    static func drawn(_ arrivals: [Double], urgentEvery: Int,
+                      draws decide: (inout BandLineDraws, Double, Int, Bool, Bool, Bool) -> Bool)
+        -> (put: [Int], shown: [Int]) {
+        var state = Self.state(paced: true)
+        var draws = BandLineDraws()
+        var linkAwake = false
+        var dirty = false
+        var put: [Int] = []
+        var shown: [Int] = []
+        var shownLines = state.history.linesAppended
+        var next = 0
+        var number = 0
+        let end = (arrivals.last ?? base) + 2
+        while base + Double(number) * frame <= end {
+            defer { number += 1 }
+            let now = base + Double(number) * frame
+            // Each arrival and each change asks for a draw; the first wakes the link.
+            var asked = false
+            while next < arrivals.count && arrivals[next] <= now {
+                state.receive(frame: BandFixtures.frame(trace: [-80, -70], sequence: UInt32(next + 1)),
+                              manualLevels: manual, at: arrivals[next])
+                next += 1
+                asked = true
+            }
+            let urgent = number % urgentEvery == urgentEvery / 2
+            if asked || urgent {
+                dirty = true
+                if !linkAwake {
+                    linkAwake = true
+                    draws.reset()
+                }
+            }
+            guard linkAwake else {
+                continue
+            }
+            let before = state.history.linesAppended
+            let lines = state.advanceLines(at: now, frameSeconds: frame)
+            for _ in 0 ..< Int(state.history.linesAppended - before) {
+                put.append(number)
+            }
+            if lines > 0 {
+                dirty = true
+            }
+            let flowing = state.linesWaiting > 0 || (state.rowClock.anchored && !state.rowClock.starved)
+            if decide(&draws, now, lines, dirty, flowing, urgent) {
+                dirty = false
+                for _ in 0 ..< Int(state.history.linesAppended - shownLines) {
+                    shown.append(number)
+                }
+                shownLines = state.history.linesAppended
+            }
+        }
+        return (put, shown)
+    }
+
+    @Test("2D draws each line on the frame it went in, 33.3 ms apart, with spots, markers and the grid drawn between",
+          arguments: 0 ... 16)
+    func drawnLinesStayEven(phaseMs: Int) {
+        let arrivals = Self.arrivals(lines: 600, phase: Double(phaseMs) / 1000, jitter: 0.008)
+        for urgentEvery in [3, 7, 11] {
+            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing, urgent in
+                draws.draws(at: now, frame: Self.frame, interval: Self.period, stacked: false, linesPut: lines,
+                            dirty: dirty, flowing: flowing, urgent: urgent)
+            }
+            #expect(run.put.count == arrivals.count)
+            // No line waits a frame for the draws' cadence, nor shows early.
+            #expect(run.shown == run.put, "phase \(phaseMs) ms, a change every \(urgentEvery) frames")
+            let steady = Self.gaps(run.shown, from: 120)
+            #expect(steady == [2: steady[2] ?? 0], "phase \(phaseMs) ms, a change every \(urgentEvery): \(steady)")
+        }
+    }
+
+    @Test("the draws' cadence: every second frame at 30 a second, run on from a frame it is locked to, and again after a rest")
+    func frameDrawCadence() {
+        var cadence = FrameDrawCadence()
+        let frames = (0 ..< 8).map { Self.base + Double($0) * Self.frame }
+        let drawn = frames.indices.filter { cadence.take(at: frames[$0], interval: Self.period, frame: Self.frame) }
+        #expect(drawn == [0, 2, 4, 6])
+        cadence.lock(at: Self.base + 9 * Self.frame)
+        let locked = (10 ..< 16).filter {
+            cadence.take(at: Self.base + Double($0) * Self.frame, interval: Self.period, frame: Self.frame)
+        }
+        #expect(locked == [11, 13, 15])
+        // A frame long after the last (the link rested) draws and starts the cadence from itself.
+        let rested = (40 ... 42).map {
+            cadence.take(at: Self.base + Double($0) * Self.frame, interval: Self.period, frame: Self.frame)
+        }
+        #expect(rested == [true, false, true])
+        cadence.reset()
+        let woke = cadence.take(at: Self.base + 43 * Self.frame, interval: Self.period, frame: Self.frame)
+        #expect(woke)
+    }
+
+    @Test("lines put in at once outside a screen frame are stamped by the state's steady clock")
+    func flushedLinesTakeTheSteadyClock() {
+        var state = Self.state(paced: true)
+        state.tracesLines = true
+        state.steadyClock = { 4_242 }
+        state.receive(frame: BandFixtures.frame(trace: [-80], sequence: 1), manualLevels: Self.manual, at: Self.base)
+        state.flushLines()
+        #expect(state.takePutLines().map(\.putAt) == [4_242])
+        state.receive(frame: BandFixtures.frame(trace: [-80], sequence: 2), manualLevels: Self.manual, at: Self.base)
+        state.flushLines(at: 7)
+        #expect(state.takePutLines().map(\.putAt) == [7])
     }
 
     @Test("lines waiting go in at once, in order, when pacing stops, at a hold, and at a key edge")

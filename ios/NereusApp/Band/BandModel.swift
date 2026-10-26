@@ -339,7 +339,7 @@ final class BandModel: ObservableObject {
             return
         }
         let lines = state.history.linesAppended
-        state.flushLines()
+        state.flushLines(at: lineClock())
         keepLookingBack(since: lines)
         moveMarks()
         noteTrace()
@@ -681,8 +681,14 @@ final class BandModel: ObservableObject {
             contextFps = context.fps
             contextFramesPerLine = context.framesPerLine
             // The row clock runs at the Core's line period, and only once it has said.
-            state.linePeriodSeconds = context.fps > 0 && context.framesPerLine > 0
+            let linePeriod = context.fps > 0 && context.framesPerLine > 0
                 ? Double(context.framesPerLine) / Double(context.fps) : 0
+            if linePeriod == 0 {
+                // The waiting lines go in here, where looking back follows
+                // them, before the clock stops.
+                flushLines()
+            }
+            state.linePeriodSeconds = linePeriod
             sourceCentreHz = context.sourceCentreHz
             sourceRateHz = context.sampleRateHz
             // The bin width the Core's engine runs at, when it says its FFT size.

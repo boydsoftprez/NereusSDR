@@ -65,10 +65,11 @@ struct BandView: UIViewRepresentable {
         private var stackDraws = StackedDrawThrottle()
         private static let logger = Logger(subsystem: "NereusSDR", category: "band")
         private weak var view: MTKView?
-        /// Reads the row clock on every screen frame while lines flow.
-        private var link: CADisplayLink?
-        /// The steady cadence of the draws while lines flow.
-        private var lineDraws = FrameDrawCadence()
+        /// Reads the row clock on every screen frame while lines flow. The
+        /// coordinator's deinit invalidates it, so it reads it unisolated.
+        nonisolated(unsafe) private var link: CADisplayLink?
+        /// Which frames draw while lines flow.
+        private var lineDraws = BandLineDraws()
         /// The band changed since the view last drew.
         private var dirty = false
         /// Frames in a row with nothing to draw and no line flowing.
@@ -90,6 +91,21 @@ struct BandView: UIViewRepresentable {
             } catch {
                 renderer = nil
                 Self.logger.error("The band cannot be drawn on this device's graphics")
+            }
+        }
+
+        deinit {
+            // Freed without dismantleUIView: a paused link never fires to
+            // find its owner gone, and would keep its run loop's hold.
+            if let link {
+                let held = HeldLink(link: link)
+                if Thread.isMainThread {
+                    held.link.invalidate()
+                } else {
+                    DispatchQueue.main.async {
+                        held.link.invalidate()
+                    }
+                }
             }
         }
 
@@ -181,7 +197,7 @@ struct BandView: UIViewRepresentable {
             // ahead of the arrivals).
             let now = link.timestamp
             let frame = max(link.targetTimestamp - link.timestamp, 0)
-            model.advanceLines(at: now, frameSeconds: frame)
+            let put = model.advanceLines(at: now, frameSeconds: frame)
             guard model.pacingLines else {
                 // The clock stopped (no line period, or the view went):
                 // back to drawing on demand.
@@ -194,14 +210,11 @@ struct BandView: UIViewRepresentable {
             }
             let flowing = model.linesFlowing
             let urgent = model.takeUrgentDraw()
-            let draws: Bool
-            if model.drawsStack {
-                // The stack glides on every drawn frame while lines flow.
-                draws = (dirty || flowing) && lineDraws.take(at: now, interval: model.lineDrawInterval, frame: frame)
-            } else {
-                draws = (urgent && dirty)
-                    || (dirty && lineDraws.take(at: now, interval: model.lineDrawInterval, frame: frame))
-            }
+            // 2D draws on each frame the clock puts a line in; 3D glides on
+            // the cadence (BandLineDraws).
+            let draws = lineDraws.draws(at: now, frame: frame, interval: model.lineDrawInterval,
+                                        stacked: model.drawsStack, linesPut: put, dirty: dirty,
+                                        flowing: flowing, urgent: urgent)
             if draws {
                 dirty = false
                 restingFrames = 0
@@ -284,6 +297,11 @@ struct BandView: UIViewRepresentable {
             #endif
         }
     }
+}
+
+/// A display link carried to the main queue from the coordinator's deinit.
+private struct HeldLink: @unchecked Sendable {
+    let link: CADisplayLink
 }
 
 /// The display link's target: it holds the band's coordinator weakly, so

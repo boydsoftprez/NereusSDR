@@ -67,10 +67,12 @@ struct BandRowClockTests {
             for _ in 0 ..< Int(band.state.history.linesAppended - lines) {
                 putFrames.append(number)
             }
-            // The glide the renderer is given is the clock's, whatever the time.
-            let glide = band.stackGlide(at: Date().timeIntervalSince1970)
+            // The glide the renderer is given follows the clock, not the
+            // time it is asked at: a draw a moment later shows the same.
+            let asked = Date().timeIntervalSince1970
+            let glide = band.stackGlide(at: asked)
             if band.state.stack.count > 0 {
-                #expect(glide == (band.state.pacedStackGlide ?? -1))
+                #expect(glide == band.stackGlide(at: asked + 0.02))
             }
             positions.append(Double(band.state.stack.rowsAppended) + glide)
         }
