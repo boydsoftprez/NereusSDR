@@ -28,6 +28,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The two Stop transmitting labels read in full in the
+//                 editor. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Created for Task 27. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 //   2026-10-26 - Fix round 1: No TX when false, the condition error, the
@@ -39,6 +42,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QLabel>
+#include <QScrollArea>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -556,6 +560,73 @@ private slots:
         copy->setTransmitting(true);
         copy->setValue(-1.0);
         QCOMPARE(stops.count(), 0);
+    }
+
+    // The two long Stop transmitting labels read in full: each row is as
+    // tall as its label's lines, and no label overlaps another, at the
+    // editor's narrow and normal widths.
+    void theStopTransmittingLabelsReadInFull_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<QString>("family");
+        // The label column's width and where the words wrap depend on the
+        // font, so the check runs in several; a family a platform lacks
+        // falls back to another.
+        for (const QString& family : {QString(), QStringLiteral("Helvetica"), QStringLiteral("Arial"),
+                                      QStringLiteral("Verdana"), QStringLiteral("DejaVu Sans"),
+                                      QStringLiteral("Times New Roman"), QStringLiteral("Courier New")}) {
+            const QString name = family.isEmpty() ? QStringLiteral("default") : family;
+            QTest::newRow(qPrintable(name + QStringLiteral("-narrow"))) << 300 << family;
+            QTest::newRow(qPrintable(name + QStringLiteral("-normal"))) << 760 << family;
+        }
+    }
+    void theStopTransmittingLabelsReadInFull()
+    {
+        QFETCH(int, width);
+        QFETCH(QString, family);
+        LEDItem led;
+        QScrollArea scroll;
+        scroll.setWidgetResizable(true);
+        const QFont appFont = QApplication::font();
+        const auto restoreFont = qScopeGuard([&] { QApplication::setFont(appFont); });
+        if (!family.isEmpty()) { QApplication::setFont(QFont(family)); }
+        auto* editor = new LedItemEditor;
+        editor->setItem(&led);
+        scroll.setWidget(editor);
+        scroll.resize(width, 600);
+        scroll.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&scroll));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QCoreApplication::processEvents();
+        QList<QLabel*> labels;
+        for (QLabel* label : editor->findChildren<QLabel*>()) {
+            if (label->isVisibleTo(editor) && !label->text().isEmpty()) { labels << label; }
+        }
+        for (const QString& text : {QStringLiteral("Stop transmitting when the LED turns on"),
+                                    QStringLiteral("Stop transmitting when the LED turns off")}) {
+            QLabel* mine = nullptr;
+            for (QLabel* label : labels) {
+                if (label->text() == text) { mine = label; }
+            }
+            QVERIFY2(mine, qPrintable(text));
+            // The height its words take wrapped at the width it was given.
+            const QRect inside = mine->contentsRect();
+            const int needed = mine->fontMetrics()
+                                   .boundingRect(QRect(0, 0, inside.width(), 10000),
+                                                 int(mine->alignment()) | Qt::TextWordWrap, text)
+                                   .height()
+                + mine->height() - inside.height();
+            QVERIFY2(mine->height() >= needed,
+                     qPrintable(QStringLiteral("%1: %2 px tall, its lines need %3 at %4 px wide")
+                                    .arg(text).arg(mine->height()).arg(needed).arg(mine->width())));
+            const QRect box(mine->mapTo(editor, QPoint()), mine->size());
+            for (QLabel* other : labels) {
+                if (other == mine) { continue; }
+                const QRect otherBox(other->mapTo(editor, QPoint()), other->size());
+                QVERIFY2(!box.intersects(otherBox),
+                         qPrintable(QStringLiteral("\"%1\" overlaps \"%2\"").arg(text, other->text())));
+            }
+        }
     }
 
     void theEditorsCheckBoxesWriteAndRoundTrip()

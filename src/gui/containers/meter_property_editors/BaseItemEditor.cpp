@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Row labels that wrap get rows as tall as their lines at
+//                 the width they are given (FormRowLabel), so a long label
+//                 no longer spills over the next row. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
 //                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -135,6 +139,20 @@ constexpr const char* kLabelStyle =
 constexpr const char* kHeaderStyle =
     "QLabel { color: #8aa8c0; font-weight: bold; font-size: 11px;"
     "  background: #1a2a38; padding: 2px 4px; }";
+
+// A row label. QFormLayout gives a label the narrower of the label column
+// and its own size hint, but sizes the row from the label's height at the
+// full column width. A wrapped label whose hint is narrower than the column
+// then needs more lines than its row has, and its words spill over the
+// next row. This label answers for the width it will be given.
+class FormRowLabel final : public QLabel {
+public:
+    FormRowLabel(const QString& text, QWidget* parent) : QLabel(text, parent) {}
+    int heightForWidth(int width) const override
+    {
+        return QLabel::heightForWidth(qMin(width, sizeHint().width()));
+    }
+};
 
 // Phase 3G-6 block 4b: minimum widths so fields don't shrink-wrap
 // to their default size.
@@ -475,7 +493,7 @@ QCheckBox* BaseItemEditor::makeCheckRow(const QString& label)
 
 void BaseItemEditor::addRow(const QString& label, QWidget* widget)
 {
-    auto* lbl = new QLabel(label, this);
+    auto* lbl = new FormRowLabel(label, this);
     lbl->setStyleSheet(kLabelStyle);
     m_form->addRow(lbl, widget);
 }
