@@ -4,6 +4,8 @@
 // tests/tst_meter_led_options.cpp  (NereusSDR)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The two Stop transmitting labels line up. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave M7: the offset tooltip names the item's width,
 //                 American spelling. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -29,6 +31,9 @@
 #include <QColor>
 #include <QDoubleSpinBox>
 #include <QImage>
+#include <QApplication>
+#include <QFontDatabase>
+#include <QLabel>
 #include <QPainter>
 #include <QSpinBox>
 
@@ -467,6 +472,44 @@ private slots:
         QVERIFY(padding->toolTip().startsWith(QStringLiteral("Space in pixels")));
         QCOMPARE(padding->maximum(), 50.0);
         QVERIFY(!offsetX->isEnabled());
+    }
+
+    // The two "Stop transmitting" rows read alike at the editor's normal
+    // width: their labels line up and neither is clipped. A label's wrapped
+    // size hint depends on the font, so every installed family is tried.
+    void stopTransmittingLabelsLineUp()
+    {
+        const QFont appFont = QApplication::font();
+        const QStringList families = QFontDatabase::families();
+        QVERIFY(!families.isEmpty());
+        for (const QString& family : families) {
+            QApplication::setFont(QFont(family));
+            auto led = makePlacedLed();
+            LedItemEditor editor;
+            editor.setItem(led.get());
+            editor.resize(560, editor.sizeHint().height());
+            editor.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&editor));
+            QLabel* on = nullptr;
+            QLabel* off = nullptr;
+            for (QLabel* label : editor.findChildren<QLabel*>()) {
+                if (label->text() == QLatin1String("Stop transmitting when the LED turns on")) { on = label; }
+                if (label->text() == QLatin1String("Stop transmitting when the LED turns off")) { off = label; }
+            }
+            QVERIFY(on && off);
+            const QRect a = on->geometry();
+            const QRect b = off->geometry();
+            QVERIFY2(a.x() == b.x() && a.width() == b.width(),
+                     qPrintable(QStringLiteral("%1: on %2,%3 %4x%5; off %6,%7 %8x%9 (heights for width %10, %11)").arg(family).arg(a.x()).arg(a.y())
+                                    .arg(a.width()).arg(a.height()).arg(b.x()).arg(b.y()).arg(b.width()).arg(b.height())
+                                    .arg(on->QLabel::heightForWidth(a.width())).arg(off->QLabel::heightForWidth(b.width()))));
+            for (QLabel* label : {on, off}) {
+                QVERIFY2(label->height() >= label->QLabel::heightForWidth(label->width()),
+                         qPrintable(QStringLiteral("%1, %2: %3 px tall, needs %4").arg(family, label->text())
+                                        .arg(label->height()).arg(label->QLabel::heightForWidth(label->width()))));
+            }
+        }
+        QApplication::setFont(appFont);
     }
 };
 

@@ -15,6 +15,61 @@
 
 namespace NereusSDR {
 
+namespace {
+// Gives a group of wrapped row labels one width: the narrowest at which each
+// wraps to two lines. It measures again when a label's font or style changes.
+class SameWrapWidth final : public QObject {
+public:
+    SameWrapWidth(const QList<QLabel*>& labels, QObject* parent) : QObject(parent), m_labels(labels)
+    {
+        for (QLabel* label : m_labels) { label->installEventFilter(this); }
+    }
+    void update()
+    {
+        // QLabel measures no narrower than its minimum width, so the width
+        // set last time is cleared before measuring again.
+        for (QLabel* label : m_labels) {
+            label->setMinimumWidth(0);
+            label->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
+        int width = 0;
+        for (QLabel* label : m_labels) {
+            label->ensurePolished();
+            const QFontMetrics metrics = label->fontMetrics();
+            const int oneLine = label->QLabel::heightForWidth(QWIDGETSIZE_MAX);
+            if (!label->wordWrap() || oneLine <= 0) { return; }
+            const int twoLines = oneLine + metrics.lineSpacing();
+            const int full = metrics.horizontalAdvance(label->text()) + 2 * label->margin();
+            // Narrowest width that needs at most two lines (the height falls
+            // as the width grows), and never narrower than its longest word.
+            int low = 1;
+            for (const QString& word : label->text().split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+                low = qMax(low, metrics.horizontalAdvance(word) + 2 * label->margin());
+            }
+            int high = qMax(1, full);
+            while (low < high) {
+                const int mid = (low + high) / 2;
+                if (label->QLabel::heightForWidth(mid) > twoLines) { low = mid + 1; } else { high = mid; }
+            }
+            width = qMax(width, low);
+        }
+        for (QLabel* label : m_labels) { label->setFixedWidth(width); }
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange) {
+            update();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QList<QLabel*> m_labels;
+};
+} // namespace
+
 LedItemEditor::LedItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
 {
@@ -415,6 +470,17 @@ void LedItemEditor::buildTypeSpecific()
     // The two long labels wrap rather than widen the label column.
     for (QWidget* field : {static_cast<QWidget*>(m_chkNoTxTrue), static_cast<QWidget*>(m_chkNoTxFalse)}) {
         if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { label->setWordWrap(true); }
+    }
+    // They read alike: both take the narrowest width at which each wraps
+    // to two lines, so they wrap at the same word and line up. The width is
+    // measured again whenever their font or style changes (the look).
+    {
+        QList<QLabel*> stopLabels;
+        for (QWidget* field : {static_cast<QWidget*>(m_chkNoTxTrue), static_cast<QWidget*>(m_chkNoTxFalse)}) {
+            if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { stopLabels.append(label); }
+        }
+        auto* sync = new SameWrapWidth(stopLabels, this);
+        sync->update();
     }
 
     // Condition, beside the thresholds (Thetis txtLedIndicator_condition).

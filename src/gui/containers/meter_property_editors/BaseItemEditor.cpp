@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - A row label given a fixed or minimum width answers its
+//                 height for that width. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Row labels that wrap get rows as tall as their lines at
 //                 the width they are given (FormRowLabel), so a long label
 //                 no longer spills over the next row. J.J. Boyd (KG4VCF),
@@ -150,7 +153,7 @@ public:
     FormRowLabel(const QString& text, QWidget* parent) : QLabel(text, parent) {}
     int heightForWidth(int width) const override
     {
-        return QLabel::heightForWidth(qMin(width, sizeHint().width()));
+        return QLabel::heightForWidth(qMin(qMin(width, maximumWidth()), qMax(sizeHint().width(), minimumWidth())));
     }
 };
 
