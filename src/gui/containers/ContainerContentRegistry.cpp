@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Power bar, Reverse power bar and SWR bar descriptors
+//                 (meter.pwr, meter.reversePwr, meter.swr). meter.adcMax is
+//                 created like its siblings, so a container shows its bar's
+//                 unavailable veil and one reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Context key mmioVariables: an array of {guid, variable}
 //                 for data source variables 2 and up (index 0 stays in
 //                 mmioGuid / mmioVariable); absent means none and is not
@@ -280,7 +285,10 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("meter.contest"),QStringLiteral("Contest controls"),false,true,{}});
     result.append({QStringLiteral("meter.sMeter"),QStringLiteral("S-meter bar (additional)"),false,true,{}});
     result.append({QStringLiteral("meter.spacer"),QStringLiteral("Spacer"),false,true,{}});
-    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); result.append({"meter."+name,variant+" bar",false,variant!="AdcMax",variant=="AdcMax"?QStringLiteral("ADC maximum magnitude has no sanctioned reading provider"):QString()}); }
+    // meter.adcMax is created like the others: its bar veils itself with the
+    // one reason ("ADC magnitude is not available") and takes no reading.
+    const QHash<QString,QString> barTitles{{QStringLiteral("Pwr"),QStringLiteral("Power bar")},{QStringLiteral("ReversePwr"),QStringLiteral("Reverse power bar")},{QStringLiteral("Swr"),QStringLiteral("SWR bar")}};
+    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); result.append({"meter."+name,barTitles.value(variant,variant+" bar"),false,true,{}}); }
     result.append({QStringLiteral("meter.mic"),QStringLiteral("Mic"),false,true,{}});
     result.append({QStringLiteral("meter.alc"),QStringLiteral("ALC"),false,true,{}});
     result.append({QStringLiteral("meter.customBar"),QStringLiteral("Custom bar face"),false,true,{}});

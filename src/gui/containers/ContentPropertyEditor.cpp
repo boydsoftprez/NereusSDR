@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Power limit row for the PWR and Reverse PWR bars.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Bar preset rows for the Thetis colour set: show title,
 //                 show marker, peak hold and peak value colours, average
 //                 marker show and colour, solid and segment low and high
@@ -568,6 +570,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         QStringList keys{"label","showTitle","barColor","showMarker","backdropColor","titleColor","historyColor","showHistory","peakHold","peakHoldColor","showValue","showPeakValue","peakValueColor","showSub","subColor","style","segLowColor","segHighColor","lowColor","highColor","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
         const QString flavor=props["flavor"].toString();
         if(flavor=="Custom") { keys.append({"minValue","maxValue","redThreshold","units"}); }
+        if(props.contains("powerLimitW")) { keys.append("powerLimitW"); }
         keys.removeAll("bindingId");keys.removeAll("secondaryBindingId");
         // A bar preset's lowColor and highColor are its scale colours.
         const auto barLabel=[](const QString& key) {
