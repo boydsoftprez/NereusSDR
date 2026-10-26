@@ -2,6 +2,12 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
 //              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26 - A CAT TX that arrives while MoxController walks back to
+//              receive is held and runs again at Rx (JJ's ruling, like
+//              Thetis): one held request, cancelled by a release, a newer
+//              request, its session closing or another keyer, and dropped
+//              past the walk's own bound. J.J. Boyd (KG4VCF), AI-assisted
+//              via Anthropic Claude Code.
 #pragma once
 #include "core/NereusCoreExport.h"
 #include "core/MoxController.h"
@@ -9,6 +15,8 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QTimer>
+#include <functional>
 namespace NereusSDR {
 class RadioModel;
 enum class CatTransmitKind { Ptt, Tune, TwoTone };
@@ -20,15 +28,27 @@ public:
     void releasePtt(quint64 sessionId);
     bool requestTxSelection(quint64 sessionId, int sliceId);
     bool requestTransmit(quint64 sessionId, int sliceId, CatTransmitKind kind);
+    // A PTT request that arrives while MoxController walks back from transmit
+    // to receive (TxToRxInFlight, TxToRxFlush) is held, and true is returned.
+    // At Rx, replayAtRx runs the caller's whole command again for the same
+    // session, so the held request meets every check a fresh one would.
+    // Otherwise this is requestTransmit above.
+    bool requestTransmit(quint64 sessionId, int sliceId, CatTransmitKind kind,
+                         std::function<void()> replayAtRx);
     void releaseTransmit(quint64 sessionId);
     void releaseTransmit(quint64 sessionId, CatTransmitKind kind);
     void cancelSession(quint64 sessionId);
     void cancelAll();
     quint64 currentRequestTag() const { return m_tag; }
+    // FOR TESTING ONLY: the held TX's bound (kHeldTxTimeoutMs).
+    void setHeldTxTimeoutMsForTest(int ms);
 private:
     bool idle() const;
     bool targetValid() const;
     void retire(bool releaseOwned);
+    bool mayHold() const;
+    void dropHeld(const char* reason);
+    void runHeld();
     QPointer<RadioModel> m_model;
     QSet<quint64> m_claims;
     SliceOwnership::SliceRef m_target;
@@ -40,5 +60,10 @@ private:
     bool m_requestInFlight{false};
     bool m_selectionInFlight{false};
     bool m_releasing{false};
+    int m_heldTimeoutForTestMs{-1};
+    quint64 m_heldSession{0};
+    std::function<void()> m_heldReplay;
+    QTimer m_heldTimer;
+    bool m_replaying{false};
 };
 } // namespace NereusSDR
