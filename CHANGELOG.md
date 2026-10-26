@@ -110,6 +110,12 @@ still connect to each other as before.
   path and has not been checked on a radio.
   ([#655](https://github.com/boydsoftprez/NereusSDR/pull/655), issue
   [#648](https://github.com/boydsoftprez/NereusSDR/issues/648))
+- With CTUN on, a tune that stays inside the zoomed view now sets the
+  receiver's offset from the receiver's own center, not from the center of the
+  view. Before, once the view had moved off the receiver's center (for example
+  after the phone tuned a slice past the desktop's zoomed view), the receiver
+  could play a different frequency from the one on the flag.
+  ([#663](https://github.com/boydsoftprez/NereusSDR/pull/663))
 
 ### Transmit
 
