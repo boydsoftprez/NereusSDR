@@ -15,7 +15,7 @@ final class TxPanelUITests: XCTestCase {
         app.launchArguments = ["-NereusShowBand"]
         let lightValidation = ProcessInfo.processInfo.environment["NEREUS_TX_APPEARANCE"] == "light"
         if lightValidation { app.launchArguments.append("-NereusTxPanelLightValidation") }
-        app.launch()
+        app.launchFresh()
         if lightValidation {
             let scheme = app.descendants(matching: .any)["nativeTxValidationScheme"]
             XCTAssertTrue(scheme.waitForExistence(timeout: 10))
@@ -65,7 +65,7 @@ final class TxPanelUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let column = app.descendants(matching: .any)["appletColumn"]
         XCTAssertTrue(column.waitForExistence(timeout: 30))
         let settings = app.buttons["txSettings"]

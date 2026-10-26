@@ -3,6 +3,7 @@
 
 import Foundation
 import NereusLink
+import os
 import SwiftUI
 import UIKit
 
@@ -55,6 +56,7 @@ struct NereusSDRApp: App {
     init() {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        Self.logLaunch(arguments: arguments, environment: ProcessInfo.processInfo.environment)
         let diversityFixture = UITestDiversityFixture.isEnabled(arguments)
         // The keyed band fixture keys with no microphone, so nothing asks iOS for one.
         let model = diversityFixture ? UITestDiversityFixture.makeApp(arguments: arguments)
@@ -123,6 +125,24 @@ struct NereusSDRApp: App {
     }
 
     #if DEBUG
+    private static let launchLogger = Logger(subsystem: "NereusSDR", category: "launch")
+
+    /// Says which process this is, at the very start of App.init: a UI test
+    /// that asked for the band and found Welcome was drawn by a process that
+    /// had no `-NereusShowBand`, either one launched without the test's
+    /// arguments (a warm launch) or one iOS prewarmed, which runs App.init
+    /// before it is launched (the PR 653 re-review e, I1). Read with
+    /// `xcrun simctl spawn <udid> log show --last 10m --predicate
+    /// 'subsystem == "NereusSDR" AND category == "launch"'`.
+    static func logLaunch(arguments: [String], environment: [String: String]) {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let showBand = arguments.contains(ConnectionFlow.showBandArgument)
+        let prewarm = environment["ActivePrewarm"] ?? "unset"
+        let given = arguments.dropFirst().joined(separator: " ")
+        launchLogger.notice(
+            "App.init pid \(pid, privacy: .public) showBand \(showBand, privacy: .public) ActivePrewarm \(prewarm, privacy: .public) arguments \(given, privacy: .public)")
+    }
+
     /// Selects UI-test fixtures before the live flow can access this phone's key.
     static func launchFlow(app: AppModel, kind: DeviceKeyAuthenticator.Kind, arguments: [String],
                            live: () -> ConnectionFlow) -> ConnectionFlow {

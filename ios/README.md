@@ -67,12 +67,21 @@ xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
 ```
 
 The scheme's tests are the app's own (`NereusApp/Tests`, `NereusApp/UITests`)
-and NereusKit's, run on the simulator. On a busy Mac, get the simulator ready
-first: `ios/scripts/sim-ready.sh "<simulator name>" [path/to/NereusSDR.app]`
-waits until the simulator has really finished booting (`simctl bootstatus -b`
-can return early while it is still migrating data), then launches the app
-until one launch succeeds. Build with `build-for-testing`, run the script with
-the built app, then `test-without-building`. Where the simulator has never
+and NereusKit's, run on the simulator. On a busy Mac, build with
+`build-for-testing` into a derived data folder, then run the tests with
+`ios/scripts/sim-test.sh "<simulator name>" "<derived data folder>"
+-only-testing:<target>/<suite>`. It runs `ios/scripts/sim-ready.sh` with the
+app just built, which waits until the simulator has really finished booting
+(`simctl bootstatus -b` can return early while it is still migrating data),
+installs the app, launches it until one launch succeeds and waits for that
+process to exit. Then it runs `test-without-building`, and when that fails
+(a test, or "The test runner hung before establishing connection") it keeps
+the result bundle and the simulator's logs for testmanagerd, CoreSimulator
+and the app before Xcode prunes them. Run `sim-ready.sh` on its own only with
+the built app's path: without one, the first launch of the new install
+happens inside xcodebuild, with no retry, which is how the runner hung. A UI
+test that asks for the band and finds Welcome fails at once and says so; the
+app's log then names the arguments each of its processes started with. Where the simulator has never
 booted, as on CI's runner, `ios/scripts/sim-settle.sh "<simulator name>"`
 goes between the two instead: it boots the simulator and waits for the Mac to
 go quiet, because a first boot keeps a small Mac busy for a quarter of an

@@ -16,7 +16,7 @@ final class AboutAppUITests: XCTestCase {
     func testWelcomeAndSavedCoresCanOpenAboutWithoutAConnection() throws {
         let welcome = XCUIApplication()
         welcome.launchArguments = ["-NereusFreshWelcome"]
-        welcome.launch()
+        welcome.launchFresh()
         XCTAssertFalse(welcome.buttons["coresNotice"].exists)
         XCTAssertTrue(welcome.buttons["welcomeAbout"].waitForExistence(timeout: 30))
         try save("about-welcome-entry")
@@ -26,7 +26,7 @@ final class AboutAppUITests: XCTestCase {
 
         let cores = XCUIApplication()
         cores.launchArguments = ["-NereusShotCores"]
-        cores.launch()
+        cores.launchFresh()
         XCTAssertTrue(cores.buttons["coresAbout"].waitForExistence(timeout: 30))
         try save("about-cores-entry")
         cores.buttons["coresAbout"].tap()
@@ -41,7 +41,7 @@ final class AboutAppUITests: XCTestCase {
                                  ("large", "UICTContentSizeCategoryAccessibilityM")] {
             let app = XCUIApplication()
             app.launchArguments = ["-NereusShowBand", "-UIPreferredContentSizeCategoryName", category]
-            app.launch()
+            app.launchFresh()
             XCTAssertFalse(app.buttons["coresNotice"].exists)
             let setup = app.otherElements["Sections"].buttons["Setup"]
             XCTAssertTrue(setup.waitForExistence(timeout: 30))
@@ -88,7 +88,7 @@ final class AboutAppUITests: XCTestCase {
     func testFailedExternalLinkExplainsItLocally() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-NereusFreshWelcome", "-NereusAboutOpenFailure"]
-        app.launch()
+        app.launchFresh()
         XCTAssertTrue(app.buttons["welcomeAbout"].waitForExistence(timeout: 30))
         app.buttons["welcomeAbout"].tap()
         try show(app.buttons["AboutLink-NereusSDR releases / What's New"], in: app)

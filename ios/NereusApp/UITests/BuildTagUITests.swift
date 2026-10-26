@@ -23,7 +23,7 @@ final class BuildTagUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         // The tab bar is NereusSDR's own, not the system's.
         let setup = app.otherElements["Sections"].buttons["Setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 30))

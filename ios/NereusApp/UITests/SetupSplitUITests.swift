@@ -164,7 +164,7 @@ final class SetupSplitUITests: XCTestCase {
             .deletingLastPathComponent()
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
-        app.launch()
+        app.launchFresh()
         return app
     }
 

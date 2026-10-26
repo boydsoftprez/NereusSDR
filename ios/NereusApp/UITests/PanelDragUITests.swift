@@ -219,7 +219,7 @@ final class PanelDragUITests: XCTestCase {
         if app.buttons["Find my Core"].exists {
             try save("welcome-\(name.filter { $0.isLetter })")
             app.terminate()
-            app.launch()
+            app.launchFresh()
             if flag.waitForExistence(timeout: 30) {
                 return
             }
@@ -268,7 +268,7 @@ final class PanelDragUITests: XCTestCase {
             .deletingLastPathComponent()
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
-        app.launch()
+        app.launchFresh()
         return app
     }
 }

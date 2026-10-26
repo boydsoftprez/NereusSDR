@@ -24,7 +24,7 @@ final class IPadUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let frontPanel = app.descendants(matching: .any)["frontPanel"]
         XCTAssertTrue(frontPanel.waitForExistence(timeout: 30))
         XCTAssertTrue(app.descendants(matching: .any)["analogSMeter"].exists)
@@ -67,7 +67,7 @@ final class IPadUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let meter = app.descendants(matching: .any)["analogSMeter"]
         XCTAssertTrue(meter.waitForExistence(timeout: 30))
         let menuButton = app.buttons["sMeterMenu"]
@@ -135,7 +135,7 @@ final class IPadUITests: XCTestCase {
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
-        app.launch()
+        app.launchFresh()
         let column = app.descendants(matching: .any)["bandColumn"]
         XCTAssertTrue(column.waitForExistence(timeout: 30), "The iPad on its side has no band column")
         let ids = ["fold", "rx", "tnf", "band", "antenna", "display", "vax", "attenuator"]
@@ -194,7 +194,7 @@ final class IPadUITests: XCTestCase {
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
-        app.launch()
+        app.launchFresh()
         let panButton = app.buttons["pan"]
         XCTAssertTrue(panButton.waitForExistence(timeout: 30))
         XCTAssertEqual(panButton.label, "Pan 1")
@@ -263,7 +263,7 @@ final class IPadUITests: XCTestCase {
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
-        app.launch()
+        app.launchFresh()
         let panButton = app.buttons["pan"]
         XCTAssertTrue(panButton.waitForExistence(timeout: 30))
         panButton.tap()

@@ -368,7 +368,7 @@ final class DisplayPillUITests: XCTestCase {
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
-        app.launch()
+        app.launchFresh()
         return app
     }
 }

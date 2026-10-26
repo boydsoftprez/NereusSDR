@@ -100,7 +100,7 @@ final class KeyedPttUITests: XCTestCase {
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         // The Core's Display description, so the pill shows in full.
         app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
-        app.launch()
+        app.launchFresh()
         return app
     }
 }

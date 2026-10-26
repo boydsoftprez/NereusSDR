@@ -24,7 +24,7 @@ final class SoundPanelUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let speaker = app.buttons["speaker"]
         XCTAssertTrue(speaker.waitForExistence(timeout: 30))
         XCTAssertEqual(speaker.label, "Sound options")
@@ -127,7 +127,7 @@ final class SoundPanelUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let link = app.buttons["link"]
         XCTAssertTrue(link.waitForExistence(timeout: 30))
         XCTAssertTrue(link.label.hasSuffix(", opens Connection and performance"), link.label)
