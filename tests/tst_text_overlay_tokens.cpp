@@ -1,7 +1,8 @@
 // no-port-check: NereusSDR-original tests for the text overlay token table.
 // Modification history (NereusSDR):
-//   2026-10-26 - The picker's list has a row cap, opens at its button and
-//                 leaves the dialog's buttons uncovered. J.J. Boyd (KG4VCF),
+//   2026-10-26 - The picker's list has a row cap, opens at its button,
+//                 opens leftward near the window's right edge and leaves the
+//                 dialog's buttons uncovered. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The token picker's list scrolls inside the screen.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -316,7 +317,51 @@ private slots:
             const QRect r(b->mapToGlobal(QPoint(0, 0)), b->size());
             QVERIFY2(!placed.intersects(r), qPrintable(b->text()));
         }
+        // The list stays inside the window and the screen on the right.
+        const int windowRight = dialog.mapToGlobal(QPoint(dialog.width() - 1, 0)).x();
+        const int screenRight = picker->screen()->availableGeometry().right();
+        QVERIFY2(placed.right() <= qMin(windowRight, screenRight),
+                 qPrintable(QStringLiteral("menu right %1, window right %2, screen right %3")
+                                .arg(placed.right()).arg(windowRight).arg(screenRight)));
         QVERIFY2(lastShown, "the list does not scroll to its last token");
+    }
+
+    // With its button near the window's right edge (and the window inside
+    // the screen), the list opens leftward, right-aligned to the button, and
+    // its right edge stays inside the window.
+    void pickerListOpensLeftwardNearTheRightEdge()
+    {
+        auto item = std::make_unique<TextOverlayItem>();
+        QWidget window;
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        const QRect room = screen->availableGeometry();
+        window.setGeometry(room.left() + 20, room.top() + 20, qMin(700, room.width() - 40), qMin(500, room.height() - 40));
+        auto* editor = new TextOverlayItemEditor(&window);
+        editor->setItem(item.get());
+        editor->resize(window.width(), editor->sizeHint().height());
+        auto* picker = editor->findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QVERIFY(picker && picker->menu());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        // The button 20 px in from the window's right edge, near its top.
+        const QPoint target(window.width() - picker->width() - 20, 40);
+        editor->move(target - picker->mapTo(&window, QPoint(0, 0)) + editor->pos());
+        QCOMPARE(picker->mapTo(&window, QPoint(0, 0)), target);
+        QMenu* menu = picker->menu();
+        QRect placed;
+        QTimer::singleShot(0, menu, [&]() {
+            QTRY_VERIFY(menu->isVisible());
+            placed = menu->geometry();
+            menu->close();
+        });
+        picker->showMenu();
+        QVERIFY(placed.isValid());
+        const QRect anchor(picker->mapToGlobal(QPoint(0, 0)), picker->size());
+        const int windowRight = window.mapToGlobal(QPoint(window.width() - 1, 0)).x();
+        QVERIFY2(placed.right() <= windowRight,
+                 qPrintable(QStringLiteral("menu %1..%2, window right %3").arg(placed.left()).arg(placed.right()).arg(windowRight)));
+        QCOMPARE(placed.right(), anchor.right());
     }
 };
 

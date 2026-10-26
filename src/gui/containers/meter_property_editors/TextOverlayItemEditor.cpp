@@ -97,7 +97,18 @@ QPoint TextOverlayItemEditor::tokenMenuPosition(const QWidget* anchor, const QSi
     if (y + menuSize.height() - 1 > room.bottom()) {
         y = qMax(room.top(), origin.y() - menuSize.height());
     }
-    const int x = qMax(room.left(), qMin(origin.x(), room.right() - menuSize.width() + 1));
+    // It opens rightward from the button's left edge; if that would pass the
+    // right edge of the button's window or of the screen, whichever is
+    // nearer, it is right-aligned to the button and opens leftward. Both
+    // edges come from mapToGlobal so they share one origin.
+    const QWidget* window = anchor->window();
+    const int windowRight = window->mapToGlobal(QPoint(window->width() - 1, 0)).x();
+    const int right = qMin(room.right(), windowRight);
+    int x = origin.x();
+    if (x + menuSize.width() - 1 > right) {
+        x = origin.x() + anchor->width() - menuSize.width();
+    }
+    x = qMax(room.left(), qMin(x, room.right() - menuSize.width() + 1));
     return QPoint(x, y);
 }
 

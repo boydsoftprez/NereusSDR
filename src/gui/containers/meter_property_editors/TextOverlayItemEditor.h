@@ -22,7 +22,8 @@ public:
     static constexpr int kTokenMenuMaxRows = 16;
     // Where a token list of `menuSize` opens for its "%" button `anchor`:
     // below the button when it fits on the button's screen, otherwise above
-    // it; kept inside that screen.
+    // it; right-aligned to the button when it would pass the right edge of
+    // the button's window or screen; kept inside that screen.
     static QPoint tokenMenuPosition(const QWidget* anchor, const QSize& menuSize);
     void setItem(MeterItem* item) override;
 
