@@ -56,7 +56,9 @@ struct NereusSDRApp: App {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         let diversityFixture = UITestDiversityFixture.isEnabled(arguments)
-        let model = diversityFixture ? UITestDiversityFixture.makeApp(arguments: arguments) : AppModel.live()
+        // The keyed band fixture keys with no microphone, so nothing asks iOS for one.
+        let model = diversityFixture ? UITestDiversityFixture.makeApp(arguments: arguments)
+            : UITestBand.keyed(arguments) ? AppModel(sessionSources: .system()) : AppModel.live()
         #else
         let model = AppModel.live()
         #endif

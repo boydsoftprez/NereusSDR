@@ -37,6 +37,17 @@ enum UITestBand {
     /// beside A, so the Pan sheet's Add a pan moves B to Pan 2; the Core
     /// takes each `panKey` write and says so.
     static let twoPansArgument = "-NereusTwoPansFixture"
+    /// Beside ``argument``: a Core that lets this device transmit, with the
+    /// link up for the PTT. Its `tx.key` is accepted (epoch 1) and its
+    /// `tx.unkey` too, so a tap on PTT keys and a second unkeys as with a
+    /// Core, and the keyed meters show while keyed. The app keeps no
+    /// microphone with it, so nothing asks iOS for one.
+    static let keyedArgument = "-NereusKeyedFixture"
+
+    /// Whether the launch arguments ask for ``keyedArgument``.
+    static func keyed(_ arguments: [String]) -> Bool {
+        arguments.contains(argument) && arguments.contains(keyedArgument)
+    }
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's
@@ -61,6 +72,7 @@ enum UITestBand {
         let noRotor = arguments.contains(noRotorArgument)
         let bandMenu = arguments.contains(bandMenuArgument)
         let twoPans = arguments.contains(twoPansArgument)
+        let keyed = arguments.contains(keyedArgument)
         let display = environment[displayEnvironment].flatMap { path in
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
@@ -92,7 +104,8 @@ enum UITestBand {
           + (bandMenu ? [.init(ordinal: 8, name: PanSheetModel.notchControlCapability,
                                value: .i64(PanSheetModel.notchAtSliceVersion))] : [])
           + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
-                        .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : []))))
+                        .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : [])
+          + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : []))))
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -160,10 +173,21 @@ enum UITestBand {
                 .init(ordinal: 1, name: "driver", value: .enumeration(0)),
             ])))
         }
+        if keyed {
+            // Nobody holds transmit: this device may key.
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "txState", className: "TransmitState", properties: [
+                .init(ordinal: 0, name: "keyed", value: .bool(false)),
+                .init(ordinal: 3, name: "txSliceId", value: .i64(0)),
+                .init(ordinal: 18, name: "holderDeviceId", value: .utf8("")),
+            ])))
+        }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
-        if bandMenu {
-            linkForBandMenu(app)
+        if bandMenu || keyed {
+            linkForBandMenu(app, keyed: keyed)
+        }
+        if keyed {
+            app.useBandFixtureLinkUpForTransmit()
         }
         if arguments.contains(spotsArgument) {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
@@ -213,7 +237,7 @@ enum UITestBand {
     /// The settings proxy and the command client up as on a live link, and
     /// the Core's answers to what they send (``bandMenuArgument``).
     @MainActor
-    private static func linkForBandMenu(_ app: AppModel) {
+    private static func linkForBandMenu(_ app: AppModel, keyed: Bool) {
         let settings = app.settings
         let commands = app.commands
         let notchVerb = PanSheetModel.addNotchAtVerb
@@ -227,6 +251,17 @@ enum UITestBand {
                     settings?.handle(.message(.settingsValue(.init(key: write.key, origin: write.origin,
                                                                    properties: write.properties))))
                 }
+            case .commandInvoke(let invoke) where keyed && ["tx.key", "tx.unkey"].contains(invoke.verb):
+                // The Core keys this device (epoch 1) and releases it.
+                let values: [LinkMessage.PropertyEntry]? = invoke.verb == "tx.key"
+                    ? [.init(name: "epoch", value: .i64(1))] : nil
+                Task {
+                    await commands.handle(.message(.commandResult(.init(verb: invoke.verb, id: invoke.id,
+                                                                        accepted: true, reason: "",
+                                                                        affected: [], values: values))))
+                }
+            case .commandInvoke(let invoke) where keyed && invoke.verb == "tx.keepalive":
+                break
             case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb].contains(invoke.verb):
                 let reason = "UI fixture: " + (invoke.verb == notchVerb ? notchText(invoke.args)
                                                                         : argumentsText(invoke.verb, invoke.args))

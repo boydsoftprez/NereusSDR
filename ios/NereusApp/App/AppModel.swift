@@ -232,6 +232,15 @@ final class AppModel: ObservableObject {
     func useBandFixtureCommandSender(_ sender: @escaping @Sendable (LinkMessage) async throws -> Void) {
         route.useBandFixtureCommandSender(sender)
     }
+
+    /// Only the command-line band fixture's keyed Core
+    /// (``UITestBand/keyedArgument``): the link reads as up, so PTT can be
+    /// used and its key and release go to the fixture's command sender.
+    func useBandFixtureLinkUpForTransmit() {
+        connection = .connected
+        let transmit = main.transmit
+        Task { await transmit.sessionChanged(.ready, owner: 1) }
+    }
     #endif
 
     init(phoneSettings: PhoneSettings = PhoneSettings(),
