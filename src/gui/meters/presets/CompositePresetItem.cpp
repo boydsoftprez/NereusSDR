@@ -1,5 +1,13 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display face: displayMode (Source slice, All slices,
+//                 Slice A and on), vfoLayout, vfoShowBandText and the
+//                 clsVfoDisplay colour keys (title, small digits, band text,
+//                 split back, split, digit highlight, RX, TX, lock, sync,
+//                 background); a key an edit or record carries wins over its
+//                 "vfo" record, a face saved without them looks the same;
+//                 new VFO display faces take kVfoPresetThetisDefaults.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Clock: thetisFormat draws Thetis's strings (12 hour h:mm:ss
 //                 with am / pm apart, ddd d MMM yyyy, titles local / utc);
 //                 new clock faces take kClockPresetThetisDefaults, a saved
@@ -286,6 +294,30 @@ constexpr float kClockAmPmFontScale=0.8f;
 // The am / pm share of the time line (NereusSDR layout; Thetis offsets it
 // w * 0.228f from the time's start, MeterManager.cs:40525 [v2.10.3.15]).
 constexpr double kClockAmPmShare=0.22;
+// The VFO display face's colour keys beyond vfoFrequencyColor,
+// vfoModeColor, vfoFilterColor and vfoBandColor. Thetis sets the same
+// colours on a VFO display group from MeterManager.cs:28052-28070 and the
+// background from :28095 [v2.10.3.15].
+struct VfoColourKey {
+    const char* key;
+    void (VfoDisplayItem::*set)(const QColor&);
+    QColor (VfoDisplayItem::*get)() const;
+};
+constexpr VfoColourKey kVfoColourKeys[]{
+    {"vfoTitleColor",&VfoDisplayItem::setTitleColour,&VfoDisplayItem::titleColour},                         // vfo.TypeColour = igs.TitleColor
+    {"vfoSmallDigitsColor",&VfoDisplayItem::setFrequencySmallColour,&VfoDisplayItem::frequencySmallColour}, // vfo.FrequencyColourSmall
+    {"vfoBandTextColor",&VfoDisplayItem::setBandTextColour,&VfoDisplayItem::bandTextColour},                // vfo.BandTextColour
+    {"vfoSplitBackColor",&VfoDisplayItem::setSplitBackColour,&VfoDisplayItem::splitBackColour},             // vfo.SplitBackColour = igs.LowColor
+    {"vfoSplitColor",&VfoDisplayItem::setSplitColour,&VfoDisplayItem::splitColour},                         // vfo.SplitColour = igs.HighColor
+    {"vfoDigitHighlightColor",&VfoDisplayItem::setDigitHighlightColour,&VfoDisplayItem::digitHighlightColour}, // vfo.DigitHighlightColour = igs.PowerScaleColour
+    {"vfoRxColor",&VfoDisplayItem::setRxColour,&VfoDisplayItem::rxColour},                                  // vfo.RxColour = igs.PeakValueColour
+    {"vfoTxColor",&VfoDisplayItem::setTxColour,&VfoDisplayItem::txColour},                                  // vfo.TxColour = igs.PeakHoldMarkerColor
+    {"vfoLockColor",&VfoDisplayItem::setLockColour,&VfoDisplayItem::lockColour},                            // vfo.LockColour
+    {"vfoSyncColor",&VfoDisplayItem::setSyncColour,&VfoDisplayItem::syncColour},                            // vfo.SyncColour
+    {"vfoBackgroundColor",&VfoDisplayItem::setBackgroundColour,&VfoDisplayItem::backgroundColour},          // solidColor.Colour = igs.Colour
+};
+// The largest display mode a face takes: the last fixed slice.
+constexpr int kMaxVfoDisplayMode=VfoDisplayItem::kFixedSliceModeBase+VfoDisplayItem::kMaxSliceCount-1;
 QColor onDarkGlass(QColor requested) {
     // Contrast adaptation changes display only: alpha and stored color survive.
     if(requested.lightnessF()<.38) { return QColor(224,231,237,requested.alpha()); }
@@ -546,6 +578,21 @@ void CompositePresetItem::applyNewItemDefaults() {
         if(!applyConfiguration({{"thetisFormat",d.thetisFormat},{"show24Hour",d.show24Hour}})) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
         return;
     }
+    if(m_face==Face::Vfo) {
+        // New VFO display faces take the VFO display item's Thetis values
+        // (kVfoPresetThetisDefaults, CompositePresetItem.h). The Contest
+        // face's VFO keeps its look.
+        const VfoPresetThetisDefaults& d=kVfoPresetThetisDefaults; const VfoDisplayThetisDefaults& v=d.display;
+        const auto hex=[](QRgb rgb) { return QColor::fromRgb(rgb).name(QColor::HexArgb); };
+        const QJsonObject edit{{"displayMode",d.displayMode},{"vfoLayout",int(v.layout)},{"vfoShowBandText",v.showBandText},
+            {"vfoFrequencyColor",hex(v.frequencyColour)},{"vfoModeColor",hex(v.modeColour)},{"vfoFilterColor",hex(v.filterColour)},{"vfoBandColor",hex(v.bandColour)},
+            {"vfoTitleColor",hex(v.titleColour)},{"vfoSmallDigitsColor",hex(v.frequencySmallColour)},{"vfoBandTextColor",hex(v.bandTextColour)},
+            {"vfoSplitBackColor",hex(v.splitBackColour)},{"vfoSplitColor",hex(v.splitColour)},{"vfoDigitHighlightColor",hex(v.digitHighlightColour)},
+            {"vfoRxColor",hex(v.rxColour)},{"vfoTxColor",hex(v.txColour)},{"vfoLockColor",hex(v.lockColour)},{"vfoSyncColor",hex(v.syncColour)},
+            {"vfoBackgroundColor",hex(v.backColour)}};
+        if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
     if(m_face==Face::Eye) {
         // New magic eyes take Thetis's AddMagicEye / clsMagicEyeItem values
         // (kMagicEyeThetisDefaults, MagicEyeItem.h). Thetis's "eye-bezel"
@@ -792,7 +839,8 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
     if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units","trace2Context"}); }
     if(m_clock) { fields.append({"clockMode","showDate","show24Hour","thetisFormat","clockTimeColor","clockDateColor","clockTitleColor"}); }
-    if(m_vfo) { fields.append({"vfo","vfoFrequencyColor","vfoModeColor","vfoFilterColor","vfoBandColor"}); }
+    if(m_vfo) { fields.append({"vfo","displayMode","vfoLayout","vfoShowBandText","vfoTitleColor","vfoFrequencyColor","vfoSmallDigitsColor","vfoModeColor","vfoFilterColor","vfoBandColor","vfoBandTextColor",
+        "vfoSplitBackColor","vfoSplitColor","vfoDigitHighlightColor","vfoRxColor","vfoTxColor","vfoLockColor","vfoSyncColor","vfoBackgroundColor"}); }
     if(m_bands) { fields.append({"bands","modes"}); }
     if(!m_channels.isEmpty()) { fields.append("bindingId"); }
     return fields;
@@ -805,6 +853,10 @@ QJsonObject CompositePresetItem::configuration() const {
         "showType","typeColor","showSubMarker","subMarkerColor","trace2Context","thetisFormat"};
     for(const QString& key:known) { if(!fields.contains(key)) { c.remove(key); } }
     if(m_vfo) { c["vfo"]=m_vfo->serialize(); c["vfoFrequencyColor"]=m_vfo->frequencyColour().name(QColor::HexArgb); c["vfoModeColor"]=m_vfo->modeColour().name(QColor::HexArgb); c["vfoFilterColor"]=m_vfo->filterColour().name(QColor::HexArgb); c["vfoBandColor"]=m_vfo->bandColour().name(QColor::HexArgb); }
+    if(m_vfo) {
+        c["displayMode"]=m_vfo->displayModeValue(); c["vfoLayout"]=int(m_vfo->layout()); c["vfoShowBandText"]=m_vfo->showBandText();
+        for(const VfoColourKey& k:kVfoColourKeys) { c[QLatin1String(k.key)]=(m_vfo->*k.get)().name(QColor::HexArgb); }
+    }
     if(m_bands) { c["bands"]=m_bands->serialize(); c["modes"]=m_modes->serialize(); }
     if(m_clock) { c["clockTimeColor"]=m_clock->timeColour().name(QColor::HexArgb); c["clockDateColor"]=m_clock->dateColour().name(QColor::HexArgb); c["clockTitleColor"]=m_clock->typeTitleColour().name(QColor::HexArgb); }
     c["x"]=x(); c["y"]=y(); c["w"]=itemWidth(); c["h"]=itemHeight(); c["bindingId"]=bindingId();
@@ -882,6 +934,13 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
         if(next.contains(key)) { const QString raw=next[key].toString(); if(child==m_vfo) { VfoDisplayItem probe; if(!probe.deserialize(raw)) { return false; } } else if(child==m_bands) { BandButtonItem probe; if(!probe.deserialize(raw)) { return false; } } else if(child==m_modes) { ModeButtonItem probe; if(!probe.deserialize(raw)) { return false; } } else { ClockItem probe(nullptr,false); if(!probe.deserialize(raw)) { return false; } } }
     }
     for(const QString& key:{QStringLiteral("clockTimeColor"),QStringLiteral("clockDateColor"),QStringLiteral("clockTitleColor"),QStringLiteral("vfoFrequencyColor"),QStringLiteral("vfoModeColor"),QStringLiteral("vfoFilterColor"),QStringLiteral("vfoBandColor")}) { if(next.contains(key) && !QColor(next[key].toString()).isValid()) { return false; } }
+    if(m_vfo) {
+        for(const VfoColourKey& k:kVfoColourKeys) { const QLatin1String key(k.key); if(next.contains(key) && (!next[key].isString() || !QColor(next[key].toString()).isValid())) { return false; } }
+        if(next.contains("vfoShowBandText") && !next["vfoShowBandText"].isBool()) { return false; }
+        // A saved 1 (the earlier VFO B) is taken and becomes Slice B.
+        if(next.contains("displayMode")) { const double v=next["displayMode"].toDouble(-1.5); if(!next["displayMode"].isDouble() || v!=std::floor(v) || v<0 || v>kMaxVfoDisplayMode) { return false; } }
+        if(next.contains("vfoLayout")) { const QJsonValue v=next["vfoLayout"]; if(!v.isDouble() || (v.toDouble()!=int(VfoDisplayItem::Layout::Compact) && v.toDouble()!=int(VfoDisplayItem::Layout::Thetis))) { return false; } }
+    }
     // Other needles color: an edit of the face option recolors every
     // non-primary needle, as Thetis sets ni.Colour = igs.SubMarkerColour
     // (MeterManager.cs:27987 [v2.10.3.15]). A saved record carries its
@@ -894,6 +953,15 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
     for(MeterItem* child:internalItems()) { const QString key=child==m_vfo?"vfo":child==m_bands?"bands":child==m_modes?"modes":"clock"; if(next.contains(key)) { child->deserialize(next[key].toString()); } }
 
     if(m_vfo) { m_vfo->setFrequencyColour(QColor(next["vfoFrequencyColor"].toString())); m_vfo->setModeColour(QColor(next["vfoModeColor"].toString())); m_vfo->setFilterColour(QColor(next["vfoFilterColor"].toString())); m_vfo->setBandColour(QColor(next["vfoBandColor"].toString())); }
+    if(m_vfo) {
+        // A key the edit (or a saved record) carries wins over its "vfo"
+        // record; a face saved before the keys keeps what its "vfo" record
+        // gives it, so it looks the same.
+        for(const VfoColourKey& k:kVfoColourKeys) { const QLatin1String key(k.key); if(edit.contains(key)) { (m_vfo->*k.set)(QColor(edit[key].toString())); } }
+        if(edit.contains("vfoShowBandText")) { m_vfo->setShowBandText(edit["vfoShowBandText"].toBool()); }
+        if(edit.contains("displayMode")) { m_vfo->setDisplayModeValue(edit["displayMode"].toInt()); }
+        if(edit.contains("vfoLayout")) { m_vfo->setLayout(static_cast<VfoDisplayItem::Layout>(edit["vfoLayout"].toInt())); }
+    }
     if(m_clock) { m_clock->setTimeColour(QColor(next["clockTimeColor"].toString())); m_clock->setDateColour(QColor(next["clockDateColor"].toString())); m_clock->setTypeTitleColour(QColor(next["clockTitleColor"].toString())); m_clock->setShow24Hour(next["show24Hour"].toBool()); m_clock->setShowType(next["showTitle"].toBool()); }
     configureDynamics(); markPresentationDirty(true); return true;
 }

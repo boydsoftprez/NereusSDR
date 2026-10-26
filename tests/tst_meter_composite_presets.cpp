@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QLabel>
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CrossNeedleItem.h"
@@ -22,6 +24,7 @@
 #include "gui/meters/presets/SignalTextPresetItem.h"
 #include "gui/meters/presets/ContestPresetItem.h"
 #include "gui/meters/presets/ClockPresetItem.h"
+#include "gui/meters/presets/VfoDisplayPresetItem.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
@@ -1094,6 +1097,145 @@ private slots:
         QVERIFY(restored.editableFields().contains("thetisFormat")); QVERIFY(!restored.applyConfiguration({{"thetisFormat","yes"}}));
         ContainerContentRegistry registry; ContentPropertyEditor editor(registry); editor.setEntry(registry.makeEntry(QStringLiteral("meter.clock")));
         QVERIFY(editor.findChild<QWidget*>(QStringLiteral("thetisFormat")));
+    }
+    // The VFO display face's own keys: display mode, layout, band text and
+    // the colour set (Thetis MeterManager.cs:28052-28074 [v2.10.3.15]).
+    static QStringList vfoFaceKeys() {
+        return {"displayMode","vfoLayout","vfoShowBandText","vfoTitleColor","vfoSmallDigitsColor","vfoBandTextColor","vfoSplitBackColor","vfoSplitColor",
+                "vfoDigitHighlightColor","vfoRxColor","vfoTxColor","vfoLockColor","vfoSyncColor","vfoBackgroundColor"};
+    }
+    static VfoSliceState openSlice(int index,qint64 hz,bool transmitting=false,bool active=false) {
+        VfoSliceState s; s.index=index; s.frequencyHz=hz; s.mode=QStringLiteral("USB"); s.filter=QStringLiteral("2.7k"); s.band=QStringLiteral("20m");
+        s.open=true; s.transmitting=transmitting; s.active=active; return s;
+    }
+    void vfoFaceSavedWithoutKeysLooksTheSame() {
+        // A face as it was saved before the keys: built in code.
+        VfoDisplayPresetItem face; face.setFrequency(14200123); face.setModeLabel("USB"); face.setBandLabel("20m");
+        for(const QString& key:vfoFaceKeys()) { QVERIFY2(face.editableFields().contains(key),qPrintable(key)); QVERIFY2(face.configuration().contains(key),qPrintable(key)); }
+        QJsonObject old=QJsonDocument::fromJson(face.serialize().toUtf8()).object();
+        for(const QString& key:vfoFaceKeys()) { old.remove(key); }
+        VfoDisplayPresetItem restored;
+        QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact))));
+        restored.setFrequency(14200123); restored.setModeLabel("USB"); restored.setBandLabel("20m");
+        QCOMPARE(restored.serialize(),face.serialize());
+        const VfoDisplayItem* vfo=restored.vfoDisplay();
+        QCOMPARE(vfo->layout(),VfoDisplayItem::Layout::Compact);
+        QCOMPARE(vfo->displayMode(),VfoDisplayItem::DisplayMode::SourceSlice);
+        QCOMPARE(vfo->backgroundColour(),QColor(0x0a,0x0a,0x18));
+        QCOMPARE(vfo->rxColour(),QColor(0x00,0xff,0x00));
+        QCOMPARE(restored.configuration()["displayMode"].toInt(-1),0);
+        QCOMPARE(restored.configuration()["vfoLayout"].toInt(-1),0);
+        QCOMPARE(rendered(restored,QSize(360,120)),rendered(face,QSize(360,120)));
+        // An older "vfo" record on Both (2) and no displayMode key loads
+        // as All slices; one on VFO B (1) loads as Slice B.
+        for(const auto& [saved,expected]:{std::pair{2,int(VfoDisplayItem::DisplayMode::AllSlices)},std::pair{1,VfoDisplayItem::fixedSliceMode(1)}}) {
+            VfoDisplayItem probe; probe.setDisplayModeValue(saved);
+            QJsonObject record=old; record["vfo"]=probe.serialize();
+            VfoDisplayPresetItem loaded; QVERIFY(loaded.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
+            QCOMPARE(loaded.vfoDisplay()->displayModeValue(),expected);
+        }
+    }
+    void newVfoFaceTakesThetisDefaults() {
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.vfoDisplay"));
+        const QJsonObject props=entry.config["properties"].toObject();
+        const auto hex=[](QRgb rgb) { return QColor::fromRgb(rgb).name(QColor::HexArgb); };
+        const VfoDisplayThetisDefaults& d=kVfoPresetThetisDefaults.display;
+        QCOMPARE(props["displayMode"].toInt(-1),int(VfoDisplayItem::DisplayMode::SourceSlice));
+        QCOMPARE(props["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Thetis));
+        QCOMPARE(props["vfoShowBandText"],QJsonValue(false));
+        QCOMPARE(props["vfoBackgroundColor"].toString(),QStringLiteral("#ff202020"));
+        QCOMPARE(props["vfoRxColor"].toString(),QStringLiteral("#ff32cd32"));
+        QCOMPARE(props["vfoTxColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(props["vfoTitleColor"].toString(),hex(d.titleColour));
+        QCOMPARE(props["vfoSmallDigitsColor"].toString(),hex(d.frequencySmallColour));
+        QCOMPARE(props["vfoSplitBackColor"].toString(),QStringLiteral("#ff404040"));
+        QCOMPARE(props["vfoLockColor"].toString(),hex(d.lockColour));
+        QCOMPARE(props["vfoFrequencyColor"].toString(),QStringLiteral("#ffffa500"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QCOMPARE(face->vfoDisplay()->layout(),VfoDisplayItem::Layout::Thetis);
+        QCOMPARE(face->vfoDisplay()->backgroundColour(),QColor(32,32,32));
+        // The Contest face's VFO keeps its look when placed new.
+        const QJsonObject contest=registry.makeEntry(QStringLiteral("meter.contest")).config["properties"].toObject();
+        QCOMPARE(contest["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Compact));
+        QCOMPARE(contest["vfoBackgroundColor"].toString(),QStringLiteral("#ff0a0a18"));
+    }
+    void vfoFaceDisplayModeShowsItsSlices() {
+        VfoDisplayPresetItem face; VfoDisplayItem* vfo=face.vfoDisplay();
+        vfo->setSliceState(0,openSlice(0,14200000,false,true)); vfo->setSliceState(1,openSlice(1,7150000)); vfo->setSliceState(2,openSlice(2,21300000));
+        // Source slice: the entry's Source picks the slice.
+        QVERIFY(face.applyConfiguration({{"displayMode",int(VfoDisplayItem::DisplayMode::SourceSlice)}}));
+        vfo->setSourceSliceIndex(1);
+        QCOMPARE(vfo->displayedSlices(),QVector<int>{1});
+        QCOMPARE(vfo->publishedReadings().value("sliceB_freq").toString(),QStringLiteral("7.150000"));
+        QVERIFY(!vfo->publishedReadings().contains("sliceA_freq"));
+        // All slices: every open slice.
+        QVERIFY(face.applyConfiguration({{"displayMode",int(VfoDisplayItem::DisplayMode::AllSlices)}}));
+        QCOMPARE(vfo->displayedSlices(),(QVector<int>{0,1,2}));
+        // Slice C shows C whatever the Source is.
+        QVERIFY(face.applyConfiguration({{"displayMode",VfoDisplayItem::fixedSliceMode(2)}}));
+        QCOMPARE(vfo->displayedSlices(),QVector<int>{2});
+        QCOMPARE(vfo->publishedReadings().value("sliceC_freq").toString(),QStringLiteral("21.300000"));
+        QVERIFY(!vfo->publishedReadings().contains("sliceB_freq"));
+        // The mode is saved and restored through the face's record.
+        VfoDisplayPresetItem copy; QVERIFY(copy.deserialize(face.serialize()));
+        QCOMPARE(copy.vfoDisplay()->displayModeValue(),VfoDisplayItem::fixedSliceMode(2));
+        QCOMPARE(copy.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(2));
+        // A 1 (the earlier VFO B) becomes Slice B.
+        QVERIFY(face.applyConfiguration({{"displayMode",1}})); QCOMPARE(face.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(1));
+        // Out of range or the wrong type is rejected and changes nothing.
+        for(const QJsonValue& bad:{QJsonValue(-1),QJsonValue(VfoDisplayItem::fixedSliceMode(VfoDisplayItem::kMaxSliceCount)),QJsonValue(2.5),QJsonValue("Slice C")}) { QVERIFY(!face.applyConfiguration({{"displayMode",bad}})); }
+        QVERIFY(!face.applyConfiguration({{"vfoLayout",2}})); QVERIFY(!face.applyConfiguration({{"vfoShowBandText","yes"}})); QVERIFY(!face.applyConfiguration({{"vfoTxColor","not a color"}}));
+        QCOMPARE(face.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(1));
+        // The colour keys and layout reach the display.
+        QVERIFY(face.applyConfiguration({{"vfoLayout",int(VfoDisplayItem::Layout::Thetis)},{"vfoShowBandText",true},{"vfoTitleColor","#ff112233"},{"vfoBackgroundColor","#ff010203"},{"vfoLockColor","#ff445566"}}));
+        QCOMPARE(vfo->layout(),VfoDisplayItem::Layout::Thetis); QVERIFY(vfo->showBandText());
+        QCOMPARE(vfo->titleColour(),QColor("#ff112233")); QCOMPARE(vfo->backgroundColour(),QColor("#ff010203")); QCOMPARE(vfo->lockColour(),QColor("#ff445566"));
+    }
+    void vfoFaceTxColourOnTheTransmittingSlice() {
+        VfoDisplayPresetItem face; VfoDisplayItem* vfo=face.vfoDisplay();
+        QVERIFY(face.applyConfiguration({{"displayMode",VfoDisplayItem::fixedSliceMode(2)},{"vfoTxColor","#ff0000ff"},{"vfoRxColor","#ff00ff00"},{"vfoLayout",int(VfoDisplayItem::Layout::Compact)}}));
+        face.setUnavailableText(QString()); vfo->setSourceSliceIndex(0);
+        vfo->setSliceState(0,openSlice(0,14200000,false,true)); vfo->setSliceState(2,openSlice(2,21300000,true));
+        const QSize size(360,120); const QPoint marker(1,60);
+        face.resetForTxTransition(true);
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,0,255));
+        // Transmit comes off Slice A: Slice C shows the RX colour.
+        vfo->setSliceState(0,openSlice(0,14200000,true,true)); vfo->setSliceState(2,openSlice(2,21300000,false));
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,255,0));
+        // Receiving: the RX colour.
+        vfo->setSliceState(2,openSlice(2,21300000,true)); face.resetForTxTransition(false);
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,255,0));
+        const QString capture=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR");
+        if(!capture.isEmpty()) {
+            QDir().mkpath(capture);
+            for(int layout:{0,1}) {
+                QVERIFY(face.applyConfiguration({{"vfoLayout",layout},{"displayMode",int(VfoDisplayItem::DisplayMode::AllSlices)}}));
+                QVERIFY(rendered(face,QSize(640,120)).save(capture+QStringLiteral("/vfo-face-layout%1.png").arg(layout)));
+            }
+        }
+    }
+    void editorOffersTheVfoFaceRows() {
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        ContentEntry edited; connect(&editor,&ContentPropertyEditor::entryEdited,this,[&](const ContentEntry& e) { edited=e; });
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.vfoDisplay")));
+        auto* mode=editor.findChild<QComboBox*>(QStringLiteral("displayMode")); QVERIFY(mode);
+        QStringList choices; for(int i=0;i<mode->count();++i) { choices.append(mode->itemText(i)); }
+        QCOMPARE(choices,(QStringList{"Source slice","All slices","Slice A","Slice B","Slice C","Slice D","Slice E"}));
+        QCOMPARE(mode->currentText(),QStringLiteral("Source slice"));
+        auto* layout=editor.findChild<QComboBox*>(QStringLiteral("vfoLayout")); QVERIFY(layout);
+        QCOMPARE(layout->itemText(0),QStringLiteral("Compact")); QCOMPARE(layout->itemText(1),QStringLiteral("Detailed")); QCOMPARE(layout->currentText(),QStringLiteral("Detailed"));
+        for(const QString& key:vfoFaceKeys()) { QVERIFY2(editor.findChild<QWidget*>(key),qPrintable(key)); }
+        mode->setCurrentIndex(mode->findText(QStringLiteral("Slice C")));
+        QCOMPARE(edited.config["properties"].toObject()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(2));
+        layout->setCurrentIndex(0);
+        QCOMPARE(edited.config["properties"].toObject()["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Compact));
+        // Rows name slices, never VFO A / B or RX1 / RX2.
+        QVERIFY(!choices.contains(QStringLiteral("Both")));
+        QStringList shown=choices; for(const QLabel* label:editor.findChildren<QLabel*>()) { shown.append(label->text()); }
+        for(const QString& text:shown) {
+            for(const char* banned:{"VFO A","VFO B","Vfo","RX1","RX2"}) { QVERIFY2(!text.contains(QLatin1String(banned)),qPrintable(text)); }
+        }
+        QVERIFY(shown.contains(QStringLiteral("Display mode"))); QVERIFY(shown.contains(QStringLiteral("TX label color")));
     }
     void primitiveClockSharesCadence() {
         ContainerContentRegistry registry; MeterWidget widget; widget.resize(360,120); auto* item=registry.createMeterItem(registry.makeEntry("CLOCK"),&widget); QVERIFY(item); widget.addItem(item); widget.show();

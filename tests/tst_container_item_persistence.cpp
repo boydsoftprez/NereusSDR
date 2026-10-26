@@ -126,6 +126,14 @@ void setNonDefaults(MeterItem* item)
         overlay->setTextBackColour2(kBack2);
         overlay->setShowTextBackColour1(true);
         overlay->setShowTextBackColour2(true);
+        overlay->setLineMode(TextOverlayItem::LineMode::RxTxSwap);
+        overlay->setTextXOffset1(0.25f);
+        overlay->setTextYOffset1(-0.5f);
+        overlay->setTextXOffset2(1.5f);
+        overlay->setTextYOffset2(0.125f);
+        overlay->setFontItalic1(true);
+        overlay->setFontUnderline1(true);
+        overlay->setFontStrikeout2(true);
     }
     if (auto* filter = qobject_cast<FilterDisplayItem*>(item)) {
         filter->setTextColour(kFilterText);
@@ -175,6 +183,16 @@ void verifyNonDefaults(const MeterItem* item)
         QCOMPARE(overlay->textBackColour2(), kBack2);
         QVERIFY(overlay->showTextBackColour1());
         QVERIFY(overlay->showTextBackColour2());
+        QCOMPARE(overlay->lineMode(), TextOverlayItem::LineMode::RxTxSwap);
+        QCOMPARE(overlay->textXOffset1(), 0.25f);
+        QCOMPARE(overlay->textYOffset1(), -0.5f);
+        QCOMPARE(overlay->textXOffset2(), 1.5f);
+        QCOMPARE(overlay->textYOffset2(), 0.125f);
+        QVERIFY(overlay->fontItalic1());
+        QVERIFY(overlay->fontUnderline1());
+        QVERIFY(!overlay->fontStrikeout1());
+        QVERIFY(!overlay->fontItalic2());
+        QVERIFY(overlay->fontStrikeout2());
     }
     if (const auto* filter = qobject_cast<const FilterDisplayItem*>(item)) {
         QCOMPARE(filter->textColour(), kFilterText);
@@ -228,6 +246,13 @@ void verifyDefaults(const MeterItem* item, const MeterItem* fresh)
         QCOMPARE(overlay->textBackColour2(), f->textBackColour2());
         QCOMPARE(overlay->showTextBackColour1(), f->showTextBackColour1());
         QCOMPARE(overlay->showTextBackColour2(), f->showTextBackColour2());
+        // An older record keeps both lines (ruling D5), whatever a new item takes.
+        QCOMPARE(overlay->lineMode(), TextOverlayItem::LineMode::Both);
+        QCOMPARE(overlay->textXOffset1(), 0.0f);
+        QCOMPARE(overlay->textYOffset2(), 0.0f);
+        QVERIFY(!overlay->fontItalic1());
+        QVERIFY(!overlay->fontUnderline2());
+        QVERIFY(!overlay->fontStrikeout2());
     }
     if (const auto* filter = qobject_cast<const FilterDisplayItem*>(item)) {
         QCOMPARE(filter->textColour(), qobject_cast<const FilterDisplayItem*>(fresh)->textColour());
@@ -259,6 +284,10 @@ class TstContainerItemPersistence : public QObject {
         QTest::newRow("TEXTOVERLAY") << QStringLiteral("TEXTOVERLAY")
             << QStringLiteral("TEXTOVERLAY|0.1|0.2|0.3|0.4|5|6|#ffff0000|#ff00ff00|#ff111111|#ff222222|0"
                "|Arial|12|1|Courier|14|0|-1|0.2|aGVsbG8=|d29ybGQ=");
+        // The record with the text back fields, before the line mode.
+        QTest::newRow("TEXTOVERLAY-textback") << QStringLiteral("TEXTOVERLAY")
+            << QStringLiteral("TEXTOVERLAY|0.1|0.2|0.3|0.4|5|6|#ffff0000|#ff00ff00|#ff111111|#ff222222|0"
+               "|Arial|12|1|Courier|14|0|-1|0.2|aGVsbG8=|d29ybGQ=|#ff404040|#ff404040|0|0");
         QTest::newRow("FILTERDISPLAY") << QStringLiteral("FILTERDISPLAY")
             << QStringLiteral("FILTERDISPLAY|0.1|0.2|0.3|0.4|5|6|1|#ff010203|#ff040506|#ff070809|#ff0a0b0c"
                "|#ff0d0e0f|#ff101112|0|0.1|-120|-30|1|6");

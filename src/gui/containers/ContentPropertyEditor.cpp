@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display face: Display mode (Source slice, All slices,
+//                 Slice A to E) and Layout (Compact, Detailed) rows, and
+//                 plain labels for its colour rows. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Clock: a "Thetis time and date format" row (thetisFormat).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history: a "Trace 2 source" row (Off, Slice A-D,
@@ -70,6 +74,7 @@
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
 #include "gui/meters/MagicEyeItem.h"
+#include "gui/meters/VfoDisplayItem.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/applets/SectionParts.h"
@@ -225,6 +230,26 @@ QString fieldLabel(QString key)
     if(key=="bezelScale") {return QObject::tr("Bezel size");}
     if(key=="bezelImage") {return QObject::tr("Bezel image");}
     if(key=="thetisFormat") {return QObject::tr("Thetis time and date format");}
+    // The VFO display face's rows, named as the VFO display item's editor
+    // names them.
+    if(key=="displayMode") {return QObject::tr("Display mode");}
+    if(key=="vfoLayout") {return QObject::tr("Layout");}
+    if(key=="vfoShowBandText") {return QObject::tr("Show band text");}
+    if(key=="vfoTitleColor") {return QObject::tr("Title color");}
+    if(key=="vfoFrequencyColor") {return QObject::tr("Frequency color");}
+    if(key=="vfoSmallDigitsColor") {return QObject::tr("Small digits color");}
+    if(key=="vfoModeColor") {return QObject::tr("Mode color");}
+    if(key=="vfoFilterColor") {return QObject::tr("Filter color");}
+    if(key=="vfoBandColor") {return QObject::tr("Band color");}
+    if(key=="vfoBandTextColor") {return QObject::tr("Band text color");}
+    if(key=="vfoSplitBackColor") {return QObject::tr("Split back color");}
+    if(key=="vfoSplitColor") {return QObject::tr("Split color");}
+    if(key=="vfoDigitHighlightColor") {return QObject::tr("Digit highlight color");}
+    if(key=="vfoRxColor") {return QObject::tr("RX label color");}
+    if(key=="vfoTxColor") {return QObject::tr("TX label color");}
+    if(key=="vfoLockColor") {return QObject::tr("Lock color");}
+    if(key=="vfoSyncColor") {return QObject::tr("Sync color");}
+    if(key=="vfoBackgroundColor") {return QObject::tr("Background color");}
     if(key=="showType") {return QObject::tr("Show type");}
     if(key=="typeColor") {return QObject::tr("Type color");}
     if(key=="showSubMarker") {return QObject::tr("Show µV and dBm");}
@@ -427,6 +452,20 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         else {combo->addItem(tr("Conditioned encoder input"),"Conditioned");combo->addItem(tr("Raw microphone"),"RawMic");}
         combo->setCurrentIndex(combo->findData(value.toVariant()));
         connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{if(!property(key,QJsonValue::fromVariant(combo->currentData()))) {const QSignalBlocker blocker(combo);combo->setCurrentIndex(combo->findData(effectiveProperty(key,-1).toVariant()));}});widget=combo;
+    } else if(key=="displayMode" || key=="vfoLayout") {
+        // VFO display face: which slices it shows (the entry's Source slice,
+        // every open slice, or one slice) and its layout.
+        auto* combo=new GuardedComboBox(this);
+        if(key=="displayMode") {
+            combo->addItem(tr("Source slice"),int(VfoDisplayItem::DisplayMode::SourceSlice));
+            combo->addItem(tr("All slices"),int(VfoDisplayItem::DisplayMode::AllSlices));
+            for(int i=0;i<VfoDisplayItem::kMaxSliceCount;++i) {combo->addItem(tr("Slice %1").arg(QChar('A'+i)),VfoDisplayItem::fixedSliceMode(i));}
+        } else {
+            combo->addItem(tr("Compact"),int(VfoDisplayItem::Layout::Compact));
+            combo->addItem(tr("Detailed"),int(VfoDisplayItem::Layout::Thetis));
+        }
+        combo->setCurrentIndex(combo->findData(value.toInt()));
+        connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{if(!property(key,combo->currentData().toInt())) {const QSignalBlocker blocker(combo);combo->setCurrentIndex(combo->findData(effectiveProperty(key,-1).toInt()));}});widget=combo;
     } else if(key.endsWith("BindingId") || key=="bindingId") {
         auto* combo=new QComboBox(this);combo->addItem(tr("Unassigned"),-1);
         // Existing GUI binding names are the source of truth, including gaps.
