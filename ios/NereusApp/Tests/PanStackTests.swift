@@ -10,6 +10,7 @@ import NereusMedia
 import NereusMirror
 @testable import NereusSDR
 import Testing
+import UIKit
 
 /// R-IOS-59, DC9, DC10 (spec section 6.3): the pans the iPad shows, up to
 /// the radio's limit; a new pan takes a spare slice or asks the Core for
@@ -92,6 +93,23 @@ struct PanStackTests {
     private static let second = PanIdentity(number: 2)
 
     // MARK: The limit
+
+    /// The PR 653 re-review d, point b: a finger on a pan marks it as it
+    /// comes down. The pan's recognizer says so at the touch's start and
+    /// fails at once, so it takes, delays and cancels no touch and blocks no
+    /// other gesture.
+    @Test("a pan's touch-down recognizer says when a finger comes down and takes no touch")
+    func touchDownMarksAndTakesNothing() {
+        let recognizer = PanTouchDownRecognizer.make()
+        #expect(!recognizer.cancelsTouchesInView && !recognizer.delaysTouchesBegan && !recognizer.delaysTouchesEnded)
+        var downs = 0
+        recognizer.touched = { downs += 1 }
+        recognizer.touchesBegan([], with: UIEvent())
+        #expect(downs == 1)
+        // It never recognizes. (Outside UIKit's own delivery of a touch, the
+        // move to failed it makes is not kept, so only that is checked here.)
+        #expect(![.began, .changed, .ended].contains(recognizer.state))
+    }
 
     @Test("Add a pan works up to the radio's limit, then greys with the radio's name and the number as a word")
     func limitAndItsReason() async throws {

@@ -245,8 +245,13 @@ final class DisplayPillUITests: XCTestCase {
 
     /// R-IOS-59, DC9: a finger held still on Pan 2, where nothing of the
     /// band's takes a hold (its dBm scale), makes Pan 2 the pan last touched,
-    /// which the toolbar follows. The finger is still throughout: the pan
-    /// must not wait for it to move.
+    /// which the toolbar follows. The finger is still throughout, so the pan
+    /// is marked without any move. What this shows is that the pan is
+    /// marked by the time the finger lifts; it cannot show the mark comes
+    /// at touch-down, since an XCUITest press returns only after the lift
+    /// and nothing can be read while the finger is down (a mid-hold check
+    /// would need a test-only probe drawn on the band). The touch-down mark
+    /// itself is PanTouchDownRecognizer's, tested in PanStackTests.
     @MainActor
     func testStillHoldMakesItsPanTheOneLastTouched() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad,
