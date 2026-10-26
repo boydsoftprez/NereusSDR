@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
+//                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
+//                 via ContentFade::nextValue), setForeignSession; a virtual
+//                 clearHistory() (Thetis clsMeterItem.ClearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - BAR building block: Segments and Solid styles ported from
 //                 renderHBar, a peak hold marker separate from the live
 //                 marker, marker stroke width, ignore history after
@@ -226,6 +231,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
 #include "AboveS9Frequency.h"
+#include "gui/containers/ContentFade.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -399,6 +405,44 @@ bool MeterItem::acceptsUpdate(qint64 monotonicMs)
     }
     m_lastAcceptedUpdateMs = monotonicMs;
     return true;
+}
+
+// From Thetis MeterManager.cs:33159-33160 [v2.10.3.15]: the update
+// interval, at most 500 ms. NereusSDR steps each item on its own interval
+// (Thetis uses the container's quickest).
+int MeterItem::fadeIntervalMs() const
+{
+    constexpr int kMaxFadeIntervalMs = 500;
+    const int interval = m_updateIntervalMs > 0 ? m_updateIntervalMs : kDefaultUpdateIntervalMs;
+    return std::min(interval, kMaxFadeIntervalMs);
+}
+
+bool MeterItem::advanceFade(qint64 monotonicMs)
+{
+    // A clock that moved backwards (a new time base), or the first call,
+    // only takes the time.
+    if (m_lastFadeStepMs < 0 || monotonicMs < m_lastFadeStepMs) {
+        m_lastFadeStepMs = monotonicMs;
+        return false;
+    }
+    const int interval = fadeIntervalMs();
+    // A foreign session's entry does not follow this window's transmit.
+    const bool tx = m_transmitting && !m_foreignSession;
+    const bool rx = fadeOnRx();
+    const bool txFade = fadeOnTx();
+    bool changed = false;
+    while (monotonicMs - m_lastFadeStepMs >= interval) {
+        const int next = ContentFade::nextValue(m_fadeValue, rx, txFade, tx, interval);
+        if (next == m_fadeValue) {
+            // At rest: the next change counts from now.
+            m_lastFadeStepMs = monotonicMs;
+            break;
+        }
+        m_fadeValue = next;
+        m_lastFadeStepMs += interval;
+        changed = true;
+    }
+    return changed;
 }
 
 void MeterItem::resetForTxTransition(bool inTx)

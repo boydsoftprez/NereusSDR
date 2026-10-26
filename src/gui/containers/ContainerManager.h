@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setTransmitting reaches widget content fade overlays;
+//                 clearItemHistory() for a band change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - onSliceOpenChanged and onMainWindowStateChanged: Hide when
 //                 slice not open and Minimizes, for every slice. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -211,9 +214,14 @@ public:
     void reconcileWorkspace(const WorkspaceDocument& document);
     CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
     // Shows or hides containers by Show on RX / TX, and hands the state to
-    // every container meter's fade covers, VFO displays and button grids
-    // (MeterWidget::setItemTxState); meters announced later take it too.
+    // every container meter's items (MeterWidget::setItemTxState: Fade on
+    // RX / TX, fade covers, VFO displays and button grids) and to each
+    // widget content's fade overlay (ContentFade); meters announced later
+    // take it too.
     void setTransmitting(bool transmitting);
+    // Every container meter's item history is cleared (Thetis ZeroOut on a
+    // band change, MeterManager.cs:4405-4462 [v2.10.3.15]).
+    void clearItemHistory();
     // Hide when slice not open: slice `sliceIndex` (its id, 0 for Slice A,
     // as RadioModel::sliceAdded and sliceRemoved carry it) was opened or
     // closed. A container with the option set is hidden while its slice is

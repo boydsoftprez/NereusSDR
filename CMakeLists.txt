@@ -1995,6 +1995,8 @@ set(GUI_SOURCES
     src/gui/containers/ContentEntryMigration.cpp
     src/gui/containers/ContainerContentRegistry.h
     src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContentFade.h
+    src/gui/containers/ContentFade.cpp
     src/gui/containers/ContainerArrangeController.h
     src/gui/containers/ContainerArrangeController.cpp
     src/gui/containers/ArrangeHoldFilter.h

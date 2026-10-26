@@ -61,8 +61,8 @@ void TextItemEditor::buildTypeSpecific()
     // Label
     m_editLabel = new QLineEdit(this);
     m_editLabel->setToolTip(QStringLiteral(
-        "%value% shows the reading, %valueWithType% the reading with its unit, "
-        "%group% the display group's name."));
+        "Make the whole label %value% to show the reading, %valueWithType% to show "
+        "it with its unit, or %group% to show the display group's name."));
     addRow(QStringLiteral("Label"), m_editLabel);
     connect(m_editLabel, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }

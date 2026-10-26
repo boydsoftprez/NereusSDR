@@ -31,6 +31,7 @@ void FadeCoverItemEditor::setItem(MeterItem* item)
         QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
             .arg(fade->colour2().name(QColor::HexArgb)));
     m_spinAlpha->setValue(static_cast<double>(fade->alpha()));
+    m_chkUseBackground->setChecked(fade->useContainerBackground());
     endProgrammaticUpdate();
 }
 
@@ -103,6 +104,18 @@ void FadeCoverItemEditor::buildTypeSpecific()
         FadeCoverItem* fade = qobject_cast<FadeCoverItem*>(m_item);
         if (!fade) { return; }
         fade->setAlpha(static_cast<float>(v));
+        notifyChanged();
+    });
+
+    // NereusSDR option: paint the container background, as Thetis's fade
+    // cover does, instead of the colour 1 / colour 2 gradient.
+    m_chkUseBackground = makeCheckRow(QStringLiteral("Use container background"));
+    m_chkUseBackground->setObjectName(QStringLiteral("useContainerBackground"));
+    connect(m_chkUseBackground, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        FadeCoverItem* fade = qobject_cast<FadeCoverItem*>(m_item);
+        if (!fade) { return; }
+        fade->setUseContainerBackground(on);
         notifyChanged();
     });
 }

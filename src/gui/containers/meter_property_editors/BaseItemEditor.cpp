@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
+//                 RX / TX" (hidden for a fade cover and a button grid, whose
+//                 editors carry their own). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - The "Limit update rate" and "Update interval (ms)" labels
 //                 wrap, so a narrow Properties pane is no wider than before.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -69,6 +73,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/UnbuiltFeatures.h"
 
 #include "../../meters/MeterItem.h"
+#include "../../meters/ButtonBoxItem.h"
+#include "../../meters/FadeCoverItem.h"
 #include "../../meters/MeterPoller.h"
 #include "../MmioVariablePickerPopup.h"
 
@@ -210,6 +216,10 @@ void BaseItemEditor::buildBaseForm()
 
     m_chkOnlyRx = makeCheckRow(QStringLiteral("Only when RX"));
     m_chkOnlyTx = makeCheckRow(QStringLiteral("Only when TX"));
+    m_chkFadeRx = makeCheckRow(QStringLiteral("Fade on RX"));
+    m_chkFadeRx->setObjectName(QStringLiteral("fadeOnRx"));
+    m_chkFadeTx = makeCheckRow(QStringLiteral("Fade on TX"));
+    m_chkFadeTx->setObjectName(QStringLiteral("fadeOnTx"));
     m_spinDisplayGroup = makeIntRow(QStringLiteral("Display group"), 0, 15);
 
     // Per-item update interval. Unchecked: the item takes every reading.
@@ -271,6 +281,20 @@ void BaseItemEditor::buildBaseForm()
     connect(m_chkOnlyTx, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate() || !m_item) { return; }
         m_item->setOnlyWhenTx(on);
+        notifyChanged();
+    });
+    // Setting either row sets both flags on the item, so the entry saves
+    // both (MeterItem::hasExplicitFade).
+    connect(m_chkFadeRx, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setFadeOnTx(m_item->fadeOnTx());
+        m_item->setFadeOnRx(on);
+        notifyChanged();
+    });
+    connect(m_chkFadeTx, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setFadeOnRx(m_item->fadeOnRx());
+        m_item->setFadeOnTx(on);
         notifyChanged();
     });
     connect(m_spinDisplayGroup, qOverload<int>(&QSpinBox::valueChanged),
@@ -366,6 +390,14 @@ void BaseItemEditor::loadBaseFields()
     m_comboBinding->setCurrentIndex(idx >= 0 ? idx : 0);
     m_chkOnlyRx->setChecked(m_item->onlyWhenRx());
     m_chkOnlyTx->setChecked(m_item->onlyWhenTx());
+    m_chkFadeRx->setChecked(m_item->fadeOnRx());
+    m_chkFadeTx->setChecked(m_item->fadeOnTx());
+    // A fade cover and a button grid keep the flags in their record; their
+    // editors show their own rows.
+    const bool recordFade = qobject_cast<FadeCoverItem*>(m_item) != nullptr
+        || qobject_cast<ButtonBoxItem*>(m_item) != nullptr;
+    m_form->setRowVisible(m_chkFadeRx, !recordFade);
+    m_form->setRowVisible(m_chkFadeTx, !recordFade);
     m_spinDisplayGroup->setValue(m_item->displayGroup());
     const int interval = m_item->updateIntervalMs();
     m_spinUpdateInterval->setValue(interval > 0 ? interval : kDefaultUpdateIntervalMs);

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: a faded grid is drawn under the animated
+//                 veil instead of being skipped; clicks stay guarded.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Contain marked stack button ink in its allocated row by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Fit transient container stack grids without changing legacy
@@ -296,9 +299,9 @@ int ButtonBoxItem::buttonAt(const QPointF& pos, int widgetW, int widgetH) const
 
 void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    // FadeOnRx/FadeOnTx guard (from Thetis clsButtonBox)
-    if (m_fadeOnTx && m_transmitting) { return; }
-    if (m_fadeOnRx && !m_transmitting) { return; }
+    // Fade on RX / TX: the grid is drawn and MeterWidget dims it with the
+    // fade veil (Thetis covers its grids rather than skipping them); the
+    // click guard below (handleMousePress) still applies.
 
     const QRectF area = pixelRect(widgetW, widgetH);
     // NereusSDR-original: wide outlines must not bleed into neighboring stack

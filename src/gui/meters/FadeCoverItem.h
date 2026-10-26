@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The 500 ms fade ramp (MeterItem's fade, Thetis fade())
+//                 in place of the instant on/off; the inflated cover rect;
+//                 the "use container background" option. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The cover keeps the last transmit state, so turning Fade
 //                 on RX / TX on or off, or loading the flags, takes effect at
 //                 once. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -69,11 +73,14 @@ public:
     explicit FadeCoverItem(QObject* parent = nullptr);
 
     // From Thetis MeterManager.cs:1900 — FadeOnRx / FadeOnTx
-    void setFadeOnRx(bool on) { m_fadeOnRx = on; updateActive(); }
-    bool fadeOnRx() const { return m_fadeOnRx; }
+    // The record holds the flags; MeterItem's fade reads them through these
+    // overrides and ramps fadeValue() (Thetis fade(), 500 ms).
+    void setFadeOnRx(bool on) override { m_fadeOnRx = on; }
+    bool fadeOnRx() const override { return m_fadeOnRx; }
 
-    void setFadeOnTx(bool on) { m_fadeOnTx = on; updateActive(); }
-    bool fadeOnTx() const { return m_fadeOnTx; }
+    void setFadeOnTx(bool on) override { m_fadeOnTx = on; }
+    bool fadeOnTx() const override { return m_fadeOnTx; }
+    bool hasExplicitFade() const override { return false; }
 
     // Overlay colours (gradient if they differ, solid if equal)
     void setColour1(const QColor& c) { m_colour1 = c; }
@@ -82,15 +89,21 @@ public:
     void setColour2(const QColor& c) { m_colour2 = c; }
     QColor colour2() const { return m_colour2; }
 
-    // Alpha of the overlay when active (0-1). Default 0.75.
+    // Alpha of the overlay when fully dimmed (0-1). Default 0.75.
     void setAlpha(float a) { m_alpha = a; }
     float alpha() const { return m_alpha; }
 
+    // NereusSDR option: paint the container background at alpha
+    // 255 - fadeValue(), as Thetis's renderFadeCover does, instead of the
+    // colour 1 / colour 2 gradient. Record field 11; a record without it
+    // keeps the gradient.
+    void setUseContainerBackground(bool on) { m_useContainerBackground = on; }
+    bool useContainerBackground() const { return m_useContainerBackground; }
+
     // From Thetis MeterManager.cs:7671 — ZOrder = int.MaxValue (always on top)
-    // Call this when MOX state changes to update m_active.
-    // m_active = (isTx && m_fadeOnTx) || (!isTx && m_fadeOnRx)
-    void setTxState(bool isTx);
-    bool txState() const { return m_isTx; }
+    // Call this when MOX state changes; the same as setTransmitting.
+    void setTxState(bool isTx) { setTransmitting(isTx); }
+    bool txState() const { return transmitting(); }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
@@ -98,16 +111,10 @@ public:
     bool deserialize(const QString& data) override;
 
 private:
-    // NereusSDR: recomputes m_active from the last transmit state.
-    void updateActive();
-
     QColor m_colour1{0x20, 0x20, 0x20};
     QColor m_colour2{0x20, 0x20, 0x20};
     float  m_alpha{0.75f};
-    bool   m_fadeOnRx{false};
-    bool   m_fadeOnTx{false};
-    bool   m_isTx{false};
-    bool   m_active{false};
+    bool   m_useContainerBackground{false};
 };
 
 } // namespace NereusSDR

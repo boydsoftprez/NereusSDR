@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original routing test; the fade rules it checks are
 // cited where they live (FadeCoverItem.cpp, ButtonBoxItem.cpp).
 // Modification history (NereusSDR):
+//   2026-10-26 - The fade cover ramps over 500 ms: coverPaints runs the
+//                 ramp first. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - Transmit state reaches fade covers, VFO displays and
 //                 button grids through ContainerManager::setTransmitting,
 //                 on change and for items added or loaded while
@@ -33,8 +36,20 @@ constexpr int kW = 120;
 constexpr int kH = 60;
 
 // True when the cover leaves paint on a transparent canvas.
+// The cover ramps over 500 ms (Thetis fade()); this runs the ramp to its
+// end on an always-increasing fake clock before looking.
+void settleFade(FadeCoverItem& cover)
+{
+    static qint64 clock = 0;
+    cover.advanceFade(clock);
+    clock += 1000;
+    cover.advanceFade(clock);
+    clock += 1;
+}
+
 bool coverPaints(FadeCoverItem& cover)
 {
+    settleFade(cover);
     QImage img(kW, kH, QImage::Format_ARGB32);
     img.fill(Qt::transparent);
     QPainter p(&img);

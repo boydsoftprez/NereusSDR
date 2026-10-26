@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / TX: the 25% legacy fade applies only to a
+//                 composite without the entry fade keys. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -1178,7 +1181,10 @@ void CompositePresetItem::layoutChildren(int width,int height) {
 void CompositePresetItem::paint(QPainter& p,int width,int height) { paintForLayer(p,width,height,Layer::Background); paintForLayer(p,width,height,Layer::OverlayDynamic); }
 void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) {
     const QRectF r=pixelRect(width,height); p.save(); p.setClipRect(r); p.setRenderHint(QPainter::Antialiasing,true);
-    if((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool())) { p.setOpacity(.25); }
+    // Legacy fade: a composite saved with fadeRx / fadeTx and no entry fade
+    // keys keeps the instant 25% opacity; with the keys (hasExplicitFade)
+    // MeterWidget draws the animated veil instead.
+    if(!hasExplicitFade() && ((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool()))) { p.setOpacity(.25); }
     QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt())); p.setFont(font);
     const double textScale=m_face==Face::Anan?1:objectTextScale(r,{m_face==Face::Cross || m_face==Face::Contest?360.:260.,
         m_face==Face::PowerSwr?144.:m_face==Face::Cross?260.:m_face==Face::Contest?280.:m_face==Face::Eye?180.:120.});

@@ -791,6 +791,10 @@ nereus_add_test(tst_web_image_item)
 nereus_add_test(tst_meter_vhf_s9)
 # Transmit state reaches fade covers, VFO displays and button grids through ContainerManager (offscreen).
 nereus_add_test(tst_container_item_tx_state)
+# Fade on RX / TX for every item: Thetis fade() steps, the item ramp, the
+# veil, persistence, legacy composite fade, fade cover, widget overlay,
+# preview transmit look, repaint and history clearing (offscreen).
+nereus_add_test(tst_meter_item_fade)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)

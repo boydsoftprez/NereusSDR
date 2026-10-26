@@ -131,7 +131,7 @@ private slots:
     // hovering it names the reason, and nothing clears that reason.
     void adcMaxBarVeilsWithItsReason()
     {
-        const QString reason = QStringLiteral("ADC magnitude is not reported yet");
+        const QString reason = QStringLiteral("ADC magnitude is not available");
         MeterWidget meter;
         meter.resize(300, 80);
         BarPresetItem* bar = addAdcBar(meter, QStringLiteral("AdcMax"));
