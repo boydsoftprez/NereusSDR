@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Clock face: a new (thetisFormat) face sizes its title,
+//                 time and date lines as Thetis's renderClock does (1, 1.9
+//                 and 0.9 of the font size). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: darkFaceArtAvailable, for the editor.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (M2): trace 2's veil shows why it has
@@ -300,6 +304,10 @@ AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,
 // From Thetis MeterManager.cs:40523,40525 [v2.10.3.15]
 constexpr float kClockTimeFontScale=1.9f;
 constexpr float kClockAmPmFontScale=0.8f;
+// The title draws at FontSize and the date at FontSize * 0.9f.
+// From Thetis MeterManager.cs:40515-40516,40533 [v2.10.3.15]
+constexpr float kClockTitleFontScale=1.0f;
+constexpr float kClockDateFontScale=0.9f;
 // The am / pm share of the time line (NereusSDR layout; Thetis offsets it
 // w * 0.228f from the time's start, MeterManager.cs:40525 [v2.10.3.15]).
 constexpr double kClockAmPmShare=0.22;
@@ -1675,26 +1683,32 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
                 const bool show24=m_config["show24Hour"].toBool();
                 const QString fmt=show24?"HH:mm:ss":"hh:mm:ss AP";
                 const bool titleOn=m_config["showTitle"].toBool(),dateOn=m_config["showDate"].toBool();
-                const int lines=1+int(titleOn)+int(dateOn); const double lineHeight=rect.height()/lines;
+                // Thetis's proportions on a new (thetisFormat) face: the title
+                // at FontSize, the time at 1.9x and the date at 0.9x, each line
+                // as tall as its share (MeterManager.cs:40515-40533
+                // [v2.10.3.15]). A saved face keeps equal lines and sizes.
+                const double titleScale=thetis?kClockTitleFontScale:1.0,timeScale=thetis?kClockTimeFontScale:1.0,dateScale=thetis?kClockDateFontScale:1.0;
+                const double weights=(titleOn?titleScale:0.0)+timeScale+(dateOn?dateScale:0.0);
+                const auto lineHeight=[&](double scale) { return rect.height()*scale/weights; };
                 // Child clock roles use the owning face scale, then measured fitting.
                 // Contest already assigns a compact child rectangle; do not multiply twice.
                 double top=rect.top();
-                if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),title,textSize); top+=lineHeight; }
+                if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(titleScale)),title,textSize*titleScale); top+=lineHeight(titleScale); }
                 p.setPen(m_clock->timeColour());
-                const QRectF timeBox(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight);
+                const QRectF timeBox(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(timeScale));
                 if(thetis && !show24) {
                     // 12 hour: h:mm:ss, then am / pm apart in a smaller font.
                     // From Thetis MeterManager.cs:40491-40495,40521-40525 [v2.10.3.15]
                     //time [original inline comment from MeterManager.cs:40521]
                     const double amPmWidth=timeBox.width()*kClockAmPmShare;
-                    drawObjectText(p,timeBox.adjusted(0,0,-amPmWidth,0),ClockItem::thetisTime(time,false),textSize,Qt::AlignRight|Qt::AlignVCenter);
-                    drawObjectText(p,QRectF(timeBox.right()-amPmWidth,timeBox.top(),amPmWidth,timeBox.height()),ClockItem::thetisAmPm(time),textSize*kClockAmPmFontScale/kClockTimeFontScale,Qt::AlignLeft|Qt::AlignVCenter);
+                    drawObjectText(p,timeBox.adjusted(0,0,-amPmWidth,0),ClockItem::thetisTime(time,false),textSize*timeScale,Qt::AlignRight|Qt::AlignVCenter);
+                    drawObjectText(p,QRectF(timeBox.right()-amPmWidth,timeBox.top(),amPmWidth,timeBox.height()),ClockItem::thetisAmPm(time),textSize*kClockAmPmFontScale,Qt::AlignLeft|Qt::AlignVCenter);
                 } else {
-                    drawObjectText(p,timeBox,thetis?ClockItem::thetisTime(time,show24):time.toString(fmt),textSize);
+                    drawObjectText(p,timeBox,thetis?ClockItem::thetisTime(time,show24):time.toString(fmt),textSize*timeScale);
                 }
-                top+=lineHeight;
+                top+=lineHeight(timeScale);
                 //date [original inline comment from MeterManager.cs:40532]
-                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),thetis?ClockItem::thetisDate(time):time.toString("yyyy-MM-dd"),textSize); }
+                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(dateScale)),thetis?ClockItem::thetisDate(time):time.toString("yyyy-MM-dd"),textSize*dateScale); }
             };
             // Thetis titles the halves "local" and "utc".
             // From Thetis MeterManager.cs:40515-40516 [v2.10.3.15]

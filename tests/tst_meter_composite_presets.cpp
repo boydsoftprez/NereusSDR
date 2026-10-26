@@ -1,5 +1,8 @@
 // no-port-check: Independent numeric oracles and real native rendering fixtures.
 // Modification history (NereusSDR):
+//   2026-10-26 - A new clock face's time is its largest text (Thetis's
+//                 renderClock proportions). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and a legacy image's
@@ -1123,6 +1126,33 @@ private slots:
         // The Contest face's clock keeps the earlier format when placed new.
         const ContentEntry contest=registry.makeEntry(QStringLiteral("meter.contest"));
         QCOMPARE(contest.config["properties"].toObject()["thetisFormat"],QJsonValue(false));
+    }
+    // A new clock face draws Thetis's proportions: the time is the largest
+    // text, as renderClock's FontSize * 1.9f time over the FontSize title
+    // and FontSize * 0.9f date (MeterManager.cs:40515-40533 [v2.10.3.15]).
+    void newClockFaceTimeIsLargest_data() {
+        QTest::addColumn<QSize>("size"); QTest::addColumn<QString>("mode");
+        QTest::newRow("scene 408x120 both") << QSize(408,120) << QStringLiteral("Both");
+        QTest::newRow("260x120 both") << QSize(260,120) << QStringLiteral("Both");
+        QTest::newRow("640x240 both") << QSize(640,240) << QStringLiteral("Both");
+        QTest::newRow("408x120 local") << QSize(408,120) << QStringLiteral("Local");
+    }
+    void newClockFaceTimeIsLargest() {
+        QFETCH(QSize,size); QFETCH(QString,mode);
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.clock"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        face->clockDisplay()->setTimeSource([] { return QDateTime(QDate(2026,10,7),QTime(14,32,10)); });
+        QVERIFY(face->applyConfiguration({{"clockMode",mode}}));
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face->paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        int title=0,time=0,date=0;
+        for(const auto& text:device.texts()) {
+            if(text.value=="local" || text.value=="utc") { title=qMax(title,text.pixels); }
+            else if(text.value=="14:32:10") { time=qMax(time,text.pixels); }
+            else if(text.value.contains("Oct 2026")) { date=qMax(date,text.pixels); }
+        }
+        QVERIFY2(title>0 && time>0 && date>0,qPrintable(QString("title %1 time %2 date %3").arg(title).arg(time).arg(date)));
+        QVERIFY2(time>title && time>date,qPrintable(QString("title %1 px, time %2 px, date %3 px").arg(title).arg(time).arg(date)));
     }
     void savedClockKeepsItsFormat() {
         // A clock saved before the option: no thetisFormat key.
