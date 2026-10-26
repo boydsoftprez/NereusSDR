@@ -35,6 +35,22 @@
 // refused while transmitting. Mute All mutes every slice this window may
 // change. None keys the radio.
 //
+// Transmit setting buttons (container item parity Task 61) call the setters
+// the TX applet, the Phone/CW applet and Setup > DSP use: COMP, VOX, DEXP,
+// TX EQ, CFC, CFC EQ, the leveler and the phase rotator, and the MIC, COMP,
+// VOX, drive and tune power steps, each clamped to its slider's range. In a
+// remote window each follows its control's gate and shows its reason; the
+// Core still decides. VOX arms voice keying as the TX applet's VOX does;
+// no button keys the radio.
+//
+// Display and window buttons (container item parity Task 62): NF, Peak
+// Blobs, Cur Info, Fill, ZTB and A-Peak act on the panadapter that shows the
+// container's slice (spectrumFor), through the setters its Display pill and
+// Setup call; Thetis's are console-wide. Spots is saved as the Spot Hub
+// saves it and every panadapter follows. MAF+ and MAF- move this computer's
+// master volume through its slider. Setup, Diversity and Linearity open the
+// windows their menu entries open, under the same rules. None keys.
+//
 // The dispatcher holds no state of its own: every lit state is read from
 // the target each time apply() runs.
 //
@@ -69,11 +85,24 @@
 //                                    SliceModel and RadioModel setters the
 //                                    rest of the app uses; none keys.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 61: the
+//                                    transmit setting buttons, through the
+//                                    TX applet's setters and gates
+//                                    (transmitSettingsRefusal, voxRefusal);
+//                                    none keys. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 62: the
+//                                    display and window buttons (spotsShown,
+//                                    setSpotsShown, stepMasterVolume,
+//                                    openSetup, openDiversity, openLinearity,
+//                                    linearityRefusal); none keys.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "gui/meters/OtherButtonItem.h"
+#include "models/Band.h"
 
 #include <QList>
 #include <QString>
@@ -122,6 +151,15 @@ public:
         // this window's PureSignal arming now (PS-A), and why not.
         std::function<bool()> pureSignalArmingPermitted;
         std::function<QString()> pureSignalArmingReason;
+        // Container item parity Task 61: why this window's transmit
+        // settings of `version` (transmitSettingsVersion) do not reach the
+        // Core now, with the holder rule the TX applet's controls follow;
+        // empty when they do (always, in a local window).
+        std::function<QString(int version)> transmitSettingsRefusal;
+        // Task 61: why VOX cannot be armed here, the TX applet VOX button's
+        // gate (remote transmit, this computer's microphone line, the
+        // transmit holder); empty when it can.
+        std::function<QString()> voxRefusal;
         // The panadapter that shows a slice (Peak, CTUN).
         std::function<SpectrumWidget*(SliceModel*)> spectrumFor;
         // This computer's VAX outputs (VAX 1, VAX 2). May be null.
@@ -132,6 +170,26 @@ public:
         std::function<bool()> displayDuplexOn;
         std::function<void(bool)> setDisplayDuplex;
         std::function<QString()> displayDuplexReason;
+        // Container item parity Task 62: Spots, the Spot Hub's "Spots"
+        // switch (IsSpotsEnabled): whether it is on, and the click, which
+        // saves it and has every panadapter follow (spotsShownSetting and
+        // showSpotsOnPans are the window's own).
+        std::function<bool()> spotsShown;
+        std::function<void(bool)> setSpotsShown;
+        // Task 62: MAF+ / MAF-, this computer's master volume moved by
+        // `delta` (linear, 0..1) through the title bar's slider
+        // (MasterOutputWidget::stepVolume).
+        std::function<void(double delta)> stepMasterVolume;
+        // Task 62: the Setup, Diversity and Linearity (PureSignal) windows,
+        // as File > Settings..., Tools > Diversity... and Tools >
+        // PureSignal... open them.
+        std::function<void()> openSetup;
+        std::function<void()> openDiversity;
+        std::function<void()> openLinearity;
+        // Task 62: why Tools > PureSignal... is disabled here now (a remote
+        // window whose Core has not advertised PureSignal 3), empty when it
+        // is enabled.
+        std::function<QString()> linearityRefusal;
     };
 
     struct State {
@@ -170,12 +228,35 @@ public:
     // Plain reasons, exposed for tests.
     static QString noRadioTransmitReason();
     static QString notchWhileTransmittingReason();
+    // Task 62 (and Peak, CTUN): no panadapter shows the container's slice.
+    static QString noPanadapterReason();
+
+    // Task 62: the Spot Hub's "Spots" switch as saved (IsSpotsEnabled, on
+    // by default, as SpectrumWidget::loadSpotDisplaySettings reads it).
+    static bool spotsShownSetting();
+    // Task 62: save the switch as the Spot Hub does, then have each pan
+    // re-read its spot settings (loadSpotDisplaySettings).
+    static void showSpotsOnPans(bool on, const QList<SpectrumWidget*>& pans);
 
 private:
     QString sliceUnavailableReason(int rxSource) const;
     bool transmitBlockedRemotely() const;
     // A receive button's click on the container's open slice.
     QString clickSlice(Id id, SliceModel* slice);
+    // Task 61: transmitSettingsRefusal, refusing in a remote window that
+    // has no such hook.
+    QString settingsRefusal(int version) const;
+    // Task 61: a transmit setting button's lit state and gate.
+    void transmitSettingState(Id id, State& st) const;
+    // Task 61: a transmit setting button's click.
+    QString clickTransmitSetting(Id id, int rxSource);
+    // Task 62: a display or window button's lit state and gate.
+    void displayOrWindowState(Id id, int rxSource, State& st) const;
+    // Task 62: a display or window button's click.
+    void clickDisplayOrWindow(Id id, int rxSource, bool turnOn);
+    // Task 61: the band whose tune power a TUN step changes until the
+    // transmit band is known (the TX applet's m_currentBand).
+    Band tunePowerBand(int rxSource) const;
     SpectrumWidget* spectrumOf(int rxSource) const;
     // Mute All: every open slice this window may change.
     QList<SliceModel*> changeableSlices() const;

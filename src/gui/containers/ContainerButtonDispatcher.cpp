@@ -98,13 +98,31 @@
 //                                    the AGC modes, AUTO and AGC+/-),
 //                                    through existing setters; none keys.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 61: 20
+//                                    transmit setting buttons (COMP, VOX,
+//                                    DEXP, TX EQ, CFC, CFC EQ, Leveler,
+//                                    PhaRot, MIC+/-, COMP+/-, VOX+/-, DRI+/-,
+//                                    DRI-0, TUN+/-, TUN-0) through the TX
+//                                    applet's setters and gates, clamped to
+//                                    their sliders; none keys. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 62: 12
+//                                    display and window buttons (NF, Peak
+//                                    Blobs, Cur Info, Spots, Fill, ZTB,
+//                                    A-Peak on the slice's panadapter;
+//                                    MAF+/-; Setup, Diversity, Linearity)
+//                                    through the controls' own paths; none
+//                                    keys. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "gui/containers/ContainerButtonDispatcher.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
+#include "core/HpsdrModel.h"
 #include "core/NbFamily.h"
 #include "core/MoxController.h"
 #include "core/SliceOwnership.h"
@@ -150,6 +168,14 @@ constexpr Id kConnected[] = {
     Id::AfP5, Id::AfM5, Id::BalP5, Id::BalM5,
     Id::AgcFixed, Id::AgcLong, Id::AgcSlow, Id::AgcMedium, Id::AgcFast,
     Id::AgcCustom, Id::AgcAuto, Id::AgcP5, Id::AgcM5,
+    // Container item parity Task 61: the transmit setting buttons.
+    Id::Comp, Id::Vox, Id::Dexp, Id::TxEq, Id::Cfc, Id::CfcEq, Id::Leveler, Id::PhaseRot,
+    Id::MicP1, Id::MicM1, Id::CompP1, Id::CompM1, Id::VoxP1, Id::VoxM1,
+    Id::DriveP5, Id::DriveM5, Id::Drive0, Id::TuneP5, Id::TuneM5, Id::Tun0,
+    // Container item parity Task 62: the display and window buttons.
+    Id::Nf, Id::PeakBlobs, Id::CursorInfo, Id::Spots, Id::FillSpectrum, Id::Ztb,
+    Id::ActivePeak, Id::MafP5, Id::MafM5,
+    Id::FormSetup, Id::FormDiversity, Id::FormLinearity,
 };
 
 // From Thetis console.cs:51556-51557 [v2.10.3.15]:
@@ -173,6 +199,100 @@ constexpr int kAgcThresholdStep = 5;
 // From Thetis console.cs:43334 [v2.10.3.15] (incrementNR):
 //   if (_nr_selected[rx - 1] > 4) _nr_selected[rx - 1] = 0;
 constexpr int kLastThetisNr = 4;
+// From Thetis console.cs:51566-51571 [v2.10.3.15]:
+//   case OtherButtonId.MIC_P1: Mic += 1; break;
+//   case OtherButtonId.MIC_M1: Mic -= 1; break;
+//   case OtherButtonId.COMP_P1: CPDRLevel += 1; break;
+//   case OtherButtonId.COMP_M1: CPDRLevel -= 1; break;
+//   case OtherButtonId.VOX_P1: VOXSens += 1; break;
+//   case OtherButtonId.VOX_M1: VOXSens -= 1; break;
+// One dB of mic gain, compression and VOX threshold here.
+constexpr int kMicGainStepDb = 1;
+constexpr int kCpdrLevelStepDb = 1;
+constexpr int kVoxThresholdStepDb = 1;
+// From Thetis console.cs:51574-51579 [v2.10.3.15]:
+//   case OtherButtonId.DRIVE_P5: PWR += 5; break;
+//   case OtherButtonId.DRIVE_M5: PWR -= 5; break;
+//   case OtherButtonId.TUNE_P5: TunePWR += 5; break;
+//   case OtherButtonId.TUNE_M5: TunePWR -= 5; break;
+//   case OtherButtonId.DRIVE_0: PWR = 0; break;
+//   case OtherButtonId.TUN_0: TunePWR = 0; break;
+constexpr int kDriveStep = 5;
+constexpr int kTunePowerStep = 5;
+constexpr int kPowerZero = 0;
+// The transmitSettingsVersion each control's gate needs (MainWindow's
+// applyRemoteRoleGating): the RF Power slider version 1; the Phone/CW and
+// TX applets' chain (COMP, DEXP, MIC, LEV, EQ, CFC, VOX level, Tune power)
+// version 2; Setup > DSP > CFC's CFC EQ and phase rotator version 4.
+// From Thetis console.cs:51554-51555 [v2.10.3.15]:
+//   case OtherButtonId.MAF_P5: AF += 5; break;
+//   case OtherButtonId.MAF_M5: AF -= 5; break;
+// on Thetis's 0..100 master AF; NereusSDR's master volume is 0..1, the
+// title bar slider's 0-100, so 5 is 0.05.
+constexpr int kThetisMafStep = 5;
+constexpr double kThetisMafRange = 100.0;
+constexpr double kMasterVolumeStep = kThetisMafStep / kThetisMafRange;
+// The Spot Hub's "Spots" switch (SpotHubDialog's displaySpotsToggle) and
+// SpectrumWidget::loadSpotDisplaySettings's default for it.
+constexpr char kSpotsEnabledKey[] = "IsSpotsEnabled";
+constexpr char kSpotsEnabledDefault[] = "True";
+constexpr int kRfPowerSettingsVersion = 1;
+constexpr int kChainSettingsVersion = 2;
+constexpr int kProcessingSettingsVersion = 4;
+
+// Container item parity Task 61: the transmit setting buttons.
+bool isTransmitSetting(Id id)
+{
+    switch (id) {
+    case Id::Comp: case Id::Vox: case Id::Dexp: case Id::TxEq: case Id::Cfc: case Id::CfcEq:
+    case Id::Leveler: case Id::PhaseRot:
+    case Id::MicP1: case Id::MicM1: case Id::CompP1: case Id::CompM1:
+    case Id::VoxP1: case Id::VoxM1:
+    case Id::DriveP5: case Id::DriveM5: case Id::Drive0:
+    case Id::TuneP5: case Id::TuneM5: case Id::Tun0:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The transmitSettingsVersion a transmit setting button's control needs.
+int settingsVersionOf(Id id)
+{
+    switch (id) {
+    case Id::CfcEq: case Id::PhaseRot:
+        return kProcessingSettingsVersion;
+    case Id::DriveP5: case Id::DriveM5: case Id::Drive0:
+        return kRfPowerSettingsVersion;
+    default:
+        return kChainSettingsVersion;
+    }
+}
+
+// Container item parity Task 62: the display toggles and ZTB, on the
+// panadapter that shows the container's slice.
+bool actsOnSlicePanadapter(Id id)
+{
+    switch (id) {
+    case Id::Nf: case Id::PeakBlobs: case Id::CursorInfo: case Id::FillSpectrum:
+    case Id::Ztb: case Id::ActivePeak:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Task 62: the display and window buttons.
+bool isDisplayOrWindow(Id id)
+{
+    switch (id) {
+    case Id::Spots: case Id::MafP5: case Id::MafM5:
+    case Id::FormSetup: case Id::FormDiversity: case Id::FormLinearity:
+        return true;
+    default:
+        return actsOnSlicePanadapter(id);
+    }
+}
 
 // The receive buttons that change only the container's own slice.
 bool actsOnSliceOnly(Id id)
@@ -346,6 +466,31 @@ QString ContainerButtonDispatcher::notchWhileTransmittingReason()
     return QStringLiteral("Notches cannot be added while transmitting.");
 }
 
+QString ContainerButtonDispatcher::noPanadapterReason()
+{
+    return QStringLiteral("No panadapter shows this slice.");
+}
+
+bool ContainerButtonDispatcher::spotsShownSetting()
+{
+    return AppSettings::instance()
+               .value(QLatin1String(kSpotsEnabledKey), QLatin1String(kSpotsEnabledDefault))
+               .toString()
+        == QStringLiteral("True");
+}
+
+void ContainerButtonDispatcher::showSpotsOnPans(bool on, const QList<SpectrumWidget*>& pans)
+{
+    // SpotHubDialog's Spots switch: saved, then each pan re-reads it.
+    AppSettings& settings = AppSettings::instance();
+    settings.setValue(QLatin1String(kSpotsEnabledKey),
+                      on ? QStringLiteral("True") : QStringLiteral("False"));
+    settings.save();
+    for (SpectrumWidget* pan : pans) {
+        if (pan) { pan->loadSpotDisplaySettings(); }
+    }
+}
+
 QList<SliceModel*> ContainerButtonDispatcher::changeableSlices() const
 {
     QList<SliceModel*> result;
@@ -505,7 +650,7 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
         }
         SpectrumWidget* sw = spectrumOf(rxSource);
         if (!sw) {
-            unavailable(QStringLiteral("No panadapter shows this slice."));
+            unavailable(noPanadapterReason());
             break;
         }
         if (id == Id::PeakHold) {
@@ -574,6 +719,14 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
         break;
     }
     default:
+        if (isTransmitSetting(id)) {
+            transmitSettingState(id, st);
+            break;
+        }
+        if (isDisplayOrWindow(id)) {
+            displayOrWindowState(id, rxSource, st);
+            break;
+        }
         if (actsOnSliceOnly(id)) {
             // Task 60: a receive button on the container's own slice.
             SliceModel* slice = sliceFor(rxSource);
@@ -699,6 +852,11 @@ QString ContainerButtonDispatcher::click(Id id, int rxSource)
         for (SliceModel* slice : changeableSlices()) { slice->setMuted(turnOn); }
         break;
     default:
+        if (isTransmitSetting(id)) { return clickTransmitSetting(id, rxSource); }
+        if (isDisplayOrWindow(id)) {
+            clickDisplayOrWindow(id, rxSource, turnOn);
+            break;
+        }
         if (actsOnSliceOnly(id)) { return clickSlice(id, sliceFor(rxSource)); }
         return st.reason;
     }
@@ -770,6 +928,254 @@ QString ContainerButtonDispatcher::clickSlice(Id id, SliceModel* slice)
             slice->agcThreshold() + (id == Id::AgcP5 ? kAgcThresholdStep : -kAgcThresholdStep),
             ControlRanges::kAgcThresholdMinDb, ControlRanges::kAgcThresholdMaxDb));
         break;
+    default:
+        break;
+    }
+    return QString();
+}
+
+QString ContainerButtonDispatcher::settingsRefusal(int version) const
+{
+    if (m_hooks.transmitSettingsRefusal) { return m_hooks.transmitSettingsRefusal(version); }
+    return m_model->ownsLocalDsp() ? QString() : IStationLink::transmitSettingsUnavailableReason();
+}
+
+void ContainerButtonDispatcher::transmitSettingState(Id id, State& st) const
+{
+    const TransmitModel& tx = m_model->transmitModel();
+    // As Thetis's clsOtherButtons lights them (GetGeneralSetting,
+    // console.cs:52669-52700 [v2.10.3.15]); the steps never light.
+    switch (id) {
+    case Id::Comp:     st.on = tx.cpdrOn(); break;
+    case Id::Vox:      st.on = tx.voxEnabled(); break;
+    case Id::Dexp:     st.on = tx.dexpEnabled(); break;
+    case Id::TxEq:     st.on = tx.txEqEnabled(); break;
+    case Id::Cfc:      st.on = tx.cfcEnabled(); break;
+    case Id::CfcEq:    st.on = tx.cfcPostEqEnabled(); break;
+    case Id::Leveler:  st.on = tx.txLevelerOn(); break;
+    case Id::PhaseRot: st.on = tx.phaseRotatorEnabled(); break;
+    default: break;
+    }
+    QString reason;
+    if (id == Id::Vox) {
+        // The TX applet's VOX button: remote transmit and this computer's
+        // microphone line first (voxRefusal), with receive only or a TX
+        // inhibit on top (TxApplet::applyReceiveOnlyLock), then the chain
+        // gate its VOX level follows.
+        const QString vox = m_hooks.voxRefusal ? m_hooks.voxRefusal() : QString();
+        if (m_model->transmitButtonsLocked() && m_model->transmitLockCoversVox()) {
+            reason = m_model->transmitLockReasonAlongside(vox);
+        } else {
+            reason = vox;
+        }
+    }
+    if (reason.isEmpty()) { reason = settingsRefusal(settingsVersionOf(id)); }
+    if (!reason.isEmpty()) {
+        st.available = false;
+        st.reason = reason;
+    }
+}
+
+void ContainerButtonDispatcher::displayOrWindowState(Id id, int rxSource, State& st) const
+{
+    const auto unavailable = [&st](const QString& reason) {
+        st.available = false;
+        st.reason = reason;
+    };
+    const QString noHook = QStringLiteral("This button does nothing in this version.");
+    if (actsOnSlicePanadapter(id)) {
+        // As Peak and CTUN: the panadapter that shows the container's slice.
+        if (!sliceFor(rxSource)) {
+            unavailable(sliceUnavailableReason(rxSource));
+            return;
+        }
+        const SpectrumWidget* sw = spectrumOf(rxSource);
+        if (!sw) {
+            unavailable(noPanadapterReason());
+            return;
+        }
+        // As Thetis's clsOtherButtons lights them (GetGeneralSetting,
+        // console.cs:52702-52716, :52763 [v2.10.3.15]), from this pan.
+        switch (id) {
+        case Id::Nf:           st.on = sw->showNoiseFloor(); break;
+        case Id::PeakBlobs:    st.on = sw->peakBlobsEnabled(); break;
+        case Id::CursorInfo:   st.on = sw->cursorFreqVisible(); break;
+        case Id::FillSpectrum: st.on = sw->panFillEnabled(); break;
+        case Id::ActivePeak:   st.on = sw->activePeakHoldEnabled(); break;
+        default:               break;  // ZTB: momentary, never lit.
+        }
+        return;
+    }
+    switch (id) {
+    case Id::Spots:
+        // Not the slice's: every panadapter shows spots or none does.
+        if (!m_hooks.setSpotsShown) {
+            unavailable(noHook);
+            return;
+        }
+        st.on = m_hooks.spotsShown && m_hooks.spotsShown();
+        return;
+    case Id::MafP5:
+    case Id::MafM5:
+        // This computer's master volume, never lit. The slider is live in
+        // every window, remote ones included, so the buttons are too.
+        if (!m_hooks.stepMasterVolume) { unavailable(noHook); }
+        return;
+    case Id::FormSetup:
+        // File > Settings... opens Setup in every state (createSetupDialog).
+        if (!m_hooks.openSetup) { unavailable(noHook); }
+        return;
+    case Id::FormDiversity:
+        // Tools > Diversity... is enabled in every window.
+        if (!m_hooks.openDiversity) { unavailable(noHook); }
+        return;
+    case Id::FormLinearity: {
+        // Tools > PureSignal...: disabled, with its reason, while it is.
+        if (!m_hooks.openLinearity) {
+            unavailable(noHook);
+            return;
+        }
+        const QString refusal = m_hooks.linearityRefusal ? m_hooks.linearityRefusal() : QString();
+        if (!refusal.isEmpty()) { unavailable(refusal); }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+void ContainerButtonDispatcher::clickDisplayOrWindow(Id id, int rxSource, bool turnOn)
+{
+    // Thetis's are console-wide; here each acts on the panadapter that
+    // shows the container's slice, through the setter its Display pill
+    // (SpectrumOverlayPanel) or Setup's per-pan row calls. Peak Blobs and
+    // A-Peak are saved as that pan's own value, as Setup's Peaks page does
+    // for a selected pan, not as the master.
+    SpectrumWidget* sw = actsOnSlicePanadapter(id) ? spectrumOf(rxSource) : nullptr;
+    switch (id) {
+    // From Thetis console.cs:51618 [v2.10.3.15]:
+    //   case OtherButtonId.NF: SetNFEnabled(rx, !GetNFEnabled(rx)); break;
+    case Id::Nf: sw->setShowNoiseFloor(turnOn); break;
+    // From Thetis console.cs:52881-52895 [v2.10.3.15] (DoGeneralSettingAction):
+    //   SetupForm.PeakBlobsEnabled = state;
+    //   SetupForm.ShowDisplayMHzCursorInfo = state;
+    //   SetupForm.ShowTCISpots = state;
+    //   SetupForm.SetActivePeakHoldsEnabledRX(rx, state);
+    //   SetupForm.DisplayPanFill = state;
+    case Id::PeakBlobs:    sw->setPeakBlobsEnabled(turnOn); break;
+    case Id::CursorInfo:   sw->setCursorFreqVisible(turnOn); break;
+    case Id::Spots:        m_hooks.setSpotsShown(turnOn); break;
+    case Id::ActivePeak:   sw->setActivePeakHoldEnabled(turnOn); break;
+    case Id::FillSpectrum: sw->setPanFillEnabled(turnOn); break;
+    // From Thetis console.cs:51548 [v2.10.3.15]:
+    //   case OtherButtonId.ZTB: ZoomToBand(button == MouseButtons.Right); break;
+    // A left click (a container button takes no other), the pan's ZTB.
+    case Id::Ztb: sw->zoomToBand(); break;
+    case Id::MafP5: m_hooks.stepMasterVolume(kMasterVolumeStep); break;
+    case Id::MafM5: m_hooks.stepMasterVolume(-kMasterVolumeStep); break;
+    // From Thetis console.cs:51581, :51594-51595 [v2.10.3.15]:
+    //   case OtherButtonId.FORM_SETUP: setupToolStripMenuItem1_Click(this, EventArgs.Empty); break;
+    //   case OtherButtonId.FORM_DIVERSITY: showHideDiversity(true); break;
+    //   case OtherButtonId.FORM_LINEARITY: linearityToolStripMenuItem_Click(this, EventArgs.Empty); break;
+    case Id::FormSetup:     m_hooks.openSetup(); break;
+    case Id::FormDiversity: m_hooks.openDiversity(); break;
+    case Id::FormLinearity: m_hooks.openLinearity(); break;
+    default: break;
+    }
+}
+
+Band ContainerButtonDispatcher::tunePowerBand(int rxSource) const
+{
+    // The TX applet's m_currentBand (a pan's band) stands in for the
+    // transmit band until RadioModel knows it; here the container's slice,
+    // or the active slice.
+    SliceModel* slice = m_model->sliceById(ContainerWidget::sliceIdForRxSource(rxSource));
+    if (!slice) { slice = m_model->activeSlice(); }
+    return slice ? bandFromFrequency(slice->frequency()) : Band::Band20m;
+}
+
+QString ContainerButtonDispatcher::clickTransmitSetting(Id id, int rxSource)
+{
+    TransmitModel& tx = m_model->transmitModel();
+    const HPSDRModel radio = m_model->hardwareProfile().model;
+    switch (id) {
+    // From Thetis console.cs:52848-52880 [v2.10.3.15] (DoGeneralSettingAction):
+    //   CPDR = state; VOXEnable = state; NoiseGateEnabled = state;
+    //   TXEQ = state; CFCEnabled = state; SetupForm.CFCPEQEnabled = state;
+    //   SetupForm.TXLevelerOn = state; SetupForm.PhaseRotEnabled = state;
+    // through the setters the Phone/CW applet's PROC and DEXP, the TX
+    // applet's VOX, EQ, CFC and LEV, and Setup > DSP > CFC call.
+    case Id::Comp:     tx.setCpdrOn(!tx.cpdrOn()); break;
+    case Id::Vox:      tx.setVoxEnabled(!tx.voxEnabled()); break;
+    case Id::Dexp:     tx.setDexpEnabled(!tx.dexpEnabled()); break;
+    case Id::TxEq:     tx.setTxEqEnabled(!tx.txEqEnabled()); break;
+    case Id::Cfc:      tx.setCfcEnabled(!tx.cfcEnabled()); break;
+    case Id::CfcEq:    tx.setCfcPostEqEnabled(!tx.cfcPostEqEnabled()); break;
+    case Id::Leveler:  tx.setTxLevelerOn(!tx.txLevelerOn()); break;
+    case Id::PhaseRot: tx.setPhaseRotatorEnabled(!tx.phaseRotatorEnabled()); break;
+    case Id::MicP1:
+    case Id::MicM1: {
+        // The Phone/CW applet's mic gain slider, ranged by the board.
+        const BoardCapabilities& caps = m_model->boardCapabilities();
+        tx.setMicGainDb(std::clamp(
+            tx.micGainDb() + (id == Id::MicP1 ? kMicGainStepDb : -kMicGainStepDb),
+            caps.micGainMinDb, caps.micGainMaxDb));
+        break;
+    }
+    case Id::CompP1:
+    case Id::CompM1:
+        // The Phone/CW applet's PROC slider (0 to 20 dB).
+        tx.setCpdrLevelDb(std::clamp(
+            tx.cpdrLevelDb() + (id == Id::CompP1 ? kCpdrLevelStepDb : -kCpdrLevelStepDb),
+            TransmitModel::kCpdrLevelDbMin, TransmitModel::kCpdrLevelDbMax));
+        break;
+    case Id::VoxP1:
+    case Id::VoxM1:
+        // The TX applet's VOX level slider (-80 to 0 dB).
+        tx.setVoxThresholdDb(std::clamp(
+            tx.voxThresholdDb() + (id == Id::VoxP1 ? kVoxThresholdStepDb : -kVoxThresholdStepDb),
+            TransmitModel::kVoxThresholdDbMin, TransmitModel::kVoxThresholdDbMax));
+        break;
+    case Id::DriveP5:
+    case Id::DriveM5:
+    case Id::Drive0: {
+        // The TX applet's RF Power slider (TransmitModel::setPower), ranged
+        // as TxPowerSection::rescalePowerSlidersForModel ranges it.
+        const int target = id == Id::Drive0 ? kPowerZero
+            : tx.power() + (id == Id::DriveP5 ? kDriveStep : -kDriveStep);
+        tx.setPower(std::clamp(target, kPowerZero, rfPowerSliderMaxFor(radio)));
+        break;
+    }
+    case Id::TuneP5:
+    case Id::TuneM5:
+    case Id::Tun0: {
+        // The TX applet's Tune Power slider: the transmit band's tune power
+        // (TxApplet::shownTunePower), ranged by tuneSliderMaxFor.
+        const Band band = tunePowerBand(rxSource);
+        const bool remote = m_model->role() == RadioModel::Role::Remote;
+        const int current = (remote || tx.tuneTxBandKnown()) ? tx.tunePowerForTxBand()
+                                                             : tx.tunePowerForBand(band);
+        const int target = std::clamp(
+            id == Id::Tun0 ? kPowerZero
+                           : current + (id == Id::TuneP5 ? kTunePowerStep : -kTunePowerStep),
+            kPowerZero, tuneSliderMaxFor(radio));
+        if (remote) {
+            // TxApplet::requestRemoteTunePower: the Core sets its own
+            // transmit band's; refused, the window shows the Core's again.
+            IStationLink* link = m_model->stationLink();
+            const IStationLink::CommandOutcome outcome = link
+                ? link->requestTunePowerForTxBand(target)
+                : IStationLink::CommandOutcome{false, IStationLink::transmitSettingsUnavailableReason()};
+            if (!outcome.sent) {
+                tx.reportTunePowerForTxBandRefused();
+                return outcome.reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                                : outcome.reason;
+            }
+            break;
+        }
+        if (!tx.setTunePowerForTxBand(target)) { tx.setTunePowerForBand(band, target); }
+        break;
+    }
     default:
         break;
     }

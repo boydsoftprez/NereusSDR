@@ -63,6 +63,10 @@
 //               Claude Code.
 //   2026-10-09 - HeaderVolumeStyle::keepFill() (JJ's D24). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 62: stepVolume(), the
+//                container MAF+ / MAF- buttons' step through the slider's
+//                own path. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -174,6 +178,12 @@ public:
     // children, with the same objectNames, serve both forms.
     void setStacked(bool stacked, int stackedLabelWidth);
     bool isStacked() const { return m_stacked; }
+
+    // Container item parity Task 62: move the volume by `delta` (linear,
+    // 0.05 is 5 on the slider), clamped to 0..1, through the slider's own
+    // path: the engine's volume, audio/Master/Volume saved, volumeChanged.
+    // At an end nothing changes and nothing is emitted.
+    void stepVolume(double delta);
 
 signals:
     // User moved the slider. Value is the 0.0–1.0 linear volume.
