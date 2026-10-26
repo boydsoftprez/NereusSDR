@@ -9884,16 +9884,25 @@ nereus_add_test(tst_station_roundtable_link
 target_compile_definitions(tst_station_roundtable_link PRIVATE
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
 # Roundtable plan Task 20 (R-RT-24, R-RT-26's software half): end to end
-# against the real Roundtable server, started as `/usr/bin/python3 -m
-# nereus_roundtable` on free 127.0.0.1 ports with a temporary database, and
+# against the real Roundtable server, started as `NEREUS_TEST_PYTHON -m
+# nereus_roundtable` (above; python3 then python on PATH when CMake found
+# none) on free 127.0.0.1 ports with a temporary database, and
 # three in-process Cores on one frequency: a reading in the talker's room
 # within 2 s, the turn's credit, an unknown turn named, AWAY refused, and
-# the archive through the web sign-in link. Skips with the reason when that
-# Python lacks websockets or cryptography. REALTIME: the 2 s window is
+# the archive through the web sign-in link. Skips with the reason when no
+# Python is found or it lacks websockets or cryptography. REALTIME: the 2 s window is
 # measured on the wall clock.
 nereus_add_test(tst_roundtable_e2e REALTIME EXTRA_LABELS session)
 target_compile_definitions(tst_roundtable_e2e PRIVATE
-    NEREUS_ROUNDTABLE_SERVER_DIR="${CMAKE_SOURCE_DIR}/roundtable/server")
+    NEREUS_ROUNDTABLE_SERVER_DIR="${CMAKE_SOURCE_DIR}/roundtable/server"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# With no usable Python the whole test skips in initTestCase and exits 0;
+# ctest reports that as Skipped, not Passed, so a run that tested nothing
+# says so (the Windows combined build f run "passed" in 0.1 s).
+if(TEST tst_roundtable_e2e)
+    set_tests_properties(tst_roundtable_e2e PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIP +: TstRoundtableE2e::initTestCase\\(\\)")
+endif()
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.

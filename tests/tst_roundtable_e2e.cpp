@@ -5,8 +5,9 @@
 //
 // Roundtable plan Task 20 (R-RT-24, R-RT-26's software half; wire spec 6,
 // the whole path): the real Roundtable server against three in-process
-// Cores. The server is started as its own process, `/usr/bin/python3 -m
-// nereus_roundtable`, listening on free 127.0.0.1 ports with a temporary
+// Cores. The server is started as its own process, `<python> -m
+// nereus_roundtable` on the interpreter CMake resolved (NEREUS_TEST_PYTHON,
+// as the rendezvous tests do), listening on free 127.0.0.1 ports with a temporary
 // database and the real clock; each Core is a RoundtableClient with its
 // own station key, all on one USB frequency:
 //   - A keys; B's reading of A appears in A's room within 2 s of being
@@ -23,8 +24,9 @@
 //     callsign and no message text (wire spec 9.3, 9.4).
 // The cases run in order on one server and one set of Cores.
 //
-// Skipped with the reason when /usr/bin/python3 is missing or lacks the
-// websockets or cryptography module. Nothing leaves 127.0.0.1. The 2 s
+// Skipped with the reason when no Python 3 is found or it lacks the
+// websockets or cryptography module; ctest reports that as Skipped, never
+// Passed (tests/CMakeLists.txt). Nothing leaves 127.0.0.1. The 2 s
 // window is measured against the wall clock, so the test is `realtime`:
 // a failure prints the load average and the measured latency.
 //
@@ -33,6 +35,11 @@
 //   2026-10-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 20).
+//   2026-10-25: the server runs on NEREUS_TEST_PYTHON, found on PATH as
+//               python3 then python when CMake found none, not on
+//               /usr/bin/python3, which Windows does not have; the skip
+//               names what is missing. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -54,6 +61,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -73,7 +81,28 @@ using namespace NereusSDR;
 
 namespace {
 
-const QString kPython = QStringLiteral("/usr/bin/python3");
+// The interpreter CMake resolved for the Python-backed tests
+// (NEREUS_TEST_PYTHON, tests/CMakeLists.txt): an absolute path, which CI
+// sets to /usr/bin/python3 with Ubuntu's websockets and cryptography. When
+// CMake found none it is the bare name python3, looked up here on PATH as
+// python3 and then python (Windows installs python.exe). Empty when none
+// is found.
+QString findPython()
+{
+    const QString configured = QStringLiteral(NEREUS_TEST_PYTHON);
+    if (QFileInfo(configured).isAbsolute()) {
+        return QFileInfo(configured).isExecutable() ? configured : QString();
+    }
+    for (const QString& name : {configured, QStringLiteral("python3"), QStringLiteral("python")}) {
+        const QString found = QStandardPaths::findExecutable(name);
+        if (!found.isEmpty()) {
+            return found;
+        }
+    }
+    return {};
+}
+
+const QString kPython = findPython();
 const QString kServerDir = QStringLiteral(NEREUS_ROUNDTABLE_SERVER_DIR);
 const QString kHost = QStringLiteral("127.0.0.1");
 const QString kRoom = QStringLiteral("usb-14212000");
@@ -296,8 +325,13 @@ private:
 
 void TstRoundtableE2e::initTestCase()
 {
-    if (!QFileInfo(kPython).isExecutable()) {
-        QSKIP("/usr/bin/python3 is not here, so the Roundtable server cannot run");
+    if (kPython.isEmpty()) {
+        const QByteArray why = QFileInfo(QStringLiteral(NEREUS_TEST_PYTHON)).isAbsolute()
+            ? QByteArray("No Python 3: NEREUS_TEST_PYTHON is " NEREUS_TEST_PYTHON
+                         ", which is not an executable here, so the Roundtable server cannot run")
+            : QByteArray("No Python 3: CMake found none (NEREUS_TEST_PYTHON is " NEREUS_TEST_PYTHON
+                         ") and no python3 or python is on PATH, so the Roundtable server cannot run");
+        QSKIP(why.constData());
     }
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1"));
@@ -326,9 +360,14 @@ void TstRoundtableE2e::initTestCase()
     QProcess probe;
     probe.setProcessEnvironment(env);
     probe.start(kPython, {QStringLiteral("-c"), QStringLiteral("import websockets, cryptography")});
+    if (!probe.waitForStarted(10000)) {
+        const QByteArray why = kPython.toLocal8Bit() + " does not start: " + probe.errorString().toLocal8Bit();
+        QSKIP(why.constData());
+    }
     QVERIFY(probe.waitForFinished(60000));
     if (probe.exitStatus() != QProcess::NormalExit || probe.exitCode() != 0) {
-        const QByteArray why = "/usr/bin/python3 lacks websockets or cryptography: "
+        const QByteArray why = kPython.toLocal8Bit()
+            + " cannot import websockets and cryptography, which the Roundtable server needs: "
             + probe.readAllStandardError().trimmed();
         QSKIP(why.constData());
     }
