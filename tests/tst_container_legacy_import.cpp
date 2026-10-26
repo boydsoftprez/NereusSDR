@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original lossless legacy migration regression tests.
+// Modification history (NereusSDR):
+//   2026-10-26 - The ADC maximum bar stays unavailable on the meter item list,
+//                 clipboard paste and container file import paths; other bar
+//                 flavors still load live. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QFile>
@@ -230,6 +235,70 @@ private slots:
         const auto mixed = LegacyContainerImporter::fromClipboard(primitive+"\n"+QString::fromUtf8(bytes)+"\nUNKNOWN|exact");
         QVERIFY(mixed.ok); QCOMPARE(mixed.document.containers.first().contents.size(),3);
         QCOMPARE(mixed.document.containers.first().contents[1].typeId,QString("BarPreset"));
+    }
+    // The ADC maximum bar is a BarPreset record with flavor AdcMax. Its own
+    // type (meter.adcMax) is unavailable, so no legacy path may load it as a
+    // live custom bar.
+    static QString adcMaxRecord() {
+        const QString raw = ContainerContentRegistry().makeEntry("meter.adcMax").config.value("legacyRecord").toString();
+        const QJsonObject json = QJsonDocument::fromJson(raw.toUtf8()).object();
+        return json.value("kind") == "BarPreset" && json.value("flavor") == "AdcMax" ? raw : QString();
+    }
+    static QString adcMaxReason() { return QStringLiteral("ADC maximum magnitude has no sanctioned reading provider"); }
+    static void verifyAdcMaxEntry(const ContentEntry& entry, const QString& raw) {
+        ContainerContentRegistry registry;
+        QCOMPARE(entry.typeId,QString("meter.adcMax"));
+        QCOMPARE(entry.extensions.value("unavailableReason").toString(),adcMaxReason());
+        QCOMPARE(registry.unavailableReason(entry.typeId),adcMaxReason());
+        QVERIFY(!entry.extensions.contains("legacyMalformed"));
+        QCOMPARE(entry.config.value("legacyRecord").toString(),raw);
+        QVERIFY(!registry.createMeterItem(entry,nullptr,ContentRenderMode::Validation));
+        QVERIFY(!registry.createMeterItem(entry,nullptr));
+    }
+    void adcMaxStaysUnavailableInMeterItemList() {
+        const QString raw = adcMaxRecord(); QVERIFY(!raw.isEmpty());
+        MeterWidget widget; QVERIFY(widget.deserializeItems(raw));
+        QCOMPARE(widget.items().size(),0);
+        QCOMPARE(widget.serializeItems(),raw);
+        MeterWidget reload; QVERIFY(reload.deserializeItems(widget.serializeItems()));
+        QCOMPARE(reload.items().size(),0); QCOMPARE(reload.serializeItems(),raw);
+        // The entries the item list decodes carry the type's reason.
+        const auto imported = LegacyContainerImporter::fromClipboard(raw); QVERIFY(imported.ok);
+        QCOMPARE(imported.document.containers.first().contents.size(),1);
+        verifyAdcMaxEntry(imported.document.containers.first().contents.first(),raw);
+    }
+    void adcMaxStaysUnavailableOnClipboardPaste() {
+        const QString raw = adcMaxRecord(); QVERIFY(!raw.isEmpty());
+        const QString text = QString::fromLatin1(raw.toUtf8().toBase64());
+        const auto pasted = ContainerDocumentCodec::importEntries(text); QVERIFY2(pasted.ok,qPrintable(pasted.error));
+        QCOMPARE(pasted.document.containers.first().contents.size(),1);
+        verifyAdcMaxEntry(pasted.document.containers.first().contents.first(),raw);
+        if (QTest::currentTestFailed()) { return; }
+        const auto again = ContainerDocumentCodec::importEntries(ContainerDocumentCodec::exportEntries(pasted.document.containers.first().contents));
+        QVERIFY2(again.ok,qPrintable(again.error));
+        verifyAdcMaxEntry(again.document.containers.first().contents.first(),raw);
+    }
+    void adcMaxStaysUnavailableOnContainerFileImport() {
+        const QString raw = adcMaxRecord(); QVERIFY(!raw.isEmpty());
+        const auto file = ContainerDocumentCodec::importContainer(raw.toUtf8()); QVERIFY2(file.ok,qPrintable(file.error));
+        QCOMPARE(file.document.containers.first().contents.size(),1);
+        verifyAdcMaxEntry(file.document.containers.first().contents.first(),raw);
+        if (QTest::currentTestFailed()) { return; }
+        const auto again = ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(file.document.containers.first()));
+        QVERIFY2(again.ok,qPrintable(again.error));
+        verifyAdcMaxEntry(again.document.containers.first().contents.first(),raw);
+    }
+    void otherBarPresetFlavorStillLoadsLive() {
+        ContainerContentRegistry registry;
+        const QString raw = registry.makeEntry("meter.adc").config.value("legacyRecord").toString();
+        QCOMPARE(QJsonDocument::fromJson(raw.toUtf8()).object().value("flavor").toString(),QString("Adc"));
+        const auto imported = LegacyContainerImporter::fromClipboard(raw); QVERIFY(imported.ok);
+        const auto& entry = imported.document.containers.first().contents.first();
+        QCOMPARE(entry.typeId,QString("BarPreset"));
+        QVERIFY(!entry.extensions.contains("unavailableReason"));
+        std::unique_ptr<MeterItem> face(registry.createMeterItem(entry,nullptr)); QVERIFY(face);
+        MeterWidget widget; QVERIFY(widget.deserializeItems(raw)); QCOMPARE(widget.items().size(),1);
+        QCOMPARE(widget.serializeItems(),raw);
     }
     void rejectsFutureAndMalformedStructuredPayload() {
         QVERIFY(!LegacyContainerImporter::fromContainerFile("{\"schemaVersion\":999}").ok);

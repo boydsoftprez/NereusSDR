@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original raw-first legacy presentation importer.
+// Modification history (NereusSDR):
+//   2026-10-26 - A BarPreset record whose flavor names an unavailable bar
+//                 type (the ADC maximum bar, meter.adcMax) comes in as that
+//                 type with its reason, never as a live custom bar.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "LegacyContainerImporter.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerDocumentCodec.h"
@@ -61,6 +66,20 @@ ContainerDocument container(const QString& id, const QString& metadata, const QS
             tag = legacyJson.value(QStringLiteral("kind")).toString();
             if (tag.isEmpty()) { tag = QStringLiteral("legacy:json"); }
         }
+        // A BarPreset record names its bar in "flavor". BarPreset alone maps to
+        // the available custom bar, so a flavor whose own type is unavailable
+        // (meter.adcMax) keeps that type and its reason instead.
+        QString variantReason;
+        if (tag == QLatin1String("BarPreset")) {
+            QString flavor = legacyJson.value(QStringLiteral("flavor")).toString();
+            if (!flavor.isEmpty()) {
+                flavor[0] = flavor[0].toLower();
+                const QString variantType = QStringLiteral("meter.") + flavor;
+                for (const auto& descriptor : registry.descriptors()) {
+                    if (descriptor.typeId == variantType && !descriptor.available) { tag = variantType; variantReason = descriptor.unavailableReason; break; }
+                }
+            }
+        }
         // GROUP is a multiline legacy adapter, not a durable composite signature.
         // Preserve it as one named unavailable composition until a lossless face
         // representation exists; do not rebuild customized primitives from defaults.
@@ -95,7 +114,7 @@ ContainerDocument container(const QString& id, const QString& metadata, const QS
             bool ok = false; const int z = itemFields.value(6).toInt(&ok); if (ok) { item->setZOrder(z); }
             entry = registry.captureMeterItem(*item,entry);
         } else {
-            const QString reason = tag == QLatin1String("DISCORDBTNS") ? QStringLiteral("This control was retired") : QStringLiteral("Unknown, unbuilt or malformed legacy content");
+            const QString reason = !variantReason.isEmpty() ? variantReason : tag == QLatin1String("DISCORDBTNS") ? QStringLiteral("This control was retired") : QStringLiteral("Unknown, unbuilt or malformed legacy content");
             if (!registry.validateEntry(entry).isEmpty()) { entry.extensions.insert(QStringLiteral("legacyMalformed"),true); }
             entry.extensions.insert(QStringLiteral("unavailableReason"),reason);
             entry.name += QStringLiteral(" (unavailable)");
