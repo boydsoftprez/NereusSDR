@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original migration of saved container entries.
 // Modification history (NereusSDR):
+//   2026-10-26 - Old default names take the new picker labels on load.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Written: a Longpath needle or bar's "direction" becomes
 //                 "binding" on load. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -18,6 +20,10 @@ namespace NereusSDR {
 // longpath.needle and longpath.bar: "direction" (no editor offers it) is
 // replaced by the "binding" it meant (LongpathContent::primaryBinding)
 // when the entry has no "binding", and dropped when it has one.
+//
+// Every type: an entry whose name is still its type's old default picker
+// label (for example "Comp bar" on meter.comp) takes the new label
+// ("Compression bar"); any other name is kept. The typeId never changes.
 void migrateEntryOnLoad(ContentEntry& entry);
 
 } // namespace NereusSDR

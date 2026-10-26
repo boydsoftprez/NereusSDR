@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - ContentGroup: the heading a descriptor is listed under in
+//                 the Available list; groupTitle names it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: ContentConfigNotifier, through
 //                 which a per-instance widget's own controls change its
 //                 entry's config. J.J. Boyd (KG4VCF), AI-assisted via
@@ -80,10 +83,14 @@ public:
 signals:
     void configEdited(const QJsonObject& config);
 };
+// The heading a type is listed under in Container Settings' Available
+// list, in the order the headings are shown.
+enum class ContentGroup { ReadyMadeMeters, BuildingBlocks, Buttons, Panels, PanelSections, LongpathInstruments };
 struct ContentDescriptor {
     QString typeId, title;
     bool singleton = false, available = false;
     QString unavailableReason;
+    ContentGroup group = ContentGroup::ReadyMadeMeters;
 };
 class ContainerContentRegistry : public QObject {
     Q_OBJECT
@@ -103,6 +110,8 @@ public:
     bool claimSingleton(const QString& typeId, const QString& entryId);
     quint64 generation() const { return m_generation; }
     static QString appletTypeForVisibilityId(const QString& id);
+    // The heading text for a group ("Ready-made meters", ...).
+    static QString groupTitle(ContentGroup group);
     QVector<ContentDescriptor> descriptors() const;
     ContentEntry makeEntry(const QString& typeId) const;
     QString validateEntry(const ContentEntry& entry) const;
@@ -127,6 +136,9 @@ public:
     using WidgetFactory = std::function<QWidget*(const ContentEntry& entry, QWidget* parent,
                                                  ContentRenderMode mode)>;
     // `properties`: the type's editable properties (workspace preview).
+    // The group comes from the typeId's prefix: "tx." and "rx." are panel
+    // sections, "longpath." Longpath instruments, "sMeter." ready-made
+    // meters; any other prefix keeps the descriptor's own group.
     void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
                                const QVector<ContentProperty>& properties = {});
     // The properties a widget type declared; empty for every other type.

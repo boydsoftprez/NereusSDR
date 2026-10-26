@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Picker names: every type's title is in plain words (bar
+//                 titles from a readable-name map, full maker and model
+//                 names for the amp, tuner and RF2K-S panels, applet titles
+//                 as their windows read) and each descriptor names its
+//                 heading (ContentGroup); widget types take theirs from the
+//                 typeId prefix. No typeId changed. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - createMeterItem: an LED made in Preview or Validation mode
 //                 never publishes its result for a text overlay's LED gate.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -280,77 +287,120 @@ QString ContainerContentRegistry::unavailableReason(const QString& typeId) const
     for (const auto& d : descriptors()) { if (d.typeId == catalogType(typeId)) { return d.unavailableReason; } }
     return QStringLiteral("Unknown content type; original data retained");
 }
+QString ContainerContentRegistry::groupTitle(ContentGroup group)
+{
+    switch (group) {
+    case ContentGroup::ReadyMadeMeters: return QStringLiteral("Ready-made meters");
+    case ContentGroup::BuildingBlocks: return QStringLiteral("Building blocks");
+    case ContentGroup::Buttons: return QStringLiteral("Buttons");
+    case ContentGroup::Panels: return QStringLiteral("Panels");
+    case ContentGroup::PanelSections: return QStringLiteral("Panel sections");
+    case ContentGroup::LongpathInstruments: return QStringLiteral("Longpath instruments");
+    }
+    return {};
+}
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
-    result.append({"meter.radeMicWaveform","Microphone waveform",false,true,{}});
-    result.append({"meter.radeSpeechWaveform","Decoded speech waveform",false,true,{}});
-    result.append({QStringLiteral("meter.powerSwr"),QStringLiteral("Power / SWR"),false,true,{}});
-    result.append({QStringLiteral("meter.ananMulti"),QStringLiteral("ANAN multi meter"),false,true,{}});
-    result.append({QStringLiteral("meter.crossNeedle"),QStringLiteral("Cross needle"),false,true,{}});
-    result.append({QStringLiteral("meter.magicEye"),QStringLiteral("Magic eye"),false,true,{}});
-    result.append({QStringLiteral("meter.signalText"),QStringLiteral("Signal text"),false,true,{}});
-    result.append({QStringLiteral("meter.historyGraph"),QStringLiteral("Signal history"),false,true,{}});
-    result.append({QStringLiteral("meter.vfoDisplay"),QStringLiteral("VFO display"),false,true,{}});
-    result.append({QStringLiteral("meter.clock"),QStringLiteral("Clock"),false,true,{}});
-    result.append({QStringLiteral("meter.contest"),QStringLiteral("Contest controls"),false,true,{}});
-    result.append({QStringLiteral("meter.sMeter"),QStringLiteral("S-meter bar (additional)"),false,true,{}});
-    result.append({QStringLiteral("meter.spacer"),QStringLiteral("Spacer"),false,true,{}});
+    // Every type is listed under one heading (ContentGroup); the titles are
+    // the operator's words, so a type's title is never its C++ name.
+    const auto add = [&result](const QString& typeId, const QString& title, ContentGroup group,
+                               bool singleton = false) {
+        result.append({typeId, title, singleton, true, {}, group});
+    };
+    add(QStringLiteral("meter.radeMicWaveform"), QStringLiteral("Microphone waveform"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.radeSpeechWaveform"), QStringLiteral("Decoded speech waveform"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.powerSwr"), QStringLiteral("Power / SWR"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.ananMulti"), QStringLiteral("ANAN multi meter"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.crossNeedle"), QStringLiteral("Cross needle"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.magicEye"), QStringLiteral("Magic eye"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.signalText"), QStringLiteral("Signal text"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.historyGraph"), QStringLiteral("Signal history"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.vfoDisplay"), QStringLiteral("VFO display"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.clock"), QStringLiteral("Clock"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.contest"), QStringLiteral("Contest controls"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.sMeter"), QStringLiteral("S-Meter bar"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.spacer"), QStringLiteral("Spacer"), ContentGroup::ReadyMadeMeters);
     // meter.adcMax is created like the others: its bar veils itself with the
     // one reason ("ADC magnitude is not available") and takes no reading.
-    const QHash<QString,QString> barTitles{{QStringLiteral("Pwr"),QStringLiteral("Power bar")},{QStringLiteral("ReversePwr"),QStringLiteral("Reverse power bar")},{QStringLiteral("Swr"),QStringLiteral("SWR bar")}};
-    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); result.append({"meter."+name,barTitles.value(variant,variant+" bar"),false,true,{}}); }
-    result.append({QStringLiteral("meter.mic"),QStringLiteral("Mic"),false,true,{}});
-    result.append({QStringLiteral("meter.alc"),QStringLiteral("ALC"),false,true,{}});
-    result.append({QStringLiteral("meter.customBar"),QStringLiteral("Custom bar face"),false,true,{}});
-    result.append({QStringLiteral("BAR"), QStringLiteral("Bar"), false, true, {}});
-    result.append({QStringLiteral("SOLID"), QStringLiteral("SolidColour"), false, true, {}});
-    result.append({QStringLiteral("IMAGE"), QStringLiteral("Image"), false, true, {}});
-    result.append({QStringLiteral("SCALE"), QStringLiteral("Scale"), false, true, {}});
-    result.append({QStringLiteral("TEXT"), QStringLiteral("Text"), false, true, {}});
-    result.append({QStringLiteral("NEEDLE"), QStringLiteral("Needle"), false, true, {}});
-    result.append({QStringLiteral("SPACER"), QStringLiteral("Spacer"), false, true, {}});
-    result.append({QStringLiteral("FADECOVER"), QStringLiteral("FadeCover"), false, true, {}});
-    result.append({QStringLiteral("LED"), QStringLiteral("LED"), false, true, {}});
-    result.append({QStringLiteral("HISTORY"), QStringLiteral("HistoryGraph"), false, true, {}});
-    result.append({QStringLiteral("MAGICEYE"), QStringLiteral("MagicEye"), false, true, {}});
-    result.append({QStringLiteral("NEEDLESCALEPWR"), QStringLiteral("NeedleScalePwr"), false, true, {}});
-    result.append({QStringLiteral("SIGNALTEXT"), QStringLiteral("SignalText"), false, true, {}});
-    result.append({QStringLiteral("DIAL"), QStringLiteral("Dial"), false, true, {}});
-    result.append({QStringLiteral("TEXTOVERLAY"), QStringLiteral("TextOverlay"), false, true, {}});
-    result.append({QStringLiteral("WEBIMAGE"), QStringLiteral("WebImage"), false, true, {}});
-    result.append({QStringLiteral("FILTERDISPLAY"), QStringLiteral("FilterDisplay"), false, true, {}});
-    result.append({QStringLiteral("ROTATOR"), QStringLiteral("Rotator"), false, true, {}});
-    result.append({QStringLiteral("BANDBTNS"), QStringLiteral("BandButton"), false, true, {}});
-    result.append({QStringLiteral("NEREUSBAND"), QStringLiteral("NereusBandButton"), false, true, {}});
-    result.append({QStringLiteral("MODEBTNS"), QStringLiteral("ModeButton"), false, true, {}});
-    result.append({QStringLiteral("FILTERBTNS"), QStringLiteral("FilterButton"), false, true, {}});
-    result.append({QStringLiteral("ANTENNABTNS"), QStringLiteral("AntennaButton"), false, true, {}});
-    result.append({QStringLiteral("TUNESTEPBTNS"), QStringLiteral("TuneStepButton"), false, true, {}});
-    result.append({QStringLiteral("OTHERBTNS"), QStringLiteral("OtherButton"), false, true, {}});
-    for (const auto& control : supportedContainerControls()) {
-        result.append({control.creationId, control.title, false, true, {}});
+    // A variant missing from barTitles falls back to "<variant> bar".
+    const QHash<QString, QString> barTitles{
+        {QStringLiteral("Comp"), QStringLiteral("Compression bar")},
+        {QStringLiteral("Eq"), QStringLiteral("EQ bar")},
+        {QStringLiteral("Leveler"), QStringLiteral("Leveler bar")},
+        {QStringLiteral("Cfc"), QStringLiteral("CFC bar")},
+        {QStringLiteral("CfcGain"), QStringLiteral("CFC gain bar")},
+        {QStringLiteral("LevelerGain"), QStringLiteral("Leveler gain bar")},
+        {QStringLiteral("AlcGain"), QStringLiteral("ALC gain bar")},
+        {QStringLiteral("AlcGroup"), QStringLiteral("ALC group bar")},
+        {QStringLiteral("Agc"), QStringLiteral("AGC bar")},
+        {QStringLiteral("AgcGain"), QStringLiteral("AGC gain bar")},
+        {QStringLiteral("Signal"), QStringLiteral("Signal peak bar")},
+        {QStringLiteral("SignalAvg"), QStringLiteral("Signal average bar")},
+        {QStringLiteral("SignalMaxBin"), QStringLiteral("Signal max bin bar")},
+        {QStringLiteral("Adc"), QStringLiteral("ADC bar")},
+        {QStringLiteral("AdcMax"), QStringLiteral("ADC maximum bar")},
+        {QStringLiteral("PbSnr"), QStringLiteral("PB SNR bar")},
+        {QStringLiteral("Pwr"), QStringLiteral("Power bar")},
+        {QStringLiteral("ReversePwr"), QStringLiteral("Reverse power bar")},
+        {QStringLiteral("Swr"), QStringLiteral("SWR bar")}};
+    for (const QString& variant : BarPresetItem::variants()) {
+        QString name = variant;
+        name[0] = name[0].toLower();
+        add(QStringLiteral("meter.") + name, barTitles.value(variant, variant + QStringLiteral(" bar")),
+            ContentGroup::ReadyMadeMeters);
     }
-    result.append({QStringLiteral("VOICERECPLAY"), QStringLiteral("VoiceRecordPlay"), false, true, {}});
-    result.append({QStringLiteral("VFO"), QStringLiteral("VfoDisplay"), false, true, {}});
-    result.append({QStringLiteral("CLOCK"), QStringLiteral("Clock"), false, true, {}});
-    result.append({QStringLiteral("CLICKBOX"), QStringLiteral("ClickBox"), false, true, {}});
-    result.append({QStringLiteral("DATAOUT"), QStringLiteral("DataOut"), false, true, {}});
-    result.append({QStringLiteral("applet:rx"), QStringLiteral("RX"), true, true, {}});
-    result.append({QStringLiteral("applet:Display"), QStringLiteral("Display"), true, true, {}});
-    result.append({QStringLiteral("applet:TX"), QStringLiteral("TX"), true, true, {}});
-    result.append({QStringLiteral("applet:PHCW"), QStringLiteral("Phone / CW"), true, true, {}});
-    result.append({QStringLiteral("applet:RADE"), QStringLiteral("RADE"), true, true, {}});
-    result.append({QStringLiteral("applet:vax"), QStringLiteral("VAX"), true, true, {}});
-    result.append({QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), true, true, {}});
-    result.append({QStringLiteral("applet:mod_monitor"), QStringLiteral("Mod Monitor"), true, true, {}});
-    result.append({QStringLiteral("applet:cat"), QStringLiteral("CAT"), true, true, {}});
-    result.append({QStringLiteral("applet:tci"), QStringLiteral("TCI"), true, true, {}});
-    result.append({QStringLiteral("applet:tci_clients"), QStringLiteral("Client Chain"), true, true, {}});
-    result.append({QStringLiteral("applet:amp"), QStringLiteral("Amplifier"), true, true, {}});
-    result.append({QStringLiteral("applet:tuner"), QStringLiteral("Tuner"), true, true, {}});
-    result.append({QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), true, true, {}});
-    result.append({QStringLiteral("applet:RfKit"), QStringLiteral("RF Kit"), true, true, {}});
-    result.append({QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), true, true, {}});
+    add(QStringLiteral("meter.mic"), QStringLiteral("Mic bar"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.alc"), QStringLiteral("ALC bar"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("meter.customBar"), QStringLiteral("Custom bar face"), ContentGroup::ReadyMadeMeters);
+    add(QStringLiteral("BAR"), QStringLiteral("Bar"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("SOLID"), QStringLiteral("Solid color"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("IMAGE"), QStringLiteral("Image"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("SCALE"), QStringLiteral("Scale"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("TEXT"), QStringLiteral("Text"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("NEEDLE"), QStringLiteral("Needle"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("SPACER"), QStringLiteral("Spacer"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("FADECOVER"), QStringLiteral("Fade cover"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("LED"), QStringLiteral("LED"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("HISTORY"), QStringLiteral("History graph"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("MAGICEYE"), QStringLiteral("Magic eye"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("NEEDLESCALEPWR"), QStringLiteral("Power scale"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("SIGNALTEXT"), QStringLiteral("Signal text"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("DIAL"), QStringLiteral("Dial"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("WEBIMAGE"), QStringLiteral("Web image"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("FILTERDISPLAY"), QStringLiteral("Filter display"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("ROTATOR"), QStringLiteral("Rotator"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("BANDBTNS"), QStringLiteral("Band buttons"), ContentGroup::Buttons);
+    add(QStringLiteral("NEREUSBAND"), QStringLiteral("Band buttons (panel style)"), ContentGroup::Buttons);
+    add(QStringLiteral("MODEBTNS"), QStringLiteral("Mode buttons"), ContentGroup::Buttons);
+    add(QStringLiteral("FILTERBTNS"), QStringLiteral("Filter buttons"), ContentGroup::Buttons);
+    add(QStringLiteral("ANTENNABTNS"), QStringLiteral("Antenna buttons"), ContentGroup::Buttons);
+    add(QStringLiteral("TUNESTEPBTNS"), QStringLiteral("Tune step buttons"), ContentGroup::Buttons);
+    add(QStringLiteral("OTHERBTNS"), QStringLiteral("Other buttons"), ContentGroup::Buttons);
+    for (const auto& control : supportedContainerControls()) {
+        add(control.creationId, control.title, ContentGroup::Buttons);
+    }
+    add(QStringLiteral("VOICERECPLAY"), QStringLiteral("Voice record and play"), ContentGroup::Buttons);
+    add(QStringLiteral("VFO"), QStringLiteral("VFO display"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("CLOCK"), QStringLiteral("Clock"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("CLICKBOX"), QStringLiteral("Click box"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("DATAOUT"), QStringLiteral("Data output"), ContentGroup::BuildingBlocks);
+    add(QStringLiteral("applet:rx"), QStringLiteral("RX"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:Display"), QStringLiteral("Display"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:TX"), QStringLiteral("TX"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:PHCW"), QStringLiteral("Phone / CW"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:RADE"), QStringLiteral("RADE"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:vax"), QStringLiteral("VAX"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:mod_monitor"), QStringLiteral("AM Mod Monitor"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:cat"), QStringLiteral("CAT"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:tci"), QStringLiteral("TCI Server"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:tci_clients"), QStringLiteral("TCI Clients"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:amp"), QStringLiteral("4O3A Power Genius"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:tuner"), QStringLiteral("4O3A Tuner Genius"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:RfKit"), QStringLiteral("RF-Kit RF2K-S"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), ContentGroup::Panels, true);
     for (auto& descriptor : result) {
         std::optional<UnbuiltFeature> feature;
         if (descriptor.typeId == QLatin1String("FILTERDISPLAY")) { feature = UnbuiltFeature::ContainerFilterDisplay; }
@@ -364,7 +414,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     for (auto& d : result) {
         if (m_unavailable.contains(d.typeId)) { d.available = false; d.unavailableReason = m_unavailable.value(d.typeId); }
     }
-    result.append({QStringLiteral("DISCORDBTNS"), QStringLiteral("Discord control (removed)"), false, false, QStringLiteral("This control was retired")});
+    result.append({QStringLiteral("DISCORDBTNS"), QStringLiteral("Discord control (removed)"), false, false, QStringLiteral("This control was retired"), ContentGroup::Buttons});
     return result;
 }
 ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
@@ -507,6 +557,13 @@ void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, cons
     ContentDescriptor stored = descriptor;
     stored.typeId = typeId;
     stored.singleton = false;
+    if (typeId.startsWith(QLatin1String("tx.")) || typeId.startsWith(QLatin1String("rx."))) {
+        stored.group = ContentGroup::PanelSections;
+    } else if (typeId.startsWith(QLatin1String("longpath."))) {
+        stored.group = ContentGroup::LongpathInstruments;
+    } else if (typeId.startsWith(QLatin1String("sMeter."))) {
+        stored.group = ContentGroup::ReadyMadeMeters;
+    }
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
     m_widgetFactories.insert(typeId, {stored, std::move(factory), properties});
     ++m_generation;

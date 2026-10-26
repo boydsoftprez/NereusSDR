@@ -34,6 +34,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Picker names: Frequency, Custom frequency, Needle meter,
+//                 Bar meter and Filter passband, listed under the
+//                 "Longpath instruments" heading instead of a suffix.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - The bandwidth pane's centre drag moves the passband with
 //                 SliceModel::shiftFilter, which keeps its width at the
 //                 filter limits (Thetis ConstrainFilter, filterShift true).
@@ -568,14 +572,14 @@ QVector<float> traceFromRendered(const QVector<float>& pixels, double centreHz,
 void registerAll(ContainerContentRegistry& registry, const Sources& sources)
 {
     registry.registerWidgetFactory(QLatin1String(kFrequencyType),
-        {QLatin1String(kFrequencyType), QStringLiteral("Frequency (Longpath)"), false, true, {}},
+        {QLatin1String(kFrequencyType), QStringLiteral("Frequency"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeFrequency(entry, parent, sources, mode == ContentRenderMode::Preview);
         },
         frequencyProperties());
 
     registry.registerWidgetFactory(QLatin1String(kFrequencyCustomType),
-        {QLatin1String(kFrequencyCustomType), QStringLiteral("Frequency (Custom)"), false, true, {}},
+        {QLatin1String(kFrequencyCustomType), QStringLiteral("Custom frequency"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeFrequencyCustom(entry, parent, sources, mode == ContentRenderMode::Preview);
         },
@@ -708,14 +712,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         return widget;
     };
     registry.registerWidgetFactory(QLatin1String(kNeedleType),
-        {QLatin1String(kNeedleType), QStringLiteral("Needle meter (Longpath)"), false, true, {}},
+        {QLatin1String(kNeedleType), QStringLiteral("Needle meter"), false, true, {}},
         meterFactory, meterProperties(QLatin1String(kNeedleType)));
     registry.registerWidgetFactory(QLatin1String(kBarType),
-        {QLatin1String(kBarType), QStringLiteral("Bar meter (Longpath)"), false, true, {}},
+        {QLatin1String(kBarType), QStringLiteral("Bar meter"), false, true, {}},
         meterFactory, meterProperties(QLatin1String(kBarType)));
 
     registry.registerWidgetFactory(QLatin1String(kFilterType),
-        {QLatin1String(kFilterType), QStringLiteral("Filter passband (Longpath)"), false, true, {}},
+        {QLatin1String(kFilterType), QStringLiteral("Filter passband"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             auto* pane = new BandwidthFilterPane(parent);
             QPointer<BandwidthFilterPane> guard(pane);

@@ -11,6 +11,10 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - The add-content scenes find the first Longpath row by
+//                 typeId and the dial by "S-Meter dial" (picker names under
+//                 headings). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -3725,7 +3729,15 @@ void sceneEditAddContent(SceneContext& ctx)
 {
     sceneEditDialog(ctx, QStringLiteral("edit-add-content"), [](SceneContext& c, ContainerSettingsDialog* d) {
         auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
-        QListWidgetItem* longpath = rowContaining(available, QStringLiteral("(Longpath)"));
+        // The first Longpath instrument, by typeId: the list names them
+        // under the "Longpath instruments" heading, not with a suffix.
+        QListWidgetItem* longpath = nullptr;
+        for (int i = 0; available != nullptr && i < available->count(); ++i) {
+            if (available->item(i)->data(Qt::UserRole).toString().startsWith(QLatin1String("longpath."))) {
+                longpath = available->item(i);
+                break;
+            }
+        }
         if (longpath == nullptr) {
             c.failure = QStringLiteral("no Longpath entry in the Available list");
             return;
@@ -4153,7 +4165,7 @@ void sceneDialAddContent(SceneContext& ctx)
     auto listRect = std::make_shared<QRect>();
     sceneEditDialog(ctx, name, [listRect](SceneContext& c, ContainerSettingsDialog* d) {
         auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
-        QListWidgetItem* dial = rowContaining(available, QStringLiteral("S-Meter dial (additional)"));
+        QListWidgetItem* dial = rowContaining(available, QStringLiteral("S-Meter dial"));
         if (dial == nullptr) {
             c.failure = QStringLiteral("no S-Meter dial row in the Available list");
             return;

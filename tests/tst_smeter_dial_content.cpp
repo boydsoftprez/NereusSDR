@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original checks for added copies of the SIGNAL
 // STRENGTH dial as container content (workspace preview).
 // Modification history (NereusSDR):
+//   2026-10-26 - The dial's picker name is "S-Meter dial". J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The external amplifier, Setup's face, locked and editing,
@@ -213,7 +215,7 @@ private slots:
                 found = true;
                 QVERIFY(!d.singleton);
                 QVERIFY(d.available);
-                QCOMPARE(d.title, QStringLiteral("S-Meter dial (additional)"));
+                QCOMPARE(d.title, QStringLiteral("S-Meter dial"));
             }
         }
         QVERIFY(found);

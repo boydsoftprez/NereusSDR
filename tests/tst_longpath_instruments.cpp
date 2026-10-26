@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original checks for the ported Longpath
 // instruments and their container-content registration (workspace preview).
 // Modification history (NereusSDR):
+//   2026-10-26 - Picker names without the "(Longpath)" suffix. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - frequencyRowUsesSliceLetters. J.J. Boyd (KG4VCF),
@@ -798,13 +800,13 @@ private slots:
                 names.append(d.title);
             }
         }
-        QCOMPARE(names, (QStringList{QStringLiteral("Frequency (Longpath)"), QStringLiteral("Frequency (Custom)"),
-                                     QStringLiteral("Needle meter (Longpath)"), QStringLiteral("Bar meter (Longpath)"),
-                                     QStringLiteral("Filter passband (Longpath)")}));
+        QCOMPARE(names, (QStringList{QStringLiteral("Frequency"), QStringLiteral("Custom frequency"),
+                                     QStringLiteral("Needle meter"), QStringLiteral("Bar meter"),
+                                     QStringLiteral("Filter passband")}));
 
         ContentEntry rx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
         ContentEntry tx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
-        QCOMPARE(rx.name, QStringLiteral("Needle meter (Longpath)"));
+        QCOMPARE(rx.name, QStringLiteral("Needle meter"));
         QVERIFY(rx.id != tx.id);
         QVERIFY(registry.validateEntry(rx).isEmpty());
         tx.config.insert(QString::fromLatin1(LongpathContent::kDirectionKey), QStringLiteral("tx"));

@@ -442,7 +442,7 @@ STATUS_ROWS = [
      "Container Settings shows each Longpath entry's declared properties (reading, form, compact, label) "
      "in place of \"Unsupported configuration\".", "edit-properties", True),
     ("Factory entries", STATUS_BUILT,
-     "Frequency, Needle meter, Bar meter and Filter passband (Longpath) as per-instance container content, "
+     "Frequency, Custom frequency, Needle meter, Bar meter and Filter passband, under the Longpath instruments heading, as per-instance container content, "
      "registered only with the preview switch on.", "mixed-container, edit-add-content", True),
     ("Workspace profiles", STATUS_BUILT,
      "Named arrangements (layout only): switch, save, new, duplicate, rename, remove.",

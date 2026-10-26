@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The workspace Available list shows its types under six
+//                 headings (Ready-made meters, Building blocks, Buttons,
+//                 Panels, Panel sections, Longpath instruments); a heading
+//                 row cannot be selected and Add on it adds nothing.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Paste settings onto an LED keeps the target's own guid,
 //                 so its 4-character ID (named by text overlay gates) does
 //                 not change. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -706,10 +711,30 @@ void ContainerSettingsDialog::populateAvailableList()
 {
     if (m_editSession && m_manager) {
         m_availableList->clear();
-        for(const auto& descriptor:m_manager->contentRegistry()->descriptors()) {
-            auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
-            row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
-            if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
+        // Six headings in order, each followed by its entries in
+        // descriptors() order. A heading row is bold, cannot be selected
+        // and carries no typeId, styled as the legacy list's headers.
+        const QVector<ContentDescriptor> all = m_manager->contentRegistry()->descriptors();
+        for (const ContentGroup group : {ContentGroup::ReadyMadeMeters, ContentGroup::BuildingBlocks,
+                                         ContentGroup::Buttons, ContentGroup::Panels,
+                                         ContentGroup::PanelSections, ContentGroup::LongpathInstruments}) {
+            bool headed = false;
+            for (const auto& descriptor : all) {
+                if (descriptor.group != group) { continue; }
+                if (!headed) {
+                    auto* heading = new QListWidgetItem(ContainerContentRegistry::groupTitle(group), m_availableList);
+                    QFont font = heading->font();
+                    font.setBold(true);
+                    heading->setFont(font);
+                    heading->setForeground(WorkspacePreview::roleColour(QColor(0x8a, 0xa8, 0xc0), "title-text"));
+                    heading->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
+                    heading->setFlags(Qt::NoItemFlags);
+                    headed = true;
+                }
+                auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
+                row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
+                if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
+            }
         }
         return;
     }
@@ -829,7 +854,10 @@ void ContainerSettingsDialog::populateAvailableList()
 void ContainerSettingsDialog::onAddFromAvailable()
 {
     if(m_editSession && m_availableList->currentItem()) {
-        addNewItem(m_availableList->currentItem()->data(Qt::UserRole).toString()); return;
+        // A heading row carries no typeId and adds nothing.
+        const QString typeId = m_availableList->currentItem()->data(Qt::UserRole).toString();
+        if (!typeId.isEmpty()) { addNewItem(typeId); }
+        return;
     }
 
     if (!m_availableList) { return; }

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Picker name "S-Meter dial", listed under Ready-made
+//                 meters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -602,10 +605,11 @@ QList<int> registeredBindings()
 
 void registerDial(ContainerContentRegistry& registry, const LongpathContent::Sources& sources)
 {
-    // "S-Meter" is the Main Panel's dial (applet:s_meter) in the same list;
-    // "(additional)" as the list names the additional S-meter bar.
+    // "S-Meter" is the Main Panel's dial (applet:s_meter), listed under
+    // Panels; this one is listed under Ready-made meters beside the
+    // S-Meter bar, so the heading says what "(additional)" used to.
     registry.registerWidgetFactory(QLatin1String(kDialType),
-        {QLatin1String(kDialType), QStringLiteral("S-Meter dial (additional)"), false, true, {}},
+        {QLatin1String(kDialType), QStringLiteral("S-Meter dial"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeDial(entry, parent, sources, mode);
         },
