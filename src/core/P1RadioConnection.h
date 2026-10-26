@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -597,6 +600,11 @@ private slots:
     void onConnectTimeout();
 
 private:
+    // RadioConnection::setOcTxModes: keyed is m_mox; a change forces bank 0
+    // (the OC byte's bank) onto the next frame, as setMox does.
+    bool ocTxKeyed() const override { return m_mox.load(); }
+    void onOcTxModesChanged() override { m_forceBank0Next = true; }
+
     // ── The announced receiver count has two inputs ──────────────────────
     //
     // Two independent things need a say in how many receivers the wire

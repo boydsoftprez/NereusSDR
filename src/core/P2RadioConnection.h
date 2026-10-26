@@ -40,6 +40,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
 //                 public, so a test reads the product's watchdogs instead of
 //                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
@@ -553,6 +556,11 @@ private slots:
     void onEstablishedSilenceTimeout();
 
 private:
+    // RadioConnection::setOcTxModes: keyed is m_mox; a change sends the
+    // high-priority packet when the OC byte it carries changed.
+    bool ocTxKeyed() const override { return m_mox.load(); }
+    void onOcTxModesChanged() override { pushBandOutputsIfChanged(); }
+
     int telemetryUdpBasePort() const override { return m_baseOutboundPort; }
 
     // --- Phase 3P-B: per-board codec chosen at connectToRadio() time ---

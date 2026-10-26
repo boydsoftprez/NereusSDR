@@ -40,6 +40,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-15 - The transmit cut: setMox(true) is refused while it is
 //                 set, and the high-priority PTT bit (codec and legacy) and
 //                 the TX I/Q frames read it as unkeyed. J.J. Boyd (KG4VCF),
@@ -846,6 +849,7 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     // stale setter delivered after the previous LinkLost must not carry MOX,
     // PureSignal, or relay intent into this SendStart sequence.
     m_mox.store(false);
+    releaseOcTxModeHold();
     m_puresignalRun = false;
     m_trxRelay = false;
     m_tx[0].pttOut = 0;
@@ -1649,6 +1653,9 @@ void P2RadioConnection::setMox(bool enabled)
     }
     m_mox = enabled;
     if (!enabled) {
+        // The OC pin actions' TUNE / two-tone flags held through the key
+        // (RadioConnection::setOcTxModes) take their requested values.
+        releaseOcTxModeHold();
         // 2026-07-27 (Codex review, PR #306): open a bounded grace window so
         // the heartbeat keeps re-emitting MOX-off for a short while after
         // unkey.
@@ -2124,7 +2131,13 @@ quint8 P2RadioConnection::composedOcByte() const
 {
     if (m_ocMatrix && m_caps && m_caps->ocOutputCount > 0) {
         const Band currentBand = bandFromFrequency(static_cast<double>(ocBandFrequencyHz()));
-        return m_ocMatrix->maskFor(currentBand, m_mox);  // 3M-1a E.7: was m_tx[0].pttOut != 0
+        // 3M-1a E.7: was m_tx[0].pttOut != 0
+        // Keyed, each TX pin is masked by its TX pin action against MOX,
+        // TUNE and two-tone (OcMatrix::maskFor, Penny.cs UpdateExtCtrl):
+        //   From Thetis console.cs:29106 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29162 [@567a7ec]
+        //     int bits = Penny.getPenny().UpdateExtCtrl(lo_band, lo_bandb, _mox, _tuning, SetupForm.TestIMD, chkExternalPA.Checked); //MW0LGE_21j
+        return m_ocMatrix->maskFor(currentBand, m_mox, ocTune(), ocTwoTone());
     }
     return 0;
 }
@@ -3976,6 +3989,7 @@ void P2RadioConnection::stopForEstablishedSilence()
     // packet: byte 4 must be exactly run=0/MOX=0. Clear the related local
     // transmit intents as well so a reused object cannot re-key itself.
     m_mox.store(false);
+    releaseOcTxModeHold();
     m_puresignalRun = false;
     m_trxRelay = false;
     m_tx[0].pttOut = 0;

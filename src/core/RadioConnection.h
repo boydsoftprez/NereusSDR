@@ -7,6 +7,9 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: The OC transmit pin actions' TUNE and two-tone inputs
+//               (setOcTxModes, ocTune, ocTwoTone). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
 //   2026-10-04: Carry the same longest wake interval's worker/acquire split.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
@@ -701,6 +704,39 @@ public slots:
     virtual void setSidetoneExpected(bool expected) { m_sidetoneExpected = expected; }
     bool sidetoneExpected() const noexcept { return m_sidetoneExpected; }
 
+    /// The OC transmit pin actions (Setup > OC Outputs "TX Pin Action
+    /// mapping") read the live TUNE and two-tone state, Thetis's _tuning
+    /// and SetupForm.TestIMD, beside MOX (OcMatrix::maskFor). RadioModel
+    /// hands them over on this object's thread, as it does setMox; safe to
+    /// call before the connection runs.
+    ///
+    /// Thetis sets _tuning before it keys and clears it after MOX is off
+    /// (console.cs:30059, 30157, 30173 [v2.10.3.15]; Thetis-Enhanced (EU2AV)
+    /// console.cs:30129, 30227, 30243 [@567a7ec]), and recomputes the
+    /// pins only on a MOX or frequency change, so a flag never drops while
+    /// the radio is still keyed for it. NereusSDR's TUNE and two-tone can
+    /// clear before the unkey reaches this thread, so a flag that falls
+    /// while keyed is held until the key ends (releaseOcTxModeHold); one
+    /// that rises applies at once. Without the hold a MOX-only pin would
+    /// close for the frames between the two.
+    void setOcTxModes(bool tune, bool twoTone)
+    {
+        m_ocTuneRequested = tune;
+        m_ocTwoToneRequested = twoTone;
+        const bool keyed = ocTxKeyed();
+        const bool appliedTune = tune || (keyed && m_ocTune.load());
+        const bool appliedTwoTone = twoTone || (keyed && m_ocTwoTone.load());
+        const bool changed = appliedTune != m_ocTune.load()
+                             || appliedTwoTone != m_ocTwoTone.load();
+        m_ocTune.store(appliedTune);
+        m_ocTwoTone.store(appliedTwoTone);
+        if (changed) {
+            onOcTxModesChanged();
+        }
+    }
+    bool ocTune() const noexcept { return m_ocTune.load(); }
+    bool ocTwoTone() const noexcept { return m_ocTwoTone.load(); }
+
     /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
     /// Alex-2 Filters): each row's edges and per-row bypass for the
     /// high-pass ladder, the band-pass bank and the Alex-2 bank, and the
@@ -1007,6 +1043,21 @@ public slots:
     void clearTransmitCut();
 
 protected:
+    // setOcTxModes' inputs. Whether the radio is keyed (the protocol's
+    // m_mox); the base has no key and holds nothing.
+    virtual bool ocTxKeyed() const { return false; }
+    // Called when the applied TUNE / two-tone pair changed, to put the new
+    // OC byte on the wire. The base does nothing.
+    virtual void onOcTxModesChanged() {}
+    // Every place the protocol's MOX goes false calls this: the held flags
+    // take the requested values. Unkeyed they no longer reach the OC byte
+    // (receive uses the RX pins), so nothing is sent.
+    void releaseOcTxModeHold()
+    {
+        m_ocTune.store(m_ocTuneRequested);
+        m_ocTwoTone.store(m_ocTwoToneRequested);
+    }
+
     // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
     // in ms: the test clock when one is set, the wall clock otherwise.
     qint64 iqSequenceGapClockMs() const
@@ -1322,6 +1373,13 @@ private:
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
     // The transmit cut latch (cutTransmit / clearTransmitCut).
     std::atomic<bool> m_transmitCut{false};
+    // setOcTxModes: the TUNE and two-tone flags the OC byte reads (atomic,
+    // read by whichever thread composes the frame), and the values last
+    // requested (this object's thread only).
+    std::atomic<bool> m_ocTune{false};
+    std::atomic<bool> m_ocTwoTone{false};
+    bool m_ocTuneRequested{false};
+    bool m_ocTwoToneRequested{false};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one

@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
+//                the OC transmit pin actions (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -2950,6 +2953,14 @@ RadioModel::RadioModel(Role role, QObject* parent)
             [this](bool) { refreshRadioStatusPtt(); });
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this,
             [this](bool) { updateCoreOnAir(); });
+    // The OC Outputs TX pin actions read TUNE and two-tone beside MOX.
+    // TUNE's change is emitted inside setTune(true) before it keys, so it
+    // is queued ahead of the MOX bit; the connection holds a flag that
+    // falls while keyed until MOX is off (RadioConnection::setOcTxModes).
+    connect(&m_transmitModel, &TransmitModel::tuneChanged, this,
+            [this](bool) { pushOcTxModes(); });
+    connect(&m_transmitModel, &TransmitModel::twoToneActiveChanged, this,
+            [this](bool) { pushOcTxModes(); });
     if (m_pureSignalFacade) {
         connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
                 this, &RadioModel::updateCoreOnAir);
@@ -21500,6 +21511,8 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     } else if (auto* p2 = qobject_cast<class P2RadioConnection*>(m_connection)) {
         p2->setOcMatrix(&m_ocMatrix);
     }
+    // The TX pin actions' TUNE and two-tone state as it stands now.
+    pushOcTxModes();
 
     // Wire CalibrationController to P2RadioConnection so hzToPhaseWord()
     // applies effectiveFreqCorrectionFactor(). Phase 3P-G.
@@ -23656,6 +23669,18 @@ void RadioModel::refreshSidetoneExpected()
         });
     }
     refreshRadioSpeakerReports();
+}
+
+void RadioModel::pushOcTxModes()
+{
+    if (m_connection == nullptr) {
+        return;
+    }
+    const bool tune = m_transmitModel.isTune();
+    const bool twoTone = m_transmitModel.isTwoToneActive();
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection, tune, twoTone]() {
+        conn->setOcTxModes(tune, twoTone);
+    });
 }
 
 void RadioModel::wireRadioSpeakerState()

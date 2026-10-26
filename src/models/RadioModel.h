@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
+//                the OC transmit pin actions (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -7229,6 +7232,10 @@ private:
     // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
     bool computeSidetoneExpected() const;
     void refreshSidetoneExpected();
+    // The OC transmit pin actions' TUNE and two-tone inputs
+    // (RadioConnection::setOcTxModes), queued to the connection's thread as
+    // setMox is.
+    void pushOcTxModes();
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;

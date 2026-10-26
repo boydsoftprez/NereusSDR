@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -2675,6 +2678,11 @@ void P1RadioConnection::setMox(bool enabled)
         discardTxIqOnUnkey();
     }
     m_mox = enabled;
+    if (!enabled) {
+        // The OC pin actions' TUNE / two-tone flags held through the key
+        // (RadioConnection::setOcTxModes) take their requested values.
+        releaseOcTxModeHold();
+    }
 
     // The low-pass on both MOX edges, as HdwMOXChanged re-drives it:
     //   From Thetis console.cs:29097-29099 (key) and 29146-29148 (unkey)
@@ -4425,7 +4433,12 @@ CodecContext P1RadioConnection::buildCodecContext() const
     // low-pass reason).
     if (m_ocMatrix) {
         const Band currentBand = bandFromFrequency(static_cast<double>(ocBandFrequencyHz()));
-        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_mox);
+        // Keyed, each TX pin is masked by its TX pin action against MOX,
+        // TUNE and two-tone (OcMatrix::maskFor, Penny.cs UpdateExtCtrl):
+        //   From Thetis console.cs:29106 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29162 [@567a7ec]
+        //     int bits = Penny.getPenny().UpdateExtCtrl(lo_band, lo_bandb, _mox, _tuning, SetupForm.TestIMD, chkExternalPA.Checked); //MW0LGE_21j
+        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_mox, ocTune(), ocTwoTone());
         if (!m_mox && m_hardwareProfile.model == HPSDRModel::HERMESLITE
             && m_countedSlotsAdc0 != 0) {
             const SharedInputLowPass::Hl2ReceivePins rx =
