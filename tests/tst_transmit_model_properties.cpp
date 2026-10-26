@@ -52,6 +52,9 @@
 //                                    applet case puts TUNE on the Tune
 //                                    slider, which is grayed otherwise.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
+//                                    16 (the CW settings on `transmit`).
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -403,8 +406,8 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     // calibration); 4 is within it.
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 15);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 15);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
     QVERIFY(s.client->transmitSettingsAvailable(4));
     QVERIFY(s.client->transmitSettingsAvailable(7));
     QVERIFY(s.client->transmitSettingsAvailable(8));
@@ -423,7 +426,9 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     QVERIFY(s.client->transmitSettingsAvailable(14));
     // 15 since a remote window edits the CFC bands (cfcProfile).
     QVERIFY(s.client->transmitSettingsAvailable(15));
-    QVERIFY(!s.client->transmitSettingsAvailable(16));
+    // 16 since the CW settings are on `transmit` (tst_cw_settings).
+    QVERIFY(s.client->transmitSettingsAvailable(16));
+    QVERIFY(!s.client->transmitSettingsAvailable(17));
 }
 
 // R-R3-49 (parity Task 5): the version 5 properties, after txAlcDecay in

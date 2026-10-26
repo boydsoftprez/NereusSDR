@@ -1213,7 +1213,7 @@ table.
 | `pairingVersion` | 1 |
 | `stationCatalogVersion` | 1 |
 | `displayExtrasVersion` | 4 |
-| `transmitSettingsVersion` | 15 |
+| `transmitSettingsVersion` | 16 |
 | `bandSelectVersion` | 1 |
 | `meterReadingsVersion` | 1 |
 | `dspInfoVersion` | 1 |
@@ -3375,7 +3375,7 @@ An enum property lists the values its domain allows.
 | 23 | `rx2AutoAttUndoDelayMs` | `i64` | bidirectional |  |
 | 24 | `rx2PreampMode` | `i64` | bidirectional |  |
 
-**TransmitModel** (89 properties)
+**TransmitModel** (119 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3468,6 +3468,36 @@ An enum property lists the values its domain allows.
 | 86 | `micMuted` | `bool` | bidirectional |  |
 | 87 | `txEqCurve` | `utf8` | outbound |  |
 | 88 | `cfcProfile` | `utf8` | outbound |  |
+| 89 | `cwKeyerSpeed` | `i64` | bidirectional |  |
+| 90 | `cwKeyerMode` | `i64` | bidirectional |  |
+| 91 | `cwKeyerWeight` | `i64` | bidirectional |  |
+| 92 | `cwReversePaddles` | `bool` | bidirectional |  |
+| 93 | `cwStrictSpacing` | `bool` | bidirectional |  |
+| 94 | `cwBreakInMode` | `i64` | bidirectional |  |
+| 95 | `cwBreakInDelayMs` | `i64` | bidirectional |  |
+| 96 | `cwKeyDownDelayMs` | `i64` | bidirectional |  |
+| 97 | `cwKeyUpDelayMs` | `i64` | bidirectional |  |
+| 98 | `cwSidetone` | `bool` | bidirectional |  |
+| 99 | `cwRadioSidetone` | `bool` | bidirectional |  |
+| 100 | `cwComputerSidetone` | `bool` | bidirectional |  |
+| 101 | `cwAutoModeSwitch` | `bool` | bidirectional |  |
+| 102 | `cwAutoModeReturn` | `bool` | bidirectional |  |
+| 103 | `cwAutoModeReturnMs` | `i64` | bidirectional |  |
+| 104 | `cwSerialPort` | `utf8` | bidirectional |  |
+| 105 | `cwSerialPaddles` | `bool` | bidirectional |  |
+| 106 | `cwSerialKeyLine` | `i64` | bidirectional |  |
+| 107 | `cwSerialPttLine` | `i64` | bidirectional |  |
+| 108 | `cwxSpeed` | `i64` | bidirectional |  |
+| 109 | `cwxRepeat` | `bool` | bidirectional |  |
+| 110 | `cwxRepeatDelayS` | `i64` | bidirectional |  |
+| 111 | `cwxMemory1` | `utf8` | bidirectional |  |
+| 112 | `cwxMemory2` | `utf8` | bidirectional |  |
+| 113 | `cwxMemory3` | `utf8` | bidirectional |  |
+| 114 | `cwxMemory4` | `utf8` | bidirectional |  |
+| 115 | `cwxMemory5` | `utf8` | bidirectional |  |
+| 116 | `cwxMemory6` | `utf8` | bidirectional |  |
+| 117 | `cwxMemory7` | `utf8` | bidirectional |  |
+| 118 | `cwxMemory8` | `utf8` | bidirectional |  |
 
 **TransmitState** (50 properties)
 
@@ -4168,6 +4198,23 @@ Notes on the keys:
   empty or unreadable, the ten-band values) into a documented form, below
   ("The CFC band editor"). Sent only to a peer that declared `cfcProfile`
   1.
+- **`transmit` at `transmitSettingsVersion` 16** (R-CW-01, R-CW-03). The
+  CW settings, each bidirectional under its setter's name and declared
+  after `cfcProfile` in `TransmitModel`: `cwKeyerSpeed` (1 to 60 WPM),
+  `cwKeyerMode` (0 straight key, 1 iambic A, 2 iambic B), `cwKeyerWeight`
+  (33 to 66), `cwReversePaddles`, `cwStrictSpacing`, `cwBreakInMode` (0
+  off, 1 semi, 2 QSK), `cwBreakInDelayMs` (0 to 1000), `cwKeyDownDelayMs`
+  (0 to 255), `cwKeyUpDelayMs` (0 to 500), `cwSidetone`,
+  `cwRadioSidetone`, `cwComputerSidetone`, `cwAutoModeSwitch`,
+  `cwAutoModeReturn`, `cwAutoModeReturnMs` (1 to 10000, rounded to 10 ms),
+  `cwSerialPort` (`utf8`, empty for none), `cwSerialPaddles`,
+  `cwSerialKeyLine` and `cwSerialPttLine` (0 none, 1 DSR, 2 CTS),
+  `cwxSpeed` (5 to 60 WPM), `cwxRepeat`, `cwxRepeatDelayS` (1 to 60) and
+  `cwxMemory1` to `cwxMemory8` (`utf8`). The integers are `i64`, the
+  switches `bool`. They take the gates of the other transmit settings; a
+  value out of range is refused with its words (for example "Choose a
+  keyer speed from 1 to 60 WPM."). None keys the radio. A Core below 16
+  has none of them.
 - **Whose each slice is** (iPhone app plan Task 73; the several-devices
   design, rulings 5.1 to 5.6). With several devices on one Core every
   slice has an owner: the device that made it, the device that adopted it

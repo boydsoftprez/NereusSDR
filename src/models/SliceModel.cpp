@@ -188,6 +188,11 @@
 //                them on F5 1.0k. The F1-F10 presets stay as Thetis has
 //                them. By J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-26 - CW transmit, the three CW pitch reads use
+//                stationCwPitchHz() (200..2250 Hz, 10 Hz step, R-CW-02) in
+//                place of their own 100..2000 clamps; the stale Longpath
+//                CW pitch entry below is marked (R-CW-52). J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -316,6 +321,10 @@
 //                 followCwPitch, recentreStoredCwFilters, clampCwPitch;
 //                 CW pitch range 200..2250 (udCWPitch/udDSPCWPitch), one
 //                 read site instead of four.
+//                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
+//                 carried this Longpath code; the entry describes Longpath
+//                 only. Trunk's pitch reads use stationCwPitchHz(), its own
+//                 code, below.]
 //   2026-09-28 -- Filter preset table Thetis-faithful, by Martin Fischer
 //                 (OE5SOS), AI-assisted via Anthropic Claude, from Thetis
 //                 v2.10.3.15-5-g852bf0e console.cs InitFilterPresets:
@@ -332,6 +341,7 @@
 #include "Band.h"
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
+#include "core/CwTypes.h"
 #include "core/DiversityPattern.h"
 #include "core/LogCategories.h"
 #include "core/RadeChannel.h"
@@ -2801,15 +2811,11 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
     // read path needs to be in place now so the filter center moves with
     // the setting once that UI ships.  Thetis's CW pitch range is 200..2250 Hz
     // (setup.designer.cs:38264-38273 udDSPCWPitch, console.Designer.cs:1378-1388
-    // udCWPitch [v2.10.3.15]); the clamp below still uses 100..2000 and is a
-    // later change.
+    // udCWPitch [v2.10.3.15]); stationCwPitchHz() clamps to it and rounds to
+    // the 10 Hz step (R-CW-02, 2026-10-26).
     //
     // From Thetis display.cs:1029 [v2.10.3.15] — cw_pitch default 600.
-    auto& s = AppSettings::instance();
-    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-    if (cwPitch < 100)  { cwPitch = 100;  }
-    if (cwPitch > 2000) { cwPitch = 2000; }
-    const int kCwPitch = cwPitch;
+    const int kCwPitch = stationCwPitchHz();
     // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14693 [v2.10.3.15]
@@ -2930,11 +2936,7 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
     // AppSettings — see defaultFilterForMode() above for the full
     // rationale.  Default 600 Hz from Thetis display.cs:1029 [v2.10.3.15].
-    auto& s = AppSettings::instance();
-    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-    if (cwPitch < 100)  { cwPitch = 100;  }
-    if (cwPitch > 2000) { cwPitch = 2000; }
-    const int kCwPitch = cwPitch;
+    const int kCwPitch = stationCwPitchHz();
     // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14693 [v2.10.3.15]
@@ -3062,11 +3064,7 @@ QList<std::pair<int, int>> SliceModel::commonPresetsForMode(DSPMode mode)
         // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
         // AppSettings.  See defaultFilterForMode() for the full rationale.
         // From Thetis display.cs:1029 [v2.10.3.15] — default 600.
-        auto& s = AppSettings::instance();
-        int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-        if (cwPitch < 100)  { cwPitch = 100;  }
-        if (cwPitch > 2000) { cwPitch = 2000; }
-        const int kCwPitch = cwPitch;
+        const int kCwPitch = stationCwPitchHz();
         const int sign = (mode == DSPMode::CWL) ? -1 : 1;
         return { {sign*(kCwPitch-50),  sign*(kCwPitch+50)},
                  {sign*(kCwPitch-100), sign*(kCwPitch+100)},

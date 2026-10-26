@@ -585,6 +585,9 @@
 //   2026-10-22: a typed Core name's addresses raced in dialStation
 //               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: CW transmit, a refused CWPitch write settles the window's
+//               cwPitchHz on the Core's value (R-CW-02). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -4194,6 +4197,11 @@ void StationClient::handleSettingsReject(const SessionMessage& message)
         m_radioModel->scheduleRemoteOcReload(QString::fromUtf8(message.objectKey));
         // R-R3-46 (parity Task 6): a refused PA write settles on the Core's.
         m_radioModel->scheduleRemotePaReload(QString::fromUtf8(message.objectKey));
+        // R-CW-02: a refused CW pitch settles on the Core's.
+        if (QString::fromUtf8(message.objectKey)
+                .compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+            m_radioModel->notifyStationCwPitchMaybeChanged();
+        }
     }
     // Task 78: a write held for a question is not a refusal to show.
     if (!message.reason.isEmpty() && m_radioModel && !isAwaitingConfirmation(message.reason)) {

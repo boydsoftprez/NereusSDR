@@ -9980,6 +9980,12 @@ nereus_add_test(tst_tx_eq_set_curve
 nereus_add_test(tst_cfc_set_profile
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CW transmit (R-CW-01, R-CW-02, R-CW-03): the CW settings on TransmitModel,
+# the CW pitch accessor and property, and the settings on `transmit`
+# (transmitSettingsVersion 16). Loopback only, no RF, no audio device.
+nereus_add_test(tst_cw_settings
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 # Control logging lane: the Core's log lines for each control write and
 # command, its answer and handling time, and the gaps between a device's
 # control messages, rate-limited. Loopback only, no RF, no audio device.

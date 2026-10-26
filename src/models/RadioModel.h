@@ -743,6 +743,12 @@
 //                option c, a gap within four windows of the last one let
 //                through. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Claude Code.
+//   2026-10-26 - CW transmit, the CW pitch as a property: cwPitchHz,
+//                setCwPitchHz, cwPitchChanged and
+//                notifyStationCwPitchMaybeChanged over the station key
+//                CWPitch (R-CW-02); the stale Longpath entry below is
+//                marked (R-CW-52). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -815,9 +821,14 @@
 //                 GPLv3).
 //   2026-09-27 -- cwPitch()/setCwPitch()/cwPitchChanged(int) (Martin
 //                 Fischer, OE5SOS, AI-assisted via Anthropic Claude).
+//                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
+//                 carried this Longpath code; the entry describes Longpath
+//                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
+//                 are its own (R-CW-02).]
 // =================================================================
 
 #include "core/MoxController.h"
+#include "core/CwTypes.h"
 #include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
@@ -1199,6 +1210,19 @@ public:
     // 600 Hz from Thetis console.cs. Setup > DSP > CW's APF Center Freq
     // uses the same value (R-R3-21).
     static constexpr int kApfCwPitchHz = 600;
+
+    // R-CW-02: the station CW pitch (AppSettings "CWPitch", Station scope),
+    // 200..2250 Hz in 10 Hz steps (stationCwPitchHz). The value this model
+    // last read or set; cwPitchChanged follows it.
+    int cwPitchHz() const { return m_cwPitchHz; }
+    // Clamps and rounds (clampCwPitchHz), saves CWPitch and emits
+    // cwPitchChanged once when the value changes; an equal value does
+    // nothing.
+    void setCwPitchHz(int hz);
+    // Re-reads CWPitch and emits cwPitchChanged when it moved: on a remote
+    // window when the Core's key arrives (reportStationSettingChanged, a
+    // refused write), on a Core when a window's write of it lands.
+    void notifyStationCwPitchMaybeChanged();
 
     // Remote-daemon R2 Task 4: which side of the wire this model's DSP
     // lives on. Local (default; unchanged behavior) owns a
@@ -6458,6 +6482,8 @@ signals:
                                  bool shownOnPage);
     /// Remote window: a Core station setting changed (empty: a snapshot).
     void stationSettingChanged(const QString& key);
+    /// R-CW-02: the station CW pitch changed (cwPitchHz).
+    void cwPitchChanged(int hz);
     /// "Limit filter edges to sidebands" changed on this model's slices.
     void limitFiltersToSidebandsChanged(bool on);
     /// A setting the transmit gate reads (ExtendedTransmit) changed on
@@ -8420,6 +8446,8 @@ private:
     // Remote-daemon R2 Task 4: set once at construction (see the Role
     // constructor overload above), never mutated afterward.
     Role m_role{Role::Local};
+    // R-CW-02: cwPitchHz(), read from CWPitch in the constructor.
+    int m_cwPitchHz{kCwPitchDefaultHz};
     bool m_receiveOnlyStationPolicy{false};
 
     // R-R3-36: PC microphone session demand (see setPcCaptureAllowed).

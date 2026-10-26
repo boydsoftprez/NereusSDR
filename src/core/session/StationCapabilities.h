@@ -253,6 +253,9 @@
 //   2026-10-22 - radioAntennaRowsVersion 2 (kRadioAntennaRowsVersion):
 //                RX-only antennas 0..5, Thetis's checkbox sum. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, kTransmitSettingsCwVersion (16): the CW
+//                settings on `transmit` (R-CW-03). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -289,6 +292,14 @@ inline constexpr int kTransmitSettingsDifferentBandVersion = 14;
 /// at once against the revision the app last saw. Against an older Core a
 /// window keeps writing the CFC properties one by one.
 inline constexpr int kTransmitSettingsCfcProfileVersion = 15;
+
+/// From this transmitSettingsVersion the Core's `transmit` object carries the
+/// CW settings (R-CW-01, R-CW-03): the keyer, break-in, delays, sidetones,
+/// mode switch, serial key and CWX settings and the eight CWX memories,
+/// mirrored both ways and each refused out of range with its words. Against
+/// an older Core a window shows its CW controls disabled with the update
+/// reason.
+inline constexpr int kTransmitSettingsCwVersion = 16;
 
 /// The newest radioAntennaRowsVersion. 1: the one-band Alex edits bound to
 /// the connected radio's MAC. 2: and `rxOnlyAntennas` entries 0..5, Thetis's

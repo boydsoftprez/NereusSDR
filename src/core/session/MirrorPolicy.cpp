@@ -231,6 +231,9 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - SliceAccess receiverHolderDeviceId Outbound. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, the 30 CW settings on TransmitModel
+//                 Bidirectional (R-CW-03, transmitSettingsVersion 16).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -508,7 +511,7 @@ const MirrorPolicy::Entry kEntries[] = {
     // rxMeterStamps (StationServer::fitPeerOnlyProperties).
     { "SliceModel", "meterReadingNs", MirrorDirection::Outbound },
 
-    // ---- TransmitModel (87 entries) ----
+    // ---- TransmitModel (117 entries) ----
     // iPhone app plan Task 35 (R-IOS-13): MOX and TUNE travel from the
     // Core only. A remote device keys with the transmit verbs (tx.key,
     // tx.tune), which pass the Core's gates; a property write never keys
@@ -632,6 +635,40 @@ const MirrorPolicy::Entry kEntries[] = {
     // to a peer that declared cfcProfile (StationServer::fitPeerOnlyProperties).
     // An app changes it with cfc.setProfile.
     { "TransmitModel", "cfcProfile", MirrorDirection::Outbound },
+    // CW transmit (R-CW-01, R-CW-03, transmitSettingsVersion 16): the CW
+    // settings, both ways under the other transmit settings' gates. None
+    // keys the radio; a value out of range is refused with its words
+    // (TransmitModel::settingRangeRefusal).
+    { "TransmitModel", "cwKeyerSpeed", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyerMode", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyerWeight", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwReversePaddles", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwStrictSpacing", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwBreakInMode", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwBreakInDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyDownDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyUpDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwRadioSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwComputerSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeSwitch", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeReturn", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeReturnMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPort", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPaddles", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialKeyLine", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPttLine", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxSpeed", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxRepeat", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxRepeatDelayS", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory1", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory2", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory3", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory4", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory5", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory6", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory7", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory8", MirrorDirection::Bidirectional },
 
     // ---- TunerModel (21 entries) ----
     { "TunerModel", "relayC1", MirrorDirection::Outbound },

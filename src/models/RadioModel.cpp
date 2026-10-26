@@ -1381,6 +1381,12 @@
 //                so both come back as they were left on a restart. The AUTO
 //                tick still schedules no save. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, setCwPitchHz and
+//                notifyStationCwPitchMaybeChanged over CWPitch (R-CW-02);
+//                a remote window re-reads it when the Core's settings
+//                arrive (reportStationSettingChanged); the stale Longpath
+//                entry below is marked (R-CW-52). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1678,6 +1684,9 @@ mw0lge@grange-lane.co.uk
 //                 sidetone and the MOX VFO shift are CW TX, deferred);
 //                 APF centre = CWPitch + tune from the setting instead of
 //                 a fixed 600 (setup.cs tbRX1APFTune_Scroll).
+//                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
+//                 carried this Longpath code; the entry describes Longpath
+//                 only. Trunk's CW pitch property (R-CW-02) is its own.]
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -2061,6 +2070,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
     , m_wdspEngine(new WdspEngine(this))
 {
     m_role = role;
+    // R-CW-02: the station CW pitch as saved (a remote window re-reads it
+    // when the Core's settings arrive).
+    m_cwPitchHz = stationCwPitchHz();
     // Core speaker (Task 21): the text forms before anything is known.
     m_coreSpeakerDevice = coreSpeakerDeviceToJson(QString(), QString());
     m_coreSpeakerDevices = coreSpeakerDevicesToJson({});
@@ -11107,8 +11119,38 @@ void RadioModel::reportStationSettingChanged(const QString& key)
         // Parity ruling C12: the Core's per-band grid reaches this window's
         // pans (empty key: a whole snapshot).
         applyPanGridSetting(key);
+        // R-CW-02: the Core's CW pitch (the catalogue's CWPitch key).
+        if (key.isEmpty() || key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+            notifyStationCwPitchMaybeChanged();
+        }
         emit stationSettingChanged(key);
     }
+}
+
+void RadioModel::setCwPitchHz(int hz)
+{
+    // R-CW-02: Setup > DSP > CW's pitch range and step (CwTypes.h).
+    const int clamped = clampCwPitchHz(hz);
+    const QString stored = QString::number(clamped);
+    auto& s = AppSettings::instance();
+    if (s.value(QStringLiteral("CWPitch")).toString() != stored) {
+        s.setValue(QStringLiteral("CWPitch"), stored);
+    }
+    if (clamped == m_cwPitchHz) {
+        return;
+    }
+    m_cwPitchHz = clamped;
+    emit cwPitchChanged(m_cwPitchHz);
+}
+
+void RadioModel::notifyStationCwPitchMaybeChanged()
+{
+    const int hz = stationCwPitchHz();
+    if (hz == m_cwPitchHz) {
+        return;
+    }
+    m_cwPitchHz = hz;
+    emit cwPitchChanged(m_cwPitchHz);
 }
 
 void RadioModel::applyPanGridSetting(const QString& key)

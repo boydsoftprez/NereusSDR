@@ -227,6 +227,10 @@
 //   2026-10-16: the cut guard's measured silence goes to tripQuiet, so
 //               its stop never reports 400 ms for a longer silence. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, transmitSettingsVersion 16 (the CW settings
+//               on `transmit`, R-CW-03), and a window's CWPitch write
+//               reaches the Core's RadioModel::cwPitchHz (R-CW-02). J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -3715,6 +3719,12 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // settings of one preset move the revision once.
                 if (isCatalogSettingsKey(key)) {
                     m_catalog->scheduleRefresh();
+                    // R-CW-02: a window's CW pitch reaches the Core's own
+                    // cwPitchHz (an equal value emits nothing).
+                    if (m_radioModel
+                        && key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+                        m_radioModel->notifyStationCwPitchMaybeChanged();
+                    }
                 }
             });
     connect(m_settingsServer, &SettingsProxyServer::outboundValueRemoved, this,
@@ -3724,6 +3734,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
                 if (isCatalogSettingsKey(key)) {
                     m_catalog->scheduleRefresh();
+                    // R-CW-02: a removed CW pitch reads the default.
+                    if (m_radioModel
+                        && key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+                        m_radioModel->notifyStationCwPitchMaybeChanged();
+                    }
                 }
             });
     connect(m_settingsServer, &SettingsProxyServer::outboundValueRemoved, this,
@@ -13516,7 +13531,16 @@ int StationServer::transmitSettingsVersion() const
     // every band's frequency, compression, post-EQ gain and Q, the range,
     // the pre-compression and the post-EQ gain at once against the
     // revision the app last saw, as the peer's own cfcParaEqData write.
-    return m_radioModel.isNull() ? 0 : kTransmitSettingsCfcProfileVersion;
+    // 16: the CW settings on `transmit` (R-CW-01, R-CW-03): cwKeyerSpeed,
+    // cwKeyerMode, cwKeyerWeight, cwReversePaddles, cwStrictSpacing,
+    // cwBreakInMode, cwBreakInDelayMs, cwKeyDownDelayMs, cwKeyUpDelayMs,
+    // cwSidetone, cwRadioSidetone, cwComputerSidetone, cwAutoModeSwitch,
+    // cwAutoModeReturn, cwAutoModeReturnMs, cwSerialPort, cwSerialPaddles,
+    // cwSerialKeyLine, cwSerialPttLine, cwxSpeed, cwxRepeat,
+    // cwxRepeatDelayS and cwxMemory1 to cwxMemory8, under the gates of the
+    // other transmit settings, each refused out of range with its words
+    // (TransmitModel::settingRangeRefusal). None keys the radio.
+    return m_radioModel.isNull() ? 0 : kTransmitSettingsCwVersion;
 }
 
 bool StationServer::takesTransmitSettingsOnAir(SessionTransport* transport) const

@@ -2425,6 +2425,156 @@
                     "kind": "bool",
                     "name": "micMuted",
                     "ordinal": 86
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerSpeed",
+                    "ordinal": 89
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerMode",
+                    "ordinal": 90
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerWeight",
+                    "ordinal": 91
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwReversePaddles",
+                    "ordinal": 92
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwStrictSpacing",
+                    "ordinal": 93
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwBreakInMode",
+                    "ordinal": 94
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwBreakInDelayMs",
+                    "ordinal": 95
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyDownDelayMs",
+                    "ordinal": 96
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyUpDelayMs",
+                    "ordinal": 97
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwSidetone",
+                    "ordinal": 98
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwRadioSidetone",
+                    "ordinal": 99
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwComputerSidetone",
+                    "ordinal": 100
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwAutoModeSwitch",
+                    "ordinal": 101
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwAutoModeReturn",
+                    "ordinal": 102
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwAutoModeReturnMs",
+                    "ordinal": 103
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwSerialPort",
+                    "ordinal": 104
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwSerialPaddles",
+                    "ordinal": 105
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwSerialKeyLine",
+                    "ordinal": 106
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwSerialPttLine",
+                    "ordinal": 107
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwxSpeed",
+                    "ordinal": 108
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwxRepeat",
+                    "ordinal": 109
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwxRepeatDelayS",
+                    "ordinal": 110
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory1",
+                    "ordinal": 111
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory2",
+                    "ordinal": 112
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory3",
+                    "ordinal": 113
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory4",
+                    "ordinal": 114
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory5",
+                    "ordinal": 115
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory6",
+                    "ordinal": 116
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory7",
+                    "ordinal": 117
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory8",
+                    "ordinal": 118
                 }
             ],
             "type": "schema"
@@ -2954,6 +3104,186 @@
                     "name": "micMuted",
                     "ordinal": 86,
                     "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerSpeed",
+                    "ordinal": 89,
+                    "value": 25
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerMode",
+                    "ordinal": 90,
+                    "value": 2
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyerWeight",
+                    "ordinal": 91,
+                    "value": 50
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwReversePaddles",
+                    "ordinal": 92,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwStrictSpacing",
+                    "ordinal": 93,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwBreakInMode",
+                    "ordinal": 94,
+                    "value": 1
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwBreakInDelayMs",
+                    "ordinal": 95,
+                    "value": 300
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyDownDelayMs",
+                    "ordinal": 96,
+                    "value": 7
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwKeyUpDelayMs",
+                    "ordinal": 97,
+                    "value": 10
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwSidetone",
+                    "ordinal": 98,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwRadioSidetone",
+                    "ordinal": 99,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwComputerSidetone",
+                    "ordinal": 100,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwAutoModeSwitch",
+                    "ordinal": 101,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwAutoModeReturn",
+                    "ordinal": 102,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwAutoModeReturnMs",
+                    "ordinal": 103,
+                    "value": 2000
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwSerialPort",
+                    "ordinal": 104,
+                    "value": ""
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwSerialPaddles",
+                    "ordinal": 105,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwSerialKeyLine",
+                    "ordinal": 106,
+                    "value": 0
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwSerialPttLine",
+                    "ordinal": 107,
+                    "value": 0
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwxSpeed",
+                    "ordinal": 108,
+                    "value": 22
+                },
+                {
+                    "kind": "bool",
+                    "name": "cwxRepeat",
+                    "ordinal": 109,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwxRepeatDelayS",
+                    "ordinal": 110,
+                    "value": 3
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory1",
+                    "ordinal": 111,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory2",
+                    "ordinal": 112,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory3",
+                    "ordinal": 113,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory4",
+                    "ordinal": 114,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory5",
+                    "ordinal": 115,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory6",
+                    "ordinal": 116,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory7",
+                    "ordinal": 117,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cwxMemory8",
+                    "ordinal": 118,
+                    "value": ""
                 }
             ],
             "type": "object.create"

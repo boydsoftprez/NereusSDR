@@ -40,6 +40,9 @@
 //                                    Core's amplifier and tuner links ask
 //                                    for status at the keyed interval.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
+//                                    16 (the CW settings on `transmit`).
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <tuple>
@@ -254,9 +257,10 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     // G-42 (the Core's Extended transmit setting), 13 since the transmit
     // settings are taken on the air as a local window takes them, 14 since
     // Prevent TX'ing on a different band became the Core's setting, 15 since
-    // a remote window edits the CFC bands (cfcProfile).
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 15);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 15);
+    // a remote window edits the CFC bands (cfcProfile), 16 since the CW
+    // settings are on `transmit`.
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
     QVERIFY(s.client->transmitSettingsAvailable());
     QVERIFY(s.client->transmitSettingsAvailable(1));
     QVERIFY(s.client->transmitSettingsAvailable(2));
@@ -273,7 +277,8 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     QVERIFY(s.client->transmitSettingsAvailable(13));
     QVERIFY(s.client->transmitSettingsAvailable(14));
     QVERIFY(s.client->transmitSettingsAvailable(15));
-    QVERIFY(!s.client->transmitSettingsAvailable(16));
+    QVERIFY(s.client->transmitSettingsAvailable(16));
+    QVERIFY(!s.client->transmitSettingsAvailable(17));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(
         QStringLiteral("DspOptionsBufferSizePhoneTx")));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(

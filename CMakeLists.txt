@@ -1126,6 +1126,9 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
+    # CW transmit (R-CW-01, R-CW-02): the CW value types and the pitch accessor.
+    src/core/CwTypes.cpp
+    src/core/CwTypes.h
     src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
