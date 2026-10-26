@@ -12,7 +12,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26 - Band grids: the slice's band and group (setSliceBand), the
-//                 2 m reason kept with its band, clicks by band number.
+//                 2 m reason kept with its band, clicks by band number; an
+//                 SWL band lights as itself (bandGridBandFromFrequency).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30 - Fix round 1 (minor 4): MOX, TUNE and 2-TONE on a remote
 //                 window give the link-down words by state. J.J. Boyd
@@ -138,6 +139,7 @@
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ButtonBoxItem.h"
 #include "models/Band.h"
+#include "models/BandDefaults.h"
 #include "models/NotchModel.h"
 #include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
@@ -1210,7 +1212,8 @@ void ContainerButtonDispatcher::applyBand(BandButtonItem* item, int rxSource) co
     item->setBandUnavailableReason(Band::Band2m, reason2m);
     // The slice's own band group (each slice keeps its own).
     if (slice) {
-        item->setSliceBand(slice->sliceIndex(), bandFromFrequency(slice->frequency()));
+        item->setSliceBand(slice->sliceIndex(),
+                           BandDefaults::bandGridBandFromFrequency(slice->frequency()));
     } else {
         item->clearSliceBand();
     }
