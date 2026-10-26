@@ -966,6 +966,10 @@
 //                Linearity opened as their menu entries open them, under
 //                the same rules. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 35: a band grid click carries
+//                the band's number, so the GEN group's SWL bands reach the
+//                slice too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -15190,10 +15194,12 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
     if (!c || c->property("mainControlsWired").toBool()) { return; }
     c->setProperty("mainControlsWired",true);
     c->installEventFilter(this);
-    // Issue #118: the band buttons, now on the container's own slice.
-    connect(c, &ContainerWidget::bandClicked, this, [this, c](int idx) {
+    // Issue #118: the band buttons, now on the container's own slice. The
+    // grid sends the band's number (any band of its GEN, HF or VHF group);
+    // its jump buttons change the group inside the grid and send nothing.
+    connect(c, &ContainerWidget::bandClicked, this, [this, c](int band) {
         if (!m_containerButtons) { return; }
-        showContainerButtonReason(m_containerButtons->clickBand(idx, containerControlRxSource(c)));
+        showContainerButtonReason(m_containerButtons->clickBand(band, containerControlRxSource(c)));
     });
     connect(c, &ContainerWidget::modeClicked, this,
             [this, c](int index) { onContainerModeClicked(c, index); });

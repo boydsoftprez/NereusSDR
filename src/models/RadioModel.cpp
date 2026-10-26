@@ -1365,6 +1365,11 @@
 //                so both come back as they were left on a restart. The AUTO
 //                tick still schedules no save. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26 - Band clicks: the SWL bands (the band grid's GEN group)
+//                take their seeds, and a slice on an SWL band clicks and
+//                saves as that band (BandDefaults::bandGridBandFromFrequency).
+//                The transverter reason is only for XVTR. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -19116,8 +19121,10 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
 
     // Use slice frequency (not PanadapterModel::band()) so that in CTUN
     // mode with an off-center panadapter, the "current band" follows the
-    // VFO's actual band, not the DDC tuner's.
-    const Band current = bandFromFrequency(slice->frequency());
+    // VFO's actual band, not the DDC tuner's. Outside the ham bands it is
+    // the SWL band whose range holds the frequency, so a slice on 31m saves
+    // its state as 31m, not into GEN.
+    const Band current = BandDefaults::bandGridBandFromFrequency(slice->frequency());
     if (band == current) {
         // Same-band click — design decision Q1(a). Keeps UX predictable;
         // avoids yanking the VFO when the user is already in the band.
@@ -19162,9 +19169,13 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // user-visible feedback.
     BandSeed seed = BandDefaults::seedFor(band);
     if (!seed.valid) {
-        // XVTR today. Becomes meaningful once the XVTR epic ships.
-        const QString reason = QStringLiteral("Band %1 ignored: transverter settings are not available")
-                                   .arg(bandLabel(band));
+        // XVTR today. Becomes meaningful once the XVTR epic ships. Only
+        // XVTR has no seed; any other band says so in plain words.
+        const QString reason = band == Band::XVTR
+            ? QStringLiteral("Band %1 ignored: transverter settings are not available")
+                  .arg(bandLabel(band))
+            : QStringLiteral("Band %1 ignored: it has no starting frequency")
+                  .arg(bandLabel(band));
         qCDebug(lcConnection) << reason;
         emit bandClickIgnored(band, reason);
         return;

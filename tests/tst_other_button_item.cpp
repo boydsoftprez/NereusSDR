@@ -275,8 +275,11 @@ private slots:
         QVERIFY(!antennas.isButtonShown(9));  // Rx/Tx
         QVERIFY(antennas.isButtonShown(3));
         BandButtonItem bands;
-        QVERIFY(!bands.isButtonShown(uiIndexFromBand(Band::XVTR)));
-        QVERIFY(bands.isButtonShown(uiIndexFromBand(Band::Band20m)));
+        QVERIFY(bands.isButtonShown(bands.buttonForBand(Band::Band20m)));
+        // XVTR is in the VHF band group.
+        bands.setGroup(bands.shownSlice(), BandGroup::Vhf);
+        QVERIFY(!bands.isButtonShown(bands.buttonForBand(Band::XVTR)));
+        QVERIFY(bands.isButtonShown(bands.buttonForBand(Band::Band2m)));
     }
 
     void aHiddenButtonComesBackWhenItsFeatureIsBuilt()

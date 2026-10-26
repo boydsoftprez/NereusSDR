@@ -468,7 +468,11 @@ public:
     }
     BandButtonItem* bandButtons()
     {
-        if (!m_bandButtons) { m_bandButtons = std::make_unique<BandButtonItem>(); }
+        if (!m_bandButtons) {
+            m_bandButtons = std::make_unique<BandButtonItem>();
+            // XVTR is in the VHF band group.
+            m_bandButtons->setGroup(m_bandButtons->shownSlice(), BandGroup::Vhf);
+        }
         return m_bandButtons.get();
     }
     // The pan's filter policy dialog for chain 0, on the window's model.
@@ -605,7 +609,7 @@ QMap<F, QList<Surface>> surfaces()
     map[F::Equalizer] = {menu(QStringLiteral("&Equalizer..."))};
     map[F::Transverters] = {
         boxButton(QStringLiteral("antenna XVTR"), antennas, 5),
-        boxButton(QStringLiteral("band XVTR"), bands, uiIndexFromBand(Band::XVTR)),
+        boxButton(QStringLiteral("band XVTR"), bands, bandGroupPosition(BandGroup::Vhf, Band::XVTR)),
         menu(QStringLiteral("Trans&verters…")), menu(QStringLiteral("&VHF")),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("XVTR tab"), tab(QStringLiteral("XVTR"))),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("OC VHF tab"), tab(QStringLiteral("VHF")))};
