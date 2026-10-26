@@ -43,6 +43,11 @@
 //               14.212.000 room fits 260-298 px, the mode moving under the
 //               frequency when the row does not fit. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: managedPopOutIsThePopOutContainer replaces
+//               managedPopOutOpensTheRoundtableWindow: the container's Pop
+//               Out gives Roundtable a pop-out container like every applet;
+//               its own window opens from its own arrow (JJ, PR 657).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1921,7 +1926,7 @@ private slots:
         QVERIFY(!applet->isPoppedOut());
     }
 
-    void managedPopOutOpensTheRoundtableWindow()
+    void managedPopOutIsThePopOutContainer()
     {
         Posed p;
         p.model.applyRoom(talkingRoom());
@@ -1932,18 +1937,17 @@ private slots:
         QVERIFY(w.roundtable->parentWidget() != &w.host);
         QVERIFY(!w.roundtable->isPoppedOut());
 
-        // The container menu's Pop Out: the Roundtable window, no shell,
-        // the entry where it was.
+        // The panel's own arrow finds the panel through the container and
+        // opens Roundtable's own window; the entry stays where it was.
         ContainerArrangeController* arrange = w.manager->arrangeController();
         const quint64 revision = w.store.snapshot().revision;
-        QVERIFY(arrange->popOut(w.roundtableEntry).ok);
+        emit w.roundtable->panel()->popOutRequested();
         settle();
         QVERIFY(w.roundtable->isPoppedOut());
         QVERIFY(w.roundtable->floatingWindow()->isVisible());
         QVERIFY(w.host.isAppletFloating(w.roundtable));
         QCOMPARE(w.store.snapshot().containers.size(), 1);
         QCOMPARE(w.store.snapshot().revision, revision);
-        QCOMPARE(w.store.snapshot().containers.first().contents.first().id, w.roundtableEntry);
         QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
                  QStringLiteral("True"));
 
@@ -1956,19 +1960,33 @@ private slots:
         QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
                  QStringLiteral("False"));
 
-        // The panel's own arrow finds the panel through the container and
-        // opens the same window; Put it back docks it.
+        // Put it back here docks it too.
         emit w.roundtable->panel()->popOutRequested();
         settle();
         QVERIFY(w.roundtable->isPoppedOut());
-        QVERIFY(w.host.isAppletFloating(w.roundtable));
         child<QPushButton>(w.roundtable, QStringLiteral("roundtablePutBackBtn"))->click();
         settle();
         QVERIFY(!w.roundtable->isPoppedOut());
         QVERIFY(!w.host.isAppletFloating(w.roundtable));
         QCOMPARE(w.store.snapshot().containers.size(), 1);
 
-        // Every other applet keeps the pop-out shell.
+        // The container menu's Pop Out: a pop-out container, as for every
+        // other applet (JJ, PR 657), not Roundtable's own window.
+        QVERIFY(arrange->popOut(w.roundtableEntry).ok);
+        settle();
+        QCOMPARE(w.store.snapshot().containers.size(), 2);
+        QVERIFY(w.store.snapshot().containers.last().popOutShell);
+        QCOMPARE(w.store.snapshot().containers.last().contents.first().id, w.roundtableEntry);
+        QVERIFY(!w.roundtable->isPoppedOut());
+        QVERIFY(w.host.isAppletFloating(w.roundtable));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                 QStringLiteral("False"));
+        QVERIFY(arrange->returnEntry(w.roundtableEntry).ok);
+        settle();
+        QCOMPARE(w.store.snapshot().containers.size(), 1);
+        QVERIFY(!w.host.isAppletFloating(w.roundtable));
+
+        // So does every other applet.
         QVERIFY(arrange->popOut(w.monitorEntry).ok);
         settle();
         QCOMPARE(w.store.snapshot().containers.size(), 2);

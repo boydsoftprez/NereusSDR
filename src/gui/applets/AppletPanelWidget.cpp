@@ -16,6 +16,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The container's Pop Out is the pop-out container for every
+//                applet again: setArrangeController no longer installs the
+//                pop-out override, which sent Roundtable's to its own window
+//                (no pop-out container to move or snap). Its own window
+//                stays on its own control (JJ, PR 657). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - floatApplet shows an applet's own pop-out window
 //                (AppletWidget::createFloatingWindow) before any
 //                AppletFloatingWindow, in both modes; dockApplet,
@@ -322,23 +328,10 @@ void AppletPanelWidget::restoreOwnWindow(AppletWidget* applet)
 
 void AppletPanelWidget::setArrangeController(ContainerArrangeController *controller)
 {
-    if (m_arrange && m_arrange != controller) {
-        m_arrange->setPopOutOverride({});
-    }
+    // The container's Pop Out gives every applet a pop-out container, one
+    // with a window of its own too; that window opens from the applet's own
+    // control (floatApplet).
     m_arrange = controller;
-    if (!m_arrange) { return; }
-    // The container menu's Pop Out (and every other path through popOut)
-    // opens an applet's own window when it has one; others get the shell.
-    QPointer<AppletPanelWidget> self(this);
-    m_arrange->setPopOutOverride([self](const ContentEntry& entry) {
-        if (!self) { return false; }
-        for (AppletWidget* applet : std::as_const(self->m_applets)) {
-            if (entry.typeId == QStringLiteral("applet:") + applet->appletId()) {
-                return self->floatOwnWindow(applet);
-            }
-        }
-        return false;
-    });
 }
 
 bool AppletPanelWidget::floatOwnWindow(AppletWidget* applet)

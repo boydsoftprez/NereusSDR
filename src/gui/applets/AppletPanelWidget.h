@@ -16,6 +16,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setArrangeController installs no pop-out override: the
+//                container's Pop Out is the pop-out container for every
+//                applet (JJ, PR 657). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-24 - An applet's own pop-out window (AppletWidget::
 //                createFloatingWindow) floats and docks through the panel
 //                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
@@ -67,9 +71,9 @@ class AppletPanelWidget : public QWidget {
     Q_OBJECT
 public:
     explicit AppletPanelWidget(QWidget* parent = nullptr);
-    // Also installs the controller's pop-out override: an applet with a
-    // window of its own (AppletWidget::createFloatingWindow) pops out into
-    // it from every Pop Out path, other applets into a pop-out shell.
+    // The container's Pop Out (the controller's popOut) gives every applet
+    // a pop-out container; an applet's own window (AppletWidget::
+    // createFloatingWindow) opens from its own control, through floatApplet.
     void setArrangeController(ContainerArrangeController* controller);
 
     // The property naming an applet's panel (a QPointer<QObject>), set by addApplet

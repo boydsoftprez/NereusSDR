@@ -9852,6 +9852,12 @@ target_compile_definitions(tst_roundtable_spothub PRIVATE
 # the read bar, keyed, the connection line, drafts, the counter, Not sent,
 # the message menus, the mute fold, the pills and the keyboard.
 nereus_add_test(tst_roundtable_panel)
+# PR 657 container bugs: the Roundtable applet as a container item like any
+# other in the real MainWindow, workspace look on: Move to a new container
+# applies, a drag drops, the container Pop Out is the pop-out container (its
+# own window stays on its own arrow), the container snaps, and a rooms
+# refresh leaves the saved workspace alone (offscreen).
+nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
 # Roundtable plan Task 14: the Roundtable tags on a panadapter: where they
 # go, which fold into +N (your room and rooms that name you never do, a
 # lone neighbor moves aside, folds widen only when the tags don't fit),
