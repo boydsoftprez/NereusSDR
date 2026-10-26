@@ -2,6 +2,8 @@
 // payload by slice and radio, the send interval, the endpoint by 4-char ID
 // and the MMIO direction rule.
 // Modification history (NereusSDR):
+//   2026-10-26: a preview copy never sends; the live copy does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: first version. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 #include <QtTest>
@@ -12,6 +14,7 @@
 #include <QNetworkDatagram>
 #include <QSpinBox>
 #include <QUdpSocket>
+#include <QWidget>
 #include <QXmlStreamReader>
 #include <memory>
 
@@ -54,6 +57,18 @@ void writeEndpoint(const QUuid& guid, const QString& direction, quint16 targetPo
     s.setValue(key(QStringLiteral("Direction")), direction);
     s.setValue(key(QStringLiteral("UdpTargetHost")), QStringLiteral("127.0.0.1"));
     s.setValue(key(QStringLiteral("UdpTargetPort")), QString::number(targetPort));
+}
+
+// A saved RAW data out entry sending every 100 ms to guid.
+ContentEntry sendingEntry(const QUuid& guid)
+{
+    ContentEntry entry;
+    entry.id = QStringLiteral("dataout-sending");
+    entry.typeId = QStringLiteral("DATAOUT");
+    entry.name = QStringLiteral("DataOut");
+    entry.config.insert(QStringLiteral("legacyRecord"),
+        QStringLiteral("DATAOUT|0|0|1|1|-1|0|||2|0|100|") + guid.toString(QUuid::WithoutBraces));
+    return entry;
 }
 
 QHash<int, double> swrAndPower()
@@ -298,6 +313,83 @@ private slots:
         const QString text = QString::fromLatin1(received);
         QVERIFY2(text.startsWith(QStringLiteral("radio:abc123:")), qPrintable(text));
         QVERIFY2(text.contains(QStringLiteral("slice:A:swr:1.5:")), qPrintable(text));
+    }
+
+    void previewNeverSendsWhileLiveCopySends()
+    {
+        QUdpSocket receiver;
+        QVERIFY(receiver.bind(QHostAddress::LocalHost, 0));
+        writeEndpoint(kOutGuid, QStringLiteral("Out"), receiver.localPort());
+        auto& engine = ExternalVariableEngine::instance();
+        engine.init();
+        MmioEndpoint* ep = engine.endpoint(kOutGuid);
+        QVERIFY(ep);
+        const ContentEntry entry = sendingEntry(kOutGuid);
+        ContainerContentRegistry registry;
+
+        // The preview path the settings dialog and workspace preview use.
+        QWidget host;
+        std::unique_ptr<QWidget> preview(registry.createPreview(entry, &host));
+        QVERIFY(preview);
+        auto* previewItem = preview->findChild<DataOutItem*>();
+        QVERIFY(previewItem);
+        QCOMPARE(previewItem->endpointGuid(), kOutGuid);
+        QCOMPARE(previewItem->sendIntervalMs(), 100);
+        QVERIFY(!previewItem->sendEnabled());
+        QVERIFY(!previewItem->sendTimerActive());
+        auto* previewMeter = qobject_cast<MeterWidget*>(preview.get());
+        QVERIFY(previewMeter);
+        previewMeter->updateMeterValue(MeterBinding::TxSwr, 1.5);
+        // Not even a direct send, nor a later endpoint change, makes it act.
+        previewItem->sendNow();
+        previewItem->setEndpointGuid(kOutGuid);
+        QVERIFY(!previewItem->sendTimerActive());
+        QCOMPARE(ep->outboundQueueSize(), 0);
+
+        // Validation copies are inert too.
+        std::unique_ptr<MeterItem> validation(
+            registry.createMeterItem(entry, nullptr, ContentRenderMode::Validation));
+        auto* validationItem = qobject_cast<DataOutItem*>(validation.get());
+        QVERIFY(validationItem);
+        QVERIFY(!validationItem->sendTimerActive());
+
+        // Five send intervals pass and nothing arrives.
+        QTest::qWait(5 * 100);
+        QVERIFY(!receiver.hasPendingDatagrams());
+
+        // The live copy of the same entry sends.
+        MeterWidget liveMeter;
+        MeterItem* live = registry.createMeterItem(entry, &liveMeter);
+        auto* liveItem = qobject_cast<DataOutItem*>(live);
+        QVERIFY(liveItem);
+        QVERIFY(liveItem->sendEnabled());
+        QVERIFY(liveItem->sendTimerActive());
+        liveMeter.addItem(live);
+        liveMeter.updateMeterValue(MeterBinding::TxSwr, 1.5);
+        QByteArray received;
+        const auto drain = [&receiver, &received] {
+            while (receiver.hasPendingDatagrams()) {
+                received.append(receiver.receiveDatagram().data());
+            }
+            return !received.isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(drain(), 5000);
+        QVERIFY2(QString::fromLatin1(received).contains(QStringLiteral("swr:1.5:")),
+                 received.constData());
+    }
+
+    void timerRunsOnlyWithAnEndpoint()
+    {
+        DataOutItem item;
+        QVERIFY(!item.sendTimerActive());
+        item.setEndpointGuid(kOutGuid);
+        QVERIFY(item.sendTimerActive());
+        item.setSendEnabled(false);
+        QVERIFY(!item.sendTimerActive());
+        item.setSendEnabled(true);
+        QVERIFY(item.sendTimerActive());
+        item.setEndpointGuid({});
+        QVERIFY(!item.sendTimerActive());
     }
 
     void inEndpointReceivesNothing()

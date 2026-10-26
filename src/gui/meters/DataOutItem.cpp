@@ -14,6 +14,9 @@
 //                 4-char ID: JSON, XML or RAW as Thetis clsDataOut.Update
 //                 writes them, naming the slice and radio in place of rx.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A copy with sending disabled (a preview) runs no timer and
+//                 sends nothing. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -97,7 +100,28 @@ DataOutItem::DataOutItem(QObject* parent)
 {
     m_sendTimer.setInterval(m_sendIntervalMs);
     connect(&m_sendTimer, &QTimer::timeout, this, &DataOutItem::sendNow);
-    m_sendTimer.start();
+}
+
+void DataOutItem::setEndpointGuid(const QUuid& guid)
+{
+    m_endpointGuid = guid;
+    updateSendTimer();
+}
+
+void DataOutItem::setSendEnabled(bool enabled)
+{
+    m_sendEnabled = enabled;
+    updateSendTimer();
+}
+
+void DataOutItem::updateSendTimer()
+{
+    const bool run = m_sendEnabled && !m_endpointGuid.isNull();
+    if (run && !m_sendTimer.isActive()) {
+        m_sendTimer.start();
+    } else if (!run) {
+        m_sendTimer.stop();
+    }
 }
 
 void DataOutItem::setSendIntervalMs(int ms)
@@ -198,7 +222,7 @@ void DataOutItem::sendNow()
     // From Thetis MeterManager.cs:17378-17381 [v2.10.3.15]: nothing is sent
     // without a known endpoint (enqueueOutbound drops an unknown guid and
     // a direction-In endpoint).
-    if (m_endpointGuid.isNull()) { return; }
+    if (!m_sendEnabled || m_endpointGuid.isNull()) { return; }
     // An item outside a meter (a record being read or captured) has no
     // readings and sends nothing.
     MeterWidget* meter = hostMeter();
@@ -247,7 +271,7 @@ bool DataOutItem::deserialize(const QString& data)
         const int ms = parts[11].toInt(&ok);
         if (ok) { setSendIntervalMs(ms); }
     }
-    if (parts.size() > 12) { m_endpointGuid = QUuid(parts[12]); }
+    if (parts.size() > 12) { setEndpointGuid(QUuid(parts[12])); }
     return true;
 }
 

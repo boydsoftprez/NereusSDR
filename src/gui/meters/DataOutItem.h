@@ -17,6 +17,10 @@
 //                 ID, with the hosting meter's readings named as Thetis
 //                 names them and the entry's slice and radio. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setSendEnabled(false) keeps a preview copy inert: no timer
+//                 and nothing sent. The timer runs only while sending is
+//                 enabled and an endpoint is chosen. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -110,8 +114,16 @@ public:
 
     // The MMIO endpoint the item sends to (Thetis MMIOGuid); null sends
     // nothing. The editor picks it by the endpoint's 4-char ID.
-    void setEndpointGuid(const QUuid& guid) { m_endpointGuid = guid; }
+    void setEndpointGuid(const QUuid& guid);
     QUuid endpointGuid() const { return m_endpointGuid; }
+
+    // False for a copy that only shows the entry (ContentRenderMode Preview
+    // or Validation): it runs no timer and sendNow() sends nothing. True by
+    // default. The send timer runs only while this is true and an endpoint
+    // is chosen.
+    void setSendEnabled(bool enabled);
+    bool sendEnabled() const { return m_sendEnabled; }
+    bool sendTimerActive() const { return m_sendTimer.isActive(); }
 
     // Set by MainWindow from the entry's Source and the session: the slice
     // letter (null when the Source resolves to no slice) and the radio id
@@ -143,6 +155,7 @@ public:
 
 private:
     MeterWidget* hostMeter() const;
+    void updateSendTimer();
 
     QString m_mmioGuid;
     QString m_mmioVariable;
@@ -152,6 +165,7 @@ private:
     QUuid m_endpointGuid;
     QChar m_sliceLetter;
     QString m_radioId;
+    bool m_sendEnabled{true};
     QTimer m_sendTimer;
 };
 } // namespace NereusSDR
