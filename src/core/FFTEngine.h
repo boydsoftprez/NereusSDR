@@ -58,6 +58,10 @@
 //               the last reset. Gaps one to four windows apart keep the
 //               full frame rate too. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Claude Code.
+//   2026-10-26: NereusSDR-original test seam setFrameGapClockForTest: the
+//               5 ms minimum frame gap can read a test's clock, so a test
+//               passes it without sleeping. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -112,6 +116,7 @@
 #include <QElapsedTimer>
 
 #include <atomic>
+#include <functional>
 #include <limits>
 
 #ifdef HAVE_FFTW3
@@ -335,6 +340,15 @@ public:
     /// link was lossy (requestWindowReset() says when).
     quint64 windowResetsSkipped() const { return m_windowResetsSkipped.load(); }
 
+    /// Test seam, NereusSDR-original (2026-10-26): the clock, in ms, that
+    /// the 5 ms minimum frame gap reads in place of its own timer, so a
+    /// test passes the gap by advancing its clock instead of sleeping. Set
+    /// it before any input is fed; the worker thread calls it.
+    void setFrameGapClockForTest(std::function<qint64()> clock)
+    {
+        m_frameGapClockForTest = std::move(clock);
+    }
+
     /// NereusSDR-original (2026-10-23). This engine's worker thread only.
     /// Takes a pending requestWindowReset() now rather than at the next
     /// feedIQ(), which takes it the same way. Returns true when the window
@@ -536,6 +550,10 @@ private:
     // Output rate limiting
     QElapsedTimer m_frameTimer;
     bool m_frameTimerStarted{false};
+    // setFrameGapClockForTest: the test's clock, and its reading at the
+    // last frame (worker thread only).
+    std::function<qint64()> m_frameGapClockForTest;
+    qint64 m_frameGapTestStampMs{0};
     // NereusSDR-original (2026-10-21): the 5 ms rule's skips, counted, and
     // a warning at most once per kMinimumGapWarningIntervalMs for skips
     // that broke an overlapped window (worker thread only, but the counts).

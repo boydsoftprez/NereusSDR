@@ -20,6 +20,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - governNnrLoadForTest takes the governor over: the load
+//                sampler's own tick no longer calls governNnrLoad once a
+//                test drives it, so its synthetic clock is the only one,
+//                and the takeover starts the governor afresh;
+//                dspLoadTickForTest runs one real tick, and nothing on a
+//                model with no load sampler (Role::Remote). J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
 //                setting (Setup's "Limit filter edges to sidebands", Thetis
 //                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
@@ -2367,9 +2374,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
         // R-R3-40: the NNR step-back reads the snapshot just taken (Qt runs
         // the two slots in connection order).
         m_nnrGovernorClock.start();
-        connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
-            governNnrLoad(m_nnrGovernorClock.elapsed());
-        });
+        connect(m_dspLoadTimer, &QTimer::timeout, this, &RadioModel::governNnrLoadOnTick);
         // 2026-10-22: noise-reduction calls over 50 ms and non-finite WDSP
         // output, on the same tick. The slow-call labels were recorded at
         // call time, so the governor's step above cannot relabel them.
@@ -15586,9 +15591,39 @@ void RadioModel::governNnrLoad(qint64 nowMs)
     });
 }
 
+void RadioModel::governNnrLoadOnTick()
+{
+    // A test driving the governor owns its clock (and its loads): a real
+    // tick between its checks would set the time base on this clock
+    // instead.
+    if (m_nnrGovernorDrivenByTest) {
+        return;
+    }
+    governNnrLoad(m_nnrGovernorClock.elapsed());
+}
+
+void RadioModel::dspLoadTickForTest()
+{
+    // Only a model whose load sampler runs (Role::Local) has the tick, and
+    // only it starts m_nnrGovernorClock.
+    if (!m_dspLoadTimer) {
+        return;
+    }
+    // The timer's three slots, in their connection order.
+    sampleReceiverDspLoad();
+    governNnrLoadOnTick();
+    reportDspDiagnostics(m_nnrGovernorClock.elapsed());
+}
+
 void RadioModel::governNnrLoadForTest(qint64 nowMs,
                                       const QHash<int, std::optional<double>>& loads)
 {
+    if (!m_nnrGovernorDrivenByTest) {
+        // The takeover starts the governor afresh: history a real tick left
+        // was taken on the other clock.
+        m_nnrGovernor = NnrLoadGovernor{};
+        m_nnrGovernorDrivenByTest = true;
+    }
     governNnrLoadWith(nowMs, [&loads](int sliceId) {
         return loads.value(sliceId, std::nullopt);
     });

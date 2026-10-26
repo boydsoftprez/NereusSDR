@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  J.J. Boyd / KG4VCF. CI load round: three ctest entries,
+//                                    each function in one by its place in
+//                                    the list. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-03  J.J. Boyd / KG4VCF. Committed workspace restoration fixture.
 //                                    AI-assisted via OpenAI Codex.
 //   2026-09-23  J.J. Boyd / KG4VCF  R3 controls that work, Task 1.
@@ -25,6 +29,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include "TestFunctionGroups.h"
 #include <QAction>
 #include <QApplication>
 #include <QFile>
@@ -410,5 +415,30 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstControlsThatWork)
+// CI load round, 2026-10-26: about 12 full MainWindows in one entry ran
+// near the 120 s limit and timed out at load 76 locally.
+// 3 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstControlsThatWork test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 3;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}},
+                                                       {QStringLiteral("part3"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 3 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_CONTROLS_THAT_WORK_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_controls_that_work.moc"
