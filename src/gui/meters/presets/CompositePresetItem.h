@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display: displayMode, vfoLayout, vfoShowBandText and
+//                 the clsVfoDisplay colour keys, and kVfoPresetThetisDefaults
+//                 for new VFO display faces. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Clock: the thetisFormat key (Thetis time and date strings)
 //                 and kClockPresetThetisDefaults for new clock faces.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -76,6 +80,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterDynamics.h"
+#include "gui/meters/VfoDisplayItem.h"
 #include <QJsonObject>
 #include <QDateTime>
 #include <QImage>
@@ -292,5 +297,20 @@ struct ClockPresetThetisDefaults {
 inline constexpr ClockPresetThetisDefaults kClockPresetThetisDefaults{
     true,                       // renderClock's strings (:40489-40516)
     true,                       // _24HourClock = true (:15416)
+};
+// New VFO display faces (makeEntry) take the VFO display item's Thetis
+// values (kVfoDisplayThetisDefaults, VfoDisplayItem.h): the clsVfoDisplay
+// colours, the background, band text off and the detailed layout. Thetis
+// applies the same set to a VFO display group at MeterManager.cs:28052-28074
+// [v2.10.3.15]. Thetis starts on VFO_BOTH (:14341); a new face starts on
+// Source slice, as a new VFO display item does. A saved face without the
+// keys keeps the look its "vfo" record gives it.
+struct VfoPresetThetisDefaults {
+    VfoDisplayThetisDefaults display;
+    int displayMode;
+};
+inline constexpr VfoPresetThetisDefaults kVfoPresetThetisDefaults{
+    kVfoDisplayThetisDefaults,
+    static_cast<int>(VfoDisplayItem::DisplayMode::SourceSlice),
 };
 }
