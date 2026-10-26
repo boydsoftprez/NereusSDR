@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars (AddPWRBar,
+//                 AddSWRBar): multi-point scale calibration, power limit
+//                 (powerLimitW, 0 follows the radio's rating) and their
+//                 Thetis defaults. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Thetis bar colour set: scale low and high colours, show
 //                 marker, peak hold and peak value colours, solid and
 //                 segment low and high colours, average (sub) marker colour
@@ -64,6 +69,9 @@ mw0lge@grange-lane.co.uk
 #include <QFont>
 #include <QRgb>
 #include <array>
+#include <utility>
+#include <QList>
+#include <QPointF>
 namespace NereusSDR {
 class BarPresetItem : public MeterItem {
     Q_OBJECT
@@ -78,6 +86,11 @@ public:
     // New items (makeEntry) take the kBarPresetThetisDefaults row for their
     // flavor; a custom bar also takes kCustomBarThetisDefaults.
     void applyNewItemDefaults() override;
+    // The radio's rating; a PWR bar with no power limit of its own scales to it.
+    using MeterItem::setPowerScale;
+    void setPowerScale(int limitWatts, double topWatts) override;
+    // The power limit a PWR or Reverse PWR bar normalises to (W).
+    double effectivePowerLimit() const;
     void setAboveS9Frequency(bool above) override { MeterItem::setAboveS9Frequency(above); if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer layer) const override;
@@ -111,6 +124,10 @@ private:
     // Today's paint for the colour-set keys; a saved record without a key
     // keeps it.
     void resetColourSet();
+    bool isPowerFlavor() const;
+    // PWR and Reverse PWR: range, high point and scale ticks follow the
+    // effective power limit.
+    void updatePowerScale();
     QString m_flavor = QStringLiteral("Custom"), m_label;
     int m_secondary = -1;
     double m_minimum = -30, m_maximum = 12, m_redThreshold = 0;
@@ -135,6 +152,12 @@ private:
     QColor m_scaleLow = Qt::white, m_scaleHigh = Qt::red, m_subColor{169,169,169};
     QColor m_peakHoldColor, m_peakValueColor, m_segLowColor, m_segHighColor;
     bool m_showMarker = true, m_showSub = true, m_showTitle = true;
+    // Multi-point calibration (value, position) for PWR and SWR; empty for
+    // the two-segment scales.
+    QList<QPointF> m_calibration;
+    // powerLimitW: 0 follows the radio's rating (MaxPower recovery,
+    // MeterManager.cs:7137 [v2.10.3.15]).
+    double m_powerLimitW = 0, m_radioRatingW = kDefaultBarPowerLimitW;
 };
 
 // New bar presets take their Thetis builder's values, over the clsBarItem
@@ -175,8 +198,9 @@ inline constexpr QRgb kLemonChiffonHistory = qRgba(0xff, 0xfa, 0xcd, 128); // Fr
 inline constexpr QRgb kPaleTurquoiseHistory = qRgba(0xaf, 0xee, 0xee, 128);// FromArgb(128, PaleTurquoise)
 inline constexpr QRgb kPeachPuffHistory = qRgba(0xff, 0xda, 0xb9, 128);    // FromArgb(128, PeachPuff)
 inline constexpr QRgb kVioletHistory = qRgba(0xee, 0x82, 0xee, 128);       // FromArgb(128, Violet)
+inline constexpr QRgb kOrangeHistory = qRgba(0xff, 0xa5, 0x00, 128);       // FromArgb(128, Orange)
 }
-inline constexpr std::array<BarPresetThetisDefaults, 19> kBarPresetThetisDefaults{{
+inline constexpr std::array<BarPresetThetisDefaults, 22> kBarPresetThetisDefaults{{
     // From Thetis MeterManager.cs:22822-22900 [v2.10.3.15] (AddSMeterBarSignal, shared builder)
     {"Signal", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kCadetBlue, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
     // From Thetis MeterManager.cs:22826 [v2.10.3.15] (AddSMeterBarSignalAvg, shared builder)
@@ -215,7 +239,34 @@ inline constexpr std::array<BarPresetThetisDefaults, 19> kBarPresetThetisDefault
     {"CfcGain", BarPresetColours::kYellow, BarPresetColours::kPaleTurquoiseHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
     // From Thetis MeterManager.cs:25004-25072 [v2.10.3.15] (AddCompBar)
     {"Comp", BarPresetColours::kYellow, BarPresetColours::kPeachPuffHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:25185-25311 [v2.10.3.15] (AddPWRBar, Reading.PWR at :25177)
+    {"Pwr", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:25185-25311 [v2.10.3.15] (AddPWRBar, Reading.REVERSE_PWR at :25181)
+    {"ReversePwr", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:25313-25375 [v2.10.3.15] (AddSWRBar)
+    {"Swr", BarPresetColours::kYellow, BarPresetColours::kOrangeHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
 }};
+// PWR bar calibration, value normalised to 100 W -> position. Thetis keeps
+// only its "case 100" table live; the other power ratings are commented out
+// and NormaliseTo100W scales the reading instead.
+// From Thetis MeterManager.cs:25231-25236 [v2.10.3.15]
+inline constexpr std::array<std::pair<double, double>, 6> kPwrBarCalibration{{
+    {0.0, 0.0}, {5.0, 0.1875}, {10.0, 0.375}, {50.0, 0.5625}, {100.0, 0.75}, {120.0, 0.99}}};
+// From Thetis MeterManager.cs:25276 [v2.10.3.15] (cb.HighPoint = ScaleCalibration ElementAt(4))
+inline constexpr int kPwrBarHighPointIndex = 4;
+// From Thetis MeterManager.cs:25334-25338 [v2.10.3.15]
+inline constexpr std::array<std::pair<double, double>, 5> kSwrBarCalibration{{
+    {1.0, 0.0}, {1.5, 0.25}, {2.0, 0.5}, {3.0, 0.75}, {5.0, 0.99}}};
+// From Thetis MeterManager.cs:25342 [v2.10.3.15] (cb.HighPoint = ScaleCalibration ElementAt(3))
+inline constexpr int kSwrBarHighPointIndex = 3;
+// Scale ticks, as values: Thetis draws them at fixed positions
+// (MeterManager.cs:33486-33597 PWR, 33603-33684 SWR [v2.10.3.15]), here
+// mapped back through the calibration above. PWR values are normalised to
+// 100 W: labels "5", "10", "50", "100", "120+" of the power limit.
+inline constexpr std::array<double, 5> kPwrBarMajorTicks{5.0, 10.0, 50.0, 100.0, 120.0};
+inline constexpr std::array<double, 5> kPwrBarMinorTicks{2.5, 7.5, 30.0, 75.0, 110.0};
+inline constexpr std::array<double, 5> kSwrBarMajorTicks{1.5, 2.0, 3.0, 4.0, 5.0};
+inline constexpr std::array<double, 16> kSwrBarMinorTicks{1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.2, 2.4, 2.6, 2.8, 3.5, 4.5};
 // A new custom bar's range, units and title (the setup defaults Thetis
 // reads when it applies a custom bar).
 struct CustomBarThetisDefaults { double minimum, maximum, high; const char* units; const char* title; };

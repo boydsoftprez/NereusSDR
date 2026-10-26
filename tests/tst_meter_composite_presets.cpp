@@ -926,7 +926,8 @@ private slots:
         for(const auto& descriptor:registry.descriptors()) {
             if(!descriptor.typeId.startsWith("meter.")) { continue; }
             ContentEntry entry=registry.makeEntry(descriptor.typeId);
-            if(descriptor.typeId=="meter.adcMax") { QVERIFY(!descriptor.available); QVERIFY(!registry.createMeterItem(entry,nullptr)); QVERIFY(descriptor.unavailableReason.contains("magnitude")); continue; }
+            // meter.adcMax is created: its bar veils itself with the one reason.
+            if(descriptor.typeId=="meter.adcMax") { QVERIFY(descriptor.available); std::unique_ptr<MeterItem> adc(registry.createMeterItem(entry,nullptr)); QVERIFY(adc); QCOMPARE(adc->bindingUnavailableReason(-1),QStringLiteral("ADC magnitude is not available")); }
             std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); QVERIFY2(item,qPrintable(descriptor.typeId));
             if(auto* face=qobject_cast<CompositePresetItem*>(item.get())) {
                 auto edit=face->configuration(); if(face->editableFields().contains("title")) { edit["title"]="Edited | title"; } if(face->editableFields().contains("backdropColor")) { edit["backdropColor"]="#ff102030"; } edit["future"]=QJsonObject{{"keep",true}}; edit["faceHeight"]=320;
