@@ -36,6 +36,10 @@
 //               readability, keepalives holding a key, an older epoch
 //               holding nothing, the watchdog's stop and the delayed copy.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the stop bound is named
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1303,7 +1307,7 @@ private slots:
         }
         QCOMPARE(tripped.count(), 1);
         const qint64 silent = tripped.first().at(2).toLongLong();
-        QVERIFY2(silent > RemoteTxWatchdog::kLinkLossDeadlineMs && silent <= 500,
+        QVERIFY2(silent > RemoteTxWatchdog::kLinkCutMs && silent <= 500,
                  qPrintable(QString::number(silent)));
         QVERIFY(!p.mox->isMox());
         // The key's delayed copy: refused, nothing keys.

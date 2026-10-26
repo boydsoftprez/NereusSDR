@@ -5,13 +5,13 @@
 //
 // RemoteTxCutGuard: a keyed remote device's transmit is cut on the guard's
 // own thread when keepalives heard off the main thread stop for
-// RemoteTxWatchdog::kLinkLossDeadlineMs (400 ms), while the main thread is
+// RemoteTxWatchdog::kLinkCutMs, while the main thread is
 // held. "Main held" here means the test's main thread sleeps with
 // std::this_thread::sleep_for and runs no event loop (the guard is not a
 // QObject and needs none).
 //
 // Real time throughout: labelled realtime. A cut comes more than
-// kLinkLossDeadlineMs and at most kLinkLossDeadlineMs + 100 ms (500 ms)
+// kLinkCutMs and at most kLinkCutMs + 100 ms
 // after the last stamp, the bounds tst_tx_link_loss_each_path uses.
 //
 // =================================================================
@@ -22,6 +22,10 @@
 //   2026-10-16: a cut comes after more than kDeadlineMs of silence, never
 //               at it (the watchdog's rule): every bound is now strict.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the stop bound is named
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxCutGuard.h"
@@ -45,7 +49,7 @@ namespace {
 using Clock = RemoteTxCutGuard::Clock;
 
 constexpr qint64 kDeadlineMs = RemoteTxCutGuard::kDeadlineMs;
-constexpr qint64 kBoundMs = RemoteTxWatchdog::kLinkLossDeadlineMs + 100;
+constexpr qint64 kBoundMs = RemoteTxWatchdog::kLinkCutMs + 100;
 constexpr auto kTick = 100ms;
 
 struct Cut {

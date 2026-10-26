@@ -37,6 +37,10 @@
 //               entries are in before a mark; a station server destroyed
 //               before its cut's post still clears the cut. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the stop bound is named
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -78,7 +82,7 @@ using Clock = std::chrono::steady_clock;
 constexpr int kMainHoldMs = 500;
 constexpr double kReachBoundMs = 50.0;
 // The bound tst_tx_link_loss_each_path uses (kBoundMs).
-constexpr qint64 kCutBoundMs = RemoteTxWatchdog::kLinkLossDeadlineMs + 100;
+constexpr qint64 kCutBoundMs = RemoteTxWatchdog::kLinkCutMs + 100;
 
 double msBetween(Clock::time_point a, Clock::time_point b)
 {
@@ -474,7 +478,7 @@ private slots:
         QVERIFY(guard->isJudging());
         // No event loop here: the post must not run before the reset.
         const Clock::time_point until =
-            Clock::now() + std::chrono::milliseconds(RemoteTxWatchdog::kLinkLossDeadlineMs + 2000);
+            Clock::now() + std::chrono::milliseconds(RemoteTxWatchdog::kLinkCutMs + 2000);
         while (Clock::now() < until && (guard->isJudging() || !rig.conn.transmitCut())) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }

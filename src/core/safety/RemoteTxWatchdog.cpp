@@ -30,6 +30,11 @@
 //   2026-10-16: a stop from the cut guard reports the silence the guard
 //               judged when this clock reads less. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: two stages per watch, the
+//               hold after kLinkHoldMs and the cut after kLinkCutMs, each
+//               with its own late turn; a counted keepalive, the key's end,
+//               the cut and the link closing end a hold. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -71,6 +76,12 @@ bool RemoteTxWatchdog::isWatching(const QByteArray& deviceId) const
     return m_devices.contains(deviceId);
 }
 
+bool RemoteTxWatchdog::isHeld(const QByteArray& deviceId) const
+{
+    const auto it = m_devices.constFind(deviceId);
+    return it != m_devices.cend() && it.value().held;
+}
+
 void RemoteTxWatchdog::setKeyed(const QByteArray& deviceId, bool keyed, quint32 epoch)
 {
     update(deviceId, keyed, true, epoch, false, false);
@@ -97,16 +108,26 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     if (voxChanged) {
         watch.voxArmed = voxArmed;
     }
+    // Hold then cut: only a key's RF is held, so a key that ended ends its
+    // hold (KeyEnded), with no stop, whether or not VOX armed still watches.
+    const bool holdEnds = watch.held && !watch.keyed;
+    const qint64 holdLengthMs = holdEnds ? now() - watch.heldSinceMs : 0;
+    if (holdEnds) {
+        watch.held = false;
+    }
     if (!watch.keyed && !watch.voxArmed) {
         if (wasWatched) {
             m_devices.erase(it);
             qCDebug(lcDsp) << "Transmit watchdog: no longer watching" << deviceId.toHex().constData();
             reschedule();
+            if (holdEnds) {
+                notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::KeyEnded);
+            }
         }
         return;
     }
     if (!wasWatched) {
-        // A fresh 400 ms, and sequences start again.
+        // A fresh start, and sequences start again.
         watch.lastMs = now();
         watch.lastSequence = 0;
         qCDebug(lcDsp) << "Transmit watchdog: watching" << deviceId
@@ -114,6 +135,9 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     }
     m_devices.insert(deviceId, watch);
     reschedule();
+    if (holdEnds) {
+        notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::KeyEnded);
+    }
 }
 
 bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, quint32 epoch,
@@ -129,8 +153,8 @@ bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, q
     // TX mic thread: heard when it came off the network.
     const qint64 heard = now() - std::max<qint64>(0, ageMs);
     // Socket input can run before an overdue timer on a busy event loop.
-    // Once the watch expires, no arriving packet may renew it.
-    if (heard - watch.lastMs > kLinkLossDeadlineMs) {
+    // Once the watch expires (past the cut), no arriving packet may renew it.
+    if (heard - watch.lastMs > kLinkCutMs) {
         trip(deviceId, false);
         return false; // The stop callback may have destroyed this object.
     }
@@ -150,11 +174,28 @@ bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, q
     // into it) leaves the watch's start as it is.
     watch.lastMs = std::max(watch.lastMs, heard);
     // Fix round 2: back within its deadline, the device's overdue period
-    // (and the late check's one turn for it) is over.
-    if (now() - watch.lastMs <= kLinkLossDeadlineMs) {
+    // (and the late check's one turn for it) is over. Hold then cut: each
+    // stage's apart.
+    const qint64 silentMs = now() - watch.lastMs;
+    if (silentMs <= kLinkCutMs) {
         watch.lateTurnGiven = false;
     }
+    const bool fresh = silentMs <= kLinkHoldMs;
+    if (fresh) {
+        watch.lateHoldTurnGiven = false;
+    }
+    // Hold then cut: a keepalive that counted, and heard within the hold's
+    // 400 ms (not one that waited behind a stall longer than that), ends
+    // the hold. Only now, past the sequence and epoch checks above.
+    const bool holdEnds = watch.held && fresh;
+    const qint64 holdLengthMs = holdEnds ? now() - watch.heldSinceMs : 0;
+    if (holdEnds) {
+        watch.held = false;
+    }
     reschedule();
+    if (holdEnds && !notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::Heard)) {
+        return true;
+    }
     emit keepaliveHeard(deviceId, gap);
     return true;
 }
@@ -188,20 +229,34 @@ void RemoteTxWatchdog::onTimer()
     // so nothing (another device's keepalives rescheduling the check on
     // every turn included) can put the judgement off again.
     // TX watch follow-up: this check is no longer pending once it runs.
+    // Hold then cut: the hold and the cut each get their own one turn; a
+    // check that finds the cut due gives (or has given) the cut's turn and
+    // judges the cut alone, as a cut ends any hold.
     const qint64 due = std::exchange(m_checkDueMs, -1);
     const bool late = due >= 0 && at - due > kLateCheckSlackMs;
     const bool canTurn = late && static_cast<bool>(m_hooks.startTimer);
     QList<QByteArray> quiet;
+    QList<QByteArray> toHold;
     for (auto it = m_devices.begin(); it != m_devices.end(); ++it) {
-        if (at - it.value().lastMs > kLinkLossDeadlineMs) {
-            if (canTurn && !it.value().lateTurnGiven) {
-                it.value().lateTurnGiven = true;   // judged at the next check
+        Watch& watch = it.value();
+        const qint64 silentMs = at - watch.lastMs;
+        if (silentMs > kLinkCutMs) {
+            if (canTurn && !watch.lateTurnGiven) {
+                watch.lateTurnGiven = true;        // judged at the next check
+                watch.lateHoldTurnGiven = true;    // the same turn serves both
             } else {
                 quiet.append(it.key());
+            }
+        } else if (watch.keyed && !watch.held && silentMs > kLinkHoldMs) {
+            if (canTurn && !watch.lateHoldTurnGiven) {
+                watch.lateHoldTurnGiven = true;    // judged at the next check
+            } else {
+                toHold.append(it.key());
             }
         }
     }
     const QPointer<RemoteTxWatchdog> self(this);
+    // The cuts first: the stop is the safer act.
     for (const QByteArray& deviceId : std::as_const(quiet)) {
         if (!self) {
             return;
@@ -211,9 +266,51 @@ void RemoteTxWatchdog::onTimer()
             trip(deviceId, false);
         }
     }
+    for (const QByteArray& deviceId : std::as_const(toHold)) {
+        if (!self) {
+            return;
+        }
+        startHold(deviceId, at);
+    }
     if (self) {
         reschedule();
     }
+}
+
+void RemoteTxWatchdog::startHold(const QByteArray& deviceId, qint64 at)
+{
+    auto it = m_devices.find(deviceId);
+    // A stop or a hold hook may already have ended the watch or its key.
+    if (it == m_devices.end() || !it.value().keyed || it.value().held) {
+        return;
+    }
+    it.value().held = true;
+    it.value().heldSinceMs = at;
+    const qint64 silentMs = at - it.value().lastMs;
+    qCInfo(lcDsp).noquote() << "Transmit watchdog: no keepalive for"
+                            << QStringLiteral("%1 ms").arg(silentMs) << "from"
+                            << QString::fromLatin1(deviceId.toHex()) << "- holding its RF silent";
+    const QPointer<RemoteTxWatchdog> self(this);
+    if (m_hooks.hold) {
+        m_hooks.hold(deviceId, true);
+    }
+    if (!self) {
+        return;
+    }
+    emit holdStarted(deviceId, silentMs);
+}
+
+bool RemoteTxWatchdog::notifyHoldEnded(const QByteArray& deviceId, qint64 lengthMs, HoldEnd how)
+{
+    const QPointer<RemoteTxWatchdog> self(this);
+    if (m_hooks.hold) {
+        m_hooks.hold(deviceId, false);
+    }
+    if (!self) {
+        return false;
+    }
+    emit holdEnded(deviceId, lengthMs, how);
+    return static_cast<bool>(self);
 }
 
 void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed, qint64 judgedSilentMs)
@@ -237,9 +334,17 @@ void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed, qint64 
         return;
     }
     emit tripped(deviceId, linkClosed, silentMs);
-    if (self) {
-        reschedule();
+    if (!self) {
+        return;
     }
+    // Hold then cut: a hold this stop ends is released only now, after the
+    // stop, so no real sample leaves between them.
+    if (watch.held
+        && !notifyHoldEnded(deviceId, now() - watch.heldSinceMs,
+                            linkClosed ? HoldEnd::LinkClosed : HoldEnd::Cut)) {
+        return;
+    }
+    reschedule();
 }
 
 void RemoteTxWatchdog::reschedule()
@@ -262,11 +367,14 @@ void RemoteTxWatchdog::reschedule()
     }
     qint64 earliest = std::numeric_limits<qint64>::max();
     for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) {
-        // "More than 400 ms": the first millisecond past the deadline.
-        earliest = std::min(earliest, it.value().lastMs + kLinkLossDeadlineMs + 1);
+        // Hold then cut: each watch's earliest pending stage, the hold for
+        // a keyed watch not yet held, else the cut. "More than": the first
+        // millisecond past it.
+        const Watch& watch = it.value();
+        const qint64 stageMs = (watch.keyed && !watch.held) ? kLinkHoldMs : kLinkCutMs;
+        earliest = std::min(earliest, watch.lastMs + stageMs + 1);
     }
-    const qint64 wait =
-        std::min<qint64>(std::max<qint64>(0, earliest - now()), kLinkLossDeadlineMs + 1);
+    const qint64 wait = std::max<qint64>(0, earliest - now());
     m_checkDueMs = now() + wait;
     if (m_hooks.startTimer) {
         m_hooks.startTimer(static_cast<int>(wait));

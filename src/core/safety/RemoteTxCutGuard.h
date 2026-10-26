@@ -6,8 +6,8 @@
 // A keyed remote device's transmit is cut off the main thread when the
 // Core's main thread stalls. RemoteTxWatchdog lives on the main thread, so
 // it cannot run while the event loop is held; this guard runs on a thread
-// of its own and judges the same 400 ms deadline
-// (RemoteTxWatchdog::kLinkLossDeadlineMs) from keepalives it hears off the
+// of its own and judges the watchdog's cut deadline
+// (RemoteTxWatchdog::kLinkCutMs) from keepalives it hears off the
 // main thread (the "tx" data channel's messages, at their receipt).
 //
 // ---- The rules ----
@@ -47,6 +47,10 @@
 //   2026-10-16: cuts after more than kDeadlineMs of silence, not at it,
 //               as the watchdog does. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: kDeadlineMs is now
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs); its hold comes later. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -72,7 +76,7 @@ public:
     // arm is still running. It must not block or wait on any other thread.
     using CutFn = std::function<void(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs)>;
 
-    static constexpr qint64 kDeadlineMs = RemoteTxWatchdog::kLinkLossDeadlineMs;
+    static constexpr qint64 kDeadlineMs = RemoteTxWatchdog::kLinkCutMs;
 
     explicit RemoteTxCutGuard(CutFn cut);   // starts its thread
     ~RemoteTxCutGuard();                    // stops and joins it; no cut after it returns

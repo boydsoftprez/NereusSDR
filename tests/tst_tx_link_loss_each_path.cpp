@@ -80,6 +80,10 @@
 //   2026-10-15: re-review fixes: dropped VOX assertions that could not fail;
 //               noted the order in the stop-once test is not forced.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the stop bound is named
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -547,7 +551,7 @@ private slots:
         qInfo("WebSocket severed: stopped %lld ms after the last keepalive",
               static_cast<long long>(trip.silentMs));
         QVERIFY(!trip.linkClosed);
-        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkLossDeadlineMs && trip.silentMs <= kBoundMs,
+        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkCutMs && trip.silentMs <= kBoundMs,
                  qPrintable(QString::number(trip.silentMs)));
         QVERIFY(!h.station.moxController()->isMox());
         QCOMPARE(stopped.count(), 1);
@@ -679,7 +683,7 @@ private slots:
         QCOMPARE(moxOff->thread, &rig.connThread);
         QVERIFY(moxOff->thread != QThread::currentThread());
         QVERIFY2(moxOff->at < holdEnd, "the cut waited for the main thread");
-        QVERIFY2(afterReceiptMs > double(RemoteTxWatchdog::kLinkLossDeadlineMs) - 1.0
+        QVERIFY2(afterReceiptMs > double(RemoteTxWatchdog::kLinkCutMs) - 1.0
                      && afterReceiptMs <= double(kBoundMs),
                  qPrintable(QString::number(afterReceiptMs)));
         QVERIFY(hasEntry(during, QStringLiteral("relay off")));
@@ -1036,7 +1040,7 @@ private slots:
         coreTransport->setReceiveSeveredForTest(true);
         QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 3000);
         const Trip trip = tripOf(tripped);
-        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkLossDeadlineMs && trip.silentMs <= kBoundMs,
+        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkCutMs && trip.silentMs <= kBoundMs,
                  qPrintable(QString::number(trip.silentMs)));
         QVERIFY(!h.station.transmitModel().voxEnabled());
         QVERIFY(h.server.voxArmedBy().isEmpty());
