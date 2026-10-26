@@ -88,7 +88,11 @@ struct NereusSDRApp: App {
         // The UI tests hand it the Core's question over whatever screen shows.
         UITestQuestion.listen(model.devices, arguments: ProcessInfo.processInfo.arguments)
         #endif
+        #if DEBUG
+        let activity = LiveActivityController(host: UITestBand.liveActivityHost(arguments: arguments))
+        #else
         let activity = LiveActivityController(host: SystemLiveActivityHost())
+        #endif
         activity.observe(app: model, flow: flow)
         // The card's and the island's buttons reach the app through here.
         ActivityAction.handler = { [weak activity] action in

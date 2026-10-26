@@ -1517,9 +1517,17 @@ struct SetupTypedEntryTests {
         return unsafeBitCast(symbol, to: Enabled.self)()
     }
 
+    /// Whether a test has turned application accessibility on in this
+    /// process (ScrollViewIdentifierTests can catch a regression only as the
+    /// first to do so).
+    private(set) static var applicationAccessibilityTurnedOn = false
+
     static func setApplicationAccessibility(_ on: Bool) {
         guard let symbol = accessibilitySymbol("_AXSApplicationAccessibilitySetEnabled") else {
             return
+        }
+        if on {
+            applicationAccessibilityTurnedOn = true
         }
         typealias SetEnabled = @convention(c) (Bool) -> Void
         unsafeBitCast(symbol, to: SetEnabled.self)(on)

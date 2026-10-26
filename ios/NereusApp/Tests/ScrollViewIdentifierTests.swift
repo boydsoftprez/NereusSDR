@@ -15,12 +15,28 @@ import UIKit
 /// process, while plain accessibility nodes keep theirs. So the identifiers
 /// tests look up on a scrolling page sit on the page's content, not on its
 /// scroll view, and are found after such a walk.
+///
+/// When it can catch a regression: only when its own walk is the first in
+/// the test process to turn application accessibility on, as when the suite
+/// runs alone (`-only-testing:NereusSDRTests/ScrollViewIdentifierTests`).
+/// That state belongs to the process and cannot be turned back: once any
+/// earlier test has turned accessibility on (BandButtonColumnTests, the
+/// Setup and TX suites), an identifier put back on a scroll view is found
+/// again and the test would pass on the code it guards against (the PR 653
+/// re-review e, Minor N4). So it cancels itself then, saying why, rather
+/// than count a pass that proves nothing.
 @Suite("Scroll view identifiers", .serialized)
 @MainActor
 struct ScrollViewIdentifierTests {
     @Test("the diagnostics page and the iPad Setup list are found after an early walk of a scroll view's tree",
           .timeLimit(.minutes(2)))
     func foundAfterAnEarlyWalk() async throws {
+        if SetupTypedEntryTests.applicationAccessibilityTurnedOn || SetupTypedEntryTests.applicationAccessibility() {
+            try Test.cancel("""
+                Application accessibility was already on in this process, so the early walk cannot leave \
+                scroll views without identifiers: run ScrollViewIdentifierTests alone for this to count
+                """)
+        }
         try await walkBeforeLayout()
         let performance = ConnectionPerformanceView(input: ConnectionPerformanceTests().fixture(),
                                                     initialSection: .connection,

@@ -30,7 +30,19 @@ struct PanStack<Content: View>: View {
                     .contentShape(Rectangle())
                     .simultaneousGesture(TapGesture().onEnded { touch(pan) })
                     .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in touch(pan) })
-                    .modifier(PanTouchDownModifier { touch(pan) })
+                    .modifier(PanTouchDownModifier {
+                        touch(pan)
+                        #if DEBUG
+                        PanTouchDownProbe.shared.count(pan)
+                        #endif
+                    })
+                    #if DEBUG
+                    .overlay(alignment: .topLeading) {
+                        if PanTouchDownProbe.isOn {
+                            PanTouchDownProbe.Readout(pan: pan)
+                        }
+                    }
+                    #endif
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("pan.\(pan.number)")
             }
@@ -92,7 +104,50 @@ final class PanTouchDownRecognizer: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        // UIKit's own touch tracking first, as every recognizer subclass does
+        // (the PR 653 re-review e, Minor N1).
+        super.touchesBegan(touches, with: event)
         touched?()
         state = .failed
     }
 }
+
+#if DEBUG
+/// With ``argument`` on a debug build's command line, each pan counts the
+/// touches its ``PanTouchDownRecognizer`` was given, and shows the count to
+/// the UI tests on an element of its own, ``identifier(_:)``, which draws
+/// nothing and takes no touch. Only the recognizer counts, so a UI test can
+/// tell that UIKit gave it a real finger on the pan's band, whatever the
+/// band's tap and drag did with it (the PR 653 re-review e, Minor N1).
+@MainActor
+final class PanTouchDownProbe: ObservableObject {
+    static let argument = "-NereusPanTouchProbe"
+    static let shared = PanTouchDownProbe()
+    static var isOn: Bool { ProcessInfo.processInfo.arguments.contains(argument) }
+    static func identifier(_ pan: PanIdentity) -> String { "panTouchDowns.\(pan.number)" }
+
+    @Published private(set) var downs: [Int: Int] = [:]
+
+    func count(_ pan: PanIdentity) {
+        guard Self.isOn else {
+            return
+        }
+        downs[pan.number, default: 0] += 1
+    }
+
+    /// The count, as the label of a point that draws nothing.
+    struct Readout: View {
+        let pan: PanIdentity
+        @ObservedObject var probe = PanTouchDownProbe.shared
+
+        var body: some View {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier(PanTouchDownProbe.identifier(pan))
+                .accessibilityLabel("\(probe.downs[pan.number] ?? 0)")
+        }
+    }
+}
+#endif

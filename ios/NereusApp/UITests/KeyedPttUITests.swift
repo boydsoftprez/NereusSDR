@@ -70,6 +70,63 @@ final class KeyedPttUITests: XCTestCase {
         XCTAssertFalse(ptt.isSelected, "The PTT still reads keyed")
     }
 
+    /// DC15 as amended (the PR 653 re-review e, Minor N3): a flag that opens
+    /// out under a held PTT draws below it, so a tap at the PTT's spot still
+    /// lands on the PTT and unkeys, through the system's own hit testing.
+    /// The PTT is held mid-band as above (keyed past the open pill, the pill
+    /// then closed); slice A's Audio panel then opens out over the band. The
+    /// test also writes down where the keyed meters went beside the held
+    /// PTT, for the case it cannot reach on this phone: the meters cut to
+    /// fit above a held PTT need a band under about 240 points with their
+    /// reasons showing (the SE sideways is about 180) and a PTT held with
+    /// under 204 points beside it either side; every simulator the project
+    /// runs is taller and wider than that.
+    @MainActor
+    func testFlagOpenedUnderAHeldPttLeavesItTappable() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .phone, "The phone held sideways: run on an iPhone")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = launch()
+        let ptt = app.buttons["ptt"]
+        XCTAssertTrue(ptt.waitForExistence(timeout: 30), "The band has no PTT")
+        XCTAssertTrue(waitUntil { ptt.isEnabled }, "PTT is not usable: the fixture's link is not up")
+        let column = app.buttons["bandColumn.display"]
+        XCTAssertTrue(column.waitForExistence(timeout: 10), "The sideways band has no column")
+        column.tap()
+        let pill = app.descendants(matching: .any)["bandColumnMenu.display"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10), "Display opened no pill beside the column")
+        XCTAssertTrue(waitUntil { ptt.frame.minX > pill.frame.maxX },
+                      "The PTT at \(ptt.frame) did not move past the pill at \(pill.frame)")
+        let held = ptt.frame
+        let spot = CGPoint(x: held.midX, y: held.midY)
+        let gauges = app.descendants(matching: .any)["keyedGauges"]
+        tap(app, at: spot)
+        XCTAssertTrue(gauges.waitForExistence(timeout: 10), "A tap at the PTT did not key: no keyed meters")
+        app.descendants(matching: .any)["bandColumnClose"].coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.15)).tap()
+        XCTAssertTrue(pill.waitForNonExistence(timeout: 10), "A tap off the pill did not close it")
+        XCTAssertEqual(ptt.frame, held, "The PTT moved when the pill closed while keyed")
+        let band = app.descendants(matching: .any)["bandSurface"].frame
+        print("""
+            KeyedPttUITests N3: band \(band), column \(column.frame), held PTT \(held), \
+            keyed meters \(gauges.frame), room over the PTT \(held.minY - band.minY - 6)
+            """)
+
+        let flagTab = app.buttons["flagTabAudioA"]
+        XCTAssertTrue(flagTab.waitForExistence(timeout: 10), "Slice A's flag has no Audio tab")
+        flagTab.tap()
+        let panel = app.descendants(matching: .any)["flagPanelAudio"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "Slice A's Audio panel did not open")
+        print("KeyedPttUITests N3: Audio panel \(panel.frame), held PTT \(ptt.frame)")
+        XCTAssertEqual(ptt.frame, held, "The PTT moved when the flag's panel opened while keyed")
+        XCTAssertTrue(gauges.exists && ptt.isSelected, "Opening the flag's panel unkeyed")
+        try XCTSkipUnless(panel.frame.contains(spot),
+                          "Slice A's Audio panel at \(panel.frame) does not open out under the PTT at \(held)")
+        // What is on top at the PTT's spot is the PTT, not the panel under it.
+        tap(app, at: spot)
+        XCTAssertTrue(gauges.waitForNonExistence(timeout: 10),
+                      "A tap where the PTT is held over the flag's panel did not unkey")
+        XCTAssertFalse(ptt.isSelected, "The PTT still reads keyed")
+    }
+
     /// A tap at `point` in the app's own coordinates.
     @MainActor
     private func tap(_ app: XCUIApplication, at point: CGPoint) {

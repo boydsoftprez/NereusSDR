@@ -279,6 +279,37 @@ final class DisplayPillUITests: XCTestCase {
         }
     }
 
+    /// The PR 653 re-review e, Minor N1: a real finger on a pan's band, which
+    /// lands on the band's own UIKit surface (`bandSurface`, over the Metal
+    /// view), reaches the pan's touch-down recognizer, which SwiftUI attaches
+    /// over the pan. The debug probe counts only that recognizer's touches,
+    /// not the band's tap or drag, so its count going up on that pan alone
+    /// shows UIKit gave it the touch: a tap, and a finger held still.
+    @MainActor
+    func testFingerOnAPanReachesItsTouchDownRecognizer() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad,
+                      "Two pans are the iPad's: run DisplayPillUITests on an iPad Pro 13-inch for this one")
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(bandMenu: true, spots: false, twoPans: true, touchProbe: true)
+        let (pans, surfaces) = openSecondPan(app)
+        let counts = ["panTouchDowns.1", "panTouchDowns.2"].map { app.descendants(matching: .any)[$0] }
+        XCTAssertTrue(counts[1].waitForExistence(timeout: 10), "Pan 2 shows no touch-down count")
+        func count(_ index: Int) -> Int { Int(counts[index].label) ?? -1 }
+        guard let surface = surfaces.first(where: { pans[1].frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }) else {
+            XCTFail("Pan 2 has no touch surface")
+            return
+        }
+        let before = (count(0), count(1))
+        // On Pan 2's dBm scale, where nothing of the band's takes a hold.
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.985, dy: 0.25)).tap()
+        XCTAssertTrue(waitUntil { count(1) == before.1 + 1 },
+                      "A tap on Pan 2's band reached no touch-down recognizer: \(before.1) then \(count(1))")
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.985, dy: 0.25)).press(forDuration: 1.5)
+        XCTAssertTrue(waitUntil { count(1) == before.1 + 2 },
+                      "A still finger on Pan 2's band reached no touch-down recognizer: \(count(1))")
+        XCTAssertEqual(count(0), before.0, "Pan 1's recognizer counted Pan 2's touches")
+    }
+
     /// Adds Pan 2 from the Pan sheet and closes the sheet: the pans' frames
     /// and their touch surfaces.
     @MainActor
@@ -354,14 +385,17 @@ final class DisplayPillUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(bandMenu: Bool = false, spots: Bool = true, twoPans: Bool = false) -> XCUIApplication {
+    private func launch(bandMenu: Bool = false, spots: Bool = true, twoPans: Bool = false,
+                        touchProbe: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The band with the Core's catalogue and its version 29 Display
         // description, with no Core (a debug build's launch arguments); for
-        // the band menu, with the spots and the menu's Core as well.
+        // the band menu, with the spots and the menu's Core as well; with
+        // `touchProbe`, each pan's count of its touch-down recognizer's touches.
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand"]
             + (bandMenu ? ["-NereusBandMenuFixture"] + (spots ? ["-NereusSpotFixture"] : []) : [])
             + (twoPans ? ["-NereusTwoPansFixture"] : [])
+            + (touchProbe ? ["-NereusPanTouchProbe"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

@@ -48,6 +48,27 @@ enum UITestBand {
     static func keyed(_ arguments: [String]) -> Bool {
         arguments.contains(argument) && arguments.contains(keyedArgument)
     }
+
+    /// The Live Activity's host for these launch arguments: iOS's, but none
+    /// under ``keyedArgument``. That fixture's Core is connected and keys,
+    /// so with iOS's host each UI test that keys would leave a card on the
+    /// simulator's lock screen and Dynamic Island (the PR 653 re-review e,
+    /// Minor N5).
+    @MainActor
+    static func liveActivityHost(arguments: [String]) -> any LiveActivityHost {
+        keyed(arguments) ? NoLiveActivityHost() : SystemLiveActivityHost()
+    }
+
+    /// A Live Activity host where Live Activities are off: it starts none.
+    @MainActor
+    final class NoLiveActivityHost: LiveActivityHost {
+        var activitiesEnabled: Bool { false }
+
+        func start(startedAt: Date, state: StationActivityAttributes.ContentState,
+                   staleDate: Date?) -> (any LiveActivityHandle)? {
+            nil
+        }
+    }
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's

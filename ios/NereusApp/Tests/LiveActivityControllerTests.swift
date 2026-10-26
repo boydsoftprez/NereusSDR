@@ -117,6 +117,26 @@ struct LiveActivityControllerTests {
         #expect(h.host.handles.isEmpty)
     }
 
+    /// The PR 653 re-review e, Minor N5: the keyed band fixture's Core is
+    /// connected and keys, so with iOS's host each UI test that keys left a
+    /// Live Activity on the simulator. Under that fixture (a debug build's
+    /// launch arguments) the app's host starts none; without it, iOS's.
+    @Test("under the keyed band fixture the app starts no Live Activity, keyed or not")
+    func keyedFixtureStartsNone() {
+        let keyed = UITestBand.liveActivityHost(arguments: ["NereusSDR", ConnectionFlow.showBandArgument,
+                                                            UITestBand.argument, UITestBand.keyedArgument])
+        #expect(keyed is UITestBand.NoLiveActivityHost)
+        #expect(!keyed.activitiesEnabled)
+        let controller = LiveActivityController(host: keyed, clock: TestLinkClock())
+        controller.sceneChanged(active: true)
+        var transmitting = Self.listening()
+        transmitting.transmitting = true
+        controller.update(transmitting)
+        #expect(controller.lastSent == nil, "a Live Activity started under the keyed fixture")
+        #expect(UITestBand.liveActivityHost(arguments: ["NereusSDR", ConnectionFlow.showBandArgument,
+                                                        UITestBand.argument]) is SystemLiveActivityHost)
+    }
+
     @Test("leaving the band ends the activity at once")
     func leavingTheBandEnds() async {
         let h = Harness()
