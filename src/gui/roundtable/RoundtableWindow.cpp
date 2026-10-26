@@ -14,6 +14,10 @@
 //               WorkspacePreview::roleColourName / statusColour), the room
 //               states the look's status colors. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: rebuildList updates the same rows in place and drops the
+//               pick before a refill, so a rooms refresh tells accessibility
+//               nothing about a row that is gone (JJ's log on PR 657).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtableWindow.h"
@@ -24,6 +28,7 @@
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
+#include <QBrush>
 #include <QCloseEvent>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -329,8 +334,15 @@ void RoundtableWindow::rebuildList()
     const QString keep = m_rooms->currentItem() != nullptr
                              ? m_rooms->currentItem()->data(kRoomIdRole).toString()
                              : shownId;
-    QSignalBlocker block(m_rooms);
-    m_rooms->clear();
+
+    // The rows the list should show: a band heading, then its rooms.
+    struct Row {
+        QString id;  // empty for a heading
+        QString text;
+        QString toolTip;
+        QVariant foreground;
+    };
+    QList<Row> rows;
     QString band;
     bool firstRoom = true;
     for (const QJsonObject& summary : std::as_const(rooms)) {
@@ -352,13 +364,8 @@ void RoundtableWindow::rebuildList()
         if (firstRoom || roomBand != band) {
             firstRoom = false;
             band = roomBand;
-            auto* heading = new QListWidgetItem(band.isEmpty() ? QStringLiteral("Other") : band.toUpper(),
-                                                m_rooms);
-            heading->setFlags(Qt::NoItemFlags);
-            QFont bold = heading->font();
-            bold.setBold(true);
-            bold.setPixelSize(11);
-            heading->setFont(bold);
+            rows.append(Row{QString(), band.isEmpty() ? QStringLiteral("Other") : band.toUpper(), QString(),
+                            QVariant()});
         }
         QString line = QStringLiteral("%1  %2").arg(frequencyText(hz), familyText(family));
         if (id == sliceRoom) {
@@ -369,18 +376,77 @@ void RoundtableWindow::rebuildList()
         if (mentions > 0) {
             line += QStringLiteral("  @%1").arg(mentions);
         }
-        auto* item = new QListWidgetItem(line + QLatin1Char('\n') + stateText(summary), m_rooms);
-        item->setData(kRoomIdRole, id);
-        item->setToolTip(QStringLiteral("Read %1 here").arg(frequencyText(hz)));
+        Row row{id, line + QLatin1Char('\n') + stateText(summary),
+                QStringLiteral("Read %1 here").arg(frequencyText(hz)), QVariant()};
         const QString state = summary.value(QStringLiteral("state")).toString();
         if (state == QLatin1String("talking")) {
-            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kGreenText), "ok"));
+            row.foreground = QBrush(WorkspacePreview::statusColour(QColor(Style::kGreenText), "ok"));
         } else if (state == QLatin1String("unknown")) {
-            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kAmberText), "warn"));
+            row.foreground = QBrush(WorkspacePreview::statusColour(QColor(Style::kAmberText), "warn"));
         } else if (state == QLatin1String("doubled")) {
-            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kRedBorder), "danger"));
+            row.foreground = QBrush(WorkspacePreview::statusColour(QColor(Style::kRedBorder), "danger"));
         }
-        if (id == keep) {
+        rows.append(row);
+    }
+
+    QSignalBlocker block(m_rooms);
+    // The refresh every couple of seconds mostly changes counts and states:
+    // the same headings and rooms in the same order are updated in place.
+    // Clearing and refilling the list there took the operator's pick away
+    // and back each time, and every time macOS accessibility was told of
+    // the pick's removal; it could not find the row ("Cannot create
+    // accessible child interface ... roundtableRoomList ...
+    // SelectionRemove", JJ's log 2026-10-26).
+    bool sameRows = m_rooms->count() == rows.size();
+    for (int i = 0; sameRows && i < rows.size(); ++i) {
+        const QListWidgetItem* item = m_rooms->item(i);
+        const bool heading = rows[i].id.isEmpty();
+        sameRows = heading ? (item->flags() == Qt::NoItemFlags && item->text() == rows[i].text)
+                           : item->data(kRoomIdRole).toString() == rows[i].id;
+    }
+    if (sameRows) {
+        for (int i = 0; i < rows.size(); ++i) {
+            if (rows[i].id.isEmpty()) {
+                continue;
+            }
+            QListWidgetItem* item = m_rooms->item(i);
+            if (item->text() != rows[i].text) {
+                item->setText(rows[i].text);
+            }
+            if (item->toolTip() != rows[i].toolTip) {
+                item->setToolTip(rows[i].toolTip);
+            }
+            if (item->data(Qt::ForegroundRole) != rows[i].foreground) {
+                item->setData(Qt::ForegroundRole, rows[i].foreground);
+            }
+            if (rows[i].id == keep && m_rooms->currentItem() != item) {
+                m_rooms->setCurrentItem(item);
+            }
+        }
+        return;
+    }
+
+    // Rooms came or went: the list is filled again, its pick dropped first
+    // while its row is still there.
+    m_rooms->setCurrentItem(nullptr);
+    m_rooms->clearSelection();
+    m_rooms->clear();
+    for (const Row& row : std::as_const(rows)) {
+        auto* item = new QListWidgetItem(row.text, m_rooms);
+        if (row.id.isEmpty()) {
+            item->setFlags(Qt::NoItemFlags);
+            QFont bold = item->font();
+            bold.setBold(true);
+            bold.setPixelSize(11);
+            item->setFont(bold);
+            continue;
+        }
+        item->setData(kRoomIdRole, row.id);
+        item->setToolTip(row.toolTip);
+        if (row.foreground.isValid()) {
+            item->setData(Qt::ForegroundRole, row.foreground);
+        }
+        if (row.id == keep) {
             m_rooms->setCurrentItem(item);
         }
     }

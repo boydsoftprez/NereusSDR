@@ -43,6 +43,10 @@
 //               14.212.000 room fits 260-298 px, the mode moving under the
 //               frequency when the row does not fit. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: aRoomsRefreshLeavesThePickedRowAlone: a rooms refresh of
+//               the same rooms tells accessibility nothing about the pop-out
+//               list's rows or pick (JJ's log on PR 657).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: managedPopOutIsThePopOutContainer replaces
 //               managedPopOutOpensTheRoundtableWindow: the container's Pop
 //               Out gives Roundtable a pop-out container like every applet;
@@ -55,6 +59,7 @@
 #include <cmath>
 #include <functional>
 
+#include <QAccessible>
 #include <QApplication>
 #include <QClipboard>
 #include <QJsonArray>
@@ -2121,6 +2126,109 @@ private slots:
         settle();
         QVERIFY(window.isListShown());
         QVERIFY(rooms->hasFocus());
+    }
+
+    void aRoomsRefreshLeavesThePickedRowAlone()
+    {
+        // JJ's log (2026-10-26): about every 2 s, with a room picked in the
+        // pop-out's list, "Cannot create accessible child interface for
+        // object: QListWidget(name = "roundtableRoomList") index: 1 type:
+        // QAccessible::SelectionRemove" and "Invalid child in
+        // QAccessibleEvent". Each rooms refresh cleared and refilled the
+        // list, so accessibility heard the pick removed and added again.
+        // A refresh of the same rooms now tells accessibility only of the
+        // rows' new text, nothing about the rows or the pick; one that
+        // brings a room in refills it with no event for a row that is gone.
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        RoundtableWindow window(&p.model);
+        auto* panel = new RoundtablePanel(&p.model);
+        panel->followSlice(0);
+        window.takePanel(panel);
+        window.resize(1200, 600);
+        window.show();
+        settle();
+        auto* rooms = child<QListWidget>(&window, QStringLiteral("roundtableRoomList"));
+        QCOMPARE(rooms->count(), 3);
+        // 7.249 picked: the heading, 7.185, 7.249.
+        rooms->setCurrentRow(2);
+        QVERIFY(rooms->currentItem()->isSelected());
+        settle();
+
+        // Accessibility active offscreen; as the macOS platform does, every
+        // event's interface is asked for.
+        struct Heard {
+            int listRowEvents = 0;
+            int stale = 0;
+        };
+        static Heard s_heard;
+        s_heard = Heard{};
+        const QAccessible::UpdateHandler previous = QAccessible::installUpdateHandler(
+            [](QAccessibleEvent* event) {
+                // The rows or the pick changing; a row's new text (a model
+                // DataChanged) is news accessibility should have.
+                const bool rowsOrPick = event->type() == QAccessible::SelectionRemove
+                    || event->type() == QAccessible::SelectionAdd || event->type() == QAccessible::Selection
+                    || (event->type() == QAccessible::TableModelChanged
+                        && static_cast<QAccessibleTableModelChangeEvent*>(event)->modelChangeType()
+                               != QAccessibleTableModelChangeEvent::DataChanged);
+                if (rowsOrPick && event->object() != nullptr
+                    && event->object()->objectName() == QLatin1String("roundtableRoomList")) {
+                    ++s_heard.listRowEvents;
+                }
+                if (event->child() >= 0 && event->accessibleInterface() == nullptr) {
+                    ++s_heard.stale;
+                }
+            });
+        QAccessible::setActive(true);
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("Cannot create accessible child interface")));
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("Invalid child in QAccessibleEvent")));
+        const auto refresh = [&p](int members) {
+            const QJsonArray fresh{
+                QJsonObject{{QStringLiteral("id"), kRoom}, {QStringLiteral("hz"), 7185000},
+                            {QStringLiteral("members"), members}},
+                QJsonObject{{QStringLiteral("id"), kOther}, {QStringLiteral("hz"), 7249000},
+                            {QStringLiteral("members"), 3}}};
+            p.model.applyRooms(QJsonObject{{QStringLiteral("rooms"), fresh}});
+            settle();
+        };
+
+        // The refresh every couple of seconds: the same rooms, new counts,
+        // with the window shown and put away (docked: hidden, not closed).
+        QListWidgetItem* picked = rooms->currentItem();
+        for (int members = 6; members < 9; ++members) {
+            refresh(members);
+        }
+        window.hide();
+        settle();
+        refresh(9);
+        refresh(10);
+        window.show();
+        settle();
+        QCOMPARE(s_heard.listRowEvents, 0);
+        QCOMPARE(rooms->currentItem(), picked);
+        QVERIFY(rooms->item(1)->text().contains(QStringLiteral("    10")));
+
+        // A refresh that brings a room in below the heading and above the
+        // pick: refilled, the pick kept, nothing about a row that is gone.
+        const QJsonArray grown{
+            QJsonObject{{QStringLiteral("id"), kRoom}, {QStringLiteral("hz"), 7185000},
+                        {QStringLiteral("members"), 4}},
+            QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-7200000")}, {QStringLiteral("hz"), 7200000},
+                        {QStringLiteral("members"), 2}},
+            QJsonObject{{QStringLiteral("id"), kOther}, {QStringLiteral("hz"), 7249000},
+                        {QStringLiteral("members"), 3}}};
+        p.model.applyRooms(QJsonObject{{QStringLiteral("rooms"), grown}});
+        settle();
+        QAccessible::setActive(false);
+        QAccessible::installUpdateHandler(previous);
+
+        QCOMPARE(rooms->count(), 4);
+        QVERIFY(s_heard.listRowEvents > 0);
+        QCOMPARE(s_heard.stale, 0);
+        QVERIFY(rooms->currentItem() != nullptr);
+        QCOMPARE(rooms->currentItem()->text().left(9), QStringLiteral("7.249.000"));
+        QVERIFY(rooms->currentItem()->isSelected());
     }
 };
 
