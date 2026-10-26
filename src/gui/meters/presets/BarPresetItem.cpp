@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - The meter.adcMax reason reads "ADC magnitude is not
+//                 available", which makes no promise. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - meter.adcMax has no reading provider yet: its bar draws the
 //                 unavailable veil with "ADC magnitude is not reported yet"
 //                 instead of staying blank. J.J. Boyd (KG4VCF), AI-assisted
@@ -75,7 +78,7 @@ namespace {
 // console.cs:47057,47221; ChannelMaster netInterface.c:159-166;
 // network.c:721-722 [v2.10.3.15]), which NereusSDR does not parse. Until it
 // does, the bar names the reason rather than drawing nothing.
-QString adcMaxUnavailableText() { return QStringLiteral("ADC magnitude is not reported yet"); }
+QString adcMaxUnavailableText() { return QStringLiteral("ADC magnitude is not available"); }
 bool adcMaxWithoutProvider(const BarPresetItem& item)
 {
     return item.typeId()==QStringLiteral("meter.adcMax") && item.bindingId()<0 && !item.hasMmioBinding();

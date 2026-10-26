@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - The 4-char ID row reads "Data source 4-char ID" and its
+//                 tooltip names the meter data source, in the words the meter
+//                 data source windows use. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - "MMIO 4-char ID" picks the endpoint data out sends to;
 //                 "Send interval (ms)" 100-5000 in steps of 10. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -112,8 +116,8 @@ void DataOutItemEditor::buildTypeSpecific()
     m_editFourChar->setMaxLength(4);
     m_editFourChar->setPlaceholderText(QStringLiteral("ID"));
     m_editFourChar->setToolTip(QStringLiteral(
-        "The 4-character ID of the MMIO endpoint the readings are sent to"));
-    addRow(QStringLiteral("MMIO 4-char ID"), m_editFourChar);
+        "The 4-character ID of the meter data source the readings are sent to"));
+    addRow(QStringLiteral("Data source 4-char ID"), m_editFourChar);
     connect(m_editFourChar, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         DataOutItem* d = qobject_cast<DataOutItem*>(m_item);
