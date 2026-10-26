@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-25 - Per-item update interval: context key updateIntervalMs,
+//                 read on create, written on capture when non-zero, and set
+//                 from the item's new-item default by makeEntry (not for bar
+//                 presets, composites or waveform faces). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - makeEntry applies MeterItem::applyNewItemDefaults() to new
+//                 items. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
@@ -344,6 +352,12 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
         return entry;
     }
     const auto item = allocate(typeId);
+    // New items take Thetis defaults; restored items never pass through here.
+    if (item) { item->applyNewItemDefaults(); }
+    // Bar presets, composites and waveform faces keep their own cadence keys.
+    const bool ownCadence = qobject_cast<const WaveformMeterItem*>(item.get()) || qobject_cast<const BarPresetItem*>(item.get())
+        || qobject_cast<const CompositePresetItem*>(item.get());
+    if (item && !ownCadence && item->updateIntervalMs() > 0) { entry.context.insert(QStringLiteral("updateIntervalMs"), item->updateIntervalMs()); }
     if (const auto* waveform=qobject_cast<const WaveformMeterItem*>(item.get())) { entry.config.insert("properties",waveform->configuration()); }
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
@@ -409,6 +423,8 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (entry.context.contains(QStringLiteral("onlyWhenRx"))) { item->setOnlyWhenRx(entry.context.value(QStringLiteral("onlyWhenRx")).toBool()); }
     if (entry.context.contains(QStringLiteral("onlyWhenTx"))) { item->setOnlyWhenTx(entry.context.value(QStringLiteral("onlyWhenTx")).toBool()); }
     if (entry.context.contains(QStringLiteral("displayGroup"))) { item->setDisplayGroup(entry.context.value(QStringLiteral("displayGroup")).toInt()); }
+    // No key (a saved item from before the update interval): every poll.
+    if (!face && !composite && !waveform && entry.context.contains(QStringLiteral("updateIntervalMs"))) { item->setUpdateIntervalMs(entry.context.value(QStringLiteral("updateIntervalMs")).toInt()); }
     // Raw legacy geometry is authoritative until capture supplies an explicit rect.
     if (!entry.canvasRect.isNull()) { item->setRect(entry.canvasRect.x(), entry.canvasRect.y(), entry.canvasRect.width(), entry.canvasRect.height()); }
     item->setZOrder(entry.paintOrder);
@@ -545,6 +561,8 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     entry.context.insert(QStringLiteral("onlyWhenRx"),item.onlyWhenRx());
     entry.context.insert(QStringLiteral("onlyWhenTx"),item.onlyWhenTx());
     entry.context.insert(QStringLiteral("displayGroup"),item.displayGroup());
+    if (!face && !composite && !waveform && item.updateIntervalMs() > 0) { entry.context.insert(QStringLiteral("updateIntervalMs"),item.updateIntervalMs()); }
+    else { entry.context.remove(QStringLiteral("updateIntervalMs")); }
     return entry;
 }
 } // namespace NereusSDR

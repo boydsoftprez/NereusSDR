@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
+//                 spin box (15-5000) for the per-item update interval.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -206,6 +209,17 @@ void BaseItemEditor::buildBaseForm()
     m_chkOnlyTx = makeCheckRow(QStringLiteral("Only when TX"));
     m_spinDisplayGroup = makeIntRow(QStringLiteral("Display group"), 0, 15);
 
+    // Per-item update interval. Unchecked: the item takes every reading.
+    m_chkLimitUpdate = makeCheckRow(QStringLiteral("Limit update rate"));
+    m_chkLimitUpdate->setObjectName(QStringLiteral("limitUpdateRate"));
+    m_spinUpdateInterval = makeIntRow(QStringLiteral("Update interval (ms)"),
+                                      kMinUpdateIntervalMs, kMaxUpdateIntervalMs);
+    m_spinUpdateInterval->setObjectName(QStringLiteral("updateIntervalMs"));
+    m_spinUpdateInterval->setValue(kDefaultUpdateIntervalMs);
+    m_spinUpdateInterval->setEnabled(false);
+    m_spinUpdateInterval->setToolTip(QStringLiteral(
+        "How often this item takes a new reading."));
+
     // Wire base spin/check changes to the item.
     connect(m_spinX, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
@@ -255,6 +269,18 @@ void BaseItemEditor::buildBaseForm()
             this, [this](int v) {
         if (isProgrammaticUpdate() || !m_item) { return; }
         m_item->setDisplayGroup(v);
+        notifyChanged();
+    });
+    connect(m_chkLimitUpdate, &QCheckBox::toggled, this, [this](bool on) {
+        m_spinUpdateInterval->setEnabled(on);
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setUpdateIntervalMs(on ? m_spinUpdateInterval->value() : 0);
+        notifyChanged();
+    });
+    connect(m_spinUpdateInterval, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (isProgrammaticUpdate() || !m_item || !m_chkLimitUpdate->isChecked()) { return; }
+        m_item->setUpdateIntervalMs(v);
         notifyChanged();
     });
 }
@@ -333,6 +359,10 @@ void BaseItemEditor::loadBaseFields()
     m_chkOnlyRx->setChecked(m_item->onlyWhenRx());
     m_chkOnlyTx->setChecked(m_item->onlyWhenTx());
     m_spinDisplayGroup->setValue(m_item->displayGroup());
+    const int interval = m_item->updateIntervalMs();
+    m_spinUpdateInterval->setValue(interval > 0 ? interval : kDefaultUpdateIntervalMs);
+    m_chkLimitUpdate->setChecked(interval > 0);
+    m_spinUpdateInterval->setEnabled(interval > 0);
     endProgrammaticUpdate();
 }
 

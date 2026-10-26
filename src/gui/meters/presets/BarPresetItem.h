@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-25 - setAboveS9Frequency overrides MeterItem's (VHF S9 rule
+//                 per slice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
@@ -60,7 +63,7 @@ public:
     QString typeId() const;
     static QStringList variants();
     bool configureVariant(const QString& flavor);
-    void setAboveS9Frequency(bool above) { if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
+    void setAboveS9Frequency(bool above) override { MeterItem::setAboveS9Frequency(above); if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer layer) const override;
     void paint(QPainter&, int, int) override;

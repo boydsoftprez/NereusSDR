@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-25 - setAboveS9Frequency overrides MeterItem's (VHF S9 rule
+//                 per slice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -86,7 +89,7 @@ public:
     // Temporary display top and legal marker, independent of radio rating.
     void setPowerScale(int visualLimitWatts, double topWatts) override;
     double legalMarkerW() const { return m_legalMarkerW; }
-    void setAboveS9Frequency(bool above) { if(m_aboveS9!=above) { m_aboveS9=above; markPresentationDirty(true); } }
+    void setAboveS9Frequency(bool above) override { MeterItem::setAboveS9Frequency(above); if(m_aboveS9!=above) { m_aboveS9=above; markPresentationDirty(true); } }
     void markPresentationDirty(bool staticLayers=false) { m_presentationDirty=true; m_staticPresentationDirty=m_staticPresentationDirty || staticLayers; }
     bool takeStaticPresentationChange() override { const bool dirty=m_staticPresentationDirty; m_staticPresentationDirty=false; return dirty; }
     void setFrequency(qint64 hz);

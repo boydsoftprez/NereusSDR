@@ -14,6 +14,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - Per-item update interval: updateMeterValue delivers a
+//                 reading to an item only when its interval has passed
+//                 (MeterItem::acceptsUpdate), on a monotonic clock a test
+//                 can replace. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - setItemTxState: the transmit state ContainerManager
 //                 receives reaches fade covers, VFO displays and button
 //                 grids, including items added later. J.J. Boyd (KG4VCF),
@@ -86,6 +91,7 @@ mw0lge@grange-lane.co.uk
 #include <QImage>
 #include <QVector>
 #include <QPointer>
+#include <functional>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
@@ -122,6 +128,8 @@ public:
     void advanceMeters(qint64 monotonicMs);
 #ifdef NEREUS_BUILD_TESTS
     quint64 readingInvalidationsForTest() const { return m_readingInvalidations; }
+    // Replaces the monotonic ms clock updateMeterValue throttles on.
+    void setMonotonicClockForTest(std::function<qint64()> clock) { m_monotonicClock = std::move(clock); }
 #ifdef NEREUS_GPU_SPECTRUM
     void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
     bool backgroundDirtyForTest() const { return m_bgDirty; }
@@ -270,6 +278,9 @@ private:
     struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
     QHash<QString, MmioReading> m_lastMmioReading;
     quint64 m_readingInvalidations{0};
+    // Per-item update interval clock; empty means the steady clock.
+    std::function<qint64()> m_monotonicClock;
+    qint64 monotonicNowMs() const;
     void invalidateItemLayers(const MeterItem* item);
     int m_powerScale{0};
     double m_powerScaleTop{0.0};

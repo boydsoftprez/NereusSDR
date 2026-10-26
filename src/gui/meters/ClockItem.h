@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 - publishedReadings(): time_utc, time_loc, date_utc and
+//                 date_loc as Thetis builds them; injectable time source.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -56,6 +59,8 @@ mw0lge@grange-lane.co.uk
 
 #include "MeterItem.h"
 #include <QColor>
+#include <QDateTime>
+#include <functional>
 
 namespace NereusSDR {
 // Dual UTC/Local time display. From Thetis clsClock (MeterManager.cs:14075+).
@@ -82,6 +87,15 @@ public:
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
+    // time_utc, time_loc, date_utc, date_loc.
+    // From Thetis MeterManager.cs:31065-31099 [v2.10.3.15]
+    QHash<QString, QVariant> publishedReadings() const override;
+
+    // Local time source; the clock and its readings use it. Unset (or an
+    // empty function) means QDateTime::currentDateTime(). Tests inject a
+    // fixed time.
+    void setTimeSource(std::function<QDateTime()> source) { m_timeSource = std::move(source); }
+
 private:
     bool m_show24Hour{true};
     bool m_showType{true};
@@ -89,5 +103,8 @@ private:
     QColor m_dateColour{0x80, 0x90, 0xa0};
     QColor m_typeTitleColour{0x70, 0x80, 0x90};
     qint64 m_lastClockSecond{-1};
+    std::function<QDateTime()> m_timeSource;
+
+    QDateTime currentLocalTime() const;
 };
 } // namespace NereusSDR

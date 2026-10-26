@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
+//                 spin box (15-5000) for the per-item update interval.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -80,6 +83,7 @@ class MeterItem;
 //   - Data binding id         (QComboBox, populated from MeterBinding)
 //   - Z-order
 //   - onlyWhenRx / onlyWhenTx / displayGroup (block 1 filter)
+//   - update interval (Limit update rate + Update interval (ms))
 //
 // Subclasses add their own type-specific fields in buildTypeSpecific()
 // which is called from the constructor after the base form is laid
@@ -156,6 +160,8 @@ private:
     QCheckBox*      m_chkOnlyRx{nullptr};
     QCheckBox*      m_chkOnlyTx{nullptr};
     QSpinBox*       m_spinDisplayGroup{nullptr};
+    QCheckBox*      m_chkLimitUpdate{nullptr};
+    QSpinBox*       m_spinUpdateInterval{nullptr};
 
     int m_programmaticDepth{0};
 
