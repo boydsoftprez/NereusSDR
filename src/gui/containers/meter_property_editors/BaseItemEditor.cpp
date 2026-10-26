@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - populateReadingCombo(): the Reading row's list, shared
+//                 with the history graph's axis 1 row. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
 //                 RX / TX" (hidden for a fade cover and a button grid, whose
 //                 editors carry their own). J.J. Boyd (KG4VCF), AI-assisted
@@ -328,6 +331,11 @@ void BaseItemEditor::setGeometryEditable(bool editable)
 
 void BaseItemEditor::populateBindingCombo()
 {
+    populateReadingCombo(m_comboBinding);
+}
+
+void BaseItemEditor::populateReadingCombo(QComboBox* combo)
+{
     struct B { int id; const char* label; };
     // Order mirrors MeterPoller.h. Block 5 adds MMIO variables at
     // the tail when ExternalVariableEngine is wired in.
@@ -360,13 +368,13 @@ void BaseItemEditor::populateBindingCombo()
         {MeterBinding::RotatorAz,    "Rotator: Azimuth"},
         {MeterBinding::RotatorEle,   "Rotator: Elevation"},
     };
-    m_comboBinding->addItem(QStringLiteral("(none)"), -1);
+    combo->addItem(QStringLiteral("(none)"), -1);
     for (const auto& b : kBindings) {
         if (b.id == MeterBinding::PbSnr
             && !UnbuiltFeatures::isBuilt(UnbuiltFeature::PbSnr)) {
             continue;
         }
-        m_comboBinding->addItem(QString::fromLatin1(b.label), b.id);
+        combo->addItem(QString::fromLatin1(b.label), b.id);
     }
 }
 

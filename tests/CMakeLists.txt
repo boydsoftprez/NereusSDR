@@ -870,6 +870,10 @@ nereus_add_test(tst_scoped_child_widget)
 nereus_add_test(tst_meter_presets)
 # Standalone PWR, Reverse PWR and SWR bars (Thetis AddPWRBar/AddSWRBar).
 nereus_add_test(tst_meter_power_swr_bars)
+# HISTORY building block: axis 1 fed from MeterWidget and data source
+# variable 2, per-axis update interval, manual range, v3 record, older
+# records' look, clsHistoryItem defaults for new items.
+nereus_add_test(tst_meter_history_item)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
 # Verifies the existing 3G-8 widget machinery (setTransmitting / isTransmitting
