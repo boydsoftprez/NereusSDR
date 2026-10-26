@@ -379,7 +379,7 @@ NOTIFY signal, clamped and idempotent in its setter, saved under
 | `cwxSpeed` | int 5..60 WPM | 22 | `CWX_Speed` | D12 |
 | `cwxRepeat` | bool | False | `CWX_Repeat` | D12 |
 | `cwxRepeatDelayS` | int 1..60 | 3 | `CWX_RepeatDelay` | D12 |
-| `cwxMemories` | QStringList, 8 entries | Thetis's first eight defaults (`cwx.cs:895-903`) | `CWX_Memory1`..`8` | D11 |
+| `cwxMemory1` .. `cwxMemory8` | QString each (the mirror carries no lists) | empty (Thetis's defaults, `cwx.cs:774-782`, carry its author's callsign) | `CWX_Memory1` .. `CWX_Memory8` | D11 |
 
 The monitor level is the existing `monitorVolume` (one level, C9). The QSK
 restore values (R-CW-21) are saved beside these under `CW_QskSaved*`.
