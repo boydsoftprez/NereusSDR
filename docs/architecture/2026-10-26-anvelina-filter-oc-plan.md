@@ -144,11 +144,38 @@ Verification: the three tests. Model tier: opus.
 
 ## Task 4: Anvelina DX outputs, Setup UI
 
-Built only after JJ signs off the mockup. The approved mockup is recorded here before dispatch (path and the
-decisions it settled: placement, labels, All on / All off, disabled-when-stopped wording).
+JJ approved the mockup on 2026-10-26 ("ok your mock up approved for dx pins"):
+https://claude.ai/artifact/1ZHK1abzvdS45NJbCFgJae (source
+`/Users/j.j.boyd/NereusSDR-crew/anvelina-filter-oc/mockup/anvelina-dx-outputs.html`). Build exactly that:
 
-Files: `src/gui/setup/hardware/OcOutputsTab.{h,cpp}` and a test (`tests/tst_oc_outputs_dx_group.cpp`, new).
-Acceptance and verification: written from the signed-off mockup. Model tier: opus.
+- Placement: a `QGroupBox` titled "Anvelina DX Outputs" directly under "User Dig Out" in
+  `OcOutputsTab` (above the HF / SWL sub-tabs), styled like the User Dig Out group beside it.
+- Contents, one row: four columns, each a checkbox "DX OUT 7" .. "DX OUT 10" with a name field (`QLineEdit`,
+  placeholder "Name", tooltip "Your name for this output, shown here only") under it; then "All on" and "All off"
+  buttons at the right. Checkbox tooltip while running: "Switches USEROUT<n> on the Anvelina's DX connector."
+- Shown only when the connected radio's model is ANVELINAPRO3; hidden on every other radio (hardware it lacks).
+- While the radio is not running (not connected / not streaming, which is when the gateware holds the pins low,
+  `Orion.v:920-923`), the four checkboxes and both buttons are disabled with the tooltip "The radio holds the DX outputs
+  off while it is stopped." and an italic line under the row: "The radio holds these outputs off while it is stopped.
+  Your choices are kept and come back when it runs." The name fields stay editable. Running: no italic line.
+- Everything reads and writes the Task 3 model `AnvelinaDxOutputs` (state and names per MAC); the UI holds no state of
+  its own. Model to UI sync uses `QSignalBlocker` (no echo loops).
+- Remote: on a remote connection the group works the same as local (the Task 3 keys reach the Core); no remote-only
+  disable.
+- No macro command (the spec's `SET_ANVELINA_DX_OUT` is not built).
+- Visual preview: add an Anvelina pose to `tests/visual/PreviewScenes.cpp` (`SetupTabSpec` today poses an `HPSDRHW`
+  only; the Anvelina is board OrionMKII with model ANVELINAPRO3, so the pose needs the model too) and scenes
+  `dialog-setup-hardware-config--oc-outputs--anvelina` and `...--antenna-alex--anvelina`. Task 5 uses the second.
+
+Files: `src/gui/setup/hardware/OcOutputsTab.{h,cpp}`, `tests/visual/PreviewScenes.cpp`, a test
+`tests/tst_oc_outputs_dx_group.cpp` (new).
+
+Acceptance: hidden for ANAN7000D and SATURN, shown for ANVELINAPRO3; toggling DX OUT 9 sets the model's out9 and
+`wireByte()` becomes `0x08`; All on gives `0x1E`, All off `0x00`; a model change (another MAC loaded) updates the boxes
+without writing back; not running disables the boxes and buttons and shows the reason line, names stay editable;
+running enables them and hides the line. Verification: the new test plus `tst_oc_outputs_hf_tab`; after-captures of the
+two Anvelina scenes in the workspace look (`look-` scene names), compared by the controller with the mockup.
+Model tier: opus.
 
 ## Task 5: "Gnd BPF2 on Tx" setting (M1) **TX**
 
@@ -156,7 +183,7 @@ JJ's answer to question 1 (2026-10-26, "match thetis"): default unticked, as on 
 property at `console.cs:10903`, the Setup box `chkBPF2Gnd` "Gnd BPF2 on Tx" (`setup.designer.cs:5736-5745`, shown
 on the Mk II models at `setup.cs:6208`), its handler `setup.cs:18214-18218`. NereusSDR hard-codes Alex1 bit 8 on
 while keyed (`src/core/codec/P2CodecOrionMkII.cpp:600-615`). Add the box on Antenna / ALEX beside the other
-"on TX" boxes, shown on the models where Thetis shows it, persisted per MAC (`"False"` default), carried in `CodecContext`. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
+"on TX" boxes, after "RX BYPASS on TX" / "Ext 2 on Tx" and before "Use TX antenna for RX", as in the approved mockup, shown on the models where Thetis shows it, persisted per MAC (`"False"` default), carried in `CodecContext`. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
 
 ## Task 6: The mapping document and provenance
 
