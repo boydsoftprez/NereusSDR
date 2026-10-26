@@ -11,6 +11,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Screenshot fix: a blank in a band group is a disabled
+//                 placeholder whose click says why, never a blank button
+//                 that takes clicks. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-09-28 - 2 m button at index 14 (R-IOS-26, R-R3-49). J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -296,6 +300,10 @@ void BandButtonItem::rebuildButtons()
             && m_hasLitBand && slot.band == m_litBand;
         face.hiddenUntilBuilt = slot.kind == BandGroupSlot::Band && slot.band == Band::XVTR
             && !transverters;
+        // NereusSDR: a blank only keeps its place; it is drawn disabled and
+        // a click says why (Thetis returns from the click, :13192).
+        face.placeholderReason = slot.kind == BandGroupSlot::Blank ? QString::fromLatin1(kBlankButtonReason)
+                                                                   : QString();
     }
     invalidateShownLayout();
     applyBandAvailability();
@@ -316,7 +324,9 @@ void BandButtonItem::applyBandAvailability()
     // A grid that is unavailable as a whole (no slice, a preview) keeps its
     // own reason on every button.
     for (int i = 0; i < buttonCount(); ++i) {
-        if (!isButtonAvailable(i)) { return; }
+        // A blank (placeholder) is never available; it says nothing about
+        // the grid.
+        if (!button(i).enabled) { return; }
     }
     const QVector<BandGroupSlot>& layout = bandGroupLayout(shownGroup());
     for (int i = 0; i < buttonCount() && i < layout.size(); ++i) {

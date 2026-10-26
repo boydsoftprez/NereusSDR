@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: kBlankButtonReason, what a click on a
+//                 blank band group button says. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -65,6 +68,11 @@ mw0lge@grange-lane.co.uk
 #include <QHash>
 
 namespace NereusSDR {
+
+// What a click on a blank in a band group says: the blank (Thetis's empty
+// HF button 11, MeterManager.cs:12981-12989 [v2.10.3.15], and the VHF
+// group's unused places) only keeps its place in the layout.
+inline constexpr char kBlankButtonReason[] = "This button has no band. It keeps its place in the band layout.";
 
 // Band selection grid, ported from Thetis clsBandButtonBox
 // (MeterManager.cs:12814+ [v2.10.3.15]).

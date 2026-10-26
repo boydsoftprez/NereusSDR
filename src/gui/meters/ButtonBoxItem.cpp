@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: a placeholder button (placeholderReason)
+//                 is dimmed, never highlights and never acts; a click
+//                 says why. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Fade on RX / TX: a faded grid is drawn under the animated
 //                 veil instead of being skipped; clicks stay guarded.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -101,6 +105,8 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 namespace {
+// The alpha an unavailable button's text, and a placeholder's body, take.
+constexpr int kPlaceholderAlpha = 80;
 bool hasFiniteButtonGeometry(const QRectF& rect)
 {
     return std::isfinite(rect.x()) && std::isfinite(rect.y())
@@ -229,12 +235,15 @@ void ButtonBoxItem::setAllButtonsAvailable(bool available, const QString& reason
 bool ButtonBoxItem::isButtonAvailable(int index) const
 {
     if (index < 0 || index >= m_buttonCount) { return false; }
-    return m_buttons[index].enabled;
+    return m_buttons[index].enabled && m_buttons[index].placeholderReason.isEmpty();
 }
 
 QString ButtonBoxItem::buttonUnavailableReason(int index) const
 {
     if (index < 0 || index >= m_buttonCount) { return QString(); }
+    if (!m_buttons[index].placeholderReason.isEmpty()) {
+        return m_buttons[index].placeholderReason;
+    }
     return m_buttons[index].unavailableReason;
 }
 
@@ -350,20 +359,27 @@ void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
 void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
 {
     const ButtonState& btn = m_buttons[index];
+    const bool placeholder = !btn.placeholderReason.isEmpty();
 
     // Determine fill color: clicked > hovered > on/off
     QColor fill;
-    if (index == m_clickedIndex) {
+    if (index == m_clickedIndex && !placeholder) {
         fill = btn.clickColour;
-    } else if (index == m_hoveredIndex) {
+    } else if (index == m_hoveredIndex && !placeholder) {
         fill = btn.hoverColour;
     } else {
         fill = btn.on ? btn.onColour : btn.fillColour;
     }
 
-    // Button body
+    // Button body; a placeholder's is dimmed as an unavailable button's
+    // text is.
+    QColor border = btn.borderColour;
+    if (placeholder) {
+        fill.setAlpha(kPlaceholderAlpha);
+        border.setAlpha(kPlaceholderAlpha);
+    }
     const float r = m_cornerRadius;
-    p.setPen(QPen(btn.borderColour, m_borderWidth * rect.width()));
+    p.setPen(QPen(border, m_borderWidth * rect.width()));
     p.setBrush(fill);
     p.drawRoundedRect(rect, r, r);
 
@@ -376,8 +392,8 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
     if (!btn.text.isEmpty()) {
         QColor textCol = btn.on && btn.indicatorType == IndicatorType::TextIconColour
                              ? btn.onColour : btn.textColour;
-        if (!btn.enabled) {
-            textCol.setAlpha(80);
+        if (!btn.enabled || placeholder) {
+            textCol.setAlpha(kPlaceholderAlpha);
         }
         QFont font = WorkspacePreview::readableFont(p.font(), p.device());
         font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(8, static_cast<int>(rect.height() * 0.4))));
@@ -466,7 +482,7 @@ bool ButtonBoxItem::handleMousePress(QMouseEvent* event, int widgetW, int widget
 
     const int idx = buttonAt(event->position(), widgetW, widgetH);
     if (idx < 0) { return false; }
-    if (!m_buttons[idx].enabled) {
+    if (!isButtonAvailable(idx)) {
         // R-R3-21: an unavailable button takes the click (so nothing
         // beneath it acts) and says why on release; it changes nothing.
         m_unavailablePressedIndex = idx;
@@ -484,8 +500,8 @@ bool ButtonBoxItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widg
         const int pressed = m_unavailablePressedIndex;
         m_unavailablePressedIndex = -1;
         if (buttonAt(event->position(), widgetW, widgetH) == pressed
-            && pressed < m_buttons.size() && !m_buttons[pressed].enabled) {
-            emit unavailableButtonClicked(pressed, m_buttons[pressed].unavailableReason);
+            && pressed < m_buttons.size() && !isButtonAvailable(pressed)) {
+            emit unavailableButtonClicked(pressed, buttonUnavailableReason(pressed));
         }
         return true;
     }

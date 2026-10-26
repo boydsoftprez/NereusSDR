@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: placeholderReason, a button that only
+//                 keeps its place in a fixed layout is drawn dimmed and
+//                 never acts; a click says why. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / TX: the fade accessors and setTransmitting
 //                 override MeterItem's, so a faded grid gets the animated
 //                 veil; clicks stay guarded. J.J. Boyd (KG4VCF), AI-assisted
@@ -171,6 +175,11 @@ public:
         // R-R3-21: why an unavailable button (enabled false) does nothing,
         // in plain words; shown when it is clicked.
         QString unavailableReason;
+        // A button that only keeps its place in a fixed layout (no label,
+        // nothing to do): always unavailable, drawn dimmed, and a click
+        // says this. Kept apart from `enabled`, so making the whole grid
+        // available never wakes it.
+        QString placeholderReason;
     };
 
     void setButtonCount(int count);
@@ -193,7 +202,9 @@ public:
     int shownButtonCount() const;
 
     // R-R3-21: an unavailable button is dimmed, a click on it changes
-    // nothing and emits unavailableButtonClicked with the reason.
+    // nothing and emits unavailableButtonClicked with the reason. A
+    // placeholder (ButtonState::placeholderReason) is never available, and
+    // its reason is the placeholder's.
     void setButtonAvailable(int index, bool available, const QString& reason = QString());
     void setAllButtonsAvailable(bool available, const QString& reason = QString());
     bool isButtonAvailable(int index) const;

@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - aBlankBandButtonIsDisabledWithAReason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-24 - The attenuator and RX1 preamp copies, AUTO AGC and
 //                 Shift-click on a copy, inert previews, the shared face
@@ -1218,6 +1220,66 @@ private slots:
         grid.setSliceBand(0, Band::WWV);
         QCOMPARE(grid.shownGroup(), BandGroup::Hf);
         QVERIFY(!grid.button(13).on);  // WWV is never lit, as in Thetis
+    }
+
+    // Screenshot fix: a blank in a band group (Thetis's empty HF button
+    // 11, the VHF group's unused places) is drawn but never a blank button
+    // that takes clicks: it is unavailable and a click says why.
+    void aBlankBandButtonIsDisabledWithAReason()
+    {
+        const QString reason = QString::fromLatin1(kBlankButtonReason);
+        BandButtonItem grid;
+        grid.setSliceBand(0, Band::Band20m);
+        QVERIFY(grid.isButtonShown(11));
+        QCOMPARE(grid.button(11).text, QString());
+        QVERIFY(!grid.isButtonAvailable(11));
+        QCOMPARE(grid.buttonUnavailableReason(11), reason);
+        for (int i = 0; i < kBandGroupButtons; ++i) {
+            if (i != 11) {
+                QVERIFY2(grid.isButtonAvailable(i), qPrintable(QString::number(i)));
+            }
+        }
+        // Making the whole grid available (a slice arrives) never wakes it,
+        // and a grid-wide reason gives way to it on the blank.
+        grid.setAllButtonsAvailable(false, QStringLiteral("No live slice is attached"));
+        QCOMPARE(grid.buttonUnavailableReason(11), reason);
+        QCOMPARE(grid.buttonUnavailableReason(3), QStringLiteral("No live slice is attached"));
+        grid.setAllButtonsAvailable(true);
+        QVERIFY(!grid.isButtonAvailable(11));
+        QVERIFY(grid.isButtonAvailable(3));
+        // A band's own reason still applies beside the blank.
+        grid.setBandUnavailableReason(Band::Band6m, QStringLiteral("Not on this radio"));
+        QVERIFY(!grid.isButtonAvailable(10));
+        QCOMPARE(grid.buttonUnavailableReason(10), QStringLiteral("Not on this radio"));
+        // The VHF group's blanks too; its bands and jump are not blanks.
+        grid.buttonClicked(12, Qt::LeftButton);
+        QCOMPARE(grid.shownGroup(), BandGroup::Vhf);
+        QVERIFY(grid.isButtonAvailable(0));
+        QVERIFY(grid.isButtonAvailable(14));
+        for (int i = 2; i < 14; ++i) {
+            QCOMPARE(grid.buttonUnavailableReason(i), reason);
+        }
+        // Back in HF, a band button is no placeholder.
+        grid.buttonClicked(14, Qt::LeftButton);
+        QCOMPARE(grid.button(3).placeholderReason, QString());
+
+        // A click on a placeholder changes nothing and says why.
+        ButtonBoxItem box;
+        box.setButtonCount(1);
+        box.setColumns(1);
+        box.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        box.button(0).placeholderReason = reason;
+        QSignalSpy clicked(&box, &ButtonBoxItem::buttonClicked);
+        QSignalSpy unavailable(&box, &ButtonBoxItem::unavailableButtonClicked);
+        // Inside the one button (it starts at the top, a row of the grid).
+        const QPointF centre(100, 10);
+        QMouseEvent press(QEvent::MouseButtonPress, centre, centre, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, centre, centre, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(box.handleMousePress(&press, 200, 100));
+        QVERIFY(box.handleMouseRelease(&release, 200, 100));
+        QCOMPARE(clicked.count(), 0);
+        QCOMPARE(unavailable.count(), 1);
+        QCOMPARE(unavailable.last().at(1).toString(), reason);
     }
 
     void eachSliceKeepsItsOwnBandGroup()
