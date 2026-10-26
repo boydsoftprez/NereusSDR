@@ -92,6 +92,11 @@
 //                 inf) into its filters, AGC, meters and audio. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-25 - Issue #650: applyEffectiveBinaural sends WDSP dual mono
+//                 while a stage that zeroes Q runs (NR1 to NR4, NNR, ANF),
+//                 so BIN no longer silences the right ear; the operator's
+//                 BIN choice is kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -1023,6 +1028,7 @@ void RxChannel::setNrEnabled(bool enabled)
         SetRXAANRRun(m_channelId, enabled ? 1 : 0);
     });
 #endif
+    applyEffectiveBinaural();
 }
 
 void RxChannel::setAnfEnabled(bool enabled)
@@ -1038,6 +1044,7 @@ void RxChannel::setAnfEnabled(bool enabled)
         SetRXAANFRun(m_channelId, enabled ? 1 : 0);
     });
 #endif
+    applyEffectiveBinaural();
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,6 +1069,7 @@ void RxChannel::setEmnrEnabled(bool enabled)
 #else
     Q_UNUSED(enabled);
 #endif
+    applyEffectiveBinaural();
 }
 
 void RxChannel::setEmnrGainMethod(int method)
@@ -1635,6 +1643,7 @@ bool RxChannel::requestNnrLimit(int limit)
             return false;
         }
         m_nnrLimit.store(limit, std::memory_order_release);
+        applyEffectiveBinaural();
         return true;
     }
     if (!isValidNnrLimit(limit)) {
@@ -1644,6 +1653,7 @@ bool RxChannel::requestNnrLimit(int limit)
     // In order with the other NNR calls: RadioModel clears a limit before
     // NNR goes on and after it goes off (R-R3-40).
     runOrdered([this, limit]() { NnrAdapter::requestLimit(m_channelId, limit); });
+    applyEffectiveBinaural();
     return true;
 }
 
@@ -1779,9 +1789,11 @@ bool RxChannel::setActiveNr(NrSlot slot)
         }
         if (!applyActiveNrOnLane(slot)) {
             storeActiveNrFlags(NrSlot::Off);
+            applyEffectiveBinaural();
             return false;
         }
         storeActiveNrFlags(slot);
+        applyEffectiveBinaural();
         return true;
     }
 
@@ -1807,6 +1819,8 @@ bool RxChannel::setActiveNr(NrSlot slot)
         }
         refreshNnrDiagnosticsOnLane();
     });
+    // After the selection job, so it reads the selection the lane kept.
+    applyEffectiveBinaural();
     return true;
 }
 
@@ -1904,6 +1918,7 @@ bool RxChannel::selectNr(NrSlot slot, const NnrSettings* tuningFirst, NrSlot pre
         }
         refreshNnrDiagnosticsOnLane();
     });
+    applyEffectiveBinaural();
     return true;
 }
 
@@ -1949,6 +1964,7 @@ void RxChannel::applyNnrState(int limit, const NnrSettings& settings, NrSlot slo
         }
         refreshNnrDiagnosticsOnLane(accepted ? nullptr : &reason);
     });
+    applyEffectiveBinaural();
 }
 
 // ---------------------------------------------------------------------------
@@ -2344,18 +2360,44 @@ void RxChannel::setBinauralEnabled(bool enabled)
     }
 
     m_binauralEnabled.store(enabled);
+    applyEffectiveBinaural();
+}
 
+// Issue #650: every WDSP noise stage writes Q = 0 on its output:
+// third_party/wdsp/src/anr.c:113 (NR1), emnr.c:1281 (NR2), rnnr.c:334
+// (NR3), sbnr.c:158 (NR4), nnr.c:644 (NNR, output mode 1, RXA.c:366) and
+// anf.c:113 (ANF). The panel runs after all of them (xrxa, RXA.c), so with
+// BIN on (copy = 0) the right ear was silent. Thetis has the same bug.
+// While one of them is selected WDSP gets dual mono (copy = 1); the
+// operator's BIN choice (m_binauralEnabled) is not changed. DFNR and MNR
+// write their mono output to both channels; BNR runs nothing here.
+bool RxChannel::qSilencingStageSelected() const
+{
+    const NrSlot nr = m_activeNr.load(std::memory_order_acquire);
+    const bool wdspNr = nr == NrSlot::NR1 || nr == NrSlot::NR2
+                     || nr == NrSlot::NR3 || nr == NrSlot::NR4;
+    // A runtime "off" limit holds NNR off in WDSP (nnr.c nnr_effective_run).
+    const bool nnr = nr == NrSlot::NNR
+        && m_nnrLimit.load(std::memory_order_acquire) != static_cast<int>(NnrLimit::Off);
+    // The legacy setNrEnabled / setEmnrEnabled run flags. With NNR selected,
+    // m_nrEnabled is only storeActiveNrFlags' mirror and ANR is off.
+    const bool legacy = (m_nrEnabled.load() && nr != NrSlot::NNR) || m_emnrEnabled.load();
+    return wdspNr || nnr || legacy || m_anfEnabled.load();
+}
+
+void RxChannel::applyEffectiveBinaural()
+{
 #ifdef HAVE_WDSP
-    runKeyed(laneParameter("setBinauralEnabled"), 0, [=, this]() {
+    // Read when the job runs, after the run-flag jobs queued before it.
+    runKeyed(laneParameter("setBinauralEnabled"), 0, [this]() {
+        const bool bin = m_binauralEnabled.load() && !qSilencingStageSelected();
         // bin=1 → copy=0 → binaural (I/Q separate headphone stereo image)
         // bin=0 → copy=1 → dual-mono (Q := I, same audio on both channels)
         // From Thetis Project Files/Source/Console/radio.cs:1145-1162
         //   default bin_on = false → dual-mono
         // WDSP: third_party/wdsp/src/patchpanel.c:187
-        SetRXAPanelBinaural(m_channelId, enabled ? 1 : 0);
+        SetRXAPanelBinaural(m_channelId, bin ? 1 : 0);
     });
-#else
-    Q_UNUSED(enabled);
 #endif
 }
 

@@ -227,6 +227,9 @@ class TstConfirmStep;
 // AGC Fixed Gain seed: the test opens real RX channels and reads the fixed
 // gain WDSP applies back from rxa[].agc.
 class TestRxChannelAgcFixedSeed;
+// Issue #650: the audio panel test opens real RX channels and reads the
+// panel's copy flag back from rxa[].panel.
+class TestRxChannelAudioPanel;
 // Task 27: the transmit analyzer skirt test opens a real TX channel.
 class TestTxAnalyzerSkirt;
 // R-IOS-13: the transmit path's DSP latency test.
@@ -1176,6 +1179,8 @@ private:
     friend class ::TstTxChannelVoxListening;
     // AGC Fixed Gain seed: same friendship, real RX channels.
     friend class ::TestRxChannelAgcFixedSeed;
+    // Issue #650: same friendship, real RX channels, for the panel test.
+    friend class ::TestRxChannelAudioPanel;
     // Squelch persistence: the squelch seed test opens real RX channels.
     friend class ::TestSliceSquelchChannelSeed;
     // Same friendship for the first DSP > Options apply test.

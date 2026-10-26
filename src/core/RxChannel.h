@@ -93,6 +93,11 @@
 //                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-25 - Issue #650: BIN sends WDSP dual mono while a stage that
+//                 zeroes Q runs (NR1 to NR4, NNR, ANF), so the right ear
+//                 is not silent; binauralEnabled() stays the operator's
+//                 choice (applyEffectiveBinaural). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -830,6 +835,8 @@ public:
     // From Thetis Project Files/Source/Console/radio.cs:1145-1162
     //   Thetis default bin_on = false
     // WDSP: third_party/wdsp/src/patchpanel.c:187
+    // binauralEnabled() is the operator's choice. WDSP gets dual mono while
+    // a stage that zeroes Q runs (issue #650, applyEffectiveBinaural).
     bool binauralEnabled() const { return m_binauralEnabled.load(); }
     void setBinauralEnabled(bool enabled);
 
@@ -1384,6 +1391,13 @@ private:
     bool applyActiveNrOnLane(NrSlot slot);
     // Sets the NR selection flags (m_activeNr and the ones kept with it).
     void storeActiveNrFlags(NrSlot slot);
+    // Issue #650: true while a WDSP stage that writes Q = 0 is selected
+    // (NR1 to NR4, NNR not held off by its limit, legacy ANR / EMNR, ANF).
+    bool qSilencingStageSelected() const;
+    // Issue #650: sends SetRXAPanelBinaural the effective value,
+    // m_binauralEnabled && !qSilencingStageSelected(), read when the job
+    // runs. Every writer of those inputs calls it after its own WDSP job.
+    void applyEffectiveBinaural();
     // R-R3-39: builds this channel's DeepFilterNet3 instance when `slot` is
     // DFNR and none is built yet (on the receive lane when there is one), publishes the
     // pointer, then sets m_dfnrActive from the current selection.

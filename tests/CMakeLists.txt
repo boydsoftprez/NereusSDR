@@ -1489,6 +1489,11 @@ endif()
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
 nereus_add_test(tst_rxchannel_audio_panel)
+# Issue #650: reads rxa[].panel.p->copy back to see what WDSP received.
+if(FFTW3_FOUND AND WDSP_FOUND)
+    target_include_directories(tst_rxchannel_audio_panel PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_rxchannel_audio_panel PRIVATE WDSP_STATIC_BUILD)
+endif()
 nereus_add_test(tst_slice_audio_panel)
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — NB2 polish (S2.7) ───────────────────
