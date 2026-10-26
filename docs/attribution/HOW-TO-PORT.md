@@ -163,7 +163,7 @@ Moved from CLAUDE.md. Before reading any upstream source file, state:
     ```
    For freedv-gui ports, also check `docs/attribution/FREEDV-GUI-PROVENANCE.md`;
    for Longpath ports, `docs/attribution/LONGPATH-PROVENANCE.md` (cite as
-   `// From Longpath <path>:<line> [@shortsha]`, pinned `551576e`).
+   `// From Longpath <path>:<line> [@shortsha]`, pinned `bb9f675c`, v0.8.2-6).
    If the file is not registered, the port is a **new attribution event**.
 4. **Plan**: if (3) returned nothing, add the verbatim upstream header AND a
    PROVENANCE row in the same commit that introduces the ported logic.

@@ -6821,6 +6821,16 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_tci_tx_mutex PRIVATE Qt6::WebSockets)
 endif()
 
+# ── Longpath bug-fix ports: TCI refuses browser origins; keyed-client watchdog ─
+# A WebSocket upgrade carrying a browser Origin is refused on every listener
+# unless TciAllowedOrigins lists it; an app that holds a TCI key and stops
+# answering pings has its key released (raw-socket hung client, real
+# RadioModel). From Longpath tests [@383f058].
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_origin_and_keyed_watchdog)
+    target_link_libraries(tst_tci_origin_and_keyed_watchdog PRIVATE Qt6::WebSockets Qt6::Network)
+endif()
+
 # ── R3 receiver audio plan, Task 4 (R-R3-42, R-R3-21, R-R3-25) ───────────────
 # TCI served by a remote window: no local taps, receive audio from the Core's
 # receiver streams (fake source and the real RemoteMediaController against an
