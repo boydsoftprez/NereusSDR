@@ -11,6 +11,13 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - container-parity-* scenes: the items and editors the
+//                 container item parity branch changed (button grid
+//                 editors, mode grid, VFO display and its screens, clock,
+//                 text overlay and LED, S-meter and tuning dials, web image
+//                 pan background, artwork options, signal text, TX and RX
+//                 sections, a long container title). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The add-content scenes find the first Longpath row by
 //                 typeId and the dial by "S-Meter dial" (picker names under
 //                 headings). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -233,6 +240,21 @@
 #include "gui/instruments/NeedleInstrument.h"
 #include "gui/meters/ItemGroup.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/applets/SectionParts.h"
+#include "gui/containers/ContentPropertyEditor.h"
+#include "gui/meters/AntennaButtonItem.h"
+#include "gui/meters/ClockItem.h"
+#include "gui/meters/DialItem.h"
+#include "gui/meters/FilterButtonItem.h"
+#include "gui/meters/SignalTextItem.h"
+#include "gui/meters/TextOverlayItem.h"
+#include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/WebImageItem.h"
+#include "gui/meters/presets/SignalTextPresetItem.h"
+#include <QLinearGradient>
+#include <QTemporaryDir>
+#include <QToolButton>
+#include <QUrl>
 #include "PreviewScenes.h"
 
 #include <QAction>
@@ -7710,6 +7732,1269 @@ void poseConnected(SceneContext& c, bool txOnly)
 
 } // namespace
 
+// ---- container item parity (PR 677, workspace preview) ---------------------
+//
+// The container-parity-* scenes show the items and editors the container
+// item parity branch changed, built through the real paths: the containers
+// are committed to the workspace as the settings dialog commits them, the
+// items come from ContainerContentRegistry::makeEntry (a new item, with
+// Thetis's defaults) or from a record a saved layout holds, and the editors
+// are the ones Containers > Edit Container shows for the selected entry.
+// Readings reach the items through the same seams the other scenes use
+// (MeterWidget::updateMeterValue, MeterPoller::readingUpdated); nothing
+// connects, keys or fetches from the network.
+
+namespace {
+
+// The strip widths these scenes give their containers.
+constexpr int kParitySideStripPx = 420;
+constexpr int kParityNarrowStripPx = 260;
+constexpr int kParityTopStripPx = 230;
+constexpr int kParityRoomyTopStripPx = 300;
+// A Detailed VFO display face with room for its three columns.
+constexpr int kParityRoomyFaceHeightPx = 240;
+// The VFO display's long press (VfoDisplayItem::kLongPressMs) plus a margin.
+constexpr int kParityLongPressMs = 1300;
+// A VFO display screen closes once more than five whole seconds pass.
+constexpr int kParityScreenCloseMaxMs = 9000;
+// The signal level fed to readings (slice A's posed level).
+constexpr double kParitySignalDbm = -73.0;
+// Fed readings: how many, and the pause between them.
+constexpr int kParityFeedCount = 12;
+constexpr int kParityFeedGapMs = 40;
+// The history wedge feed: levels swing this far either side of the level.
+constexpr int kParityHistorySteps = 40;
+constexpr double kParityHistorySwingDb = 12.0;
+// A tooltip composited under a disabled row, this far from its left edge.
+constexpr int kParityTipInsetPx = 8;
+// The fixed local time every clock shows.
+QDateTime parityClockTime()
+{
+    return QDateTime(QDate(2026, 10, 7), QTime(14, 32, 10));
+}
+
+// One item of a parity container.
+struct ParityItem {
+    QString typeId;
+    // The entry name: the editor's list row and the entry header.
+    QString name;
+    // A saved record (the item's look before this branch); empty for a
+    // new item, which makeEntry gives Thetis's defaults.
+    QString legacyRecord;
+    // Keys merged into the entry config; a "properties" object is merged
+    // into the face's own properties, key by key.
+    QJsonObject config;
+    // true: "properties" replaces the face's properties (a saved face).
+    bool replaceProperties{false};
+};
+
+struct ParityBox {
+    QString name;
+    DockEdge edge{DockEdge::Left};
+    QVector<ParityItem> items;
+    // The slice the container follows (1 = slice A).
+    int rx{1};
+};
+
+// What the commit built: container ids and, per container, entry ids.
+struct ParityBuilt {
+    QStringList containers;
+    QVector<QStringList> entries;
+};
+
+ContainerDocument parityContainer(ContainerManager* manager, const ParityBox& box)
+{
+    QVector<EdgeEntry> entries;
+    for (const ParityItem& item : box.items) {
+        entries.append({item.typeId, {}, item.legacyRecord, rxSource(box.rx), {}});
+    }
+    ContainerDocument d = onSlice(makeSceneContainer(manager, box.name, box.edge,
+                                                     ContentLayout::VerticalStack, entries), box.rx);
+    for (int i = 0; i < box.items.size() && i < d.contents.size(); ++i) {
+        const ParityItem& item = box.items.at(i);
+        ContentEntry& entry = d.contents[i];
+        if (!item.name.isEmpty()) {
+            entry.name = item.name;
+        }
+        for (auto it = item.config.constBegin(); it != item.config.constEnd(); ++it) {
+            if (it.key() == QLatin1String("properties") && !item.replaceProperties) {
+                QJsonObject merged = entry.config.value(it.key()).toObject();
+                const QJsonObject change = it.value().toObject();
+                for (auto c = change.constBegin(); c != change.constEnd(); ++c) {
+                    merged.insert(c.key(), c.value());
+                }
+                entry.config.insert(it.key(), merged);
+            } else {
+                entry.config.insert(it.key(), it.value());
+            }
+        }
+    }
+    return d;
+}
+
+// The two-band window with `boxes` committed beside the Main Panel (right),
+// every header shown; `afterFeed` runs once the spectra are fed.
+bool runParityWindow(SceneContext& ctx, const QVector<ParityBox>& boxes, const QMap<DockEdge, int>& thickness,
+                     ParityBuilt& built, const std::function<void(SceneContext&)>& afterFeed = {})
+{
+    ctx.provenance = provProposed();
+    runWindowScene(ctx, twoBandPoses(), 0, [&boxes, &thickness, &built](SceneContext& c) {
+        commitScene(c, HeaderMode::Shown, [&boxes, &thickness, &built](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            for (const ParityBox& box : boxes) {
+                const ContainerDocument container = parityContainer(m, box);
+                built.containers.append(container.id);
+                QStringList ids;
+                for (const ContentEntry& entry : container.contents) {
+                    ids.append(entry.id);
+                }
+                built.entries.append(ids);
+                d.containers.append(container);
+            }
+            for (auto it = thickness.constBegin(); it != thickness.constEnd(); ++it) {
+                d.arrangement.strips[it.key()].thickness = it.value();
+            }
+        });
+    }, [&afterFeed](SceneContext& c) {
+        if (afterFeed) {
+            afterFeed(c);
+        }
+        pump(kFinalSettleMs);
+    });
+    if (!ctx.failure.isEmpty()) {
+        return false;
+    }
+    noteStrips(ctx);
+    return true;
+}
+
+ContainerManager* parityManager(SceneContext& ctx)
+{
+    return ctx.window->findChild<ContainerManager*>();
+}
+
+// Every item of a type in one container, with the meter surface it is on.
+template <typename T>
+QVector<QPair<MeterWidget*, T*>> parityItems(SceneContext& ctx, const QString& containerId)
+{
+    QVector<QPair<MeterWidget*, T*>> out;
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    if (host == nullptr) {
+        return out;
+    }
+    for (MeterWidget* meter : host->meterSurfaces()) {
+        for (MeterItem* item : meter->items()) {
+            if (auto* t = qobject_cast<T*>(item)) {
+                out.append({meter, t});
+            }
+        }
+    }
+    return out;
+}
+
+CapturedImage parityGrab(QWidget* widget, const QString& name, const QString& kind)
+{
+    CapturedImage img;
+    img.name = name;
+    img.kind = kind;
+    img.image = grabWidget(widget);
+    img.logicalSize = widget->size();
+    img.dpr = img.image.devicePixelRatio();
+    img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(widget->metaObject()->className());
+    img.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(widget);
+    img.geometry = widgetGeometry(widget);
+    attachRegions(img, widget);
+    return img;
+}
+
+// The whole window, without the standard crops: where the containers sit.
+void captureParityWindow(SceneContext& ctx, const QString& name)
+{
+    for (const QJsonValue& v : stopTimersUnder(ctx.window)) {
+        ctx.stoppedTimers.append(v);
+    }
+    CapturedImage img = parityGrab(ctx.window, name, QStringLiteral("window"));
+    img.extra[QStringLiteral("applet_fit")] = measureAppletFit(ctx.window);
+    ctx.images.append(img);
+}
+
+// One container as the window shows it (`name`), and, when its content
+// scrolls, the whole content (`name`-content).
+void captureParityContainer(SceneContext& ctx, const QString& name, const QString& containerId)
+{
+    ContainerManager* manager = parityManager(ctx);
+    ContainerWidget* container = manager->container(containerId);
+    ContainerContentHost* host = manager->contentHost(containerId);
+    if (container == nullptr || host == nullptr || !container->isVisible()) {
+        ctx.failure = QStringLiteral("%1: container %2 is not shown").arg(name, containerId);
+        return;
+    }
+    pump(kFinalSettleMs);
+    CapturedImage img = parityGrab(container, name, QStringLiteral("container"));
+    const int minimumWidth = qMax(container->minimumWidth(), container->minimumSizeHint().width());
+    img.extra[QStringLiteral("container_minimum_width")] = minimumWidth;
+    QJsonArray rows;
+    const ContainerDocument doc = host->captureDocument();
+    for (const ContentEntry& entry : doc.contents) {
+        const QRect r = host->entryBoundary(entry.id);
+        rows.append(QJsonObject{{QStringLiteral("entry"), entry.id},
+                                {QStringLiteral("type"), entry.typeId},
+                                {QStringLiteral("name"), entry.name},
+                                {QStringLiteral("rect_in_content"), rectJson(r)}});
+    }
+    img.extra[QStringLiteral("entries")] = rows;
+    ctx.images.append(img);
+    QString scroll;
+    auto* area = container->contentHolder()->findChild<QScrollArea*>();
+    const bool scrolls = area != nullptr && area->verticalScrollBar()->isVisible();
+    if (scrolls) {
+        ctx.images.append(parityGrab(host, name + QStringLiteral("-content"), QStringLiteral("container-content")));
+        scroll = QStringLiteral(", content scrolls (%1 px in a %2 px view); %3-content shows all of it")
+                     .arg(host->height()).arg(area->viewport()->height()).arg(name);
+    }
+    ctx.notes.append(QStringLiteral("%1: container \"%2\" %3x%4, minimum width %5%6")
+                         .arg(name, container->notes().isEmpty() ? containerId : container->notes())
+                         .arg(container->width()).arg(container->height()).arg(minimumWidth).arg(scroll));
+}
+
+// Containers > Edit Container on `containerId`, shown (not exec()'d) and
+// sized to the window as a user would, over the window's middle.
+ContainerSettingsDialog* openParityDialog(SceneContext& ctx, const QString& containerId)
+{
+    ContainerManager* manager = parityManager(ctx);
+    ContainerWidget* container = manager->container(containerId);
+    if (container == nullptr) {
+        ctx.failure = QStringLiteral("no container %1 for the settings dialog").arg(containerId);
+        return nullptr;
+    }
+    auto* dialog = new ContainerSettingsDialog(container, ctx.window, manager);
+    dialog->selectDraftContainer(containerId);
+    dialog->show();
+    pump(kDialogSettleMs);
+    const QSize fit = dialog->size().boundedTo(ctx.window->size() - QSize(kDialogInsetPx, kDialogInsetPx))
+                          .expandedTo(dialog->minimumSizeHint());
+    dialog->resize(fit);
+    pump(kFinalSettleMs);
+    dialog->move(ctx.window->mapToGlobal(ctx.window->rect().center()) - dialog->rect().center());
+    pump(kFinalSettleMs);
+    return dialog;
+}
+
+void closeParityDialog(ContainerSettingsDialog* dialog)
+{
+    if (dialog != nullptr) {
+        dialog->reject();
+        dialog->deleteLater();
+    }
+}
+
+// Selects the entry in the dialog's contents list and returns the editor
+// it shows.
+ContentPropertyEditor* selectParityEntry(SceneContext& ctx, ContainerSettingsDialog* dialog, const QString& entryId)
+{
+    auto* contents = dialog->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
+    QListWidgetItem* row = nullptr;
+    for (int i = 0; contents != nullptr && i < contents->count(); ++i) {
+        if (contents->item(i)->data(Qt::UserRole).toString() == entryId) {
+            row = contents->item(i);
+        }
+    }
+    if (row == nullptr) {
+        ctx.failure = QStringLiteral("no row for entry %1 in the settings dialog").arg(entryId);
+        return nullptr;
+    }
+    contents->setCurrentItem(row);
+    pump(kFinalSettleMs);
+    for (ContentPropertyEditor* editor : dialog->findChildren<ContentPropertyEditor*>()) {
+        if (editor->isVisible()) {
+            return editor;
+        }
+    }
+    ctx.failure = QStringLiteral("no property editor shown for entry %1").arg(entryId);
+    return nullptr;
+}
+
+// The scroll area the editor sits in, scrolled so `w` is in view.
+void scrollParityEditorTo(QWidget* editor, QWidget* w)
+{
+    for (QWidget* p = editor->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(p)) {
+            area->ensureWidgetVisible(w, 0, 40);
+            pump(kFinalSettleMs);
+            return;
+        }
+    }
+}
+
+// The editor at its full height (not clipped to the dialog's scroll area).
+CapturedImage parityEditorImage(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                                const QString& entryName)
+{
+    for (const QJsonValue& v : stopTimersUnder(editor)) {
+        ctx.stoppedTimers.append(v);
+    }
+    CapturedImage img = parityGrab(editor, name, QStringLiteral("editor"));
+    QStringList labels;
+    for (QLabel* l : editor->findChildren<QLabel*>()) {
+        if (l->isVisibleTo(editor) && !l->text().isEmpty()) {
+            labels.append(l->text() + (l->isEnabled() ? QString() : QStringLiteral(" (disabled)")));
+        }
+    }
+    img.extra[QStringLiteral("entry")] = entryName;
+    img.extra[QStringLiteral("labels")] = QJsonArray::fromStringList(labels);
+    ctx.notes.append(QStringLiteral("%1: the property editor of \"%2\" at its full height, %3x%4")
+                         .arg(name, entryName).arg(editor->width()).arg(editor->height()));
+    return img;
+}
+
+void captureParityEditor(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                         const QString& entryName)
+{
+    ctx.images.append(parityEditorImage(ctx, editor, name, entryName));
+}
+
+// A tooltip as the pointer over `anchor` raises it, placed under the row
+// at the editor's left edge so the editor image can carry it.
+QWidget* showParityTip(QWidget* editor, QWidget* anchor, const QString& text)
+{
+    QToolTip::hideText();
+    pump(kFinalSettleMs);
+    const QPoint at(globalOf(editor).x() + kParityTipInsetPx, globalOf(anchor).y() + anchor->height() + 2);
+    QToolTip::showText(at, text, anchor);
+    pump(kFinalSettleMs);
+    QWidget* tip = visibleToolTip();
+    if (tip != nullptr) {
+        tip->move(at);
+        pump(kFinalSettleMs);
+    }
+    return tip;
+}
+
+// The editor with each disabled control's tooltip painted under it, one
+// image per control.
+void captureParityEditorTips(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                             const QString& entryName, const QStringList& objectNames)
+{
+    for (const QString& objectName : objectNames) {
+        auto* anchor = editor->findChild<QWidget*>(objectName);
+        if (anchor == nullptr) {
+            ctx.failure = QStringLiteral("%1: no control %2 in the editor").arg(name, objectName);
+            return;
+        }
+        const QString text = anchor->toolTip();
+        QWidget* tip = showParityTip(editor, anchor, text);
+        CapturedImage img = parityEditorImage(ctx, editor, name + QStringLiteral("-") + slug(objectName),
+                                              entryName);
+        if (tip == nullptr) {
+            ctx.notes.append(QStringLiteral("%1: the tooltip of %2 did not show; its text is \"%3\"")
+                                 .arg(img.name, objectName, text));
+        } else {
+            paintOver(img, editor, tip);
+        }
+        img.extra[QStringLiteral("tooltip_of")] = objectName;
+        img.extra[QStringLiteral("tooltip_text")] = text;
+        img.extra[QStringLiteral("control_enabled")] = anchor->isEnabled();
+        ctx.notes.append(QStringLiteral("%1: %2 is %3, tooltip \"%4\" painted under its row")
+                             .arg(img.name, objectName,
+                                  anchor->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"), text));
+        ctx.images.append(img);
+        QToolTip::hideText();
+        pump(kFinalSettleMs);
+    }
+}
+
+// Pushes `value` to `bindings` on every meter surface of a container, as
+// the poller's updates would arrive.
+void feedParityReadings(SceneContext& ctx, const QString& containerId, const QList<int>& bindings, double value)
+{
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    if (host == nullptr) {
+        return;
+    }
+    for (int i = 0; i < kParityFeedCount; ++i) {
+        for (MeterWidget* meter : host->meterSurfaces()) {
+            for (int binding : bindings) {
+                meter->updateMeterValue(binding, value);
+            }
+        }
+        pump(kParityFeedGapMs);
+    }
+    QJsonArray ids;
+    for (int binding : bindings) {
+        ids.append(binding);
+    }
+    ctx.fedReadings.append(QJsonObject{{QStringLiteral("container"), containerId},
+                                       {QStringLiteral("bindings"), ids},
+                                       {QStringLiteral("value"), value},
+                                       {QStringLiteral("count"), kParityFeedCount},
+                                       {QStringLiteral("seam"), QStringLiteral("MeterWidget::updateMeterValue")}});
+}
+
+// Every clock in a container (building blocks and clock faces) reads the
+// fixed time.
+void fixParityClocks(SceneContext& ctx, const QString& containerId)
+{
+    QList<ClockItem*> clocks;
+    for (const auto& [meter, clock] : parityItems<ClockItem>(ctx, containerId)) {
+        clocks.append(clock);
+    }
+    for (const auto& [meter, face] : parityItems<CompositePresetItem>(ctx, containerId)) {
+        if (face->clockDisplay() != nullptr) {
+            clocks.append(face->clockDisplay());
+        }
+    }
+    for (ClockItem* clock : clocks) {
+        clock->setTimeSource([] { return parityClockTime(); });
+    }
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    for (MeterWidget* meter : host != nullptr ? host->meterSurfaces() : QVector<MeterWidget*>{}) {
+        for (MeterItem* item : meter->items()) {
+            meter->invalidatePresentation(item);
+        }
+        meter->update();
+    }
+    pump(kFinalSettleMs);
+    ctx.frozen.append(QJsonObject{{QStringLiteral("item"), QStringLiteral("clocks in %1").arg(containerId)},
+                                  {QStringLiteral("value"), QStringLiteral("local time 2026-10-07 14:32:10 "
+                                                                           "(ClockItem::setTimeSource)")},
+                                  {QStringLiteral("count"), int(clocks.size())}});
+}
+
+// A record of `Item` as constructed, before any new-item default: the
+// look a layout saved before this branch loads with.
+template <typename Item>
+QString savedRecord()
+{
+    Item item;
+    return item.serialize();
+}
+
+// ---- 1 and 11: button grid editors -----------------------------------------
+
+void sceneParityButtonGrids(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-button-grids");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Mode buttons"), DockEdge::Left, {{QStringLiteral("MODEBTNS")}}},
+        {QStringLiteral("Tune step buttons"), DockEdge::Left, {{QStringLiteral("TUNESTEPBTNS")}}},
+        {QStringLiteral("Antenna buttons"), DockEdge::Left, {{QStringLiteral("ANTENNABTNS")}}},
+        {QStringLiteral("Filter buttons"), DockEdge::Left, {{QStringLiteral("FILTERBTNS")}}},
+        {QStringLiteral("Other buttons"), DockEdge::Left, {{QStringLiteral("OTHERBTNS")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    const QStringList keys = {QStringLiteral("modes"), QStringLiteral("steps"), QStringLiteral("antennas"),
+                              QStringLiteral("filters"), QStringLiteral("other")};
+    for (int i = 0; i < keys.size(); ++i) {
+        captureParityContainer(ctx, name + QStringLiteral("--") + keys.at(i), built.containers.at(i));
+    }
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.at(i));
+        ContentPropertyEditor* editor = dialog != nullptr
+            ? selectParityEntry(ctx, dialog, built.entries.at(i).value(0)) : nullptr;
+        if (editor != nullptr) {
+            if (i == 0) {
+                captureDialog(ctx, dialog, name + QStringLiteral("--dialog"));
+            }
+            const QString image = name + QStringLiteral("--editor-") + keys.at(i);
+            captureParityEditor(ctx, editor, image, boxes.at(i).name);
+            if (keys.at(i) == QLatin1String("antennas")) {
+                // XVTR input and Rx/Tx swap (AntennaButtonItem::kXvtrButton,
+                // kRxTxButton) wait for features that are not built.
+                captureParityEditorTips(ctx, editor, image, boxes.at(i).name,
+                                        {QStringLiteral("antennaVisible_%1").arg(AntennaButtonItem::kXvtrButton),
+                                         QStringLiteral("antennaVisible_%1").arg(AntennaButtonItem::kRxTxButton)});
+            } else if (keys.at(i) == QLatin1String("filters")) {
+                captureParityEditorTips(ctx, editor, image, boxes.at(i).name,
+                                        {QStringLiteral("filterVisible_%1").arg(FilterButtonItem::kVar1Button),
+                                         QStringLiteral("filterVisible_%1").arg(FilterButtonItem::kVar2Button)});
+            }
+        }
+        closeParityDialog(dialog);
+        pump(kFinalSettleMs);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 2: mode grid ------------------------------------------------------------
+
+// A mode grid saved before the twelve-mode order: the old ten buttons, all
+// shown, no order marker (ModeButtonItem::deserialize remaps it and starts
+// SPEC and DRM hidden).
+QString savedModeGridRecord()
+{
+    ModeButtonItem item;
+    QStringList parts = item.serialize().split(QLatin1Char('|')).mid(0, 9);
+    parts.append(QString::number((1u << 10) - 1u));
+    return parts.join(QLatin1Char('|'));
+}
+
+void sceneParityModeGrid(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-mode-grid");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Modes"), DockEdge::Left,
+         {{QStringLiteral("MODEBTNS"), QStringLiteral("Mode buttons (new)")},
+          {QStringLiteral("MODEBTNS"), QStringLiteral("Mode buttons (saved layout)"), savedModeGridRecord()},
+          {QStringLiteral("meter.contest"), QStringLiteral("Contest controls (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--grids"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    const QString savedEntry = built.entries.value(0).value(1);
+    ContentPropertyEditor* editor = dialog != nullptr ? selectParityEntry(ctx, dialog, savedEntry) : nullptr;
+    if (editor == nullptr) {
+        closeParityDialog(dialog);
+        return;
+    }
+    captureParityEditor(ctx, editor, name + QStringLiteral("--editor-saved"), QStringLiteral("Mode buttons (saved layout)"));
+    // Tick SPEC and DRM in Visible modes, then Apply, as a user would.
+    QStringList ticked;
+    for (int i = 0; i < ModeButtonItem::kModeCount; ++i) {
+        const QString label = ModeButtonItem::modeLabel(i);
+        if (label != QLatin1String("SPEC") && label != QLatin1String("DRM")) {
+            continue;
+        }
+        auto* check = editor->findChild<QCheckBox*>(QStringLiteral("modeVisible_%1").arg(i));
+        if (check == nullptr) {
+            ctx.failure = QStringLiteral("no Visible modes row for %1").arg(label);
+            closeParityDialog(dialog);
+            return;
+        }
+        ctx.notes.append(QStringLiteral("saved grid before the tick: %1 %2").arg(label,
+            check->isChecked() ? QStringLiteral("ticked") : QStringLiteral("not ticked")));
+        check->setChecked(true);
+        ticked.append(label);
+        pump(kFinalSettleMs);
+    }
+    const CommitResult applied = dialog->applyDraft();
+    pump(kSettleMs);
+    ctx.notes.append(QStringLiteral("ticked %1 on the saved grid and pressed Apply: %2")
+                         .arg(ticked.join(QStringLiteral(" and ")),
+                              applied.status == CommitStatus::Saved ? QStringLiteral("saved")
+                                                                    : QStringLiteral("not saved")));
+    if (applied.status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("Apply did not save the ticked modes");
+        closeParityDialog(dialog);
+        return;
+    }
+    editor = selectParityEntry(ctx, dialog, savedEntry);
+    if (editor != nullptr) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor-saved-spec-drm"),
+                            QStringLiteral("Mode buttons (saved layout)"));
+    }
+    closeParityDialog(dialog);
+    pump(kSettleMs);
+    fixParityClocks(ctx, id);
+    captureParityContainer(ctx, name + QStringLiteral("--grids-spec-drm"), id);
+    ctx.notes.append(QStringLiteral("the Contest face's grid has no Visible modes row (its properties leave "
+                                    "out \"modes\"); it shows its ten modes"));
+    annotateSlices(ctx);
+}
+
+// ---- 3: VFO display ------------------------------------------------------------
+
+// Sends a press and release (or a held press) to `meter` at `pos`.
+void parityClick(MeterWidget* meter, const QPointF& pos, int holdMs = 0)
+{
+    QMouseEvent press(QEvent::MouseButtonPress, pos, meter->mapToGlobal(pos), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(meter, &press);
+    pump(holdMs > 0 ? holdMs : 20);
+    QMouseEvent release(QEvent::MouseButtonRelease, pos, meter->mapToGlobal(pos), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(meter, &release);
+    pump(kFinalSettleMs);
+}
+
+// A point of the Detailed layout of a one-column VFO display face, from
+// the Thetis fractions renderVfoDisplay's boxes use (x of the width times
+// kVfoSingleXMulti 2.07, y of the height).
+QPointF parityVfoPoint(MeterWidget* meter, MeterItem* face, double fx, double fy)
+{
+    const QRectF r(face->x() * meter->width(), face->y() * meter->height(),
+                   face->itemWidth() * meter->width(), face->itemHeight() * meter->height());
+    return QPointF(r.left() + r.width() * 2.07 * fx, r.top() + r.height() * fy);
+}
+
+void waitParityScreenClosed(VfoDisplayItem* vfo, int slice)
+{
+    QElapsedTimer t;
+    t.start();
+    while (vfo->screenFor(slice) != VfoDisplayItem::Screen::Vfo && t.elapsed() < kParityScreenCloseMaxMs) {
+        pump(200);
+    }
+}
+
+void sceneParityVfoDisplay(SceneContext& ctx, bool roomy)
+{
+    const QString name = roomy ? QStringLiteral("container-parity-vfo-display-roomy")
+                               : QStringLiteral("container-parity-vfo-display");
+    QJsonObject all{{QStringLiteral("properties"),
+                     QJsonObject{{QStringLiteral("displayMode"), int(VfoDisplayItem::DisplayMode::AllSlices)}}}};
+    QJsonObject source;
+    if (roomy) {
+        QJsonObject p = all.value(QStringLiteral("properties")).toObject();
+        p.insert(QStringLiteral("faceHeight"), kParityRoomyFaceHeightPx);
+        all.insert(QStringLiteral("properties"), p);
+        source.insert(QStringLiteral("properties"), QJsonObject{{QStringLiteral("faceHeight"), kParityRoomyFaceHeightPx}});
+    }
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("VFO display, slice A"), DockEdge::Top,
+         {{QStringLiteral("meter.vfoDisplay"), QStringLiteral("VFO display (new)"), {}, source}}},
+        {QStringLiteral("VFO display, all slices"), DockEdge::Top,
+         {{QStringLiteral("meter.vfoDisplay"), QStringLiteral("VFO display, all slices"), {}, all}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Top, roomy ? kParityRoomyTopStripPx : kParityTopStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--slice-a"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--all-slices"), built.containers.value(1));
+    for (const auto& [meter, face] : parityItems<CompositePresetItem>(ctx, built.containers.value(0))) {
+        ctx.notes.append(QStringLiteral("slice A face: %1x%2 px on its meter, layout %3, face height %4")
+                             .arg(int(face->itemWidth() * meter->width())).arg(int(face->itemHeight() * meter->height()))
+                             .arg(face->vfoDisplay() != nullptr && face->vfoDisplay()->layout() == VfoDisplayItem::Layout::Thetis
+                                      ? QStringLiteral("Detailed") : QStringLiteral("Compact"))
+                             .arg(face->configuration().value(QStringLiteral("faceHeight")).toInt()));
+    }
+    if (roomy) {
+        annotateSlices(ctx);
+        return;
+    }
+    // The editor of the new face.
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(0))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("VFO display (new)"));
+        }
+        closeParityDialog(dialog);
+        pump(kFinalSettleMs);
+    }
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    // Each screen of the slice A face, opened as a click (a long press for
+    // the tune step) opens it; each closes on its own after five seconds.
+    const auto faces = parityItems<CompositePresetItem>(ctx, built.containers.value(0));
+    if (faces.isEmpty() || faces.first().second->vfoDisplay() == nullptr) {
+        ctx.failure = QStringLiteral("no VFO display face in the slice A container");
+        return;
+    }
+    MeterWidget* meter = faces.first().first;
+    CompositePresetItem* face = faces.first().second;
+    VfoDisplayItem* vfo = face->vfoDisplay();
+    struct ScreenShot {
+        QString key;
+        VfoDisplayItem::Screen screen;
+        double fx;
+        double fy;
+        int holdMs;
+    };
+    // From Thetis MeterManager.cs renderVfoDisplay boxes (kVfoHitBoxes):
+    // mode 0.008-0.078, filter 0.250-0.332, band 0.333-0.480 across, all
+    // 0.555-0.900 down; the kHz digits 0.346-0.416 at 0.30.
+    const QVector<ScreenShot> shots = {
+        {QStringLiteral("band"), VfoDisplayItem::Screen::Band, 0.40, 0.70, 0},
+        {QStringLiteral("mode"), VfoDisplayItem::Screen::Mode, 0.04, 0.70, 0},
+        {QStringLiteral("filter"), VfoDisplayItem::Screen::Filter, 0.29, 0.70, 0},
+        {QStringLiteral("tune-step"), VfoDisplayItem::Screen::TuneStep, 0.346 + (0.416 - 0.346) / 3.0 * 2.5, 0.30,
+         kParityLongPressMs},
+    };
+    const int sliceA = 0;
+    for (const ScreenShot& shot : shots) {
+        waitParityScreenClosed(vfo, sliceA);
+        parityClick(meter, parityVfoPoint(meter, face, shot.fx, shot.fy), shot.holdMs);
+        meter->update();
+        pump(kFinalSettleMs);
+        if (vfo->screenFor(sliceA) != shot.screen) {
+            ctx.notes.append(QStringLiteral("the %1 screen did not open from a %2 at %3,%4 of the face")
+                                 .arg(shot.key, shot.holdMs > 0 ? QStringLiteral("long press") : QStringLiteral("click"))
+                                 .arg(shot.fx).arg(shot.fy));
+            ctx.failure = QStringLiteral("the VFO display's %1 screen did not open").arg(shot.key);
+            return;
+        }
+        captureParityContainer(ctx, name + QStringLiteral("--screen-") + shot.key, built.containers.value(0));
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 4: clock ----------------------------------------------------------------
+
+QString centeredClockRecord()
+{
+    ClockItem item(nullptr, false);
+    item.applyNewItemDefaults();
+    item.setLayout(ClockItem::Layout::NereusSDR);
+    return item.serialize();
+}
+
+void sceneParityClock(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-clock");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Clocks"), DockEdge::Left,
+         {{QStringLiteral("CLOCK"), QStringLiteral("Clock (new, Large time)")},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (new, Centered)"), centeredClockRecord()},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (saved layout)"), savedRecord<ClockItem>()},
+          {QStringLiteral("meter.clock"), QStringLiteral("Clock face (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--clocks"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    const QStringList names = {QStringLiteral("Clock (new, Large time)"), QStringLiteral("Clock (new, Centered)"),
+                               QStringLiteral("Clock (saved layout)"), QStringLiteral("Clock face (new)")};
+    const QStringList keys = {QStringLiteral("large-time"), QStringLiteral("centered"), QStringLiteral("saved"),
+                              QStringLiteral("face")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(i))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-") + keys.at(i), names.at(i));
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 5 and 10: text overlay and LED -------------------------------------------
+
+void sceneParityOverlayLed(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-overlay-led");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Overlay and LED"), DockEdge::Left,
+         {{QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)")},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (saved layout)"), savedRecord<TextOverlayItem>()},
+          {QStringLiteral("LED"), QStringLiteral("LED (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--items"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    // The text overlay's editor, then its "%" token picker open.
+    if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor-overlay"), QStringLiteral("Text overlay (new)"));
+        auto* picker = editor->findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QMenu* menu = picker != nullptr ? picker->menu() : nullptr;
+        if (menu == nullptr) {
+            ctx.failure = QStringLiteral("no \"%\" token picker on the text overlay editor");
+        } else {
+            scrollParityEditorTo(editor, picker);
+            // The menu InstantPopup opens, shown with popup() so the grab
+            // needs no nested loop.
+            menu->popup(globalOf(picker) + QPoint(0, picker->height()));
+            pump(kFinalSettleMs);
+            menu->move(globalOf(picker) + QPoint(0, picker->height()));
+            pump(kFinalSettleMs);
+            appendPopupImages(ctx, name + QStringLiteral("--token-picker"), dialog, {menu}, menu);
+            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3")
+                                 .arg(menu->actions().size()).arg(menu->width()).arg(menu->height()));
+            menu->close();
+            pump(kFinalSettleMs);
+        }
+    }
+    // The LED's editor, then with a condition it cannot work out.
+    if (ctx.failure.isEmpty()) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(2))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-led"), QStringLiteral("LED (new)"));
+            auto* condition = editor->findChild<QLineEdit*>(QStringLiteral("ledCondition"));
+            if (condition == nullptr) {
+                ctx.failure = QStringLiteral("no Condition row on the LED editor");
+            } else {
+                const QString bad = QStringLiteral("%swr% >= (2");
+                condition->setText(bad);
+                emit condition->textEdited(bad);
+                pump(kFinalSettleMs);
+                captureParityEditor(ctx, editor, name + QStringLiteral("--editor-led-bad-condition"),
+                                    QStringLiteral("LED (new)"));
+                ctx.notes.append(QStringLiteral("LED condition typed: \"%1\"").arg(bad));
+            }
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 6: S-meter dial (and the tuning dial's saved look) ---------------------------
+
+// Feeds every added S-meter dial a swinging level, so a dial that keeps
+// history has a wedge to draw, then the slice's level.
+void feedParityDials(SceneContext& ctx)
+{
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (poller == nullptr) {
+        ctx.failure = QStringLiteral("no MeterPoller");
+        return;
+    }
+    const QList<SMeterWidget*> dials = dialCopies(ctx);
+    for (int step = 0; step < kParityHistorySteps; ++step) {
+        const double swing = kParityHistorySwingDb * std::sin(step * 0.6);
+        for (SMeterWidget* dial : dials) {
+            const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kParitySignalDbm + swing);
+        }
+        pump(kParityFeedGapMs);
+    }
+    for (SMeterWidget* dial : dials) {
+        const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, kParitySignalDbm);
+    }
+    ctx.fedReadings.append(QJsonObject{
+        {QStringLiteral("instrument"), QStringLiteral("SMeterWidget (added copies)")},
+        {QStringLiteral("binding"), QStringLiteral("RX: Signal Peak")},
+        {QStringLiteral("values_dbm"), QStringLiteral("%1 readings swinging %2 dB about %3, then %3")
+                                           .arg(kParityHistorySteps).arg(kParityHistorySwingDb).arg(kParitySignalDbm)},
+        {QStringLiteral("seam"), consumerSeam(poller)}});
+}
+
+QString savedTuningDialRecord()
+{
+    DialItem item;
+    item.applyNewItemDefaults();
+    item.setThetisLook(false);
+    return item.serialize();
+}
+
+void sceneParitySMeterDial(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-smeter-dial");
+    const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+    const QString dark = QString::fromLatin1(SMeterDialContent::kDarkModeKey);
+    const QString history = QString::fromLatin1(SMeterDialContent::kShowHistoryKey);
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Dial"), DockEdge::Top, {{dial, QStringLiteral("S-meter dial (new)")}}},
+        {QStringLiteral("Dial, dark mode"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, dark mode"), {}, QJsonObject{{dark, true}}}}},
+        {QStringLiteral("Dial, history"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, history"), {}, QJsonObject{{history, true}}}}},
+        {QStringLiteral("Dial, dark and history"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, dark mode and history"), {}, QJsonObject{{dark, true}, {history, true}}}}},
+        {QStringLiteral("Tuning dials"), DockEdge::Left,
+         {{QStringLiteral("DIAL"), QStringLiteral("Tuning dial (new)")},
+          {QStringLiteral("DIAL"), QStringLiteral("Tuning dial (saved look)"), savedTuningDialRecord()}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Top, kParityTopStripPx}, {DockEdge::Left, kParitySideStripPx}},
+                         built, [](SceneContext& c) { feedParityDials(c); })) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    const QStringList keys = {QStringLiteral("default"), QStringLiteral("dark"), QStringLiteral("history"),
+                              QStringLiteral("dark-history"), QStringLiteral("tuning-dials")};
+    for (int i = 0; i < keys.size(); ++i) {
+        captureParityContainer(ctx, name + QStringLiteral("--") + keys.at(i), built.containers.value(i));
+    }
+    noteDials(ctx);
+    ctx.notes.append(QStringLiteral("an S-meter dial has no new-item default: a new copy and a saved copy "
+                                    "both draw with dark mode and history off (absent keys)"));
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(3))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(3).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"),
+                                QStringLiteral("S-meter dial, dark mode and history"));
+        }
+        closeParityDialog(dialog);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 7: web image background ----------------------------------------------------
+
+// A fixed picture for the web image item: bands of colour with a grid and
+// a caption, so it is plain where it is drawn.
+QImage parityWebPicture()
+{
+    QImage img(640, 360, QImage::Format_ARGB32);
+    QPainter p(&img);
+    QLinearGradient sky(0, 0, 0, img.height());
+    sky.setColorAt(0.0, QColor(0x1c, 0x3f, 0x6e));
+    sky.setColorAt(0.6, QColor(0x5a, 0x86, 0xb8));
+    sky.setColorAt(1.0, QColor(0xd9, 0x9a, 0x4e));
+    p.fillRect(img.rect(), sky);
+    p.setPen(QPen(QColor(255, 255, 255, 60), 1));
+    for (int x = 0; x < img.width(); x += 40) {
+        p.drawLine(x, 0, x, img.height());
+    }
+    for (int y = 0; y < img.height(); y += 40) {
+        p.drawLine(0, y, img.width(), y);
+    }
+    QFont f = p.font();
+    f.setPixelSize(28);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(QColor(255, 255, 255, 200));
+    p.drawText(img.rect(), Qt::AlignCenter, QStringLiteral("Web image (preview picture)"));
+    return img;
+}
+
+void sceneParityWebImage(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-web-image");
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("web-image.png"));
+    if (!dir.isValid() || !parityWebPicture().save(path, "PNG")) {
+        ctx.failure = QStringLiteral("could not write the web image picture");
+        return;
+    }
+    const QString url = QUrl::fromLocalFile(path).toString();
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Web image"), DockEdge::Left, {{QStringLiteral("WEBIMAGE"), QStringLiteral("Web image (new)")}}},
+    };
+    // The item reads a local file (no network): WebImageItem::setUrl loads a
+    // file URL at once, and a live item on Pan 1 hands its picture to that
+    // pan's spectrum (WebImageBackgrounds, MainWindow).
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built, [&built, &url](SceneContext& c) {
+            for (const auto& [meter, web] : parityItems<WebImageItem>(c, built.containers.value(0))) {
+                web->setUrl(url);
+                web->setTargetPan(0);
+                meter->update();
+                c.notes.append(QStringLiteral("web image: url a local PNG (no network), Pan 1; image %1, "
+                                              "shows background %2")
+                                   .arg(web->currentImage().isNull() ? QStringLiteral("none") : QStringLiteral("loaded"))
+                                   .arg(web->showsBackground() ? QStringLiteral("yes") : QStringLiteral("no")));
+            }
+            pump(kSettleMs);
+        })) {
+        return;
+    }
+    SpectrumWidget* pan = spectrumFor(ctx.window, panIdAt(0));
+    if (pan == nullptr) {
+        ctx.failure = QStringLiteral("no pan 1 spectrum");
+        return;
+    }
+    if (!pan->hasBackgroundImageOverride()) {
+        ctx.failure = QStringLiteral("pan 1 has no web image background");
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--item"), built.containers.value(0));
+    QWidget* applet = appletFor(ctx.window, panIdAt(0));
+    QWidget* panWidget = applet != nullptr ? applet : pan;
+    ctx.notes.append(QStringLiteral("pan 1 background: own background %1, opacity %2%")
+                         .arg(pan->backgroundEnabled() ? QStringLiteral("on") : QStringLiteral("off"))
+                         .arg(pan->backgroundOpacity()));
+    ctx.images.append(parityGrab(panWidget, name + QStringLiteral("--pan"), QStringLiteral("pan")));
+    // The pan's own background setting on: its opacity applies.
+    const bool wasOn = pan->backgroundEnabled();
+    pan->setBackgroundEnabled(true);
+    pump(kSettleMs);
+    ctx.notes.append(QStringLiteral("then the pan's own background on (opacity %1%)").arg(pan->backgroundOpacity()));
+    ctx.images.append(parityGrab(panWidget, name + QStringLiteral("--pan-background-on"), QStringLiteral("pan")));
+    pan->setBackgroundEnabled(wasOn);
+    pump(kSettleMs);
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(0))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("Web image (new)"));
+        }
+        closeParityDialog(dialog);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 8: ANAN dark face and magic eye bezel -------------------------------------
+
+void sceneParityArtworkOptions(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-artwork-options");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Faces"), DockEdge::Left,
+         {{QStringLiteral("meter.ananMulti"), QStringLiteral("ANAN multi meter (new)")},
+          {QStringLiteral("meter.magicEye"), QStringLiteral("Magic eye face (new)")},
+          {QStringLiteral("MAGICEYE"), QStringLiteral("Magic eye (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--faces"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    const QStringList names = {QStringLiteral("ANAN multi meter (new)"), QStringLiteral("Magic eye face (new)"),
+                               QStringLiteral("Magic eye (new)")};
+    const QStringList keys = {QStringLiteral("anan"), QStringLiteral("eye-face"), QStringLiteral("eye")};
+    const QStringList controls = {QStringLiteral("darkMode"), QStringLiteral("builtInBezel"),
+                                  QStringLiteral("builtInBezel")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(i));
+        if (editor == nullptr) {
+            break;
+        }
+        const QString image = name + QStringLiteral("--editor-") + keys.at(i);
+        captureParityEditor(ctx, editor, image, names.at(i));
+        captureParityEditorTips(ctx, editor, image, names.at(i), {controls.at(i)});
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 9: signal text ----------------------------------------------------------
+
+QString savedSignalFaceRecord(QJsonObject& properties)
+{
+    SignalTextPresetItem face;
+    properties = face.configuration();
+    return face.serialize();
+}
+
+void sceneParitySignalText(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-signal-text");
+    QJsonObject savedFaceProperties;
+    const QString savedFace = savedSignalFaceRecord(savedFaceProperties);
+    ParityItem savedFaceItem{QStringLiteral("meter.signalText"), QStringLiteral("Signal text face (saved layout)"),
+                             savedFace, QJsonObject{{QStringLiteral("properties"), savedFaceProperties}}, true};
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Signal text"), DockEdge::Left,
+         {{QStringLiteral("SIGNALTEXT"), QStringLiteral("Signal text (new)")},
+          {QStringLiteral("SIGNALTEXT"), QStringLiteral("Signal text (saved layout)"), savedRecord<SignalTextItem>()},
+          {QStringLiteral("meter.signalText"), QStringLiteral("Signal text face (new)")},
+          savedFaceItem}},
+    };
+    const QList<int> bindings = {MeterBinding::SignalPeak, MeterBinding::SignalAvg, MeterBinding::SignalMaxBin};
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built,
+                         [&built, &bindings](SceneContext& c) {
+            feedParityReadings(c, built.containers.value(0), bindings, kParitySignalDbm);
+        })) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--items"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("Signal text (new)"));
+        auto* units = editor->findChild<QComboBox*>(QStringLiteral("signalUnits"));
+        if (units == nullptr) {
+            ctx.failure = QStringLiteral("no Units row on the signal text editor");
+        } else {
+            QStringList items;
+            for (int i = 0; i < units->count(); ++i) {
+                items.append(units->itemText(i));
+            }
+            ctx.notes.append(QStringLiteral("Units (signalUnits): current \"%1\", items [%2]")
+                                 .arg(units->currentText(), items.join(QStringLiteral(", "))));
+            scrollParityEditorTo(editor, units);
+            const QSet<QWidget*> before = visiblePopups();
+            units->showPopup();
+            pump(kFinalSettleMs);
+            QWidget* popup = newPopup(before);
+            appendPopupImages(ctx, name + QStringLiteral("--units"), dialog, {popup}, popup);
+            if (popup == nullptr) {
+                ctx.notes.append(QStringLiteral("the Units list did not open offscreen; see the editor image"));
+            }
+            units->hidePopup();
+            pump(kFinalSettleMs);
+        }
+    }
+    if (ctx.failure.isEmpty()) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(2))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-face"),
+                                QStringLiteral("Signal text face (new)"));
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 12: TX and RX section items -------------------------------------------------
+
+// A section type with at least three parts, its built order and its
+// hide keys, from the properties it declares.
+struct ParitySection {
+    QString typeId;
+    QStringList order;
+    QStringList labels;
+};
+
+ParitySection paritySection(ContainerContentRegistry* registry, const QStringList& candidates)
+{
+    for (const QString& typeId : candidates) {
+        for (const ContentProperty& p : registry->declaredProperties(typeId)) {
+            if (p.kind != ContentProperty::Kind::Order || p.choices.size() < 3) {
+                continue;
+            }
+            ParitySection s;
+            s.typeId = typeId;
+            for (const ContentPropertyChoice& choice : p.choices) {
+                s.order.append(choice.value.toObject().value(QStringLiteral("id")).toString());
+                s.labels.append(choice.label);
+            }
+            return s;
+        }
+    }
+    return {};
+}
+
+// The section with its second part hidden and its parts in reverse order
+// (SectionParts::effectiveOrder keeps a shared line together).
+QJsonObject paritySectionEdit(const ParitySection& s)
+{
+    QStringList reversed = s.order;
+    std::reverse(reversed.begin(), reversed.end());
+    return QJsonObject{{SectionParts::hideKey(s.order.value(1)), true},
+                       {SectionParts::orderKey(), QJsonArray::fromStringList(reversed)}};
+}
+
+void sceneParitySections(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-sections");
+    ContainerContentRegistry* registry = parityManager(ctx) != nullptr ? parityManager(ctx)->contentRegistry() : nullptr;
+    if (registry == nullptr) {
+        ctx.failure = QStringLiteral("no content registry: the workspace preview switch is off");
+        return;
+    }
+    const ParitySection tx = paritySection(registry, {QStringLiteral("tx.power"), QStringLiteral("tx.processing"),
+                                                      QStringLiteral("tx.chain"), QStringLiteral("tx.keying"),
+                                                      QStringLiteral("tx.monitor"), QStringLiteral("tx.vox"),
+                                                      QStringLiteral("tx.filter")});
+    const ParitySection rx = paritySection(registry, {QStringLiteral("rx.agc"), QStringLiteral("rx.filter"),
+                                                      QStringLiteral("rx.mode"), QStringLiteral("rx.antennas"),
+                                                      QStringLiteral("rx.attenuator"), QStringLiteral("rx.squelch"),
+                                                      QStringLiteral("rx.rit"), QStringLiteral("rx.xit"),
+                                                      QStringLiteral("rx.step"), QStringLiteral("rx.pan")});
+    if (tx.typeId.isEmpty() || rx.typeId.isEmpty()) {
+        ctx.failure = QStringLiteral("no TX or RX section type with three or more parts");
+        return;
+    }
+    ctx.notes.append(QStringLiteral("TX section %1, parts [%2]; second part hidden, order reversed")
+                         .arg(tx.typeId, tx.labels.join(QStringLiteral(", "))));
+    ctx.notes.append(QStringLiteral("RX section %1, parts [%2]; second part hidden, order reversed")
+                         .arg(rx.typeId, rx.labels.join(QStringLiteral(", "))));
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("TX section"), DockEdge::Left,
+         {{tx.typeId, QStringLiteral("TX section (as built)")},
+          {tx.typeId, QStringLiteral("TX section (hidden and reordered)"), {}, paritySectionEdit(tx)}}},
+        {QStringLiteral("RX section"), DockEdge::Left,
+         {{rx.typeId, QStringLiteral("RX section (as built)")},
+          {rx.typeId, QStringLiteral("RX section (hidden and reordered)"), {}, paritySectionEdit(rx)}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--tx"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--rx"), built.containers.value(1));
+    const QStringList keys = {QStringLiteral("tx"), QStringLiteral("rx")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(i))) {
+            if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(i).value(1))) {
+                captureParityEditor(ctx, editor, name + QStringLiteral("--editor-") + keys.at(i),
+                                    boxes.at(i).items.at(1).name);
+            }
+            closeParityDialog(dialog);
+            pump(kFinalSettleMs);
+        }
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 13: container header with a long default name -----------------------------------
+
+void sceneParityLongTitle(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-long-title");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Signal max bin bar"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin")}}},
+        {QStringLiteral("Signal"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParityNarrowStripPx}}, built,
+                         [&built](SceneContext& c) {
+            for (const QString& id : built.containers) {
+                feedParityReadings(c, id, {MeterBinding::SignalMaxBin}, kParitySignalDbm);
+            }
+        })) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--long"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--short"), built.containers.value(1));
+    if (auto* area = ctx.window->findChild<EdgeDockArea*>()) {
+        EdgeDockStrip* strip = area->strip(DockEdge::Left);
+        ctx.notes.append(QStringLiteral("left strip asked for %1 px, is %2 px wide (minimum %3)")
+                             .arg(kParityNarrowStripPx).arg(strip->width())
+                             .arg(qMax(strip->minimumWidth(), strip->minimumSizeHint().width())));
+    }
+    ContainerManager* manager = parityManager(ctx);
+    for (const QString& id : built.containers) {
+        ContainerWidget* container = manager->container(id);
+        WorkspaceGroupHeader* header = container != nullptr ? container->workspaceHeader() : nullptr;
+        if (header == nullptr) {
+            continue;
+        }
+        QLabel* title = nullptr;
+        for (QLabel* l : header->findChildren<QLabel*>()) {
+            if (l->isVisible() && !l->text().isEmpty()) {
+                title = l;
+            }
+        }
+        ctx.notes.append(QStringLiteral("header of \"%1\": %2 px wide, title label %3 px wide showing \"%4\" "
+                                        "(full text needs %5 px)")
+                             .arg(header->title()).arg(header->width())
+                             .arg(title != nullptr ? title->width() : -1)
+                             .arg(title != nullptr ? title->text() : QString())
+                             .arg(title != nullptr ? title->fontMetrics().horizontalAdvance(header->title()) : -1));
+    }
+    annotateSlices(ctx);
+}
+
+// The container-parity-* scenes (workspace preview switch on).
+void appendContainerParityScenes(QVector<Scene>& scenes)
+{
+    const auto add = [&scenes](const QString& name, const std::function<void(SceneContext&)>& run) {
+        scenes.append({name, QStringLiteral("2v"), false, run, true});
+    };
+    add(QStringLiteral("container-parity-button-grids"), sceneParityButtonGrids);
+    add(QStringLiteral("container-parity-mode-grid"), sceneParityModeGrid);
+    add(QStringLiteral("container-parity-vfo-display"), [](SceneContext& ctx) { sceneParityVfoDisplay(ctx, false); });
+    add(QStringLiteral("container-parity-vfo-display-roomy"),
+        [](SceneContext& ctx) { sceneParityVfoDisplay(ctx, true); });
+    add(QStringLiteral("container-parity-clock"), sceneParityClock);
+    add(QStringLiteral("container-parity-overlay-led"), sceneParityOverlayLed);
+    add(QStringLiteral("container-parity-smeter-dial"), sceneParitySMeterDial);
+    add(QStringLiteral("container-parity-web-image"), sceneParityWebImage);
+    add(QStringLiteral("container-parity-artwork-options"), sceneParityArtworkOptions);
+    add(QStringLiteral("container-parity-signal-text"), sceneParitySignalText);
+    add(QStringLiteral("container-parity-sections"), sceneParitySections);
+    add(QStringLiteral("container-parity-long-title"), sceneParityLongTitle);
+}
+
+} // namespace
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -8593,6 +9878,7 @@ QVector<Scene> fixedScenes()
         QMetaObject::invokeMethod(ctx.window, "openDiversityDialog", Qt::DirectConnection);
         captureDialog(ctx, visibleTopLevel<DiversityDialog>(), QStringLiteral("dialog-diversity"));
     }});
+    appendContainerParityScenes(scenes);
     appendInventoryDialogScenes(scenes);
     appendMenuScenes(scenes);
     return scenes;

@@ -48,6 +48,10 @@
 #                say which profiles dialogs are captured at; status table
 #                lists the source menu, property editor and CW page.
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-26 - Single-run mode lists images of any other kind (container,
+#                editor, popup, sheet, ...) under "Other images" instead of
+#                dropping them. J.J. Boyd (KG4VCF), AI-assisted via
+#                Anthropic Claude Code.
 
 import argparse
 import datetime
@@ -72,6 +76,9 @@ GROUPS = [
     ("setup", "Setup pages"),
 ]
 
+# Single-run mode: images whose kind is not a GROUPS key land here.
+OTHER_GROUP = ("other", "Other images")
+
 
 def esc(v):
     return html.escape(str(v), quote=True)
@@ -81,6 +88,8 @@ def group_of(meta):
     kind = meta.get("kind", "window")
     if kind == "dialog" and str(meta.get("scene", "")).startswith("dialog-setup-"):
         return "setup"
+    if kind not in (k for k, _ in GROUPS):
+        return OTHER_GROUP[0]
     return kind
 
 
@@ -264,14 +273,14 @@ def build_run_page(run_dir):
         parts = ["<p class='sub'>Logical %s, DPR %s, QT_SCALE_FACTOR %s</p>" % (
             esc("x".join(str(v) for v in info.get("logical_size", []))), esc(info.get("dpr")),
             esc(info.get("qt_scale_factor")))]
-        for key, label in GROUPS:
+        for key, label in GROUPS + [OTHER_GROUP]:
             items = [(png, meta) for png, meta in by_profile[profile] if group_of(meta) == key]
             if not items:
                 continue
             parts.append("<h2>%s</h2>" % esc(label))
             current_scene = None
             for png, meta in items:
-                if key in ("crop", "crop-3x") and meta.get("scene") != current_scene:
+                if key in ("crop", "crop-3x", OTHER_GROUP[0]) and meta.get("scene") != current_scene:
                     current_scene = meta.get("scene")
                     parts.append("<h3>%s</h3>" % esc(current_scene))
                 parts.append(card(png, meta, idx))
