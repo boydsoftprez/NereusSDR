@@ -140,6 +140,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (font family) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "SignalTextItem.h"
@@ -811,7 +814,9 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 QString SignalTextItem::serialize() const
 {
-    return QStringLiteral("SIGNALTEXT|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15")
+    // The font family is joined, not substituted through .arg(), so a "%1"
+    // in it can never be read as a placeholder.
+    return QStringLiteral("SIGNALTEXT|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14")
         .arg(static_cast<double>(x()))
         .arg(static_cast<double>(y()))
         .arg(static_cast<double>(itemWidth()))
@@ -826,7 +831,7 @@ QString SignalTextItem::serialize() const
         .arg(m_colour.name(QColor::HexArgb))
         .arg(m_peakColour.name(QColor::HexArgb))
         .arg(m_markerColour.name(QColor::HexArgb))
-        .arg(m_fontFamily)
+        + QLatin1Char('|') + m_fontFamily
         + QStringLiteral("|%1|%2")
         .arg(static_cast<double>(m_fontSize))
         .arg(static_cast<int>(m_barStyle))

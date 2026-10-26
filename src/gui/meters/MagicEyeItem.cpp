@@ -18,6 +18,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - User text in the record (bezel image path) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -340,7 +343,9 @@ QString MagicEyeItem::serialize() const
         cal << QStringLiteral("%1:%2").arg(static_cast<double>(it.key()))
                                       .arg(static_cast<double>(it.value()));
     }
-    return QStringLiteral("MAGICEYE|%1|%2|%3|%4|%5|%6|%7|%8")
+    // The bezel path is joined, not substituted through .arg(), so a "%1"
+    // in it can never be read as a placeholder.
+    return QStringLiteral("MAGICEYE|%1|%2|%3|%4|%5|%6|%7")
         .arg(static_cast<double>(m_x))
         .arg(static_cast<double>(m_y))
         .arg(static_cast<double>(m_w))
@@ -348,7 +353,7 @@ QString MagicEyeItem::serialize() const
         .arg(m_bindingId)
         .arg(m_zOrder)
         .arg(m_glowColor.name(QColor::HexArgb))
-        .arg(m_bezelPath)
+        + QLatin1Char('|') + m_bezelPath
         + QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8|%9")
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio))

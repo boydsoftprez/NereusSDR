@@ -791,7 +791,9 @@ nereus_add_test(tst_text_overlay_item)
 # Text overlay tokens: case-insensitive table, precision, time and date
 # integers, slice-letter tokens, the Thetis text translator and the picker.
 nereus_add_test(tst_text_overlay_tokens)
-# Every meter item record fills every field it declares and round-trips.
+# Every meter item record fills every field it declares and round-trips; free
+# text holding %1, %20 and %% survives a save, load and save in every
+# registry type's record (offscreen).
 nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.
 nereus_add_test(tst_meter_new_item_defaults)

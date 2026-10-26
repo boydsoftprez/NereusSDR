@@ -199,7 +199,7 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - Keep overflowing regular scale endpoint glyphs within the
 //                 meter canvas in both looks, preserving ticks and fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-26 - User text in the record (image path, needle source label) is joined, not substituted
+//   2026-10-26 - User text in the record (image path, text label and suffix, needle source label) is joined, not substituted
 //                 by chained QString::arg, so a "%1" or "%20" in it survives.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
