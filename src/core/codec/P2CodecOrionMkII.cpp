@@ -68,6 +68,9 @@
 //   2026-10-15 - The Anvelina note gives the gateware's tested rate budget.
 //                Comment only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - High-priority byte 1397: the Anvelina PRO3 DX open
+//                collector outputs (network.c:1016-1020 [v2.10.3.15]), mask
+//                kDxWireMask (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 //
 // === Verbatim Thetis Console/console.cs header (lines 1-50) ===
@@ -296,6 +299,23 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
     //   // Open Collector Outputs
     //   packetbuf[1401] = (prn->oc_output << 1) & 0xfe;
     buf[1401] = static_cast<quint8>((ctx.ocByte << 1) & 0xfe);
+
+    // The Anvelina PRO3 DX open collector outputs, USEROUT7 .. USEROUT10.
+    // From Thetis ChannelMaster/network.c:1016-1020 [v2.10.3.15]
+    // From Thetis-Enhanced (EU2AV) ChannelMaster/network.c:1016-1020 [@567a7ec]
+    //   //1397 - Open_Collector_Anvelina_DX
+    //   if (HPSDRModel == HPSDRModel_ANVELINAPRO3)
+    //   {
+    //       packetbuf[1397] = prn->oc_output_extras & 0x0f;  // [4:0]
+    //   }
+    // NereusSDR-divergence: masked with kDxWireMask (0x1E, bits 1-4), not
+    // 0x0f, so DX OUT 10 (bit 4) reaches the radio. See kDxWireMask in
+    // CodecContext.h (Spec page 2, "Structure of Byte 1397"; Orion.v:923
+    // [@8e86a61]). The radio holds the pins low while run is 0, so the
+    // byte goes out whatever the run state.
+    if (ctx.model == HPSDRModel::ANVELINAPRO3) {
+        buf[1397] = static_cast<quint8>(ctx.ocExtrasByte & kDxWireMask);
+    }
 
     // R-SPK-09: the speaker amplifier mute. Bit 1 only: bit 0 (transverter
     // out) and bit 2 (ATU tune) stay zero, as they always have here.

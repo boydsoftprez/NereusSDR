@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Bank 17 carries the Anvelina DX open collector outputs:
+//                ctx.ocExtrasByte from setOcExtrasByte (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -4450,6 +4453,13 @@ CodecContext P1RadioConnection::buildCodecContext() const
     } else {
         ctx.ocByte = m_ocOutput;
     }
+
+    // The Anvelina PRO3 DX open collector outputs, their own byte
+    // (prn->oc_output_extras), which only P1CodecAnvelinaPro3's bank 17
+    // sends (networkproto1.c:668-674 [v2.10.3.15]). RadioModel hands it
+    // over from AnvelinaDxOutputs (setOcExtrasByte); bank 17 is in every
+    // frame rotation, so a change needs no forced bank.
+    ctx.ocExtrasByte = ocExtrasByte();
 
     // The HL2 has no Alex board (hasAlexFilters=false, m_caps->hasAlex=
     // false): its RX preselector is the N2ADR board wired through these

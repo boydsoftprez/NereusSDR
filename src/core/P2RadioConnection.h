@@ -40,6 +40,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - onOcExtrasChanged: the Anvelina DX open collector byte
+//                sends the high-priority packet on a change (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -560,6 +563,9 @@ private:
     // high-priority packet when the OC byte it carries changed.
     bool ocTxKeyed() const override { return m_mox.load(); }
     void onOcTxModesChanged() override { pushBandOutputsIfChanged(); }
+    // RadioConnection::setOcExtrasByte: a change sends the high-priority
+    // packet, which carries byte 1397.
+    void onOcExtrasChanged() override;
 
     int telemetryUdpBasePort() const override { return m_baseOutboundPort; }
 

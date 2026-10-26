@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - AnvelinaDxOutputs: the Anvelina DX open collector outputs,
+//                loaded per MAC beside the OC matrix, handed to the
+//                connection (setOcExtrasByte) and applied on a Core at once,
+//                keyed or not ("ocDx" reload); a remote window's copy
+//                follows the Core's (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
 //   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
 //                the OC transmit pin actions (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -19487,6 +19493,13 @@ void RadioModel::connectBandOutputsReport()
     connect(&m_ocMatrix, &OcMatrix::changed, conn,
             [conn]() { conn->onBandOutputPinsChanged(); },
             Qt::QueuedConnection);
+    // The Anvelina DX outputs (this window's, or a remote window's through
+    // the "ocDx" reload) reach the connection, which sends them at once on
+    // Protocol 2 and in bank 17's rotation on Protocol 1. wireByte() is
+    // atomic, read here on the connection's thread.
+    connect(&m_anvelinaDxOutputs, &AnvelinaDxOutputs::changed, conn,
+            [conn, dx = &m_anvelinaDxOutputs]() { conn->setOcExtrasByte(dx->wireByte()); },
+            Qt::QueuedConnection);
 }
 
 void RadioModel::onBandOutputsComposed(quint8 ocByte, int band, bool keyed)
@@ -19960,6 +19973,9 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     if (!info.macAddress.isEmpty()) {
         m_ocMatrix.setMacAddress(info.macAddress);
         m_ocMatrix.load();
+        // And the Anvelina DX outputs, the radio's own per-MAC state.
+        m_anvelinaDxOutputs.setMacAddress(info.macAddress);
+        m_anvelinaDxOutputs.load();
 
         // Reconcile the OcMatrix to the persisted N2ADR Filter setting at
         // app launch.  Without this, a matrix populated by a prior session's
@@ -21510,6 +21526,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         p1->setOcMatrix(&m_ocMatrix);
     } else if (auto* p2 = qobject_cast<class P2RadioConnection*>(m_connection)) {
         p2->setOcMatrix(&m_ocMatrix);
+    }
+    // The Anvelina DX outputs as they stand now; later changes arrive
+    // through connectBandOutputsReport's connection.
+    if (m_connection != nullptr) {
+        m_connection->setOcExtrasByte(m_anvelinaDxOutputs.wireByte());
     }
     // The TX pin actions' TUNE and two-tone state as it stands now.
     pushOcTxModes();
@@ -33676,7 +33697,12 @@ void RadioModel::scheduleRemoteHardwareApply(const QString& key)
     }
     const QString rest = key.mid(prefix.size());
     QString reload;
-    if (rest.startsWith(QLatin1String("oc/"))) {
+    if (rest.startsWith(QLatin1String("oc/dx/"), Qt::CaseInsensitive)) {
+        // The Anvelina DX outputs: not transmit settings and not the band
+        // OC byte, so they apply at once, keyed or not (no on-air hold in
+        // flushRemoteHardwareApply).
+        reload = QStringLiteral("ocDx");
+    } else if (rest.startsWith(QLatin1String("oc/"))) {
         reload = QStringLiteral("oc");
     } else if (rest == QLatin1String("hl2IoBoard/n2adrFilter")) {
         reload = QStringLiteral("n2adr");
@@ -33788,6 +33814,13 @@ void RadioModel::flushRemoteHardwareApply()
         m_ocMatrix.setMacAddress(mac);
         m_ocMatrix.load();
         observe(QStringLiteral("oc"));
+    }
+    // The Anvelina DX outputs, which load() hands to the connection
+    // (changed()); never held for the air.
+    if (reloads.contains(QStringLiteral("ocDx"))) {
+        m_anvelinaDxOutputs.setMacAddress(mac);
+        m_anvelinaDxOutputs.load();
+        observe(QStringLiteral("ocDx"));
     }
     // The same reconcile the connect path runs (see connectToRadio):
     // the N2ADR switch on the Core's HL2 fills or clears the filter-board
@@ -34192,6 +34225,9 @@ void RadioModel::scheduleRemoteOcReload(const QString& key)
             }
             m_ocMatrix.setMacAddress(current);
             m_ocMatrix.load();
+            // The Anvelina DX outputs sit under the same oc/ prefix.
+            m_anvelinaDxOutputs.setMacAddress(current);
+            m_anvelinaDxOutputs.load();
         });
     }
     if (!m_remoteOcReloadTimer->isActive()) {

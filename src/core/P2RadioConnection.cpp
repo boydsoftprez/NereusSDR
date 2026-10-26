@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - High-priority byte 1397 carries the Anvelina DX open
+//                collector outputs (ctx.ocExtrasByte); a change sends the
+//                packet at once, as SetOCExtraBits does (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -2183,6 +2187,33 @@ void P2RadioConnection::pushBandOutputsIfChanged()
 void P2RadioConnection::onBandOutputPinsChanged()
 {
     pushBandOutputsIfChanged();
+}
+
+// ---------------------------------------------------------------------------
+// onOcExtrasChanged: the Anvelina DX open collector byte changed
+// (RadioConnection::setOcExtrasByte). Thetis sends the high-priority packet
+// at once:
+//   From Thetis ChannelMaster/netInterface.c:409-418 [v2.10.3.15]
+//   From Thetis-Enhanced (EU2AV) ChannelMaster/netInterface.c:409-418 [@567a7ec]
+//     PORT
+//     void SetOCExtraBits(int b)
+//     {
+//         if (prn->oc_output_extras != b)
+//         {
+//             prn->oc_output_extras = b;
+//             if (listenSock != INVALID_SOCKET && prn->sendHighPriority != 0)
+//                 CmdHighPriority();
+//         }
+//     }
+// The base already compared and stored the byte; m_running stands in for
+// the socket and sendHighPriority checks, as pushBandOutputsIfChanged.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::onOcExtrasChanged()
+{
+    if (!m_running) {
+        return;
+    }
+    sendCmdHighPriority();
 }
 
 // ---------------------------------------------------------------------------
@@ -4506,6 +4537,15 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // band while not (ocBandFrequencyHz). Only a board with OC outputs
     // (ocOutputCount, every Protocol 2 row) drives the pins.
     ctx.ocByte = composedOcByte();
+
+    // The Anvelina PRO3 DX open collector outputs (prn->oc_output_extras),
+    // which P2CodecOrionMkII writes to byte 1397 on an ANVELINAPRO3 only
+    // (network.c:1016-1020 [v2.10.3.15]). Every high-priority packet
+    // carries it, as byte 1401 carries the OC byte. The codec's gate reads
+    // the model, which this context did not carry before (no compose read
+    // it; the DDC assignment takes RadioModel::currentCodecContext's).
+    ctx.ocExtrasByte = ocExtrasByte();
+    ctx.model        = m_hardwareProfile.model;
 
     // The speaker amplifier mute, high-priority byte 1400 bit 1, only on a
     // model with the switchable amplifier (R-SPK-08, R-SPK-09).

@@ -90,6 +90,47 @@ private slots:
         QCOMPARE(int(buf[4]) & 0x01, 0x01);  // run bit set
     }
 
+    // CmdHighPriority byte 1397 — the Anvelina DX open collector outputs,
+    // ANVELINAPRO3 only, masked with kDxWireMask (0x1E).
+    // Source: network.c:1016-1020 [v2.10.3.15]; mask per the Anvelina DX
+    // spec page 2 (NereusSDR-divergence from Thetis's 0x0f).
+    void cmdHighPriority_byte1397_anvelina_dx() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        ctx.model = HPSDRModel::ANVELINAPRO3;
+        ctx.ocExtrasByte = 0x0A;
+        ctx.ocByte = 0x05;
+        quint8 buf[1444] = {};
+        codec.composeCmdHighPriority(ctx, buf);
+        QCOMPARE(int(buf[1397]), 0x0A);
+        // Byte 1401 is the band OC byte, unchanged by the extras.
+        QCOMPARE(int(buf[1401]), 0x0A);  // (0x05 << 1) & 0xfe
+
+        CodecContext bandOnly;
+        bandOnly.model = HPSDRModel::ANVELINAPRO3;
+        bandOnly.ocByte = 0x05;
+        quint8 ref[1444] = {};
+        codec.composeCmdHighPriority(bandOnly, ref);
+        QCOMPARE(int(ref[1401]), int(buf[1401]));
+        QCOMPARE(int(ref[1397]), 0x00);
+
+        // Bit 4 (DX OUT 10) reaches the wire; bit 0 and bits 5-7 do not.
+        ctx.ocExtrasByte = 0xFF;
+        quint8 all[1444] = {};
+        codec.composeCmdHighPriority(ctx, all);
+        QCOMPARE(int(all[1397]), 0x1E);
+    }
+
+    void cmdHighPriority_byte1397_zero_on_other_models() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        ctx.model = HPSDRModel::ANAN7000D;
+        ctx.ocExtrasByte = 0x0A;
+        quint8 buf[1444] = {};
+        codec.composeCmdHighPriority(ctx, buf);
+        QCOMPARE(int(buf[1397]), 0x00);
+    }
+
     // CmdHighPriority bytes 1432-1435 — Alex0 HPF 13 MHz (bit 1 in reg = 0x02)
     // Source: network.c:1040-1050 [@501e3f5]
     void cmdHighPriority_alex0_hpf_13MHz() {

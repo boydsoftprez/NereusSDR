@@ -7,6 +7,9 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: The Anvelina DX open collector byte (setOcExtrasByte,
+//               ocExtrasByte, onOcExtrasChanged). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
 //   2026-10-26: The OC transmit pin actions' TUNE and two-tone inputs
 //               (setOcTxModes, ocTune, ocTwoTone). J.J. Boyd (KG4VCF),
 //               AI-assisted: Claude Code.
@@ -737,6 +740,19 @@ public slots:
     bool ocTune() const noexcept { return m_ocTune.load(); }
     bool ocTwoTone() const noexcept { return m_ocTwoTone.load(); }
 
+    /// The Anvelina PRO3 DX open collector outputs as their wire byte
+    /// (AnvelinaDxOutputs::wireByte), which the codecs put in Protocol 2
+    /// high-priority byte 1397 and Protocol 1 bank 17 on an ANVELINAPRO3.
+    /// RadioModel hands it over on this object's thread; safe to call
+    /// before the connection runs. A change calls onOcExtrasChanged.
+    void setOcExtrasByte(quint8 bits)
+    {
+        if (m_ocExtrasByte.exchange(bits) != bits) {
+            onOcExtrasChanged();
+        }
+    }
+    quint8 ocExtrasByte() const noexcept { return m_ocExtrasByte.load(); }
+
     /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
     /// Alex-2 Filters): each row's edges and per-row bypass for the
     /// high-pass ladder, the band-pass bank and the Alex-2 bank, and the
@@ -1049,6 +1065,10 @@ protected:
     // Called when the applied TUNE / two-tone pair changed, to put the new
     // OC byte on the wire. The base does nothing.
     virtual void onOcTxModesChanged() {}
+    // Called when the DX open collector byte changed (setOcExtrasByte), to
+    // put it on the wire. Protocol 1 carries bank 17 in its frame rotation,
+    // so the base does nothing.
+    virtual void onOcExtrasChanged() {}
     // Every place the protocol's MOX goes false calls this: the held flags
     // take the requested values. Unkeyed they no longer reach the OC byte
     // (receive uses the RX pins), so nothing is sent.
@@ -1380,6 +1400,9 @@ private:
     std::atomic<bool> m_ocTwoTone{false};
     bool m_ocTuneRequested{false};
     bool m_ocTwoToneRequested{false};
+    // setOcExtrasByte: the DX open collector byte (atomic, read by whichever
+    // thread composes the frame).
+    std::atomic<quint8> m_ocExtrasByte{0};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one

@@ -2488,6 +2488,13 @@ nereus_add_test(tst_preamp_mode)
 # under hardware/<mac>/oc/{rx,tx}/<band>/pin<n> and .../actions/pin<n>/action.
 nereus_add_test(tst_oc_matrix)
 
+# ── Anvelina PRO3 DX open collector outputs (DX OUT 7..10) ───────────────────
+# Wire byte (bits 1-4, kDxWireMask 0x1E), per-MAC persistence under
+# hardware/<mac>/oc/dx/out<N>/{enabled,label}, and a Core's "ocDx" reload
+# applying a window's change at once, keyed or not.
+nereus_add_test(tst_anvelina_dx_outputs)
+target_compile_definitions(tst_anvelina_dx_outputs PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-D Task 2: OC Outputs HF sub-sub-tab UI + matrix wiring ──────────
 # Smoke-tests construction, RX/TX pin sync (matrix→UI via changed()), reset
 # flow, GEN band row disabled state, and default TXPinAction (MoxTuneTwoTone).

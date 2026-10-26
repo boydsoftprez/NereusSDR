@@ -13,6 +13,11 @@
 // no-port-check: NereusSDR-original aggregator. Field-level comments may
 //   cite Thetis for default-value origins (e.g. create_rnet defaults from
 //   netInterface.c:1416) without making the file a port.
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - ocExtrasByte and kDxWireMask: the Anvelina PRO3 DX open
+//                collector outputs (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
 // =================================================================
 
 #pragma once
@@ -24,6 +29,26 @@
 #include "../HpsdrModel.h"
 
 namespace NereusSDR {
+
+/// The bits of the Anvelina DX byte (ocExtrasByte) that reach the wire:
+/// bits 1-4, USEROUT7 .. USEROUT10.
+///
+/// NereusSDR-divergence (JJ, 2026-10-26): Thetis masks the byte with 0x0f,
+///   From Thetis ChannelMaster/network.c:1019 [v2.10.3.15]
+///   From Thetis-Enhanced (EU2AV) ChannelMaster/network.c:1019 [@567a7ec]
+///     packetbuf[1397] = prn->oc_output_extras & 0x0f;  // [4:0]
+///   From Thetis ChannelMaster/networkproto1.c:670 [v2.10.3.15]
+///   From Thetis-Enhanced (EU2AV) ChannelMaster/networkproto1.c:670 [@567a7ec]
+///     C1 = prn->oc_output_extras & 0x0f;  // [4:0]
+/// which never sends bit 4 although its own comment reads "[4:0]", so
+/// USEROUT10 could not be switched. NereusSDR follows the spec and the
+/// gateware so all four outputs work:
+///   Spec: Open_Collector_Anvelina_DX for Thetis (EU2AV, 2026-05-21),
+///   page 2, "Structure of Byte 1397": bit 1 -> USEROUT7 .. bit 4 ->
+///   USEROUT10, bit 0 reserved (always 0), bits 7:5 transmitted as 0.
+///   Gateware n1gp-Anvelina_PROIII Orion.v:923 [@8e86a61]:
+///     assign USEROUT10 = run ? Open_Collector_Anvelina_DX[4] : 1'b0;
+inline constexpr quint8 kDxWireMask = 0x1E;
 
 /// Operator-driven configuration that the codec consumes to produce a
 /// DdcAssignment. Phase 3F Sub-Epic B Task 1.
@@ -435,6 +460,11 @@ struct CodecContext {
 
     // OC output byte (bank 0 C2). Phase D will drive this from OcMatrix.
     quint8  ocByte{0};
+
+    // The Anvelina PRO3 DX open collector outputs (AnvelinaDxOutputs::
+    // wireByte): Protocol 2 high-priority byte 1397 and Protocol 1 bank 17
+    // C1, both ANVELINAPRO3 only. Thetis's prn->oc_output_extras.
+    quint8  ocExtrasByte{0};
 
     // ADC-to-DDC routing — historical NereusSDR field that absorbs the
     // P2 cntrl1 + cntrl2 bytes from `UpdateDDCs` (Thetis console.cs:8531
