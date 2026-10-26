@@ -19,21 +19,6 @@ struct BandMenuHit {
     /// A press that moves this far is a drag, not a hold.
     static let moveLimitPoints: CGFloat = TuneGestures.dragThresholdPoints
 
-    /// One press on the band while it may still become a hold.
-    struct Press: Equatable {
-        /// Where the finger came down.
-        let start: CGPoint
-        /// Which press this is, so a timer started for an earlier one does nothing.
-        let generation: Int
-        /// False once the finger has moved too far or a pinch has begun.
-        var live = true
-    }
-
-    /// The finger at `point` is still holding where it came down at `start`.
-    static func isHold(from start: CGPoint, to point: CGPoint) -> Bool {
-        hypot(point.x - start.x, point.y - start.y) < moveLimitPoints
-    }
-
     /// `point` is empty band: inside the band, off the dBm scale, and on
     /// none of the `flags` (full flags with their buttons, and folded
     /// tags), `spots` (labels and badges) or `stations` (other devices'

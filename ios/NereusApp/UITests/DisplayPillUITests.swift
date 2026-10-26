@@ -254,6 +254,57 @@ final class DisplayPillUITests: XCTestCase {
         }
     }
 
+    /// R-IOS-59, DC9: a finger held still on Pan 2, where nothing of the
+    /// band's takes a hold (its dBm scale), makes Pan 2 the pan last touched,
+    /// which the toolbar follows. The finger is still throughout: the pan
+    /// must not wait for it to move.
+    @MainActor
+    func testStillHoldMakesItsPanTheOneLastTouched() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad,
+                      "Two pans are the iPad's: run DisplayPillUITests on an iPad Pro 13-inch for this one")
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(bandMenu: true, spots: false, twoPans: true)
+        let panButton = app.buttons["pan"]
+        let (pans, surfaces) = openSecondPan(app)
+        let menu = app.descendants(matching: .any)["bandMenu"]
+        for (index, pan) in pans.enumerated().reversed() {
+            let other = pans[1 - index]
+            // A tap on the other pan first makes that one the pan last touched.
+            guard let otherSurface = surfaces.first(where: { other.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }),
+                  let surface = surfaces.first(where: { pan.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY)) }) else {
+                XCTFail("The pans have no touch surface each")
+                return
+            }
+            otherSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.985, dy: 0.25)).tap()
+            XCTAssertTrue(waitUntil { panButton.label == "Pan \(2 - index)" }, "A tap did not make Pan \(2 - index) the pan last touched")
+            // Still on this pan's dBm scale for a second and a half.
+            surface.coordinate(withNormalizedOffset: CGVector(dx: 0.985, dy: 0.25)).press(forDuration: 1.5)
+            XCTAssertFalse(menu.exists, "A hold on the dBm scale opened the band menu")
+            XCTAssertTrue(waitUntil { panButton.label == "Pan \(index + 1)" },
+                          "A still hold on Pan \(index + 1) did not make it the pan last touched: the toolbar shows \(panButton.label)")
+        }
+    }
+
+    /// Adds Pan 2 from the Pan sheet and closes the sheet: the pans' frames
+    /// and their touch surfaces.
+    @MainActor
+    private func openSecondPan(_ app: XCUIApplication) -> ([XCUIElement], [XCUIElement]) {
+        let panButton = app.buttons["pan"]
+        XCTAssertTrue(panButton.waitForExistence(timeout: 30))
+        panButton.tap()
+        let add = app.buttons["panSheet.addPan"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "The Pan sheet has no Add a pan")
+        add.tap()
+        let pans = [app.descendants(matching: .any)["pan.1"], app.descendants(matching: .any)["pan.2"]]
+        XCTAssertTrue(pans[1].waitForExistence(timeout: 10), "Add a pan opened no Pan 2")
+        app.buttons["Close the sheet"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["panSheet"].waitForNonExistence(timeout: 10))
+        let surfaces = app.descendants(matching: .any).matching(identifier: "bandSurface")
+        XCTAssertTrue(waitUntil { surfaces.count == 2 }, "The two pans have no touch surface each")
+        return (pans, surfaces.allElementsBoundByIndex)
+    }
+
     /// Holds a finger still on the band at `offset` for longer than the band menu's half second.
     @MainActor
     private func holdOnBand(_ app: XCUIApplication, at offset: CGVector) {

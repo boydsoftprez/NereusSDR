@@ -43,12 +43,6 @@ struct BandMenuTests {
     func holdRule() {
         #expect(BandMenuHit.holdSeconds == 0.5)
         #expect(BandMenuHit.moveLimitPoints == 6)
-        let start = CGPoint(x: 100, y: 100)
-        #expect(BandMenuHit.isHold(from: start, to: start))
-        #expect(BandMenuHit.isHold(from: start, to: CGPoint(x: 105.9, y: 100)))
-        #expect(BandMenuHit.isHold(from: start, to: CGPoint(x: 104, y: 104)))
-        #expect(!BandMenuHit.isHold(from: start, to: CGPoint(x: 106, y: 100)))
-        #expect(!BandMenuHit.isHold(from: start, to: CGPoint(x: 100, y: 94)))
     }
 
     @Test("empty band is inside the band, off the dBm scale and clear of flags, spots and other devices' labels")
