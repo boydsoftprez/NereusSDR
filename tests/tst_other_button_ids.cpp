@@ -24,6 +24,10 @@
 //   2026-10-25  J.J. Boyd / KG4VCF  Container item parity Task 58.
 //                                    AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Task 60: NR has an action now; the
+//                                    no-action case takes an id without
+//                                    one. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -357,8 +361,18 @@ private slots:
 
     void anIdWithNoActionIsNeverDrawnAndKeepsItsVisibility()
     {
-        const Id nr = static_cast<Id>(32);
         OtherButtonItem item;
+        // Task 60 gave NR (32) an action: take the first id still without
+        // one (later tasks offer more).
+        Id nr = Id::Power;
+        for (int value = 1; value < OtherButtonItem::kSlotCount; ++value) {
+            if (value % 32 != 31 && !item.isOffered(static_cast<Id>(value))) {
+                nr = static_cast<Id>(value);
+                break;
+            }
+        }
+        QVERIFY(nr != Id::Power);
+        QVERIFY(item.isOffered(static_cast<Id>(32)));
         QVERIFY(!item.isOffered(nr));
         QVERIFY(!item.isOffered(Id::Power));
         QVERIFY(item.isOffered(Id::Anf));

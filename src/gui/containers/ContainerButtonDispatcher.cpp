@@ -90,12 +90,22 @@
 //                                    the reason, while the receiver's
 //                                    C-Tune setting is another's to change.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 60: 31
+//                                    receive buttons on the container's
+//                                    slice (NR, NR1-NR4, NB, NB1, NB2, MNF+,
+//                                    RIT, XIT, RIT0, XIT0, Lock, TS+/TS-,
+//                                    Mute All, Voice SQL, AF+/-, BAL+/-,
+//                                    the AGC modes, AUTO and AGC+/-),
+//                                    through existing setters; none keys.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/containers/ContainerButtonDispatcher.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/ControlRanges.h"
+#include "core/NbFamily.h"
 #include "core/MoxController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
@@ -113,6 +123,9 @@
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
+#include <QObject>
+
+#include <algorithm>
 #include <utility>
 
 namespace NereusSDR {
@@ -129,7 +142,129 @@ constexpr Id kConnected[] = {
     Id::Mon, Id::Tun, Id::Mox, Id::TwoTon, Id::PsA,
     Id::Anf, Id::Snb, Id::Mnf, Id::PeakHold, Id::Ctun,
     Id::Vac1, Id::Vac2, Id::Mute, Id::Bin, Id::Dup,
+    // Container item parity Task 60: the receive buttons.
+    Id::Nr, Id::Nr1, Id::Nr2, Id::Nr3, Id::Nr4,
+    Id::Nb, Id::Nb1, Id::Nb2, Id::MnfPlus,
+    Id::Rit, Id::Rit0, Id::Xit, Id::Xit0, Id::LockA,
+    Id::TuneStepUp, Id::TuneStepDown, Id::MuteAll, Id::SqlVsql,
+    Id::AfP5, Id::AfM5, Id::BalP5, Id::BalM5,
+    Id::AgcFixed, Id::AgcLong, Id::AgcSlow, Id::AgcMedium, Id::AgcFast,
+    Id::AgcCustom, Id::AgcAuto, Id::AgcP5, Id::AgcM5,
 };
+
+// From Thetis console.cs:51556-51557 [v2.10.3.15]:
+//   case OtherButtonId.AF_P5: SetAF(rx, GetAF(rx) + 5); break;
+//   case OtherButtonId.AF_M5: SetAF(rx, GetAF(rx) - 5); break;
+constexpr int kAfStep = 5;
+// From Thetis console.cs:51558-51559 [v2.10.3.15]:
+//   case OtherButtonId.BAL_P5: SetBal(rx, GetBal(rx) + 5); break;
+//   case OtherButtonId.BAL_M5: SetBal(rx, GetBal(rx) - 5); break;
+// on Thetis's 0..100 balance; NereusSDR's pan is -1..1, the RX applet's
+// slider mapping (v - 50) / 50 (RxApplet.cpp:1087), so 5 is 0.1.
+constexpr int kThetisBalStep = 5;
+constexpr double kThetisBalHalfRange = 50.0;
+constexpr double kBalStep = kThetisBalStep / kThetisBalHalfRange;
+constexpr double kPanLeft = -1.0;
+constexpr double kPanRight = 1.0;
+// From Thetis console.cs:51572-51573 [v2.10.3.15]:
+//   case OtherButtonId.AGC_P5: SetAgcT(rx, GetAgcT(rx) + 5); break;
+//   case OtherButtonId.AGC_M5: SetAgcT(rx, GetAgcT(rx) - 5); break;
+constexpr int kAgcThresholdStep = 5;
+// From Thetis console.cs:43334 [v2.10.3.15] (incrementNR):
+//   if (_nr_selected[rx - 1] > 4) _nr_selected[rx - 1] = 0;
+constexpr int kLastThetisNr = 4;
+
+// The receive buttons that change only the container's own slice.
+bool actsOnSliceOnly(Id id)
+{
+    switch (id) {
+    case Id::Nr: case Id::Nr1: case Id::Nr2: case Id::Nr3: case Id::Nr4:
+    case Id::Nb: case Id::Nb1: case Id::Nb2:
+    case Id::Rit: case Id::Rit0: case Id::Xit: case Id::Xit0: case Id::LockA:
+    case Id::TuneStepUp: case Id::TuneStepDown: case Id::SqlVsql:
+    case Id::AfP5: case Id::AfM5: case Id::BalP5: case Id::BalM5:
+    case Id::AgcFixed: case Id::AgcLong: case Id::AgcSlow: case Id::AgcMedium:
+    case Id::AgcFast: case Id::AgcCustom: case Id::AgcAuto:
+    case Id::AgcP5: case Id::AgcM5:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// NR1 to NR4 (Thetis SelectNR's 1-4) by button.
+NrSlot nrOf(Id id)
+{
+    switch (id) {
+    case Id::Nr1: return NrSlot::NR1;
+    case Id::Nr2: return NrSlot::NR2;
+    case Id::Nr3: return NrSlot::NR3;
+    default:      return NrSlot::NR4;
+    }
+}
+
+// The AGC mode an AGC button selects. Thetis FIXD (0) is AGCMode::Off
+// (enums.cs:152-162 [v2.10.3.15]).
+AGCMode agcModeOf(Id id)
+{
+    switch (id) {
+    case Id::AgcFixed:  return AGCMode::Off;
+    case Id::AgcLong:   return AGCMode::Long;
+    case Id::AgcSlow:   return AGCMode::Slow;
+    case Id::AgcMedium: return AGCMode::Med;
+    case Id::AgcFast:   return AGCMode::Fast;
+    default:            return AGCMode::Custom;
+    }
+}
+
+// The lit state and caption of a receive button on `slice`, as Thetis's
+// clsOtherButtons lights them (MeterManager.cs:8600-8737 [v2.10.3.15]).
+void sliceButtonState(Id id, const SliceModel& slice, ContainerButtonDispatcher::State& st)
+{
+    switch (id) {
+    case Id::Nr:
+        st.on = slice.activeNr() != NrSlot::Off;
+        st.label = OtherButtonItem::nrLabel(slice.activeNr());
+        break;
+    case Id::Nr1: case Id::Nr2: case Id::Nr3: case Id::Nr4:
+        st.on = slice.activeNr() == nrOf(id);
+        break;
+    case Id::Nb:
+        st.on = slice.nbMode() != NbMode::Off;
+        st.label = OtherButtonItem::nbLabel(slice.nbMode());
+        break;
+    case Id::Nb1:
+        st.on = slice.nbMode() == NbMode::NB;
+        break;
+    case Id::Nb2:
+        st.on = slice.nbMode() == NbMode::NB2;
+        break;
+    case Id::Rit:     st.on = slice.ritEnabled(); break;
+    case Id::Xit:     st.on = slice.xitEnabled(); break;
+    case Id::LockA:   st.on = slice.locked(); break;
+    case Id::SqlVsql: st.on = slice.ssqlEnabled(); break;
+    case Id::AgcFixed: case Id::AgcLong: case Id::AgcSlow: case Id::AgcMedium:
+    case Id::AgcFast: case Id::AgcCustom:
+        st.on = slice.agcMode() == agcModeOf(id);
+        break;
+    case Id::AgcAuto: st.on = slice.autoAgcEnabled(); break;
+    default:
+        // RIT0, XIT0, TS+/TS-, AF+/-, BAL+/-, AGC+/-: momentary, never lit.
+        break;
+    }
+}
+
+// setActiveNr, with the slice's refusal (nrSelectionRefused) as the reason.
+QString selectNr(SliceModel* slice, NrSlot slot)
+{
+    QString refusal;
+    const QMetaObject::Connection refused = QObject::connect(
+        slice, &SliceModel::nrSelectionRefused,
+        [&refusal](const QString& reason) { refusal = reason; });
+    slice->setActiveNr(slot);
+    QObject::disconnect(refused);
+    return refusal;
+}
 
 int vaxChannelOf(Id id)
 {
@@ -204,6 +339,23 @@ QString ContainerButtonDispatcher::sliceUnavailableReason(int rxSource) const
 QString ContainerButtonDispatcher::noRadioTransmitReason()
 {
     return QStringLiteral("Connect a radio to transmit.");
+}
+
+QString ContainerButtonDispatcher::notchWhileTransmittingReason()
+{
+    return QStringLiteral("Notches cannot be added while transmitting.");
+}
+
+QList<SliceModel*> ContainerButtonDispatcher::changeableSlices() const
+{
+    QList<SliceModel*> result;
+    if (!m_model) { return result; }
+    for (SliceModel* slice : m_model->slices()) {
+        // The same test as a container on that slice: open, and this
+        // window's to change.
+        if (slice && sliceFor(slice->sliceIndex() + 1) == slice) { result.append(slice); }
+    }
+    return result;
 }
 
 bool ContainerButtonDispatcher::transmitBlockedRemotely() const
@@ -396,7 +548,42 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
         }
         st.on = m_hooks.vaxDevices->isVaxBusOpen(vaxChannelOf(id));
         break;
+    case Id::MnfPlus:
+        // Task 60: TNFAdd on the container's slice (Thetis always RX1,
+        // "// no rx2", console.cs:51403 [v2.10.3.15]). Never lit. Refused
+        // while transmitting, as the filter display's +MNF is.
+        if (!sliceFor(rxSource)) {
+            unavailable(sliceUnavailableReason(rxSource));
+        } else if (!m_model->notchModel()) {
+            unavailable(QStringLiteral("Notches are not ready."));
+        } else if (m_model->isTransmitting()) {
+            unavailable(notchWhileTransmittingReason());
+        }
+        break;
+    case Id::MuteAll: {
+        // Task 60: GetMute(0), every receiver muted (console.cs:52208-52229
+        // [v2.10.3.15]), over the slices this window may change.
+        if (!sliceFor(rxSource)) {
+            unavailable(sliceUnavailableReason(rxSource));
+            break;
+        }
+        const QList<SliceModel*> slices = changeableSlices();
+        st.on = !slices.isEmpty()
+            && std::all_of(slices.cbegin(), slices.cend(),
+                           [](const SliceModel* s) { return s->muted(); });
+        break;
+    }
     default:
+        if (actsOnSliceOnly(id)) {
+            // Task 60: a receive button on the container's own slice.
+            SliceModel* slice = sliceFor(rxSource);
+            if (!slice) {
+                unavailable(sliceUnavailableReason(rxSource));
+            } else {
+                sliceButtonState(id, *slice, st);
+            }
+            break;
+        }
         // Hidden until its feature is built (OtherButtonItem).
         unavailable(QStringLiteral("This button does nothing in this version."));
         break;
@@ -411,6 +598,7 @@ void ContainerButtonDispatcher::apply(OtherButtonItem* item, int rxSource) const
         const State st = stateOf(id, rxSource);
         item->setButtonState(id, st.on);
         item->setButtonAvailable(id, st.available, st.reason);
+        item->setButtonLabel(id, st.label);
     }
 }
 
@@ -500,8 +688,90 @@ QString ContainerButtonDispatcher::click(Id id, int rxSource)
         m_hooks.vaxDevices->setVaxEnabled(channel, turnOn);
         break;
     }
+    case Id::MnfPlus:
+        // RadioModel::addTnfForSlice, the pan strip's +TNF; a refused add
+        // reaches the window through NotchModel::notchAddRejected.
+        m_model->addTnfForSlice(sliceFor(rxSource));
+        break;
+    case Id::MuteAll:
+        // From Thetis console.cs:51421 [v2.10.3.15]:
+        //   case OtherButtonId.MUTE_ALL: SetMute(0, !GetMute(0)); break;
+        for (SliceModel* slice : changeableSlices()) { slice->setMuted(turnOn); }
+        break;
     default:
+        if (actsOnSliceOnly(id)) { return clickSlice(id, sliceFor(rxSource)); }
         return st.reason;
+    }
+    return QString();
+}
+
+QString ContainerButtonDispatcher::clickSlice(Id id, SliceModel* slice)
+{
+    switch (id) {
+    case Id::Nr: {
+        // From Thetis console.cs:43333-43334 [v2.10.3.15] (incrementNR):
+        //   _nr_selected[rx - 1] += 1;
+        //   if (_nr_selected[rx - 1] > 4) _nr_selected[rx - 1] = 0;
+        // A NereusSDR-only reducer (above NR4) goes to off the same way.
+        int next = static_cast<int>(slice->activeNr()) + 1;
+        if (next > kLastThetisNr) { next = static_cast<int>(NrSlot::Off); }
+        return selectNr(slice, static_cast<NrSlot>(next));
+    }
+    case Id::Nr1: case Id::Nr2: case Id::Nr3: case Id::Nr4:
+        // From Thetis console.cs:51425-51444 [v2.10.3.15]:
+        //   if (GetSelectedNR(rx) == 1) { SelectNR(rx, true, 0); } else { SelectNR(rx, true, 1); }
+        return selectNr(slice, slice->activeNr() == nrOf(id) ? NrSlot::Off : nrOf(id));
+    case Id::Nb:
+        // Thetis console.cs:51393-51400 [v2.10.3.15]: Off, NB, NB2, Off.
+        slice->setNbMode(cycleNbMode(slice->nbMode()));
+        break;
+    case Id::Nb1:
+    case Id::Nb2: {
+        // From Thetis console.cs:51445-51454 [v2.10.3.15]:
+        //   if (GetSelectedNB(rx) == 1) { SetSelectedNB(rx, 0); } else { SetSelectedNB(rx, 1); }
+        const NbMode mode = id == Id::Nb1 ? NbMode::NB : NbMode::NB2;
+        slice->setNbMode(slice->nbMode() == mode ? NbMode::Off : mode);
+        break;
+    }
+    // Thetis console.cs:51503-51506, :52896-52907 [v2.10.3.15]: RITOn,
+    // XITOn and the reset buttons (udRIT.Value = 0), per slice here.
+    case Id::Rit:  slice->setRitEnabled(!slice->ritEnabled()); break;
+    case Id::Xit:  slice->setXitEnabled(!slice->xitEnabled()); break;
+    case Id::Rit0: slice->setRitHz(0); break;
+    case Id::Xit0: slice->setXitHz(0); break;
+    // Thetis console.cs:51611 [v2.10.3.15], VFOALock = !VFOALock: the
+    // container's slice here.
+    case Id::LockA: slice->setLocked(!slice->locked()); break;
+    // Thetis console.cs:51613-51614 [v2.10.3.15], TuneStepIndex += 1 / -= 1:
+    // the slice's own step here.
+    case Id::TuneStepUp:   slice->changeTuneStepUp(); break;
+    case Id::TuneStepDown: slice->changeTuneStepDown(); break;
+    // Thetis console.cs:51510 [v2.10.3.15]: voice squelch on or off.
+    case Id::SqlVsql: slice->setSsqlEnabled(!slice->ssqlEnabled()); break;
+    case Id::AfP5:
+    case Id::AfM5:
+        slice->setAfGain(std::clamp(slice->afGain() + (id == Id::AfP5 ? kAfStep : -kAfStep),
+                                    ControlRanges::kAfGainMin, ControlRanges::kAfGainMax));
+        break;
+    case Id::BalP5:
+    case Id::BalM5:
+        slice->setAudioPan(std::clamp(slice->audioPan() + (id == Id::BalP5 ? kBalStep : -kBalStep),
+                                      kPanLeft, kPanRight));
+        break;
+    // Thetis console.cs:51477-51483 [v2.10.3.15]: SetAGCMode, SetAGCAuto.
+    case Id::AgcFixed: case Id::AgcLong: case Id::AgcSlow: case Id::AgcMedium:
+    case Id::AgcFast: case Id::AgcCustom:
+        slice->setAgcMode(agcModeOf(id));
+        break;
+    case Id::AgcAuto: slice->setAutoAgcEnabled(!slice->autoAgcEnabled()); break;
+    case Id::AgcP5:
+    case Id::AgcM5:
+        slice->setAgcThreshold(std::clamp(
+            slice->agcThreshold() + (id == Id::AgcP5 ? kAgcThresholdStep : -kAgcThresholdStep),
+            ControlRanges::kAgcThresholdMinDb, ControlRanges::kAgcThresholdMaxDb));
+        break;
+    default:
+        break;
     }
     return QString();
 }

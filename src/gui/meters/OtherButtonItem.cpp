@@ -37,6 +37,11 @@
 //                 with Shift to swap the two; the order is saved. The
 //                 dragged button follows the pointer in NereusSDR colours.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Receive buttons (container item parity Task 60): 31 more
+//                 ids are offered (NR, NB, AGC, RIT/XIT, Lock, tune step,
+//                 Mute All, Voice SQL, AF and BAL steps, MNF+); the NR and
+//                 NB captions follow the slice; LockA reads "Lock".
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -136,6 +141,7 @@ mw0lge@grange-lane.co.uk
 #include <QStringList>
 
 #include <algorithm>
+#include <iterator>
 
 namespace NereusSDR {
 
@@ -176,6 +182,33 @@ const QColor kDragTargetOutline{0x00, 0xb4, 0xd8};  // STYLEGUIDE accent
 const QColor kDragNoTargetOutline{0x20, 0x50, 0x70}; // STYLEGUIDE border
 constexpr qreal kDragFaceOpacity = 0.85;
 constexpr qreal kDragOutlineWidth = 2.0;
+
+// Container item parity Task 60: the receive buttons NereusSDR acts on
+// (ContainerButtonDispatcher), beyond the earlier core buttons.
+constexpr OtherButtonItem::ButtonId kReceiveButtons[] = {
+    OtherButtonItem::ButtonId::Nr, OtherButtonItem::ButtonId::Nr1,
+    OtherButtonItem::ButtonId::Nr2, OtherButtonItem::ButtonId::Nr3,
+    OtherButtonItem::ButtonId::Nr4, OtherButtonItem::ButtonId::Nb,
+    OtherButtonItem::ButtonId::Nb1, OtherButtonItem::ButtonId::Nb2,
+    OtherButtonItem::ButtonId::MnfPlus, OtherButtonItem::ButtonId::Rit,
+    OtherButtonItem::ButtonId::Rit0, OtherButtonItem::ButtonId::Xit,
+    OtherButtonItem::ButtonId::Xit0, OtherButtonItem::ButtonId::LockA,
+    OtherButtonItem::ButtonId::TuneStepUp, OtherButtonItem::ButtonId::TuneStepDown,
+    OtherButtonItem::ButtonId::MuteAll, OtherButtonItem::ButtonId::SqlVsql,
+    OtherButtonItem::ButtonId::AfP5, OtherButtonItem::ButtonId::AfM5,
+    OtherButtonItem::ButtonId::BalP5, OtherButtonItem::ButtonId::BalM5,
+    OtherButtonItem::ButtonId::AgcFixed, OtherButtonItem::ButtonId::AgcLong,
+    OtherButtonItem::ButtonId::AgcSlow, OtherButtonItem::ButtonId::AgcMedium,
+    OtherButtonItem::ButtonId::AgcFast, OtherButtonItem::ButtonId::AgcCustom,
+    OtherButtonItem::ButtonId::AgcAuto, OtherButtonItem::ButtonId::AgcP5,
+    OtherButtonItem::ButtonId::AgcM5,
+};
+
+bool isReceiveButton(OtherButtonItem::ButtonId id)
+{
+    return std::find(std::begin(kReceiveButtons), std::end(kReceiveButtons), id)
+        != std::end(kReceiveButtons);
+}
 
 bool isMacroId(int id)
 {
@@ -234,6 +267,9 @@ QString OtherButtonItem::labelFor(int id) const
     if (isMacroId(id)) {
         return QStringLiteral("M%1").arg(id - static_cast<int>(ButtonId::Macro0));
     }
+    // Ruling D2: Thetis's "LockA" names VFO A; NereusSDR locks the
+    // container's slice, so the button reads "Lock".
+    if (static_cast<ButtonId>(id) == ButtonId::LockA) { return QStringLiteral("Lock"); }
     return OtherButtonCatalog::info(static_cast<ButtonId>(id)).caption;
 }
 
@@ -402,8 +438,50 @@ bool OtherButtonItem::isOffered(ButtonId id) const
     if (isMacroId(value)) { return true; }
     // Power is not a NereusSDR button (maintainer decision 2026-09-30).
     if (id == ButtonId::Power) { return false; }
+    if (isReceiveButton(id)) { return true; }
     const int old = OtherButtonCatalog::buttonIdToLegacy(id);
     return old >= 0 && old < kCoreLabelCount;
+}
+
+void OtherButtonItem::setButtonLabel(ButtonId id, const QString& label)
+{
+    const int index = indexOf(id);
+    if (index < 0) { return; }
+    m_buttons[index].text = label.isEmpty() ? labelFor(static_cast<int>(id)) : label;
+}
+
+QString OtherButtonItem::buttonLabel(ButtonId id) const
+{
+    const int index = indexOf(id);
+    return index >= 0 ? button(index).text : QString();
+}
+
+//-- special ones that change text [original inline comment from MeterManager.cs:8692]
+QString OtherButtonItem::nrLabel(NrSlot slot)
+{
+    // From Thetis MeterManager.cs:8700 [v2.10.3.15]:
+    //   string sText = value > 1 ? "NR" + value.ToString() : "NR";
+    switch (slot) {
+    case NrSlot::NR2:  return QStringLiteral("NR2");
+    case NrSlot::NR3:  return QStringLiteral("NR3");
+    case NrSlot::NR4:  return QStringLiteral("NR4");
+    // NereusSDR-only reducers have no Thetis caption: the button names them.
+    case NrSlot::DFNR: return QStringLiteral("DFNR");
+    case NrSlot::BNR:  return QStringLiteral("BNR");
+    case NrSlot::MNR:  return QStringLiteral("MNR");
+    case NrSlot::NNR:  return QStringLiteral("NNR");
+    case NrSlot::Off:
+    case NrSlot::NR1:
+        break;
+    }
+    return QStringLiteral("NR");
+}
+
+QString OtherButtonItem::nbLabel(NbMode mode)
+{
+    // From Thetis MeterManager.cs:8728 [v2.10.3.15]:
+    //   string sText = value > 1 ? "NB" + value.ToString() : "NB";
+    return mode == NbMode::NB2 ? QStringLiteral("NB2") : QStringLiteral("NB");
 }
 
 std::optional<UnbuiltFeature> OtherButtonItem::unbuiltFeatureFor(ButtonId id)
