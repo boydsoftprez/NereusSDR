@@ -7,8 +7,50 @@
 #include <QDoubleSpinBox>
 #include <QFontComboBox>
 #include <QColorDialog>
+#include <QComboBox>
 
 namespace NereusSDR {
+
+namespace {
+// Offset rows: range, step and decimals from Thetis setup.designer.cs:62944-62960
+// [v2.10.3.15] (nudTextOverlay_RXxOffset: -10..10, 0.001, 3 places).
+constexpr double kOffsetMin = -10.0;
+constexpr double kOffsetMax = 10.0;
+constexpr double kOffsetStep = 0.001;
+constexpr int kOffsetDecimals = 3;
+// Padding row: maximum, step and decimals from Thetis setup.designer.cs:63008-63022
+// [v2.10.3.15] (nudTextOverlay_PanelPadding: up to 10, 0.001, 3 places).
+// NereusSDR keeps 0 as the minimum, since older items may hold it.
+constexpr double kPaddingMax = 10.0;
+constexpr double kPaddingStep = 0.001;
+constexpr int kPaddingDecimals = 3;
+} // namespace
+
+QCheckBox* TextOverlayItemEditor::makeFlagRow(const QString& label, void (TextOverlayItem::*setter)(bool))
+{
+    QCheckBox* box = makeCheckRow(label);
+    connect(box, &QCheckBox::toggled, this, [this, setter](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        (x->*setter)(on);
+        notifyChanged();
+    });
+    return box;
+}
+
+QDoubleSpinBox* TextOverlayItemEditor::makeOffsetRow(const QString& label, void (TextOverlayItem::*setter)(float))
+{
+    QDoubleSpinBox* spin = makeDoubleRow(label, kOffsetMin, kOffsetMax, kOffsetStep, kOffsetDecimals);
+    connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, setter](double v) {
+        if (isProgrammaticUpdate()) { return; }
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        (x->*setter)(static_cast<float>(v));
+        notifyChanged();
+    });
+    return spin;
+}
 
 TextOverlayItemEditor::TextOverlayItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
@@ -30,6 +72,8 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
 
+    m_comboLineMode->setCurrentIndex(m_comboLineMode->findData(static_cast<int>(x->lineMode())));
+
     m_editText1->setText(x->text1());
     applyColor(m_btnColour1, x->textColour1());
     applyColor(m_btnBackColour1, x->textBackColour1());
@@ -37,6 +81,11 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_fontCombo1->setCurrentFont(QFont(x->fontFamily1()));
     m_spinFontSize1->setValue(static_cast<double>(x->fontSize1()));
     m_chkBold1->setChecked(x->fontBold1());
+    m_chkItalic1->setChecked(x->fontItalic1());
+    m_chkUnderline1->setChecked(x->fontUnderline1());
+    m_chkStrikeout1->setChecked(x->fontStrikeout1());
+    m_spinXOffset1->setValue(static_cast<double>(x->textXOffset1()));
+    m_spinYOffset1->setValue(static_cast<double>(x->textYOffset1()));
 
     m_editText2->setText(x->text2());
     applyColor(m_btnColour2, x->textColour2());
@@ -45,6 +94,11 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_fontCombo2->setCurrentFont(QFont(x->fontFamily2()));
     m_spinFontSize2->setValue(static_cast<double>(x->fontSize2()));
     m_chkBold2->setChecked(x->fontBold2());
+    m_chkItalic2->setChecked(x->fontItalic2());
+    m_chkUnderline2->setChecked(x->fontUnderline2());
+    m_chkStrikeout2->setChecked(x->fontStrikeout2());
+    m_spinXOffset2->setValue(static_cast<double>(x->textXOffset2()));
+    m_spinYOffset2->setValue(static_cast<double>(x->textYOffset2()));
 
     m_chkShowPanel->setChecked(x->showBackPanel());
     applyColor(m_btnPanelBack1, x->panelBackColour1());
@@ -57,6 +111,23 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
 
 void TextOverlayItemEditor::buildTypeSpecific()
 {
+    m_comboLineMode = new QComboBox(this);
+    m_comboLineMode->addItem(QStringLiteral("Line 1 on RX, line 2 on TX"),
+                             static_cast<int>(TextOverlayItem::LineMode::RxTxSwap));
+    m_comboLineMode->addItem(QStringLiteral("Both lines"),
+                             static_cast<int>(TextOverlayItem::LineMode::Both));
+    m_comboLineMode->setToolTip(QStringLiteral(
+        "Line 1 on RX, line 2 on TX: the receive line, or the transmit line while "
+        "transmitting, placed by its X and Y offsets. Both lines: line 1 above line 2."));
+    addRow(QStringLiteral("Show"), m_comboLineMode);
+    connect(m_comboLineMode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (isProgrammaticUpdate()) { return; }
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        x->setLineMode(static_cast<TextOverlayItem::LineMode>(m_comboLineMode->currentData().toInt()));
+        notifyChanged();
+    });
+
     // ---- Line 1 ----
     addHeader(QStringLiteral("Line 1"));
 
@@ -138,6 +209,11 @@ void TextOverlayItemEditor::buildTypeSpecific()
         x->setFontBold1(on);
         notifyChanged();
     });
+    m_chkItalic1 = makeFlagRow(QStringLiteral("Italic 1"), &TextOverlayItem::setFontItalic1);
+    m_chkUnderline1 = makeFlagRow(QStringLiteral("Underline 1"), &TextOverlayItem::setFontUnderline1);
+    m_chkStrikeout1 = makeFlagRow(QStringLiteral("Strikeout 1"), &TextOverlayItem::setFontStrikeout1);
+    m_spinXOffset1 = makeOffsetRow(QStringLiteral("X offset 1"), &TextOverlayItem::setTextXOffset1);
+    m_spinYOffset1 = makeOffsetRow(QStringLiteral("Y offset 1"), &TextOverlayItem::setTextYOffset1);
 
     // ---- Line 2 ----
     addHeader(QStringLiteral("Line 2"));
@@ -220,6 +296,33 @@ void TextOverlayItemEditor::buildTypeSpecific()
         x->setFontBold2(on);
         notifyChanged();
     });
+    m_chkItalic2 = makeFlagRow(QStringLiteral("Italic 2"), &TextOverlayItem::setFontItalic2);
+    m_chkUnderline2 = makeFlagRow(QStringLiteral("Underline 2"), &TextOverlayItem::setFontUnderline2);
+    m_chkStrikeout2 = makeFlagRow(QStringLiteral("Strikeout 2"), &TextOverlayItem::setFontStrikeout2);
+    m_spinXOffset2 = makeOffsetRow(QStringLiteral("X offset 2"), &TextOverlayItem::setTextXOffset2);
+    m_spinYOffset2 = makeOffsetRow(QStringLiteral("Y offset 2"), &TextOverlayItem::setTextYOffset2);
+
+    m_btnCopyFont = new QPushButton(QStringLiteral("Copy font 1 to 2"), this);
+    m_btnCopyFont->setToolTip(QStringLiteral("Line 2 takes line 1's font, size, style and colours."));
+    addRow(QString(), m_btnCopyFont);
+    connect(m_btnCopyFont, &QPushButton::clicked, this, [this]() {
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        x->copyFont1To2();
+        setItem(x);
+        notifyChanged();
+    });
+
+    m_btnCopyOffsets = new QPushButton(QStringLiteral("Copy offsets 1 to 2"), this);
+    m_btnCopyOffsets->setToolTip(QStringLiteral("Line 2 takes line 1's X and Y offsets."));
+    addRow(QString(), m_btnCopyOffsets);
+    connect(m_btnCopyOffsets, &QPushButton::clicked, this, [this]() {
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        x->copyOffsets1To2();
+        setItem(x);
+        notifyChanged();
+    });
 
     // ---- Panel ----
     addHeader(QStringLiteral("Panel"));
@@ -268,7 +371,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
     // ---- Layout ----
     addHeader(QStringLiteral("Layout"));
 
-    m_spinScrollX = makeDoubleRow(QStringLiteral("Scroll X"), -10.0, 10.0, 0.1, 2);
+    m_spinScrollX = makeDoubleRow(QStringLiteral("Scroll X"), -10.0, 10.0, 0.01, 2);
     connect(m_spinScrollX, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
         TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
@@ -277,7 +380,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
-    m_spinPadding = makeDoubleRow(QStringLiteral("Padding"), 0.0, 1.0, 0.01, 2);
+    m_spinPadding = makeDoubleRow(QStringLiteral("Padding"), 0.0, kPaddingMax, kPaddingStep, kPaddingDecimals);
     connect(m_spinPadding, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
         TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);

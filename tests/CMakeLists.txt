@@ -776,6 +776,9 @@ nereus_add_test(tst_container_document)
 nereus_add_test(tst_container_item_persistence)
 # CLOCK: Thetis layout and defaults for new clocks; saved clocks keep theirs.
 nereus_add_test(tst_clock_item_layout)
+# Text overlay: RX/TX swap and Thetis defaults for new items, both lines for
+# saved ones; panel MOX flip fade, copy font, auto scroll.
+nereus_add_test(tst_text_overlay_item)
 # Every meter item record fills every field it declares and round-trips.
 nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.

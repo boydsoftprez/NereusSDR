@@ -2,8 +2,13 @@
 // src/gui/meters/TextOverlayItem.cpp  (NereusSDR)
 // =================================================================
 //
-// Ported from Thetis source:
-//   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
+// Ported from Thetis sources:
+//   Project Files/Source/Console/MeterManager.cs
+//     (clsTextOverlay, parseText, renderTextOverlay),
+//     original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs
+//     (btnTextOverlay_copyfonts_Click, btnTextOverlay_copyoffsets_Click),
+//     original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -24,7 +29,16 @@
 //   2026-10-25 - Saves and restores the text back colours and toggles after
 //                 the older fields, so they survive a reload. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis RX/TX swap (renderTextOverlay) as LineMode
+//                 RxTxSwap for new items, both lines kept for older
+//                 records; per-line offsets, font styles, the panel's MOX
+//                 flip fade (ContentFade::nextValue), auto scroll, copy
+//                 font / offsets (setup.cs) and kTextOverlayThetisDefaults.
+//                 Fields appended after the older ones. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
+
+// --- From MeterManager.cs ---
 
 /*  MeterManager.cs
 
@@ -66,6 +80,53 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From setup.cs ---
+
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -79,13 +140,46 @@ mw0lge@grange-lane.co.uk
 
 // From Thetis clsTextOverlay (MeterManager.cs:18746+)
 
+#include "gui/containers/ContentFade.h"
+
 #include <QPainter>
 #include <QFont>
 #include <QFontMetrics>
+#include <QFontMetricsF>
+#include <QMouseEvent>
 #include <QStringList>
 #include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
+
+namespace {
+
+// From Thetis MeterManager.cs:34185 [v2.10.3.15]: fontSize *= 2.1f;
+// when a container is added, and not resized, 72 point font needs this fudge to get it to be 72 point
+constexpr float kFontSizeFudge = 2.1f;
+// plotText sizes text by the container width.
+// From Thetis MeterManager.cs:37863 [v2.10.3.15]: float em_scale = containerWidth / 52f / 16f;
+constexpr float kPlotTextEmWidth = 52.0f;
+constexpr float kPlotTextEmSize = 16.0f;
+// From Thetis MeterManager.cs:34208 [v2.10.3.15]: ScrollX * deltaTimeMS / 1000f
+constexpr double kScrollMsPerSecond = 1000.0;
+// From Thetis MeterManager.cs:34151 [v2.10.3.15]: mi.FadeValue = 48;
+// (ContentFade::kDimmedLevel, the same 48.)
+constexpr int kPanelFlipLevel = ContentFade::kDimmedLevel;
+// NereusSDR: a long gap (a hidden container) catches up a few frames at
+// most, as LEDItem does.
+constexpr int kMaxCatchUpFrames = 16;
+
+// getDXBrushForColour(c, nFade) replaces the alpha, except for a
+// transparent colour (MeterManager.cs:32306-32315 [v2.10.3.15]).
+QColor withAlpha(QColor c, int alpha)
+{
+    if (c.alpha() != 0) { c.setAlpha(alpha); }
+    return c;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // resolveText()
@@ -155,6 +249,16 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
+    if (m_lineMode == LineMode::RxTxSwap) {
+        paintSwap(p, widgetW, widgetH);
+        return;
+    }
+    paintBoth(p, rect);
+}
+
+// Both lines, the look of records saved before LineMode existed.
+void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
+{
     // Step 1: back panel fill — upper/lower halves may differ in color
     if (m_showBackPanel) {
         const QRect topHalf(rect.left(), rect.top(),
@@ -184,6 +288,9 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
     if (!resolved1.isEmpty()) {
         QFont font1 = WorkspacePreview::readableFont(QFont(m_fontFamily1), p.device());
         font1.setBold(m_fontBold1);
+        font1.setItalic(m_fontItalic1);
+        font1.setUnderline(m_fontUnderline1);
+        font1.setStrikeOut(m_fontStrikeout1);
         font1=fitObjectText(font1,m_fontSize1*objectTextScale(rect,{260,120}),resolved1,m_scrollX!=0?QRectF(lineRect1.left(),lineRect1.top(),1e9,lineRect1.height()):QRectF(lineRect1),true,
             m_scrollX!=0?Qt::TextSingleLine:Qt::TextWordWrap,p.device());
         p.setFont(font1);
@@ -226,6 +333,9 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
     if (!resolved2.isEmpty()) {
         QFont font2 = WorkspacePreview::readableFont(QFont(m_fontFamily2), p.device());
         font2.setBold(m_fontBold2);
+        font2.setItalic(m_fontItalic2);
+        font2.setUnderline(m_fontUnderline2);
+        font2.setStrikeOut(m_fontStrikeout2);
         font2=fitObjectText(font2,m_fontSize2*objectTextScale(rect,{260,120}),resolved2,m_scrollX!=0?QRectF(lineRect2.left(),lineRect2.top(),1e9,lineRect2.height()):QRectF(lineRect2),true,
             m_scrollX!=0?Qt::TextSingleLine:Qt::TextWordWrap,p.device());
         p.setFont(font2);
@@ -264,6 +374,304 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
 }
 
 // ---------------------------------------------------------------------------
+// RxTxSwap: Thetis renderTextOverlay
+// From Thetis MeterManager.cs:34135-34290 [v2.10.3.15]
+// Thetis places the text by ratios of targetWidth * m.XRatio; an item here
+// keeps its own rectangle, so those ratios are of the item's width (as
+// LEDItem's placed look does), and plotText's container width is the
+// widget's (as ClockItem's Thetis layout does).
+// ---------------------------------------------------------------------------
+
+// From Thetis MeterManager.cs:34146 [v2.10.3.15]
+bool TextOverlayItem::coverFadeActive() const
+{
+    const bool tx = effectiveTransmitting();
+    return (fadeOnRx() && !tx) || (fadeOnTx() && tx);
+}
+
+// From Thetis MeterManager.cs:34147-34152 [v2.10.3.15]: on a MOX flip the
+// panel fade restarts at 48.
+bool TextOverlayItem::checkPanelFlip()
+{
+    if (coverFadeActive() || m_panelBack1 == m_panelBack2) {
+        return false;
+    }
+    const bool tx = effectiveTransmitting();
+    if (tx == m_moxFadeToggle) {
+        return false;
+    }
+    m_panelFadeValue = kPanelFlipLevel;
+    m_moxFadeToggle = tx;
+    return true;
+}
+
+// From Thetis MeterManager.cs:34172 [v2.10.3.15]:
+//   getDXBrushForColour(m.MOX ? text_overlay.PanelBackColour2 : text_overlay.PanelBackColour1, mi.FadeValue)
+// While the fade on RX / TX veil is active, MeterWidget's veil dims the
+// item (Thetis's FadeValue is that same fade), so the colour shows at full
+// alpha.
+QColor TextOverlayItem::panelColour() const
+{
+    const QColor c = effectiveTransmitting() ? m_panelBack2 : m_panelBack1;
+    const bool flipFade = !coverFadeActive() && m_panelBack1 != m_panelBack2;
+    return withAlpha(c, flipFade ? m_panelFadeValue : ContentFade::kUndimmedLevel);
+}
+
+// The panel is the item's width wide and padding * width tall (Thetis
+// sizes the item SpacerPadding high, MeterManager.cs:27565
+// [v2.10.3.15]); it stops at the item's bottom edge, as LEDItem's does.
+QRect TextOverlayItem::swapPanelRect(int widgetW, int widgetH) const
+{
+    QRect rect = pixelRect(widgetW, widgetH);
+    const int height = qRound(static_cast<double>(rect.width()) * static_cast<double>(m_padding));
+    rect.setHeight(std::clamp(height, 0, rect.height()));
+    return rect;
+}
+
+QFont TextOverlayItem::swapFont(bool tx, const QPaintDevice* device, int widgetW) const
+{
+    float fontSize = tx ? m_fontSize2 : m_fontSize1;
+    fontSize *= kFontSizeFudge; // when a container is added, and not resized, 72 point font needs this fudge to get it to be 72 point
+    // From Thetis MeterManager.cs:37863-37864 [v2.10.3.15] (plotText)
+    const double emScale = static_cast<double>(widgetW) / kPlotTextEmWidth / kPlotTextEmSize;
+    QFont font(tx ? m_fontFamily2 : m_fontFamily1);
+    font.setPixelSize(std::max(1, static_cast<int>(std::lround(fontSize * emScale))));
+    font.setBold(tx ? m_fontBold2 : m_fontBold1);
+    font.setItalic(tx ? m_fontItalic2 : m_fontItalic1);
+    font.setUnderline(tx ? m_fontUnderline2 : m_fontUnderline1);
+    font.setStrikeOut(tx ? m_fontStrikeout2 : m_fontStrikeout1);
+    return device ? WorkspacePreview::readableFont(font, device) : WorkspacePreview::readableFont(font);
+}
+
+TextOverlayItem::SwapLine TextOverlayItem::swapLine(int widgetW, int widgetH) const
+{
+    SwapLine line;
+    const bool tx = effectiveTransmitting();
+
+    // show?
+    if (!tx && !m_showRx) { return line; }
+    if (tx && !m_showTx) { return line; }
+
+    const QRect rect = pixelRect(widgetW, widgetH);
+    const double w = rect.width();
+
+    // Determine the text to measure and display
+    line.text = resolveText(tx ? m_text2 : m_text1);
+    line.font = swapFont(tx, nullptr, widgetW);
+
+    // Calculate the text position
+    const double xOffset = tx ? m_xOffset2 : m_xOffset1;
+    const double yOffset = tx ? m_yOffset2 : m_yOffset1;
+    double textX = rect.left() + xOffset * w;
+    const double textY = rect.top() + yOffset * w;
+
+    const double scrollOffset = tx ? m_scrollXOffset2 : m_scrollXOffset1;
+    textX += scrollOffset * w;
+    line.topLeft = QPointF(textX, textY);
+
+    // Render the text
+    line.fillBack = (m_showTextBack1 && !tx) || (m_showTextBack2 && tx);
+    line.backColour = withAlpha(tx ? m_textBackColour2 : m_textBackColour1, ContentFade::kUndimmedLevel);
+    line.colour = withAlpha(tx ? m_textColour2 : m_textColour1, ContentFade::kUndimmedLevel);
+    return line;
+}
+
+void TextOverlayItem::paintSwap(QPainter& p, int widgetW, int widgetH)
+{
+    const QRect rect = pixelRect(widgetW, widgetH);
+    const bool tx = effectiveTransmitting();
+    m_measuredItemWidth = rect.width();
+
+    // From Thetis MeterManager.cs:34167-34174 [v2.10.3.15] (render_text false)
+    if (m_showBackPanel) {
+        p.fillRect(swapPanelRect(widgetW, widgetH), panelColour());
+    }
+
+    SwapLine line = swapLine(widgetW, widgetH);
+    double& measured = tx ? m_measuredTextWidth2 : m_measuredTextWidth1;
+    if (line.text.isEmpty()) {
+        measured = 0.0;
+        return;
+    }
+    line.font = swapFont(tx, p.device(), widgetW);
+
+    // plotText: left and top aligned at the point, measured size
+    // (MeterManager.cs:37858-37920 [v2.10.3.15]).
+    const QFontMetricsF fm(line.font, p.device());
+    const QSizeF size = fm.boundingRect(QRectF(0, 0, 1.0e9, 1.0e9),
+                                        Qt::AlignLeft | Qt::AlignTop, line.text).size();
+    measured = size.width();
+    const QRectF box(line.topLeft, size);
+
+    // NereusSDR: Thetis's overlay spans the container, so text scrolled
+    // past its left edge leaves the container; here it stops at the item's
+    // left and right edges.
+    p.save();
+    p.setClipRect(QRect(rect.left(), 0, rect.width(), widgetH));
+    if (line.fillBack) {
+        p.fillRect(box, line.backColour);
+    }
+    p.setFont(line.font);
+    p.setPen(line.colour);
+    p.drawText(box, Qt::AlignLeft | Qt::AlignTop | Qt::TextDontClip, line.text);
+    p.restore();
+}
+
+// From Thetis MeterManager.cs:34197-34252 [v2.10.3.15]. Thetis measures
+// and steps in the same frame; here paint() measures and advanceMeter()
+// steps. Thetis's textX is from the container's left edge, where its
+// overlay starts; here it is from the item's.
+bool TextOverlayItem::stepScroll(double deltaMs)
+{
+    // scroll?
+    if (m_lineMode != LineMode::RxTxSwap || m_scrollX == 0.0f) {
+        return false;
+    }
+    const double w = m_measuredItemWidth;
+    if (w <= 0.0) {
+        return false;
+    }
+    const bool tx = effectiveTransmitting();
+    float& lineScroll = tx ? m_scrollXOffset2 : m_scrollXOffset1;
+    int& scrollCount = tx ? m_scrollXCount2 : m_scrollXCount1;
+    const double textWidth = tx ? m_measuredTextWidth2 : m_measuredTextWidth1;
+    const double xOffset = tx ? m_xOffset2 : m_xOffset1;
+    const float scrollBefore = lineScroll;
+    const int countBefore = scrollCount;
+
+    // Calculate the text position
+    const double textX = (xOffset * w) + (lineScroll * w);
+
+    if (textWidth > w && scrollCount <= 1) // cant use w as it becomes 0 when panel hidden
+    {
+        lineScroll += static_cast<float>(m_scrollX * deltaMs / kScrollMsPerSecond);
+
+        if (textX < -textWidth) {
+            const double newX = w - (xOffset * w);
+            lineScroll = static_cast<float>(newX / w);
+            ++scrollCount;
+        } else if (textX <= 0.0 && scrollCount == 1) {
+            lineScroll = 0.0f;
+            ++scrollCount;
+        }
+    } else {
+        lineScroll = 0.0f;
+    }
+    return lineScroll != scrollBefore || scrollCount != countBefore;
+}
+
+void TextOverlayItem::setTransmitting(bool tx)
+{
+    MeterItem::setTransmitting(tx);
+    if (m_lineMode == LineMode::RxTxSwap) {
+        checkPanelFlip();
+    }
+}
+
+// One Thetis frame per update interval (Thetis renders at the
+// container's quickest interval).
+bool TextOverlayItem::advanceMeter(qint64 monotonicMs)
+{
+    if (m_lineMode != LineMode::RxTxSwap) {
+        return false;
+    }
+    bool changed = checkPanelFlip();
+    const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+    // The first call, or a clock that moved backwards, only takes the time.
+    if (m_lastStepMs < 0 || monotonicMs < m_lastStepMs) {
+        m_lastStepMs = monotonicMs;
+        return changed;
+    }
+    int frames = 0;
+    while (monotonicMs - m_lastStepMs >= interval) {
+        // From Thetis MeterManager.cs:34146-34165 [v2.10.3.15]
+        if (!coverFadeActive() && m_panelBack1 != m_panelBack2) {
+            // fade to take half a second (ContentFade::nextValue with no fade
+            // flag set takes the 255-48 = 207 step of :34158-34164)
+            const int next = ContentFade::nextValue(m_panelFadeValue, false, false,
+                                                    effectiveTransmitting(), interval);
+            changed = changed || next != m_panelFadeValue;
+            m_panelFadeValue = next;
+        }
+        changed = stepScroll(interval) || changed;
+        m_lastStepMs += interval;
+        if (++frames >= kMaxCatchUpFrames) {
+            m_lastStepMs = monotonicMs;
+            break;
+        }
+    }
+    return changed;
+}
+
+// From Thetis MeterManager.cs:34260-34285 [v2.10.3.15]: the pointer over
+// the text or the item lets the current line scroll again. MeterWidget
+// sends only moves inside the item.
+bool TextOverlayItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
+{
+    Q_UNUSED(event); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+    if (m_lineMode == LineMode::RxTxSwap) {
+        if (effectiveTransmitting()) {
+            m_scrollXCount2 = 0;
+        } else {
+            m_scrollXCount1 = 0;
+        }
+    }
+    return false;
+}
+
+// From Thetis setup.cs:31291-31298 [v2.10.3.15] (btnTextOverlay_copyfonts_Click)
+void TextOverlayItem::copyFont1To2()
+{
+    // _textOverlayFont2 = new Font(_textOverlayFont1.FontFamily, _textOverlayFont1.Size, _textOverlayFont1.Style)
+    m_fontFamily2     = m_fontFamily1;
+    m_fontSize2       = m_fontSize1;
+    m_fontBold2       = m_fontBold1;
+    m_fontItalic2     = m_fontItalic1;
+    m_fontUnderline2  = m_fontUnderline1;
+    m_fontStrikeout2  = m_fontStrikeout1;
+    m_textColour2     = m_textColour1;
+    m_textBackColour2 = m_textBackColour1;
+    m_showTextBack2   = m_showTextBack1;
+}
+
+// From Thetis setup.cs:29690-29694 [v2.10.3.15] (btnTextOverlay_copyoffsets_Click)
+void TextOverlayItem::copyOffsets1To2()
+{
+    m_xOffset2 = m_xOffset1;
+    m_yOffset2 = m_yOffset1;
+}
+
+// From Thetis MeterManager.cs:20123-20183 [v2.10.3.15] (clsTextOverlay())
+void TextOverlayItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const TextOverlayItemThetisDefaults& d = kTextOverlayThetisDefaults;
+    m_textColour1     = QColor::fromRgb(d.textColour1);
+    m_textColour2     = QColor::fromRgb(d.textColour2);
+    m_textBackColour1 = QColor::fromRgb(d.textBackColour1);
+    m_textBackColour2 = QColor::fromRgb(d.textBackColour2);
+    m_panelBack1      = QColor::fromRgb(d.panelBackColour1);
+    m_panelBack2      = QColor::fromRgb(d.panelBackColour2);
+    m_showTextBack1   = d.showTextBack1;
+    m_showTextBack2   = d.showTextBack2;
+    m_showBackPanel   = d.showBackPanel;
+    m_xOffset1        = d.xOffset1;
+    m_yOffset1        = d.yOffset1;
+    m_xOffset2        = d.xOffset2;
+    m_yOffset2        = d.yOffset2;
+    m_scrollX         = d.scrollX;
+    m_fontFamily1     = QString::fromLatin1(d.fontFamily1);
+    m_fontSize1       = d.fontSize1;
+    m_fontFamily2     = QString::fromLatin1(d.fontFamily2);
+    m_fontSize2       = d.fontSize2;
+    // FontStyle.Regular (:20170, :20173)
+    m_fontBold1 = m_fontItalic1 = m_fontUnderline1 = m_fontStrikeout1 = false;
+    m_fontBold2 = m_fontItalic2 = m_fontUnderline2 = m_fontStrikeout2 = false;
+    m_padding         = d.padding;
+    m_lineMode        = d.lineMode;
+}
+
+// ---------------------------------------------------------------------------
 // serialize()
 // Format: TEXTOVERLAY|x|y|w|h|bindingId|zOrder|
 //         textColour1|textColour2|panelBack1|panelBack2|
@@ -272,11 +680,14 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
 //         fontFamily2|fontSize2|fontBold2|
 //         scrollX|padding|
 //         <base64(text1)>|<base64(text2)>|
-//         textBackColour1|textBackColour2|showTextBack1|showTextBack2
+//         textBackColour1|textBackColour2|showTextBack1|showTextBack2|
+//         lineMode|xOffset1|yOffset1|xOffset2|yOffset2|
+//         italic1|underline1|strikeout1|italic2|underline2|strikeout2
 //
 // text1/text2 are base64-encoded to avoid '|' collisions. The text back
-// fields follow the older ones, so a record saved before they existed
-// still loads (with the defaults).
+// fields, then the line mode, offsets and font styles, follow the older
+// ones, so a record saved before they existed still loads (with the
+// defaults; no line mode reads as Both). Never renumber.
 // ---------------------------------------------------------------------------
 QString TextOverlayItem::serialize() const
 {
@@ -314,7 +725,19 @@ QString TextOverlayItem::serialize() const
               .arg(m_textBackColour1.name(QColor::HexArgb))
               .arg(m_textBackColour2.name(QColor::HexArgb))
               .arg(m_showTextBack1 ? 1 : 0)
-              .arg(m_showTextBack2 ? 1 : 0);
+              .arg(m_showTextBack2 ? 1 : 0)
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11")
+              .arg(static_cast<int>(m_lineMode))
+              .arg(static_cast<double>(m_xOffset1))
+              .arg(static_cast<double>(m_yOffset1))
+              .arg(static_cast<double>(m_xOffset2))
+              .arg(static_cast<double>(m_yOffset2))
+              .arg(m_fontItalic1 ? 1 : 0)
+              .arg(m_fontUnderline1 ? 1 : 0)
+              .arg(m_fontStrikeout1 ? 1 : 0)
+              .arg(m_fontItalic2 ? 1 : 0)
+              .arg(m_fontUnderline2 ? 1 : 0)
+              .arg(m_fontStrikeout2 ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +756,10 @@ QString TextOverlayItem::serialize() const
 // Optional (absent from older records):
 // [22] = textBackColour1      [23] = textBackColour2
 // [24] = showTextBack1        [25] = showTextBack2
+// [26] = lineMode (0 Both, 1 RxTxSwap; absent = Both)
+// [27] = xOffset1  [28] = yOffset1  [29] = xOffset2  [30] = yOffset2
+// [31] = italic1   [32] = underline1   [33] = strikeout1
+// [34] = italic2   [35] = underline2   [36] = strikeout2
 // ---------------------------------------------------------------------------
 bool TextOverlayItem::deserialize(const QString& data)
 {
@@ -418,6 +845,42 @@ bool TextOverlayItem::deserialize(const QString& data)
         const int show2 = parts[25].toInt(&ok);
         if (ok) { m_showTextBack2 = (show2 != 0); }
     }
+
+    // A record without a field takes the look it had before the field
+    // existed: both lines, no offsets, no italic / underline / strikeout.
+    m_lineMode = LineMode::Both;
+    if (parts.size() > 26) {
+        const int mode = parts[26].toInt(&ok);
+        if (ok && mode == static_cast<int>(LineMode::RxTxSwap)) { m_lineMode = LineMode::RxTxSwap; }
+    }
+    const auto floatAt = [&parts](int index) {
+        bool fieldOk = false;
+        const float v = parts.size() > index ? parts[index].toFloat(&fieldOk) : 0.0f;
+        return fieldOk && std::isfinite(v) ? v : 0.0f;
+    };
+    const auto flagAt = [&parts](int index) {
+        bool fieldOk = false;
+        const int v = parts.size() > index ? parts[index].toInt(&fieldOk) : 0;
+        return fieldOk && v != 0;
+    };
+    m_xOffset1       = floatAt(27);
+    m_yOffset1       = floatAt(28);
+    m_xOffset2       = floatAt(29);
+    m_yOffset2       = floatAt(30);
+    m_fontItalic1    = flagAt(31);
+    m_fontUnderline1 = flagAt(32);
+    m_fontStrikeout1 = flagAt(33);
+    m_fontItalic2    = flagAt(34);
+    m_fontUnderline2 = flagAt(35);
+    m_fontStrikeout2 = flagAt(36);
+
+    // Runtime state starts again.
+    m_scrollXOffset1 = 0.0f;
+    m_scrollXOffset2 = 0.0f;
+    m_scrollXCount1  = 0;
+    m_scrollXCount2  = 0;
+    m_panelFadeValue = ContentFade::kUndimmedLevel;
+    m_moxFadeToggle  = effectiveTransmitting();
 
     return true;
 }
