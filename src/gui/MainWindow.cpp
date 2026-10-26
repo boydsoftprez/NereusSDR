@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Text overlay slice tokens: refreshContainerMeter gives
+//                 each text overlay the VfoSliceState of every open slice
+//                 (the VFO display's feed, sliceStateFor), none for an
+//                 entry on another session's radio; any slice's tuning
+//                 refreshes overlays. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Dial tuning: onContainerItemAdded connects each live
 //                 dial (wireDialRequests); tuning, step changes, slice
 //                 select and lock act on the slice each request names after
@@ -1332,6 +1338,7 @@ warren@wpratt.com
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
 #include "meters/DialItem.h"
+#include "meters/TextOverlayItem.h"
 #include "meters/ModeButtonItem.h"      // R-R3-21 container controls
 #include "meters/FilterButtonItem.h"
 #include "meters/AntennaButtonItem.h"
@@ -15673,6 +15680,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         if (auto* mode = qobject_cast<ModeButtonItem*>(item)) { value += QString::number(mode->activeMode()); }
         if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += vfo->presentationKey(); }
         if (auto* dial = qobject_cast<DialItem*>(item)) { value += dial->presentationKey(); }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { value += overlay->presentationKey(); }
         if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
             for (int i=0;i<other->buttonCount();++i) { value += QString::number(other->buttonState(static_cast<OtherButtonItem::ButtonId>(i))); }
         }
@@ -15731,42 +15739,58 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     // slice, a fixed slice or All slices draws from the same feed. The band
     // text is the band-plan segment holding the frequency (Thetis
     // DB.BandText, console.cs:31657-31668 [v2.10.3.15]).
+    const auto sliceStateFor = [&](const SliceModel* s) {
+        const QVector<BandSegment>& segments = m_radioModel->bandPlanManager().segments();
+        const SliceModel* active = m_radioModel->activeSlice();
+        VfoSliceState state;
+        state.index = s->sliceIndex();
+        state.frequencyHz = qint64(std::llround(s->frequency()));
+        state.mode = SliceModel::modeName(s->dspMode());
+        state.filter = filterTextFor(s);
+        state.band = bandLabel(bandFromFrequency(s->frequency()));
+        const double mhz = s->frequency() / 1.0e6;
+        for (const BandSegment& segment : segments) {
+            if (mhz >= segment.lowMhz && mhz <= segment.highMhz) { state.bandText = segment.label; break; }
+        }
+        state.stepHz = s->stepHz();
+        // The FILTER screen's names, and the preset the filter is on
+        // (RxApplet::updateFilterButtons tolerance: 50 Hz per edge).
+        if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
+            const QList<FilterPreset> presets = store->presetsForMode(s->dspMode());
+            for (int i = 0; i < presets.size(); ++i) {
+                state.filterNames.append(presets[i].name);
+                if (state.filterIndex < 0 && qAbs(s->filterLow() - presets[i].low) <= 50
+                    && qAbs(s->filterHigh() - presets[i].high) <= 50) {
+                    state.filterIndex = i;
+                }
+            }
+        }
+        state.locked = s->locked();
+        state.transmitting = s->txSliceMarked();
+        state.active = s == active;
+        state.open = true;
+        return state;
+    };
     const auto feedVfo = [&](VfoDisplayItem* vfo) {
         vfo->clearSliceStates();
         vfo->setSourceSliceIndex(slice ? slice->sliceIndex() : -1);
-        const QVector<BandSegment>& segments = m_radioModel->bandPlanManager().segments();
-        const SliceModel* active = m_radioModel->activeSlice();
         for (SliceModel* s : m_radioModel->slices()) {
             if (!s) { continue; }
-            VfoSliceState state;
-            state.index = s->sliceIndex();
-            state.frequencyHz = qint64(std::llround(s->frequency()));
-            state.mode = SliceModel::modeName(s->dspMode());
-            state.filter = filterTextFor(s);
-            state.band = bandLabel(bandFromFrequency(s->frequency()));
-            const double mhz = s->frequency() / 1.0e6;
-            for (const BandSegment& segment : segments) {
-                if (mhz >= segment.lowMhz && mhz <= segment.highMhz) { state.bandText = segment.label; break; }
-            }
-            state.stepHz = s->stepHz();
-            // The FILTER screen's names, and the preset the filter is on
-            // (RxApplet::updateFilterButtons tolerance: 50 Hz per edge).
-            if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
-                const QList<FilterPreset> presets = store->presetsForMode(s->dspMode());
-                for (int i = 0; i < presets.size(); ++i) {
-                    state.filterNames.append(presets[i].name);
-                    if (state.filterIndex < 0 && qAbs(s->filterLow() - presets[i].low) <= 50
-                        && qAbs(s->filterHigh() - presets[i].high) <= 50) {
-                        state.filterIndex = i;
-                    }
-                }
-            }
-            state.locked = s->locked();
-            state.transmitting = s->txSliceMarked();
-            state.active = s == active;
-            state.open = true;
+            const VfoSliceState state = sliceStateFor(s);
             vfo->setSliceState(state.index, state);
         }
+    };
+    // Text overlay slice tokens (%sliceA_freq%, %tx_slice%): the same
+    // states, whatever the entry's Source. An entry on another session's
+    // radio gets none: this window holds only its own radio's slices.
+    const auto feedOverlay = [&](TextOverlayItem* overlay) {
+        QVector<VfoSliceState> states;
+        if (!foreignSession && !unsupported) {
+            for (SliceModel* s : m_radioModel->slices()) {
+                if (s) { states.append(sliceStateFor(s)); }
+            }
+        }
+        overlay->setOverlaySlices(states);
     };
 
     // Dial: the open slices, the one the entry's Source gives and the
@@ -15805,6 +15829,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         const auto applyNoSlice = [&](MeterItem* item) {
             if (auto* face = qobject_cast<CompositePresetItem*>(item)) { face->setUnavailableText(notOpen); }
             if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
+            if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); return; }
             if (applyAlways(item)) { return; }
             if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
                 m_containerButtons->applySliceAvailability(box, rxSource);
@@ -15891,9 +15916,11 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 vfo->setBandLabel(bandLabel(band));
                 feedVfo(vfo);
             }
+            if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); }
             return;
         }
         if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); return; }
         if (applyAlways(item)) { return; }
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             m_containerButtons->applySliceAvailability(box, rxSource);
@@ -15948,7 +15975,9 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                 // reaches it. A VFO display face shows its own VFO display.
                 const auto* face = qobject_cast<const CompositePresetItem*>(root);
                 const auto* vfo = face ? face->vfoDisplay() : qobject_cast<const VfoDisplayItem*>(root);
-                const bool showsOtherSlices = vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice;
+                const bool showsOtherSlices = (vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice)
+                    // A text overlay's slice tokens name any slice.
+                    || qobject_cast<const TextOverlayItem*>(root) != nullptr;
                 if (containerSourceSlice(context) == slice || showsOtherSlices) {
                     refreshContainerMeter(c, meter, root, context, true);
                 }

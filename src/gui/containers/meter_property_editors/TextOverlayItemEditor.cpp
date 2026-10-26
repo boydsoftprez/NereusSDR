@@ -8,6 +8,9 @@
 #include <QFontComboBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QHBoxLayout>
+#include <QMenu>
+#include <QToolButton>
 
 namespace NereusSDR {
 
@@ -37,6 +40,41 @@ QCheckBox* TextOverlayItemEditor::makeFlagRow(const QString& label, void (TextOv
         notifyChanged();
     });
     return box;
+}
+
+QWidget* TextOverlayItemEditor::makeTokenField(QLineEdit* edit,
+                                               void (TextOverlayItem::*setter)(const QString&),
+                                               const QString& buttonName)
+{
+    auto* field = new QWidget(this);
+    auto* row = new QHBoxLayout(field);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(4);
+    edit->setParent(field);
+    row->addWidget(edit, 1);
+
+    // Thetis's variable picker puts "%" + variable + "%" on the
+    // clipboard; here it goes in the field.
+    auto* button = new QToolButton(field);
+    button->setObjectName(buttonName);
+    button->setText(QStringLiteral("%"));
+    button->setToolTip(QStringLiteral("Insert a value token"));
+    button->setPopupMode(QToolButton::InstantPopup);
+    auto* menu = new QMenu(button);
+    for (const QString& token : offeredOverlayTokens()) {
+        menu->addAction(token);
+    }
+    button->setMenu(menu);
+    row->addWidget(button);
+    connect(menu, &QMenu::triggered, this, [this, edit, setter](QAction* action) {
+        edit->insert(action->text());
+        if (isProgrammaticUpdate()) { return; }
+        TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
+        if (!x) { return; }
+        (x->*setter)(edit->text());
+        notifyChanged();
+    });
+    return field;
 }
 
 QDoubleSpinBox* TextOverlayItemEditor::makeOffsetRow(const QString& label, void (TextOverlayItem::*setter)(float))
@@ -137,7 +175,8 @@ void TextOverlayItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("Line 1"));
 
     m_editText1 = new QLineEdit(this);
-    addRow(QStringLiteral("Text 1"), m_editText1);
+    addRow(QStringLiteral("Text 1"), makeTokenField(m_editText1, &TextOverlayItem::setText1,
+                                                QStringLiteral("overlayTokenPicker1")));
     connect(m_editText1, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);
@@ -224,7 +263,8 @@ void TextOverlayItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("Line 2"));
 
     m_editText2 = new QLineEdit(this);
-    addRow(QStringLiteral("Text 2"), m_editText2);
+    addRow(QStringLiteral("Text 2"), makeTokenField(m_editText2, &TextOverlayItem::setText2,
+                                                QStringLiteral("overlayTokenPicker2")));
     connect(m_editText2, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         TextOverlayItem* x = qobject_cast<TextOverlayItem*>(m_item);

@@ -2129,6 +2129,7 @@ set(GUI_SOURCES
     src/gui/meters/TuneStepButtonItem.cpp
     src/gui/meters/OtherButtonCatalog.cpp
     src/gui/meters/OtherButtonItem.cpp
+    src/gui/meters/OverlayTokens.cpp
     src/gui/meters/LedResultRegistry.cpp
     src/gui/meters/BandGroups.cpp
     src/gui/meters/VoiceRecordPlayItem.cpp

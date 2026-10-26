@@ -24,6 +24,11 @@ private:
     QCheckBox* makeFlagRow(const QString& label, void (TextOverlayItem::*setter)(bool));
     // A spin row (-10..10) that writes one offset of the item.
     QDoubleSpinBox* makeOffsetRow(const QString& label, void (TextOverlayItem::*setter)(float));
+    // The text field with a "%" button beside it that lists the offered
+    // tokens, as Thetis's text overlay variable picker does; a picked
+    // token goes in at the cursor and is saved.
+    QWidget* makeTokenField(QLineEdit* edit, void (TextOverlayItem::*setter)(const QString&),
+                            const QString& buttonName);
 
     QComboBox*      m_comboLineMode{nullptr};
 

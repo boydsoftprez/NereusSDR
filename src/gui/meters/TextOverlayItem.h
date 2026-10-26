@@ -28,6 +28,10 @@
 //                 its own logic flag (Thetis tests the RX one). Appended to
 //                 the record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Token table (OverlayTokens): slice states for the slice
+//                 tokens, %group% text, and a refresh for tokens that
+//                 change on their own. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -71,6 +75,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "OverlayTokens.h"
 #include <QColor>
 #include <QFont>
 #include <QMap>
@@ -245,6 +250,19 @@ public:
         m_variables[name.toUpper()] = value;
     }
 
+    // The open slices the slice tokens read (%sliceA_freq%, %tx_slice%);
+    // MainWindow::refreshContainerMeter feeds them. Runtime only.
+    void setOverlaySlices(const QVector<VfoSliceState>& slices) { m_overlaySlices = slices; }
+    QVector<VfoSliceState> overlaySlices() const { return m_overlaySlices; }
+
+    // Text for the %group% token: the container's shown display group
+    // (as TextItem::setDisplayGroupText). Runtime only, not saved.
+    void setDisplayGroupText(const QString& text) { m_displayGroupText = text; }
+    QString displayGroupText() const { return m_displayGroupText; }
+
+    // Both lines as resolved now, for a refresh that compares them.
+    QString presentationKey() const { return resolvedText1() + QLatin1Char('\n') + resolvedText2(); }
+
     // The two lines paint() draws, after token substitution (R-R3-13:
     // %VALUE% is "--" with no reading).
     QString resolvedText1() const { return resolveText(m_text1); }
@@ -266,8 +284,12 @@ public:
     bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH) override;
 
 private:
-    // From Thetis parseText() (MeterManager.cs:19267)
+    // From Thetis parseText() (MeterManager.cs:20587-20716 [v2.10.3.15])
     QString resolveText(const QString& templateText) const;
+    OverlayContext overlayContext(const QString& templateText) const;
+    // Resolves both lines; true when either differs from the last time
+    // (time and slice tokens change with nothing else).
+    bool refreshResolvedText();
     bool effectiveTransmitting() const { return transmitting() && !foreignSession(); }
     bool coverFadeActive() const;
     bool checkPanelFlip();
@@ -349,7 +371,13 @@ private:
 
     // Variable registry
     QMap<QString, QString> m_variables;
-    mutable int m_precision{1};  // current precision for %PRECIS=n%
+    // NereusSDR: %value% decimals without %precis=N% (the look saved
+    // overlays had before the token table).
+    static constexpr int kValueDecimals = 1;
+    QVector<VfoSliceState> m_overlaySlices;
+    QString m_displayGroupText;
+    QString m_lastResolved1;
+    QString m_lastResolved2;
 };
 
 // Thetis's clsTextOverlay constructor values

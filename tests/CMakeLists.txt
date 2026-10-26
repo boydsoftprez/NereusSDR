@@ -779,6 +779,9 @@ nereus_add_test(tst_clock_item_layout)
 # Text overlay: RX/TX swap and Thetis defaults for new items, both lines for
 # saved ones; panel MOX flip fade, copy font, auto scroll.
 nereus_add_test(tst_text_overlay_item)
+# Text overlay tokens: case-insensitive table, precision, time and date
+# integers, slice-letter tokens, the Thetis text translator and the picker.
+nereus_add_test(tst_text_overlay_tokens)
 # Every meter item record fills every field it declares and round-trips.
 nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.

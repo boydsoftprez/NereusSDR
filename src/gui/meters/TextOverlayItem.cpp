@@ -43,6 +43,11 @@
 //                 logic flag; NereusSDR uses the TX one. An unknown ID hides
 //                 nothing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Tokens resolve through the OverlayTokens table (Thetis
+//                 parseText): reading, time and date, slice-letter, MOX and
+//                 meter data source tokens, %group%, and %precis=N% for the
+//                 whole line. Unknown text such as %1 stays as written.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -149,12 +154,14 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/containers/ContentFade.h"
 #include "LedResultRegistry.h"
+#include "MeterWidget.h"
 
 #include <QPainter>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QMouseEvent>
+#include <QDateTime>
 #include <QStringList>
 #include <algorithm>
 #include <cmath>
@@ -191,55 +198,58 @@ QColor withAlpha(QColor c, int alpha)
 
 // ---------------------------------------------------------------------------
 // resolveText()
-// From Thetis parseText() (MeterManager.cs:19267-19395)
-// Splits template on '%', alternating literal/token segments.
+// From Thetis parseText() (MeterManager.cs:20587-20716 [v2.10.3.15]), by
+// way of the token table in OverlayTokens.
 // ---------------------------------------------------------------------------
 QString TextOverlayItem::resolveText(const QString& templateText) const
 {
     if (templateText.isEmpty()) {
         return {};
     }
+    return resolveOverlayTokens(templateText, overlayContext(templateText));
+}
 
-    const QStringList parts = templateText.split(QLatin1Char('%'));
-    QString result;
-    int precision = m_precision;
-
-    for (int i = 0; i < parts.size(); ++i) {
-        if (i % 2 == 0) {
-            // Literal text — pass through unchanged
-            result += parts[i];
-        } else {
-            // Token — case-insensitive match
-            const QString token = parts[i].toUpper();
-
-            if (token == QLatin1String("NL")) {
-                // From Thetis parseText() — newline token
-                result += QLatin1Char('\n');
-            } else if (token.startsWith(QLatin1String("PRECIS="))) {
-                // From Thetis parseText() — set decimal precision, no output
-                bool ok = false;
-                int p = token.mid(7).toInt(&ok);
-                if (ok) {
-                    precision = std::clamp(p, 0, 20);
-                    m_precision = precision;
-                }
-            } else if (token == QLatin1String("VALUE")) {
-                // Base meter value with current precision.
-                // NereusSDR (R-R3-13): "--" with no reading.
-                result += isNoReading(m_value)
-                    ? QStringLiteral("--")
-                    : QString::number(m_value, 'f', precision);
-            } else if (m_variables.contains(token)) {
-                // Named variable from external registry
-                result += m_variables[token];
-            } else {
-                // Unknown token — pass through verbatim
-                result += QLatin1Char('%') + parts[i] + QLatin1Char('%');
-            }
+OverlayContext TextOverlayItem::overlayContext(const QString& templateText) const
+{
+    OverlayContext context;
+    for (QObject* p = parent(); p; p = p->parent()) {
+        if (auto* meter = qobject_cast<MeterWidget*>(p)) {
+            context.readings = meter->lastBindingValues();
+            break;
         }
     }
+    context.slices = m_overlaySlices;
+    for (const VfoSliceState& s : m_overlaySlices) {
+        if (s.open && s.transmitting) {
+            context.txSlice = QChar(u'A' + s.index);
+            break;
+        }
+    }
+    context.mox = effectiveTransmitting();
+    context.nowUtc = QDateTime::currentDateTimeUtc();
+    context.nowLocal = QDateTime::currentDateTime();
 
-    return result;
+    // NereusSDR: %value% is the item's own reading, one decimal unless the
+    // line has %precis=N%; "--" with no reading (R-R3-13).
+    const int precision = overlayTokenPrecision(templateText);
+    context.named.insert(QStringLiteral("value"), isNoReading(m_value)
+        ? QStringLiteral("--")
+        : QString::number(m_value, 'f', precision >= 0 ? precision : kValueDecimals));
+    context.named.insert(QStringLiteral("group"), m_displayGroupText);
+    for (auto it = m_variables.cbegin(); it != m_variables.cend(); ++it) {
+        context.named.insert(it.key().toLower(), it.value());
+    }
+    return context;
+}
+
+bool TextOverlayItem::refreshResolvedText()
+{
+    const QString line1 = resolveText(m_text1);
+    const QString line2 = resolveText(m_text2);
+    const bool changed = line1 != m_lastResolved1 || line2 != m_lastResolved2;
+    m_lastResolved1 = line1;
+    m_lastResolved2 = line2;
+    return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,10 +673,14 @@ bool TextOverlayItem::advanceMeter(qint64 monotonicMs)
     // The gates follow their LEDs in either line mode; only RxTxSwap draws
     // by them.
     const bool gatesChanged = refreshLedGates();
+    // Tokens such as %time_utc% change with nothing else; a line with no
+    // % has none.
+    const bool hasTokens = m_text1.contains(QLatin1Char('%')) || m_text2.contains(QLatin1Char('%'));
+    const bool textChanged = hasTokens && refreshResolvedText();
     if (m_lineMode != LineMode::RxTxSwap) {
-        return false;
+        return textChanged;
     }
-    bool changed = checkPanelFlip() || gatesChanged;
+    bool changed = checkPanelFlip() || gatesChanged || textChanged;
     const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
     // The first call, or a clock that moved backwards, only takes the time.
     if (m_lastStepMs < 0 || monotonicMs < m_lastStepMs) {

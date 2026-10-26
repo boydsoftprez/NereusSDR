@@ -92,6 +92,8 @@
 //                 container's, the user's colour when the container has
 //                 one, and is redrawn when the container's changes. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - %group% text also reaches text overlays. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -249,6 +251,7 @@ void feedDisplayGroupText(const QVector<MeterItem*>& items, int group)
         ? QString::number(group) : QString();
     for (MeterItem* item : items) {
         if (auto* textItem = qobject_cast<TextItem*>(item)) { textItem->setDisplayGroupText(text); }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { overlay->setDisplayGroupText(text); }
     }
 }
 } // namespace

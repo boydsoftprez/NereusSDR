@@ -1,0 +1,222 @@
+// no-port-check: NereusSDR-original tests for the text overlay token table.
+// Modification history (NereusSDR):
+//   2026-10-26 - Token table: case-insensitive names, %precis=N% for the
+//                 line, time and date integers, slice-letter tokens, text
+//                 that is not a token kept as written, the Thetis text
+//                 translator, the offered list and the editor's picker.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+
+#include <QtTest>
+#include <QAction>
+#include <QLineEdit>
+#include <QMenu>
+#include <QTimeZone>
+#include <QToolButton>
+#include <memory>
+
+#include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
+#include "gui/meters/MeterPoller.h"
+#include "gui/meters/OverlayTokens.h"
+#include "gui/meters/TextOverlayItem.h"
+
+using namespace NereusSDR;
+
+namespace {
+
+VfoSliceState openSlice(int index, qint64 hz, const QString& mode, bool transmitting = false)
+{
+    VfoSliceState s;
+    s.index = index;
+    s.frequencyHz = hz;
+    s.mode = mode;
+    s.filter = QStringLiteral("2.7k");
+    s.band = QStringLiteral("20m");
+    s.stepHz = 100;
+    s.transmitting = transmitting;
+    s.open = true;
+    return s;
+}
+
+OverlayContext contextAt(const QDateTime& utc, const QDateTime& local)
+{
+    OverlayContext c;
+    c.nowUtc = utc;
+    c.nowLocal = local;
+    return c;
+}
+
+} // namespace
+
+class TstTextOverlayTokens : public QObject {
+    Q_OBJECT
+
+private slots:
+    void namesMatchWithoutRegardToCase()
+    {
+        OverlayContext c;
+        c.slices = {openSlice(0, 14074000, QStringLiteral("USB"))};
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%SliceA_Freq%"), c),
+                 resolveOverlayTokens(QStringLiteral("%slicea_freq%"), c));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%SliceA_Freq%"), c), QStringLiteral("14.074.000"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%SLICEA_MODE%"), c), QStringLiteral("USB"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("a%NL%b"), c), QStringLiteral("a\nb"));
+    }
+
+    void precisionAppliesToTheWholeLine()
+    {
+        OverlayContext c;
+        c.readings.insert(MeterBinding::TxSwr, 1.234);
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%swr% %precis=1%"), c), QStringLiteral("1.2 "));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%PRECIS=3%%SWR%"), c), QStringLiteral("1.234"));
+        // The first valid one counts; every one shows nothing.
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%precis=x%%precis=0%%swr%%precis=4%"), c),
+                 QStringLiteral("1"));
+        // Kept to 0..20.
+        QCOMPARE(overlayTokenPrecision(QStringLiteral("%precis=99%")), 20);
+        QCOMPARE(overlayTokenPrecision(QStringLiteral("%precis=-3%")), 0);
+        QCOMPARE(overlayTokenPrecision(QStringLiteral("%swr%")), -1);
+    }
+
+    void readingsWithoutPrecisionShowOneToSixDecimals()
+    {
+        OverlayContext c;
+        c.readings.insert(MeterBinding::TxSwr, 2.0);
+        c.readings.insert(MeterBinding::TxPower, 1.2345678);
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%swr%"), c), QStringLiteral("2.0"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%pwr%"), c), QStringLiteral("1.234568"));
+        // A reading the meter has no value for reads 0, as Thetis.
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%mic%"), c), QStringLiteral("0.0"));
+    }
+
+    void timeIntegers()
+    {
+        const QDateTime afternoon(QDate(2026, 10, 25), QTime(13, 5, 9), QTimeZone::UTC);
+        const QDateTime morning(QDate(2026, 10, 25), QTime(9, 5, 7), QTimeZone::UTC);
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%time_utc_int%"), contextAt(afternoon, morning)),
+                 QStringLiteral("130509"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%time_utc_int%"), contextAt(morning, afternoon)),
+                 QStringLiteral("90507"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%time_loc_int%"), contextAt(afternoon, morning)),
+                 QStringLiteral("90507"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%time_utc%"), contextAt(afternoon, morning)),
+                 QStringLiteral("13:05:09"));
+    }
+
+    void dateIntegersAreTheDate()
+    {
+        const QDateTime utc(QDate(2026, 10, 26), QTime(1, 2, 3), QTimeZone::UTC);
+        const QDateTime local(QDate(2026, 10, 25), QTime(21, 2, 3));
+        const OverlayContext c = contextAt(utc, local);
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%date_loc_int%"), c), QStringLiteral("20261025"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%date_utc_int%"), c), QStringLiteral("20261026"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%date_loc%"), c), QStringLiteral("Sun 25 Oct 2026"));
+    }
+
+    void sliceTokensByLetter()
+    {
+        OverlayContext c;
+        c.slices = {openSlice(0, 7074000, QStringLiteral("LSB")),
+                    openSlice(1, 14074000, QStringLiteral("DIGU"), true)};
+        c.txSlice = QLatin1Char('B');
+        c.mox = true;
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%sliceB_open%|%sliceC_open%|%sliceC_freq%"), c),
+                 QStringLiteral("Slice B on||"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%tx_slice% %mox%"), c), QStringLiteral("B MOX"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%sliceA_filter% %sliceA_band% %sliceA_step%"), c),
+                 QStringLiteral("2.7k 20m 100"));
+        c.mox = false;
+        c.txSlice = QChar();
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("[%tx_slice%%mox%]"), c), QStringLiteral("[]"));
+    }
+
+    void textThatIsNotATokenStays()
+    {
+        OverlayContext c;
+        c.readings.insert(MeterBinding::TxSwr, 1.5);
+        // Thetis leaves unknown tokens as written; %1, %20 and %% are text.
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%1 and %20 100%% %foo% %swr%"), c),
+                 QStringLiteral("%1 and %20 100%% %foo% 1.5"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%foo%"), c), QStringLiteral("%foo%"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("50%"), c), QStringLiteral("50%"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%sliceA_colour%"), c), QStringLiteral("%sliceA_colour%"));
+        // A value is not read again as tokens.
+        c.named.insert(QStringLiteral("note"), QStringLiteral("%swr%"));
+        QCOMPARE(resolveOverlayTokens(QStringLiteral("%note%"), c), QStringLiteral("%swr%"));
+    }
+
+    void thetisTextTranslatesToSliceLetters()
+    {
+        QCOMPARE(translateThetisOverlayText(QStringLiteral("%VFOA% %rx2%")),
+                 QStringLiteral("%sliceA_freq% %sliceB_open%"));
+        QCOMPARE(translateThetisOverlayText(QStringLiteral("%mode_vfob% %band_vfoa% %filter_vfoa_name%")),
+                 QStringLiteral("%sliceB_mode% %sliceA_band% %sliceA_filter%"));
+        QCOMPARE(translateThetisOverlayText(QStringLiteral("%1 %swr% %vfoasub%")),
+                 QStringLiteral("%1 %swr% %vfoasub%"));
+    }
+
+    void offeredTokensUseSliceLetters()
+    {
+        const QStringList offered = offeredOverlayTokens();
+        for (const QString& token : offered) {
+            QVERIFY2(!token.contains(QLatin1String("vfoa"), Qt::CaseInsensitive), qPrintable(token));
+            QVERIFY2(!token.contains(QLatin1String("vfob"), Qt::CaseInsensitive), qPrintable(token));
+            QVERIFY2(!token.contains(QLatin1String("rx2"), Qt::CaseInsensitive), qPrintable(token));
+            QVERIFY(token.startsWith(QLatin1Char('%')) && token.endsWith(QLatin1Char('%')));
+        }
+        for (const char* expected : {"%sliceA_freq%", "%sliceD_open%", "%tx_slice%", "%mox%",
+                                     "%time_utc_int%", "%date_loc_int%", "%swr%", "%nl%", "%group%"}) {
+            QVERIFY2(offered.contains(QLatin1String(expected)), expected);
+        }
+    }
+
+    void itemResolvesItsOwnValuesAndSlices()
+    {
+        TextOverlayItem overlay;
+        overlay.setBindingId(MeterBinding::SignalPeak);
+        overlay.setOverlaySlices({openSlice(0, 14074000, QStringLiteral("USB"))});
+        overlay.setDisplayGroupText(QStringLiteral("2"));
+        overlay.setVariable(QStringLiteral("Call"), QStringLiteral("KG4VCF"));
+        overlay.setValue(-73.26);
+        overlay.setText1(QStringLiteral("%sliceA_mode% %VALUE% %group% %call% %1"));
+        QCOMPARE(overlay.resolvedText1(), QStringLiteral("USB -73.3 2 KG4VCF %1"));
+        overlay.setText2(QStringLiteral("%precis=0%%value%"));
+        QCOMPARE(overlay.resolvedText2(), QStringLiteral("-73"));
+        // Line 1 keeps its own precision.
+        QCOMPARE(overlay.resolvedText1(), QStringLiteral("USB -73.3 2 KG4VCF %1"));
+    }
+
+    void tokensThatChangeOnTheirOwnRepaint()
+    {
+        TextOverlayItem overlay;
+        overlay.setText1(QStringLiteral("%sliceA_freq%"));
+        overlay.setOverlaySlices({openSlice(0, 14074000, QStringLiteral("USB"))});
+        QVERIFY(overlay.advanceMeter(0));
+        QVERIFY(!overlay.advanceMeter(10));
+        overlay.setOverlaySlices({openSlice(0, 14075000, QStringLiteral("USB"))});
+        QVERIFY(overlay.advanceMeter(20));
+        QCOMPARE(overlay.resolvedText1(), QStringLiteral("14.075.000"));
+    }
+
+    void pickerInsertsATokenAndSaves()
+    {
+        auto item = std::make_unique<TextOverlayItem>();
+        item->setText1(QStringLiteral("F "));
+        TextOverlayItemEditor editor;
+        editor.setItem(item.get());
+        auto* picker = editor.findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QVERIFY(picker && picker->menu());
+        QCOMPARE(picker->text(), QStringLiteral("%"));
+        QAction* freq = nullptr;
+        for (QAction* action : picker->menu()->actions()) {
+            QVERIFY(!action->text().contains(QLatin1String("vfo"), Qt::CaseInsensitive));
+            if (action->text() == QLatin1String("%sliceA_freq%")) { freq = action; }
+        }
+        QVERIFY(freq);
+        freq->trigger();
+        QCOMPARE(item->text1(), QStringLiteral("F %sliceA_freq%"));
+        QVERIFY(editor.findChild<QToolButton*>(QStringLiteral("overlayTokenPicker2")));
+    }
+};
+
+QTEST_MAIN(TstTextOverlayTokens)
+#include "tst_text_overlay_tokens.moc"
