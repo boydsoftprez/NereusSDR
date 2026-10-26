@@ -40,6 +40,9 @@
 //   2026-10-26 - The fade click guard and a shown button's rectangle are
 //                 open to a subclass (other buttons' reorder drag).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - columnRange (NereusSDR's range unless the grid type gives
+//                 its own) and new grids get Thetis's 3 columns. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -119,6 +122,28 @@ ButtonBoxItem::ButtonBoxItem(QObject* parent)
 }
 
 ButtonBoxItem::~ButtonBoxItem() = default;
+
+std::pair<int, int> ButtonBoxItem::columnRange() const
+{
+    return {kDefaultMinColumns, kDefaultMaxColumns};
+}
+
+void ButtonBoxItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    // From Thetis MeterManager.cs:25390 [v2.10.3.15] (and its twins at
+    // :25462, :25563, :25628, :25664, :25700)
+    setColumns(kNewGridColumns);
+}
+
+int ButtonBoxItem::checkedButtonCount() const
+{
+    int checked = 0;
+    for (int i = 0; i < m_buttonCount && i < m_buttons.size(); ++i) {
+        if (m_buttons[i].visible) { ++checked; }
+    }
+    return checked;
+}
 
 bool ButtonBoxItem::advanceMeter(qint64 monotonicMs)
 {

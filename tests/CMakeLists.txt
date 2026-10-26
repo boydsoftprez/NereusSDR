@@ -813,6 +813,8 @@ nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)
 nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
 nereus_add_test(tst_container_preview NATIVE_WINDOW)
+# Item settings paste between compatible bar meters (Thetis canPasteSettings).
+nereus_add_test(tst_container_copy_paste)
 nereus_add_test(tst_free_canvas NATIVE_WINDOW)
 # The free canvas minimum follows its views where they are now (offscreen).
 nereus_add_test(tst_free_canvas_extent)

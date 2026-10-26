@@ -85,6 +85,9 @@ public:
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
+    // The column counts this grid offers (Thetis setup.cs).
+    std::pair<int, int> columnRange() const override;
+
 signals:
     void bandClicked(int bandIndex);
     // From Thetis PopupBandstack (MeterManager.cs:11896)

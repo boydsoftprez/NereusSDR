@@ -8,6 +8,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Copy settings and Paste settings work in the workspace
+//                 draft: shown there, disabled with a plain reason when they
+//                 cannot apply; a paste keeps the object's place. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Paste settings between compatible bar meters, ported from
+//                 Thetis setup.cs canPasteSettings and the paste body: the
+//                 target keeps its reading, title, scale and units, and its
+//                 average marker when the source has none. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A web image's Show next selects the web image with that
 //                 4-char ID, in whichever container holds it. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -215,6 +224,8 @@ mw0lge@grange-lane.co.uk
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
 #include "../meters/ItemGroup.h"
+#include "../meters/presets/BarPresetItem.h"
+#include "../meters/presets/CompositePresetItem.h"
 
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
 //                                               ScaleItem, TextItem, NeedleItem)
@@ -511,7 +522,7 @@ void ContainerSettingsDialog::buildLayout()
     // --- Button bar (bottom) ---
     buildButtonBar();
     if (m_editSession) {
-        m_btnPreset->hide();m_btnCopySettings->hide();m_btnPasteSettings->hide();
+        m_btnPreset->hide();updateCopyPasteButtonState();
         m_highlightCheck->setEnabled(false);m_highlightCheck->setToolTip(tr("Highlight is a live arrangement aid; drafts use the preview."));
         m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit meter data sources in application settings."));
         for (auto* edit : findChildren<QLineEdit*>()) { connect(edit,&QLineEdit::textChanged,this,[this]{ updatePreview(); }); }
@@ -1344,6 +1355,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
     if(m_editSession) {
         if(!m_propertyStack) {return;}
         if(m_currentTypeEditor) { m_propertyStack->removeWidget(m_currentTypeEditor); delete m_currentTypeEditor; m_currentTypeEditor=nullptr; m_contentEditor=nullptr; }
+        updateCopyPasteButtonState();
         const int row=m_itemList->currentRow();
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
             const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
@@ -2063,38 +2075,182 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
 // Phase 3G-6 block 7 commit 2: copy/paste item settings clipboard
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// The bar meters that share one settings record: every BarPresetItem
+// flavor (Thetis MeterType values outside the self-contained list in
+// canPasteSettings, setup.cs:27098-27106 [v2.10.3.15]). The custom bar
+// is CUSTOM_METER_BAR, which Thetis lists as self-contained.
+bool isSharedSettingsBar(const QString& typeId)
+{
+    if (typeId == QLatin1String("meter.mic") || typeId == QLatin1String("meter.alc")) { return true; }
+    for (const QString& variant : BarPresetItem::variants()) {
+        QString name = variant;
+        name[0] = name[0].toLower();
+        if (typeId == QLatin1String("meter.") + name) { return true; }
+    }
+    return false;
+}
+
+} // namespace
+
+QString ContainerSettingsDialog::pasteTypeId(const MeterItem& item)
+{
+    if (const auto* bar = qobject_cast<const BarPresetItem*>(&item)) { return bar->typeId(); }
+    if (const auto* composite = qobject_cast<const CompositePresetItem*>(&item)) { return composite->typeId(); }
+    const QString serialized = item.serialize();
+    const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
+    return (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+}
+
+// From Thetis setup.cs:27085-27127 [v2.10.3.15] (canPasteSettings).
+// Thetis lets every type outside its self-contained list paste onto every
+// other such type (bars, button boxes, web image, data out), because they
+// share one clsIGSettings. In NereusSDR only the bar flavors share a
+// record, so the other types, and the types Thetis does not have, paste
+// only onto their own type. Thetis's second list tests the target, not the
+// source, for ROTATOR and HISTORY (setup.cs:27113), so a rotator or history
+// source pastes onto a bar there; NereusSDR refuses it in both directions.
+bool ContainerSettingsDialog::canPasteSettings(const QString& fromTypeId, const QString& toTypeId)
+{
+    if (fromTypeId.isEmpty() || toTypeId.isEmpty()) { return false; }
+
+    // only allow paste into matching items. Some items allow pasting into non matching types as they share settings
+    if (fromTypeId == toTypeId) { return true; }
+    return isSharedSettingsBar(fromTypeId) && isSharedSettingsBar(toTypeId);
+}
+
+// From Thetis setup.cs:26988 [v2.10.3.15] (btnMeterPasteSettings_Click; its
+// paste body, setup.cs:27001-27083, is cited where it is ported below).
+bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target)
+{
+    const QString toTypeId = pasteTypeId(target);
+    if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
+    if (fromTypeId == toTypeId) { return target.deserialize(copiedSerialized); }
+
+    auto* bar = qobject_cast<BarPresetItem*>(&target);
+    if (!bar) { return false; }
+    const QJsonDocument document = QJsonDocument::fromJson(copiedSerialized.toUtf8());
+    if (!document.isObject()) { return false; }
+    QJsonObject settings = document.object();
+    const QJsonObject currentSettings = bar->configuration();
+    const auto keepCurrent = [&](const QString& key) {
+        if (currentSettings.contains(key)) { settings.insert(key, currentSettings.value(key)); }
+        else { settings.remove(key); }
+    };
+
+    // From Thetis setup.cs:27003-27015 [v2.10.3.15]
+    // ignore some things [2.10.1.0] MW0LGE - fixes issue where bar with change units is paste into new bar, and source bars have no sub indicator
+
+    // prevent overwrite of the following
+    keepCurrent(QStringLiteral("units"));
+
+    // A source with no average marker has no second reading.
+    if (settings.value(QStringLiteral("secondaryBindingId")).toInt(-1) < 0) {
+        // no sub indicators on the source, replace with current so we end up with no change on the paste
+        // [Thetis also assigns ShowSubMarker from ShowMarker first, setup.cs:27012; the next line overwrites it]
+        keepCurrent(QStringLiteral("showSub"));
+        keepCurrent(QStringLiteral("subColor"));
+    }
+
+    // NereusSDR: what Thetis builds per MeterType and leaves out of
+    // clsIGSettings (the reading, title and scale; MeterManager.cs:29275-29373
+    // [v2.10.3.15]) stays the target's, as does the item's place.
+    for (const QString& key : {QStringLiteral("kind"), QStringLiteral("flavor"), QStringLiteral("label"),
+                               QStringLiteral("bindingId"), QStringLiteral("secondaryBindingId"),
+                               QStringLiteral("minValue"), QStringLiteral("maxValue"), QStringLiteral("redThreshold"),
+                               QStringLiteral("aboveS9Frequency"), QStringLiteral("x"), QStringLiteral("y"),
+                               QStringLiteral("w"), QStringLiteral("h"), QStringLiteral("rowHeight")}) {
+        keepCurrent(key);
+    }
+    // Thetis copies MaxPower only from a PWR or REVERSE_PWR source
+    // (MeterManager.cs:29329 [v2.10.3.15]); otherwise the target keeps its own.
+    if (!settings.contains(QStringLiteral("powerLimitW"))) { keepCurrent(QStringLiteral("powerLimitW")); }
+
+    return bar->deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
+}
+
+bool ContainerSettingsDialog::selectedDraftEntry(ContentEntry& entry) const
+{
+    if (!m_editSession || !m_itemList) { return false; }
+    const int row = m_itemList->currentRow();
+    for (const auto& c : m_editSession->draft().containers) {
+        if (c.id != m_selectedId || row < 0 || row >= c.contents.size()) { continue; }
+        entry = c.contents[row];
+        return true;
+    }
+    return false;
+}
+
+std::unique_ptr<MeterItem> ContainerSettingsDialog::draftMeterItem(const ContentEntry& entry) const
+{
+    if (!m_manager || !m_manager->contentRegistry()) { return {}; }
+    return std::unique_ptr<MeterItem>(
+        m_manager->contentRegistry()->createMeterItem(entry, nullptr, ContentRenderMode::Preview));
+}
+
 void ContainerSettingsDialog::onCopyItemSettings()
 {
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        m_clipboardSerialized = item->serialize();
+        m_clipboardTypeTag = pasteTypeId(*item);
+        updateCopyPasteButtonState();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
     if (!item) { return; }
 
     m_clipboardSerialized = item->serialize();
-    const int pipeIdx = m_clipboardSerialized.indexOf(QLatin1Char('|'));
-    m_clipboardTypeTag = (pipeIdx >= 0)
-        ? m_clipboardSerialized.left(pipeIdx)
-        : m_clipboardSerialized;
+    m_clipboardTypeTag = pasteTypeId(*item);
     updateCopyPasteButtonState();
 }
 
 void ContainerSettingsDialog::onPasteItemSettings()
 {
     if (m_clipboardSerialized.isEmpty()) { return; }
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        // The object keeps its place: settings paste, the place does not.
+        const float x = item->x();
+        const float y = item->y();
+        const float w = item->itemWidth();
+        const float h = item->itemHeight();
+        if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
+        item->setRect(x, y, w, h);
+        const ContentEntry pasted = m_manager->contentRegistry()->captureMeterItem(*item, entry);
+        auto draft = m_editSession->draft();
+        for (auto& c : draft.containers) {
+            if (c.id != m_selectedId) { continue; }
+            for (auto& e : c.contents) {
+                if (e.id == entry.id) { e = pasted; }
+            }
+        }
+        m_editSession->setDraft(draft);
+        updatePreview();
+        updateDraftStatus();
+        // Rebuild the editor so its fields read the pasted settings.
+        onItemSelectionChanged();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
     if (!item) { return; }
 
-    // Type-tag check: only allow paste between items of the same
-    // class so we don't try to deserialize NEEDLE bytes into a TEXT
-    // item. Matches Thetis paste-settings behavior.
-    const QString cur = item->serialize();
-    const int pipeIdx = cur.indexOf(QLatin1Char('|'));
-    const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
-    if (curTag != m_clipboardTypeTag) { return; }
-
-    item->deserialize(m_clipboardSerialized);
+    // Type check: paste only between items whose settings are
+    // compatible (canPasteSettings) so we don't try to deserialize
+    // NEEDLE bytes into a TEXT item. Matches Thetis paste-settings
+    // behavior.
+    if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
     if (m_editSession) { updatePreview(); } else { applyToContainer(); }
 
     // Force the editor stack to rebuild so the property fields
@@ -2104,6 +2260,31 @@ void ContainerSettingsDialog::onPasteItemSettings()
 
 void ContainerSettingsDialog::updateCopyPasteButtonState()
 {
+    if (m_editSession) {
+        // Disabled, never hidden: each button says why it cannot act.
+        ContentEntry entry;
+        const bool haveSelection = selectedDraftEntry(entry);
+        const std::unique_ptr<MeterItem> item = haveSelection ? draftMeterItem(entry) : nullptr;
+        QString copyReason;
+        if (!haveSelection) { copyReason = tr("Select an object to copy its settings."); }
+        else if (!item) { copyReason = tr("This object has no settings to copy."); }
+        QString pasteReason = copyReason;
+        if (pasteReason.isEmpty()) {
+            if (m_clipboardTypeTag.isEmpty()) { pasteReason = tr("Copy an object's settings first."); }
+            else if (!canPasteSettings(m_clipboardTypeTag, pasteTypeId(*item))) {
+                pasteReason = tr("The copied settings do not fit this object.");
+            }
+        }
+        if (m_btnCopySettings) {
+            m_btnCopySettings->setEnabled(copyReason.isEmpty());
+            m_btnCopySettings->setToolTip(copyReason);
+        }
+        if (m_btnPasteSettings) {
+            m_btnPasteSettings->setEnabled(pasteReason.isEmpty());
+            m_btnPasteSettings->setToolTip(pasteReason);
+        }
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     const bool haveSelection = (row >= 0 && row < m_workingItems.size());
     if (m_btnCopySettings) {
@@ -2111,11 +2292,8 @@ void ContainerSettingsDialog::updateCopyPasteButtonState()
     }
     if (m_btnPasteSettings) {
         bool typeMatches = false;
-        if (haveSelection && !m_clipboardTypeTag.isEmpty()) {
-            const QString cur = m_workingItems[row]->serialize();
-            const int pipeIdx = cur.indexOf(QLatin1Char('|'));
-            const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
-            typeMatches = (curTag == m_clipboardTypeTag);
+        if (haveSelection && !m_clipboardTypeTag.isEmpty() && m_workingItems[row]) {
+            typeMatches = canPasteSettings(m_clipboardTypeTag, pasteTypeId(*m_workingItems[row]));
         }
         m_btnPasteSettings->setEnabled(typeMatches);
     }

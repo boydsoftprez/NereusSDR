@@ -434,6 +434,11 @@ private slots:
             container.geometry = QRect(10, 20, 600, 600);
             ContentEntry entry = registry.makeEntry(QStringLiteral("OTHERBTNS"));
             entry.id = QStringLiteral("grid-buttons");
+            // Six columns, as pointOfShown expects (a new grid has three).
+            QStringList fields = entry.config.value(QStringLiteral("legacyRecord")).toString().split(QLatin1Char('|'));
+            QVERIFY(fields.size() > 7);
+            fields[7] = QStringLiteral("6");
+            entry.config.insert(QStringLiteral("legacyRecord"), fields.join(QLatin1Char('|')));
             container.contents.append(entry);
             WorkspaceDocument document;
             document.containers.append(container);

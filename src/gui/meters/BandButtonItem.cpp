@@ -2,8 +2,9 @@
 // src/gui/meters/BandButtonItem.cpp  (NereusSDR)
 // =================================================================
 //
-// Ported from Thetis source:
+// Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs (column range), original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -16,6 +17,9 @@
 //   2026-10-25 - Saves and restores the grid styling (border, margin,
 //                 corner radius, height ratio, fade on RX/TX) after the
 //                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Column range from Thetis setup.cs (columnRange), which
+//                 the editor clamps to. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 // =================================================================
 
@@ -45,6 +49,53 @@ The author can be reached by email at
 
 mw0lge@grange-lane.co.uk
 */
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From setup.cs ---
+
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
@@ -139,6 +190,19 @@ bool BandButtonItem::deserialize(const QString& data)
     if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
     deserializeGridStyle(parts, 10);
     return true;
+}
+
+namespace {
+// From Thetis setup.cs:25817 [v2.10.3.15]
+constexpr int kBandGridMinColumns = 1;
+constexpr int kBandGridMaxColumns = 15;
+} // namespace
+
+// From Thetis setup.cs:25816-25820 [v2.10.3.15] (BAND_BUTTONS: 1 to 15 columns). NereusBandButtonItem, a band grid
+// of its own, takes the same range.
+std::pair<int, int> BandButtonItem::columnRange() const
+{
+    return {kBandGridMinColumns, kBandGridMaxColumns};
 }
 
 } // namespace NereusSDR
