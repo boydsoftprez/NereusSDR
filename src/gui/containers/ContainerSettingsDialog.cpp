@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - OK and Apply say why in a message box when a new or
+//                 duplicated container in the draft cannot be saved. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
 //                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
@@ -204,6 +207,7 @@ mw0lge@grange-lane.co.uk
 #include "meter_property_editors/OtherButtonItemEditor.h"
 #include "meter_property_editors/VoiceRecordPlayItemEditor.h"
 #include "ContainerWidget.h"
+#include "ContainerWorkspaceNotices.h"
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
 #include "../meters/ItemGroup.h"
@@ -274,6 +278,7 @@ mw0lge@grange-lane.co.uk
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QMessageBox>
+#include <QSet>
 #include <QClipboard>
 #include <QApplication>
 
@@ -1296,7 +1301,10 @@ void ContainerSettingsDialog::buildButtonBar()
     connect(m_btnSave,   &QPushButton::clicked, this, &ContainerSettingsDialog::onSaveToFile);
     connect(m_btnLoad,   &QPushButton::clicked, this, &ContainerSettingsDialog::onLoadFromFile);
     connect(m_btnMmio,   &QPushButton::clicked, this, &ContainerSettingsDialog::onOpenMmioDialog);
-    connect(m_btnApply,  &QPushButton::clicked, this, &ContainerSettingsDialog::applyToContainer);
+    connect(m_btnApply,  &QPushButton::clicked, this, [this]() {
+        if (m_editSession) { applyDraftFromButton(); return; }
+        applyToContainer();
+    });
     connect(m_btnCancel, &QPushButton::clicked, this, [this]() {
         // Phase 3G-6 block 3 commit 14: Cancel reverts the container
         // and its meter items to the snapshot captured on dialog
@@ -1308,7 +1316,7 @@ void ContainerSettingsDialog::buildButtonBar()
         reject();
     });
     connect(m_btnOk,     &QPushButton::clicked, this, [this]() {
-        if (m_editSession) { if (applyDraft().status==CommitStatus::Saved) { accept(); } }
+        if (m_editSession) { if (applyDraftFromButton().status==CommitStatus::Saved) { accept(); } }
         else { applyToContainer(); accept(); }
     });
 
@@ -2196,6 +2204,30 @@ CommitResult ContainerSettingsDialog::applyDraft()
         m_container=m_manager->container(m_selectedId); loadCurrentDraft(); refreshDraftDropdown();
     }
     if(m_transactionStatus) { m_transactionStatus->setText(result.status==CommitStatus::Saved ? tr("All drafts saved.") : result.error); }
+    return result;
+}
+CommitResult ContainerSettingsDialog::applyDraftFromButton()
+{
+    const ContainerWorkspaceStore* store = m_manager ? m_manager->workspaceStore() : nullptr;
+    QSet<QString> saved;
+    if (store) {
+        for (const auto& c : store->snapshot().containers) { saved.insert(c.id); }
+    }
+    bool addsContainer = false;
+    if (m_editSession) {
+        saveCurrentDraft();
+        for (const auto& c : m_editSession->draft().containers) {
+            if (!saved.contains(c.id)) { addsContainer = true; break; }
+        }
+    }
+    const CommitResult result = applyDraft();
+    if (result.status != CommitStatus::Saved && addsContainer) {
+        // The status line under the list says it too, but a new container
+        // the operator asked for is worth a box (JJ's bench, 2026-10-26).
+        const bool stuck = store && !store->blockedReason().isEmpty();
+        QMessageBox::warning(this, ContainerWorkspaceNotices::newContainerTitle(),
+                             ContainerWorkspaceNotices::newContainerRefused(result.error, stuck));
+    }
     return result;
 }
 void ContainerSettingsDialog::saveCurrentDraft()

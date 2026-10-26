@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: updateContainerWorkspaceNotice() and the notice it keeps
+//               up while every container change is refused. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -2298,9 +2301,18 @@ private:
     /// moment the streams come back instead of aging out.
     QPointer<class StatusToast> m_suspendToast;
 
+    /// The container layout notice that stays up while every change is
+    /// refused; see updateContainerWorkspaceNotice().
+    QPointer<class StatusToast> m_containerWorkspaceNotice;
+
     /// Re-stack live toasts bottom-right, newest nearest the bar.
     /// Called on show, on close, and on move/resize.
     void restackToasts();
+
+    /// Shows, rewords or takes down the notice that stays up while the
+    /// container layout refuses every change (ContainerWorkspaceStore::
+    /// blockedReason), so it goes the moment the layout is read again.
+    void updateContainerWorkspaceNotice();
 
     // Spectrum overlay panels. Parity Task 18: the pan-0-only target the
     // display-settings and Clarity wiring used is gone; each strip is wired

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - commitWorkspace logs the refusals it makes itself (no
+//                 workspace adapter, a second singleton placement); the
+//                 store logs its own. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 - Bench fix (JJ's Rotor window created at (0,1337) on a
 //                 1512 x 982 screen): a floating window is given a place
 //                 where its header can be reached every time it is shown,
@@ -474,7 +478,10 @@ ContainerContentHost* ContainerManager::contentHost(const QString& id) const
 }
 CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision)
 {
-    if (!m_store || !m_registry) { return {CommitStatus::Invalid, 0, QStringLiteral("No workspace adapter")}; }
+    if (!m_store || !m_registry) {
+        qCWarning(lcContainer) << "Container workspace commit refused: Invalid - No workspace adapter";
+        return {CommitStatus::Invalid, 0, QStringLiteral("No workspace adapter")};
+    }
     // Existing duplicate singleton records remain recoverable; transactions may
     // repair them, but cannot create another supported singleton placement.
     QHash<QString, int> oldCounts, counts;
@@ -482,7 +489,9 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
     for (const auto& c : document.containers) { for (const auto& e : c.contents) { ++counts[e.typeId]; } }
     for (const auto& d : m_registry->descriptors()) {
         if (d.singleton && counts.value(d.typeId) > 1 && counts.value(d.typeId) > oldCounts.value(d.typeId)) {
-            return {CommitStatus::Invalid, expectedRevision, QStringLiteral("%1 already has a placement").arg(d.title)};
+            const QString reason = QStringLiteral("%1 already has a placement").arg(d.title);
+            qCWarning(lcContainer).noquote() << "Container workspace commit refused: Invalid -" << reason;
+            return {CommitStatus::Invalid, expectedRevision, reason};
         }
     }
     WorkspaceDocument saved = document;

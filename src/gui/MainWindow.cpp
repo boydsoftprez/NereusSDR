@@ -11,6 +11,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: A refused container change says why. Containers > New
+//               Container shows the reason in a message box when the new
+//               container cannot be saved; a one-off refusal toasts
+//               "Container change not saved"; while every change is
+//               refused (the saved layout failed to load, or changed
+//               underneath) a notice stays up, says what to do, and goes
+//               when the layout is read again. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -1221,6 +1229,7 @@ warren@wpratt.com
 #include "containers/ContainerContentRegistry.h"
 #include "containers/ContainerContentHost.h"
 #include "containers/ContainerWorkspaceStore.h"
+#include "containers/ContainerWorkspaceNotices.h"
 #include "containers/ContainerSourceAdapter.h"
 #include "meters/presets/CompositePresetItem.h"
 #include "meters/presets/BarPresetItem.h"
@@ -8975,8 +8984,19 @@ void MainWindow::buildUI()
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
-        showToast(tr("Container layout is read-only: %1").arg(error), ToastSeverity::Warning, 6000);
+        // While every change is refused the notice that stays up says so,
+        // and what to do; a toast on top would repeat it.
+        const ContainerWorkspaceStore* store = m_containerManager->workspaceStore();
+        if (store && !store->blockedReason().isEmpty()) {
+            updateContainerWorkspaceNotice();
+            return;
+        }
+        showToast(ContainerWorkspaceNotices::changeNotSaved(error), ToastSeverity::Warning, 6000);
     });
+    connect(workspaceStore, &ContainerWorkspaceStore::blockedChanged, this,
+            [this](const QString&) { updateContainerWorkspaceNotice(); });
+    // The saved layout may already have failed to load.
+    updateContainerWorkspaceNotice();
     // Adopt legacy state exactly once. Existing document placements, including
     // hidden/moved applets, are authoritative on every subsequent startup.
     // The workspace preview keeps its own key, seeded from the shipped
@@ -12860,7 +12880,16 @@ void MainWindow::buildMenuBar()
             if (!m_containerManager) { return; }
 
             ContainerWidget* c = m_containerManager->createContainer(1, DockMode::Floating);
-            if (!c) { return; }
+            if (!c) {
+                // A refused save otherwise shows only as a toast that floating
+                // containers can cover (JJ's bench, 2026-10-26).
+                const ContainerWorkspaceStore* store = m_containerManager->workspaceStore();
+                const bool stuck = store && !store->blockedReason().isEmpty();
+                QMessageBox::warning(this, ContainerWorkspaceNotices::newContainerTitle(),
+                                     ContainerWorkspaceNotices::newContainerRefused(
+                                         m_containerManager->storageError(), stuck));
+                return;
+            }
             c->setNotes(QStringLiteral("Meter"));
 
             // Give it a MeterWidget as content (replaces the default placeholder label)
@@ -14407,6 +14436,28 @@ StatusToast* MainWindow::showToast(const QString& message,
     toast->show();
     restackToasts();
     return toast;
+}
+
+void MainWindow::updateContainerWorkspaceNotice()
+{
+    const ContainerWorkspaceStore* store =
+        m_containerManager ? m_containerManager->workspaceStore() : nullptr;
+    const QString reason = store ? store->blockedReason() : QString();
+    if (reason.isEmpty()) {
+        if (m_containerWorkspaceNotice) {
+            m_containerWorkspaceNotice->close();
+        }
+        return;
+    }
+    const QString text = ContainerWorkspaceNotices::readOnly(reason);
+    if (m_containerWorkspaceNotice && m_containerWorkspaceNotice->message() == text) {
+        return;
+    }
+    if (m_containerWorkspaceNotice) {
+        m_containerWorkspaceNotice->close();
+    }
+    // No timeout: it stays until the layout can be saved again.
+    m_containerWorkspaceNotice = showToast(text, ToastSeverity::Warning, StatusToast::kUntilClosed);
 }
 
 void MainWindow::restackToasts()

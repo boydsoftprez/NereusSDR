@@ -14,6 +14,9 @@
 // its floor drops to 55 and the noise-reduction table's labels, units and
 // items are checked here instead. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-26: the words for a refused container change (ContainerWorkspace-
+// Notices.h) are swept with the reworded windows. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -887,6 +890,7 @@ private slots:
             {"src/gui/widgets/NnrControls.cpp", 55},
             {"src/gui/setup/FourO3APage.cpp", 30},
             {"src/gui/PsForm.cpp", 80},
+            {"src/gui/containers/ContainerWorkspaceNotices.h", 6},
         };
         for (const auto& entry : files) {
             const QString source = joinedSource(sourcePath(entry.file));
