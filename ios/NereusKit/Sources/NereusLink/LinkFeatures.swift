@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-22: the app declares displayCodec 2 (NSDC v2).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: the app declares setupDescription 30 (General's Filters page).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 /// The `features` object of the app's `hello` (link document section 6.1):
 /// what the Core must know about this app before it sends capabilities.
@@ -24,8 +26,8 @@
 /// reads `txState`. A Core that is sent it at minor 11 watches the app's
 /// keepalives and stops a key of the app's that goes quiet.
 ///
-/// `setupDescription` 29: the app draws every Setup page the Core
-/// describes, through description version 28 (Display's Grid & Scales,
+/// `setupDescription` 30: the app draws every Setup page the Core
+/// describes, through description version 30 (Display's Grid & Scales,
 /// 3D View and the rest of Setup > Display, Appearance's Reset all
 /// colors, then the pages versions 13 to 24 add: 17 the Alex-1 low-pass
 /// rows, 18 the HL2 clock rows, 19 the CFC band editor, 20 the PA
@@ -36,8 +38,9 @@
 /// retitled Microphone, 26 Waterfall Defaults' level rows gated on
 /// Clarity, Use spectrum min/max and AGC, 27 Appearance's Trace Color row
 /// beside Fill Color, 28 Spectrum Defaults' Sizing row with the Size and
-/// Hz/bin Target rows it gates, and the two averaging times from 1 ms),
-/// and sends each control to its owner
+/// Hz/bin Target rows it gates, and the two averaging times from 1 ms,
+/// 29 the regrouped Display pages, 30 General's Filters page with Limit
+/// filter edges to sidebands), and sends each control to its owner
 /// (the Setup description contract); the Core sends the `setup` object
 /// and projects each category to this version. A Core that offers less
 /// is read at its own version; rows it cannot run on a phone stay greyed
@@ -231,7 +234,7 @@
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
     public static let app: [String: Int] = ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                            "setupDescription": 29, "settingsHygiene": 2,
+                                            "setupDescription": 30, "settingsHygiene": 2,
                                             "radioAntennaRows": 2,
                                             "vax": 1, "txEqCurve": 2,
                                             "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1,

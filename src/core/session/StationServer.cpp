@@ -1,6 +1,21 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
+//               effective value (RadioModel's default, False) when the Core
+//               never stored it, so a headless Core's phone row is live.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: That effective value is added only to a snapshot that has
+//               other content, so an empty snapshot still keeps a window's
+//               Core pages waiting. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: Setup description cap 30, General > Filters' Limit filter
+//               edges to sidebands row. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: "Limit filter edges to sidebands" (LimitFiltersToSidebands)
+//               reaches the Core's slices when a window's change or a
+//               removal lands in its settings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-23: a Core inside a desktop window gives a returning device
 //               the letters it kept for it (placeReservedSlicesFor), and a
 //               device admitted before the radio connects is placed when it
@@ -1530,12 +1545,13 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
-// The highest Setup description version the Core sends (29: the accepted
+// The highest Setup description version the Core sends (30: General's
+// Filters page with Limit filter edges to sidebands; 29: the accepted
 // eight Display pages and scoped picture controls; 28: Display's FFT
 // sizing rows and the averaging times from 1 ms; 27: Appearance's Trace
 // Color row beside Fill Color; 26: Display's Waterfall Defaults level gates
 // and the allOf form of enabledWhen).
-constexpr int kSetupDescriptionCap = 29;
+constexpr int kSetupDescriptionCap = 30;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -3635,6 +3651,15 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(value.toString() == QLatin1String("True"));
                 }
+                // "Limit filter edges to sidebands" reaches the Core's
+                // slices at once, whichever path stored it, as Thetis's
+                // checkbox sets console.LimitFiltersToSideBands
+                // (setup.cs:22378-22381 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        value.toString() == QLatin1String("True"));
+                }
             });
     // Task 13: External TX Inhibit gates the Core's own keying, so a
     // window's change reaches the Core's TxInhibitMonitor, whichever path
@@ -3705,6 +3730,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             [this](const QString& key) {
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(RadioModel::kNetworkWatchdogDefault);
+                }
+                // Limit filter edges to sidebands defaults off
+                // (console.cs:7516 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        RadioModel::kLimitFiltersToSidebandsDefault);
                 }
                 // Task 13: both External TX Inhibit boxes default off
                 // (console.cs:15336-15337 [v2.10.3.15]).
@@ -7937,8 +7969,25 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
     // radio therefore needs a fresh snapshot even though the mirror objects
     // already exist on the GUI; SettingsProxy merges this authoritative scope
     // into its in-memory cache without touching local GUI storage.
-    const QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
+    QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
         m_radioModel.isNull() ? QString() : m_radioModel->currentRadioMac());
+    // General > Filters' Limit filter edges to sidebands: a Core that never
+    // stored the setting (a headless Core with no desktop window) still
+    // applies RadioModel's default to its slices, so the snapshot carries
+    // that effective value and a phone's row reads it instead of showing
+    // no value. Only this key; every other unstored setting stays absent.
+    // An empty snapshot stays empty: a window reads an empty snapshot with
+    // no seed marker as "the Core has not sent its settings" and keeps its
+    // Core pages waiting (SettingsProxy::setupDialogAllowed()), and an
+    // added default would read as the Core's content. A headless Core
+    // always carries its seed marker (server_main.cpp), so its phone row
+    // still gets the value.
+    const QString limitFiltersKey = QLatin1String(RadioModel::kLimitFiltersToSidebandsKey);
+    if (!snapshot.isEmpty() && !snapshot.contains(limitFiltersKey)) {
+        snapshot.insert(limitFiltersKey, RadioModel::kLimitFiltersToSidebandsDefault
+                                             ? QStringLiteral("True")
+                                             : QStringLiteral("False"));
+    }
     QList<MirrorUpdate> entries;
     entries.reserve(snapshot.size());
     for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {
@@ -9708,7 +9757,8 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
             // speaker rows; TX Input titled Microphone. 26: Display >
             // Waterfall Defaults' level rows grey out as the desktop page's
-            // do (the allOf form of enabledWhen).
+            // do (the allOf form of enabledWhen). 30: General > Filters'
+            // Limit filter edges to sidebands row.
             const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;

@@ -34,6 +34,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - The bandwidth pane's centre drag moves the passband with
+//                 SliceModel::shiftFilter, which keeps its width at the
+//                 filter limits (Thetis ConstrainFilter, filterShift true).
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -633,7 +638,10 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                 follower->track(QObject::connect(guard, &BandwidthFilterPane::filterCentreChanged, slice, [target](int centre) {
                     if (!target) { return; }
                     const int width = target->filterHigh() - target->filterLow();
-                    target->setFilter(centre - width / 2, centre - width / 2 + width);
+                    // The whole passband moves: shiftFilter keeps its width at a
+                    // limit, as Thetis's whole-filter drag does (console.cs:50630-50636
+                    // [v2.10.3.15]).
+                    target->shiftFilter(centre - width / 2, centre - width / 2 + width);
                 }));
             };
             if (preview) {

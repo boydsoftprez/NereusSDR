@@ -1,5 +1,8 @@
 // NereusSDR for iOS: strict parsing of Setup descriptions received from a Core
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the app reads Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import Testing
@@ -103,7 +106,7 @@ import Testing
 
     @Test func malformedCategoryAndUnknownVersionAreRejected() {
         #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: "{") }
-        #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: document(control("sample.main.one"), version: 30)) }
+        #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: document(control("sample.main.one"), version: 31)) }
     }
 
     @Test func commandSourcesStayTypedAndUnknownSourcesDisable() throws {

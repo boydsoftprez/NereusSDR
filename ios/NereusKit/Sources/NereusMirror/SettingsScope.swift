@@ -128,6 +128,9 @@ public enum SettingsScope: Sendable, Equatable {
         Rule(text: "WindBackPowerSwr", scope: .station),
         Rule(text: "MultimeterDelayMs", scope: .station),
         Rule(text: "NetworkWatchdogEnabled", scope: .station),
+        // "Limit filter edges to sidebands" is the Core's: a slice's filter
+        // is constrained where the slice lives.
+        Rule(text: "LimitFiltersToSidebands", scope: .station),
         // Remote transmit's time-outs are the Core's: they end any device's
         // key, and the station's own.
         Rule(text: "MoxTimeOutEnabled", scope: .station),

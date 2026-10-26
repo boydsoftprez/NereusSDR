@@ -18,6 +18,8 @@
 // 2026-10-12: Pre-V29 Display/Appearance payloads from frozen baseline
 // resources, before the existing older projections. J.J. Boyd (KG4VCF),
 // AI-assisted via OpenAI Codex.
+// 2026-10-24: General version 30, the Filters page's Limit filter edges to
+// sidebands row. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/setup/SetupDescriptionService.h"
 #include "core/session/SessionCommandDispatcher.h"
 #include "core/session/MirrorSchema.h"
@@ -298,6 +300,16 @@ constexpr char kHardwareV23Controls[] =
 // the ORION panel's Tip / Ring that Thetis enables on the G2 and G2-1K
 // (setup.cs:20292, 20343 [v2.10.3.15]), bound to transmit's micTipRing as
 // the Orion group's row is. Closed as the version 23 row is.
+// General version 30: the Filters page's one row, the desktop General >
+// Filters checkbox (GeneralFiltersPage m_chkLimitFilterEdgesToSidebands),
+// bound to the station setting LimitFiltersToSidebands that the Core
+// applies to every slice (RadioModel::applyLimitFiltersToSidebands). Label
+// and tooltip are the checkbox's. Closed as the version 23 row is.
+constexpr char kGeneralV30Controls[] =
+    R"json([)json"
+    R"json({"id":"general.filters.limitFilterEdgesToSidebands","label":"Limit filter edges to sidebands","tooltip":"Prevents crossing the 0 point with certain filters","kind":"toggle","binding":{"setting":"LimitFiltersToSidebands"},"applies":"live","valueEncoding":{"true":"True","false":"False"},"requiresDescriptionVersion":30})json"
+    R"json(])json";
+
 constexpr char kAudioV24Controls[] =
     R"json([)json"
     R"json({"id":"audio.txInput.hermesLineInGain","label":"Line In Gain:","tooltip":"","kind":"decimal","binding":{"property":{"object":"transmit","name":"lineInBoost"}},"applies":"live","requiresDescriptionVersion":24,"gate":{"capability":"transmitSettingsVersion","min":3,"transmit":true},"min":-34.5,"max":12,"step":1.5,"decimals":1,"unit":"dB"},)json"
@@ -573,6 +585,12 @@ const QHash<QString, QJsonObject>& hardwareV18Controls()
 const QHash<QString, QJsonObject>& hardwareV23Controls()
 {
     static const QHash<QString, QJsonObject> table = controlsById(kHardwareV23Controls);
+    return table;
+}
+
+const QHash<QString, QJsonObject>& generalV30Controls()
+{
+    static const QHash<QString, QJsonObject> table = controlsById(kGeneralV30Controls);
     return table;
 }
 
@@ -931,6 +949,9 @@ QString loadCategory(const QString& id, const BoardCapabilities& caps, HPSDRMode
          // version 25: Outputs' radio speaker rows, TX Input as Microphone.
          && !(id == QLatin1String("audio")
               && root.value(QStringLiteral("version")) == QJsonValue(kAudioOutputsVersion))
+         // Version 30: General > Filters' Limit filter edges to sidebands.
+         && !(id == QLatin1String("general")
+              && root.value(QStringLiteral("version")) == QJsonValue(30))
          // Version 21: CAT & Network's TCI Forget row greys out with Duplicate.
          && !(id == QLatin1String("catNetwork")
               && root.value(QStringLiteral("version")) == QJsonValue(21))
@@ -1015,6 +1036,22 @@ QString loadCategory(const QString& id, const BoardCapabilities& caps, HPSDRMode
                             != QJsonValue(kAudioOutputsVersion)
                         || !SetupDescription::validateAudioV25Control(control)
                         || !SetupDescription::validateAudioPropertyBinding(control)) {
+                        return {};
+                    }
+                    ids.insert(controlId);
+                    continue;
+                }
+                // Version 30: General > Filters' Limit filter edges to
+                // sidebands, accepted only as the exact closed row
+                // (validateGeneralV30Control), its setting a Station key
+                // (validateSettingToggleEncoding).
+                if (id == QLatin1String("general")
+                    && control.value(QStringLiteral("requiresDescriptionVersion"))
+                        == QJsonValue(30)) {
+                    if (controlId.isEmpty() || ids.contains(controlId)
+                        || root.value(QStringLiteral("version")) != QJsonValue(30)
+                        || !SetupDescription::validateGeneralV30Control(control)
+                        || !SetupDescription::validateSettingToggleEncoding(control)) {
                         return {};
                     }
                     ids.insert(controlId);
@@ -2626,6 +2663,13 @@ bool SetupDescription::validateHardwareV23Control(const QJsonObject& control)
     return row != hardwareV23Controls().constEnd() && control == *row;
 }
 
+bool SetupDescription::validateGeneralV30Control(const QJsonObject& control)
+{
+    const auto row = generalV30Controls().constFind(
+        control.value(QStringLiteral("id")).toString());
+    return row != generalV30Controls().constEnd() && control == *row;
+}
+
 bool SetupDescription::validateTransmitSettingBinding(const QJsonObject& control)
 {
     const QJsonObject binding = control.value(QStringLiteral("binding")).toObject();
@@ -3566,6 +3610,9 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
         : categoryId == QLatin1String("display")
             ? (version >= kDisplayFftSizingVersion ? kDisplayFftSizingVersion
                : version >= kDisplayLevelGatesVersion ? kDisplayLevelGatesVersion : 12)
+        // General changed at 30 (the Filters page's Limit filter edges to
+        // sidebands row): 3 to 29 see 3.
+        : categoryId == QLatin1String("general") ? (version >= 30 ? 30 : 3)
         : 3;
     // Appearance changed at 4, 7, 12 and 27: versions 7-11 all see version 7.
     category.insert(QStringLiteral("version"),
@@ -3602,7 +3649,8 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
     }
     // PA changed at 5, 13, 14 and 20; hardware at 6, 13, 16, 17, 18 and 23;
     // transmit at 13; DSP, Transmit, Audio, Diagnostics and CAT & Network at
-    // 15; DSP at 19; CAT & Network at 21; Audio at 24 and 25; Display at 26.
+    // 15; DSP at 19; CAT & Network at 21; Audio at 24 and 25; Display at 26;
+    // General at 30.
     if (version >= 2 && version < SetupDescriptionV15::kVersion
         && category.value(QStringLiteral("category")).toObject()
             .value(QStringLiteral("id")) == QJsonValue(QStringLiteral("dsp"))) {
