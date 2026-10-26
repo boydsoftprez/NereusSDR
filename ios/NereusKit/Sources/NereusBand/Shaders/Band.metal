@@ -112,10 +112,18 @@ fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
     return float4(colour.rgb, 1.0);
 }
 
-// The 3D view's stacked trace: one instance per stored row, oldest first so
-// nearer rows cover farther ones; two vertices per column, the ridge's top
-// and the foot of the row in front. Each row keeps its own window, so a
-// column lands where its frequency now falls in the view.
+// The 3D view's stacked trace, oldest first so nearer rows cover farther
+// ones; two vertices per column, the ridge's top and the foot of the row in
+// front. Each row keeps its own window, so a column lands where its
+// frequency now falls in the view.
+//
+// Every row but the newest glides back from the front as the next row
+// comes: the row `age` rows old (1 or more) sits (age - 1 + glide) rows
+// deep. The front stays put. It shows the row one older than the newest
+// in full, and over it the newest row grows from clear to whole as the
+// glide runs, so when the next row arrives the front already shows it and
+// nothing jumps. The instances: the gliding rows, then the front's two
+// layers, the older below and the newest over it.
 
 struct StackedUniforms {
     float4 plot;          // the spectrum's plot: x, y, width, height in pixels
@@ -143,6 +151,7 @@ struct StackedOut {
     float valid;
     float widthScale;
     float across;         // the ridge's steepness: vertical distance to distance across the ridge line
+    float opacity;        // 1, or the newest row's share while it grows in at the front
 };
 
 // NereusSDR modification history: 2026-10-12 J.J. Boyd (KG4VCF),
@@ -172,12 +181,17 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
                                     texture2d<float, access::read> windows [[texture(1)]]) {
     StackedOut out;
     uint shown = min(u.count, u.capacity);
-    uint age = shown - 1 - min(instance, shown - 1);
+    float glide = u.view.z;
+    // The gliding rows, oldest first (shown - 1 of them), then the front:
+    // the row before the newest, whole, and the newest growing in.
+    uint gliding = shown - 1;
+    bool front = instance >= gliding;
+    uint age = front ? (instance == gliding ? 1u : 0u) : shown - 1 - instance;
+    float opacity = front && age == 0 ? glide : 1.0;
     uint row = (u.newestRow + u.capacity - age) % u.capacity;
     uint column = min(vertexId / 2, u.columns - 1);
     bool top = (vertexId & 1) == 0;
-    float glide = u.view.z;
-    float depth = (float(age) + glide) / u.view.w;
+    float depth = front ? 0.0 : (float(age) - 1.0 + glide) / u.view.w;
     float4 window = windows.read(uint2(0, row));
     // Emit the current view's mesh and sample the retained frequency window,
     // so a source/view change keeps real channels and known overhang aligned.
@@ -186,7 +200,7 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
     float dbm = sampled.x;
     float d = clamp(depth, 0.0, 1.0);
     float widthScale = 1.0 - d * (1.0 - u.shape.x);
-    bool ok = sampled.y > 0.5 && isfinite(dbm) && window.y > 0.0 && depth <= 1.0;
+    bool ok = age < shown && sampled.y > 0.5 && isfinite(dbm) && window.y > 0.0 && depth <= 1.0;
     float share = ok ? pow(clamp((dbm - u.levels.x) / u.levels.y, 0.0, 1.0), u.shape.w) : 0.0;
     float baseY = u.plot.y + u.plot.w * (1.0 - d * u.shape.y);
     float ridgeY = baseY - share * u.shape.z * widthScale * u.plot.w;
@@ -205,9 +219,11 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
                  * u.shape.z * widthScale * u.plot.w;
     float run = max(float(right - left), 1.0) / float(u.columns) * u.look.w * u.plot.z * widthScale;
     float slope = ok ? rise / max(run, 0.001) : 0.0;
+    // The front reaches the plot's floor; a gliding row stands on the row
+    // in front of it, one row nearer (the front itself for the nearest).
     float footY = u.plot.y + u.plot.w;
-    if (age > 0) {
-        float nearer = clamp((float(age) - 1.0 + glide) / u.view.w, 0.0, 1.0);
+    if (!front) {
+        float nearer = clamp((float(age) - 2.0 + glide) / u.view.w, 0.0, 1.0);
         footY = u.plot.y + u.plot.w * (1.0 - nearer * u.shape.y);
     }
     // A pixel past the row in front, so no seam shows between them.
@@ -221,13 +237,14 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
     out.valid = ok ? 1.0 : 0.0;
     out.widthScale = widthScale;
     out.across = 1.0 / sqrt(1.0 + slope * slope);
+    out.opacity = ok ? opacity : 0.0;
     return out;
 }
 
 fragment float4 bandStackedFragment(StackedOut in [[stage_in]],
                                     constant StackedUniforms &u [[buffer(0)]],
                                     texture2d<float> palette [[texture(0)]]) {
-    if (in.valid < 0.999 || abs(in.unit - 0.5) > u.look.w * 0.5) {
+    if (in.valid < 0.999 || in.opacity <= 0.0 || abs(in.unit - 0.5) > u.look.w * 0.5) {
         discard_fragment();
     }
     constexpr sampler lookup(filter::nearest, address::clamp_to_edge);
@@ -251,5 +268,7 @@ fragment float4 bandStackedFragment(StackedOut in [[stage_in]],
     }
     // Farther rows fade toward the background.
     colour = mix(colour, background, in.depth * u.look.x);
-    return float4(colour, 1.0);
+    // Premultiplied: the newest row at the front lets the older show through.
+    float opacity = clamp(in.opacity, 0.0, 1.0);
+    return float4(colour * opacity, opacity);
 }

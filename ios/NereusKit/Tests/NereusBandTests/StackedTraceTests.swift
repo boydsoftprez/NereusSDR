@@ -151,10 +151,21 @@ import Testing
         #expect(abs(StackedTrace.widestRowSpan - 1 / StackedTraceShape.forAngle(0).backWidth) < 1e-12)
     }
 
+    /// The front stays at depth 0 and the newest row grows in over it, as
+    /// the desktop's 3D draws its front; every older row glides back from
+    /// the front. The newest row used to be drawn whole at (age + glide)
+    /// rows deep and changed the front all at once on each row.
     @Test func rowsRecedeAndGlide() {
         #expect(StackedTraceGeometry.depth(age: 0, glide: 0) == 0)
-        #expect(StackedTraceGeometry.depth(age: 96, glide: 0) == 1)
-        #expect(StackedTraceGeometry.depth(age: 4, glide: 0.5) == 4.5 / 96)
+        #expect(StackedTraceGeometry.depth(age: 0, glide: 0.7) == 0, "the front stays put")
+        #expect(StackedTraceGeometry.depth(age: 1, glide: 0) == 0, "the row before the newest starts at the front")
+        #expect(StackedTraceGeometry.depth(age: 1, glide: 0.5) == 0.5 / 96)
+        #expect(StackedTraceGeometry.depth(age: 4, glide: 0.5) == 3.5 / 96)
+        #expect(StackedTraceGeometry.depth(age: 96, glide: 1) == 1)
+        #expect(StackedTraceGeometry.depth(age: 97, glide: 0) == 1)
+        #expect(StackedTraceGeometry.frontOpacity(glide: 0) == 0, "a new row starts clear")
+        #expect(StackedTraceGeometry.frontOpacity(glide: 0.25) == 0.25)
+        #expect(StackedTraceGeometry.frontOpacity(glide: 1.5) == 1)
         let geometry = Self.geometry()
         #expect(geometry.baselineY(depth: 0) == 200)
         #expect(geometry.baselineY(depth: 1) < geometry.baselineY(depth: 0.5))
@@ -503,5 +514,88 @@ import Testing
         // No flat trace is drawn in 3D.
         let flatY = Int(plot.y(forDbm: -125))
         #expect(!(flatY - 1...flatY + 1).contains { image.isTrace(20, $0) })
+    }
+
+    /// The newest row grows in at the front as the glide runs, and the
+    /// front looks the same either side of a new row: drawn whole the
+    /// moment it arrived, the newest row changed the front on one frame
+    /// in four at Match 4 (front-row parity, 2026-10-26).
+    @Test func theFrontGrowsTheNewestRowInWithoutAJump() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        var state = BandState(waterfallLines: 10)
+        state.stacksRows = true
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        state.note(context: 1, coverage: coverage)
+        let flat = [Float](repeating: -125, count: 200)
+        var signal = flat
+        for index in 95..<105 {
+            signal[index] = -50
+        }
+        var sequence: UInt32 = 0
+        func add(_ line: [Float]) {
+            sequence += 1
+            state.receive(frame: BandFixtures.frame(trace: line, sequence: sequence),
+                          manualLevels: .init(lowDbm: -130, highDbm: -60))
+        }
+        func render(glide: Double) throws -> Image {
+            var overlays = BandRendererTests.overlays(settings)
+            overlays.frameCoverage = coverage
+            overlays.stacked = StackedTraceOverlay(noiseFloorDbm: -125, glide: glide, availableSpanFactor: 1)
+            renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: nil,
+                          overlays: overlays, into: target.texture)?.waitUntilCompleted()
+            return try target.read()
+        }
+        let plot = BandRendererTests.geometry(settings)
+        let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
+                                            scale: settings.scaleRange)
+        let middle = BandRendererTests.width / 2
+        func centre(age: Int) -> Double {
+            Double(state.stack.sample(age: age, frequencyHz: coverage.centerHz, view: coverage, currentFloor: -200).dbm)
+        }
+        // The largest step the desktop's front makes in one frame is 0.41 dB
+        // (the parity measurement): 2.3 of 255 colour steps on the 45 dB
+        // colour span and under a pixel of height. 8 allows for the 0.001
+        // of glide left before a row and for rounding.
+        let largestStep = 8
+        func largestChange(_ before: Image, _ after: Image) -> Int {
+            var largest = 0
+            for y in 0..<Int(plot.size.height) {
+                for x in 0..<BandRendererTests.width {
+                    let a = before.pixel(x, y)
+                    let b = after.pixel(x, y)
+                    largest = max(largest, abs(a.r - b.r), abs(a.g - b.g), abs(a.b - b.b))
+                }
+            }
+            return largest
+        }
+
+        for _ in 0..<8 {
+            add(flat)
+        }
+        let beforeSignal = try render(glide: 0.999)
+        // Until a row stands well over the floor at the centre (one line,
+        // unless the rows are smoothed as they go in).
+        while centre(age: 0) < -100 && sequence < 20 {
+            add(signal)
+        }
+        #expect(centre(age: 1) < -110, "the row before it is still flat")
+        let probe = Int(geometry.ridgeY(dbm: centre(age: 0), depth: 0)) + 4
+        let arrived = try render(glide: 0)
+        let clear = arrived.grey(middle, probe)
+        #expect(clear < 30, "the front still shows the row before the newest")
+        #expect(largestChange(beforeSignal, arrived) <= largestStep, "no jump as the row arrives")
+        let half = try render(glide: 0.5).grey(middle, probe)
+        let grown = try render(glide: 0.999)
+        let whole = grown.grey(middle, probe)
+        #expect(whole > 40, "the newest row is whole by the time the next is due")
+        let share = Double(half - clear) / Double(max(whole - clear, 1))
+        #expect(share > 0.35 && share < 0.65, "half way, half grown in: \(share)")
+        add(flat)
+        let after = try render(glide: 0)
+        #expect(after.grey(middle, probe) > 40, "the signal stays at the front, now as the older layer")
+        #expect(largestChange(grown, after) <= largestStep, "and nothing jumps as the next row arrives")
     }
 }

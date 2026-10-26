@@ -1576,7 +1576,8 @@ public final class BandRenderer {
         blit.endEncoding()
     }
 
-    /// The stacked trace over the spectrum's plot, oldest row first.
+    /// The stacked trace over the spectrum's plot, oldest row first, the
+    /// newest growing in at the front as the glide runs.
     private func drawStack(_ stack: StackedTraceHistory, overlay: StackedTraceOverlay, geometry: StackedTraceGeometry,
                            settings: BandDisplaySettings, markers: [SliceMarkers.Marker], view: BandCoverage,
                            scale: CGFloat, target: CGSize, encoder: any MTLRenderCommandEncoder,
@@ -1634,8 +1635,9 @@ public final class BandRenderer {
         encoder.setVertexTexture(rows, index: 0)
         encoder.setVertexTexture(windows, index: 1)
         encoder.setFragmentTexture(palette, index: 0)
+        // Every row but the newest glides; the front draws two layers.
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
-                               instanceCount: min(stack.count, stack.capacity))
+                               instanceCount: min(stack.count, stack.capacity) + 1)
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(target.width), height: Int(target.height)))
     }
 

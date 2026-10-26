@@ -212,10 +212,25 @@ public struct StackedTraceGeometry: Equatable, Sendable {
         gamma = StackedTrace.gamma(gain: settings.threeDGain)
     }
 
-    /// The depth of the row `age` lines old, `glide` of the way to the next
-    /// line (0 just after a line arrived, towards 1 before the next).
+    /// The depth of the row `age` rows old, `glide` of the way to the next
+    /// row (0 just after a row arrived, towards 1 before the next). The
+    /// front, at depth 0, stays put: it shows the row before the newest,
+    /// and the newest grows in over it (``frontOpacity(glide:)``). Every
+    /// older row glides back from the front, so the row one before the
+    /// newest leaves the front as the newest takes its place.
     public static func depth(age: Int, glide: Double) -> Double {
-        (Double(age) + min(max(glide, 0), 1)) / Double(StackedTrace.visibleRows)
+        guard age > 0 else {
+            return 0
+        }
+        return (Double(age) - 1 + min(max(glide, 0), 1)) / Double(StackedTrace.visibleRows)
+    }
+
+    /// How much of the newest row the front shows over the row before it:
+    /// none when the row arrives, all of it when the next is due. A row so
+    /// reaches the front whole one row after it arrives, and the front
+    /// changes a little on every frame rather than all at once on a row.
+    public static func frontOpacity(glide: Double) -> Double {
+        min(max(glide, 0), 1)
     }
 
     /// Where a frequency lands across the plot at `depth`: `unit` is its
