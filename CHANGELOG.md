@@ -254,6 +254,20 @@ still connect to each other as before.
 - Over Hamlib rigctld, PKTUSB and PKTLSB use a 3000 Hz default filter instead
   of 1200 Hz, matching the new DIGU and DIGL starting filter.
   ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
+- TCI refuses connections from web pages. Before, a web page open in your
+  browser could connect to TCI and key the radio. A connection that carries a
+  browser origin is now refused, on the desktop and on the Core. Native TCI
+  programs are unaffected. The Core setting `TciAllowedOrigins` (empty by
+  default, no Setup page) lists origins you choose to allow, separated by
+  commas. Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#605](https://github.com/boydsoftprez/NereusSDR/pull/605))
+- A TCI program that stops answering while it holds the key loses the key. The
+  program is checked every second while keyed, and after three missed checks
+  (about 3 seconds) the key is released, as if it had disconnected. This
+  changes when the radio transmits and has not been tried with a radio and a
+  real TCI program yet. Thanks to Martin Fischer (OE5SOS), whose Longpath fix
+  this follows.
+  ([#605](https://github.com/boydsoftprez/NereusSDR/pull/605))
 
 ### Remote connections
 
