@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setTransmitting reaches widget-factory rows through
+//                 ContainerContentHost::setTransmitting, which keeps a row
+//                 on another session's radio in the receive state; each
+//                 host is given the session id (the preview poller's) and
+//                 the transmit state when it is made. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setTransmitting reaches widget content fade overlays;
 //                 clearItemHistory() for a band change (Thetis bandChange
 //                 / ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -721,9 +727,10 @@ void ContainerManager::setTransmitting(bool transmitting)
         for (MeterWidget* meter : std::as_const(meters)) {
             meter->setItemTxState(transmitting);
         }
-        // Widget content with Fade on RX / TX (ContentFade::attach).
-        for (ContentFadeOverlay* overlay : c->content()->findChildren<ContentFadeOverlay*>()) {
-            overlay->setTransmitting(transmitting);
+        // Widget content with Fade on RX / TX (ContentFade::attach): the
+        // host knows each row's session.
+        if (auto* host = qobject_cast<ContainerContentHost*>(c->content())) {
+            host->setTransmitting(transmitting);
         }
     }
     if (!m_store) {
@@ -1169,6 +1176,11 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
         if (!host) {
             host = new ContainerContentHost(*m_registry, c);
+            // Fade on RX / TX: a widget row made now starts in the current
+            // transmit state; a row on another session's radio does not
+            // follow this window's.
+            host->setSessionIdSource([this] { return m_previewPoller ? m_previewPoller->sessionId() : QString(); });
+            host->setTransmitting(m_transmitting);
             connect(host, &ContainerContentHost::meterSurfaceReady, this, [this, c](MeterWidget* meter, const QJsonObject& context) {
                 // Structured items route through Main's per-entry wiring; never
                 // also install the legacy container-source forwarding signals.

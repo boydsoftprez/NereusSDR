@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-26 - Widget-factory rows with Fade on RX / TX get the fade
+//                 overlay (ContentFadeOverlay, which only paints) and the
+//                 radio's transmit state, read only, as the meters do.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The preview's meters take the radio's transmit state
 //                 (MeterWidget::setItemTxState), read only, so Fade on RX /
 //                 TX and Only when TX items show their transmit look.
@@ -22,6 +26,7 @@
 #include "ContainerContentRegistry.h"
 #include "ContainerContentHost.h"
 #include "ContainerWidget.h"
+#include "ContentFade.h"
 #include "ContainerControlCatalog.h"
 #include "FreeCanvasSurface.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -98,7 +103,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         setProperty(WorkspacePreview::kUserBackgroundProperty, ContainerWidget::userBackground(configured));
     }
     setStyleSheet(QStringLiteral("#containerDraftPreview {background:%1;}").arg(background));
-    m_document=document; m_materialized=true; m_surfaces.clear(); m_views.clear();
+    m_document=document; m_materialized=true; m_surfaces.clear(); m_views.clear(); m_fadeViews.clear();
     m_layout->setAlignment(document.layout==ContentLayout::VerticalStack ? Qt::AlignTop : Qt::Alignment());
     while (auto* child=m_layout->takeAt(0)) { delete child; }
     if(document.layout==ContentLayout::FreeCanvas) {m_layout->addWidget(m_canvas);m_canvas->show();}
@@ -136,6 +141,15 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
             view->setMinimumSize(0,0);view->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
         }
         m_views[entry.id]=view; if(document.layout!=ContentLayout::FreeCanvas) {m_layout->addWidget(view);}
+        if(view->property("containerFactoryType").toString()==entry.typeId) {
+            // Fade on RX / TX: ContentFade::attach builds the overlay for
+            // live content only; here it is built directly, since it only
+            // paints and takes no input.
+            const bool fadeRx=entry.config.value(QLatin1String(ContentFade::kFadeOnRxKey)).toBool(false);
+            const bool fadeTx=entry.config.value(QLatin1String(ContentFade::kFadeOnTxKey)).toBool(false);
+            if((fadeRx || fadeTx) && !ContentFade::overlayFor(view)) {new ContentFadeOverlay(view,fadeRx,fadeTx);}
+            if(ContentFade::overlayFor(view)) {m_fadeViews.append({view,context});}
+        }
         if (auto* meter=qobject_cast<MeterWidget*>(view)) {
             int height=document.layout==ContentLayout::VerticalStack ? 72 : 80;QSize minimum(24,24);
             for (auto* item : meter->items()) {
@@ -163,6 +177,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     for(const auto& view:oldViews) { if(view && !retained.contains(view) && !retired.contains(view)) { retired.insert(view); delete view.data(); } }
     if(document.layout==ContentLayout::FreeCanvas) {m_canvas->project(document,m_views);}
     m_inTx=m_poller->inTx();
+    updateFadeViews();
     for (const auto& surface : m_surfaces) {
         if (!surface.widget) { continue; }
         // The radio's transmit state, read only: the TX look of fades, VFO
@@ -208,6 +223,14 @@ ContainerDocument ContainerPreviewWidget::convertedLegacyPositions() const
     }
     result.setFreeCanvasExtent(extent);result.layout=ContentLayout::FreeCanvas;return result;
 }
+void ContainerPreviewWidget::updateFadeViews()
+{
+    if (!m_poller) { return; }
+    const QString session=m_poller->sessionId();
+    for (const auto& view : std::as_const(m_fadeViews)) {
+        if (view.widget) { ContentFade::setTransmitting(view.widget,m_inTx && !ContainerContentHost::foreignSession(view.context,session)); }
+    }
+}
 void ContainerPreviewWidget::advance(qint64 timestamp)
 {
     if (!m_poller) { return; }
@@ -218,6 +241,8 @@ void ContainerPreviewWidget::advance(qint64 timestamp)
         emit presentationRequested(surface.widget,surface.context);
         surface.widget->advanceMeters(timestamp);
     }
+    const bool txChanged=m_inTx!=m_poller->inTx();
     m_inTx=m_poller->inTx();
+    if (txChanged) { updateFadeViews(); }
 }
 }

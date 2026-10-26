@@ -55,6 +55,14 @@
 //                 secondReadingTakesTheVhfS9RuleOfItsBinding and
 //                 previewTakesTheVhfS9RuleOnce. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX on the five types:
+//                 everyTypeDeclaresTheFadeToggles,
+//                 fadeFollowsTransmitOnEveryType,
+//                 rowMadeWhileTransmittingStartsInTheTransmitLook,
+//                 fadedRowsStillTakeTheMouse and
+//                 previewRowTakesTheTransmitState; a needle's editor now
+//                 has the fade rows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <limits>
@@ -63,6 +71,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QLineEdit>
 #include <QMenu>
@@ -81,6 +90,8 @@
 #include <QScopeGuard>
 #include <QSplitter>
 #include <QTemporaryDir>
+#include <QWheelEvent>
+#include <QWindow>
 #include "core/AppSettings.h"
 #include "core/SliceOwnership.h"
 #include "core/antenna/AmateurBands.h"
@@ -91,6 +102,7 @@
 #include "gui/containers/ContainerPreviewWidget.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/WorkspaceHeader.h"
 #include "gui/instruments/BarInstrument.h"
@@ -257,6 +269,64 @@ QList<ThetisScaleCase> thetisScaleCases()
 // ReadingSource.cpp (LongpathBinding); MeterBinding has neither.
 constexpr int kNoiseFloorReading = 9;
 constexpr int kRadeSnrReading = 10;
+
+// The five Longpath widget types.
+constexpr const char* kLongpathTypes[] = {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType,
+                                          LongpathContent::kNeedleType, LongpathContent::kBarType,
+                                          LongpathContent::kFilterType};
+
+// A container manager over a workspace store, as the app has one.
+struct FadeHarness {
+    explicit FadeHarness(ContainerContentRegistry& registry)
+    {
+        dock.resize(900, 900);
+        manager.setWorkspaceAdapter(&store, &registry);
+    }
+    bool commit(const QVector<ContainerDocument>& containers)
+    {
+        WorkspaceDocument document;
+        for (const ContainerDocument& c : containers) { document.containers.append(c); }
+        document.mainContainerId = containers.constFirst().id;
+        const auto committed = manager.commitWorkspace(document, store.snapshot().revision);
+        settle();
+        return committed.status == CommitStatus::Saved;
+    }
+    QTemporaryDir directory;
+    AppSettings settings{directory.filePath(QStringLiteral("fade.xml"))};
+    ContainerWorkspaceStore store{settings};
+    QWidget dock;
+    QSplitter splitter;
+    ContainerManager manager{&dock, &splitter};
+};
+
+ContainerDocument fadeContainer(const QString& id, ContentLayout layout)
+{
+    ContainerDocument c;
+    c.id = id;
+    c.name = id;
+    c.layout = layout;
+    c.dockMode = DockMode::OverlayDocked;
+    c.geometry = QRect(10, 10, 380, 860);
+    return c;
+}
+
+ContentEntry fadeEntry(const ContainerContentRegistry& registry, const QString& typeId, const QString& id,
+                       bool fadeOnRx, bool fadeOnTx)
+{
+    ContentEntry entry = registry.makeEntry(typeId);
+    entry.id = id;
+    if (fadeOnRx) { entry.config.insert(QString::fromLatin1(ContentFade::kFadeOnRxKey), true); }
+    if (fadeOnTx) { entry.config.insert(QString::fromLatin1(ContentFade::kFadeOnTxKey), true); }
+    return entry;
+}
+
+QWidget* rowWidget(const ContainerContentHost& host, const QString& entryId)
+{
+    for (const auto& row : host.entryRows()) {
+        if (row.entryId == entryId) { return row.widget; }
+    }
+    return nullptr;
+}
 
 class TstLongpathInstruments : public QObject {
     Q_OBJECT
@@ -1785,9 +1855,13 @@ private slots:
         QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kLabelKey)));
         QVERIFY(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
 
-        // A needle declares only readings: no empty appearance group.
+        // A needle declares its readings and the fade toggles: the
+        // appearance group holds only the toggles.
         editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType)));
-        QVERIFY(!editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
+        auto* needleGroup = editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties"));
+        QVERIFY(needleGroup);
+        QCOMPARE(needleGroup->findChildren<QCheckBox*>().size(), 2);
+        QVERIFY(!needleGroup->findChild<QComboBox*>());
         const auto advancedGroup = [&editor]() -> QGroupBox* {
             for (QGroupBox* g : editor.findChildren<QGroupBox*>()) {
                 if (g->title() == QStringLiteral("Advanced bindings")) { return g; }
@@ -2166,6 +2240,278 @@ private slots:
         });
         QTest::mouseClick(chip, Qt::LeftButton);
         QVERIFY(shown.contains(QStringLiteral("Active slice")));
+    }
+
+    // --- Fade on RX / Fade on TX (Thetis fade(), ContentFade) ----------
+
+    // The five Longpath types show the two toggles and write them to the
+    // entry config.
+    void everyTypeDeclaresTheFadeToggles()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            QStringList keys;
+            for (const ContentProperty& p : registry.declaredProperties(typeId)) { keys.append(p.key); }
+            QVERIFY2(keys.contains(QString::fromLatin1(ContentFade::kFadeOnRxKey)), type);
+            QVERIFY2(keys.contains(QString::fromLatin1(ContentFade::kFadeOnTxKey)), type);
+
+            editor.setEntry(registry.makeEntry(typeId));
+            auto* group = editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties"));
+            QVERIFY2(group, type);
+            auto* fields = qobject_cast<QFormLayout*>(group->layout());
+            QVERIFY(fields);
+            for (const auto& [key, label] : {std::pair{ContentFade::kFadeOnRxKey, "Fade on RX"},
+                                             std::pair{ContentFade::kFadeOnTxKey, "Fade on TX"}}) {
+                auto* check = editor.findChild<QCheckBox*>(QStringLiteral("property_") + QString::fromLatin1(key));
+                QVERIFY2(check, type);
+                QVERIFY(!check->isChecked());
+                auto* shown = qobject_cast<QLabel*>(fields->labelForField(check));
+                QVERIFY(shown);
+                QCOMPARE(shown->text(), QString::fromLatin1(label));
+                edited.clear();
+                check->setChecked(true);
+                QCOMPARE(edited.size(), 1);
+                const auto entry = edited.takeLast().at(0).value<ContentEntry>();
+                QCOMPARE(entry.config.value(QString::fromLatin1(key)), QJsonValue(true));
+            }
+        }
+    }
+
+    // Fade on RX dims a row while receiving and lifts it on transmit; Fade
+    // on TX is the reverse; with both off the row has no overlay, so an
+    // entry saved without the keys looks as it did. Both host layouts.
+    void fadeFollowsTransmitOnEveryType()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        FadeHarness h(registry);
+        ContainerDocument stack = fadeContainer(QStringLiteral("stack"), ContentLayout::VerticalStack);
+        ContainerDocument canvas = fadeContainer(QStringLiteral("canvas"), ContentLayout::FreeCanvas);
+        canvas.geometry = QRect(400, 10, 380, 300);
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("rx-") + typeId, true, false));
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("tx-") + typeId, false, true));
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("off-") + typeId, false, false));
+        }
+        canvas.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kNeedleType),
+                                         QStringLiteral("canvas-rx"), true, false));
+        canvas.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kNeedleType),
+                                         QStringLiteral("canvas-off"), false, false));
+        QVERIFY(h.commit({stack, canvas}));
+        ContainerContentHost* stackHost = h.manager.contentHost(stack.id);
+        ContainerContentHost* canvasHost = h.manager.contentHost(canvas.id);
+        QVERIFY(stackHost && canvasHost);
+
+        QVector<ContentFadeOverlay*> receive, transmit;
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            QWidget* rx = rowWidget(*stackHost, QStringLiteral("rx-") + typeId);
+            QWidget* tx = rowWidget(*stackHost, QStringLiteral("tx-") + typeId);
+            QWidget* off = rowWidget(*stackHost, QStringLiteral("off-") + typeId);
+            QVERIFY2(rx && tx && off, type);
+            QCOMPARE(rx->property("containerFactoryType").toString(), typeId);
+            QVERIFY2(ContentFade::overlayFor(rx), type);
+            QVERIFY2(ContentFade::overlayFor(tx), type);
+            QVERIFY2(!ContentFade::overlayFor(off), type);
+            QVERIFY(off->findChildren<ContentFadeOverlay*>().isEmpty());
+            receive.append(ContentFade::overlayFor(rx));
+            transmit.append(ContentFade::overlayFor(tx));
+        }
+        QWidget* canvasRx = rowWidget(*canvasHost, QStringLiteral("canvas-rx"));
+        QWidget* canvasOff = rowWidget(*canvasHost, QStringLiteral("canvas-off"));
+        QVERIFY(canvasRx && canvasOff);
+        QVERIFY(ContentFade::overlayFor(canvasRx));
+        QVERIFY(!ContentFade::overlayFor(canvasOff));
+        receive.append(ContentFade::overlayFor(canvasRx));
+
+        const auto steps = [](const QVector<ContentFadeOverlay*>& overlays) {
+            for (int i = 0; i < 5; ++i) {
+                for (ContentFadeOverlay* o : overlays) { o->advance(); }
+            }
+        };
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), 255); }
+
+        h.manager.setTransmitting(true);
+        QVERIFY(stackHost->transmitting());
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QVERIFY(o->transmitting()); }
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), 255); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+
+        h.manager.setTransmitting(false);
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), 255); }
+    }
+
+    // A row made while the radio transmits is in the transmit look at
+    // once, without waiting for the next transmit change; a row on another
+    // session's radio stays in the receive state.
+    void rowMadeWhileTransmittingStartsInTheTransmitLook()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        MeterPoller poller;
+        poller.setSessionIdSource([] { return QStringLiteral("this-radio"); });
+        FadeHarness h(registry);
+        h.manager.setPreviewPoller(&poller);
+        h.manager.setTransmitting(true);
+        ContainerDocument c = fadeContainer(QStringLiteral("late"), ContentLayout::VerticalStack);
+        const QString needle = QString::fromLatin1(LongpathContent::kNeedleType);
+        c.contents.append(fadeEntry(registry, needle, QStringLiteral("own"), false, true));
+        ContentEntry local = fadeEntry(registry, needle, QStringLiteral("local"), false, true);
+        local.context.insert(QStringLiteral("sessionId"), QStringLiteral("this-radio"));
+        ContentEntry foreign = fadeEntry(registry, needle, QStringLiteral("foreign"), false, true);
+        foreign.context.insert(QStringLiteral("sessionId"), QStringLiteral("other-radio"));
+        c.contents << local << foreign;
+        QVERIFY(h.commit({c}));
+        ContainerContentHost* host = h.manager.contentHost(c.id);
+        QVERIFY(host);
+        QVERIFY(host->transmitting());
+        ContentFadeOverlay* own = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("own")));
+        ContentFadeOverlay* onThis = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("local")));
+        ContentFadeOverlay* onOther = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("foreign")));
+        QVERIFY(own && onThis && onOther);
+        QVERIFY(own->transmitting());
+        QVERIFY(onThis->transmitting());
+        QVERIFY(!onOther->transmitting());
+        for (int i = 0; i < 5; ++i) {
+            own->advance();
+            onOther->advance();
+        }
+        QCOMPARE(own->value(), ContentFade::kDimmedLevel);
+        QCOMPARE(onOther->value(), 255);
+
+        // The other session's row does not follow this window's MOX.
+        h.manager.setTransmitting(false);
+        h.manager.setTransmitting(true);
+        QVERIFY(!onOther->transmitting());
+        QVERIFY(onThis->transmitting());
+        QVERIFY(ContainerContentHost::foreignSession(foreign.context, QStringLiteral("this-radio")));
+        QVERIFY(!ContainerContentHost::foreignSession(local.context, QStringLiteral("this-radio")));
+        QVERIFY(!ContainerContentHost::foreignSession(QJsonObject{}, QStringLiteral("this-radio")));
+    }
+
+    // A faded row still takes the mouse: the wheel on a frequency digit
+    // tunes the slice and a filter edge drag moves the slice's filter.
+    void fadedRowsStillTakeTheMouse()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(7185000.0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFilter(100, 3100);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        FadeHarness h(registry);
+        ContainerDocument c = fadeContainer(QStringLiteral("input"), ContentLayout::VerticalStack);
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kFrequencyType),
+                                    QStringLiteral("freq"), true, false));
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kFilterType),
+                                    QStringLiteral("filter"), true, false));
+        QVERIFY(h.commit({c}));
+        h.dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&h.dock));
+        settle();
+        ContainerContentHost* host = h.manager.contentHost(c.id);
+        QVERIFY(host);
+        auto* frequency = qobject_cast<FrequencyInstrument*>(rowWidget(*host, QStringLiteral("freq")));
+        auto* pane = qobject_cast<BandwidthFilterPane*>(rowWidget(*host, QStringLiteral("filter")));
+        QVERIFY(frequency && pane);
+        for (QWidget* w : {static_cast<QWidget*>(frequency), static_cast<QWidget*>(pane)}) {
+            ContentFadeOverlay* overlay = ContentFade::overlayFor(w);
+            QVERIFY(overlay);
+            for (int i = 0; i < 5; ++i) { overlay->advance(); }
+            QCOMPARE(overlay->value(), ContentFade::kDimmedLevel);
+            QVERIFY(overlay->isVisible());
+            QCOMPARE(overlay->geometry(), w->rect());
+        }
+
+        // Wheel: the window's hit test passes the veil and finds a digit.
+        QWidget* window = h.dock.window();
+        QLabel* digit = nullptr;
+        for (QLabel* l : frequency->findChildren<QLabel*>()) {
+            if (l->isVisible() && l->text().size() == 1 && l->text().at(0).isDigit()) {
+                digit = l;
+                break;
+            }
+        }
+        QVERIFY(digit);
+        const QPoint digitAt = digit->mapTo(window, digit->rect().center());
+        QCOMPARE(window->childAt(digitAt), static_cast<QWidget*>(digit));
+        const double before = slice->frequency();
+        QWheelEvent wheel(QPointF(digit->rect().center()), QPointF(digit->mapToGlobal(digit->rect().center())),
+                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(window->childAt(digitAt), &wheel);
+        QVERIFY(slice->frequency() > before);
+
+        // Filter edge: hover finds it through the veil, then a drag moves it.
+        QWindow* handle = window->windowHandle();
+        QVERIFY(handle);
+        const int y = pane->height() / 2;
+        int edgeX = -1;
+        for (int x = 2; x < pane->width() - 2 && edgeX < 0; ++x) {
+            const QPoint at = pane->mapTo(window, QPoint(x, y));
+            QCOMPARE(window->childAt(at), static_cast<QWidget*>(pane));
+            QTest::mouseMove(handle, at);
+            if (pane->cursor().shape() == Qt::SizeHorCursor) { edgeX = x; }
+        }
+        QVERIFY(edgeX >= 0);
+        const int lowBefore = slice->filterLow();
+        const int highBefore = slice->filterHigh();
+        const QPoint from = pane->mapTo(window, QPoint(edgeX, y));
+        const QPoint to = pane->mapTo(window, QPoint(edgeX + 30, y));
+        QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, from);
+        QTest::mouseMove(handle, to);
+        QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, to);
+        QVERIFY(slice->filterLow() != lowBefore || slice->filterHigh() != highBefore);
+        QCOMPARE(pane->filterLow(), slice->filterLow());
+    }
+
+    // The settings preview shows the transmit look of a faded widget row,
+    // read only.
+    void previewRowTakesTheTransmitState()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        MeterPoller poller;
+        ContainerDocument c = fadeContainer(QStringLiteral("preview"), ContentLayout::VerticalStack);
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kBarType),
+                                    QStringLiteral("bar"), false, true));
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kBarType),
+                                    QStringLiteral("plain"), false, false));
+        poller.setInTx(true);
+        ContainerPreviewWidget preview(registry, poller);
+        preview.setDocument(c);
+        QVector<ContentFadeOverlay*> overlays = preview.findChildren<ContentFadeOverlay*>();
+        QCOMPARE(overlays.size(), 1);
+        ContentFadeOverlay* overlay = overlays.constFirst();
+        QVERIFY(overlay->transmitting());
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
+        for (int i = 0; i < 5; ++i) { overlay->advance(); }
+        QCOMPARE(overlay->value(), ContentFade::kDimmedLevel);
+
+        poller.setInTx(false);
+        emit poller.frameAdvanced(1000);
+        QVERIFY(!overlay->transmitting());
+        for (int i = 0; i < 5; ++i) { overlay->advance(); }
+        QCOMPARE(overlay->value(), 255);
     }
 
     void traceFromRenderedTakesBucketMaxima()

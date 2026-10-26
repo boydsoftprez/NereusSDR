@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - sessionId(): the window's session id from
+//                 setSessionIdSource, for the container rows that follow
+//                 only their own session's transmit state. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - mmioReading(guid, variable) for each data source variable
 //                 an item reads. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -381,6 +385,8 @@ public:
     // Current GUI window identity; explicit foreign sessions cannot consume
     // window-global TX/PA/hardware caches, independent of RX slice availability.
     void setSessionIdSource(std::function<QString()> source);
+    // The current session id from that source; empty without one.
+    QString sessionId() const { return m_sessionIdSource ? m_sessionIdSource() : QString(); }
     // Seeds state, availability and current samples without registering or
     // polling the widget. Read-only previews then listen to readingUpdated,
     // frameAdvanced, and bindingAvailabilityChanged.

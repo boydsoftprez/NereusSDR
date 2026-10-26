@@ -1,6 +1,12 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / Fade on TX for widget-factory rows: each row
+//                 gets ContentFade's overlay, setTransmitting hands it the
+//                 transmit state (a row created later starts in it), and a
+//                 row on another session's radio stays in the receive
+//                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - A meter item's own config edits (ContentConfigNotifier,
 //                 the other buttons' reorder) are committed to its entry
 //                 the same way. J.J. Boyd (KG4VCF), AI-assisted via
@@ -40,6 +46,7 @@
 #include <QWidget>
 #include <QPointer>
 #include <QVector>
+#include <functional>
 class QVBoxLayout;
 class QScrollArea;
 class QMenu;
@@ -92,6 +99,17 @@ public:
     // Workspace preview: the entry header of one entry, or nullptr.
     WorkspaceEntryHeader* entryHeader(const QString& entryId) const;
     static QJsonObject effectiveContext(const ContainerDocument& document, const ContentEntry& entry);
+    // Fade on RX / TX (ContentFade): the transmit state every widget row's
+    // overlay follows; a row created later starts in it. Read only: it
+    // never keys the radio.
+    void setTransmitting(bool transmitting);
+    bool transmitting() const { return m_transmitting; }
+    // This window's session (radio) id. A row whose context names another
+    // session stays in the receive state, as a meter item does
+    // (MeterItem::setForeignSession).
+    void setSessionIdSource(std::function<QString()> source);
+    // Whether `context` names a session other than `localSessionId`.
+    static bool foreignSession(const QJsonObject& context, const QString& localSessionId);
     // The width the contents need: the scrolled body's minimum (the widest
     // visible row and the body margins) and the vertical bar's extent. A
     // free canvas needs none. Also the host's own minimum width.
@@ -113,6 +131,10 @@ private:
     // A meter item with a ContentConfigNotifier child: the keys it emits
     // replace those of its entry's config, committed like a widget's.
     void connectItemConfigNotifier(MeterItem* item, const QString& entryId);
+    // Gives a widget row its fade overlay (ContentFade::attach) in the
+    // row's transmit state.
+    void attachFade(QWidget* widget, const ContentEntry& entry, const QJsonObject& context);
+    bool rowTransmitting(const QJsonObject& context) const;
     void updateGrips();
     void scheduleStackProjection();
     void projectStackRows();
@@ -150,5 +172,7 @@ private:
     int m_surfaceMinimumWidth = 0;   // the meter surfaces' minimum and gutter
     int m_contentMinimumWidth = -1;  // last value announced; -1 before the first
     QPointer<QMenu> m_bannerMenu;
+    bool m_transmitting = false;
+    std::function<QString()> m_sessionIdSource;
 };
 }

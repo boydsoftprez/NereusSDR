@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - Fade on RX / Fade on TX for widget-factory rows: each row
+//                 gets ContentFade's overlay, setTransmitting hands it the
+//                 transmit state (a row created later starts in it), and a
+//                 row on another session's radio stays in the receive
+//                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - A meter item's own config edits (ContentConfigNotifier,
 //                 the other buttons' reorder) are committed to its entry
 //                 the same way. J.J. Boyd (KG4VCF), AI-assisted via
@@ -96,6 +102,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QTimer>
 #include <QSet>
 #include "ContainerContentRegistry.h"
+#include "ContentFade.h"
 #include "core/LogCategories.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
@@ -117,6 +124,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 namespace NereusSDR {
 namespace {
 int preferredWidgetHeight(const QWidget* widget, int width)
@@ -485,6 +493,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 widget->setProperty("containerSourceContext", row.context);
                 widget->setProperty(WorkspacePreview::kSkipProperty, true);
                 connectConfigNotifier(widget, entry.id);
+                attachFade(widget, effective, row.context);
                 row.widget = widget; m_layout->addWidget(widget);
                 widget->setVisible(row.effectiveVisible);
                 m_rows.append(row); continue;
@@ -606,6 +615,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     widget->setProperty("containerSourceContext",row.context);
                     widget->setProperty(WorkspacePreview::kSkipProperty,true);
                     connectConfigNotifier(widget,entry.id);
+                    attachFade(widget,effective,row.context);
                     widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
                     widget->setProperty("freeCanvasHint",widget->sizeHint());
                     widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
@@ -702,6 +712,35 @@ void ContainerContentHost::connectItemConfigNotifier(MeterItem* item, const QStr
             return;
         }
     }, Qt::QueuedConnection);
+}
+void ContainerContentHost::attachFade(QWidget* widget, const ContentEntry& entry, const QJsonObject& context)
+{
+    // The host builds live content only; the settings preview builds its
+    // own (ContainerPreviewWidget).
+    ContentFade::attach(widget, entry.config, ContentRenderMode::Live);
+    // Created while transmitting, it starts in the transmit look.
+    ContentFade::setTransmitting(widget, rowTransmitting(context));
+}
+bool ContainerContentHost::foreignSession(const QJsonObject& context, const QString& localSessionId)
+{
+    const QString session = context.value(QStringLiteral("sessionId")).toString();
+    return !session.isEmpty() && session != localSessionId;
+}
+bool ContainerContentHost::rowTransmitting(const QJsonObject& context) const
+{
+    if (!m_transmitting) { return false; }
+    return !foreignSession(context, m_sessionIdSource ? m_sessionIdSource() : QString());
+}
+void ContainerContentHost::setSessionIdSource(std::function<QString()> source)
+{
+    m_sessionIdSource = std::move(source);
+}
+void ContainerContentHost::setTransmitting(bool transmitting)
+{
+    m_transmitting = transmitting;
+    for (const EntryRow& row : std::as_const(m_rows)) {
+        if (row.widget && !row.item) { ContentFade::setTransmitting(row.widget, rowTransmitting(row.context)); }
+    }
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 {
