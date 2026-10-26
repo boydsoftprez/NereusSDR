@@ -26,6 +26,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - The mi0bot-Thetis quotes and MI0BOT tags above the slider
 //                rescale and the dB labels, as TxApplet.cpp carried them.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -139,6 +142,10 @@ m_swrGauge = AccessoryReadouts::makeSlimBar(
 m_swrGauge->setAccessibleName(QStringLiteral("SWR gauge"));
 vbox->addWidget(m_swrGauge);
 
+// The row labels, for the parts registered below.
+QLabel* rfLabel = nullptr;
+QLabel* tuneLabel = nullptr;
+
 // ── 3. RF Power slider row ───────────────────────────────────────────────
 // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:87–104)
 {
@@ -161,6 +168,7 @@ vbox->addWidget(m_swrGauge);
     row->setSpacing(4);
 
     auto* lbl = new QLabel(QStringLiteral("RF Power:"), this);
+    rfLabel = lbl;
     lbl->setFixedWidth(62);
     lbl->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }").arg(Style::kTitleText));
@@ -198,6 +206,7 @@ vbox->addWidget(m_swrGauge);
     row->setSpacing(4);
 
     auto* lbl = new QLabel(QStringLiteral("Tune Pwr:"), this);
+    tuneLabel = lbl;
     lbl->setFixedWidth(62);
     lbl->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }").arg(Style::kTitleText));
@@ -214,6 +223,14 @@ vbox->addWidget(m_swrGauge);
 
     vbox->addLayout(row);
 }
+
+// The parts a container copy hides and orders (SectionParts).
+m_parts.add(QStringLiteral("forwardGauge"), QStringLiteral("Forward power gauge"), -1, {m_fwdPowerGauge});
+m_parts.add(QStringLiteral("swrGauge"), QStringLiteral("SWR gauge"), -1, {m_swrGauge});
+m_parts.add(QStringLiteral("rfPower"), QStringLiteral("RF power"), -1,
+            {rfLabel, m_rfPowerSlider, m_rfPowerValue});
+m_parts.add(QStringLiteral("tunePower"), QStringLiteral("Tune power"), -1,
+            {tuneLabel, m_tunePwrSlider, m_tunePwrValue});
 }
 
 void TxPowerSection::rescaleFwdGaugeForModel(HPSDRModel model,

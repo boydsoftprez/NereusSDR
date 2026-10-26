@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -89,6 +92,8 @@
 #include <QString>
 #include <QWidget>
 
+#include "SectionParts.h"
+
 #include "core/HpsdrModel.h"
 
 class QLabel;
@@ -146,6 +151,11 @@ public:
     double smoothedForwardPowerW() const { return m_fwdPowerSmoothedW; }
     void setSmoothedForwardPowerW(double watts) { m_fwdPowerSmoothedW = watts; }
 
+    // The row's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own row never applies a config.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
+
 private:
     void buildUI(int rowSpacing, const MainPowerMeter* meter);
     // The margins this section gives itself.  The applet's own rows
@@ -153,6 +163,7 @@ private:
     // in a container has no column of its own, so it gives itself the
     // margins the column would have given it.
     QMargins m_outerMargins;
+    SectionParts m_parts{this};
 
     BarInstrument* m_fwdPowerGauge = nullptr;
     BarInstrument* m_swrGauge = nullptr;

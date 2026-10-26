@@ -30,6 +30,10 @@
 //                 corner radius, height ratio, fade on RX/TX) after the
 //                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - Grids of more than 32 buttons: each button's grid
+//                 position is cached, and a single control is one shown
+//                 button rather than one mask bit. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -122,10 +126,13 @@ void ButtonBoxItem::setButtonCount(int count)
 {
     m_buttonCount = count;
     m_buttons.resize(count);
+    m_shownDirty = true;
 }
 
 ButtonBoxItem::ButtonState& ButtonBoxItem::button(int index)
 {
+    // The caller may change the button's visibility through the reference.
+    m_shownDirty = true;
     return m_buttons[index];
 }
 
@@ -140,18 +147,38 @@ void ButtonBoxItem::setVisibleBits(uint32_t bits)
     for (int i = 0; i < m_buttonCount && i < 32; ++i) {
         m_buttons[i].visible = (bits >> i) & 1;
     }
+    m_shownDirty = true;
 }
 
 void ButtonBoxItem::setButtonHiddenUntilBuilt(int index, bool hidden)
 {
     if (index < 0 || index >= m_buttonCount) { return; }
     m_buttons[index].hiddenUntilBuilt = hidden;
+    m_shownDirty = true;
 }
 
 bool ButtonBoxItem::isButtonShown(int index) const
 {
     if (index < 0 || index >= m_buttonCount || index >= m_buttons.size()) { return false; }
     return m_buttons[index].visible && !m_buttons[index].hiddenUntilBuilt;
+}
+
+int ButtonBoxItem::shownButtonCount() const
+{
+    ensureShownLayout();
+    return m_shownCount;
+}
+
+void ButtonBoxItem::ensureShownLayout() const
+{
+    if (!m_shownDirty && m_shownOrdinal.size() == m_buttonCount) { return; }
+    m_shownOrdinal.resize(m_buttonCount);
+    int shown = 0;
+    for (int i = 0; i < m_buttonCount; ++i) {
+        m_shownOrdinal[i] = isButtonShown(i) ? shown++ : -1;
+    }
+    m_shownCount = shown;
+    m_shownDirty = false;
 }
 
 void ButtonBoxItem::setButtonAvailable(int index, bool available, const QString& reason)
@@ -198,10 +225,14 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     if (m_columns <= 0) { return {}; }
 
     // Count visible buttons up to this index to determine grid position
+    // (cached: an other-buttons grid has 384 slots).
+    ensureShownLayout();
     int visIndex = 0;
-    for (int i = 0; i < index; ++i) {
-        if (isButtonShown(i)) {
-            ++visIndex;
+    if (index >= 0 && index < m_shownOrdinal.size() && m_shownOrdinal[index] >= 0) {
+        visIndex = m_shownOrdinal[index];
+    } else {
+        for (int i = 0; i < index && i < m_shownOrdinal.size(); ++i) {
+            if (m_shownOrdinal[i] >= 0) { ++visIndex; }
         }
     }
 
@@ -216,16 +247,15 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     // only a supported single OTHERBTNS cell marked by
     // the container factory/editor fits its viewport. Legacy groups retain
     // the upstream aspect ratio. Paint and hit testing share this rectangle.
-    const bool singleControl = m_columns == 1 && m_visibleBits != 0
-        && (m_visibleBits & (m_visibleBits - 1)) == 0
+    // One shown button (an other-buttons grid holds more than one mask).
+    const bool singleControl = m_columns == 1 && m_shownCount == 1
         && property("containerSingleControl").toBool();
     // NereusSDR-original stack exception: keep saved legacy ratios intact,
     // and fit all actually shown rows only inside an explicitly marked stack.
     const bool stackGrid=!singleControl && property("containerStackGrid").toBool();
     int rows=1;
     if (stackGrid) {
-        int shown=0;
-        for (int i=0;i<m_buttonCount;++i) { if (isButtonShown(i)) { ++shown; } }
+        const int shown=m_shownCount;
         rows=qMax(1,shown/m_columns+int(shown%m_columns!=0));
     }
     // Keep the legacy float product and the existing viewport narrowing;

@@ -650,14 +650,16 @@ QMap<F, QList<Surface>> surfaces()
     // front a feature of their own.
     map[F::MacroButtons] = {
         Surface{QStringLiteral("container macro buttons"), Host::Container, [](Hosts& h) {
-                    // Macro buttons follow the 34 core buttons; none is saved
-                    // visible by default, so "not hidden until built" is the
-                    // surface here.
+                    // The macro buttons (Thetis numbers 352-382); none is
+                    // saved visible by default, so "not hidden until built"
+                    // is the surface here.
                     OtherButtonItem* item = h.otherButtons();
-                    for (int i = 34; i < item->buttonCount(); ++i) {
-                        if (item->button(i).hiddenUntilBuilt) { return false; }
+                    for (int i = 0; i < OtherButtonItem::kMacroCount; ++i) {
+                        const int index = item->indexOf(static_cast<OtherButtonItem::ButtonId>(
+                            int(OtherButtonItem::ButtonId::Macro0) + i));
+                        if (index < 0 || item->button(index).hiddenUntilBuilt) { return false; }
                     }
-                    return item->buttonCount() > 34;
+                    return true;
                 }}};
     map[F::DisplayAveraging] = {functionButton(QStringLiteral("AVG"), B::Avg)};
     map[F::TwoReceiverLayout] = {

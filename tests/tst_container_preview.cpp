@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original actual native inert draft preview regressions.
+// Modification history (NereusSDR):
+//   2026-10-25 - An OTHERBTNS record edited through field 8 is cut to the
+//                 earlier record (fields 0-14), so field 8 is the one read.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSignalSpy>
@@ -106,6 +110,8 @@ private slots:
         ContainerContentRegistry registry; auto entry=registry.makeEntry(type);
         QStringList fields=entry.config["legacyRecord"].toString().split('|');
         const int visibilityField=type=="OTHERBTNS" ? 8 : 9; QVERIFY(fields.size()>visibilityField);
+        // An earlier OTHERBTNS record (fields 0-14): field 8 is its visibility.
+        if (type=="OTHERBTNS") { fields=fields.mid(0,15); }
         fields[7]=QString::number(columns); fields[visibilityField]=QString::number(bits);
         entry.config["legacyRecord"]=fields.join('|');
         std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Live));
@@ -210,7 +216,7 @@ private slots:
         const int visibilityField=type=="VOICERECPLAY" ? -1 : (type=="OTHERBTNS" || type=="ANTENNABTNS" ? 8 : 9);
         QVERIFY(fields.size()>qMax(7,visibilityField));
         fields[7]="2";
-        if (type=="OTHERBTNS") { fields[8]="1052"; }
+        if (type=="OTHERBTNS") { fields=fields.mid(0,15); fields[8]="1052"; }
         else if (type=="ANTENNABTNS") { fields[8]="7"; }
         else if (type!="VOICERECPLAY") { fields[9]="7"; }
         fields.append("future-tail"); entry.config["legacyRecord"]=fields.join('|');

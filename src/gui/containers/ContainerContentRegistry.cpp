@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-25 - A control.* shortcut shows its one button by Thetis button
+//                 number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - Per-item update interval: context key updateIntervalMs,
 //                 read on create, written on capture when non-zero, and set
 //                 from the item's new-item default by makeEntry (not for bar
@@ -344,7 +347,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
         if (typeId != control.creationId) { continue; }
         OtherButtonItem item;
         item.setColumns(1);
-        item.setVisibleBits(1u << int(control.buttonId));
+        item.setOnlyVisible(control.buttonId);
         entry.typeId = QStringLiteral("OTHERBTNS");
         entry.config.insert(QStringLiteral("legacyRecord"), item.serialize());
         entry.canvasRect = QRectF(item.x(), item.y(), item.itemWidth(), item.itemHeight());

@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original creation metadata for existing native actions.
 // Modification history (NereusSDR):
+//   2026-10-25 - A single control is one shown button, by Thetis button
+//                 number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 — Shared stack button-grid sizing by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Individually arranged controls by J.J. Boyd (KG4VCF),
@@ -31,9 +34,12 @@ inline QVector<ContainerControlDescriptor> supportedContainerControls()
 inline bool isSingleContainerControl(const MeterItem* item)
 {
     const auto* other = qobject_cast<const OtherButtonItem*>(item);
-    if (!other || other->columns() != 1) { return false; }
+    if (!other || other->columns() != 1 || other->shownButtonCount() != 1) { return false; }
+    // Exactly one button drawn, and it is one of the controls. Buttons saved
+    // visible but never drawn (no action, feature not built) do not count:
+    // an earlier record always held two such (Spectrascope and Off).
     for (const auto& control : supportedContainerControls()) {
-        if (other->visibleBits() == (1u << int(control.buttonId))) { return true; }
+        if (other->isButtonShown(control.buttonId)) { return true; }
     }
     return false;
 }
@@ -43,8 +49,7 @@ inline QSize singleContainerControlMinimum() { return {64, 32}; }
 inline int containerStackButtonRows(const ButtonBoxItem* box)
 {
     if (!box || box->columns()<=0 || box->columns()>box->buttonCount()) { return 0; }
-    int shown=0;
-    for (int i=0;i<box->buttonCount();++i) { if (box->isButtonShown(i)) { ++shown; } }
+    const int shown=box->shownButtonCount();
     return qMax(1,shown/box->columns()+int(shown%box->columns()!=0));
 }
 inline QSize containerStackButtonSize(const MeterItem* item)

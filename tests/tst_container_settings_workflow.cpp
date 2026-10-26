@@ -1,6 +1,10 @@
 // no-port-check: NereusSDR-original complete-entry draft workflow regressions.
+// Modification history (NereusSDR):
+//   2026-10-25 - A control shortcut is checked by Thetis button number.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
+#include "gui/meters/OtherButtonCatalog.h"
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
 #include "gui/containers/ContainerContentHost.h"
@@ -106,7 +110,8 @@ private slots:
         const auto copy=registry.makeEntry("control."+action.first);QVERIFY(copy.id!=entry.id);
         std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
         auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);
-        QCOMPARE(other->visibleBits(),uint32_t(1u<<int(action.second)));QCOMPARE(other->columns(),1);
+        QVERIFY(other->isButtonShown(action.second));QCOMPARE(other->shownButtonCount(),1);
+        QCOMPARE(other->visibleBits(),uint32_t(1u<<OtherButtonCatalog::buttonIdToLegacy(action.second)));QCOMPARE(other->columns(),1);
         QSignalSpy command(other,&OtherButtonItem::otherButtonClicked);
         const auto captured=registry.captureMeterItem(*other);QCOMPARE(captured.id,entry.id);QCOMPARE(captured.typeId,QString("OTHERBTNS"));
         QCOMPARE(command.count(),0);QVERIFY(registry.validateEntry(captured).isEmpty());

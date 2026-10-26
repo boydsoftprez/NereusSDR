@@ -22,6 +22,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -171,6 +174,9 @@ void TxProcessingSection::buildUI(int rowSpacing)
         vbox->addLayout(row);
     }
 
+    // The SWR protection inset, for the parts registered below.
+    QWidget* swrInset = nullptr;
+
     // ── SWR protection LED inset ─────────────────────────────────────────────
     // xPA button removed (external-PA hardware-specific phase, no plan yet).
     // SWR Prot LED now occupies its own full-width inset row.
@@ -205,7 +211,14 @@ void TxProcessingSection::buildUI(int rowSpacing)
 
         row->addWidget(inset, 1); // full width (xPA removed)
         vbox->addLayout(row);
+        swrInset = inset;
     }
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("twoTone"), QStringLiteral("2-Tone button"), 0, {m_twoToneBtn});
+    m_parts.add(QStringLiteral("psa"), QStringLiteral("PS-A button"), 0, {m_psaBtn});
+    m_parts.add(QStringLiteral("dup"), QStringLiteral("DUP button"), 0, {m_dupBtn});
+    m_parts.add(QStringLiteral("swrProtection"), QStringLiteral("SWR protection"), -1, {swrInset});
 }
 
 } // namespace NereusSDR

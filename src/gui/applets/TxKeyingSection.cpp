@@ -24,6 +24,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - A container copy can hide the slice-letter row.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-20 - A copy of this row in a container is told the outer
@@ -178,6 +181,14 @@ m_takeTransmitBtn->setToolTip(
                    "when no device does, so MOX, TUNE and programs transmit from here."));
 m_takeTransmitBtn->setVisible(false);
 vbox->addWidget(m_takeTransmitBtn);
+
+// The parts a container copy hides and orders (SectionParts).  The slice
+// indicators are the letter row, the holder line and Take transmit
+// together, as setSliceIndicatorsHidden hides them.
+m_parts.add(QStringLiteral("tune"), QStringLiteral("TUNE button"), 0, {m_tuneBtn});
+m_parts.add(QStringLiteral("mox"), QStringLiteral("MOX button"), 0, {m_moxBtn});
+m_parts.add(QStringLiteral("sliceIndicators"), QStringLiteral("Slice indicators"), -1,
+            {m_sliceIndicatorRow, m_holderLabel, m_takeTransmitBtn});
 }
 
 void TxKeyingSection::clearTransmitSliceButtons()
@@ -220,11 +231,10 @@ QPushButton* TxKeyingSection::addTransmitSliceButton(const QString& letter,
 
 void TxKeyingSection::setSliceIndicatorsHidden(bool hidden)
 {
-    m_hideSliceIndicators = hidden;
-    if (m_sliceIndicatorRow) { m_sliceIndicatorRow->setVisible(!hidden); }
-    if (!hidden) { return; }
-    if (m_holderLabel) { m_holderLabel->setVisible(false); }
-    if (m_takeTransmitBtn) { m_takeTransmitBtn->setVisible(false); }
+    // The part hides the letter row, the holder line and Take transmit; the
+    // holder line and Take transmit still show only when the applet allows
+    // them (SectionParts::setDynamicVisible).
+    m_parts.setHidden(QStringLiteral("sliceIndicators"), hidden);
 }
 
 } // namespace NereusSDR

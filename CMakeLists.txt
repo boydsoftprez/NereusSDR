@@ -2124,6 +2124,7 @@ set(GUI_SOURCES
     src/gui/meters/FilterButtonItem.cpp
     src/gui/meters/AntennaButtonItem.cpp
     src/gui/meters/TuneStepButtonItem.cpp
+    src/gui/meters/OtherButtonCatalog.cpp
     src/gui/meters/OtherButtonItem.cpp
     src/gui/meters/VoiceRecordPlayItem.cpp
     src/gui/meters/VfoDisplayItem.cpp
@@ -2214,6 +2215,7 @@ set(GUI_SOURCES
     src/gui/applets/TxChainSection.cpp
     src/gui/applets/TxKeyingSection.cpp
     src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/SectionParts.cpp
     src/gui/applets/TxSectionContent.cpp
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp
