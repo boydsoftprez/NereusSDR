@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Every slice's title fits slice A's room, so the titles
+//                 match as Thetis's do; the band text keeps a gap clear of
+//                 the filter text. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-03 — Fit VFO text to its actual row width by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -134,6 +138,10 @@ constexpr float kDimmerFactor = 0.3f;
 // From Thetis MeterManager.cs:40436, :40442 [v2.10.3.15]: an icon that is
 // off draws at Math.Min(64, nFade).
 constexpr int kIconOffAlpha = 64;
+// NereusSDR: the clear space between the filter text (its room ends at
+// 0.333) and the band text (right aligned at 0.48), as a share of the
+// layout unit.
+constexpr qreal kFilterBandGap = 0.012;
 // From Thetis database.cs:9578 [v2.10.3.15]: outStr = "Out of Band";
 constexpr const char* kOutOfBandText = "Out of Band";
 
@@ -869,8 +877,10 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
 
     // Titles read "Slice A" and so on in place of "VFO A" / "VFO Sub" /
     // "VFO B". From Thetis MeterManager.cs:40246-40262 [v2.10.3.15]
+    // Thetis draws every title at vfo.FontSize, so each slice's title fits
+    // the room slice A has before its split box: the titles match.
     const QString title = sliceTitle(s.index);
-    const qreal titleRoom = (s.index == 0 ? 0.100 - 0.010 : 0.216 - 0.010) * f.unit;
+    const qreal titleRoom = (0.100 - 0.010) * f.unit;
     plotText(p, title, f.x(0.01), f.y(0.03), fitted(base, title, titleRoom), m_titleColour);
 
     // frequency
@@ -906,7 +916,11 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     // From Thetis MeterManager.cs:40314-40319 [v2.10.3.15]
     if (!s.band.isEmpty()) {
         const QString band = s.band + QStringLiteral(" band");
-        plotText(p, band, f.x(0.48), f.y(0.54), fitted(base, band, (0.480 - 0.333) * f.unit), m_bandColour, true);
+        // NereusSDR: the filter's room ends at 0.333 and the band's begins
+        // there, so text fitted to both rooms touched; the band keeps
+        // kFilterBandGap clear.
+        plotText(p, band, f.x(0.48), f.y(0.54), fitted(base, band, (0.480 - 0.333 - kFilterBandGap) * f.unit),
+                 m_bandColour, true);
     }
 
     //split only on VFOA

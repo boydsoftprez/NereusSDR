@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original tests for the VFO display item's slice
 // modes, Thetis colours, paint and published readings.
 // Modification history (NereusSDR):
+//   2026-10-26 - All slices: the slices' titles match and the band text
+//                 clears the filter text. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Display modes by slice letter (saved VFO B and Both),
 //                 the Thetis import map, new-item defaults, the inactive
 //                 slice fade, band text, the split box and its reason,
@@ -257,6 +260,80 @@ private slots:
         // The sync icon is greyed and says why.
         QCOMPARE(item.reasonAt(QPointF(0.237 * 2.07 * kW, 0.7 * kH), kW, kH),
                  QStringLiteral("Sync is not available."));
+    }
+
+    // All slices, Thetis layout: every slice's title is the same size
+    // (Thetis draws "VFO A" and "VFO B" at vfo.FontSize,
+    // MeterManager.cs:40246-40262 [v2.10.3.15]) and the band text never
+    // touches the filter text.
+    void allSlicesTitlesMatchAndBandClearsFilter_data()
+    {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("scene 672x90") << QSize(672, 90);
+        QTest::newRow("roomy 795x240") << QSize(795, 240);
+        QTest::newRow("400x80") << QSize(400, 80);
+        QTest::newRow("1000x160") << QSize(1000, 160);
+    }
+    void allSlicesTitlesMatchAndBandClearsFilter()
+    {
+        QFETCH(QSize, size);
+        VfoDisplayItem item;
+        item.setRect(0, 0, 1, 1);
+        item.setLayout(VfoDisplayItem::Layout::Thetis);
+        item.setBackgroundColour(Qt::black);
+        item.setDisplayMode(VfoDisplayItem::DisplayMode::AllSlices);
+        const QColor white(Qt::white);
+        for (auto setter : {&VfoDisplayItem::setFrequencyColour, &VfoDisplayItem::setFrequencySmallColour,
+                            &VfoDisplayItem::setModeColour, &VfoDisplayItem::setSplitColour,
+                            &VfoDisplayItem::setRxColour, &VfoDisplayItem::setTxColour,
+                            &VfoDisplayItem::setLockColour, &VfoDisplayItem::setSyncColour}) {
+            (item.*setter)(white);
+        }
+        item.setSplitBackColour(QColor(60, 60, 60));
+        item.setTitleColour(QColor(255, 0, 255));
+        item.setFilterColour(QColor(0, 255, 255));
+        item.setBandColour(QColor(255, 255, 0));
+        VfoSliceState a = openSlice(0, 7185000, QStringLiteral("LSB"), true);
+        a.band = QStringLiteral("40m");
+        VfoSliceState b = openSlice(1, 14225000, QStringLiteral("USB"), true);
+        item.setSliceState(0, a);
+        item.setSliceState(1, b);
+        item.setSourceSliceIndex(0);
+        QImage image(size, QImage::Format_ARGB32);
+        image.fill(Qt::black);
+        {
+            QPainter p(&image);
+            item.paint(p, size.width(), size.height());
+        }
+        // Ink of one hue in one column: magenta title, cyan filter, yellow band.
+        const auto ink = [&image, &size](int column, int hue) {
+            QRect r;
+            const int half = size.width() / 2;
+            for (int y = 0; y < size.height(); ++y) {
+                for (int x = column * half; x < (column + 1) * half; ++x) {
+                    const QColor c = image.pixelColor(x, y);
+                    const bool hit = hue == 0 ? (c.red() > 140 && c.green() < 60 && c.blue() > 140)
+                        : hue == 1 ? (c.red() < 60 && c.green() > 140 && c.blue() > 140)
+                                   : (c.red() > 140 && c.green() > 140 && c.blue() < 60);
+                    if (hit) { r = r.united(QRect(x, y, 1, 1)); }
+                }
+            }
+            return r;
+        };
+        const QRect titleA = ink(0, 0);
+        const QRect titleB = ink(1, 0);
+        QVERIFY(!titleA.isEmpty() && !titleB.isEmpty());
+        QVERIFY2(qAbs(titleA.height() - titleB.height()) <= 1,
+                 qPrintable(QStringLiteral("Slice A title %1x%2, Slice B title %3x%4")
+                                .arg(titleA.width()).arg(titleA.height()).arg(titleB.width()).arg(titleB.height())));
+        for (int column = 0; column < 2; ++column) {
+            const QRect filter = ink(column, 1);
+            const QRect band = ink(column, 2);
+            QVERIFY(!filter.isEmpty() && !band.isEmpty());
+            QVERIFY2(band.left() - filter.right() >= 3,
+                     qPrintable(QStringLiteral("column %1: filter ends at %2, band starts at %3")
+                                    .arg(column).arg(filter.right()).arg(band.left())));
+        }
     }
 
     void publishedReadingsBySliceLetter()
