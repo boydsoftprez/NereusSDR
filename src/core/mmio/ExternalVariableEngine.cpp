@@ -14,6 +14,9 @@
 //                 enqueueOutbound (SendDataMMIO), and the new endpoint
 //                 settings. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 — A backfilled 4-char ID's key is built from the same
+//                 endpoint prefix as the other endpoint keys. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -403,9 +406,11 @@ void ExternalVariableEngine::loadFromSettings()
         if (storedId.isEmpty()) {
             // An endpoint saved before IDs existed gets one now, from
             // its guid, host and port, and keeps it from here on.
-            s.setValue(QStringLiteral("%1%2/FourChar")
-                           .arg(QLatin1String(kSettingsPrefix), it.key()),
-                       ep->fourChar());
+            // Built like saveEndpointToSettings()'s keys, from the same
+            // "MmioEndpoints/<guid>/" prefix.
+            const QString prefix = QStringLiteral("%1%2/")
+                .arg(QLatin1String(kSettingsPrefix), it.key());
+            s.setValue(prefix + QStringLiteral("FourChar"), ep->fourChar());
         } else {
             ep->setFourChar(storedId);
         }
