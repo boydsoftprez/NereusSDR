@@ -829,6 +829,10 @@ nereus_add_test(tst_meter_item_scale)
 # Container item parity Task 16: TEXT tokens, font and centring; IMAGE
 # dark and size variants; new-item defaults.
 nereus_add_test(tst_meter_item_text_image)
+# Container item parity Task 18: NEEDLE shadow, peak hold, history arc,
+# ignore history and power limit; NEEDLESCALEPWR power limit; new-item
+# defaults.
+nereus_add_test(tst_meter_item_needle)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.

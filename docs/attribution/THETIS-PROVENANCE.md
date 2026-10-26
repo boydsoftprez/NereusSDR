@@ -481,6 +481,7 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | tests/tst_sku_ui_profile.cpp | Project Files/Source/Console/setup.cs | 19832-20375 | port | thetis-samphire | per-SKU label + flag fixture for SkuUiProfile (Phase 3P-I-b) |
 | tests/tst_antenna_labels.cpp | Project Files/Source/Console/setup.cs | 19846-20375 | port | thetis-samphire | delegator test for AntennaLabels + rxOnlyLabels (Phase 3P-I-b) |
 | tests/tst_meter_item_bar.cpp | Project Files/Source/Console/MeterManager.cs | 19917-20278; 35950-36140; 21499-21616; 21284-21302; 37458-37606; 41053-41056 [v2.10.3.15] | port | thetis-samphire | clsBarItem, renderHBar, addSMeterBar parity; Segments / Solid geometry, power limit, defaults |
+| tests/tst_meter_item_needle.cpp | Project Files/Source/Console/MeterManager.cs | 21942-21973; 22018-22029; 22100-22139; 16229-16260; 40785-40928; 41047-41057; 7132-7139 [v2.10.3.15] | port | thetis-samphire | clsNeedleItem, clsNeedleScalePwrItem, renderNeedle parity; shadow, peak hold, history, ignore history, power limit, defaults |
 | tests/tst_meter_item_scale.cpp | Project Files/Source/Console/MeterManager.cs | 14785-15853; 31879-31886; 32338+ | port | thetis-samphire | clsScaleItem, ShowType, generalScale |
 | tests/tst_meter_presets.cpp | Project Files/Source/Console/MeterManager.cs | 21499-21616; 31911-31916 | port | thetis-samphire | addSMeterBar, renderScale dispatch |
 | tests/tst_reading_name.cpp | Project Files/Source/Console/MeterManager.cs | 2258-2318 | port | thetis-samphire | verbatim label parity |

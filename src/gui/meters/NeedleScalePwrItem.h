@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - NEEDLESCALEPWR building block: the power limit takes
+//                 0.1 W to 5000 W (below 0.1 recovers to 100 W) and new
+//                 items take the clsNeedleScalePwrItem defaults
+//                 (kNeedleScalePwrThetisDefaults). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -90,7 +95,10 @@ public:
     void setShowMarkers(bool s) { m_showMarkers = s; }
     bool showMarkers() const { return m_showMarkers; }
 
-    void setMaxPower(float p) { m_maxPower = p; }
+    // Power limit of the scale (W). Clamped to kMinBarPowerLimitW..
+    // kMaxBarPowerLimitW; below the minimum recovers to the default.
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15]
+    void setMaxPower(float p);
     float maxPower() const { return m_maxPower; }
 
     void setDarkMode(bool d) { m_darkMode = d; }
@@ -115,6 +123,9 @@ public:
         m_calibration.insert(value, QPointF(nx, ny));
     }
 
+    // New items (makeEntry) take the clsNeedleScalePwrItem constructor's values.
+    void applyNewItemDefaults() override;
+
     Layer renderLayer() const override { return Layer::OverlayStatic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -138,6 +149,35 @@ private:
     QPointF   m_needleOffset{0.0, 0.0};
     float     m_lengthFactor{1.0f};
     QMap<float, QPointF> m_calibration;
+};
+
+// New NEEDLESCALEPWR items (makeEntry) take the clsNeedleScalePwrItem
+// constructor's values. From Thetis MeterManager.cs:16229-16260 [v2.10.3.15];
+// the power limit is the setup control's default, as for BAR
+// (Thetis takes CurrentPowerRating, MeterManager.cs:6774).
+struct NeedleScalePwrItemThetisDefaults {
+    QRgb        lowColour;
+    QRgb        highColour;
+    const char* fontFamily;
+    bool        fontBold;
+    float       fontSize;
+    bool        showMarkers;
+    bool        darkMode;
+    float       lengthFactor;
+    NeedleScalePwrItem::Direction direction;
+    double      maxPower;
+};
+inline constexpr NeedleScalePwrItemThetisDefaults kNeedleScalePwrThetisDefaults{
+    qRgb(0xff, 0xff, 0xff),     // _lowColour = System.Drawing.Color.White
+    qRgb(0xff, 0x00, 0x00),     // _highColour = System.Drawing.Color.Red
+    "Trebuchet MS",             // _fontFamily = "Trebuchet MS"
+    false,                      // _fontStyle = FontStyle.Regular
+    20.0f,                      // _fontSize = 20f
+    true,                       // _showMarkers = true
+    false,                      // _darkMode = false
+    1.0f,                       // _lengthFactor = 1f
+    NeedleScalePwrItem::Direction::Clockwise, // _needleDirection = clsNeedleItem.NeedleDirection.Clockwise
+    kDefaultBarPowerLimitW,     // nudMeterItemsPowerLimit.Value = 100
 };
 
 } // namespace NereusSDR

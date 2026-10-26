@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - NEEDLESCALEPWR building block: the power limit takes
+//                 0.1 W to 5000 W (below 0.1 recovers to 100 W) and new
+//                 items take the clsNeedleScalePwrItem defaults
+//                 (kNeedleScalePwrThetisDefaults). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -70,7 +75,37 @@ mw0lge@grange-lane.co.uk
 #include <QRect>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace NereusSDR {
+
+void NeedleScalePwrItem::setMaxPower(float p)
+{
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(static_cast<double>(p) >= kMinBarPowerLimitW)) {
+        m_maxPower = static_cast<float>(kDefaultBarPowerLimitW);
+        return;
+    }
+    m_maxPower = static_cast<float>(std::min(static_cast<double>(p), kMaxBarPowerLimitW));
+}
+
+void NeedleScalePwrItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const NeedleScalePwrItemThetisDefaults& d = kNeedleScalePwrThetisDefaults;
+    m_lowColour    = QColor::fromRgb(d.lowColour);
+    m_highColour   = QColor::fromRgb(d.highColour);
+    m_fontFamily   = QString::fromLatin1(d.fontFamily);
+    m_fontBold     = d.fontBold;
+    m_fontSize     = d.fontSize;
+    m_showMarkers  = d.showMarkers;
+    m_darkMode     = d.darkMode;
+    m_lengthFactor = d.lengthFactor;
+    m_direction    = d.direction;
+    setMaxPower(static_cast<float>(d.maxPower));
+}
 
 // ---------------------------------------------------------------------------
 // tidyPower()
@@ -286,7 +321,7 @@ bool NeedleScalePwrItem::deserialize(const QString& data)
     m_fontSize    = fontSize;
     m_fontBold    = fontBold;
     m_marks       = marks;
-    m_maxPower    = maxPower;
+    setMaxPower(maxPower);
     m_darkMode    = darkMode;
     m_calibration = calibration;
 
