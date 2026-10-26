@@ -18,6 +18,8 @@
 //   2026-10-24 - Its drag goes on past the cap with the slice already
 //                 there, and the copy shows the stored filter. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - thePropertyEditorDoesNotCallARowUnsupported. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -25,6 +27,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
+#include <QGroupBox>
+#include <QLineEdit>
 #include <QLayout>
 #include <QMouseEvent>
 #include <QPointer>
@@ -38,6 +42,7 @@
 #include "core/P2RadioConnection.h"
 #include "core/StepAttenuatorFacade.h"
 #include "gui/applets/RxApplet.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/applets/RxControlSections.h"
 #include "gui/applets/RxSectionContent.h"
 #include "gui/widgets/FilterPassbandWidget.h"
@@ -80,6 +85,19 @@ QPushButton* appletSql(RxApplet& applet)
         if (button->text() == QStringLiteral("SQL")) { return button; }
     }
     return nullptr;
+}
+
+// Every label text and tooltip the property editor shows.
+QString editorText(const QWidget& editor)
+{
+    QStringList parts;
+    for (const QLabel* label : editor.findChildren<QLabel*>()) {
+        parts.append(label->text());
+    }
+    for (const QWidget* widget : editor.findChildren<QWidget*>()) {
+        parts.append(widget->toolTip());
+    }
+    return parts.join(QLatin1Char('\n'));
 }
 
 } // namespace
@@ -570,6 +588,47 @@ private slots:
         QCOMPARE(slice.filterHigh(), 10000);
         QCOMPARE(passband->filterLo(), 8100);
         QCOMPARE(passband->filterHi(), 10000);
+    }
+
+    // ── The property editor: an RX row is a known type with no options ──
+    void thePropertyEditorDoesNotCallARowUnsupported()
+    {
+        RadioModel radio;
+        RxApplet applet(nullptr, &radio);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+
+        for (const char* type : kTypes) {
+            const QString id = QString::fromLatin1(type);
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(registry.makeEntry(id));
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("Unsupported")), qPrintable(id));
+            QVERIFY2(editor.findChild<QLineEdit*>(QStringLiteral("contentName")), qPrintable(id));
+            QVERIFY2(editor.findChild<QCheckBox*>(QStringLiteral("contentVisible")), qPrintable(id));
+            // Only a row that declares options (TX Keying, RX Filter) has
+            // an item-specific group; every other row has none.
+            QCOMPARE(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")) != nullptr,
+                     !registry.declaredProperties(id).isEmpty());
+        }
+
+        // A type the registry does not know (a layout from a newer build)
+        // still says so: the registry's unknown-type reason, the original
+        // data retained.
+        ContentEntry unknown = registry.makeEntry(QString::fromLatin1(kTypes[0]));
+        unknown.typeId = QStringLiteral("rx.fromANewerBuild");
+        ContentPropertyEditor unknownEditor(registry);
+        unknownEditor.setEntry(unknown);
+        QVERIFY(!registry.isAvailable(unknown.typeId));
+        QVERIFY(editorText(unknownEditor).contains(registry.unavailableReason(unknown.typeId)));
+        QVERIFY(editorText(unknownEditor).contains(QStringLiteral("Unknown content type; original data retained")));
+
+        // An unavailable row shows its reason.
+        const QString first = QString::fromLatin1(kTypes[0]);
+        registry.setAvailable(first, false, QStringLiteral("Test reason: not available here"));
+        ContentPropertyEditor unavailableEditor(registry);
+        unavailableEditor.setEntry(registry.makeEntry(first));
+        QVERIFY(editorText(unavailableEditor).contains(QStringLiteral("Test reason: not available here")));
+        QVERIFY(!editorText(unavailableEditor).contains(QStringLiteral("Unsupported configuration")));
     }
 };
 

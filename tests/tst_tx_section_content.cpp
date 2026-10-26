@@ -26,9 +26,12 @@
 //  13. A copy's Take transmit asks as the applet's own does.
 //  14. A preview of a row is inert.
 //  15. An unkey clears every power row's reading.
+//  16. The property editor does not call a row unsupported.
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The property editor does not call a row unsupported.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-21 - Copies made after the gates, remote 2-TONE copies, a copy's
 //                Take transmit and inert previews; the unreachable "+" menu
 //                test goes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -42,6 +45,9 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QLabel>
+#include <QGroupBox>
+#include <QLineEdit>
+#include <QCheckBox>
 #include <QLayout>
 #include <QListWidget>
 #include <QMargins>
@@ -73,6 +79,7 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
@@ -95,6 +102,19 @@ const char* const kAppletRowWidgets[] = {
     "TxLevButton", "TxEqButton", "TxCfcButton", "TxRfPowerSlider",
     "TxVoxButton", "TxAppletPsaBtn", "TxHolderLabel", "TxTakeTransmitButton",
 };
+
+// Every label text and tooltip the property editor shows.
+QString editorText(const QWidget& editor)
+{
+    QStringList parts;
+    for (const QLabel* label : editor.findChildren<QLabel*>()) {
+        parts.append(label->text());
+    }
+    for (const QWidget* widget : editor.findChildren<QWidget*>()) {
+        parts.append(widget->toolTip());
+    }
+    return parts.join(QLatin1Char('\n'));
+}
 
 } // namespace
 
@@ -845,6 +865,47 @@ private slots:
         QVERIFY(folded->takeTransmitButton()->isHidden());
         QVERIFY(!shown->holderLabel()->isHidden());
         QVERIFY(!shown->takeTransmitButton()->isHidden());
+    }
+
+    // ── The property editor: a TX row is a known type with no options ──
+    void thePropertyEditorDoesNotCallARowUnsupported()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(registry.makeEntry(id));
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("Unsupported")), qPrintable(id));
+            QVERIFY2(editor.findChild<QLineEdit*>(QStringLiteral("contentName")), qPrintable(id));
+            QVERIFY2(editor.findChild<QCheckBox*>(QStringLiteral("contentVisible")), qPrintable(id));
+            // Only a row that declares options (TX Keying, RX Filter) has
+            // an item-specific group; every other row has none.
+            QCOMPARE(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")) != nullptr,
+                     !registry.declaredProperties(id).isEmpty());
+        }
+
+        // A type the registry does not know (a layout from a newer build)
+        // still says so: the registry's unknown-type reason, the original
+        // data retained.
+        ContentEntry unknown = registry.makeEntry(QString::fromLatin1(kRowTypes[0]));
+        unknown.typeId = QStringLiteral("tx.fromANewerBuild");
+        ContentPropertyEditor unknownEditor(registry);
+        unknownEditor.setEntry(unknown);
+        QVERIFY(!registry.isAvailable(unknown.typeId));
+        QVERIFY(editorText(unknownEditor).contains(registry.unavailableReason(unknown.typeId)));
+        QVERIFY(editorText(unknownEditor).contains(QStringLiteral("Unknown content type; original data retained")));
+
+        // An unavailable row shows its reason.
+        const QString first = QString::fromLatin1(kRowTypes[0]);
+        registry.setAvailable(first, false, QStringLiteral("Test reason: not available here"));
+        ContentPropertyEditor unavailableEditor(registry);
+        unavailableEditor.setEntry(registry.makeEntry(first));
+        QVERIFY(editorText(unavailableEditor).contains(QStringLiteral("Test reason: not available here")));
+        QVERIFY(!editorText(unavailableEditor).contains(QStringLiteral("Unsupported configuration")));
     }
 };
 
