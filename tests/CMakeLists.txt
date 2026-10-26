@@ -9173,7 +9173,11 @@ target_compile_definitions(tst_other_button_reorder PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 60: the receive buttons (NR, NB, AGC, RIT,
 # XIT, Lock, tune step, Mute All, Voice SQL, AF, BAL, MNF+) act on the
 # container's slice; none keys, and a preview's click never reaches them.
-nereus_add_test(tst_other_button_actions)
+# Task 61: and the transmit setting buttons follow the TX applet's setters
+# and gates; a remote TUN+ reaches a loopback Core.
+nereus_add_test(tst_other_button_actions
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 target_compile_definitions(tst_other_button_actions PRIVATE NEREUS_BUILD_TESTS)
 # R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
 # builds, local or remote, carries a not-yet-implemented mark or tooltip,

@@ -931,6 +931,12 @@
 //                each slice's NR, NB, RIT, XIT, lock, AGC mode, auto AGC
 //                and voice squelch changes (the receive buttons). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 61: the container transmit
+//                setting buttons follow the TX applet's gates
+//                (transmitSettingsRefusal, voxRefusal) and light from the
+//                transmit model's COMP, VOX, DEXP, TX EQ, CFC, CFC EQ,
+//                leveler and phase rotator. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -9231,6 +9237,40 @@ void MainWindow::buildUI()
             return holder.isEmpty() || !pureSignalArmingPermitted() ? pureSignalArmingReason()
                                                                     : holder;
         };
+        // Container item parity Task 61: the transmit setting buttons follow
+        // their applet controls' gates, applyRemoteRoleGating's settingsAt
+        // and settingsReasonAt: the version's own reason first, then the
+        // Core's holder reason; empty when the Core takes them.
+        hooks.transmitSettingsRefusal = [this, otherHolder](int version) {
+            return transmitSettingsPermitted(version) ? otherHolder()
+                                                      : transmitSettingsReason(version);
+        };
+        // Task 61: VOX follows the TX applet's VOX button: remote transmit
+        // (setTransmitPermitted), then applyRemoteRoleGating's VOX line
+        // (this computer's microphone line, the Core's microphone source,
+        // the transmit holder), then a hosting window's station VOX holder
+        // (applyDesktopVoxHolderGate).
+        hooks.voxRefusal = [this] {
+            if (!transmitControlsPermitted()) { return remoteTransmitReason(); }
+            QString reason;
+            if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
+                reason = TxRefusals::micNotConnected().text;
+            }
+            if (m_stationClient && m_stationClient->remoteTransmit()) {
+                const auto* source = m_stationClient->remoteTransmit();
+                if (!source->micSourceSettled()) {
+                    reason = source->micSourceReason();
+                } else if (source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+                    reason = remoteRadioVoxReason();
+                }
+            }
+            if (reason.isEmpty() && m_stationClient && m_stationClient->knowsTransmitHolder()
+                && !m_stationClient->holdsTransmitHere()) {
+                const QString holder = m_stationClient->otherHolderReason();
+                reason = holder.isEmpty() ? TxRefusals::notHolder().text : holder;
+            }
+            return reason.isEmpty() ? desktopVoxHolderReason() : reason;
+        };
         hooks.remoteTransmitReason =
             tr("Remote transmit controls are not available from this Core.");
         // Desktop remote transmit: the Core's own reason when it gave one.
@@ -9284,6 +9324,19 @@ void MainWindow::buildUI()
         const auto refresh = [this]() { refreshContainerControls(); };
         connect(&m_radioModel->transmitModel(), &TransmitModel::monEnabledChanged,
                 this, refresh);
+        // Container item parity Task 61: the transmit setting buttons light
+        // from the transmit model.
+        {
+            const TransmitModel* tx = &m_radioModel->transmitModel();
+            connect(tx, &TransmitModel::cpdrOnChanged, this, refresh);
+            connect(tx, &TransmitModel::voxEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::dexpEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::txEqEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::cfcEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::cfcPostEqEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::txLevelerOnChanged, this, refresh);
+            connect(tx, &TransmitModel::phaseRotatorEnabledChanged, this, refresh);
+        }
         connect(m_radioModel, &RadioModel::tuneRefused, this, refresh);
         connect(m_radioModel, &RadioModel::connectionStateChanged, this, refresh);
         // Desktop remote transmit: a remote window's MOX, TUNE and 2-TONE

@@ -23,11 +23,28 @@
 //   - Each receive button is offered, and its editor row is enabled.
 //   - A settings preview's click never reaches the dispatcher.
 //
+// Container item parity Task 61: 20 transmit setting buttons call the TX
+// applet's setters (Thetis console.cs:51486-51579 [v2.10.3.15]):
+//   - In a local window each click sets the transmit model, the toggles
+//     light from it and the steps clamp to their sliders' ranges.
+//   - In a remote window whose gate refuses, each is unavailable with that
+//     gate's reason (VOX with its VOX line reason) and a click changes
+//     nothing.
+//   - A remote TUN+ reaches the Core, whose transmit band's tune power
+//     rises by 5.
+//   - None keys the radio; a preview's click goes nowhere.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 60.
 //                                    AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 61: the
+//                                    transmit setting buttons; the fixture
+//                                    drops RadioModel's "TX frequency NOT
+//                                    pushed" warning, which tuning with no
+//                                    radio raises. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -40,8 +57,18 @@
 #include <QTemporaryDir>
 
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
+#include "core/ConnectionState.h"
 #include "core/ControlRanges.h"
+#include "core/HpsdrModel.h"
 #include "core/MoxController.h"
+#include "core/safety/TxRefusal.h"
+#include "core/session/IStationLink.h"
+#include "core/session/StationClient.h"
+#include "core/session/StationServer.h"
+#include "core/settings/SettingsProxy.h"
+#include "fakes/LoopbackTransport.h"
+#include "fakes/UpgradedCoreToken.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "gui/containers/ContainerContentHost.h"
@@ -55,6 +82,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "models/Band.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -79,6 +107,108 @@ const QList<Id> kReceive = {
     Id::MuteAll, Id::SqlVsql, Id::AfP5, Id::AfM5, Id::BalP5, Id::BalM5,
     Id::AgcFixed, Id::AgcLong, Id::AgcSlow, Id::AgcMedium, Id::AgcFast, Id::AgcCustom,
     Id::AgcAuto, Id::AgcP5, Id::AgcM5,
+};
+
+// The 20 transmit setting buttons of Task 61, in Thetis id order.
+const QList<Id> kTransmitSettings = {
+    Id::Comp, Id::Vox, Id::Dexp, Id::TxEq, Id::Cfc, Id::CfcEq,
+    Id::MicP1, Id::MicM1, Id::CompP1, Id::CompM1, Id::VoxP1, Id::VoxM1,
+    Id::Leveler, Id::PhaseRot,
+    Id::DriveP5, Id::DriveM5, Id::TuneP5, Id::TuneM5, Id::Drive0, Id::Tun0,
+};
+
+// RadioModel warns that it cannot push the transmit frequency each time the
+// transmit slice is tuned with no radio connected (pushTxFrequencyFromTxSlice).
+// These tests tune with no radio on purpose; every other message passes.
+class QuietUnconnectedTxFrequency {
+public:
+    QuietUnconnectedTxFrequency() { s_previous = qInstallMessageHandler(&drop); }
+    ~QuietUnconnectedTxFrequency() { qInstallMessageHandler(s_previous); }
+    QuietUnconnectedTxFrequency(const QuietUnconnectedTxFrequency&) = delete;
+    QuietUnconnectedTxFrequency& operator=(const QuietUnconnectedTxFrequency&) = delete;
+
+private:
+    static void drop(QtMsgType type, const QMessageLogContext& context, const QString& message)
+    {
+        if (type == QtWarningMsg
+            && message.startsWith(QStringLiteral("TX frequency NOT pushed: no connection yet"))) {
+            return;
+        }
+        if (s_previous) { s_previous(type, context, message); }
+    }
+    static inline QtMessageHandler s_previous = nullptr;
+};
+
+// Everything a transmit setting button may change.
+struct TransmitSnapshot {
+    bool cpdr, vox, dexp, txEq, cfc, cfcEq, leveler, phaseRot;
+    int mic, cpdrLevel, voxThreshold, power, tune20m, tuneTx;
+
+    static TransmitSnapshot of(const TransmitModel& t)
+    {
+        return {t.cpdrOn(), t.voxEnabled(), t.dexpEnabled(), t.txEqEnabled(), t.cfcEnabled(),
+                t.cfcPostEqEnabled(), t.txLevelerOn(), t.phaseRotatorEnabled(), t.micGainDb(),
+                t.cpdrLevelDb(), t.voxThresholdDb(), t.power(), t.tunePowerForBand(Band::Band20m),
+                t.tunePowerForTxBand()};
+    }
+    bool operator==(const TransmitSnapshot& o) const
+    {
+        return cpdr == o.cpdr && vox == o.vox && dexp == o.dexp && txEq == o.txEq && cfc == o.cfc
+            && cfcEq == o.cfcEq && leveler == o.leveler && phaseRot == o.phaseRot && mic == o.mic
+            && cpdrLevel == o.cpdrLevel && voxThreshold == o.voxThreshold && power == o.power
+            && tune20m == o.tune20m && tuneTx == o.tuneTx;
+    }
+};
+
+// A Core with an HL2 on 40 m and one remote window, linked in memory, the
+// loopback session of tst_transmit_model_properties.cpp.
+struct LoopbackSession {
+    explicit LoopbackSession(const QString& securityDir, QObject* parent)
+        : settings(settingsDir.filePath(QStringLiteral("NereusSDR.settings")))
+    {
+        // Both ends' settings as CoreInit::initialize() leaves them, so the
+        // session finds no schema skew.
+        settings.setValue(QStringLiteral("SettingsSchemaVersion"), kSchemaVersion);
+        AppSettings::instance().setValue(QStringLiteral("SettingsSchemaVersion"), kSchemaVersion);
+        core = std::make_unique<RadioModel>();
+        core->setBoardForTest(HPSDRHW::HermesLite);
+        core->setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        core->setConnectionStateForTest(ConnectionState::Connected);
+        core->addSlice(QStringLiteral("pan-0"));
+        server = std::make_unique<StationServer>(
+            core.get(), settings, NereusSDR::Test::seedUpgradedCoreToken(securityDir));
+        client = std::make_unique<StationClient>(&window, &proxy);
+        coreEnd = new NereusSDR::Test::LoopbackTransport(QStringLiteral("station-end"), parent);
+        windowEnd = new NereusSDR::Test::LoopbackTransport(QStringLiteral("client-end"), parent);
+        coreEnd->linkTo(windowEnd);
+    }
+    bool connect()
+    {
+        // A remote window's RadioModel takes the radio's name, model and
+        // version from its own connection, not from the Core's snapshot;
+        // StationClient says so once per property.
+        for (const char* property : {"name", "model", "version"}) {
+            QTest::ignoreMessage(QtWarningMsg,
+                qPrintable(QStringLiteral("No way to apply station value for \"RadioModel.%1\" "
+                                          "-- this property will read stale on this client")
+                               .arg(QLatin1String(property))));
+        }
+        QSignalSpy completed(client.get(), &StationClient::handshakeComplete);
+        client->startSession(windowEnd, server->token());
+        server->acceptTransport(coreEnd);
+        return completed.wait(5000) || completed.count() == 1;
+    }
+
+    QTemporaryDir settingsDir;
+    AppSettings settings;
+    std::unique_ptr<RadioModel> core;
+    std::unique_ptr<StationServer> server;
+    RadioModel window{RadioModel::Role::Remote};
+    SettingsProxy proxy;
+    std::unique_ptr<StationClient> client;
+    NereusSDR::Test::LoopbackTransport* coreEnd = nullptr;
+    NereusSDR::Test::LoopbackTransport* windowEnd = nullptr;
+    static inline const QString kSchemaVersion = QStringLiteral("7");
 };
 
 // Everything a receive button may change on a slice.
@@ -130,9 +260,101 @@ class TstOtherButtonActions : public QObject {
     Q_OBJECT
 
 private:
+    QTemporaryDir m_securityDir;
+
+    // A transmit setting button's row: how to set the model up, what the
+    // click must have done, and whether it lights after.
+    struct TxRow {
+        Id id;
+        std::function<void(TransmitModel&)> prepare;
+        std::function<bool(const TransmitModel&)> changed;
+        bool litAfter;
+    };
+
+    // The tune power the TX applet shows before the transmit band is known
+    // (TxApplet::shownTunePower): slice A's band, 20 m, in the fixture.
+    static int shownTunePower(const TransmitModel& t)
+    {
+        return t.tuneTxBandKnown() ? t.tunePowerForTxBand() : t.tunePowerForBand(Band::Band20m);
+    }
+    static void setShownTunePower(TransmitModel& t, int watts)
+    {
+        if (!t.setTunePowerForTxBand(watts)) { t.setTunePowerForBand(Band::Band20m, watts); }
+    }
+
+    static QList<TxRow> txRows()
+    {
+        using T = TransmitModel;
+        const auto toggle = [](Id id, std::function<void(T&, bool)> set,
+                               std::function<bool(const T&)> get) {
+            return TxRow{id, [set](T& t) { set(t, false); }, get, true};
+        };
+        return {
+            toggle(Id::Comp, &T::setCpdrOn, &T::cpdrOn),
+            toggle(Id::Vox, &T::setVoxEnabled, &T::voxEnabled),
+            toggle(Id::Dexp, &T::setDexpEnabled, &T::dexpEnabled),
+            toggle(Id::TxEq, &T::setTxEqEnabled, &T::txEqEnabled),
+            toggle(Id::Cfc, &T::setCfcEnabled, &T::cfcEnabled),
+            toggle(Id::CfcEq, &T::setCfcPostEqEnabled, &T::cfcPostEqEnabled),
+            {Id::MicP1, [](T& t) { t.setMicGainDb(0); },
+             [](const T& t) { return t.micGainDb() == 1; }, false},
+            {Id::MicM1, [](T& t) { t.setMicGainDb(0); },
+             [](const T& t) { return t.micGainDb() == -1; }, false},
+            {Id::CompP1, [](T& t) { t.setCpdrLevelDb(10); },
+             [](const T& t) { return t.cpdrLevelDb() == 11; }, false},
+            {Id::CompM1, [](T& t) { t.setCpdrLevelDb(10); },
+             [](const T& t) { return t.cpdrLevelDb() == 9; }, false},
+            {Id::VoxP1, [](T& t) { t.setVoxThresholdDb(-20); },
+             [](const T& t) { return t.voxThresholdDb() == -19; }, false},
+            {Id::VoxM1, [](T& t) { t.setVoxThresholdDb(-20); },
+             [](const T& t) { return t.voxThresholdDb() == -21; }, false},
+            toggle(Id::Leveler, &T::setTxLevelerOn, &T::txLevelerOn),
+            toggle(Id::PhaseRot, &T::setPhaseRotatorEnabled, &T::phaseRotatorEnabled),
+            {Id::DriveP5, [](T& t) { t.setPower(50); },
+             [](const T& t) { return t.power() == 55; }, false},
+            {Id::DriveM5, [](T& t) { t.setPower(50); },
+             [](const T& t) { return t.power() == 45; }, false},
+            {Id::TuneP5, [](T& t) { setShownTunePower(t, 30); },
+             [](const T& t) { return shownTunePower(t) == 35; }, false},
+            {Id::TuneM5, [](T& t) { setShownTunePower(t, 30); },
+             [](const T& t) { return shownTunePower(t) == 25; }, false},
+            {Id::Drive0, [](T& t) { t.setPower(50); },
+             [](const T& t) { return t.power() == 0; }, false},
+            {Id::Tun0, [](T& t) { setShownTunePower(t, 30); },
+             [](const T& t) { return shownTunePower(t) == 0; }, false},
+        };
+    }
+
+    // The editor lists each of `ids` enabled, under `captions`.
+    static void checkOfferedWithEnabledEditorRows(const QList<Id>& ids, const QStringList& captions)
+    {
+        OtherButtonItem item;
+        OtherButtonItemEditor editor;
+        editor.setItem(&item);
+        for (Id id : ids) {
+            QVERIFY2(item.isOffered(id), qPrintable(QString::number(int(id))));
+            QVERIFY(!OtherButtonItem::unbuiltFeatureFor(id).has_value());
+            // Hidden on a new grid, so an earlier layout looks the same.
+            QVERIFY(!item.isButtonVisible(id));
+            auto* check = editor.findChild<QCheckBox*>(
+                QStringLiteral("otherVisible_%1").arg(int(id)));
+            QVERIFY2(check, qPrintable(QString::number(int(id))));
+            QVERIFY(check->isEnabled());
+            QVERIFY(!check->toolTip().contains(UnbuiltFeatures::notBuiltReason()));
+            check->setChecked(true);
+            QVERIFY(item.isButtonShown(id));
+        }
+        QCOMPARE(ids.size(), captions.size());
+        for (int i = 0; i < ids.size(); ++i) {
+            QCOMPARE(item.buttonLabel(ids[i]), captions[i]);
+        }
+    }
+
     // A local model with slices A and B, B active, and no radio (the
     // fixture of tst_other_button_item.cpp).
     struct Fixture {
+        // First, so it outlives the model's own messages.
+        QuietUnconnectedTxFrequency quiet;
         RadioModel model;
         SliceModel* a{nullptr};
         SliceModel* b{nullptr};
@@ -231,6 +453,8 @@ private:
     }
 
 private slots:
+    void initTestCase() { QVERIFY(m_securityDir.isValid()); }
+
     void init()
     {
         UnbuiltFeatures::resetForTest();
@@ -536,6 +760,8 @@ private slots:
         QSignalSpy transmitting(&f.model, &RadioModel::transmittingChanged);
         for (int round = 0; round < 3; ++round) {
             for (Id id : kReceive) { f.dispatcher->click(id, kSliceA); }
+            // Task 61: and the transmit setting buttons, VOX included.
+            for (Id id : kTransmitSettings) { f.dispatcher->click(id, kSliceA); }
         }
         QVERIFY(!f.model.isTransmitting());
         QVERIFY(!f.model.transmitModel().isTune());
@@ -548,30 +774,205 @@ private slots:
     // enabled with no change to the editor.
     void everyReceiveButtonIsOfferedAndItsEditorRowEnabled()
     {
-        OtherButtonItem item;
-        OtherButtonItemEditor editor;
-        editor.setItem(&item);
-        for (Id id : kReceive) {
-            QVERIFY2(item.isOffered(id), qPrintable(QString::number(int(id))));
-            QVERIFY(!OtherButtonItem::unbuiltFeatureFor(id).has_value());
-            // Hidden on a new grid, so an earlier layout looks the same.
-            QVERIFY(!item.isButtonVisible(id));
-            auto* check = editor.findChild<QCheckBox*>(
-                QStringLiteral("otherVisible_%1").arg(int(id)));
-            QVERIFY2(check, qPrintable(QString::number(int(id))));
-            QVERIFY(check->isEnabled());
-            QVERIFY(!check->toolTip().contains(UnbuiltFeatures::notBuiltReason()));
-            check->setChecked(true);
-            QVERIFY(item.isButtonShown(id));
-        }
-        const QStringList captions = {
+        checkOfferedWithEnabledEditorRows(kReceive, {
             "NR", "NR1", "NR2", "NR3", "NR4", "NB", "NB1", "NB2", "MNF+", "RIT", "RIT0",
             "XIT", "XIT0", "Lock", "TS+", "TS-", "Mute All", "Voice SQL", "AF+", "AF-",
             "BAL+", "BAL-", "FIX", "LONG", "SLOW", "MED", "FAST", "CUST", "AUTO", "AGC+",
-            "AGC-"};
-        for (int i = 0; i < kReceive.size(); ++i) {
-            QCOMPARE(item.buttonLabel(kReceive[i]), captions[i]);
+            "AGC-"});
+    }
+
+    // Task 61: each transmit setting button is offered under its Thetis
+    // caption, and its editor row is enabled.
+    void everyTransmitSettingButtonIsOfferedAndItsEditorRowEnabled()
+    {
+        checkOfferedWithEnabledEditorRows(kTransmitSettings, {
+            "COMP", "VOX", "DEXP", "TX EQ", "CFC", "CFC EQ", "MIC+", "MIC-", "COMP+",
+            "COMP-", "VOX+", "VOX-", "Leveler", "PhaRot", "DRI+", "DRI-", "TUN+", "TUN-",
+            "DRI-0", "TUN-0"});
+    }
+
+    // Task 61 acceptance, local window: each row sets the transmit model as
+    // its applet control does; the toggles light from the model and go off
+    // again; the steps never light. Nothing keys.
+    void everyTransmitSettingRowSetsTheModel()
+    {
+        for (const TxRow& row : txRows()) {
+            Fixture f;
+            TransmitModel& tx = f.model.transmitModel();
+            row.prepare(tx);
+            const QByteArray name = QByteArray::number(int(row.id));
+            const auto before = f.dispatcher->stateOf(row.id, kSliceA);
+            QVERIFY2(before.available, name.constData());
+            QVERIFY2(!before.on, name.constData());
+            QCOMPARE(f.dispatcher->click(row.id, kSliceA), QString());
+            QVERIFY2(row.changed(tx), name.constData());
+            QCOMPARE(f.dispatcher->stateOf(row.id, kSliceA).on, row.litAfter);
+            // A transmit setting is not the slice's: a container on any
+            // slice shows the same, even one not open.
+            QCOMPARE(f.dispatcher->stateOf(row.id, kSliceC).on, row.litAfter);
+            QVERIFY(f.dispatcher->stateOf(row.id, kSliceC).available);
+            if (row.litAfter) {
+                QCOMPARE(f.dispatcher->click(row.id, kSliceA), QString());
+                QVERIFY2(!f.dispatcher->stateOf(row.id, kSliceA).on, name.constData());
+            }
+            QVERIFY(!f.model.isTransmitting());
+            QVERIFY(!tx.isTune());
+            // apply() lights the grid from the model.
+            OtherButtonItem item;
+            row.prepare(tx);
+            if (row.litAfter) { f.dispatcher->click(row.id, kSliceA); }
+            f.dispatcher->apply(&item, kSliceA);
+            QCOMPARE(item.buttonState(row.id), row.litAfter);
+            QVERIFY(item.isButtonAvailable(row.id));
         }
+    }
+
+    // Task 61 acceptance: the steps clamp to their sliders' ranges: the
+    // board's mic gain range, PROC 0 to 20 dB, VOX -80 to 0 dB, and RF and
+    // Tune Power 0 to the radio's slider maximum (an HL2's 90 and 99).
+    void transmitStepsClampToTheirSliders()
+    {
+        for (const bool hl2 : {false, true}) {
+            Fixture f;
+            if (hl2) { f.model.setHpsdrModelForTest(HPSDRModel::HERMESLITE); }
+            const HPSDRModel radio = f.model.hardwareProfile().model;
+            TransmitModel& tx = f.model.transmitModel();
+            const BoardCapabilities& caps = f.model.boardCapabilities();
+            const auto clicks = [&f](Id id, int times) {
+                for (int i = 0; i < times; ++i) { f.dispatcher->click(id, kSliceA); }
+            };
+
+            tx.setMicGainDb(caps.micGainMaxDb - 1);
+            clicks(Id::MicP1, 3);
+            QCOMPARE(tx.micGainDb(), caps.micGainMaxDb);
+            tx.setMicGainDb(caps.micGainMinDb + 1);
+            clicks(Id::MicM1, 3);
+            QCOMPARE(tx.micGainDb(), caps.micGainMinDb);
+
+            tx.setCpdrLevelDb(19);
+            clicks(Id::CompP1, 3);
+            QCOMPARE(tx.cpdrLevelDb(), 20);
+            tx.setCpdrLevelDb(1);
+            clicks(Id::CompM1, 3);
+            QCOMPARE(tx.cpdrLevelDb(), 0);
+
+            tx.setVoxThresholdDb(-1);
+            clicks(Id::VoxP1, 3);
+            QCOMPARE(tx.voxThresholdDb(), 0);
+            tx.setVoxThresholdDb(-79);
+            clicks(Id::VoxM1, 3);
+            QCOMPARE(tx.voxThresholdDb(), -80);
+
+            const int rfMax = rfPowerSliderMaxFor(radio);
+            QCOMPARE(rfMax, hl2 ? 90 : 100);
+            tx.setPower(rfMax - 2);
+            clicks(Id::DriveP5, 2);
+            QCOMPARE(tx.power(), rfMax);
+            tx.setPower(3);
+            clicks(Id::DriveM5, 2);
+            QCOMPARE(tx.power(), 0);
+
+            const int tuneMax = tuneSliderMaxFor(radio);
+            QCOMPARE(tuneMax, hl2 ? 99 : 100);
+            setShownTunePower(tx, tuneMax - 2);
+            clicks(Id::TuneP5, 2);
+            QCOMPARE(shownTunePower(tx), tuneMax);
+            setShownTunePower(tx, 3);
+            clicks(Id::TuneM5, 2);
+            QCOMPARE(shownTunePower(tx), 0);
+            QVERIFY(!f.model.isTransmitting());
+        }
+    }
+
+    // Task 61 acceptance, remote window with the gate refused: every row
+    // is unavailable with its control's gate's reason, and a click changes
+    // nothing. VOX shows its VOX line reason (no microphone line here).
+    void aRefusedRemoteGateShowsItsReasonAndChangesNothing()
+    {
+        QuietUnconnectedTxFrequency quiet;
+        RadioModel remote(RadioModel::Role::Remote);
+        QVERIFY(remote.addSliceWithStationId(0, QString()) >= 0);
+        ContainerButtonDispatcher::Hooks hooks;
+        hooks.transmitSettingsRefusal = [](int version) {
+            return QStringLiteral("Version %1 is refused.").arg(version);
+        };
+        hooks.voxRefusal = [] { return TxRefusals::micNotConnected().text; };
+        ContainerButtonDispatcher dispatcher(&remote, std::move(hooks));
+        TransmitModel& tx = remote.transmitModel();
+        const TransmitSnapshot before = TransmitSnapshot::of(tx);
+        for (Id id : kTransmitSettings) {
+            const QString expected = id == Id::Vox ? TxRefusals::micNotConnected().text
+                : (id == Id::CfcEq || id == Id::PhaseRot) ? QStringLiteral("Version 4 is refused.")
+                : (id == Id::DriveP5 || id == Id::DriveM5 || id == Id::Drive0)
+                    ? QStringLiteral("Version 1 is refused.")
+                    : QStringLiteral("Version 2 is refused.");
+            const auto st = dispatcher.stateOf(id, kSliceA);
+            QVERIFY2(!st.available, qPrintable(QString::number(int(id))));
+            QCOMPARE(st.reason, expected);
+            QCOMPARE(dispatcher.click(id, kSliceA), expected);
+        }
+        QVERIFY(TransmitSnapshot::of(tx) == before);
+        QVERIFY(!remote.isTransmitting());
+        OtherButtonItem item;
+        dispatcher.apply(&item, kSliceA);
+        for (Id id : kTransmitSettings) { QVERIFY(!item.isButtonAvailable(id)); }
+
+        // VOX with its line open still follows the chain gate after it.
+        {
+            ContainerButtonDispatcher::Hooks lineOpen;
+            lineOpen.transmitSettingsRefusal = [](int version) {
+                return QStringLiteral("Version %1 is refused.").arg(version);
+            };
+            lineOpen.voxRefusal = [] { return QString(); };
+            ContainerButtonDispatcher d(&remote, std::move(lineOpen));
+            QCOMPARE(d.stateOf(Id::Vox, kSliceA).reason, QStringLiteral("Version 2 is refused."));
+        }
+        // A remote window with no gate at all refuses with the plain reason.
+        {
+            ContainerButtonDispatcher d(&remote, ContainerButtonDispatcher::Hooks{});
+            for (Id id : kTransmitSettings) {
+                QCOMPARE(d.stateOf(id, kSliceA).reason,
+                         IStationLink::transmitSettingsUnavailableReason());
+                QCOMPARE(d.click(id, kSliceA), IStationLink::transmitSettingsUnavailableReason());
+            }
+        }
+        QVERIFY(TransmitSnapshot::of(tx) == before);
+    }
+
+    // Task 61 acceptance: a remote TUN+ asks the Core, whose transmit
+    // band's tune power rises by 5; TUN- and TUN-0 follow; nothing keys.
+    void aRemoteTunePlusReachesTheCore()
+    {
+        QuietUnconnectedTxFrequency quiet;
+        LoopbackSession s(m_securityDir.path(), this);
+        TransmitModel& coreTx = s.core->transmitModel();
+        SliceModel* const txSlice = s.core->txBoundSlice();
+        QVERIFY(txSlice);
+        txSlice->setFrequency(7'150'000.0);
+        coreTx.setTunePowerForBand(Band::Band40m, 20);
+        QTRY_COMPARE(coreTx.tunePowerForTxBand(), 20);
+        QVERIFY(s.connect());
+        TransmitModel& windowTx = s.window.transmitModel();
+        QTRY_COMPARE(windowTx.tunePowerForTxBand(), 20);
+
+        ContainerButtonDispatcher::Hooks hooks;
+        hooks.transmitSettingsRefusal = [](int) { return QString(); };
+        hooks.voxRefusal = [] { return QString(); };
+        ContainerButtonDispatcher dispatcher(&s.window, std::move(hooks));
+        QVERIFY(dispatcher.stateOf(Id::TuneP5, kSliceA).available);
+        QCOMPARE(dispatcher.click(Id::TuneP5, kSliceA), QString());
+        QTRY_COMPARE(coreTx.tunePowerForBand(Band::Band40m), 25);
+        QCOMPARE(coreTx.tunePowerForTxBand(), 25);
+        QTRY_COMPARE(windowTx.tunePowerForTxBand(), 25);
+        QCOMPARE(dispatcher.click(Id::TuneM5, kSliceA), QString());
+        QTRY_COMPARE(coreTx.tunePowerForBand(Band::Band40m), 20);
+        QTRY_COMPARE(windowTx.tunePowerForTxBand(), 20);
+        QCOMPARE(dispatcher.click(Id::Tun0, kSliceA), QString());
+        QTRY_COMPARE(coreTx.tunePowerForBand(Band::Band40m), 0);
+        QVERIFY(!s.core->isTransmitting());
+        QVERIFY(!coreTx.isTune());
+        QVERIFY(!s.core->moxController() || !s.core->moxController()->isMox());
+        QVERIFY(!s.window.isTransmitting());
     }
 
     // A settings preview is inert: its click never reaches the window's
@@ -639,10 +1040,14 @@ private slots:
         for (MeterWidget* meter : preview->findChildren<MeterWidget*>()) {
             QVERIFY(meter->testAttribute(Qt::WA_TransparentForMouseEvents));
         }
+        const TransmitSnapshot txBefore = TransmitSnapshot::of(f.model.transmitModel());
         emit copy->otherButtonClicked(int(Id::Nr));
         for (Id id : kReceive) { emit copy->otherButtonClicked(int(id)); }
+        // Task 61: and the transmit setting buttons.
+        for (Id id : kTransmitSettings) { emit copy->otherButtonClicked(int(id)); }
         QCOMPARE(dispatched, 0);
         QCOMPARE(f.a->activeNr(), NrSlot::Off);
+        QVERIFY(TransmitSnapshot::of(f.model.transmitModel()) == txBefore);
 
         // The live grid's click reaches it (the wiring above is real).
         emit live->otherButtonClicked(int(Id::Nr));

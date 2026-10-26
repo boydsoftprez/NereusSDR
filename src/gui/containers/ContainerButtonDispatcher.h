@@ -35,6 +35,14 @@
 // refused while transmitting. Mute All mutes every slice this window may
 // change. None keys the radio.
 //
+// Transmit setting buttons (container item parity Task 61) call the setters
+// the TX applet, the Phone/CW applet and Setup > DSP use: COMP, VOX, DEXP,
+// TX EQ, CFC, CFC EQ, the leveler and the phase rotator, and the MIC, COMP,
+// VOX, drive and tune power steps, each clamped to its slider's range. In a
+// remote window each follows its control's gate and shows its reason; the
+// Core still decides. VOX arms voice keying as the TX applet's VOX does;
+// no button keys the radio.
+//
 // The dispatcher holds no state of its own: every lit state is read from
 // the target each time apply() runs.
 //
@@ -69,11 +77,18 @@
 //                                    SliceModel and RadioModel setters the
 //                                    rest of the app uses; none keys.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 61: the
+//                                    transmit setting buttons, through the
+//                                    TX applet's setters and gates
+//                                    (transmitSettingsRefusal, voxRefusal);
+//                                    none keys. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "gui/meters/OtherButtonItem.h"
+#include "models/Band.h"
 
 #include <QList>
 #include <QString>
@@ -122,6 +137,15 @@ public:
         // this window's PureSignal arming now (PS-A), and why not.
         std::function<bool()> pureSignalArmingPermitted;
         std::function<QString()> pureSignalArmingReason;
+        // Container item parity Task 61: why this window's transmit
+        // settings of `version` (transmitSettingsVersion) do not reach the
+        // Core now, with the holder rule the TX applet's controls follow;
+        // empty when they do (always, in a local window).
+        std::function<QString(int version)> transmitSettingsRefusal;
+        // Task 61: why VOX cannot be armed here, the TX applet VOX button's
+        // gate (remote transmit, this computer's microphone line, the
+        // transmit holder); empty when it can.
+        std::function<QString()> voxRefusal;
         // The panadapter that shows a slice (Peak, CTUN).
         std::function<SpectrumWidget*(SliceModel*)> spectrumFor;
         // This computer's VAX outputs (VAX 1, VAX 2). May be null.
@@ -176,6 +200,16 @@ private:
     bool transmitBlockedRemotely() const;
     // A receive button's click on the container's open slice.
     QString clickSlice(Id id, SliceModel* slice);
+    // Task 61: transmitSettingsRefusal, refusing in a remote window that
+    // has no such hook.
+    QString settingsRefusal(int version) const;
+    // Task 61: a transmit setting button's lit state and gate.
+    void transmitSettingState(Id id, State& st) const;
+    // Task 61: a transmit setting button's click.
+    QString clickTransmitSetting(Id id, int rxSource);
+    // Task 61: the band whose tune power a TUN step changes until the
+    // transmit band is known (the TX applet's m_currentBand).
+    Band tunePowerBand(int rxSource) const;
     SpectrumWidget* spectrumOf(int rxSource) const;
     // Mute All: every open slice this window may change.
     QList<SliceModel*> changeableSlices() const;

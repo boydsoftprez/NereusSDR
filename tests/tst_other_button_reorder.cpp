@@ -36,6 +36,9 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  Task 60: the editor lists the 31
 //                                    receive buttons too. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Task 61: and the 20 transmit setting
+//                                    buttons. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -529,8 +532,9 @@ private slots:
             QVERIFY(!check->toolTip().isEmpty());
         }
         // The 33 buttons NereusSDR has had (Power excepted), Task 60's 31
-        // receive buttons and 31 macros.
-        QCOMPARE(offered, 33 + 31 + OtherButtonItem::kMacroCount);
+        // receive buttons, Task 61's 20 transmit setting buttons and 31
+        // macros.
+        QCOMPARE(offered, 33 + 31 + 20 + OtherButtonItem::kMacroCount);
 
         QStringList texts;
         for (const QLabel* label : editor.findChildren<QLabel*>()) {
