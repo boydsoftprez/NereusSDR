@@ -236,7 +236,21 @@ jobs:
         run: ios/scripts/sim-settle.sh 'iPhone 17'
 
       - name: Test on an iPhone 17 simulator
+        # Without ScrollViewIdentifierTests: in a process where an earlier
+        # suite has turned accessibility on, it can only cancel itself.
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
-            test-without-building
+            test-without-building \
+            -skip-testing:NereusSDRTests/ScrollViewIdentifierTests
+
+      - name: Test the scroll view identifiers in a process of their own
+        # ScrollViewIdentifierTests only catches a regression when its walk
+        # is the first in the test process to turn application
+        # accessibility on, so it runs alone, on the products and the
+        # simulator the steps above built and booted.
+        run: |
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            test-without-building \
+            -only-testing:NereusSDRTests/ScrollViewIdentifierTests
