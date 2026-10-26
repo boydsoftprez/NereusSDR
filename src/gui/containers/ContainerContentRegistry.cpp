@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - createMeterItem: an LED made in Preview or Validation mode
+//                 never asks to stop transmitting (No TX). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Power bar, Reverse power bar and SWR bar descriptors
 //                 (meter.pwr, meter.reversePwr, meter.swr). meter.adcMax is
 //                 created like its siblings, so a container shows its bar's
@@ -416,6 +419,10 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     // never starts.
     if (auto* out = qobject_cast<DataOutItem*>(item.get())) {
         out->setSendEnabled(mode == ContentRenderMode::Live);
+    }
+    // An LED copy outside the live host never asks to stop transmitting.
+    if (auto* led = qobject_cast<LEDItem*>(item.get())) {
+        led->setStopEnabled(mode == ContentRenderMode::Live);
     }
     // Likewise a rotator copy outside the live host never commands the rotor.
     if (auto* rotator = qobject_cast<RotatorItem*>(item.get())) {

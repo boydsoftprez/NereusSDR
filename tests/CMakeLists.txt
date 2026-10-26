@@ -864,6 +864,16 @@ nereus_add_test(tst_meter_led_options)
 # slice readings, clock values and a loopback meter data source; the
 # editor's inline error; no condition keeps the thresholds; save and load.
 nereus_add_test(tst_led_condition_expression)
+# Container item parity Task 27: LED No TX. One stop per transition to true
+# while transmitting, with Thetis's message; none with No TX off, receiving,
+# another session's entry, a preview copy or a hidden meter (unless processed
+# when hidden). The session rule; a local radio's MOX stopped through
+# stopAllTx; a remote window's stop reaching the Core over the in-process
+# loopback session. It never keys. No device.
+nereus_add_test(tst_meter_led_no_tx
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_meter_led_no_tx PRIVATE NEREUS_BUILD_TESTS)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
