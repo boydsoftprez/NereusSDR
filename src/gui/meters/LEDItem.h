@@ -24,6 +24,12 @@
 //                 and kLedThetisDefaults for new items. Fields appended to
 //                 the record; saved LEDs keep the fill look and animation.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Condition: a Thetis-style LED condition in NereusSDR's
+//                 expression language (core/LedConditionExpression.h),
+//                 its %name% values from the entry's slice readings, the
+//                 clock values and meter data sources, appended to the
+//                 record; empty, the thresholds decide as before.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -113,9 +119,15 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "core/LedConditionExpression.h"
 #include <QColor>
+#include <QVariant>
+
+#include <optional>
 
 namespace NereusSDR {
+
+class MeterWidget;
 
 // LED update interval range.
 // From Thetis setup.designer.cs:63735-63744 [v2.10.3.15] (nudLedIndicator_UpdateInterval)
@@ -238,9 +250,36 @@ public:
     void setRedThreshold(double t) { m_redThreshold = t; }
     double redThreshold() const { return m_redThreshold; }
 
-    // The LED's true state: the reading is at or above a threshold (the
-    // state in which a fill-look LED is lit). Thetis ConditionResult.
+    // The LED's true state (Thetis ConditionResult): the condition's
+    // result when one is set (false while it has an error), else the
+    // reading at or above a threshold (the state in which a fill-look LED
+    // is lit).
     bool isTrue() const { return m_isTrue; }
+
+    // The condition (Thetis LED condition, MeterManager.cs:21066-21100
+    // [v2.10.3.15]), in the language of core/LedConditionExpression.h, not
+    // C#. Empty: the thresholds decide, as before. Set: the condition
+    // alone decides, and the light shows the true and false colours
+    // (amber and red belong to the thresholds).
+    void setCondition(const QString& expression);
+    QString condition() const { return m_condition; }
+    bool hasCondition() const;
+    // Why the last evaluation failed, or empty. The LED is false while
+    // this is set.
+    QString conditionError() const { return m_conditionError; }
+    // The value of %name%: a Thetis reading name from the entry's slice
+    // readings (the hosting meter's latest values), a clock value
+    // (time_utc, time_loc, date_utc, date_loc), or a meter data source
+    // value written <4 character ID>.<value name>. std::nullopt for an
+    // unknown name; an invalid QVariant for a known name with no value yet.
+    std::optional<QVariant> conditionValue(const QString& name) const;
+    // Checks an expression for the editor. A known name with no value yet
+    // stands in as 0 (empty text for a clock value), so only mistakes show.
+    LedConditionResult checkCondition(const QString& expression) const;
+    // Works the condition out now; true when the true state or the error
+    // changed. Readings, the update interval in advanceMeter and
+    // setCondition call it.
+    bool evaluateCondition();
 
     // Placed look runtime state (not saved): Thetis ColorFade 0..1 between
     // the false and true colours, and the panel flip fade 48..255.
@@ -284,6 +323,9 @@ private:
     void paintFill(QPainter& p, int widgetW, int widgetH);
     void paintPlaced(QPainter& p, int widgetW, int widgetH);
     void drawShape(QPainter& p, const QRect& ledRect, const QColor& color);
+    MeterWidget* hostMeter() const;
+    // Evaluates the condition once per update interval.
+    bool stepCondition(qint64 monotonicMs);
 
     LedShape m_shape{LedShape::Round};
     LedStyle m_style{LedStyle::Flat};
@@ -307,6 +349,10 @@ private:
     bool     m_showTrue{true};
     bool     m_showFalse{true};
     bool     m_processWhenHidden{false};
+    // Appended after the options (base64 UTF-8); absent = empty.
+    QString  m_condition;
+    QString  m_conditionError;
+    qint64   m_lastConditionMs{-1};
 
     // Threshold-based state
     double m_greenThreshold{0.0};

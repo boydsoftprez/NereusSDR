@@ -6,6 +6,8 @@
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QColorDialog>
+#include <QLabel>
+#include <QLineEdit>
 
 namespace NereusSDR {
 
@@ -40,6 +42,23 @@ void LedItemEditor::applyPlacedRows(bool placed)
         spin->setEnabled(placed);
     }
     endProgrammaticUpdate();
+}
+
+void LedItemEditor::refreshConditionRows()
+{
+    LEDItem* x = qobject_cast<LEDItem*>(m_item);
+    const bool has = x && x->hasCondition();
+    for (QDoubleSpinBox* spin : {m_spinGreenThreshold, m_spinAmberThreshold, m_spinRedThreshold}) {
+        spin->setEnabled(!has);
+    }
+    QString error;
+    if (has) {
+        const LedConditionResult check = x->checkCondition(x->condition());
+        if (!check.ok) {
+            error = check.error;
+        }
+    }
+    m_lblConditionError->setText(error);
 }
 
 void LedItemEditor::setItem(MeterItem* item)
@@ -82,9 +101,11 @@ void LedItemEditor::setItem(MeterItem* item)
     m_chkShowFalse->setChecked(x->showFalse());
     m_chkProcessWhenHidden->setChecked(x->processWhenHidden());
 
+    m_editCondition->setText(x->condition());
     m_spinGreenThreshold->setValue(x->greenThreshold());
     m_spinAmberThreshold->setValue(x->amberThreshold());
     m_spinRedThreshold->setValue(x->redThreshold());
+    refreshConditionRows();
 
     endProgrammaticUpdate();
 }
@@ -334,6 +355,37 @@ void LedItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
+    // Condition, beside the thresholds (Thetis txtLedIndicator_condition).
+    addHeader(QStringLiteral("Condition"));
+
+    m_editCondition = new QLineEdit(this);
+    m_editCondition->setObjectName(QStringLiteral("ledCondition"));
+    m_editCondition->setPlaceholderText(QStringLiteral("%signal_strength% > -73"));
+    m_editCondition->setToolTip(QStringLiteral(
+        "When to light the LED, worked out from readings, for example "
+        "%swr% >= 2 or (%swr% >= 2) && !(%mic% < -20). "
+        "Use numbers, \"text\", %names%, + - * /, < <= > >= == !=, && || ! and brackets. "
+        "Names are the readings of this slice, the clock values, and data "
+        "source values written %ABCD.name%. Leave it empty to use the thresholds."));
+    addRow(QStringLiteral("Condition"), m_editCondition);
+    connect(m_editCondition, &QLineEdit::textEdited, this, [this](const QString& text) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setCondition(text);
+        refreshConditionRows();
+        notifyChanged();
+    });
+
+    // The reason the condition cannot be worked out; empty while it can.
+    // The LED stays false while there is one.
+    m_lblConditionError = new QLabel(this);
+    m_lblConditionError->setWordWrap(true);
+    m_lblConditionError->setStyleSheet(QStringLiteral("QLabel { color: #ff8060; }"));
+    m_lblConditionError->setToolTip(QStringLiteral(
+        "While the condition has a mistake the LED stays false."));
+    addRow(QString(), m_lblConditionError);
+
     // Thresholds
     addHeader(QStringLiteral("Thresholds"));
 
@@ -363,6 +415,10 @@ void LedItemEditor::buildTypeSpecific()
         x->setRedThreshold(v);
         notifyChanged();
     });
+
+    for (QDoubleSpinBox* spin : {m_spinGreenThreshold, m_spinAmberThreshold, m_spinRedThreshold}) {
+        spin->setToolTip(QStringLiteral("Used while the condition is empty."));
+    }
 }
 
 } // namespace NereusSDR
