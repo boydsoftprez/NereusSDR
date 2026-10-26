@@ -11,6 +11,13 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - container-parity-* round 3: a container's -content image
+//                 is the whole scrolled body; tooltips sit where Qt places
+//                 them for a pointer on the control; the signal text Units
+//                 list is moved from the stale mapToGlobal origin to the
+//                 window-geometry one; the VFO screens note their two lit
+//                 cells. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - container-parity-* round 2: the text overlays carry
 //                 token text (a new item starts empty, as Thetis's does),
 //                 the short-title container's entry is named "Signal",
@@ -7772,8 +7779,6 @@ constexpr int kParityFeedGapMs = 40;
 // The history wedge feed: levels swing this far either side of the level.
 constexpr int kParityHistorySteps = 40;
 constexpr double kParityHistorySwingDb = 12.0;
-// A tooltip composited under a disabled row, this far from its left edge.
-constexpr int kParityTipInsetPx = 8;
 // The fixed local time every clock shows.
 QDateTime parityClockTime()
 {
@@ -7954,10 +7959,12 @@ void captureParityContainer(SceneContext& ctx, const QString& name, const QStrin
     QString scroll;
     auto* area = container->contentHolder()->findChild<QScrollArea*>();
     const bool scrolls = area != nullptr && area->verticalScrollBar()->isVisible();
-    if (scrolls) {
-        ctx.images.append(parityGrab(host, name + QStringLiteral("-content"), QStringLiteral("container-content")));
+    if (scrolls && area->widget() != nullptr) {
+        // The scrolled body, all of it (the host is only the view's height).
+        QWidget* body = area->widget();
+        ctx.images.append(parityGrab(body, name + QStringLiteral("-content"), QStringLiteral("container-content")));
         scroll = QStringLiteral(", content scrolls (%1 px in a %2 px view); %3-content shows all of it")
-                     .arg(host->height()).arg(area->viewport()->height()).arg(name);
+                     .arg(body->height()).arg(area->viewport()->height()).arg(name);
     }
     ctx.notes.append(QStringLiteral("%1: container \"%2\" %3x%4, minimum width %5%6")
                          .arg(name, container->notes().isEmpty() ? containerId : container->notes())
@@ -8060,21 +8067,29 @@ void captureParityEditor(SceneContext& ctx, ContentPropertyEditor* editor, const
     ctx.images.append(parityEditorImage(ctx, editor, name, entryName));
 }
 
-// A tooltip as the pointer over `anchor` raises it, placed under the row
-// at the editor's left edge so the editor image can carry it.
+// A tooltip as the pointer resting on `anchor` raises it, where Qt
+// places it.
 QWidget* showParityTip(QWidget* editor, QWidget* anchor, const QString& text)
 {
     QToolTip::hideText();
-    pump(kFinalSettleMs);
-    const QPoint at(globalOf(editor).x() + kParityTipInsetPx, globalOf(anchor).y() + anchor->height() + 2);
-    QToolTip::showText(at, text, anchor);
-    pump(kFinalSettleMs);
-    QWidget* tip = visibleToolTip();
-    if (tip != nullptr) {
-        tip->move(at);
-        pump(kFinalSettleMs);
+    // The dialog's properties pane scrolls the control into view first, as
+    // a user hovering it sees it: a row below the screen would make Qt
+    // place the tip far above it.
+    for (QWidget* w = anchor->parentWidget(); w != nullptr && w != editor->window(); w = w->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(w)) {
+            area->ensureWidgetVisible(anchor);
+            break;
+        }
     }
-    return tip;
+    pump(kFinalSettleMs);
+    // The pointer rests on the control; QToolTip places the tip from that
+    // point itself (below the pointer by the cursor's height), so it is not
+    // moved after. Window-geometry positions (globalOf), as the composite
+    // uses.
+    const QPoint pointer = globalOf(anchor) + anchor->rect().center();
+    QToolTip::showText(pointer, text, anchor);
+    pump(kFinalSettleMs);
+    return visibleToolTip();
 }
 
 // The editor with each disabled control's tooltip painted under it, one
@@ -8101,9 +8116,13 @@ void captureParityEditorTips(SceneContext& ctx, ContentPropertyEditor* editor, c
         img.extra[QStringLiteral("tooltip_of")] = objectName;
         img.extra[QStringLiteral("tooltip_text")] = text;
         img.extra[QStringLiteral("control_enabled")] = anchor->isEnabled();
-        ctx.notes.append(QStringLiteral("%1: %2 is %3, tooltip \"%4\" painted under its row")
+        const QPoint pointer = offsetIn(editor, anchor) + anchor->rect().center();
+        ctx.notes.append(QStringLiteral("%1: %2 is %3, tooltip \"%4\" where Qt placed it for a pointer at %5,%6: %7")
                              .arg(img.name, objectName,
-                                  anchor->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"), text));
+                                  anchor->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"), text)
+                             .arg(pointer.x()).arg(pointer.y())
+                             .arg(tip != nullptr ? QStringLiteral("%1,%2").arg(offsetIn(editor, tip).x()).arg(offsetIn(editor, tip).y())
+                                                 : QStringLiteral("not shown")));
         ctx.images.append(img);
         QToolTip::hideText();
         pump(kFinalSettleMs);
@@ -8431,6 +8450,10 @@ void sceneParityVfoDisplay(SceneContext& ctx, bool roomy)
             return;
         }
         captureParityContainer(ctx, name + QStringLiteral("--screen-") + shot.key, built.containers.value(0));
+        ctx.notes.append(QStringLiteral("%1--screen-%2: two cells lit, as Thetis lights them: the slice's current "
+                                        "choice and the cell under the pointer, which rests where it clicked "
+                                        "(%3,%4 of the face)")
+                             .arg(name, shot.key).arg(shot.fx).arg(shot.fy));
     }
     annotateSlices(ctx);
 }
@@ -8852,6 +8875,25 @@ void sceneParitySignalText(SceneContext& ctx)
             units->showPopup();
             pump(kFinalSettleMs);
             QWidget* popup = newPopup(before);
+            // QComboBox places its list from mapToGlobal(), which for this
+            // never-shown (WA_DontShowOnScreen) window keeps a stale origin;
+            // the composite uses window geometry (globalOf). Move the list by
+            // the difference, to where Qt puts it on a shown window.
+            if (popup != nullptr) {
+                const QPoint stale = units->mapToGlobal(QPoint(0, 0));
+                const QPoint actual = globalOf(units);
+                const QPoint qtPlaced = popup->pos();
+                popup->move(qtPlaced + (actual - stale));
+                pump(kFinalSettleMs);
+                ctx.notes.append(QStringLiteral("Units list: combo at %1,%2 by mapToGlobal but %3,%4 by window "
+                                                "geometry; Qt put the list at %5,%6, moved by %7,%8 to %9,%10 "
+                                                "(combo %11 px tall, list top %12 px from the combo's top)")
+                                     .arg(stale.x()).arg(stale.y()).arg(actual.x()).arg(actual.y())
+                                     .arg(qtPlaced.x()).arg(qtPlaced.y())
+                                     .arg(actual.x() - stale.x()).arg(actual.y() - stale.y())
+                                     .arg(popup->pos().x()).arg(popup->pos().y())
+                                     .arg(units->height()).arg(popup->pos().y() - actual.y()));
+            }
             appendPopupImages(ctx, name + QStringLiteral("--units"), dialog, {popup}, popup);
             if (popup == nullptr) {
                 ctx.notes.append(QStringLiteral("the Units list did not open offscreen; see the editor image"));
