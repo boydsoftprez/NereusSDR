@@ -25,6 +25,16 @@
 //                 kFilterDisplayThetisDefaults. A saved waterfall palette
 //                 now loads as itself whatever the frame interval.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis filter display render and input (renderFilterDisplay,
+//                 MouseUp, MouseWheel, the Low/High/Shift/AdjustNotch
+//                 setters): new items paint the Thetis look with the MNF,
+//                 +MNF, SNAP and FIT buttons and take edge drags, notches
+//                 and zoom; saved records without the Thetis-look field
+//                 paint as before. The item only asks (filterEdgesRequested
+//                 and the notch and TNF signals); MainWindow applies the
+//                 requests through FilterDisplayRequests, and an item it has
+//                 not armed (a preview copy) asks nothing.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -68,14 +78,26 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "core/WdspTypes.h"
 #include <QColor>
+#include <QFont>
 #include <QImage>
+#include <QPoint>
+#include <QPointF>
+#include <QRectF>
+#include <QString>
 #include <QVector>
 #include <vector>
 
+class QMenu;
+
 namespace NereusSDR {
 
+class NotchModel;
+class RadioModel;
 class RxChannel;
+class SliceModel;
+class TransmitModel;
 
 // From Thetis clsFilterItem (MeterManager.cs:16852+)
 // Mini passband spectrum/waterfall display with filter edge markers.
@@ -119,7 +141,142 @@ public:
     static constexpr float kCharacteristicLowMin = -300.0f;
     static constexpr float kCharacteristicLowMax = -50.0f;
 
+    // From Thetis MeterManager.cs:43361 [v2.10.3.15]: MiniSpec.TX_BANDWIDTH,
+    // the TX extent (ExtentHZ while MOX).
+    static constexpr int kTxExtentHz = 20000;
+    // From Thetis console.cs:13221 [v2.10.3.15]: _max_filter_width = 10000,
+    // the RX extent (FilterMaxWidth) when no frame says otherwise.
+    static constexpr int kRxExtentHz = 10000;
+    // From Thetis console.cs:12788 [v2.10.3.15]: default_low_cut = 150, the
+    // USB/LSB edge the top-line right click resets to.
+    static constexpr int kDefaultLowCutHz = 150;
+    // From Thetis MeterManager.cs:18966, 19016 [v2.10.3.15]:
+    // float step = Common.ShiftKeyDown ? 1 : 10;
+    static constexpr float kStepHz = 10.0f;
+    static constexpr float kFineStepHz = 1.0f;
+    // From Thetis MeterManager.cs:35481-35486 [v2.10.3.15]: a sideband-mode
+    // display is 1.9 widths wide, so one sideband fills the item.
+    static constexpr float kSidebandWidthFactor = 1.9f;
+    // From Thetis MeterManager.cs:35555 [v2.10.3.15]: 18f * font_scale.
+    static constexpr float kBaseFontSize = 18.0f;
+    // From Thetis MeterManager.cs:35583-35585 [v2.10.3.15]: autozoom margins
+    // and limits.
+    static constexpr float kAutoZoomTwoSidebandMargin = 0.85f;
+    static constexpr float kAutoZoomSidebandMargin = 0.92f;
+    static constexpr float kAutoZoomMax = 20.0f;
+    // From Thetis MeterManager.cs:35898, 35902, 35906 [v2.10.3.15]:
+    // isMouseNearLine thresholds for the edges (6) and the top line (12).
+    static constexpr float kEdgeGrabPixels = 6.0f;
+    static constexpr float kTopGrabPixels = 12.0f;
+    // From Thetis MeterManager.cs:36110 [v2.10.3.15]: the notch hit area
+    // reaches 2 pixels past the notch width.
+    static constexpr float kNotchGrabPixels = 2.0f;
+    // Snap grid defaults. From Thetis setup.designer.cs:12405, 12414, 12423
+    // [v2.10.3.15] (txtFilter_other/cw/sideband_frequencies); NereusSDR has
+    // no Setup page for them yet.
+    static const QVector<float>& snapFrequencies(DSPMode mode);
+
     explicit FilterDisplayItem(QObject* parent = nullptr);
+
+    // ── Thetis look (renderFilterDisplay, MeterManager.cs:35466-36270) ─────
+    // New items (applyNewItemDefaults) and records that saved it on paint
+    // the Thetis filter display and take its input. A record saved before
+    // the field existed loads with it off and paints as it always has.
+    void setThetisLook(bool on) { m_thetisLook = on; }
+    bool thetisLook() const { return m_thetisLook; }
+
+    // What MainWindow tells the display about its slice each frame. Edges
+    // are the slice's (RX) and TransmitModel's (TX, positive magnitudes as
+    // Thetis's TXFilterLow/High) filter in Hz; notch centres are RF Hz.
+    struct NotchMark {
+        int    id{0};
+        double centreHz{0.0};
+        double widthHz{0.0};
+        bool   active{true};
+    };
+    struct SliceFilterState {
+        int     sliceIndex{-1};
+        DSPMode mode{DSPMode::USB};
+        double  vfoHz{0.0};
+        int     rxLowHz{0};
+        int     rxHighHz{0};
+        int     txLowHz{0};
+        int     txHighHz{0};
+        int     cwPitchHz{600};
+        int     diglOffsetHz{0};
+        int     diguOffsetHz{0};
+        double  minNotchWidthHz{0.0};
+        bool    tnfActive{false};
+        QString filterName;
+        QString txProfileName;
+        QVector<NotchMark> notches;
+    };
+    void setSliceFilterState(const SliceFilterState& state) { m_state = state; }
+    const SliceFilterState& sliceFilterState() const { return m_state; }
+    void clearSliceFilterState() { m_state = SliceFilterState{}; }
+
+    // Only MainWindow arms an item, when it wires the requests to the
+    // models. A preview copy is never armed, so it asks for nothing.
+    void setRequestsEnabled(bool on) { m_requestsEnabled = on; }
+    bool requestsEnabled() const { return m_requestsEnabled; }
+
+    // Thetis Low/High getters (MeterManager.cs:19151-19278 [v2.10.3.15]):
+    // the displayed edges in Hz from the slice's centre.
+    float displayLowHz() const;
+    float displayHighHz() const;
+
+    // The notch menu (Thetis ShowNotchPopup, console.cs:33541): width,
+    // bypass and remove, as the panadapter's notch menu offers them.
+    void buildNotchMenu(int id, QMenu& menu);
+
+    // Geometry shared by paint and the mouse handlers, so hit areas match
+    // what is drawn. From Thetis renderFilterDisplay (MeterManager.cs:35466-
+    // 35868 [v2.10.3.15]).
+    struct ThetisLayout {
+        bool   valid{false};
+        QRectF itemRect;        // original_x / original_w
+        float  x{0}, y{0}, w{0}, h{0};
+        int    sidebandSign{0};
+        float  zoom{1.0f};
+        int    extentHz{kRxExtentHz};
+        int    hzSpan{2 * kRxExtentHz};
+        float  pixelSpan{0};    // extent_h - extent_l
+        QFont  font;
+        float  textHeight{0};   // tsl.Height
+        float  maxExtentTextWidth{0};
+        float  zeroWidth{0};
+        float  zeroHeight{0};
+        float  lineWidth{2};
+        float  slopePixels{0};
+        float  zoomDiffPixels{0};
+        float  topLineY{0};
+        float  botLineY{0};
+        float  extentL{0};
+        float  extentH{0};
+        float  spectrumHeight{0};
+        float  topPos{0};
+        float  botPos{0};
+        float  centre{0};
+        float  textY{0};
+        QRectF mnfRect;
+        QRectF mnfPlusRect;
+        QRectF snapRect;
+        QRectF fitRect;
+        float  lowHz{0};
+        float  highHz{0};
+        float  filterL{0};
+        float  filterH{0};
+        QPointF lowBot, lowTop, highBot, highTop, topLeft, topRight;
+    };
+    ThetisLayout thetisLayout(int widgetW, int widgetH) const;
+    float hzToPixels(double hz, float pixelSpan, int hzSpan) const;
+    double pixelsToHz(float pixels, float pixelSpan, int hzSpan) const;
+
+    bool hitTest(const QPointF& pos, int widgetW, int widgetH) const override;
+    bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleWheel(QWheelEvent* event, int widgetW, int widgetH) override;
 
     void setDisplayMode(DisplayMode m) {
         if (m_displayMode == m) { return; }
@@ -282,8 +439,87 @@ public:
 
 signals:
     void displayModeChanged();
+    // Requests MainWindow applies (FilterDisplayRequests). tx: the edges
+    // are TransmitModel's FilterLow/FilterHigh (positive magnitudes), not
+    // the slice's. Changing the TX filter never keys the radio.
+    void filterEdgesRequested(int slice, int lowHz, int highHz, bool tx);
+    // Thetis Shift (MeterManager.cs:19378-19412 [v2.10.3.15]): the whole
+    // passband moves, constrained with filterShift (SliceModel::shiftFilter).
+    void filterShiftRequested(int slice, int lowHz, int highHz);
+    void notchAddRequested(int slice, double hz);
+    void notchChangeRequested(int id, double hz, double widthHz);
+    void notchActiveRequested(int id, bool active);
+    void notchRemoveRequested(int id);
+    void tnfToggleRequested();
+    void tnfAddRequested(int slice);
+    // Right click on a notch: MainWindow pops a menu it owns, filled by
+    // buildNotchMenu(id, menu).
+    void notchMenuRequested(int id, const QPoint& globalPos);
 
 private:
+    // Thetis look.
+    void paintThetis(QPainter& p, int widgetW, int widgetH);
+    void paintThetisSpectrum(QPainter& p, const ThetisLayout& l);
+    void paintThetisWaterfall(QPainter& p, const ThetisLayout& l);
+    void paintThetisCharacteristic(QPainter& p, const ThetisLayout& l,
+                                   const QColor& lineColour);
+    QSizeF plotText(QPainter& p, const ThetisLayout& l, const QString& text,
+                    float x, float y, const QColor& colour, int alpha,
+                    bool alignRight, bool alignCentre, bool fillBackground,
+                    const QColor& back) const;
+    QVector<float> greyscale(const ThetisLayout& l) const;
+    // Hover analysis from renderFilterDisplay, for the stored mouse point.
+    struct Hover {
+        bool onButton{false};
+        bool low{false};
+        bool high{false};
+        bool top{false};
+        int  notchId{-1};
+        bool mnf{false};
+        bool mnfPlus{false};
+        bool snap{false};
+        bool fit{false};
+        bool adjustLow{false};
+        bool adjustHigh{false};
+        bool adjustShift{false};
+    };
+    Hover hoverAt(const ThetisLayout& l, const QPointF& mouse) const;
+    bool interactive() const;
+    bool filterEnabled() const;   // Thetis RXEnabled / TXEnabled
+    bool canAdjust() const;       // Thetis CanAdjust
+    bool twoSidebands() const;    // console.CurrentDSPhasTwoSidebands
+    int  sidebandModeSign() const;
+    int  modeSign() const;
+    bool isCw() const;
+    int  extentHz() const;
+    // Thetis setters: they emit the request instead of calling the console.
+    void requestLow(float value, Qt::KeyboardModifiers mods, bool ignoreSnap);
+    void requestHigh(float value, Qt::KeyboardModifiers mods, bool ignoreSnap);
+    void requestShift(float shiftHz, Qt::KeyboardModifiers mods);
+    void requestNotchMove(float deltaHz, Qt::KeyboardModifiers mods);
+    void resetFilterPosition();
+    int  findNearestVGrid(int hz) const;
+    const NotchMark* notchById(int id) const;
+    void clearSelection();
+
+    bool m_thetisLook{false};
+    bool m_requestsEnabled{false};
+    SliceFilterState m_state;
+    // Mouse state (Thetis MouseMovePoint, MouseButtonDown, the selections).
+    QPointF m_mousePoint{-1.0e9, -1.0e9};
+    bool m_mouseInside{false};
+    bool m_mouseDown{false};
+    Qt::MouseButton m_mouseButton{Qt::NoButton};
+    bool m_lowSelected{false};
+    bool m_highSelected{false};
+    bool m_topSelected{false};
+    int  m_selectedNotchId{-1};
+    double m_notchStartHz{-1.0};
+    float m_startShiftX{0.0f};
+    float m_startLow{0.0f};
+    float m_startHigh{0.0f};
+    bool m_pressHandled{false};
+
     void paintSpectrum(QPainter& p, const QRect& rect);
     void paintWaterfall(QPainter& p, const QRect& rect);
     void paintFilterEdges(QPainter& p, const QRect& rect);
@@ -445,5 +681,21 @@ inline constexpr FilterDisplayItemThetisDefaults kFilterDisplayThetisDefaults{
     false,                                  // filterdisplay_characteristic false
     -250.0f,                                // filterdisplay_characteristic_low -250f
 };
+
+// How MainWindow applies a filter display's requests. Kept here so the
+// routing (RX edges to the slice, TX edges to TransmitModel, no notch
+// added while transmitting) is testable without a window.
+namespace FilterDisplayRequests {
+// tx: TransmitModel::setFilterLow/setFilterHigh; else SliceModel::setFilter.
+void applyEdges(SliceModel* slice, TransmitModel* transmit, int lowHz,
+                int highHz, bool tx);
+void applyShift(SliceModel* slice, int lowHz, int highHz);
+void applyNotchChange(NotchModel* notches, int id, double hz, double widthHz);
+void applyTnfToggle(NotchModel* notches);
+// Refused (false) while the radio transmits, as Thetis refuses
+// (MeterManager.cs:18949, 18997 [v2.10.3.15]).
+bool applyNotchAdd(RadioModel* radio, SliceModel* slice, double hz);
+bool applyTnfAdd(RadioModel* radio, SliceModel* slice);
+} // namespace FilterDisplayRequests
 
 } // namespace NereusSDR

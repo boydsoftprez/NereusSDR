@@ -914,6 +914,13 @@
 //                reset (JJ's ruling, option i), and then option c, a gap
 //                within four windows of the last one let through. J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Claude Code.
+//   2026-10-26 - A live filter display item is armed and its requests
+//                applied (FilterDisplayRequests): RX edges to the slice,
+//                TX edges to TransmitModel (the TX passband; never keys),
+//                notches and the TNF to NotchModel, with no notch or TNF
+//                added while transmitting. Each frame tells the item its
+//                slice's filter, mode and notches. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1182,6 +1189,7 @@ warren@wpratt.com
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
+#include "core/MicProfileManager.h"
 #include "core/ControlRanges.h"
 #include "core/DisplayFftSizing.h"
 #include "core/BuildIdentity.h"
@@ -14711,6 +14719,57 @@ void MainWindow::reconcileMiniDisplays()
 {
     if (m_shuttingDown || !m_containerManager || !m_radioModel) { return; }
     std::map<int, QList<QPointer<FilterDisplayItem>>> wanted;
+    // A live filter display asks for filter, notch and TNF changes; only
+    // here (live containers) is it armed and heard. Preview copies never
+    // pass through, so they stay inert.
+    const auto wireRequests = [this](FilterDisplayItem* item) {
+        if (item->property("filterDisplayRequestsWired").toBool()) { return; }
+        item->setProperty("filterDisplayRequestsWired", true);
+        item->setRequestsEnabled(true);
+        connect(item, &FilterDisplayItem::filterEdgesRequested, this,
+                [this](int slice, int low, int high, bool tx) {
+            if (!m_radioModel) { return; }
+            // tx: the TX passband through TransmitModel. It never keys.
+            FilterDisplayRequests::applyEdges(m_radioModel->sliceById(slice),
+                                              &m_radioModel->transmitModel(),
+                                              low, high, tx);
+        });
+        connect(item, &FilterDisplayItem::filterShiftRequested, this,
+                [this](int slice, int low, int high) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyShift(m_radioModel->sliceById(slice), low, high);
+        });
+        connect(item, &FilterDisplayItem::notchAddRequested, this,
+                [this](int slice, double hz) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyNotchAdd(m_radioModel,
+                                                 m_radioModel->sliceById(slice), hz);
+        });
+        connect(item, &FilterDisplayItem::notchChangeRequested, this,
+                [this](int id, double hz, double widthHz) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyNotchChange(m_radioModel->notchModel(), id, hz, widthHz);
+        });
+        connect(item, &FilterDisplayItem::notchActiveRequested, this,
+                [this](int id, bool active) { onNotchActiveRequested(id, active); });
+        connect(item, &FilterDisplayItem::notchRemoveRequested, this,
+                [this](int id) { onNotchRemoveRequested(id); });
+        connect(item, &FilterDisplayItem::tnfToggleRequested, this, [this]() {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyTnfToggle(m_radioModel->notchModel());
+        });
+        connect(item, &FilterDisplayItem::tnfAddRequested, this, [this](int slice) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyTnfAdd(m_radioModel, m_radioModel->sliceById(slice));
+        });
+        connect(item, &FilterDisplayItem::notchMenuRequested, this,
+                [this, item](int id, const QPoint& globalPos) {
+            auto* menu = new QMenu(this);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            item->buildNotchMenu(id, *menu);
+            menu->popup(globalPos);
+        });
+    };
     for (ContainerWidget* container : m_containerManager->allContainers()) {
         // A floating form can hide its owner without setting the child's
         // explicit hidden flag. isVisible() includes that ancestor state.
@@ -14729,6 +14788,7 @@ void MainWindow::reconcileMiniDisplays()
                 if (item && !item->property("containerUnsupportedSource").toBool() && meter->shouldRender(item)
                     && item->displayMode() != FilterDisplayItem::DisplayMode::None) {
                     wanted[slice->sliceIndex()].append(item);
+                    wireRequests(item);
                 }
             }
         }
@@ -14771,7 +14831,17 @@ void MainWindow::reconcileMiniDisplays()
         const bool highResolution = AppSettings::instance().value(
             QStringLiteral("DspOptionsHighResFilterCharacteristics"),
             QStringLiteral("False")).toString() == QLatin1String("True");
-        m_radioModel->setMiniFilterResponseSlices(highResolution ? slices : QSet<int>{});
+        // A Thetis-look item showing its characteristic needs the response
+        // too (FilterDisplayItem::paintThetisCharacteristic).
+        QSet<int> responseSlices = highResolution ? slices : QSet<int>{};
+        for (const auto& [sliceId, producer] : m_miniProducers) {
+            for (const auto& item : producer->items) {
+                if (item && item->thetisLook() && item->showCharacteristic()) {
+                    responseSlices.insert(sliceId);
+                }
+            }
+        }
+        m_radioModel->setMiniFilterResponseSlices(responseSlices);
     } else if (TxDisplayFeed* feed = m_radioModel->txDisplayFeed()) {
         const SliceModel* tx = m_radioModel->txBoundSlice();
         feed->setLocalMiniDemand(tx && wanted.count(tx->sliceIndex()) != 0);
@@ -14841,9 +14911,59 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
         producer.gradientKey = gradientKey;
         producer.gradientTx = transmit;
     }
-    const bool highResolution = AppSettings::instance().value(
+    bool highResolution = AppSettings::instance().value(
         QStringLiteral("DspOptionsHighResFilterCharacteristics"),
         QStringLiteral("False")).toString() == QLatin1String("True");
+    // A Thetis-look item showing its characteristic plots the same response.
+    for (const auto& item : found->second->items) {
+        if (item && item->thetisLook() && item->showCharacteristic()) {
+            highResolution = true;
+        }
+    }
+    // What the filter display shows and acts on: the slice's filter, mode
+    // and notches, and TransmitModel's TX filter (Thetis's owning meter
+    // values, Initialise, MeterManager.cs:18366-18448 [v2.10.3.15]).
+    FilterDisplayItem::SliceFilterState state;
+    state.sliceIndex = sliceId;
+    state.mode = slice->dspMode();
+    state.vfoHz = rxCentre;
+    state.rxLowHz = slice->filterLow();
+    state.rxHighHz = slice->filterHigh();
+    state.txLowHz = tx.filterLow();
+    state.txHighHz = tx.filterHigh();
+    // From Thetis display.cs:1029 [v2.10.3.15]: cw_pitch default 600
+    // (the key SliceModel's CW presets read).
+    state.cwPitchHz = AppSettings::instance().value(QStringLiteral("CWPitch"), 600).toInt();
+    state.diglOffsetHz = slice->diglOffsetHz();
+    state.diguOffsetHz = slice->diguOffsetHz();
+    // The slice mirrors its channel's minimum notch width (0 without one).
+    state.minNotchWidthHz = slice->minNotchWidthHz();
+    if (NotchModel* model = m_radioModel->notchModel()) {
+        state.tnfActive = model->globalEnabled();
+        for (const Notch& notch : model->notches()) {
+            state.notches.append({notch.id, notch.centerHz, notch.widthHz, notch.active});
+        }
+    }
+    {
+        // The filter's name as the container's filter buttons show it: the
+        // matching preset (50 Hz per edge), else the width.
+        const int widthHz = std::abs(slice->filterHigh() - slice->filterLow());
+        state.filterName = widthHz >= 1000
+            ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
+            : QString::number(widthHz);
+        if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
+            for (const FilterPreset& preset : store->presetsForMode(slice->dspMode())) {
+                if (!preset.name.isEmpty() && qAbs(slice->filterLow() - preset.low) <= 50
+                    && qAbs(slice->filterHigh() - preset.high) <= 50) {
+                    state.filterName = preset.name;
+                    break;
+                }
+            }
+        }
+    }
+    if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+        state.txProfileName = profiles->activeProfileName();
+    }
     if (highResolution && m_radioModel->role() != RadioModel::Role::Remote) {
         if (!producer.filterCached || producer.filterLow != slice->filterLow()
             || producer.filterHigh != slice->filterHigh()
@@ -14871,6 +14991,7 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                                          producer.customGradient);
         item->presentFrame(traceDbm, waterfallDbm, centreHz, spanHz,
                            transmit, advance);
+        item->setSliceFilterState(state);
         item->setRfMarkers(rxCentre + slice->filterLow(),
                            rxCentre + slice->filterHigh(),
                            txCentre + tx.filterLow(), txCentre + tx.filterHigh(),

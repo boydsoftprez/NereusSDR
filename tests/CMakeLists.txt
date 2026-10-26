@@ -6146,6 +6146,10 @@ nereus_add_test(tst_filter_high_resolution)
 # bindRxChannel(nullptr) safety, paint-with-nullptr-channel no-crash,
 # bind-and-clear lifecycle.
 nereus_add_test(tst_filter_display_high_resolution)
+# Task 44: the Thetis filter display's edge drags (RX to the slice, TX to
+# TransmitModel), notches, MNF/+MNF (refused while transmitting), SNAP/FIT,
+# inert preview copies and old records painting as before.
+nereus_add_test(tst_filter_display_item_input)
 nereus_add_test(tst_mini_display_composition fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_mini_filter_response_lifecycle)
 
