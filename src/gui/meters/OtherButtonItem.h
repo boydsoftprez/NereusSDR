@@ -31,6 +31,12 @@
 //                 with Shift to swap the two; the order is saved. The
 //                 dragged button follows the pointer in NereusSDR colours.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Receive buttons (container item parity Task 60): NR,
+//                 NR1-NR4, NB, NB1, NB2, MNF+, RIT, XIT, RIT0, XIT0, Lock,
+//                 TS+/TS-, Mute All, Voice SQL, AF+/-, BAL+/- and the AGC
+//                 buttons are offered; the NR and NB captions follow the
+//                 slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -118,6 +124,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ButtonBoxItem.h"
+#include "core/WdspTypes.h"
 #include "gui/NereusGuiExport.h"
 #include "gui/UnbuiltFeatures.h"
 
@@ -151,12 +158,19 @@ public:
     enum class ButtonId {
         Power = 0, Rx2 = 1, Mon = 2, Tun = 3, Mox = 4, TwoTon = 5, Dup = 6, PsA = 7,
         Xpa = 8, Rec = 9, Play = 10,
-        Anf = 37, Snb = 41, Mnf = 42,
+        Nr = 32, Nr1 = 33, Nr2 = 34, Nr3 = 35, Nr4 = 36,
+        Anf = 37, Nb = 38, Nb1 = 39, Nb2 = 40, Snb = 41, Mnf = 42, MnfPlus = 43,
+        Rit = 70, Rit0 = 71, Xit = 72, Xit0 = 73, LockA = 75,
+        TuneStepUp = 77, TuneStepDown = 78,
         Avg = 96, PeakHold = 97, Ctun = 98,
         Spectrum = 99, Panadapter = 100, Scope = 101, Scope2 = 102, Phase = 103,
         Waterfall = 104, Histogram = 105, Panafall = 106, Panascope = 107,
         Spectrascope = 108, DisplayOff = 109,
-        Vac1 = 128, Vac2 = 129, Mute = 130, Bin = 132, SubRx = 133, PanSwap = 134,
+        Vac1 = 128, Vac2 = 129, Mute = 130, MuteAll = 131, Bin = 132, SubRx = 133,
+        PanSwap = 134, SqlVsql = 137,
+        AfP5 = 151, AfM5 = 152, BalP5 = 153, BalM5 = 154,
+        AgcFixed = 192, AgcLong = 193, AgcSlow = 194, AgcMedium = 195, AgcFast = 196,
+        AgcCustom = 197, AgcAuto = 198, AgcP5 = 199, AgcM5 = 200,
         Macro0 = 352
     };
 
@@ -215,6 +229,19 @@ public:
     // than Power, or a macro). Any other id is never drawn; its saved
     // visibility is kept.
     bool isOffered(ButtonId id) const;
+
+    // Container item parity Task 60: a button's caption now (the NR and NB
+    // buttons name the slice's reducer and blanker). Empty restores the
+    // button's own caption. The caption moves with its id on a reorder and
+    // is never saved.
+    void setButtonLabel(ButtonId id, const QString& label);
+    QString buttonLabel(ButtonId id) const;
+    // The NR button's caption for a slice's reducer: "NR" for off and NR1,
+    // "NR2" to "NR4", and a NereusSDR-only reducer's own name.
+    static QString nrLabel(NrSlot slot);
+    // The NB button's caption for a slice's blanker: "NB" for off and NB1,
+    // "NB2" for NB2.
+    static QString nbLabel(NbMode mode);
 
     // R-R3-49: the unbuilt feature a button waits for, or nullopt for a
     // button whose feature NereusSDR has. Such a button is not drawn until

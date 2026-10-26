@@ -28,6 +28,13 @@
 // that keys nothing: it toggles the Core's MON while the Core takes
 // transmit settings and its radio is off the air (R-R3-49).
 //
+// Receive buttons (container item parity Task 60) change the container's
+// slice through the SliceModel setters the VFO flag and the RX applet use:
+// noise reduction and blanking, AGC, RIT and XIT, the lock, the tune step,
+// voice squelch, AF and balance. MNF+ adds a notch on that slice and is
+// refused while transmitting. Mute All mutes every slice this window may
+// change. None keys the radio.
+//
 // The dispatcher holds no state of its own: every lit state is read from
 // the target each time apply() runs.
 //
@@ -54,12 +61,21 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  The container Power button is removed
 //                                    (maintainer decision): no Power hooks.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 60: the
+//                                    receive buttons (NR, NB, AGC, RIT,
+//                                    XIT, Lock, tune step, Mute All, Voice
+//                                    SQL, AF, BAL, MNF+) act on the
+//                                    container's slice through the
+//                                    SliceModel and RadioModel setters the
+//                                    rest of the app uses; none keys.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "gui/meters/OtherButtonItem.h"
 
+#include <QList>
 #include <QString>
 
 #include <functional>
@@ -122,6 +138,9 @@ public:
         bool on{false};
         bool available{true};
         QString reason;  // why it is unavailable, in plain words
+        // Task 60: the caption now (NR and NB name the slice's reducer and
+        // blanker); empty keeps the button's own caption.
+        QString label;
     };
 
     ContainerButtonDispatcher(RadioModel* model, Hooks hooks);
@@ -150,11 +169,16 @@ public:
 
     // Plain reasons, exposed for tests.
     static QString noRadioTransmitReason();
+    static QString notchWhileTransmittingReason();
 
 private:
     QString sliceUnavailableReason(int rxSource) const;
     bool transmitBlockedRemotely() const;
+    // A receive button's click on the container's open slice.
+    QString clickSlice(Id id, SliceModel* slice);
     SpectrumWidget* spectrumOf(int rxSource) const;
+    // Mute All: every open slice this window may change.
+    QList<SliceModel*> changeableSlices() const;
 
     RadioModel* m_model{nullptr};
     Hooks m_hooks;

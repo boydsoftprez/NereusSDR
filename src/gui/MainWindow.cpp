@@ -927,6 +927,10 @@
 //                added while transmitting. Each frame tells the item its
 //                slice's filter, mode and notches. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 60: the containers refresh on
+//                each slice's NR, NB, RIT, XIT, lock, AGC mode, auto AGC
+//                and voice squelch changes (the receive buttons). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -15205,7 +15209,17 @@ void MainWindow::watchSlicesForContainers()
             << connect(slice, &SliceModel::anfEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::snbEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::mutedChanged, this, refresh)
-            << connect(slice, &SliceModel::binauralEnabledChanged, this, refresh);
+            << connect(slice, &SliceModel::binauralEnabledChanged, this, refresh)
+            // Container item parity Task 60: the receive buttons' lit
+            // state and the NR / NB captions.
+            << connect(slice, &SliceModel::activeNrChanged, this, refresh)
+            << connect(slice, &SliceModel::nbModeChanged, this, refresh)
+            << connect(slice, &SliceModel::ritEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::xitEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::lockedChanged, this, refresh)
+            << connect(slice, &SliceModel::agcModeChanged, this, refresh)
+            << connect(slice, &SliceModel::autoAgcEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::ssqlEnabledChanged, this, refresh);
     }
     refreshContainerControls();
 }

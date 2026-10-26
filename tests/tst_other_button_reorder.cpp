@@ -33,6 +33,9 @@
 //                                    is saved; unbuilt rows disabled.
 //                                    AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Task 60: the editor lists the 31
+//                                    receive buttons too. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -525,8 +528,9 @@ private slots:
             QCOMPARE(check->isChecked(), item.isButtonVisible(id));
             QVERIFY(!check->toolTip().isEmpty());
         }
-        // The 33 buttons NereusSDR has had (Power excepted) and 31 macros.
-        QCOMPARE(offered, 33 + OtherButtonItem::kMacroCount);
+        // The 33 buttons NereusSDR has had (Power excepted), Task 60's 31
+        // receive buttons and 31 macros.
+        QCOMPARE(offered, 33 + 31 + OtherButtonItem::kMacroCount);
 
         QStringList texts;
         for (const QLabel* label : editor.findChildren<QLabel*>()) {
