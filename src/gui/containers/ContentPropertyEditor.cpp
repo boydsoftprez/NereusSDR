@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - An RX section item's Advanced bindings are disabled with
+//                 the reason, as a TX section row's are: its factory never
+//                 reads the entry's context. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - An Order control (a TX section row's parts, with Move up
 //                 and Move down), and a TX section row's Advanced bindings
 //                 stay disabled with the reason. J.J. Boyd (KG4VCF),
@@ -509,6 +513,10 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         // A TX section row is a copy the TX applet makes and wires; the
         // factory never reads the entry's context.
         advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the TX panel; they have no source of their own."));
+    } else if(entry.typeId.startsWith(QStringLiteral("rx.")) && m_registry.hasWidgetFactory(entry.typeId)) {
+        // An RX section item is a copy the RX applet makes and wires; the
+        // factory never reads the entry's context.
+        advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the RX panel; they have no source of their own."));
     } else if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
     } else if((applet && entry.typeId!="applet:s_meter") || (widgetType && !declared)) {
