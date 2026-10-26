@@ -33,9 +33,14 @@
 #
 # The summary prints the failures first, in the order xcodebuild wrote them
 # (XCTest's "error: -[...]" and "Test Case '...' failed" lines and Swift
-# Testing's "✘" lines, each once), and then the counts.
+# Testing's "✘" lines, each once), and then the counts, with any Swift
+# Testing cancel ("Test ... was cancelled").
 #
-# Exits with xcodebuild's status, or sim-ready.sh's when that fails.
+# Exits with xcodebuild's status, or sim-ready.sh's when that fails. A
+# Swift Testing cancel is not a pass: xcodebuild still ends in TEST EXECUTE
+# SUCCEEDED and exits 0, and the result bundle counts the test as skipped,
+# like an XCTSkip, so sim-test reads the cancel line in the console and
+# exits 1, keeping the logs as for a failure.
 
 set -u
 
@@ -107,10 +112,17 @@ status=$?
 # The failures first, from XCTest and Swift Testing, each once and in
 # xcodebuild's order, then the counts. Swift Testing's closing "✘ Test run
 # with ..." line is a count.
-counts="Executed [0-9]+ test|Test run with|Test cancelled|TEST EXECUTE|TEST SUCCEEDED"
+cancelled="Test .* was cancelled|Test cancelled"
+counts="Executed [0-9]+ test|Test run with|$cancelled|TEST EXECUTE|TEST SUCCEEDED"
 grep -E "✘|error: -\[|Test Case .* failed|hung before" "$logs/xcodebuild.log" |
     grep -v -E "Test run with" | awk '!seen[$0]++'
 grep -E "$counts" "$logs/xcodebuild.log" | awk '!seen[$0]++'
+
+cancel=0
+if [ "$status" -eq 0 ] && grep -q -E "$cancelled" "$logs/xcodebuild.log"; then
+    cancel=1
+    status=1
+fi
 
 if [ "$status" -eq 0 ]; then
     finish 0
@@ -118,6 +130,8 @@ fi
 
 if grep -q "hung before establishing connection" "$logs/xcodebuild.log"; then
     say "the test runner hung before it connected; keeping its logs in $logs"
+elif [ "$cancel" -eq 1 ]; then
+    say "xcodebuild exited 0, but a test was cancelled, which is not a pass; keeping the logs in $logs"
 else
     say "xcodebuild exited $status; keeping the logs in $logs"
 fi
