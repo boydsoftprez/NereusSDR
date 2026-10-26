@@ -20,6 +20,10 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - thePropertyEditorDoesNotCallARowUnsupported. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Each job's parts: the default look, the hide keys, the
+//                 dynamic shows, the order, the editor and the store round
+//                 trip. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -28,6 +32,8 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QGroupBox>
+#include <QJsonArray>
+#include <QListWidget>
 #include <QLineEdit>
 #include <QLayout>
 #include <QMouseEvent>
@@ -45,6 +51,8 @@
 #include "gui/containers/ContentPropertyEditor.h"
 #include "gui/applets/RxControlSections.h"
 #include "gui/applets/RxSectionContent.h"
+#include "gui/applets/SectionParts.h"
+#include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -67,6 +75,95 @@ const char* const kTitles[] = {
     "RX Antennas", "RX Mode", "RX Step", "RX Filter", "RX Pan",
     "RX Squelch", "RX Attenuator", "RX AGC", "RX RIT", "RX XIT",
 };
+
+// The jobs that have parts: every one but Mode, which has one control.
+const char* const kPartTypes[] = {
+    "rx.antennas", "rx.step", "rx.filter", "rx.pan",
+    "rx.squelch", "rx.attenuator", "rx.agc", "rx.rit", "rx.xit",
+};
+
+// The fixed width the geometry checks lay a copy out at.
+constexpr int kCopyWidth = 320;
+
+// A copy the way the factories built one before a job had parts: the
+// applet's copy with no config applied.
+QWidget* copyWithoutConfig(RxApplet& applet, const QString& type, QWidget* parent)
+{
+    if (type == QLatin1String("rx.antennas")) { return applet.createAntennasSection(parent); }
+    if (type == QLatin1String("rx.step")) { return applet.createStepSection(parent); }
+    if (type == QLatin1String("rx.filter")) { return applet.createFilterSection(parent); }
+    if (type == QLatin1String("rx.pan")) { return applet.createPanSection(parent); }
+    if (type == QLatin1String("rx.squelch")) { return applet.createSquelchSection(parent); }
+    if (type == QLatin1String("rx.attenuator")) { return applet.createAttenuatorSection(parent); }
+    if (type == QLatin1String("rx.agc")) { return applet.createAgcSection(parent); }
+    if (type == QLatin1String("rx.rit")) { return applet.createRitSection(parent); }
+    if (type == QLatin1String("rx.xit")) { return applet.createXitSection(parent); }
+    return nullptr;
+}
+
+// A copy's parts, whatever its section type.
+const SectionParts* partsOf(QWidget* copy)
+{
+    if (auto* s = qobject_cast<RxAntennasSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxStepSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxFilterSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxPanSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxSquelchSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxAttenuatorSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxAgcSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxRitSection*>(copy)) { return &s->parts(); }
+    if (auto* s = qobject_cast<RxXitSection*>(copy)) { return &s->parts(); }
+    return nullptr;
+}
+
+// Lays a copy out at the fixed width and returns its own rect, then every
+// child's geometry and hidden state, in creation order.
+QStringList laidOut(QWidget* copy)
+{
+    copy->setFixedWidth(kCopyWidth);
+    copy->resize(kCopyWidth, copy->sizeHint().height());
+    copy->layout()->activate();
+    QStringList result;
+    const auto describe = [](const QWidget* w) {
+        const QRect g = w->geometry();
+        return QStringLiteral("%1 %2 %3,%4 %5x%6 %7").arg(w->metaObject()->className(), w->objectName())
+            .arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height())
+            .arg(w->isHidden() ? QStringLiteral("hidden") : QStringLiteral("shown"));
+    };
+    result.append(describe(copy));
+    for (const QWidget* child : copy->findChildren<QWidget*>()) {
+        result.append(describe(child));
+    }
+    return result;
+}
+
+// The index of the item of a copy's column that is or holds `widget`.
+int columnIndex(QWidget* copy, QWidget* widget)
+{
+    QLayout* column = copy->layout();
+    for (int i = 0; i < column->count(); ++i) {
+        QLayoutItem* item = column->itemAt(i);
+        if (item->widget() == widget) {
+            return i;
+        }
+        if (QLayout* line = item->layout()) {
+            if (line->indexOf(widget) >= 0) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+// The index of `widget` in the line of a copy's column that holds it.
+int lineIndex(QWidget* copy, QWidget* widget)
+{
+    const int index = columnIndex(copy, widget);
+    if (index < 0 || !copy->layout()->itemAt(index)->layout()) {
+        return -1;
+    }
+    return copy->layout()->itemAt(index)->layout()->indexOf(widget);
+}
 
 QList<QPushButton*> appletPresets(RxApplet& applet)
 {
@@ -256,7 +353,7 @@ private slots:
         QVERIFY(passband->isVisible());
 
         const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("rx.filter"));
-        QCOMPARE(properties.size(), 8);
+        QCOMPARE(properties.size(), 10);
         QCOMPARE(properties.at(0).label, QStringLiteral("Hide width label"));
         QCOMPARE(properties.at(1).label, QStringLiteral("Hide passband"));
         QCOMPARE(properties.at(2).key, QStringLiteral("columns"));
@@ -268,6 +365,13 @@ private slots:
         QCOMPARE(properties.at(5).label, QStringLiteral("Background bottom"));
         QCOMPARE(properties.at(6).label, QStringLiteral("Selected top"));
         QCOMPARE(properties.at(7).label, QStringLiteral("Selected bottom"));
+        // The preset grid's toggle and the order come after.
+        QCOMPARE(properties.at(8).key, QStringLiteral("hidePresets"));
+        QCOMPARE(properties.at(8).label, QStringLiteral("Hide Preset buttons"));
+        QCOMPARE(properties.at(8).kind, ContentProperty::Kind::Toggle);
+        QCOMPARE(properties.at(9).key, QStringLiteral("order"));
+        QCOMPARE(properties.at(9).kind, ContentProperty::Kind::Order);
+        QCOMPARE(properties.at(9).defaultValue.toArray(), (QJsonArray{"top", "presets", "bottom"}));
 
         ContentEntry hidden = registry.makeEntry(QStringLiteral("rx.filter"));
         hidden.config.insert(QStringLiteral("hideTop"), true);
@@ -534,7 +638,7 @@ private slots:
         ContainerContentRegistry registry;
         registerRxSectionContent(registry, &applet);
         const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("rx.filter"));
-        QCOMPARE(properties.size(), 8);
+        QCOMPARE(properties.size(), 10);
         QCOMPARE(properties.at(3).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kText));
         QCOMPARE(properties.at(4).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kRestingTop));
         QCOMPARE(properties.at(5).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kRestingBottom));
@@ -629,6 +733,370 @@ private slots:
         unavailableEditor.setEntry(registry.makeEntry(first));
         QVERIFY(editorText(unavailableEditor).contains(QStringLiteral("Test reason: not available here")));
         QVERIFY(!editorText(unavailableEditor).contains(QStringLiteral("Unsupported configuration")));
+    }
+    // ── Each job's parts ────────────────────────────────────────────────
+    // With no part keys, and with an order equal to the built one, a copy
+    // lays out exactly as a copy built without parts did.
+    void theDefaultLookIsUnchanged()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+
+        for (const char* type : kPartTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* before = copyWithoutConfig(applet, id, &host);
+            QWidget* after = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(before && after, type);
+            const SectionParts* parts = partsOf(after);
+            QVERIFY2(parts && !parts->ids().isEmpty(), type);
+
+            ContentEntry ordered = registry.makeEntry(id);
+            ordered.config.insert(SectionParts::orderKey(), QJsonArray::fromStringList(parts->ids()));
+            QWidget* builtOrder = registry.createWidget(ordered, &host);
+            QVERIFY2(builtOrder, type);
+
+            const QStringList expected = laidOut(before);
+            QCOMPARE(laidOut(after), expected);
+            QCOMPARE(laidOut(builtOrder), expected);
+        }
+
+        // Mode has one control and no parts.
+        QVERIFY(registry.declaredProperties(QStringLiteral("rx.mode")).isEmpty());
+    }
+
+    void eachHideKeyHidesExactlyItsPart()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+
+        for (const char* type : kPartTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* plain = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(plain, type);
+            const QStringList partIds = partsOf(plain)->ids();
+            for (const QString& part : partIds) {
+                ContentEntry entry = registry.makeEntry(id);
+                entry.config.insert(SectionParts::hideKey(part), true);
+                QWidget* copy = registry.createWidget(entry, &host);
+                QVERIFY2(copy, qPrintable(part));
+                const SectionParts* parts = partsOf(copy);
+                for (const QString& other : partIds) {
+                    QCOMPARE(parts->isHidden(other), other == part);
+                    const QList<QWidget*> mine = parts->widgets(other);
+                    const QList<QWidget*> theirs = partsOf(plain)->widgets(other);
+                    QCOMPARE(mine.size(), theirs.size());
+                    for (int i = 0; i < mine.size(); ++i) {
+                        if (other == part) {
+                            QVERIFY2(mine.at(i)->isHidden(), qPrintable(id + QLatin1Char(' ') + part));
+                        } else {
+                            QCOMPARE(mine.at(i)->isHidden(), theirs.at(i)->isHidden());
+                        }
+                    }
+                }
+            }
+        }
+
+        // RX Filter's old keys name its top and bottom; hidePresets hides
+        // the preset grid.
+        QCOMPARE(SectionParts::hideKey(QStringLiteral("top")), QStringLiteral("hideTop"));
+        QCOMPARE(SectionParts::hideKey(QStringLiteral("bottom")), QStringLiteral("hideBottom"));
+        QWidget host;
+        ContentEntry noPresets = registry.makeEntry(QStringLiteral("rx.filter"));
+        noPresets.config.insert(QStringLiteral("hidePresets"), true);
+        auto* filter = qobject_cast<RxFilterSection*>(registry.createWidget(noPresets, &host));
+        QVERIFY(filter);
+        QVERIFY(filter->grid()->parentWidget()->isHidden());
+        QVERIFY(!filter->widthLabel()->isHidden());
+        QVERIFY(!filter->passband()->isHidden());
+        QVERIFY(!filter->buttons().isEmpty());
+    }
+
+    // A hidden antenna button or preamp check box stays hidden when the
+    // board brings them.
+    void aHiddenPartStaysHiddenWhenTheAppletShowsIt()
+    {
+        P2RadioConnection connection;
+        connection.setBoardForTest(HPSDRHW::OrionMKII);
+        RadioModel model;
+        model.injectConnectionForTest(&connection);
+        const auto uninject = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &model);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+
+        // The copies follow what the applet's own panel shows, so the
+        // panel is on screen.
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet));
+
+        ContentEntry noRxAnt = registry.makeEntry(QStringLiteral("rx.antennas"));
+        noRxAnt.config.insert(QStringLiteral("hideRxAntenna"), true);
+        auto* hiddenAnt = qobject_cast<RxAntennasSection*>(registry.createWidget(noRxAnt, &host));
+        auto* shownAnt = qobject_cast<RxAntennasSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.antennas")), &host));
+        ContentEntry noPreamp = registry.makeEntry(QStringLiteral("rx.attenuator"));
+        noPreamp.config.insert(QStringLiteral("hidePreamp"), true);
+        auto* hiddenAtt = qobject_cast<RxAttenuatorSection*>(registry.createWidget(noPreamp, &host));
+        auto* shownAtt = qobject_cast<RxAttenuatorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.attenuator")), &host));
+        QVERIFY(hiddenAnt && shownAnt && hiddenAtt && shownAtt);
+
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        const BoardCapabilities caps = model.boardCapabilities();
+        QVERIFY(caps.hasAlex && caps.antennaInputCount >= 3);
+        QVERIFY(caps.p2PreampPerAdc);
+        applet.setBoardCapabilities(caps);
+
+        QVERIFY(hiddenAnt->rxButton()->isHidden());
+        QVERIFY(!hiddenAnt->txButton()->isHidden());
+        QVERIFY(!shownAnt->rxButton()->isHidden());
+        QVERIFY(!shownAnt->txButton()->isHidden());
+        QVERIFY(hiddenAtt->rx1Preamp()->isHidden());
+        QVERIFY(!shownAtt->rx1Preamp()->isHidden());
+
+        // Copies made once the board is known follow the same rule.
+        auto* lateHiddenAnt = qobject_cast<RxAntennasSection*>(registry.createWidget(noRxAnt, &host));
+        auto* lateShownAnt = qobject_cast<RxAntennasSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.antennas")), &host));
+        auto* lateHiddenAtt = qobject_cast<RxAttenuatorSection*>(registry.createWidget(noPreamp, &host));
+        auto* lateShownAtt = qobject_cast<RxAttenuatorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.attenuator")), &host));
+        QVERIFY(lateHiddenAnt && lateShownAnt && lateHiddenAtt && lateShownAtt);
+        QVERIFY(lateHiddenAnt->rxButton()->isHidden());
+        QVERIFY(!lateHiddenAnt->txButton()->isHidden());
+        QVERIFY(!lateShownAnt->rxButton()->isHidden());
+        QVERIFY(lateHiddenAtt->rx1Preamp()->isHidden());
+        QVERIFY(!lateShownAtt->rx1Preamp()->isHidden());
+
+        // The applet's own panel keeps its buttons.
+        auto* ownRx = applet.findChild<QPushButton*>(QStringLiteral("m_rxAntBtn"));
+        QVERIFY(ownRx);
+        QVERIFY(!ownRx->isHidden());
+    }
+
+    void theOrderMovesParts()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+
+        const auto copyWithOrder = [&](const char* type, const QStringList& order) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            entry.config.insert(SectionParts::orderKey(), QJsonArray::fromStringList(order));
+            QWidget* copy = registry.createWidget(entry, &host);
+            if (copy) {
+                laidOut(copy);
+            }
+            return copy;
+        };
+
+        // RIT reversed.
+        auto* rit = qobject_cast<RxRitSection*>(
+            copyWithOrder("rx.rit", {"plus", "offset", "minus", "zero", "on"}));
+        QVERIFY(rit);
+        QCOMPARE(lineIndex(rit, rit->plus()), 0);
+        QCOMPARE(lineIndex(rit, rit->label()), 1);
+        QCOMPARE(lineIndex(rit, rit->minus()), 2);
+        QCOMPARE(lineIndex(rit, rit->zeroButton()), 3);
+        QCOMPARE(lineIndex(rit, rit->onButton()), 4);
+        QVERIFY(rit->plus()->geometry().x() < rit->label()->geometry().x());
+        QVERIFY(rit->zeroButton()->geometry().x() < rit->onButton()->geometry().x());
+        // Each keeps its stretch.
+        auto* ritLine = qobject_cast<QBoxLayout*>(rit->layout()->itemAt(0)->layout());
+        QVERIFY(ritLine);
+        QCOMPARE(ritLine->stretch(lineIndex(rit, rit->onButton())), 1);
+        QCOMPARE(ritLine->stretch(lineIndex(rit, rit->label())), 1);
+        QCOMPARE(ritLine->stretch(lineIndex(rit, rit->zeroButton())), 0);
+
+        // XIT the same way.
+        auto* xit = qobject_cast<RxXitSection*>(
+            copyWithOrder("rx.xit", {"plus", "offset", "minus", "zero", "on"}));
+        QVERIFY(xit);
+        QCOMPARE(lineIndex(xit, xit->plus()), 0);
+        QCOMPARE(lineIndex(xit, xit->onButton()), 4);
+
+        // RX Filter with the passband first.
+        auto* filter = qobject_cast<RxFilterSection*>(
+            copyWithOrder("rx.filter", {"bottom", "presets", "top"}));
+        QVERIFY(filter);
+        QCOMPARE(columnIndex(filter, filter->passband()), 0);
+        QCOMPARE(columnIndex(filter, filter->grid()->parentWidget()), 1);
+        QCOMPARE(columnIndex(filter, filter->widthLabel()), 2);
+        QVERIFY(filter->passband()->geometry().y() < filter->widthLabel()->geometry().y());
+        QCOMPARE(filter->buttons().size(), appletPresets(applet).size());
+
+        // AGC: the slider above the mode line; the line moves as a unit.
+        auto* agc = qobject_cast<RxAgcSection*>(copyWithOrder("rx.agc", {"slider", "auto", "mode"}));
+        QVERIFY(agc);
+        QCOMPARE(columnIndex(agc, agc->slider()), 0);
+        QCOMPARE(columnIndex(agc, agc->combo()), 1);
+        QCOMPARE(columnIndex(agc, agc->autoButton()), 1);
+        QVERIFY(lineIndex(agc, agc->autoButton()) < lineIndex(agc, agc->combo()));
+        QCOMPARE(columnIndex(agc, agc->infoLabel()), 2);
+    }
+
+    void theEditorOffersTheTogglesAndTheOrder()
+    {
+        RadioModel radio;
+        RxApplet applet(nullptr, &radio);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        const QString reason =
+            QStringLiteral("These controls follow the RX panel; they have no source of their own.");
+        const auto advancedOf = [](const QWidget& editor) -> QGroupBox* {
+            for (QGroupBox* group : editor.findChildren<QGroupBox*>()) {
+                if (group->title() == QStringLiteral("Advanced bindings")) {
+                    return group;
+                }
+            }
+            return nullptr;
+        };
+
+        for (const char* type : kPartTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* copy = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(copy, type);
+            const QStringList partIds = partsOf(copy)->ids();
+
+            const QVector<ContentProperty> properties = registry.declaredProperties(id);
+            QVERIFY2(!properties.isEmpty(), type);
+            QCOMPARE(properties.last().kind, ContentProperty::Kind::Order);
+            QCOMPARE(properties.last().key, QStringLiteral("order"));
+            QCOMPARE(properties.last().choices.size(), partIds.size());
+            for (const ContentProperty& property : properties) {
+                QVERIFY2(!property.label.contains(QStringLiteral("RX1"))
+                         && !property.label.contains(QStringLiteral("RX2")), qPrintable(property.label));
+            }
+
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(registry.makeEntry(id));
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("Unsupported")), type);
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("RX1")), type);
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("RX2")), type);
+            QVERIFY2(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")), type);
+            auto* list = editor.findChild<QListWidget*>(QStringLiteral("property_orderList"));
+            QVERIFY2(list, type);
+            QCOMPARE(list->count(), partIds.size());
+            for (const QString& part : partIds) {
+                auto* toggle = editor.findChild<QCheckBox*>(
+                    QStringLiteral("property_") + SectionParts::hideKey(part));
+                QVERIFY2(toggle, qPrintable(id + QLatin1Char(' ') + part));
+                QVERIFY(!toggle->isChecked());
+            }
+
+            QGroupBox* advanced = advancedOf(editor);
+            QVERIFY2(advanced, type);
+            QVERIFY(!advanced->isEnabled());
+            QCOMPARE(advanced->toolTip(), reason);
+
+            // Each toggle writes its key.
+            QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+            for (const QString& part : partIds) {
+                const QString key = SectionParts::hideKey(part);
+                editor.findChild<QCheckBox*>(QStringLiteral("property_") + key)->setChecked(true);
+                QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(key), QJsonValue(true));
+            }
+        }
+
+        // Mode: no item group, nothing unsupported, Advanced disabled.
+        ContentPropertyEditor modeEditor(registry);
+        modeEditor.setEntry(registry.makeEntry(QStringLiteral("rx.mode")));
+        QVERIFY(!modeEditor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
+        QVERIFY(!editorText(modeEditor).contains(QStringLiteral("Unsupported")));
+        QVERIFY(advancedOf(modeEditor));
+        QVERIFY(!advancedOf(modeEditor)->isEnabled());
+        QCOMPARE(advancedOf(modeEditor)->toolTip(), reason);
+
+        // RX Filter's two old toggles keep their labels.
+        ContentPropertyEditor filterEditor(registry);
+        filterEditor.setEntry(registry.makeEntry(QStringLiteral("rx.filter")));
+        QVERIFY(editorText(filterEditor).contains(QStringLiteral("Hide width label")));
+        QVERIFY(editorText(filterEditor).contains(QStringLiteral("Hide passband")));
+        QVERIFY(editorText(filterEditor).contains(QStringLiteral("Hide Preset buttons")));
+
+        // The order list moves the passband up; back to the built order
+        // writes no order.
+        auto* list = filterEditor.findChild<QListWidget*>(QStringLiteral("property_orderList"));
+        auto* up = filterEditor.findChild<QPushButton*>(QStringLiteral("property_orderUp"));
+        auto* down = filterEditor.findChild<QPushButton*>(QStringLiteral("property_orderDown"));
+        QVERIFY(list && up && down);
+        QCOMPARE(list->item(2)->text(), QStringLiteral("Passband"));
+        QSignalSpy edited(&filterEditor, &ContentPropertyEditor::entryEdited);
+        list->setCurrentRow(2);
+        up->click();
+        QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
+                 QJsonValue(QJsonArray{"top", "bottom", "presets"}));
+        down->click();
+        QVERIFY(!qvariant_cast<ContentEntry>(edited.last().at(0)).config.contains(QStringLiteral("order")));
+    }
+
+    // A copy's part keys and order survive a save and a load, as the
+    // workspace store writes them, and lay the loaded copy out.
+    void thePartsSurviveTheStore()
+    {
+        WorkspaceDocument doc;
+        doc.mainContainerId = QStringLiteral("main");
+        ContainerDocument container;
+        container.id = doc.mainContainerId;
+        container.name = QStringLiteral("RX");
+        container.layout = ContentLayout::VerticalStack;
+        ContentEntry rit;
+        rit.id = QStringLiteral("rx-rit-1");
+        rit.typeId = QStringLiteral("rx.rit");
+        rit.name = QStringLiteral("RX RIT");
+        rit.config = {{"hideZero", true}, {"order", QJsonArray{"plus", "offset", "minus", "zero", "on"}}};
+        container.contents.append(rit);
+        ContentEntry filter;
+        filter.id = QStringLiteral("rx-filter-1");
+        filter.typeId = QStringLiteral("rx.filter");
+        filter.name = QStringLiteral("RX Filter");
+        filter.config = {{"hideTop", true}, {"hidePresets", false}, {"columns", 2},
+                         {"order", QJsonArray{"bottom", "presets", "top"}}};
+        container.contents.append(filter);
+        doc.containers.append(container);
+
+        const DocumentResult decoded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        const ContentEntry& loadedRit = decoded.document.containers.at(0).contents.at(0);
+        const ContentEntry& loadedFilter = decoded.document.containers.at(0).contents.at(1);
+        QCOMPARE(loadedRit.typeId, QStringLiteral("rx.rit"));
+        QCOMPARE(loadedFilter.config.value("order").toArray(), (QJsonArray{"bottom", "presets", "top"}));
+
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* ritCopy = qobject_cast<RxRitSection*>(registry.createWidget(loadedRit, &host));
+        QVERIFY(ritCopy);
+        QVERIFY(ritCopy->zeroButton()->isHidden());
+        QCOMPARE(lineIndex(ritCopy, ritCopy->plus()), 0);
+        auto* filterCopy = qobject_cast<RxFilterSection*>(registry.createWidget(loadedFilter, &host));
+        QVERIFY(filterCopy);
+        QVERIFY(filterCopy->widthLabel()->isHidden());
+        QCOMPARE(filterCopy->columns(), 2);
+        QCOMPARE(columnIndex(filterCopy, filterCopy->passband()), 0);
     }
 };
 

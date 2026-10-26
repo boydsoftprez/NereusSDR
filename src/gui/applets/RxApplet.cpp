@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The dynamic shows and hides of a copy's antenna buttons,
+//                 preamp check box and AGC info line go through the copy's
+//                 parts, so a container copy that hides one keeps it
+//                 hidden. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-24 - A RX Filter copy's passband centre drag goes through
 //                 SliceModel::shiftFilter, as the applet's own passband
 //                 does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -2037,8 +2042,9 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_txAntBtn) { m_txAntBtn->setVisible(showAnt); }
     for (const auto& section : m_antennaCopies) {
         if (!section) { continue; }
-        section->rxButton()->setVisible(showAnt);
-        section->txButton()->setVisible(showAnt);
+        // Through the parts: a copy that hides a button keeps it hidden.
+        section->parts().setDynamicVisible(section->rxButton(), showAnt);
+        section->parts().setDynamicVisible(section->txButton(), showAnt);
     }
 
     // hermes-filter-debug Bug 1: re-range the S-ATT spinbox from caps on
@@ -2073,7 +2079,7 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     }
     for (const auto& section : m_attCopies) {
         if (section && section->rx1Preamp()) {
-            section->rx1Preamp()->setVisible(caps.p2PreampPerAdc);
+            section->parts().setDynamicVisible(section->rx1Preamp(), caps.p2PreampPerAdc);
         }
     }
 
@@ -3141,8 +3147,9 @@ void RxApplet::syncCopy(RxAntennasSection* section)
     if (!m_rxAntBtn || !m_txAntBtn) { return; }
     section->rxButton()->setText(m_rxAntBtn->text());
     section->txButton()->setText(m_txAntBtn->text());
-    section->rxButton()->setVisible(m_rxAntBtn->isVisible());
-    section->txButton()->setVisible(m_txAntBtn->isVisible());
+    // Through the parts: a copy that hides a button keeps it hidden.
+    section->parts().setDynamicVisible(section->rxButton(), m_rxAntBtn->isVisible());
+    section->parts().setDynamicVisible(section->txButton(), m_txAntBtn->isVisible());
 }
 
 void RxApplet::syncCopy(RxModeSection* section)
@@ -3201,7 +3208,7 @@ void RxApplet::syncCopy(RxAttenuatorSection* section)
     }
     if (section->rx1Preamp()) {
         const bool show = m_rx1PreampToggle && m_rx1PreampToggle->isVisible();
-        section->rx1Preamp()->setVisible(show);
+        section->parts().setDynamicVisible(section->rx1Preamp(), show);
         if (m_rx1PreampToggle) {
             QSignalBlocker block(section->rx1Preamp());
             section->rx1Preamp()->setChecked(m_rx1PreampToggle->isChecked());
@@ -3225,7 +3232,7 @@ void RxApplet::syncCopy(RxAgcSection* section)
     }
     if (m_agcInfoLabel && section->infoLabel()) {
         section->infoLabel()->setText(m_agcInfoLabel->text());
-        section->infoLabel()->setVisible(m_agcInfoLabel->isVisible());
+        section->parts().setDynamicVisible(section->infoLabel(), m_agcInfoLabel->isVisible());
     }
 }
 
