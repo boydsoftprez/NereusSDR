@@ -34,7 +34,12 @@
 # The summary prints the failures first, in the order xcodebuild wrote them
 # (XCTest's "error: -[...]" and "Test Case '...' failed" lines and Swift
 # Testing's "✘" lines, each once), and then the counts, with any Swift
-# Testing cancel ("Test ... was cancelled").
+# Testing cancel: the console line 'Test "<name>" was cancelled after N
+# seconds', or 'Test name() was cancelled after N seconds' for a test with
+# no display name. The pattern is anchored on the quoted name or the
+# closing parenthesis and "was cancelled after", so a test whose own name
+# begins with "cancelled" (cancelledPendingClaimReleasesItsReservation())
+# is not read as a cancel.
 #
 # Exits with xcodebuild's status, or sim-ready.sh's when that fails. A
 # Swift Testing cancel is not a pass: xcodebuild still ends in TEST EXECUTE
@@ -112,7 +117,7 @@ status=$?
 # The failures first, from XCTest and Swift Testing, each once and in
 # xcodebuild's order, then the counts. Swift Testing's closing "✘ Test run
 # with ..." line is a count.
-cancelled="Test .* was cancelled|Test cancelled"
+cancelled='Test (".*"|[^ ]+\)) was cancelled after [0-9.]+ seconds'
 counts="Executed [0-9]+ test|Test run with|$cancelled|TEST EXECUTE|TEST SUCCEEDED"
 grep -E "✘|error: -\[|Test Case .* failed|hung before" "$logs/xcodebuild.log" |
     grep -v -E "Test run with" | awk '!seen[$0]++'
