@@ -397,6 +397,12 @@ warren@wpratt.com
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 //   2026-10-15 - Punctuation of the 2026-10-11 entry. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Remote transmit hold then cut: the RF hold. While any
+//                 RfHold reason is set, the block sent to the connection
+//                 and the AM monitor tap is zeroed inside the sender
+//                 section; setRfHold(on) waits for a block already in it,
+//                 as closeRfGate does. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -718,6 +724,30 @@ void TxChannel::closeRfGate() noexcept
     // gate again: its sequence is now stale (applyRunningOnLane).
     m_runSequence.fetch_add(1, std::memory_order_acq_rel);
     closeRfGateAndWaitForSender();
+}
+
+// Remote transmit hold then cut (2026-10-26). NereusSDR-original.
+void TxChannel::setRfHold(RfHold reason, bool on) noexcept
+{
+    const quint32 bit = static_cast<quint32>(reason);
+    if (!on) {
+        m_rfHoldMask.fetch_and(~bit, std::memory_order_seq_cst);
+        return;
+    }
+    // Dekker pairing with driveOneTxBlockFromInterleaved, as in
+    // closeRfGateAndWaitForSender: either the worker's check inside the
+    // sender section sees the hold and zeroes its block, or this sees the
+    // worker inside its send and waits for it to leave.
+    m_rfHoldMask.fetch_or(bit, std::memory_order_seq_cst);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    while (m_txIqSendersInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+void TxChannel::clearRfHolds() noexcept
+{
+    m_rfHoldMask.store(0u, std::memory_order_seq_cst);
 }
 
 void TxChannel::refreshStageCacheOnLane() const
@@ -3911,6 +3941,12 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     if (!m_running.load(std::memory_order_seq_cst)) {
         m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
         return;
+    }
+    // Remote transmit hold then cut: a held key still sends every block,
+    // all zeros, so the radio stays keyed and its stream keeps its cadence
+    // while no RF goes out. The AM monitor tap below gets the same block.
+    if (m_rfHoldMask.load(std::memory_order_seq_cst) != 0u) {
+        std::fill_n(m_outInterleavedFloat.begin(), static_cast<std::size_t>(2 * outN), 0.0f);
     }
     m_connection->sendTxIq(m_outInterleavedFloat.data(), outN);
     m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);

@@ -634,6 +634,15 @@ if(TARGET wdsp_static)
     # (Thetis's order). REALTIME: wall-clock bounds on real channels; it
     # plans through the shared wisdom cache, so the default 120 s holds.
     nereus_add_test(tst_stop_transmit_now EXTRA_LABELS core REALTIME)
+    # Remote transmit hold then cut (2026-10-26): the TX channel's RF hold.
+    # A held key still sends every block at the same cadence, all zeros, to
+    # the connection and the AM monitor tap; the gate, the run sequence and
+    # rfGateOpened are untouched; the last reason off sends real output on
+    # the next block; closeRfGate still stops everything; RadioModel's
+    # setRemoteRfHold emits on the mask's edges, MOX's return to receive
+    # clears it, and the TX time-out does not see it. REALTIME, as
+    # tst_stop_transmit_now: a real TX channel runs.
+    nereus_add_test(tst_tx_rf_hold EXTRA_LABELS core REALTIME)
     if(NOT WIN32)
         # R-R3-41: linux_port.c's thread-start hook fires once per channel
         # worker and flush thread, on that thread, with its kind and channel.

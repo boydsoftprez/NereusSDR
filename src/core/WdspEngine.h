@@ -79,6 +79,9 @@
 //                 maxBinHoldNextDbm declared, ported from Longpath PR 215
 //                 (src/core/WdspEngine.h:631-654 [@383f058]), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-26 : Remote transmit hold then cut by J.J. Boyd (KG4VCF):
+//                 test-only friendship for the RF hold test's live transmit
+//                 channel. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -221,6 +224,8 @@ class TestDspControlReceive;
 class TestDspControlTransmit;
 // Task 33: the stop-transmit test opens real TX and RX channels on lanes.
 class TestStopTransmitNow;
+// Remote transmit hold then cut: the RF hold test opens a real TX channel.
+class TestTxRfHold;
 // Several-devices fix wave 2: the confirm-step test drives a Protocol 1
 // rate change, which needs an initialized engine with RX channels.
 class TstConfirmStep;
@@ -1160,6 +1165,8 @@ private:
     friend class ::TestDspControlTransmit;
     // Task 33: same friendship for the stop-transmit test.
     friend class ::TestStopTransmitNow;
+    // Remote transmit hold then cut: same friendship for the RF hold test.
+    friend class ::TestTxRfHold;
     // Several-devices fix wave 2: same friendship for the confirm-step
     // test's Protocol 1 rate change (the synchronous init would open the
     // PureSignal feedback channel too, which the test does not need).

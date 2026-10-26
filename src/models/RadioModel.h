@@ -12,6 +12,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Remote transmit hold then cut: setRemoteRfHold,
+//                isRemoteRfHeld and remoteRfHoldChanged hold the TX
+//                channel's RF silent for a reason while the key stays up;
+//                MOX's return to receive clears every reason.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -838,6 +844,7 @@
 #include "core/session/StationCapabilities.h"
 #include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
+#include "core/TxChannel.h"  // TxChannel::RfHold (setRemoteRfHold)
 #include "core/TuneMemoryStore.h"
 #include "models/RotorCommandSink.h"
 #include "models/TunerModel.h"
@@ -5761,6 +5768,15 @@ public slots:
     void catchUpTransmitCut(const QString& stopText);
 
 public:
+    // Remote transmit hold then cut (2026-10-26), main thread. Holds the TX
+    // channel's RF silent for `reason` (TxChannel::setRfHold) while MOX,
+    // the relay and the stream stay keyed. remoteRfHoldChanged(true) fires
+    // when the first reason is set, (false) when the last clears; MOX's
+    // return to receive clears every reason. Nothing else (the TX time-out,
+    // the keying walk) sees a hold.
+    void setRemoteRfHold(TxChannel::RfHold reason, bool on);
+    bool isRemoteRfHeld() const { return m_remoteRfHoldMask != 0u; }
+
     // ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ──
     //
     // TxTimeOutTimer (Thetis TimeOutTimerManager) on a model with its own
@@ -6337,6 +6353,9 @@ signals:
     // the operator (MainWindow shows it for 10 s, as Thetis's
     // infoBar.Warning(msg, false, 10000)).
     void transmitStopped(QString message);
+    // Remote transmit hold then cut: the hold mask went from no reason to
+    // some (true) or back (false).
+    void remoteRfHoldChanged(bool held);
     // iPhone app plan Task 38: the Core stopped a transmission for a
     // reason of its own (lastTransmitStopReason()); emitted after
     // transmitStopped.
@@ -8236,6 +8255,10 @@ private:
     // parent this) and the last reason the Core stopped a transmission.
     TxTimeOutTimer* m_txTimeOut{nullptr};
     TransmitStopReason m_lastTransmitStopReason;
+    // Remote transmit hold then cut: the RfHold reasons set through
+    // setRemoteRfHold (main thread); cleared when MOX returns to receive.
+    quint32 m_remoteRfHoldMask{0};
+    void clearRemoteRfHolds();
     quint32 m_keyingEpoch{0};
     // iPhone app plan Task 36: the remote microphone ring (Local only; it
     // outlives the transmit pump, which holds a plain pointer to it) and
