@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Rows for the ANAN, Cross and Power/SWR per-item options:
+//                 power limit (0 shows "Radio rating"), power scale, peak
+//                 hold, peak value and other needles colors (blank keeps
+//                 the face's ink), shadow and dark mode. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - One data source row pair per variable the item type reads
 //                 (MeterItem::mmioVariableCount, Thetis MeterVariables):
 //                 variables 2 and up are stored in mmioVariables.
@@ -190,6 +195,12 @@ QString fieldLabel(QString key)
     if(key=="secondaryBindingId") {return QObject::tr("Average reading");}
     if(key=="decay") {return QObject::tr("Release (0–1)");}
     if(key=="attack") {return QObject::tr("Attack (0–1)");}
+    if(key=="powerLimitW") {return QObject::tr("Power limit");}
+    if(key=="powerScaleColor") {return QObject::tr("Power scale color");}
+    if(key=="peakHoldColor") {return QObject::tr("Peak hold color");}
+    if(key=="peakValueColor") {return QObject::tr("Peak value color");}
+    if(key=="subNeedleColor") {return QObject::tr("Other needles color");}
+    if(key=="darkMode") {return QObject::tr("Dark mode");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;
@@ -408,13 +419,16 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* spin=new QDoubleSpinBox(this);spin->setDecimals(4);spin->setRange(-1000000,1000000);
             if(key=="attack" || key=="decay") {spin->setRange(0,1);spin->setSingleStep(.05);}
             if(key.startsWith("radius") || key=="strokeWidth" || key=="lengthFactor") {spin->setRange(.0001,1000);spin->setSingleStep(.05);}
+            // 0 follows the radio's rating; the face rejects 0-0.1.
+            if(key=="powerLimitW") {spin->setDecimals(1);spin->setRange(0,kMaxBarPowerLimitW);spin->setSingleStep(10);spin->setSuffix(tr(" W"));spin->setSpecialValueText(tr("Radio rating"));}
             spin->setValue(value.toDouble());connect(spin,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,key,channel,spin](double v){if(!property(key,v,channel)) {const QSignalBlocker block(spin);spin->setValue(effectiveProperty(key,channel).toDouble());spin->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=spin;
         }
     } else if(value.isString()) {
         auto* edit=new QLineEdit(value.toString(),this);edit->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));
         connect(edit,&QLineEdit::editingFinished,this,[this,edit,key,channel]{if(!property(key,edit->text(),channel)) {edit->setText(effectiveProperty(key,channel).toString());edit->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=edit;
         if(key.endsWith("Color") || key=="color") {
-            edit->setPlaceholderText(tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor"}.contains(key)?tr("Blank uses the face color")
+                :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
             connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
         }
