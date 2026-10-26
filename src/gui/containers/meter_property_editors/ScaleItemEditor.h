@@ -86,6 +86,9 @@ private:
     // Phase B4 — ShowType centered title (Thetis clsScaleItem.ShowType)
     QCheckBox*      m_chkShowType{nullptr};
     QPushButton*    m_btnTitleColor{nullptr};
+    // Thetis clsScaleItem.LowColour / HighColour
+    QPushButton*    m_btnLowColor{nullptr};
+    QPushButton*    m_btnHighColor{nullptr};
 };
 
 } // namespace NereusSDR

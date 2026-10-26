@@ -1,6 +1,7 @@
 #include "ImageItemEditor.h"
 #include "../../meters/MeterItem.h"
 
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QFileDialog>
@@ -23,6 +24,7 @@ void ImageItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
     m_editPath->setText(img->imagePath());
+    m_chkDarkMode->setChecked(img->darkMode());
     endProgrammaticUpdate();
 }
 
@@ -45,6 +47,19 @@ void ImageItemEditor::buildTypeSpecific()
     hbox->addWidget(m_btnBrowse);
 
     addRow(QStringLiteral("Image path"), rowWidget);
+
+    // Dark mode: use the image's "-dark" file when there is one beside it.
+    m_chkDarkMode = makeCheckRow(QStringLiteral("Dark mode"));
+    m_chkDarkMode->setObjectName(QStringLiteral("imageDarkMode"));
+    m_chkDarkMode->setToolTip(QStringLiteral(
+        "Use the image's -dark file (for example meter-dark.png) when there is one"));
+    connect(m_chkDarkMode, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        ImageItem* img = qobject_cast<ImageItem*>(m_item);
+        if (!img) { return; }
+        img->setDarkMode(on);
+        notifyChanged();
+    });
 
     // Apply path when the user finishes editing the line edit directly
     connect(m_editPath, &QLineEdit::editingFinished, this, [this]() {

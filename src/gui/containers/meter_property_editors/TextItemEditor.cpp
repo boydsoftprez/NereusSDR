@@ -7,6 +7,8 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QColorDialog>
+#include <QComboBox>
+#include <QFontDatabase>
 
 namespace NereusSDR {
 
@@ -35,6 +37,20 @@ void TextItemEditor::setItem(MeterItem* item)
     m_editIdleText->setText(x->idleText());
     m_spinMinValid->setValue(x->minValidValue());
 
+    // Empty family is the application font (the first entry). A family not
+    // installed here is added so the saved name still shows.
+    int familyIndex = 0;
+    if (!x->fontFamily().isEmpty()) {
+        familyIndex = m_comboFontFamily->findData(x->fontFamily());
+        if (familyIndex < 0) {
+            m_comboFontFamily->addItem(x->fontFamily(), x->fontFamily());
+            familyIndex = m_comboFontFamily->count() - 1;
+        }
+    }
+    m_comboFontFamily->setCurrentIndex(familyIndex);
+    m_chkItalic->setChecked(x->italic());
+    m_chkCentred->setChecked(x->centred());
+
     endProgrammaticUpdate();
 }
 
@@ -44,6 +60,9 @@ void TextItemEditor::buildTypeSpecific()
 
     // Label
     m_editLabel = new QLineEdit(this);
+    m_editLabel->setToolTip(QStringLiteral(
+        "%value% shows the reading, %valueWithType% the reading with its unit, "
+        "%group% the display group's name."));
     addRow(QStringLiteral("Label"), m_editLabel);
     connect(m_editLabel, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
@@ -79,6 +98,22 @@ void TextItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
+    // Font family
+    m_comboFontFamily = new QComboBox(this);
+    m_comboFontFamily->setObjectName(QStringLiteral("textFontFamily"));
+    m_comboFontFamily->addItem(QStringLiteral("Default"), QString());
+    for (const QString& family : QFontDatabase::families()) {
+        m_comboFontFamily->addItem(family, family);
+    }
+    addRow(QStringLiteral("Font"), m_comboFontFamily);
+    connect(m_comboFontFamily, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (isProgrammaticUpdate()) { return; }
+        TextItem* x = qobject_cast<TextItem*>(m_item);
+        if (!x) { return; }
+        x->setFontFamily(m_comboFontFamily->currentData().toString());
+        notifyChanged();
+    });
+
     // Bold
     m_chkBold = makeCheckRow(QStringLiteral("Bold"));
     connect(m_chkBold, &QCheckBox::toggled, this, [this](bool on) {
@@ -86,6 +121,28 @@ void TextItemEditor::buildTypeSpecific()
         TextItem* x = qobject_cast<TextItem*>(m_item);
         if (!x) { return; }
         x->setBold(on);
+        notifyChanged();
+    });
+
+    // Italic
+    m_chkItalic = makeCheckRow(QStringLiteral("Italic"));
+    m_chkItalic->setObjectName(QStringLiteral("textItalic"));
+    connect(m_chkItalic, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        TextItem* x = qobject_cast<TextItem*>(m_item);
+        if (!x) { return; }
+        x->setItalic(on);
+        notifyChanged();
+    });
+
+    // Centred
+    m_chkCentred = makeCheckRow(QStringLiteral("Centered"));
+    m_chkCentred->setObjectName(QStringLiteral("textCentred"));
+    connect(m_chkCentred, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        TextItem* x = qobject_cast<TextItem*>(m_item);
+        if (!x) { return; }
+        x->setCentred(on);
         notifyChanged();
     });
 
