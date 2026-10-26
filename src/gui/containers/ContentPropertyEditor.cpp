@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Bar preset rows for the Thetis colour set: show title,
+//                 show marker, peak hold and peak value colours, average
+//                 marker show and colour, solid and segment low and high
+//                 colours, scale low and high colours. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Signal text rows: Show type, Type color, Show µV and dBm
+//                 and µV and dBm color. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Magic eye rows: eye size and bezel size (0.01 to 1) and a
 //                 bezel image with a file picker. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -209,6 +217,15 @@ QString fieldLabel(QString key)
     if(key=="eyeScale") {return QObject::tr("Eye size");}
     if(key=="bezelScale") {return QObject::tr("Bezel size");}
     if(key=="bezelImage") {return QObject::tr("Bezel image");}
+    if(key=="showType") {return QObject::tr("Show type");}
+    if(key=="typeColor") {return QObject::tr("Type color");}
+    if(key=="showSubMarker") {return QObject::tr("Show µV and dBm");}
+    if(key=="subMarkerColor") {return QObject::tr("µV and dBm color");}
+    if(key=="showMarker") {return QObject::tr("Show marker");}
+    if(key=="showSub") {return QObject::tr("Show average marker");}
+    if(key=="subColor") {return QObject::tr("Average marker color");}
+    if(key=="segLowColor") {return QObject::tr("Solid and segment low color");}
+    if(key=="segHighColor") {return QObject::tr("Solid and segment high color");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;
@@ -437,7 +454,7 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         auto* edit=new QLineEdit(value.toString(),this);edit->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));
         connect(edit,&QLineEdit::editingFinished,this,[this,edit,key,channel]{if(!property(key,edit->text(),channel)) {edit->setText(effectiveProperty(key,channel).toString());edit->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=edit;
         if(key.endsWith("Color") || key=="color") {
-            edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor"}.contains(key)?tr("Blank uses the face color")
+            edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor","segLowColor","segHighColor"}.contains(key)?tr("Blank uses the face color")
                 :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
             connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
@@ -548,11 +565,17 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     } else if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
         const auto props=bar->configuration();
-        QStringList keys{"label","barColor","backdropColor","titleColor","historyColor","showHistory","peakHold","showValue","showPeakValue","style","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
+        QStringList keys{"label","showTitle","barColor","showMarker","backdropColor","titleColor","historyColor","showHistory","peakHold","peakHoldColor","showValue","showPeakValue","peakValueColor","showSub","subColor","style","segLowColor","segHighColor","lowColor","highColor","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
         const QString flavor=props["flavor"].toString();
         if(flavor=="Custom") { keys.append({"minValue","maxValue","redThreshold","units"}); }
         keys.removeAll("bindingId");keys.removeAll("secondaryBindingId");
-        for(const auto& key:keys) {if(auto* widget=control(key,props[key])) {fields->addRow(fieldLabel(key),widget);}}
+        // A bar preset's lowColor and highColor are its scale colours.
+        const auto barLabel=[](const QString& key) {
+            if(key=="lowColor") {return tr("Scale low color");}
+            if(key=="highColor") {return tr("Scale high color");}
+            return fieldLabel(key);
+        };
+        for(const auto& key:keys) {if(auto* widget=control(key,props[key])) {fields->addRow(barLabel(key),widget);}}
         addFadeRows(fields);
         auto* note=new QLabel(flavor=="Custom"?tr("Custom calibration range is editable."):tr("This face uses its calibrated source scale; minimum and maximum are fixed."),this); note->setWordWrap(true); root->addWidget(note);
         if(flavor.contains("Signal") || flavor=="PbSnr") { auto* note=new QLabel(tr("Signal units and decimal precision follow the global multimeter preferences."),this); note->setWordWrap(true); root->addWidget(note); }

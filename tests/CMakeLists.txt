@@ -844,6 +844,10 @@ nereus_add_test(tst_meter_item_needle)
 # attack and decay, eye and bezel size, bezel image, calibration and the
 # VHF S9 rule, history, saved records and new-item defaults.
 nereus_add_test(tst_meter_magic_eye)
+# Container item parity: signal text (SIGNALTEXT and meter.signalText): the
+# PK / AVG / FFT type glyph, the uV and dBm sub lines, the peak value without
+# peak hold, the background, history, saved records and new-item defaults.
+nereus_add_test(tst_meter_signal_text)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.

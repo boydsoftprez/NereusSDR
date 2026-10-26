@@ -7,6 +7,7 @@ class QPushButton;
 class QDoubleSpinBox;
 class QComboBox;
 class QFontComboBox;
+class QSpinBox;
 
 namespace NereusSDR {
 
@@ -33,6 +34,14 @@ private:
     QFontComboBox*  m_fontCombo{nullptr};
     QDoubleSpinBox* m_spinFontSize{nullptr};
     QComboBox*      m_comboBarStyle{nullptr};
+    QComboBox*      m_comboTypeStyle{nullptr};
+    QPushButton*    m_btnTypeColour{nullptr};
+    QCheckBox*      m_chkShowSubMarker{nullptr};
+    QPushButton*    m_btnSubMarkerColour{nullptr};
+    QPushButton*    m_btnBackgroundColour{nullptr};
+    QCheckBox*      m_chkPeakNeedsHold{nullptr};
+    QSpinBox*       m_spinHistoryMs{nullptr};
+    QSpinBox*       m_spinIgnoreHistoryMs{nullptr};
 };
 
 } // namespace NereusSDR

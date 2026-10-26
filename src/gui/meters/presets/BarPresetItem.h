@@ -1,5 +1,12 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Thetis bar colour set: scale low and high colours, show
+//                 marker, peak hold and peak value colours, solid and
+//                 segment low and high colours, average (sub) marker colour
+//                 and show, show title. New items take
+//                 kBarPresetThetisDefaults (applyNewItemDefaults); saved
+//                 records without the keys paint as before. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setSecondaryValue: a second data source variable feeds the
 //                 average marker. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -55,6 +62,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterDynamics.h"
 #include <QJsonObject>
 #include <QFont>
+#include <QRgb>
+#include <array>
 namespace NereusSDR {
 class BarPresetItem : public MeterItem {
     Q_OBJECT
@@ -66,6 +75,9 @@ public:
     QString typeId() const;
     static QStringList variants();
     bool configureVariant(const QString& flavor);
+    // New items (makeEntry) take the kBarPresetThetisDefaults row for their
+    // flavor; a custom bar also takes kCustomBarThetisDefaults.
+    void applyNewItemDefaults() override;
     void setAboveS9Frequency(bool above) override { MeterItem::setAboveS9Frequency(above); if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer layer) const override;
@@ -96,6 +108,9 @@ public:
     bool hasAverageReading() const { return m_average.hasReading(); }
 private:
     void configureDynamics();
+    // Today's paint for the colour-set keys; a saved record without a key
+    // keeps it.
+    void resetColourSet();
     QString m_flavor = QStringLiteral("Custom"), m_label;
     int m_secondary = -1;
     double m_minimum = -30, m_maximum = 12, m_redThreshold = 0;
@@ -115,5 +130,95 @@ private:
     QImage m_scaleCache;
     QRect m_scaleRect;
     QFont m_scaleFont;
+    // Colour set (MeterManager.cs:28272-28315 [v2.10.3.15]). An invalid
+    // optional colour draws today's colour for that part.
+    QColor m_scaleLow = Qt::white, m_scaleHigh = Qt::red, m_subColor{169,169,169};
+    QColor m_peakHoldColor, m_peakValueColor, m_segLowColor, m_segHighColor;
+    bool m_showMarker = true, m_showSub = true, m_showTitle = true;
 };
+
+// New bar presets take their Thetis builder's values, over the clsBarItem
+// constructor (MeterManager.cs:21284-21302), the clsScaleItem constructor
+// (MeterManager.cs:16118-16124) and the builders' clsSolidColour backdrop.
+struct BarPresetThetisDefaults {
+    const char* flavor;
+    QRgb markerColour;        // cb.MarkerColour (constructor Yellow)
+    QRgb historyColour;       // cb.HistoryColour
+    QRgb segLowColour;        // cb.Colour (constructor Red)
+    QRgb segHighColour;       // cb.ColourHigh (constructor Orange)
+    QRgb peakHoldColour;      // cb.PeakHoldMarkerColour (constructor Red)
+    QRgb peakValueColour;     // cb.PeakValueColour (constructor Red)
+    QRgb subColour;           // sub bar cb.MarkerColour (DarkGray)
+    QRgb scaleLowColour;      // cs.LowColour (constructor White)
+    QRgb scaleHighColour;     // cs.HighColour (constructor Red)
+    QRgb backgroundColour;    // sc.Colour
+    bool showHistory;         // cb.ShowHistory
+    bool peakHold;            // cb.PeakHold (constructor false)
+    bool showMarker;          // cb.ShowMarker (constructor true)
+    bool showSub;             // sub bar ShowMarker (constructor true)
+    bool showTitle;           // cs.ShowType
+    const char* style;        // cb.Style
+};
+namespace BarPresetColours {
+inline constexpr QRgb kYellow = qRgb(0xff, 0xff, 0x00);          // Color.Yellow
+inline constexpr QRgb kOrange = qRgb(0xff, 0xa5, 0x00);          // Color.Orange
+inline constexpr QRgb kRed = qRgb(0xff, 0x00, 0x00);             // Color.Red
+inline constexpr QRgb kWhite = qRgb(0xff, 0xff, 0xff);           // Color.White
+inline constexpr QRgb kDarkGray = qRgb(0xa9, 0xa9, 0xa9);        // Color.DarkGray
+inline constexpr QRgb kCadetBlue = qRgb(0x5f, 0x9e, 0xa0);       // Color.CadetBlue
+inline constexpr QRgb kDarkCyan = qRgb(0x00, 0x8b, 0x8b);        // Color.DarkCyan
+inline constexpr QRgb kBackground = qRgb(32, 32, 32);            // Color.FromArgb(32, 32, 32)
+inline constexpr QRgb kRedHistory = qRgba(0xff, 0x00, 0x00, 128);          // FromArgb(128, Red)
+inline constexpr QRgb kCornflowerHistory = qRgba(0x64, 0x95, 0xed, 128);   // FromArgb(128, CornflowerBlue)
+inline constexpr QRgb kPurpleHistory = qRgba(0x80, 0x00, 0x80, 128);       // FromArgb(128, Purple)
+inline constexpr QRgb kLemonChiffonHistory = qRgba(0xff, 0xfa, 0xcd, 128); // FromArgb(128, LemonChiffon)
+inline constexpr QRgb kPaleTurquoiseHistory = qRgba(0xaf, 0xee, 0xee, 128);// FromArgb(128, PaleTurquoise)
+inline constexpr QRgb kPeachPuffHistory = qRgba(0xff, 0xda, 0xb9, 128);    // FromArgb(128, PeachPuff)
+inline constexpr QRgb kVioletHistory = qRgba(0xee, 0x82, 0xee, 128);       // FromArgb(128, Violet)
+}
+inline constexpr std::array<BarPresetThetisDefaults, 19> kBarPresetThetisDefaults{{
+    // From Thetis MeterManager.cs:22822-22900 [v2.10.3.15] (AddSMeterBarSignal, shared builder)
+    {"Signal", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kCadetBlue, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:22826 [v2.10.3.15] (AddSMeterBarSignalAvg, shared builder)
+    {"SignalAvg", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kCadetBlue, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:22830 [v2.10.3.15] (AddSMeterBarMaxBin, shared builder)
+    {"SignalMaxBin", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kCadetBlue, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:22940-22983 [v2.10.3.15] (AddADCMaxMag)
+    {"AdcMax", BarPresetColours::kOrange, BarPresetColours::kCornflowerHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:23063-23133 [v2.10.3.15] (AddADCBar)
+    {"Adc", BarPresetColours::kOrange, BarPresetColours::kCornflowerHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:23151-23195 [v2.10.3.15] (AddPBSNRBar)
+    {"PbSnr", BarPresetColours::kYellow, BarPresetColours::kVioletHistory, BarPresetColours::kDarkCyan, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, false, true, true, true, true, "Segments"},
+    // From Thetis MeterManager.cs:23222-23266 [v2.10.3.15] (AddAGCGainBar)
+    {"AgcGain", BarPresetColours::kYellow, BarPresetColours::kVioletHistory, BarPresetColours::kDarkCyan, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:23284-23356 [v2.10.3.15] (AddAGCBar)
+    {"Agc", BarPresetColours::kYellow, BarPresetColours::kVioletHistory, BarPresetColours::kDarkCyan, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:23374-23448 [v2.10.3.15] (AddCustomBar)
+    {"Custom", BarPresetColours::kYellow, BarPresetColours::kVioletHistory, BarPresetColours::kDarkCyan, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24327-24396 [v2.10.3.15] (AddMicBar)
+    {"Mic", BarPresetColours::kYellow, BarPresetColours::kRedHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24414-24484 [v2.10.3.15] (AddEQBar)
+    {"Eq", BarPresetColours::kYellow, BarPresetColours::kCornflowerHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24502-24570 [v2.10.3.15] (AddLevelerBar)
+    {"Leveler", BarPresetColours::kYellow, BarPresetColours::kPurpleHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24588-24631 [v2.10.3.15] (AddLevelerGainBar)
+    {"LevelerGain", BarPresetColours::kYellow, BarPresetColours::kPurpleHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24649-24717 [v2.10.3.15] (AddALCBar)
+    {"Alc", BarPresetColours::kYellow, BarPresetColours::kLemonChiffonHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24735-24778 [v2.10.3.15] (AddALCGainBar)
+    {"AlcGain", BarPresetColours::kYellow, BarPresetColours::kLemonChiffonHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24796-24839 [v2.10.3.15] (AddALCGroupBar)
+    {"AlcGroup", BarPresetColours::kYellow, BarPresetColours::kLemonChiffonHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24857-24925 [v2.10.3.15] (AddCFCBar)
+    {"Cfc", BarPresetColours::kYellow, BarPresetColours::kPaleTurquoiseHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:24943-24986 [v2.10.3.15] (AddCFCGainBar)
+    {"CfcGain", BarPresetColours::kYellow, BarPresetColours::kPaleTurquoiseHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+    // From Thetis MeterManager.cs:25004-25072 [v2.10.3.15] (AddCompBar)
+    {"Comp", BarPresetColours::kYellow, BarPresetColours::kPeachPuffHistory, BarPresetColours::kRed, BarPresetColours::kOrange, BarPresetColours::kRed, BarPresetColours::kRed, BarPresetColours::kDarkGray, BarPresetColours::kWhite, BarPresetColours::kRed, BarPresetColours::kBackground, true, false, true, true, true, "Line"},
+}};
+// A new custom bar's range, units and title (the setup defaults Thetis
+// reads when it applies a custom bar).
+struct CustomBarThetisDefaults { double minimum, maximum, high; const char* units; const char* title; };
+// From Thetis MeterManager.cs:28251-28257 [v2.10.3.15]
+inline constexpr CustomBarThetisDefaults kCustomBarThetisDefaults{0.0, 10.0, 7.5, "?", "Title"};
 }

@@ -1,5 +1,13 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Thetis bar colour set: lowColor/highColor (scale),
+//                 showMarker, peakHoldColor, segLowColor/segHighColor,
+//                 peakValueColor, subColor/showSub and showTitle keys.
+//                 An absent key keeps today's paint, including the average
+//                 marker at (169,169,169) and the white/red scale. New items
+//                 take kBarPresetThetisDefaults per variant and a new custom
+//                 bar 0/10/7.5, "?" and "Title". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A second data source (MMIO) variable drives the average
 //                 marker (setSecondaryValue(1, ...)); the radio's average
 //                 reading then leaves it alone. J.J. Boyd (KG4VCF),
@@ -75,6 +83,7 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QJsonDocument>
 #include <algorithm>
+#include <utility>
 namespace NereusSDR {
 namespace {
 // ADC maximum magnitude has no core provider yet. Thetis reads ADC_MAX_MAG
@@ -98,7 +107,13 @@ void BarPresetItem::configureDynamics() {
     if(adcMaxWithoutProvider(*this)) { setBindingUnavailable(bindingId(),adcMaxUnavailableText()); }
     else if(bindingUnavailableReason(-1)==adcMaxUnavailableText()) { MeterItem::setBindingUnavailable(-1,QString()); }
 }
+void BarPresetItem::resetColourSet() {
+    m_scaleLow=Qt::white; m_scaleHigh=Qt::red; m_subColor=QColor(169,169,169);
+    m_peakHoldColor=QColor(); m_peakValueColor=QColor(); m_segLowColor=QColor(); m_segHighColor=QColor();
+    m_showMarker=true; m_showSub=true; m_showTitle=true;
+}
 void BarPresetItem::configureAsMic() {
+    resetColourSet();
     // From Thetis MeterManager.cs:24327-24413 [v2.10.3.15]
     m_attack=.8; m_release=.1; m_middle=0; m_middlePosition=.665; m_redThreshold=0; m_historyMs=2000; m_marker=Qt::yellow; m_units="dB"; m_showHistory=true; m_peakHold=false; m_style="Line"; m_major={-20,-10,0,4,8,12}; m_minor={-25,-15,-5,2,6,10};
     m_flavor="Mic"; m_label="MIC"; setBindingId(MeterBinding::TxMicPeak); m_secondary=MeterBinding::TxMic;
@@ -110,6 +125,7 @@ void BarPresetItem::configureAsAlc() {
     m_minimum=-30; m_maximum=12; m_historyColor=QColor(255,250,205,128); configureDynamics();
 }
 void BarPresetItem::configureAsCustom(int binding, double minimum, double maximum, const QString& label) {
+    resetColourSet();
     m_flavor="Custom"; m_label=label; setBindingId(binding); m_secondary=-1;
     m_minimum=minimum; m_maximum=maximum; configureDynamics();
 }
@@ -148,6 +164,25 @@ bool BarPresetItem::configureVariant(const QString& flavor) {
     }
     if(flavor=="PbSnr") { m_lowFill=QColor(0,139,139); setBindingId(MeterBinding::PbSnr); m_minimum=0; m_middle=50; m_middlePosition=.8333; m_maximum=60; m_redThreshold=50; m_attack=.2; m_release=.05; m_historyMs=4000; m_showHistory=false; m_peakHold=true; m_style="Segments"; m_major={0,10,20,30,40,50,60}; m_minor={}; m_historyColor=QColor(238,130,238,128); }
     m_calMinimum=m_minimum; m_calMaximum=m_maximum; configureDynamics(); return true;
+}
+void BarPresetItem::applyNewItemDefaults() {
+    MeterItem::applyNewItemDefaults();
+    for(const BarPresetThetisDefaults& d:kBarPresetThetisDefaults) {
+        if(m_flavor!=QLatin1String(d.flavor)) { continue; }
+        m_marker=QColor::fromRgba(d.markerColour); m_historyColor=QColor::fromRgba(d.historyColour);
+        m_segLowColor=QColor::fromRgba(d.segLowColour); m_segHighColor=QColor::fromRgba(d.segHighColour);
+        m_peakHoldColor=QColor::fromRgba(d.peakHoldColour); m_peakValueColor=QColor::fromRgba(d.peakValueColour);
+        m_subColor=QColor::fromRgba(d.subColour); m_scaleLow=QColor::fromRgba(d.scaleLowColour); m_scaleHigh=QColor::fromRgba(d.scaleHighColour);
+        m_background=QColor::fromRgba(d.backgroundColour);
+        m_showHistory=d.showHistory; m_peakHold=d.peakHold; m_showMarker=d.showMarker; m_showSub=d.showSub; m_showTitle=d.showTitle;
+        m_style=QString::fromLatin1(d.style);
+    }
+    if(m_flavor==QLatin1String("Custom")) {
+        const CustomBarThetisDefaults& c=kCustomBarThetisDefaults;
+        m_minimum=c.minimum; m_maximum=c.maximum; m_redThreshold=c.high; m_calMinimum=c.minimum; m_calMaximum=c.maximum;
+        m_units=QString::fromLatin1(c.units); m_label=QString::fromLatin1(c.title);
+    }
+    configureDynamics();
 }
 QString BarPresetItem::typeId() const { if(m_flavor=="Custom") { return "meter.customBar"; } QString name=m_flavor; name[0]=name[0].toLower(); return "meter."+name; }
 QSet<int> BarPresetItem::readingBindings() const {
@@ -208,21 +243,27 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     if(layer==Layer::Background) {
         p.fillRect(g.face,backdrop); p.setPen(m_title);
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
-        drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale);
+        // From Thetis MeterManager.cs:28312 [v2.10.3.15] — scaleItem.ShowType.
+        if(m_showTitle) { drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
         if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),m_historyColor); }
         const auto marker=[&](double value,QColor color,int thickness) { p.setPen(QPen(color,thickness)); p.drawLine(QPointF(pos(value),g.top),QPointF(pos(value),g.bottom)); };
-        if(m_average.hasReading()) { marker(m_average.value(),QColor(169,169,169),3); }
+        // From Thetis MeterManager.cs:28288-28289 [v2.10.3.15] — the sub bar's
+        // MarkerColour and ShowMarker.
+        //igs.SubMarkerColour = bi.SubMarkerColour; [original inline comment from MeterManager.cs:28290]
+        if(m_showSub && m_average.hasReading()) { marker(m_average.value(),m_subColor,3); }
         if(m_primary.hasReading() && m_style!="Line") {
             // From Thetis MeterManager.cs:37458-37591 [v2.10.3.15]
             const double end=pos(m_primary.value());
             const double transition=pos(m_redThreshold);
-            const QColor low=m_flavor=="Custom" ? m_marker : m_lowFill;
+            // From Thetis MeterManager.cs:28275-28276 [v2.10.3.15] — bi.Colour, bi.ColourHigh.
+            const QColor low=m_segLowColor.isValid() ? m_segLowColor : m_flavor=="Custom" ? m_marker : m_lowFill;
+            const QColor highFill=m_segHighColor.isValid() ? m_segHighColor : QColor(Qt::red);
             const auto fill=[&](double start,double stop) {
                 if(start<transition) { p.fillRect(QRectF(start,g.top,qMax(0.0,qMin(stop,transition)-start),g.baseline-g.top),low); }
-                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),Qt::red); }
+                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),highFill); }
             };
             if(m_style=="Solid") { fill(g.left,end); }
             else {
@@ -241,14 +282,16 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             m_scaleCache=QImage(scaleSize,QImage::Format_ARGB32_Premultiplied); m_scaleCache.setDevicePixelRatio(dpr); m_scaleCache.fill(Qt::transparent);
             m_scaleRect=pixelRect(width,height); m_scaleFont=font; QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
             // From Thetis MeterManager.cs:33393-33871,33872-33958 [v2.10.3.15]
+            // From Thetis MeterManager.cs:28310-28315 [v2.10.3.15] — scale LowColour/HighColour
+            // and FontColourLow/FontColourHigh.
             const double high=m_redThreshold;
-            scale.setPen(QPen(Qt::white,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
-            scale.setPen(QPen(Qt::red,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
+            scale.setPen(QPen(m_scaleLow,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
+            scale.setPen(QPen(m_scaleHigh,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? m_scaleHigh : m_scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
             for(double value:major) {
-                scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                scale.setPen(QPen(value>high ? m_scaleHigh : m_scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
                 const double x=pos(value);
                 const int index=major.indexOf(value);
                 const double before=index==0?g.left:pos(major[index-1]);
@@ -261,13 +304,15 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             }
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
-        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),Qt::red,3); }
-        if(m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
+        // From Thetis MeterManager.cs:28272-28274 [v2.10.3.15] — ShowMarker, PeakHold, PeakHoldMarkerColour.
+        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),m_peakHoldColor.isValid() ? m_peakHoldColor : QColor(Qt::red),3); }
+        if(m_showMarker && m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
         p.setFont(font);
         const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():QStringLiteral(" ")+m_units); };
         p.setPen(m_marker);
         if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
-        p.setPen(Qt::red);
+        // From Thetis MeterManager.cs:28278 [v2.10.3.15] — PeakValueColour.
+        p.setPen(m_peakValueColor.isValid() ? m_peakValueColor : QColor(Qt::red));
         if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
     }
     p.restore();
@@ -282,6 +327,11 @@ QJsonObject BarPresetItem::configuration() const {
     c["titleColor"]=m_title.name(QColor::HexArgb); c["historyColor"]=m_historyColor.name(QColor::HexArgb);
     c["showHistory"]=m_showHistory; c["peakHold"]=m_peakHold; c["showValue"]=m_showValue; c["showPeakValue"]=m_showPeakValue;
     c["style"]=m_style; c["units"]=m_units; c["updateIntervalMs"]=m_interval; c["historyMs"]=m_historyMs; c["ignoreHistoryMs"]=m_ignoreMs; c["rowHeight"]=m_rowHeight; c["attack"]=m_attack; c["decay"]=m_release; c["aboveS9Frequency"]=m_aboveS9;
+    // An optional colour saves blank when it keeps today's colour.
+    const auto optional=[](const QColor& color) { return color.isValid() ? color.name(QColor::HexArgb) : QString(); };
+    c["lowColor"]=m_scaleLow.name(QColor::HexArgb); c["highColor"]=m_scaleHigh.name(QColor::HexArgb); c["subColor"]=m_subColor.name(QColor::HexArgb);
+    c["peakHoldColor"]=optional(m_peakHoldColor); c["peakValueColor"]=optional(m_peakValueColor); c["segLowColor"]=optional(m_segLowColor); c["segHighColor"]=optional(m_segHighColor);
+    c["showMarker"]=m_showMarker; c["showSub"]=m_showSub; c["showTitle"]=m_showTitle;
     return c;
 }
 bool BarPresetItem::applyConfiguration(const QJsonObject& c) {
@@ -301,9 +351,11 @@ bool BarPresetItem::deserialize(const QString& data) {
     }
     if(c["w"].toDouble()<=0 || c["h"].toDouble()<=0) { return false; }
     for(const QString& key:{QStringLiteral("x"),QStringLiteral("y"),QStringLiteral("w"),QStringLiteral("h")}) { if(qAbs(c[key].toDouble())>std::numeric_limits<float>::max()) { return false; } }
-    for(const QString& key:{QStringLiteral("showHistory"),QStringLiteral("peakHold"),QStringLiteral("showValue"),QStringLiteral("showPeakValue")}) { if(c.contains(key) && !c[key].isBool()) { return false; } }
+    for(const QString& key:{QStringLiteral("showHistory"),QStringLiteral("peakHold"),QStringLiteral("showValue"),QStringLiteral("showPeakValue"),QStringLiteral("showMarker"),QStringLiteral("showSub"),QStringLiteral("showTitle")}) { if(c.contains(key) && !c[key].isBool()) { return false; } }
     for(const QString& key:{QStringLiteral("label"),QStringLiteral("style"),QStringLiteral("units")}) { if(c.contains(key) && !c[key].isString()) { return false; } }
-    for(const QString& key:{QStringLiteral("barColor"),QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("historyColor")}) { if(c.contains(key) && (!c[key].isString() || !QColor(c[key].toString()).isValid())) { return false; } }
+    for(const QString& key:{QStringLiteral("barColor"),QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("historyColor"),QStringLiteral("lowColor"),QStringLiteral("highColor"),QStringLiteral("subColor")}) { if(c.contains(key) && (!c[key].isString() || !QColor(c[key].toString()).isValid())) { return false; } }
+    // Blank is valid for an optional colour: it keeps today's colour.
+    for(const QString& key:{QStringLiteral("peakHoldColor"),QStringLiteral("peakValueColor"),QStringLiteral("segLowColor"),QStringLiteral("segHighColor")}) { if(c.contains(key) && (!c[key].isString() || (!c[key].toString().isEmpty() && !QColor(c[key].toString()).isValid()))) { return false; } }
     if(c.contains("redThreshold") && (!c["redThreshold"].isDouble() || !std::isfinite(c["redThreshold"].toDouble()))) { return false; }
     for(const QString& key:{QStringLiteral("attack"),QStringLiteral("decay")}) { if(c.contains(key) && (!c[key].isDouble() || !std::isfinite(c[key].toDouble()) || c[key].toDouble()<0 || c[key].toDouble()>1)) { return false; } }
     const QString style=c.value("style").toString("Line"); if(style!="Line" && style!="Solid" && style!="Segments") { return false; }
@@ -316,6 +368,12 @@ bool BarPresetItem::deserialize(const QString& data) {
     m_redThreshold=c.value("redThreshold").toDouble(m_redThreshold);
     const auto color=[&](const char* key,QColor& value) { if(c.contains(key)) { QColor parsed(c.value(key).toString()); if(!parsed.isValid()) { return false; } value=parsed; } return true; };
     if(!color("barColor",m_marker)||!color("backdropColor",m_background)||!color("titleColor",m_title)||!color("historyColor",m_historyColor)) { return false; }
+    if(!color("lowColor",m_scaleLow)||!color("highColor",m_scaleHigh)||!color("subColor",m_subColor)) { return false; }
+    const std::pair<const char*,QColor*> optionals[]{{"peakHoldColor",&m_peakHoldColor},{"peakValueColor",&m_peakValueColor},{"segLowColor",&m_segLowColor},{"segHighColor",&m_segHighColor}};
+    for(const auto& [key,value]:optionals) {
+        if(c.contains(key)) { const QString text=c.value(key).toString(); *value=text.isEmpty() ? QColor() : QColor(text); }
+    }
+    m_showMarker=c.value("showMarker").toBool(m_showMarker); m_showSub=c.value("showSub").toBool(m_showSub); m_showTitle=c.value("showTitle").toBool(m_showTitle);
     m_showHistory=c.value("showHistory").toBool(m_showHistory); m_peakHold=c.value("peakHold").toBool(m_peakHold); m_showValue=c.value("showValue").toBool(m_showValue); m_showPeakValue=c.value("showPeakValue").toBool(m_showPeakValue);
     m_style=c.value("style").toString(m_style); if(m_style!="Line" && m_style!="Solid" && m_style!="Segments") { return false; }
     m_units=c.value("units").toString(m_units); m_interval=c.value("updateIntervalMs").toInt(m_interval); m_historyMs=c.value("historyMs").toInt(m_historyMs); m_ignoreMs=c.value("ignoreHistoryMs").toInt(m_ignoreMs); m_rowHeight=c.value("rowHeight").toInt(m_rowHeight);
