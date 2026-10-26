@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - TxStage and txStage(): the TX stage an EQ, Leveler,
+//                 Leveler Gain, CFC, CFC Gain or Compressor bar shows;
+//                 applyTxStageState() dims those bars while their stage is
+//                 off (Thetis DisableMeterType). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars (AddPWRBar,
 //                 AddSWRBar): multi-point scale calibration, power limit
 //                 (powerLimitW, 0 follows the radio's rating) and their
@@ -73,6 +78,11 @@ mw0lge@grange-lane.co.uk
 #include <QList>
 #include <QPointF>
 namespace NereusSDR {
+class TransmitModel;
+// The TX stage a bar shows, for the "Disabled" dim (Thetis MeterType EQ,
+// LEVELER and LEVELER_GAIN, CFC and CFC_GAIN, COMP; DisableMeterType,
+// MeterManager.cs:26773-26792 [v2.10.3.15]).
+enum class TxStage { None, Eq, Leveler, Cfc, Compander };
 class BarPresetItem : public MeterItem {
     Q_OBJECT
 public:
@@ -91,6 +101,9 @@ public:
     void setPowerScale(int limitWatts, double topWatts) override;
     // The power limit a PWR or Reverse PWR bar normalises to (W).
     double effectivePowerLimit() const;
+    // Eq, Leveler, LevelerGain, Cfc, CfcGain and Comp name their stage;
+    // every other flavor is TxStage::None.
+    TxStage txStage() const;
     void setAboveS9Frequency(bool above) override { MeterItem::setAboveS9Frequency(above); if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer layer) const override;
@@ -159,6 +172,13 @@ private:
     // MeterManager.cs:7137 [v2.10.3.15]).
     double m_powerLimitW = 0, m_radioRatingW = kDefaultBarPowerLimitW;
 };
+
+// Whether `stage` is off in `tx` (TxStage::None never is).
+bool txStageOff(TxStage stage, const TransmitModel& tx);
+// Sets every bar among `items` to its stage's state in `tx`
+// (MeterItem::setStageDisabled); a bar with no stage is never disabled and
+// other items are left alone. It only reads `tx`.
+void applyTxStageState(const QVector<MeterItem*>& items, const TransmitModel& tx);
 
 // New bar presets take their Thetis builder's values, over the clsBarItem
 // constructor (MeterManager.cs:21284-21302), the clsScaleItem constructor

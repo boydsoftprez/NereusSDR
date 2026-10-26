@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - txStage(), txStageOff() and applyTxStageState(): the EQ,
+//                 Leveler, Leveler Gain, CFC, CFC Gain and Compressor bars
+//                 dim while their TX stage is off, as Thetis's OnEQChanged,
+//                 OnLevelerChanged, OnCFCChanged and OnCompandChanged do.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars (meter.pwr,
 //                 meter.reversePwr, meter.swr): the TX power, reverse power
 //                 and SWR readings, multi-point calibration, NormaliseTo100W
@@ -86,6 +91,7 @@ mw0lge@grange-lane.co.uk
 #include "CompositePresetItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "models/TransmitModel.h"
 #include <QPainter>
 #include <QJsonDocument>
 #include <algorithm>
@@ -218,6 +224,33 @@ void BarPresetItem::applyNewItemDefaults() {
         m_units=QString::fromLatin1(c.units); m_label=QString::fromLatin1(c.title);
     }
     configureDynamics();
+}
+// From Thetis MeterManager.cs:5313-5366 [v2.10.3.15]: OnEQChanged disables
+// MeterType.EQ; OnLevelerChanged LEVELER and LEVELER_GAIN; OnCFCChanged CFC
+// and CFC_GAIN; OnCompandChanged COMP.
+TxStage BarPresetItem::txStage() const {
+    if(m_flavor==QLatin1String("Eq")) { return TxStage::Eq; }
+    if(m_flavor==QLatin1String("Leveler") || m_flavor==QLatin1String("LevelerGain")) { return TxStage::Leveler; }
+    if(m_flavor==QLatin1String("Cfc") || m_flavor==QLatin1String("CfcGain")) { return TxStage::Cfc; }
+    if(m_flavor==QLatin1String("Comp")) { return TxStage::Compander; }
+    return TxStage::None;
+}
+// From Thetis MeterManager.cs:5313-5366 [v2.10.3.15]: each handler calls
+// DisableMeterType(type, !newState).
+bool txStageOff(TxStage stage, const TransmitModel& tx) {
+    switch(stage) {
+    case TxStage::Eq: return !tx.txEqEnabled();
+    case TxStage::Leveler: return !tx.txLevelerOn();
+    case TxStage::Cfc: return !tx.cfcEnabled();
+    case TxStage::Compander: return !tx.cpdrOn();
+    case TxStage::None: break;
+    }
+    return false;
+}
+void applyTxStageState(const QVector<MeterItem*>& items, const TransmitModel& tx) {
+    for(MeterItem* item:items) {
+        if(auto* bar=qobject_cast<BarPresetItem*>(item)) { bar->setStageDisabled(txStageOff(bar->txStage(),tx)); }
+    }
 }
 bool BarPresetItem::isPowerFlavor() const { return m_flavor==QLatin1String("Pwr") || m_flavor==QLatin1String("ReversePwr"); }
 double BarPresetItem::effectivePowerLimit() const {

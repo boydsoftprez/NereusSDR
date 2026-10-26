@@ -11,6 +11,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - TX stage dim: the TX EQ, Leveler, CFC and compander
+//                 switches dim every container's EQ, Leveler, Leveler Gain,
+//                 CFC, CFC Gain and Compressor bars while the stage is off
+//                 (applyTxStageState; Thetis OnEQChanged, OnLevelerChanged,
+//                 OnCFCChanged, OnCompandChanged), and a bar added later
+//                 takes the state on onContainerItemAdded. Reads the
+//                 transmit model only. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - LED No TX: onContainerItemAdded connects each live LED's
 //                 txStopRequested, queued as Thetis's BeginInvoke is
 //                 (MeterManager.cs:21206-21211 [v2.10.3.15]); a stop for
@@ -9389,6 +9397,34 @@ void MainWindow::buildUI()
             connect(tx, &TransmitModel::txLevelerOnChanged, this, refresh);
             connect(tx, &TransmitModel::phaseRotatorEnabledChanged, this, refresh);
         }
+        // Container item parity Task 7: a TX stage that is off dims its
+        // bars (Thetis OnEQChanged, OnLevelerChanged, OnCFCChanged and
+        // OnCompandChanged, MeterManager.cs:5313-5366 [v2.10.3.15], over
+        // every meter). A foreign session's entry is not dimmed
+        // (MeterItem::advanceFade).
+        {
+            const TransmitModel* tx = &m_radioModel->transmitModel();
+            const auto applyStages = [this, tx]() {
+                if (m_shuttingDown || !m_containerManager) { return; }
+                for (ContainerWidget* c : m_containerManager->allContainers()) {
+                    if (!c || !c->content()) { continue; }
+                    QList<MeterWidget*> meters = c->content()->findChildren<MeterWidget*>();
+                    if (auto* direct = qobject_cast<MeterWidget*>(c->content())) { meters.prepend(direct); }
+                    for (MeterWidget* meter : std::as_const(meters)) {
+                        QVector<MeterItem*> items;
+                        for (MeterItem* root : meter->items()) {
+                            items.append(root);
+                            if (auto* face = qobject_cast<CompositePresetItem*>(root)) { items += face->internalItems(); }
+                        }
+                        applyTxStageState(items, *tx);
+                    }
+                }
+            };
+            connect(tx, &TransmitModel::txEqEnabledChanged, this, applyStages);
+            connect(tx, &TransmitModel::txLevelerOnChanged, this, applyStages);
+            connect(tx, &TransmitModel::cfcEnabledChanged, this, applyStages);
+            connect(tx, &TransmitModel::cpdrOnChanged, this, applyStages);
+        }
         connect(m_radioModel, &RadioModel::tuneRefused, this, refresh);
         connect(m_radioModel, &RadioModel::connectionStateChanged, this, refresh);
         // Desktop remote transmit: a remote window's MOX, TUNE and 2-TONE
@@ -15249,6 +15285,13 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     // local rotor or the remote Core).
     if (auto* rotator = qobject_cast<RotatorItem*>(item); rotator && m_radioModel) {
         rotator->setRotor(m_radioModel->rotorModel(), m_radioModel);
+    }
+    // Container item parity Task 7: a TX stage bar added while its stage is
+    // off starts dimming at once.
+    if (m_radioModel) {
+        QVector<MeterItem*> stageItems{item};
+        if (auto* face = qobject_cast<CompositePresetItem*>(item)) { stageItems += face->internalItems(); }
+        applyTxStageState(stageItems, m_radioModel->transmitModel());
     }
     // Container item parity Task 27: LED No TX stops this window's radio,
     // and only for an entry of this window's session. Queued, as Thetis's
