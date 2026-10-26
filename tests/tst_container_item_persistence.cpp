@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original tests for container item records.
 // Modification history (NereusSDR):
+//   2026-10-26 - Mode grid: twelve modes in DSPMode order; a ten-button
+//                 record saved before the order marker is remapped (SAM
+//                 7 -> 10, DIGL 8 -> 9, DIGU 9 -> 7, SPEC and DRM hidden)
+//                 and a new record is not. The MODEBTNS old-record row
+//                 shows LSB to AM only, which the remap leaves in place.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - VFO display: the new colours, band text, background,
 //                 layout and a fixed slice survive a save; the old-record
 //                 row saves Both (2), which loads as All slices and keeps 2.
@@ -19,6 +25,7 @@
 //                 Claude Code.
 
 #include <QtTest>
+#include <QCheckBox>
 #include <QColor>
 #include <QStringList>
 #include <functional>
@@ -27,6 +34,7 @@
 #include "core/UnbuiltFeatureList.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
+#include "gui/containers/meter_property_editors/ModeButtonItemEditor.h"
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ButtonBoxItem.h"
@@ -292,7 +300,8 @@ class TstContainerItemPersistence : public QObject {
             << QStringLiteral("FILTERDISPLAY|0.1|0.2|0.3|0.4|5|6|1|#ff010203|#ff040506|#ff070809|#ff0a0b0c"
                "|#ff0d0e0f|#ff101112|0|0.1|-120|-30|1|6");
         QTest::newRow("BANDBTNS") << QStringLiteral("BANDBTNS") << QStringLiteral("BANDBTNS|0.1|0.2|0.3|0.4|5|6|3|2|255");
-        QTest::newRow("MODEBTNS") << QStringLiteral("MODEBTNS") << QStringLiteral("MODEBTNS|0.1|0.2|0.3|0.4|5|6|3|2|255");
+        // LSB to AM: buttons the old-order remap leaves where they were.
+        QTest::newRow("MODEBTNS") << QStringLiteral("MODEBTNS") << QStringLiteral("MODEBTNS|0.1|0.2|0.3|0.4|5|6|3|2|127");
         QTest::newRow("FILTERBTNS") << QStringLiteral("FILTERBTNS") << QStringLiteral("FILTERBTNS|0.1|0.2|0.3|0.4|5|6|3|2|255");
         QTest::newRow("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS") << QStringLiteral("TUNESTEPBTNS|0.1|0.2|0.3|0.4|5|6|3|2|127");
         QTest::newRow("ANTENNABTNS") << QStringLiteral("ANTENNABTNS") << QStringLiteral("ANTENNABTNS|0.1|0.2|0.3|0.4|5|6|3|255");
@@ -528,6 +537,122 @@ private slots:
         QCOMPARE(o->layout(), ClockItem::Layout::NereusSDR);
         QCOMPARE(o->timeColour(), QColor(0x11, 0x22, 0x33));
         QVERIFY(!o->backEnabled());
+    }
+
+    // A new mode grid has Thetis's twelve modes in DSPMode order, and
+    // button i sets DSPMode (LSB + i).
+    void modeGridHasTwelveModesInDspModeOrder()
+    {
+        ModeButtonItem grid;
+        QCOMPARE(grid.buttonCount(), 12);
+        const QStringList labels{"LSB", "USB", "DSB", "CWL", "CWU", "FM", "AM",
+                                 "DIGU", "SPEC", "DIGL", "SAM", "DRM"};
+        for (int i = 0; i < labels.size(); ++i) {
+            QCOMPARE(ModeButtonItem::modeLabel(i), labels[i]);
+            QCOMPARE(ModeButtonItem::modeForIndex(i), static_cast<DSPMode>(i));
+            QVERIFY(grid.isButtonShown(i));
+        }
+        QVERIFY(ModeButtonItem::modeLabel(12).isEmpty());
+        QCOMPARE(ModeButtonItem::modeForIndex(10), DSPMode::SAM);
+        QCOMPARE(ModeButtonItem::modeForIndex(8), DSPMode::SPEC);
+        QCOMPARE(grid.columnRange(), std::make_pair(1, 12));
+    }
+
+    // A grid saved in the old ten-button order (LSB, USB, DSB, CWL, CWU,
+    // FM, AM, SAM, DIGL, DIGU) keeps its visible buttons and active mode:
+    // SAM 7 -> 10, DIGL 8 -> 9, DIGU 9 -> 7; SPEC and DRM start hidden.
+    void oldModeGridRemapsToDspModeOrder()
+    {
+        // LSB, USB, SAM, DIGL, DIGU visible; DSB to AM hidden; DIGU active.
+        const QString oldRecord = QStringLiteral("MODEBTNS|0.1|0.2|0.3|0.4|5|6|4|9|899");
+        ModeButtonItem grid;
+        QVERIFY(grid.deserialize(oldRecord));
+        QCOMPARE(grid.activeMode(), 7);
+        QCOMPARE(ModeButtonItem::modeForIndex(grid.activeMode()), DSPMode::DIGU);
+        QCOMPARE(grid.visibleBits(), uint32_t((1u << 0) | (1u << 1) | (1u << 7) | (1u << 9) | (1u << 10)));
+        for (int hidden : {2, 3, 4, 5, 6, 8, 11}) { QVERIFY2(!grid.isButtonShown(hidden), qPrintable(QString::number(hidden))); }
+        QCOMPARE(grid.columns(), 4);
+
+        // Old SAM and DIGL active move too.
+        ModeButtonItem sam;
+        QVERIFY(sam.deserialize(QStringLiteral("MODEBTNS|0|0|1|1|0|0|5|7|1023")));
+        QCOMPARE(sam.activeMode(), 10);
+        ModeButtonItem digl;
+        QVERIFY(digl.deserialize(QStringLiteral("MODEBTNS|0|0|1|1|0|0|5|8|1023")));
+        QCOMPARE(digl.activeMode(), 9);
+        // Every old button shown: all but SPEC and DRM.
+        for (int i = 0; i < ModeButtonItem::kModeCount; ++i) {
+            QCOMPARE(sam.isButtonShown(i), i != 8 && i != 11);
+        }
+
+        // An old record with the grid styling and no marker is old too.
+        ModeButtonItem styled;
+        QVERIFY(styled.deserialize(QStringLiteral("MODEBTNS|0|0|1|1|0|0|5|9|4294967295|0.01|0.02|4|0.75|0|0")));
+        QCOMPARE(styled.activeMode(), 7);
+        QVERIFY(!styled.isButtonShown(8));
+        QVERIFY(!styled.isButtonShown(11));
+        QVERIFY(styled.isButtonShown(10));
+
+        // The new record carries the order marker and is never remapped
+        // again: a save and reload keeps every index.
+        const QString saved = grid.serialize();
+        QVERIFY2(saved.endsWith(QStringLiteral("|DSPORDER")), qPrintable(saved));
+        ModeButtonItem reloaded;
+        QVERIFY(reloaded.deserialize(saved));
+        QCOMPARE(reloaded.activeMode(), 7);
+        QCOMPARE(reloaded.visibleBits(), grid.visibleBits());
+        QCOMPARE(reloaded.serialize(), saved);
+        ModeButtonItem fresh;
+        fresh.setActiveMode(10);
+        ModeButtonItem freshCopy;
+        QVERIFY(freshCopy.deserialize(fresh.serialize()));
+        QCOMPARE(freshCopy.activeMode(), 10);
+        QVERIFY(freshCopy.isButtonShown(8));
+        QVERIFY(freshCopy.isButtonShown(11));
+    }
+
+    // The same remap through a saved layout's content entry.
+    void savedLayoutOldModeGridRemaps()
+    {
+        ContainerContentRegistry registry;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("MODEBTNS"));
+        entry.config.insert(QStringLiteral("legacyRecord"), QStringLiteral("MODEBTNS|0.1|0.2|0.3|0.4|5|6|4|9|899"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry, nullptr));
+        auto* grid = qobject_cast<ModeButtonItem*>(item.get());
+        QVERIFY(grid);
+        QCOMPARE(grid->activeMode(), 7);
+        QVERIFY(grid->isButtonShown(9));
+        QVERIFY(grid->isButtonShown(10));
+        QVERIFY(!grid->isButtonShown(8));
+        QVERIFY(!grid->isButtonShown(11));
+        // A new grid from the registry shows all twelve.
+        std::unique_ptr<MeterItem> fresh(registry.createMeterItem(registry.makeEntry(QStringLiteral("MODEBTNS")), nullptr));
+        auto* freshGrid = qobject_cast<ModeButtonItem*>(fresh.get());
+        QVERIFY(freshGrid);
+        QCOMPARE(freshGrid->buttonCount(), 12);
+        for (int i = 0; i < 12; ++i) { QVERIFY(freshGrid->isButtonShown(i)); }
+    }
+
+    // The editor shows a row per mode; ticking SPEC shows it on an old grid.
+    void modeEditorShowsEachMode()
+    {
+        ModeButtonItem grid;
+        QVERIFY(grid.deserialize(QStringLiteral("MODEBTNS|0|0|1|1|0|0|5|0|1023")));
+        ModeButtonItemEditor editor;
+        editor.setItem(&grid);
+        QSignalSpy changed(&editor, &BaseItemEditor::propertyChanged);
+        for (int i = 0; i < ModeButtonItem::kModeCount; ++i) {
+            auto* check = editor.findChild<QCheckBox*>(QStringLiteral("modeVisible_%1").arg(i));
+            QVERIFY2(check, qPrintable(QString::number(i)));
+            QCOMPARE(check->isChecked(), i != 8 && i != 11);
+        }
+        QCOMPARE(changed.count(), 0);
+        editor.findChild<QCheckBox*>(QStringLiteral("modeVisible_8"))->setChecked(true);
+        QVERIFY(grid.isButtonShown(8));
+        QCOMPARE(changed.count(), 1);
+        editor.findChild<QCheckBox*>(QStringLiteral("modeVisible_0"))->setChecked(false);
+        QVERIFY(!grid.isButtonShown(0));
+        QVERIFY(grid.isButtonShown(1));
     }
 };
 

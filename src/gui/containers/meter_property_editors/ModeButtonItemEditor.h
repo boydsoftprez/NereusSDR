@@ -1,6 +1,10 @@
 #pragma once
 #include "ButtonBoxItemEditor.h"
 
+#include <QVector>
+
+class QCheckBox;
+
 namespace NereusSDR {
 class ModeButtonItem;
 
@@ -12,6 +16,8 @@ public:
 
 private:
     void buildModeSpecific();
+    // One row per mode button, in DSPMode order ("modeVisible_<index>").
+    QVector<QCheckBox*> m_visible;
 };
 
 } // namespace NereusSDR

@@ -29,6 +29,9 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  A VFO display face on All slices
 //                                    redraws when Slice B tunes.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Mode grid clicks set DSPMode
+//                                    (LSB + index): index 10 SAM, 8 SPEC.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -540,6 +543,15 @@ private slots:
         }
 
         slice->setFrequency(14074000.0);
+        // The twelve buttons are in DSPMode order.
+        emit container->modeClicked(10);  // SAM
+        QCOMPARE(slice->dspMode(), DSPMode::SAM);
+        QCOMPARE(mode->activeMode(), 10);
+        emit container->modeClicked(8);   // SPEC
+        QCOMPARE(slice->dspMode(), DSPMode::SPEC);
+        QCOMPARE(mode->activeMode(), 8);
+        emit container->modeClicked(12);  // past the grid: nothing
+        QCOMPARE(slice->dspMode(), DSPMode::SPEC);
         emit container->modeClicked(1);   // USB
         QCOMPARE(slice->dspMode(), DSPMode::USB);
         QCOMPARE(mode->activeMode(), 1);
