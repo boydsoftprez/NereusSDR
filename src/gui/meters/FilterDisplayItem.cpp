@@ -18,6 +18,14 @@
 //   2026-10-25 - Saves and restores the text colour after the older fields,
 //                 so they survive a reload. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - Thetis filter display settings and colours appended to
+//                 the record (older records load with the constructor
+//                 values); applyNewItemDefaults copies
+//                 kFilterDisplayThetisDefaults. Fixes the palette load: a
+//                 saved palette loads as itself whatever the frame
+//                 interval, and one outside WaterfallPalette loads as
+//                 Enhanced. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -87,6 +95,49 @@ FilterDisplayItem::FilterDisplayItem(QObject* parent)
     // From Thetis clsFilterItem ctor (MeterManager.cs:18326) [@3759d096] — MiniSpec.PIXELS
     m_waterfallImage = QImage(kSpectrumPixels, 200, QImage::Format_RGB32);
     m_waterfallImage.fill(Qt::black);
+}
+
+// ---------------------------------------------------------------------------
+// applyNewItemDefaults()
+// New items only. From Thetis MeterManager.cs:27651-27705 [v2.10.3.15]
+// (see kFilterDisplayThetisDefaults).
+// ---------------------------------------------------------------------------
+void FilterDisplayItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const FilterDisplayItemThetisDefaults& d = kFilterDisplayThetisDefaults;
+    m_padding = d.verticalRatio;
+    m_showFilterLimits = d.showFilterLimits;
+    m_fixedRxZoom = d.fixedRxZoom;
+    m_fixedTxZoom = d.fixedTxZoom;
+    m_rxZoom = d.rxZoom;
+    m_txZoom = d.txZoom;
+    m_sidebandsScale = d.sidebandsScale;
+    m_cwScale = d.cwScale;
+    m_othersScale = d.othersScale;
+    setDisplayMode(d.displayMode);
+    m_fontScale = d.fontScale;
+    m_dataLineColour = QColor::fromRgb(d.dataLineColour);
+    m_waterfallLowColour = QColor::fromRgb(d.waterfallLowColour);
+    m_textColour = QColor::fromRgb(d.textColour);
+    m_numberHighlightColour = QColor::fromRgb(d.numberHighlightColour);
+    m_edgesColourRX = QColor::fromRgb(d.edgesColourRx);
+    m_edgesColourTX = QColor::fromRgb(d.edgesColourTx);
+    m_edgeHighlightColour = QColor::fromRgb(d.edgeHighlightColour);
+    m_meterBackColour = QColor::fromRgb(d.meterBackColour);
+    m_notchColour = QColor::fromRgb(d.notchColour);
+    m_notchHighlightColour = QColor::fromRgb(d.notchHighlightColour);
+    m_extentsColour = QColor::fromRgb(d.extentsColour);
+    m_sidebandMode = d.sidebandMode;
+    setWaterfallFrameInterval(d.frameInterval);
+    m_greyWhenNotActive = d.greyWhenNotActive;
+    m_snapLines = d.snapLines;
+    m_autoZoom = d.autoZoom;
+    m_snapLineColour = QColor::fromRgb(d.snapLineColour);
+    m_settingOnColour = QColor::fromRgb(d.settingOnColour);
+    m_buttonHighlightColour = QColor::fromRgb(d.buttonHighlightColour);
+    m_showCharacteristic = d.showCharacteristic;
+    m_characteristicLow = d.characteristicLow;
 }
 
 // ---------------------------------------------------------------------------
@@ -584,9 +635,16 @@ void FilterDisplayItem::paintNotches(QPainter& p, const QRect& rect)
 // Format: FILTERDISPLAY|x|y|w|h|bindingId|zOrder|displayMode|dataLineColour|
 //         dataFillColour|edgesColourRX|edgesColourTX|notchColour|
 //         meterBackColour|fillSpectrum|padding|specMinDb|specMaxDb|
-//         waterfallPalette|waterfallFrameInterval|textColour
-// textColour follows the older fields, so a record saved before it existed
-// still loads (with the default colour).
+//         waterfallPalette|waterfallFrameInterval|textColour|
+//         showFilterLimits|fixedRxZoom|fixedTxZoom|rxZoom|txZoom|
+//         sidebandsScale|cwScale|othersScale|fontScale|sidebandMode|
+//         greyWhenNotActive|snapLines|autoZoom|showCharacteristic|
+//         characteristicLow|numberHighlightColour|edgeHighlightColour|
+//         extentsColour|notchHighlightColour|snapLineColour|settingOnColour|
+//         buttonHighlightColour
+// textColour and the Thetis settings follow the older fields, so a record
+// saved before they existed still loads (with the constructor values).
+// padding is the Thetis vertical ratio.
 // ---------------------------------------------------------------------------
 QString FilterDisplayItem::serialize() const
 {
@@ -610,7 +668,31 @@ QString FilterDisplayItem::serialize() const
         .arg(static_cast<double>(m_specMaxDb))
         .arg(static_cast<int>(m_waterfallPalette))
         .arg(m_waterfallFrameInterval)
-        + QLatin1Char('|') + m_textColour.name(QColor::HexArgb);
+        + QLatin1Char('|') + m_textColour.name(QColor::HexArgb)
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15")
+              .arg(m_showFilterLimits ? 1 : 0)
+              .arg(m_fixedRxZoom ? 1 : 0)
+              .arg(m_fixedTxZoom ? 1 : 0)
+              .arg(static_cast<double>(m_rxZoom))
+              .arg(static_cast<double>(m_txZoom))
+              .arg(static_cast<double>(m_sidebandsScale))
+              .arg(static_cast<double>(m_cwScale))
+              .arg(static_cast<double>(m_othersScale))
+              .arg(static_cast<double>(m_fontScale))
+              .arg(m_sidebandMode ? 1 : 0)
+              .arg(m_greyWhenNotActive ? 1 : 0)
+              .arg(m_snapLines ? 1 : 0)
+              .arg(m_autoZoom ? 1 : 0)
+              .arg(m_showCharacteristic ? 1 : 0)
+              .arg(static_cast<double>(m_characteristicLow))
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6|%7")
+              .arg(m_numberHighlightColour.name(QColor::HexArgb))
+              .arg(m_edgeHighlightColour.name(QColor::HexArgb))
+              .arg(m_extentsColour.name(QColor::HexArgb))
+              .arg(m_notchHighlightColour.name(QColor::HexArgb))
+              .arg(m_snapLineColour.name(QColor::HexArgb))
+              .arg(m_settingOnColour.name(QColor::HexArgb))
+              .arg(m_buttonHighlightColour.name(QColor::HexArgb));
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +704,16 @@ QString FilterDisplayItem::serialize() const
 // [14]=fillSpectrum [15]=padding [16]=specMinDb [17]=specMaxDb
 // [18]=waterfallPalette [19]=waterfallFrameInterval
 // Optional (absent from older records): [20]=textColour
+// [21]=showFilterLimits [22]=fixedRxZoom [23]=fixedTxZoom [24]=rxZoom
+// [25]=txZoom [26]=sidebandsScale [27]=cwScale [28]=othersScale
+// [29]=fontScale [30]=sidebandMode [31]=greyWhenNotActive [32]=snapLines
+// [33]=autoZoom [34]=showCharacteristic [35]=characteristicLow
+// [36]=numberHighlightColour [37]=edgeHighlightColour [38]=extentsColour
+// [39]=notchHighlightColour [40]=snapLineColour [41]=settingOnColour
+// [42]=buttonHighlightColour
+// A missing or unreadable optional field keeps its current value; numbers
+// are clamped to the ranges the Thetis Apply uses (MeterManager.cs:27651-27705
+// [v2.10.3.15]).
 // ---------------------------------------------------------------------------
 bool FilterDisplayItem::deserialize(const QString& data)
 {
@@ -670,13 +762,59 @@ bool FilterDisplayItem::deserialize(const QString& data)
     m_padding           = padding;
     m_specMinDb         = specMinDb;
     m_specMaxDb         = specMaxDb;
-    m_waterfallPalette  = static_cast<WaterfallPalette>(waterfallFrameInterval < 0 ? 0 : waterfallPalette);
+    // The palette loads as itself when it names a WaterfallPalette, else
+    // Enhanced. It used to test the frame interval here, so a negative
+    // interval reset a valid palette and a bad palette went unchecked.
+    const bool paletteKnown = waterfallPalette >= static_cast<int>(WaterfallPalette::Enhanced)
+        && waterfallPalette <= static_cast<int>(WaterfallPalette::Custom);
+    m_waterfallPalette  = paletteKnown ? static_cast<WaterfallPalette>(waterfallPalette)
+                                       : WaterfallPalette::Enhanced;
     m_waterfallFrameInterval = (waterfallFrameInterval > 0) ? waterfallFrameInterval : 4;
 
     if (parts.size() > 20) {
         const QColor textColour(parts[20]);
         if (textColour.isValid()) { m_textColour = textColour; }
     }
+
+    const auto readBool = [&parts](int index, bool& out) {
+        if (index >= parts.size()) { return; }
+        bool okField = false;
+        const int v = parts[index].toInt(&okField);
+        if (okField) { out = (v != 0); }
+    };
+    const auto readFloat = [&parts](int index, float lo, float hi, float& out) {
+        if (index >= parts.size()) { return; }
+        bool okField = false;
+        const float v = parts[index].toFloat(&okField);
+        if (okField && std::isfinite(v)) { out = std::clamp(v, lo, hi); }
+    };
+    const auto readColour = [&parts](int index, QColor& out) {
+        if (index >= parts.size()) { return; }
+        const QColor c(parts[index]);
+        if (c.isValid()) { out = c; }
+    };
+    readBool(21, m_showFilterLimits);
+    readBool(22, m_fixedRxZoom);
+    readBool(23, m_fixedTxZoom);
+    readFloat(24, kRxZoomMin, kRxZoomMax, m_rxZoom);
+    readFloat(25, kTxZoomMin, kTxZoomMax, m_txZoom);
+    readFloat(26, kScaleMin, kScaleMax, m_sidebandsScale);
+    readFloat(27, kScaleMin, kScaleMax, m_cwScale);
+    readFloat(28, kScaleMin, kScaleMax, m_othersScale);
+    readFloat(29, kFontScaleMin, kFontScaleMax, m_fontScale);
+    readBool(30, m_sidebandMode);
+    readBool(31, m_greyWhenNotActive);
+    readBool(32, m_snapLines);
+    readBool(33, m_autoZoom);
+    readBool(34, m_showCharacteristic);
+    readFloat(35, kCharacteristicLowMin, kCharacteristicLowMax, m_characteristicLow);
+    readColour(36, m_numberHighlightColour);
+    readColour(37, m_edgeHighlightColour);
+    readColour(38, m_extentsColour);
+    readColour(39, m_notchHighlightColour);
+    readColour(40, m_snapLineColour);
+    readColour(41, m_settingOnColour);
+    readColour(42, m_buttonHighlightColour);
 
     return true;
 }

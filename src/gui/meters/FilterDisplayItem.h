@@ -17,6 +17,14 @@
 //                 (setFilterResponseBins) in a remote window, resampled as
 //                 the local channel's is. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - Thetis filter display settings (vertical ratio, limits,
+//                 fixed zoom, scales, font scale, sideband mode, frame
+//                 interval, grey outside the passband, snap, autozoom,
+//                 characteristic and its low limit) and the missing
+//                 colours, appended to the record; new items take
+//                 kFilterDisplayThetisDefaults. A saved waterfall palette
+//                 now loads as itself whatever the frame interval.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -84,6 +92,33 @@ public:
     // From Thetis MeterManager.cs:43362 [v2.10.3.15] MiniSpec.PIXELS.
     static constexpr int kSpectrumPixels = 1024;
 
+    // Button labels drawn on the display. From Thetis MeterManager.cs:36195-36198
+    // [v2.10.3.15]. Qt does not trim, so the labels carry only their padding
+    // spaces and not Thetis's trailing zero-width space:
+    // the + "\u200B" is for a zero-width space to preserve layout, otherwise direct write trims
+    // [original inline comment from MeterManager.cs:36194]
+    static constexpr const char* kMnfLabel = " MNF ";
+    static constexpr const char* kMnfPlusLabel = " +MNF ";
+    static constexpr const char* kSnapLabel = " SNAP ";
+    static constexpr const char* kFitLabel = " FIT ";
+
+    // Ranges the Thetis Apply clamps to. From Thetis MeterManager.cs:27651-27705
+    // [v2.10.3.15] (GetSetting min, max).
+    static constexpr float kVerticalRatioMin = 0.15f;
+    static constexpr float kVerticalRatioMax = 1.0f;
+    static constexpr float kRxZoomMin = 1.0f;
+    static constexpr float kRxZoomMax = 10.0f;
+    static constexpr float kTxZoomMin = 1.0f;
+    static constexpr float kTxZoomMax = 20.0f;
+    static constexpr float kScaleMin = 0.0f;
+    static constexpr float kScaleMax = 10.0f;
+    static constexpr float kFontScaleMin = 0.01f;
+    static constexpr float kFontScaleMax = 4.0f;
+    static constexpr int   kFrameIntervalMin = 1;
+    static constexpr int   kFrameIntervalMax = 1000;
+    static constexpr float kCharacteristicLowMin = -300.0f;
+    static constexpr float kCharacteristicLowMax = -50.0f;
+
     explicit FilterDisplayItem(QObject* parent = nullptr);
 
     void setDisplayMode(DisplayMode m) {
@@ -134,6 +169,70 @@ public:
     QColor meterBackColour() const { return m_meterBackColour; }
     void setTextColour(const QColor& c) { m_textColour = c; }
     QColor textColour() const { return m_textColour; }
+    void setNumberHighlightColour(const QColor& c) { m_numberHighlightColour = c; }
+    QColor numberHighlightColour() const { return m_numberHighlightColour; }
+    void setEdgeHighlightColour(const QColor& c) { m_edgeHighlightColour = c; }
+    QColor edgeHighlightColour() const { return m_edgeHighlightColour; }
+    void setExtentsColour(const QColor& c) { m_extentsColour = c; }
+    QColor extentsColour() const { return m_extentsColour; }
+    void setNotchHighlightColour(const QColor& c) { m_notchHighlightColour = c; }
+    QColor notchHighlightColour() const { return m_notchHighlightColour; }
+    void setSnapLineColour(const QColor& c) { m_snapLineColour = c; }
+    QColor snapLineColour() const { return m_snapLineColour; }
+    void setSettingOnColour(const QColor& c) { m_settingOnColour = c; }
+    QColor settingOnColour() const { return m_settingOnColour; }
+    void setButtonHighlightColour(const QColor& c) { m_buttonHighlightColour = c; }
+    QColor buttonHighlightColour() const { return m_buttonHighlightColour; }
+
+    // Thetis filter display settings (MeterManager.cs:27651-27705
+    // [v2.10.3.15]). Stored and saved per item; the editor enforces the
+    // Thetis ranges above.
+    // Vertical ratio is the Thetis Padding (filterdisplay_vertical_ratio).
+    void setVerticalRatio(float r) { m_padding = r; }
+    float verticalRatio() const { return m_padding; }
+    void setShowFilterLimits(bool on) { m_showFilterLimits = on; }
+    bool showFilterLimits() const { return m_showFilterLimits; }
+    void setFixedRxZoom(bool on) { m_fixedRxZoom = on; }
+    bool fixedRxZoom() const { return m_fixedRxZoom; }
+    void setFixedTxZoom(bool on) { m_fixedTxZoom = on; }
+    bool fixedTxZoom() const { return m_fixedTxZoom; }
+    void setRxZoom(float z) { m_rxZoom = z; }
+    float rxZoom() const { return m_rxZoom; }
+    void setTxZoom(float z) { m_txZoom = z; }
+    float txZoom() const { return m_txZoom; }
+    void setSidebandsScale(float s) { m_sidebandsScale = s; }
+    float sidebandsScale() const { return m_sidebandsScale; }
+    void setCwScale(float s) { m_cwScale = s; }
+    float cwScale() const { return m_cwScale; }
+    void setOthersScale(float s) { m_othersScale = s; }
+    float othersScale() const { return m_othersScale; }
+    void setFontScale(float s) { m_fontScale = s; }
+    float fontScale() const { return m_fontScale; }
+    void setSidebandMode(bool on) { m_sidebandMode = on; }
+    bool sidebandMode() const { return m_sidebandMode; }
+    // From Thetis FrameInterval setter (MeterManager.cs:18688-18704
+    // [v2.10.3.15]): a new interval restarts the frame count.
+    void setWaterfallFrameInterval(int frames)
+    {
+        m_waterfallFrameInterval = frames;
+        m_waterfallFrameCount = 0;
+    }
+    int waterfallFrameInterval() const { return m_waterfallFrameInterval; }
+    // Thetis Greyscale (filterdisplay_use_grey): grey when not active.
+    void setGreyWhenNotActive(bool on) { m_greyWhenNotActive = on; }
+    bool greyWhenNotActive() const { return m_greyWhenNotActive; }
+    void setSnapLines(bool on) { m_snapLines = on; }
+    bool snapLines() const { return m_snapLines; }
+    void setAutoZoom(bool on) { m_autoZoom = on; }
+    bool autoZoom() const { return m_autoZoom; }
+    void setShowCharacteristic(bool on) { m_showCharacteristic = on; }
+    bool showCharacteristic() const { return m_showCharacteristic; }
+    void setCharacteristicLow(float dbm) { m_characteristicLow = dbm; }
+    float characteristicLow() const { return m_characteristicLow; }
+
+    // New items only (ContainerContentRegistry::makeEntry): copies
+    // kFilterDisplayThetisDefaults. Saved records keep their look.
+    void applyNewItemDefaults() override;
 
     void setFillSpectrum(bool f) { m_fillSpectrum = f; }
     bool fillSpectrum() const { return m_fillSpectrum; }
@@ -142,6 +241,7 @@ public:
     void setWaterfallPalette(WaterfallPalette pal) { m_waterfallPalette = pal; }
     WaterfallPalette waterfallPalette() const { return m_waterfallPalette; }
     void setWaterfallLowColour(const QColor& color) { m_waterfallLowColour = color; }
+    QColor waterfallLowColour() const { return m_waterfallLowColour; }
     void setCustomWaterfallGradient(const QVector<QColor>& rx,
                                     const QVector<QColor>& tx) {
         m_customRxGradient = rx;
@@ -226,6 +326,32 @@ private:
     QColor m_notchColour{0xff, 0xa5, 0x00};           // Orange
     QColor m_meterBackColour{0x00, 0x00, 0x00};       // Black
     QColor m_textColour{0xff, 0xff, 0xff};             // White
+    // From Thetis clsFilterItem ctor (MeterManager.cs:18337-18348
+    // [v2.10.3.15]).
+    QColor m_numberHighlightColour{0x8b, 0x00, 0x00};  // DarkRed
+    QColor m_edgeHighlightColour{0xff, 0xff, 0xff};    // White
+    QColor m_extentsColour{0x80, 0x80, 0x80};          // Gray
+    QColor m_notchHighlightColour{0x32, 0xcd, 0x32};   // LimeGreen
+    QColor m_snapLineColour{0x80, 0x80, 0x80};         // Gray
+    QColor m_settingOnColour{0x64, 0x95, 0xed};        // CornflowerBlue
+    QColor m_buttonHighlightColour{0x80, 0x80, 0x80};  // Gray
+    // From Thetis clsFilterItem ctor (MeterManager.cs:18310-18322,
+    // 18350-18353 [v2.10.3.15]).
+    bool   m_showFilterLimits{true};
+    bool   m_fixedRxZoom{false};
+    bool   m_fixedTxZoom{false};
+    float  m_rxZoom{1.0f};
+    float  m_txZoom{1.0f};
+    float  m_sidebandsScale{0.0f};
+    float  m_cwScale{0.0f};
+    float  m_othersScale{0.0f};
+    float  m_fontScale{1.0f};
+    bool   m_sidebandMode{false};
+    bool   m_greyWhenNotActive{true};
+    bool   m_snapLines{false};
+    bool   m_autoZoom{false};
+    bool   m_showCharacteristic{false};
+    float  m_characteristicLow{-250.0f};
     bool   m_fillSpectrum{true};
     float  m_padding{0.02f};
     float  m_specMinDb{-140.0f};
@@ -244,6 +370,80 @@ private:
     double m_rfFilterStartHz{0.0};
     double m_rfFilterStepHz{0.0};
     double m_rfFilterReferenceHz{0.0};
+};
+
+// New FILTERDISPLAY items (makeEntry) take the values Thetis applies to a
+// filter display. From Thetis MeterManager.cs:27651-27705 [v2.10.3.15]
+// (ApplySettingsForMeterGroup, FILTER_DISPLAY: the GetSetting defaults);
+// colours in Apply order, each named by its field in the clsFilterItem
+// constructor (MeterManager.cs:18316-18350 [v2.10.3.15]).
+struct FilterDisplayItemThetisDefaults {
+    float verticalRatio;
+    bool  showFilterLimits;
+    bool  fixedRxZoom;
+    bool  fixedTxZoom;
+    float rxZoom;
+    float txZoom;
+    float sidebandsScale;
+    float cwScale;
+    float othersScale;
+    FilterDisplayItem::DisplayMode displayMode;
+    float fontScale;
+    QRgb  dataLineColour;
+    QRgb  waterfallLowColour;
+    QRgb  textColour;
+    QRgb  numberHighlightColour;
+    QRgb  edgesColourRx;
+    QRgb  edgesColourTx;
+    QRgb  edgeHighlightColour;
+    QRgb  meterBackColour;
+    QRgb  notchColour;
+    QRgb  notchHighlightColour;
+    QRgb  extentsColour;
+    bool  sidebandMode;
+    int   frameInterval;
+    bool  greyWhenNotActive;
+    bool  snapLines;
+    bool  autoZoom;
+    QRgb  snapLineColour;
+    QRgb  settingOnColour;
+    QRgb  buttonHighlightColour;
+    bool  showCharacteristic;
+    float characteristicLow;
+};
+inline constexpr FilterDisplayItemThetisDefaults kFilterDisplayThetisDefaults{
+    0.2f,                                   // filterdisplay_vertical_ratio 0.2f
+    true,                                   // filterdisplay_show_filter_limits true
+    false,                                  // filterdisplay_show_fixed_rx_zoom false
+    false,                                  // filterdisplay_show_fixed_tx_zoom false
+    1.0f,                                   // filterdisplay_rx_zoom 1f
+    1.0f,                                   // filterdisplay_tx_zoom 1f
+    0.0f,                                   // filterdisplay_sidebands_scale 0f
+    0.0f,                                   // filterdisplay_cw_scale 0f
+    0.0f,                                   // filterdisplay_others_scale 0f
+    FilterDisplayItem::DisplayMode::Panafall, // filterdisplay_others_displaymode PANAFALL
+    1.0f,                                   // filterdisplay_font_scale 1f
+    qRgb(0x32, 0xcd, 0x32),                 // _dataline_colour = LimeGreen
+    qRgb(0x00, 0x00, 0x00),                 // _waterfall_low_colour = Black
+    qRgb(0xff, 0xff, 0xff),                 // _text_colour = White
+    qRgb(0x8b, 0x00, 0x00),                 // _number_highlight_colour = DarkRed
+    qRgb(0xff, 0xff, 0x00),                 // _edges_colour_rx = Yellow
+    qRgb(0xff, 0x00, 0x00),                 // _edges_colour_tx = Red
+    qRgb(0xff, 0xff, 0xff),                 // _edge_highlight_colour = White
+    qRgb(0x00, 0x00, 0x00),                 // _meterback_colour = Black
+    qRgb(0xff, 0x45, 0x00),                 // _notch_colour = OrangeRed (Apply)
+    qRgb(0x32, 0xcd, 0x32),                 // _notchhighligh_colour = LimeGreen
+    qRgb(0x80, 0x80, 0x80),                 // _extents_colour = Gray
+    false,                                  // filterdisplay_sideband_mode false
+    4,                                      // filterdisplay_waterfall_frameupdate 4
+    true,                                   // filterdisplay_use_grey true
+    false,                                  // filterdisplay_snap_lines false
+    false,                                  // filterdisplay_autozoom false
+    qRgb(0x80, 0x80, 0x80),                 // _snapline_colour = Gray
+    qRgb(0x64, 0x95, 0xed),                 // _setting_on_colour = CornflowerBlue
+    qRgb(0x80, 0x80, 0x80),                 // _button_highlight_colour = Gray
+    false,                                  // filterdisplay_characteristic false
+    -250.0f,                                // filterdisplay_characteristic_low -250f
 };
 
 } // namespace NereusSDR
