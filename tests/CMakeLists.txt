@@ -780,6 +780,9 @@ nereus_add_test(tst_meter_item_serialize_placeholders)
 nereus_add_test(tst_meter_new_item_defaults)
 # Per-item update interval: throttle, saved entries, new-item default, editor.
 nereus_add_test(tst_meter_item_update_interval)
+# Container item parity Task 28: the building-block Reading list offers the
+# six TX stage peak readings under plain labels, and choosing one saves its id.
+nereus_add_test(tst_meter_reading_list)
 # Thetis reading names for meter bindings and the readings a clock publishes.
 nereus_add_test(tst_meter_published_readings)
 # Data out: Thetis-format payload by slice and radio, send interval, endpoint
