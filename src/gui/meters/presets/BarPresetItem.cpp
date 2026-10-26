@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - meter.adcMax has no reading provider yet: its bar draws the
+//                 unavailable veil with "ADC magnitude is not reported yet"
+//                 instead of staying blank. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview data colours (JJ's decision B): the
 //                 default backdrop reads WorkspacePreview::dataBackground(),
 //                 the role of the container around the meter or the user's
@@ -65,6 +69,18 @@ mw0lge@grange-lane.co.uk
 #include <QJsonDocument>
 #include <algorithm>
 namespace NereusSDR {
+namespace {
+// ADC maximum magnitude has no core provider yet. Thetis reads ADC_MAX_MAG
+// from the Protocol 2 high-priority packet, bytes 35-38 (From Thetis
+// console.cs:47057,47221; ChannelMaster netInterface.c:159-166;
+// network.c:721-722 [v2.10.3.15]), which NereusSDR does not parse. Until it
+// does, the bar names the reason rather than drawing nothing.
+QString adcMaxUnavailableText() { return QStringLiteral("ADC magnitude is not reported yet"); }
+bool adcMaxWithoutProvider(const BarPresetItem& item)
+{
+    return item.typeId()==QStringLiteral("meter.adcMax") && item.bindingId()<0 && !item.hasMmioBinding();
+}
+}
 BarPresetItem::BarPresetItem(QObject* parent) : MeterItem(parent) { configureAsCustom(-1,-30,12,QStringLiteral("Custom")); }
 void BarPresetItem::configureDynamics() {
     m_scaleCache=QImage(); m_staticDirty=true;
@@ -72,6 +88,8 @@ void BarPresetItem::configureDynamics() {
     m_primary.configure(m_attack,m_release,m_interval,m_historyMs,m_ignoreMs);
     m_average.configure(m_attack,m_release,m_interval,(m_flavor=="Cfc" || m_flavor=="Agc" || m_flavor=="Adc")?m_interval:m_historyMs,m_ignoreMs);
     m_primary.reset(m_minimum); m_average.reset(m_minimum);
+    if(adcMaxWithoutProvider(*this)) { setBindingUnavailable(bindingId(),adcMaxUnavailableText()); }
+    else if(bindingUnavailableReason(-1)==adcMaxUnavailableText()) { MeterItem::setBindingUnavailable(-1,QString()); }
 }
 void BarPresetItem::configureAsMic() {
     // From Thetis MeterManager.cs:24327-24413 [v2.10.3.15]
@@ -125,13 +143,21 @@ bool BarPresetItem::configureVariant(const QString& flavor) {
     m_calMinimum=m_minimum; m_calMaximum=m_maximum; configureDynamics(); return true;
 }
 QString BarPresetItem::typeId() const { if(m_flavor=="Custom") { return "meter.customBar"; } QString name=m_flavor; name[0]=name[0].toLower(); return "meter."+name; }
-QSet<int> BarPresetItem::readingBindings() const { QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); } return result; }
+QSet<int> BarPresetItem::readingBindings() const {
+    QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); }
+    // The provider-less ADC maximum bar keeps its reason channel, so the
+    // meter veils it and its hover names the reason.
+    if(adcMaxWithoutProvider(*this)) { result.insert(bindingId()); }
+    return result;
+}
 void BarPresetItem::pushBindingValue(int binding, double value) {
     const bool available=bindingUnavailableReason(binding).isEmpty() && std::isfinite(value) && (hasMmioBinding() || (m_flavor=="Custom" ? (!isNoReadingBinding(binding) || !isNoMeterReading(value)) : !isNoMeterReading(value)));
     if(binding==bindingId()) { m_value=value; m_primary.push(value,available); }
     if(binding==m_secondary) { m_average.push(value,available); }
 }
-void BarPresetItem::setBindingUnavailable(int binding, const QString& reason) {
+void BarPresetItem::setBindingUnavailable(int binding, const QString& givenReason) {
+    // A meter clearing availability cannot clear a reading no provider sends.
+    const QString reason=(givenReason.isEmpty() && binding==bindingId() && adcMaxWithoutProvider(*this)) ? adcMaxUnavailableText() : givenReason;
     MeterItem::setBindingUnavailable(binding,reason);
     if(!reason.isEmpty()) { if(binding==bindingId()) { m_primary.push(0,false); } if(binding==m_secondary) { m_average.push(0,false); } }
 }

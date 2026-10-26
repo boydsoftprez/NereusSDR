@@ -721,6 +721,8 @@ nereus_add_test(tst_container_window_monitors)
 # Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
 nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
+# ADC bars read the ADC behind their slice; the ADC maximum bar names why it is empty.
+nereus_add_test(tst_meter_adc_slice)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
 # A scrolled docked stack shows no black band over its GPU
