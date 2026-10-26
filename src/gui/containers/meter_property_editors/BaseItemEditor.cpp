@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - A wrapped row label is as tall as its lines painted
+//                 centred, which can take one pixel row more than QLabel's
+//                 own measure (Courier New on Linux). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A row label given a fixed or minimum width answers its
 //                 height for that width. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -106,6 +110,7 @@ mw0lge@grange-lane.co.uk
 #include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QTextDocument>
 #include <QFrame>
 
 namespace NereusSDR {
@@ -148,12 +153,35 @@ constexpr const char* kHeaderStyle =
 // full column width. A wrapped label whose hint is narrower than the column
 // then needs more lines than its row has, and its words spill over the
 // next row. This label answers for the width it will be given.
+//
+// QLabel measures its lines with vertical centring turned off, but paints
+// them centred in its rows. When the lines' height is fractional, centring
+// can put them across one more pixel row than that measure, and the last
+// row of the text is cut by a pixel. So the height is also measured from
+// the wrapped text as it is painted: with the label's own alignment, at the
+// width inside its margins, plus those margins.
 class FormRowLabel final : public QLabel {
 public:
     FormRowLabel(const QString& text, QWidget* parent) : QLabel(text, parent) {}
     int heightForWidth(int width) const override
     {
-        return QLabel::heightForWidth(qMin(qMin(width, maximumWidth()), qMax(sizeHint().width(), minimumWidth())));
+        const int given = qMin(qMin(width, maximumWidth()), qMax(sizeHint().width(), minimumWidth()));
+        const int measured = QLabel::heightForWidth(given);
+        const bool richText = textFormat() == Qt::RichText
+            || (textFormat() == Qt::AutoText && Qt::mightBeRichText(text()));
+        if (!wordWrap() || text().isEmpty() || richText) { return measured; }
+        const QMargins edges = contentsMargins();
+        const int inside = given - edges.left() - edges.right() - 2 * margin();
+        if (inside <= 0) { return measured; }
+        // Tall enough for any label's lines; centring in it leaves the
+        // same fraction of a pixel above the text as the row will.
+        constexpr int kMeasureHeight = 10000;
+        const int painted = fontMetrics()
+                                .boundingRect(QRect(0, 0, inside, kMeasureHeight),
+                                              int(alignment()) | Qt::TextWordWrap, text())
+                                .height()
+            + edges.top() + edges.bottom() + 2 * margin();
+        return qMax(measured, painted);
     }
 };
 
