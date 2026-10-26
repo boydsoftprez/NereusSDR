@@ -14,13 +14,32 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  The fake answers the rest of the sink
 //                                    (rotor control plan, Task 6).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Thetis rotator settings (container item
+//                                    parity): older records, the 100 ms new
+//                                    item, the beam width rows, padding,
+//                                    full background, dark mode, the
+//                                    elevation on variable 2 and inert
+//                                    preview copies. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QFile>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPushButton>
+#include <QTemporaryDir>
 #include <QTest>
+#include <QUuid>
 
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/RotatorItemEditor.h"
+#include "gui/meters/MeterWidget.h"
 #include "gui/meters/RotatorItem.h"
 #include "models/RotorCommandSink.h"
 #include "models/RotorModel.h"
@@ -296,7 +315,9 @@ private slots:
         }
         const QPointF ele = fed.elevationCentre(kW, kH);
         const QPointF onPointer = elevationPoint(ele, 45.0, fed.pointerRadius(kW, kH) * 0.6);
+        // Not the black canvas, nor the full background under the face.
         QVERIFY(image.pixelColor(onPointer.toPoint()) != QColor(Qt::black));
+        QVERIFY(image.pixelColor(onPointer.toPoint()) != fed.backgroundColour());
     }
 
     void dragOnTheElevationFaceSetsElevation()
@@ -329,6 +350,307 @@ private slots:
         QVERIFY(!item.elevationControllable());
         QVERIFY(!press(item, elevationPoint(ele, 30.0, r * 0.8)));
         QCOMPARE(commands.targets.size(), 1);
+    }
+
+    // ── Thetis rotator settings (container item parity) ──
+
+    void anOlderRecordRoundTripsUnchanged()
+    {
+        // Saved before fields 22 and 23: Azimuth, beam shown at 45.5,
+        // dark mode, padding 0.5.
+        const QString record = QStringLiteral(
+            "ROTATOR|0.25|0.5|0.5|0.25|300|3|0|1|1|1|45.5|0.75|1|0.5|"
+            "#ffff0000|#ffffffff|#ff808080|#ffffffff|#ff404040|#ff202020|");
+        QCOMPARE(record.split(QLatin1Char('|')).size(), 22);
+        RotatorItem item;
+        QVERIFY(item.deserialize(record));
+        QVERIFY(!item.fullBackground());
+        QVERIFY(!item.paddingLayout());
+        QCOMPARE(item.mode(), RotatorItem::RotatorMode::Az);
+        QCOMPARE(item.beamWidth(), 45.5f);
+        QVERIFY(item.darkMode());
+        // The 22 fields come back as saved; the appended pair reads off.
+        QCOMPARE(item.serialize(), record + QStringLiteral("|0|0"));
+        RotatorItem again;
+        QVERIFY(again.deserialize(item.serialize()));
+        QCOMPARE(again.serialize(), item.serialize());
+
+        // Through the content registry: no overrides, the record unchanged.
+        ContainerContentRegistry registry;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("ROTATOR"));
+        entry.config.insert(QStringLiteral("legacyRecord"), record);
+        entry.canvasRect = {};
+        entry.paintOrder = 3;  // the record's z-order
+        MeterWidget widget;
+        MeterItem* restored = registry.createMeterItem(entry, &widget, ContentRenderMode::Live);
+        QVERIFY(restored);
+        auto* rotator = qobject_cast<RotatorItem*>(restored);
+        QVERIFY(rotator);
+        QVERIFY(!rotator->fullBackground());
+        QVERIFY(!rotator->paddingLayout());
+        const ContentEntry captured = registry.captureMeterItem(*restored, entry);
+        QCOMPARE(captured.config.value(QStringLiteral("legacyRecord")).toString(), record);
+        const QJsonObject overrides = captured.config.value(QStringLiteral("overrides")).toObject();
+        QVERIFY2(overrides.isEmpty(), qPrintable(QJsonDocument(overrides).toJson(QJsonDocument::Compact)));
+        // A setting changed on it later saves and restores over the record.
+        rotator->setFullBackground(true);
+        const ContentEntry changed = registry.captureMeterItem(*restored, captured);
+        QCOMPARE(changed.config.value(QStringLiteral("legacyRecord")).toString(), record);
+        auto* reloaded = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(changed, &widget, ContentRenderMode::Live));
+        QVERIFY(reloaded);
+        QVERIFY(reloaded->fullBackground());
+        QVERIFY(!reloaded->paddingLayout());
+
+        // The appended fields round-trip.
+        RotatorItem both;
+        QCOMPARE(both.serialize().split(QLatin1Char('|')).size(), 24);
+        both.setPaddingLayout(false);
+        RotatorItem copy;
+        QVERIFY(copy.deserialize(both.serialize()));
+        QVERIFY(copy.fullBackground());
+        QVERIFY(!copy.paddingLayout());
+        QCOMPARE(copy.serialize(), both.serialize());
+    }
+
+    void aNewItemUpdatesAt100Ms()
+    {
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("ROTATOR"));
+        QCOMPARE(entry.context.value(QStringLiteral("updateIntervalMs")).toInt(), 100);
+        MeterWidget widget;
+        auto* item = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &widget, ContentRenderMode::Live));
+        QVERIFY(item);
+        QCOMPARE(item->updateIntervalMs(), RotatorItem::kThetisUpdateIntervalMs);
+        QCOMPARE(item->updateIntervalMs(), 100);
+        // A new item draws as Thetis does; the existing defaults are kept.
+        QVERIFY(item->fullBackground());
+        QVERIFY(item->paddingLayout());
+        QCOMPARE(item->mode(), RotatorItem::RotatorMode::Both);
+        QCOMPARE(item->beamWidth(), 30.0f);
+        QCOMPARE(item->padding(), 0.5f);
+    }
+
+    void theBeamWidthRowsFollowShowBeamWidth()
+    {
+        RotatorItem item;
+        RotatorItemEditor editor;
+        editor.setItem(&item);
+        auto* show = editor.findChild<QCheckBox*>(QStringLiteral("rotatorShowBeamWidth"));
+        auto* width = editor.findChild<QDoubleSpinBox*>(QStringLiteral("rotatorBeamWidth"));
+        auto* alpha = editor.findChild<QDoubleSpinBox*>(QStringLiteral("rotatorBeamAlpha"));
+        auto* colour = editor.findChild<QPushButton*>(QStringLiteral("rotatorBeamWidthColour"));
+        QVERIFY(show && width && alpha && colour);
+        // Thetis nudMeterItemRotatorBeamWidth: 0 to 180 in 0.05 steps.
+        QCOMPARE(width->minimum(), 0.0);
+        QCOMPARE(width->maximum(), 180.0);
+        QCOMPARE(width->singleStep(), 0.05);
+        QVERIFY(!item.showBeamWidth());
+        QVERIFY(!show->isChecked());
+        QVERIFY(!width->isEnabled());
+        QVERIFY(!alpha->isEnabled());
+        QVERIFY(!colour->isEnabled());
+        show->setChecked(true);
+        QVERIFY(item.showBeamWidth());
+        QVERIFY(width->isEnabled());
+        QVERIFY(alpha->isEnabled());
+        QVERIFY(colour->isEnabled());
+        width->setValue(120.5);
+        QCOMPARE(item.beamWidth(), 120.5f);
+        show->setChecked(false);
+        QVERIFY(!width->isEnabled());
+
+        // An item loaded with the beam on shows the rows enabled.
+        RotatorItem shown;
+        shown.setShowBeamWidth(true);
+        editor.setItem(&shown);
+        QVERIFY(width->isEnabled());
+    }
+
+    void editorRowsForPaddingAndFullBackground()
+    {
+        RotatorItem item;
+        QVERIFY(item.deserialize(QStringLiteral(
+            "ROTATOR|0|0|1|1|300|3|0|1|0|0|30|0.6|0|0.5|"
+            "#ffff0000|#ffffffff|#ff808080|#ffffffff|#ff404040|#ff202020|")));
+        RotatorItemEditor editor;
+        editor.setItem(&item);
+        auto* padding = editor.findChild<QDoubleSpinBox*>(QStringLiteral("rotatorPadding"));
+        auto* full = editor.findChild<QCheckBox*>(QStringLiteral("rotatorFullBackground"));
+        QVERIFY(padding && full);
+        QCOMPARE(padding->minimum(), 0.001);
+        QCOMPARE(padding->maximum(), 1.0);
+        QVERIFY(!full->isChecked());
+        QVERIFY(!item.paddingLayout());
+        // Setting padding on an older item lets it size the face.
+        padding->setValue(0.75);
+        QCOMPARE(item.padding(), 0.75f);
+        QVERIFY(item.paddingLayout());
+        full->setChecked(true);
+        QVERIFY(item.fullBackground());
+        // Thetis holds padding to at least 0.001.
+        item.setPadding(0.0f);
+        QCOMPARE(item.padding(), RotatorItem::kMinPadding);
+    }
+
+    void paddingSizesTheAzimuthFace()
+    {
+        RotatorItem item;  // a new item: padding sizes the face
+        item.setMode(RotatorItem::RotatorMode::Az);
+        item.setPadding(0.3f);
+        // 0.3 of 400 wide is 120, centred across and at the top.
+        QCOMPARE(item.azimuthCentre(kW, kH), QPointF(200.0, 60.0));
+        item.setPadding(1.0f);
+        // Held to the item's height.
+        QCOMPARE(item.azimuthCentre(kW, kH), QPointF(200.0, 100.0));
+        QCOMPARE(item.stopCircleRadius(kW, kH), (kH * 0.15f) / 2.0f);
+
+        // An older item keeps the largest square, centred.
+        item.setPadding(0.3f);
+        item.setPaddingLayout(false);
+        QCOMPARE(item.azimuthCentre(kW, kH), QPointF(200.0, 100.0));
+
+        // Both is laid out the same either way.
+        RotatorItem both;
+        const QPointF before = both.azimuthCentre(kW, kH);
+        both.setPadding(0.3f);
+        both.setPaddingLayout(false);
+        QCOMPARE(both.azimuthCentre(kW, kH), before);
+    }
+
+    void fullBackgroundFillsTheItem()
+    {
+        RotatorItem item;
+        item.setMode(RotatorItem::RotatorMode::Az);
+        item.setBackgroundColour(QColor(10, 80, 30));
+        QImage image(kW, kH, QImage::Format_ARGB32);
+        image.fill(Qt::black);
+        {
+            QPainter p(&image);
+            item.paint(p, kW, kH);
+        }
+        QCOMPARE(image.pixelColor(2, kH - 2), QColor(10, 80, 30));
+        QCOMPARE(image.pixelColor(kW - 2, 2), QColor(10, 80, 30));
+
+        item.setFullBackground(false);
+        image.fill(Qt::black);
+        {
+            QPainter p(&image);
+            item.paint(p, kW, kH);
+        }
+        QCOMPARE(image.pixelColor(2, kH - 2), QColor(Qt::black));
+    }
+
+    void darkModeDrawsTheDarkImage()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QImage plain(64, 64, QImage::Format_ARGB32);
+        plain.fill(QColor(200, 0, 0));
+        QImage dark(64, 64, QImage::Format_ARGB32);
+        dark.fill(QColor(0, 0, 200));
+        const QString plainPath = dir.filePath(QStringLiteral("face.png"));
+        const QString darkPath = dir.filePath(QStringLiteral("face-dark.png"));
+        QVERIFY(plain.save(plainPath));
+        QVERIFY(dark.save(darkPath));
+
+        RotatorItem item;
+        item.setMode(RotatorItem::RotatorMode::Az);
+        item.setBackgroundImagePath(plainPath);
+        const QPointF centre = item.azimuthCentre(kW, kH);
+        // Inside the disc, clear of the ring, the arrow and the readout.
+        const QPoint probe = (centre - QPointF(item.pointerRadius(kW, kH) * 0.5, 0.0)).toPoint();
+        const auto drawn = [&] {
+            QImage image(kW, kH, QImage::Format_ARGB32);
+            image.fill(Qt::black);
+            QPainter p(&image);
+            item.paint(p, kW, kH);
+            p.end();
+            return image.pixelColor(probe);
+        };
+        QCOMPARE(drawn(), QColor(200, 0, 0));
+        QCOMPARE(item.effectiveBackgroundImagePath(), plainPath);
+        item.setDarkMode(true);
+        QCOMPARE(drawn(), QColor(0, 0, 200));
+        QCOMPARE(item.effectiveBackgroundImagePath(), darkPath);
+        // Without a "-dark" file, dark mode draws the chosen one.
+        QVERIFY(QFile::remove(darkPath));
+        RotatorItem other;
+        other.setMode(RotatorItem::RotatorMode::Az);
+        other.setDarkMode(true);
+        other.setBackgroundImagePath(plainPath);
+        QImage image(kW, kH, QImage::Format_ARGB32);
+        QPainter p(&image);
+        other.paint(p, kW, kH);
+        p.end();
+        QCOMPARE(other.effectiveBackgroundImagePath(), plainPath);
+    }
+
+    void variableTwoFeedsTheElevation()
+    {
+        // From Thetis MeterManager.cs:22720 [v2.10.3.15]: ROTATOR reads 2.
+        QCOMPARE(MeterItem::mmioVariableCount(QStringLiteral("ROTATOR")), 2);
+        ContainerContentRegistry registry;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("ROTATOR"));
+        const QUuid guid = QUuid::createUuid();
+        entry.context.insert(QStringLiteral("mmioVariables"),
+                             QJsonArray{QJsonObject{{"guid", guid.toString(QUuid::WithoutBraces)}, {"variable", "ele"}}});
+        MeterWidget widget;
+        auto* item = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &widget, ContentRenderMode::Live));
+        QVERIFY(item);
+        QVERIFY(item->hasMmioBinding(1));
+        widget.addItem(item);
+        for (int i = 0; i < 80; ++i) { widget.updateMmioValue(item, 1, 30.0); }
+        QVERIFY2(std::abs(item->displayedElevation() - 30.0f) < 0.01f,
+                 qPrintable(QString::number(item->displayedElevation())));
+        QCOMPARE(item->elevation(), 30.0f);
+        // A source without the reading leaves the dial where it was.
+        widget.updateMmioValue(item, 1, 70.0, QStringLiteral("External meter source is unavailable."));
+        QCOMPARE(item->elevation(), 30.0f);
+        // The azimuth stays on variable 1.
+        QVERIFY(std::abs(item->displayedAzimuth()) < 0.01f);
+    }
+
+    void aPreviewCopyNeverTurnsTheRotor()
+    {
+        RotorModel rotor;
+        rotor.setState(connectedRotor());
+        FakeCommands commands;
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.makeEntry(QStringLiteral("ROTATOR"));
+        MeterWidget previewWidget;
+        auto* preview = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &previewWidget, ContentRenderMode::Preview));
+        QVERIFY(preview);
+        QVERIFY(!preview->controlEnabled());
+        preview->setRotor(&rotor, &commands);
+        QVERIFY(!preview->rotorControllable());
+        const QPointF az = preview->azimuthCentre(kW, kH);
+        const float r = preview->pointerRadius(kW, kH);
+        QVERIFY(!press(*preview, compassPoint(az, 90.0, r * 0.8)));
+        QVERIFY(!release(*preview, compassPoint(az, 90.0, r * 0.8)));
+        QVERIFY(!press(*preview, az));
+        QVERIFY(commands.targets.isEmpty());
+        QCOMPARE(commands.stops, 0);
+
+        // The live copy of the same entry turns it.
+        MeterWidget liveWidget;
+        auto* live = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &liveWidget, ContentRenderMode::Live));
+        QVERIFY(live);
+        live->setRotor(&rotor, &commands);
+        QVERIFY(live->rotorControllable());
+        QVERIFY(press(*live, compassPoint(az, 90.5, r * 0.8)));
+        QVERIFY(release(*live, compassPoint(az, 90.5, r * 0.8)));
+        QCOMPARE(commands.targets.size(), 1);
+        // Turning control off mid-way cancels and sends nothing more.
+        QVERIFY(press(*live, compassPoint(az, 200.5, r * 0.8)));
+        live->setControlEnabled(false);
+        QVERIFY(!release(*live, compassPoint(az, 200.5, r * 0.8)));
+        QCOMPARE(commands.targets.size(), 1);
+        QCOMPARE(commands.stops, 0);
     }
 };
 

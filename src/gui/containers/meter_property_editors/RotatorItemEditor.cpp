@@ -1,3 +1,10 @@
+// no-port-check: NereusSDR-original Qt property adapter; it cites Thetis Setup ranges and row enabling as facts.
+// Modification history (NereusSDR):
+//   2026-10-26 - Thetis rotator settings: beam width 0-180 in 0.05 steps
+//                 and padding 0.001-1 (the Thetis Setup ranges), the beam
+//                 width rows disabled when the beam is off, a full background
+//                 row; setting padding lets it size the face. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "RotatorItemEditor.h"
 #include "../../meters/RotatorItem.h"
 
@@ -8,6 +15,7 @@
 #include <QPushButton>
 #include <QColorDialog>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QHBoxLayout>
 
 namespace NereusSDR {
@@ -59,6 +67,7 @@ void RotatorItemEditor::setItem(MeterItem* item)
     m_spinBeamAlpha->setValue(static_cast<double>(r->beamWidthAlpha()));
     m_chkDarkMode->setChecked(r->darkMode());
     m_spinPadding->setValue(static_cast<double>(r->padding()));
+    m_chkFullBackground->setChecked(r->fullBackground());
     m_editBgPath->setText(r->backgroundImagePath());
     applyBtnColor(m_btnBigBlob,    r->bigBlobColour());
     applyBtnColor(m_btnSmallBlob,  r->smallBlobColour());
@@ -66,7 +75,22 @@ void RotatorItemEditor::setItem(MeterItem* item)
     applyBtnColor(m_btnArrow,      r->arrowColour());
     applyBtnColor(m_btnBeamWidth,  r->beamWidthColour());
     applyBtnColor(m_btnBackground, r->backgroundColour());
+    updateBeamWidthRows();
     endProgrammaticUpdate();
+}
+
+// From Thetis setup.cs:31263-31271 [v2.10.3.15] (updateShowBeamWidthControls):
+// the beam width colour, degrees and alpha are enabled only while the beam
+// width is shown.
+void RotatorItemEditor::updateBeamWidthRows()
+{
+    const bool en = m_chkShowBeamWidth->isChecked();
+    for (QWidget* field : {static_cast<QWidget*>(m_spinBeamWidth), static_cast<QWidget*>(m_spinBeamAlpha),
+                           static_cast<QWidget*>(m_btnBeamWidth)}) {
+        if (!field) { continue; }
+        field->setEnabled(en);
+        if (QWidget* label = m_form->labelForField(field)) { label->setEnabled(en); }
+    }
 }
 
 void RotatorItemEditor::buildTypeSpecific()
@@ -107,7 +131,9 @@ void RotatorItemEditor::buildTypeSpecific()
     });
 
     m_chkShowBeamWidth = makeCheckRow(QStringLiteral("Show beam width"));
+    m_chkShowBeamWidth->setObjectName(QStringLiteral("rotatorShowBeamWidth"));
     connect(m_chkShowBeamWidth, &QCheckBox::toggled, this, [this](bool on) {
+        updateBeamWidthRows();
         if (isProgrammaticUpdate()) { return; }
         RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
         if (!r) { return; }
@@ -115,7 +141,10 @@ void RotatorItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
-    m_spinBeamWidth = makeDoubleRow(QStringLiteral("Beam width (deg)"), 0.0, 360.0, 1.0, 1);
+    // From Thetis setup.designer.cs:64527-64556 [v2.10.3.15]
+    // (nudMeterItemRotatorBeamWidth): 0 to 180, step 0.05, one decimal.
+    m_spinBeamWidth = makeDoubleRow(QStringLiteral("Beam width (deg)"), 0.0, 180.0, 0.05, 1);
+    m_spinBeamWidth->setObjectName(QStringLiteral("rotatorBeamWidth"));
     connect(m_spinBeamWidth, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
@@ -126,6 +155,7 @@ void RotatorItemEditor::buildTypeSpecific()
     });
 
     m_spinBeamAlpha = makeDoubleRow(QStringLiteral("Beam alpha"), 0.0, 1.0, 0.05, 2);
+    m_spinBeamAlpha->setObjectName(QStringLiteral("rotatorBeamAlpha"));
     connect(m_spinBeamAlpha, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
@@ -144,13 +174,32 @@ void RotatorItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
-    m_spinPadding = makeDoubleRow(QStringLiteral("Padding"), 0.0, 2.0, 0.05, 2);
+    // From Thetis setup.designer.cs:64344-64373 [v2.10.3.15]
+    // (nudMeterItemRotator_padding): 0.001 to 1, step 0.001, three decimals.
+    m_spinPadding = makeDoubleRow(QStringLiteral("Padding"), 0.001, 1.0, 0.001, 3);
+    m_spinPadding->setObjectName(QStringLiteral("rotatorPadding"));
+    m_spinPadding->setToolTip(QStringLiteral(
+        "Size of the azimuth or elevation face, as a share of the item's width."));
     connect(m_spinPadding, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
         RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
         if (!r) { return; }
         r->setPadding(static_cast<float>(v));
+        // An older item starts sizing its face by padding once it is set.
+        r->setPaddingLayout(true);
+        notifyChanged();
+    });
+
+    m_chkFullBackground = makeCheckRow(QStringLiteral("Full background"));
+    m_chkFullBackground->setObjectName(QStringLiteral("rotatorFullBackground"));
+    m_chkFullBackground->setToolTip(QStringLiteral(
+        "Fill the whole item with the background colour, not only the compass."));
+    connect(m_chkFullBackground, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
+        if (!r) { return; }
+        r->setFullBackground(on);
         notifyChanged();
     });
 
@@ -212,6 +261,8 @@ void RotatorItemEditor::buildTypeSpecific()
     makeColorBtn(QStringLiteral("Arrow"),        m_btnArrow,     &RotatorItem::setArrowColour);
     makeColorBtn(QStringLiteral("Beam width"),   m_btnBeamWidth, &RotatorItem::setBeamWidthColour);
     makeColorBtn(QStringLiteral("Background"),   m_btnBackground,&RotatorItem::setBackgroundColour);
+    m_btnBeamWidth->setObjectName(QStringLiteral("rotatorBeamWidthColour"));
+    updateBeamWidthRows();
 }
 
 } // namespace NereusSDR

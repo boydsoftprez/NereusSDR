@@ -1,4 +1,8 @@
 #pragma once
+// Modification history (NereusSDR):
+//   2026-10-26 - Thetis rotator settings: full background row, beam width
+//                 rows disabled when the beam is off. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "BaseItemEditor.h"
 
 class QComboBox;
@@ -18,6 +22,8 @@ public:
 
 private:
     void buildTypeSpecific() override;
+    // The beam width, alpha and colour rows follow "Show beam width".
+    void updateBeamWidthRows();
 
     QComboBox*      m_comboMode{nullptr};
     QCheckBox*      m_chkShowValue{nullptr};
@@ -27,6 +33,7 @@ private:
     QDoubleSpinBox* m_spinBeamAlpha{nullptr};
     QCheckBox*      m_chkDarkMode{nullptr};
     QDoubleSpinBox* m_spinPadding{nullptr};
+    QCheckBox*      m_chkFullBackground{nullptr};
 
     // Background image path
     QLineEdit*      m_editBgPath{nullptr};

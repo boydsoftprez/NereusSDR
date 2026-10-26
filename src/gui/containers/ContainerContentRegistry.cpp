@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - createMeterItem: a rotator made in Preview or Validation
+//                 mode never turns or stops the rotor, even if a rotor is
+//                 attached to it later. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Context key mmioVariables: an array of {guid, variable}
 //                 for data source variables 2 and up (index 0 stays in
 //                 mmioGuid / mmioVariable); absent means none and is not
@@ -404,6 +408,10 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     // never starts.
     if (auto* out = qobject_cast<DataOutItem*>(item.get())) {
         out->setSendEnabled(mode == ContentRenderMode::Live);
+    }
+    // Likewise a rotator copy outside the live host never commands the rotor.
+    if (auto* rotator = qobject_cast<RotatorItem*>(item.get())) {
+        rotator->setControlEnabled(mode == ContentRenderMode::Live);
     }
     const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
     auto* face=qobject_cast<BarPresetItem*>(item.get());

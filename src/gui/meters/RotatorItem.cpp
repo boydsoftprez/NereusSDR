@@ -20,6 +20,14 @@
 //   2026-10-25 - Corrected the "N" colour note: Thetis draws every
 //                 cardinal in OuterTextColour. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator settings (container item parity): full
+//                 background and padding layout appended as fields 22 and
+//                 23 (both off for an older record, which keeps its look),
+//                 dark mode loads the "-dark" image,
+//                 data source variable 2 feeds the elevation, the rotor feed
+//                 follows the update interval (100 ms for new items), and
+//                 preview copies never send. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -161,11 +169,71 @@ RotatorItem::RotatorItem(QObject* parent)
 void RotatorItem::setBackgroundImagePath(const QString& path)
 {
     m_bgImagePath = path;
+    m_bgImage = QImage{};
+    m_bgImageLoadedPath.clear();
     if (!path.isEmpty()) {
+        // The plain file now; paint swaps in a variant if one applies.
         m_bgImage.load(path);
-    } else {
-        m_bgImage = QImage{};
+        m_bgImageLoadedPath = path;
     }
+}
+
+// ---------------------------------------------------------------------------
+// ensureBackgroundImage()
+// From Thetis MeterManager.cs:27370, 27393 [v2.10.3.15]: the rotator's grid
+// and map images take the dark mode setting; renderImage (:40641-40650,
+// ported as ImageItem::variantPath) then draws the "-dark" file when there
+// is one, and the "-small" or "-large" file for the face's size. Thetis's
+// images are built-in skin files; ours is the chosen file, with any variants
+// beside it.
+// ---------------------------------------------------------------------------
+void RotatorItem::ensureBackgroundImage(const QRect& rect)
+{
+    if (m_bgImagePath.isEmpty()) { return; }
+    const double diagonal = std::sqrt(static_cast<double>(rect.width()) * rect.width()
+                                      + static_cast<double>(rect.height()) * rect.height());
+    const QString wanted = ImageItem::variantPath(m_bgImagePath, m_darkMode, diagonal);
+    if (wanted == m_bgImageLoadedPath) { return; }
+    m_bgImage = QImage{};
+    m_bgImage.load(wanted);
+    m_bgImageLoadedPath = wanted;
+}
+
+void RotatorItem::setDarkMode(bool d)
+{
+    m_darkMode = d;
+}
+
+void RotatorItem::setPadding(float p)
+{
+    // From Thetis MeterManager.cs:16539 [v2.10.3.15]
+    m_padding = p < kMinPadding ? kMinPadding : p;
+}
+
+void RotatorItem::setControlEnabled(bool on)
+{
+    m_controlEnabled = on;
+    if (!on) { cancelControl(); }
+}
+
+void RotatorItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    // From Thetis MeterManager.cs:23490, 23503 [v2.10.3.15]
+    setUpdateIntervalMs(kThetisUpdateIntervalMs);
+}
+
+// ---------------------------------------------------------------------------
+// setSecondaryValue()
+// From Thetis MeterManager.cs:22669, 23501 [v2.10.3.15]: variable 2 (index
+// 1) is the ELE reading. A source without a reading (NaN) leaves the dial
+// where it was.
+// ---------------------------------------------------------------------------
+void RotatorItem::setSecondaryValue(int index, double value)
+{
+    if (index != 1 || !std::isfinite(value)) { return; }
+    // MeterWidget::updateMmioValue repaints the item.
+    setElevation(static_cast<float>(value));
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +300,17 @@ QRect RotatorItem::squareRect(int widgetW, int widgetH) const
 // ---------------------------------------------------------------------------
 QRect RotatorItem::faceRect(int widgetW, int widgetH) const
 {
-    if (m_mode != RotatorMode::Both) { return squareRect(widgetW, widgetH); }
+    if (m_mode != RotatorMode::Both) {
+        if (!m_paddingLayout) { return squareRect(widgetW, widgetH); }
+        // From Thetis MeterManager.cs:27341-27345 [v2.10.3.15]: in AZ or
+        // ELE the rotator is padding wide and high (in widths), centred
+        // across and at the top: TopLeft (0.5 - padding / 2, top).
+        const QRect pr = pixelRect(widgetW, widgetH);
+        const float pad = std::max(m_padding, kMinPadding);
+        const int wanted = static_cast<int>(std::lround(static_cast<float>(pr.width()) * pad));
+        const int side = std::max(1, std::min({wanted, pr.width(), pr.height()}));
+        return QRect(pr.left() + (pr.width() - side) / 2, pr.top(), side, side);
+    }
     // From Thetis MeterManager.cs:23474-23486 [v2.10.3.15]: in BOTH the
     // rotator is one wide and half as high (ri.Size = new SizeF(1f, fSize),
     // fSize 0.5). The text positions (x + w * 0.75f) assume it.
@@ -331,6 +409,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
     p.drawEllipse(disc);
 
     // Step 2: draw background image if loaded
+    ensureBackgroundImage(compassRect);
     if (!m_bgImage.isNull()) {
         p.save();
         QPainterPath clipPath;
@@ -804,6 +883,7 @@ void RotatorItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer lay
 {
     const QRect cr = faceRect(widgetW, widgetH);
     if (layer == Layer::OverlayStatic) {
+        paintFullBackground(p, widgetW, widgetH);
         if (m_mode != RotatorMode::Ele) {
             paintCompassFace(p, cr);
         }
@@ -823,6 +903,7 @@ void RotatorItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer lay
 void RotatorItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect cr = faceRect(widgetW, widgetH);
+    paintFullBackground(p, widgetW, widgetH);
     if (m_mode != RotatorMode::Ele) {
         paintCompassFace(p, cr);
     }
@@ -831,6 +912,17 @@ void RotatorItem::paint(QPainter& p, int widgetW, int widgetH)
     }
     paintHeading(p, cr);
     paintControl(p, cr);
+}
+
+// ---------------------------------------------------------------------------
+// paintFullBackground()
+// From Thetis MeterManager.cs:23550-23556, 27396-27406 [v2.10.3.15]: a solid
+// colour (igs.Colour) under the whole rotator.
+// ---------------------------------------------------------------------------
+void RotatorItem::paintFullBackground(QPainter& p, int widgetW, int widgetH)
+{
+    if (!m_fullBackground) { return; }
+    p.fillRect(pixelRect(widgetW, widgetH), m_backgroundColour);
 }
 
 // ---------------------------------------------------------------------------
@@ -856,7 +948,7 @@ void RotatorItem::setRotor(RotorLink::RotorModel* state, RotorCommandSink* comma
 
 bool RotatorItem::rotorControllable() const
 {
-    return m_rotor && m_commands
+    return m_controlEnabled && m_rotor && m_commands
         && m_rotor->driver() != RotorLink::RotorModel::Driver::None
         && m_rotor->connectionPhase() == TunerModel::ConnectionPhase::Connected;
 }
@@ -881,6 +973,9 @@ void RotatorItem::onRotorChanged()
     m_rotorEle = static_cast<float>(m_rotor->elevationDeg());
     feedTick();
     if ((m_rotorAz >= 0.0f || m_rotorEle >= 0.0f) && !m_feed.isActive()) {
+        // From Thetis MeterManager.cs:27312 [v2.10.3.15]: the rotator reads
+        // at its update interval (every poll when none is set: 100 ms).
+        m_feed.setInterval(updateIntervalMs() > 0 ? updateIntervalMs() : kFeedIntervalMs);
         m_feed.start();
     }
     emit repaintRequested();
@@ -1191,11 +1286,14 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
 // Format: ROTATOR|x|y|w|h|bindingId|zOrder|mode|showValue|showCardinals|
 //         showBeamWidth|beamWidth|beamWidthAlpha|darkMode|padding|
 //         bigBlobColour|smallBlobColour|outerTextColour|arrowColour|
-//         beamWidthColour|backgroundColour|bgImagePath
+//         beamWidthColour|backgroundColour|bgImagePath[|fullBackground|
+//         paddingLayout]
+// A record saved before the two appended fields loads with both off and
+// writes them as 0, so its first 22 fields come back as they were.
 // ---------------------------------------------------------------------------
 QString RotatorItem::serialize() const
 {
-    return QStringLiteral(
+    QString record = QStringLiteral(
         "ROTATOR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21")
         .arg(static_cast<double>(m_x))
         .arg(static_cast<double>(m_y))
@@ -1218,12 +1316,16 @@ QString RotatorItem::serialize() const
         .arg(m_beamWidthColour.name(QColor::HexArgb))
         .arg(m_backgroundColour.name(QColor::HexArgb))
         .arg(m_bgImagePath);
+    record += QStringLiteral("|%1|%2").arg(m_fullBackground ? 1 : 0).arg(m_paddingLayout ? 1 : 0);
+    return record;
 }
 
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected parts (22 total):
 // [0]=ROTATOR [1-6]=base fields [7-21]=type-specific fields
+// Optional: [22]=fullBackground [23]=paddingLayout. Absent (a record saved
+// before them) or not 1, each is off, so the item draws as it did.
 // ---------------------------------------------------------------------------
 bool RotatorItem::deserialize(const QString& data)
 {
@@ -1282,6 +1384,9 @@ bool RotatorItem::deserialize(const QString& data)
     // bgImagePath — trailing optional field (index 21)
     const QString imgPath = (parts.size() > 21) ? parts[21] : QString{};
     setBackgroundImagePath(imgPath);
+
+    m_fullBackground = parts.size() > 22 && parts[22] == QLatin1String("1");
+    m_paddingLayout  = parts.size() > 23 && parts[23] == QLatin1String("1");
 
     return true;
 }
