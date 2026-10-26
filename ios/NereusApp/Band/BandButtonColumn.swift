@@ -176,17 +176,44 @@ enum BandColumnLayout {
         let leading: CGFloat
         /// The meters sit at the region's left edge (above the PTT) rather than centred in it.
         let alignLeading: Bool
+        /// The region ends this far in from the band's right: beside a PTT
+        /// held in their rows (``PttLatch``).
+        var trailing: CGFloat = 0
     }
 
     /// The keyed meters' place: as today while nothing of the column's
-    /// reaches their height; centred right of it while they fit there; above
-    /// the moved PTT, at its left, when they don't (the board's meters "beside
-    /// it or above it").
+    /// reaches their height; centred right of it while they fit there;
+    /// above the moved PTT, at its left, when they don't (the board's meters
+    /// "beside it or above it"). With the PTT `held` at a moved spot
+    /// (``PttLatch``) in their rows: beside it, right or else left, at full
+    /// width while they fit there; else on the wider side, narrowed to fit
+    /// down to `narrowest` (the manager's ruling, 2026-10-25, for JJ's veto),
+    /// inside `leadingInset` and `trailingInset`.
     static func keyedPlace(top: CGFloat, height: CGFloat, bandWidth: CGFloat, needed: CGFloat,
-                           avoid: [CGRect], ptt: CGRect?) -> KeyedPlace {
+                           avoid: [CGRect], ptt: CGRect?, held: Bool = false, narrowest: CGFloat = .infinity,
+                           leadingInset: CGFloat = 0, trailingInset: CGFloat = 0) -> KeyedPlace {
         let reaching = avoid.filter { $0.minY < top + height && $0.maxY > top }
         guard let edge = reaching.map(\.maxX).max() else {
             return KeyedPlace(top: top, leading: 0, alignLeading: false)
+        }
+        if held, let ptt, reaching.contains(ptt) {
+            let others = reaching.filter { $0 != ptt }
+            // Where the meters' gauges may start and end on each side of the PTT.
+            let before = others.filter { $0.midX < ptt.midX }.map(\.maxX).max() ?? 0
+            let after = others.filter { $0.midX > ptt.midX }.map(\.minX).min() ?? .infinity
+            let left = (start: max(leadingInset, before + clearance), end: ptt.minX - clearance)
+            let right = (start: ptt.maxX + clearance, end: min(bandWidth - trailingInset, after - clearance))
+            func place(_ side: (start: CGFloat, end: CGFloat)) -> KeyedPlace {
+                KeyedPlace(top: top, leading: side.start - 10, alignLeading: false,
+                           trailing: bandWidth - side.end - 10)
+            }
+            if let full = [right, left].first(where: { $0.end - $0.start >= needed }) {
+                return place(full)
+            }
+            let wider = right.end - right.start >= left.end - left.start ? right : left
+            if wider.end - wider.start >= narrowest {
+                return place(wider)
+            }
         }
         // The meters' own 10 point side margins sit inside the region.
         let leading = edge + clearance - 10
@@ -197,6 +224,69 @@ enum BandColumnLayout {
             return KeyedPlace(top: max(0, ptt.minY - 6 - height), leading: max(0, ptt.minX - 10), alignLeading: true)
         }
         return KeyedPlace(top: top, leading: leading, alignLeading: false)
+    }
+}
+
+/// Where the PTT was when this phone's transmitting began, held for the
+/// whole key (spec DC15 as amended after the PR 653 review: the manager's
+/// ruling, 2026-10-25, for JJ's veto): the tap that unkeys lands where
+/// the tap that keyed did, whatever the flags or the column do meanwhile.
+/// Receiving it follows the PTT's usual place; keyed it keeps that place
+/// while it still stands on the band: a rotation or a new band size moves
+/// the PTT's home or narrows the band past it, and then the PTT takes its
+/// keyed place (DC15's, beside the column, over any flag) and holds that.
+struct PttLatch: Equatable {
+    /// Where the PTT is held.
+    let frame: CGRect
+    /// The PTT's home when it was held.
+    let home: CGRect
+
+    /// What the latch hangs on, for a view's `onChange`.
+    struct Inputs: Equatable {
+        let keyed: Bool
+        let home: CGRect
+        let maxX: CGFloat
+        /// The PTT's place while receiving (``BandColumnLayout/pttFrame(home:avoid:flags:keyed:maxX:)``).
+        let receive: CGRect
+        /// Its place keyed with nothing held: the same call with `keyed` (DC15's place).
+        let keyedRule: CGRect
+    }
+
+    /// The latch holds for this layout: the same home, still on the band.
+    func holds(home: CGRect, maxX: CGFloat) -> Bool {
+        self.home == home && frame.maxX <= maxX
+    }
+
+    /// Where the PTT is drawn.
+    static func shown(_ latch: PttLatch?, _ inputs: Inputs) -> CGRect {
+        guard inputs.keyed else {
+            return inputs.receive
+        }
+        if let latch, latch.holds(home: inputs.home, maxX: inputs.maxX) {
+            return latch.frame
+        }
+        return inputs.keyedRule
+    }
+
+    /// The latch after a layout: receiving, the place the PTT is drawn at;
+    /// keyed, what it held while that holds, else the keyed place.
+    static func next(_ latch: PttLatch?, _ inputs: Inputs) -> PttLatch {
+        PttLatch(frame: shown(latch, inputs), home: inputs.home)
+    }
+}
+
+/// The PTT's ``PttLatch``, shared by the views that place the PTT, the keyed
+/// meters and the column's note. A reference the screen holds without
+/// watching, so a flag's move redraws only the views that follow it.
+@MainActor
+final class PttHold: ObservableObject {
+    @Published private(set) var latch: PttLatch?
+
+    func update(_ inputs: PttLatch.Inputs) {
+        let next = PttLatch.next(latch, inputs)
+        if next != latch {
+            latch = next
+        }
     }
 }
 
@@ -238,6 +328,8 @@ struct BandButtonColumn: View {
     let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
     let onOpenPage: (String) -> Void
     let onOpen: (PanIdentity) -> Void
+    /// Where the PTT is held while keyed (``PttLatch``), for the note to keep clear of.
+    var pttHold: PttHold?
 
     /// The Core's words for the column's last refused request, shown for a moment.
     @State private var shownNote: String?
@@ -262,7 +354,8 @@ struct BandButtonColumn: View {
          displayTab: Binding<DisplayPillTab>, leadingInset: CGFloat = 0, trailingInset: CGFloat = 0,
          openSetup: @escaping () -> Void,
          onSetupDefaults: @escaping (DisplayPillTab, PanIdentity) -> Void,
-         onOpenPage: @escaping (String) -> Void, onOpen: @escaping (PanIdentity) -> Void) {
+         onOpenPage: @escaping (String) -> Void, onOpen: @escaping (PanIdentity) -> Void,
+         pttHold: PttHold? = nil) {
         self.pan = pan
         _open = open
         _folded = folded
@@ -279,6 +372,7 @@ struct BandButtonColumn: View {
         self.onSetupDefaults = onSetupDefaults
         self.onOpenPage = onOpenPage
         self.onOpen = onOpen
+        self.pttHold = pttHold
     }
 
     var body: some View {
@@ -401,9 +495,14 @@ struct BandButtonColumn: View {
                                 width: BandColumnLayout.width(of: open), height: maxHeight))
         }
         let flags = slices.flagRects
-        let ptt = BandColumnLayout.pttFrame(home: PttButton.frame(bandSize: bandSize, leadingInset: leadingInset),
-                                            avoid: avoid, flags: flags, keyed: main.transmit.ptt.transmitting,
-                                            maxX: bandSize.width - trailingInset - PttButton.inset)
+        let home = PttButton.frame(bandSize: bandSize, leadingInset: leadingInset)
+        let keyed = main.transmit.ptt.transmitting
+        let maxX = bandSize.width - trailingInset - PttButton.inset
+        // Keyed, the PTT stays where it was when transmitting began (PttLatch).
+        let ptt = PttLatch.shown(pttHold?.latch, PttLatch.Inputs(
+            keyed: keyed, home: home, maxX: maxX,
+            receive: BandColumnLayout.pttFrame(home: home, avoid: avoid, flags: flags, maxX: maxX),
+            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: avoid, flags: flags, keyed: true, maxX: maxX)))
         return BandColumnLayout.notePlace(bandSize: bandSize, trailingInset: trailingInset, height: noteHeight,
                                           maxWidth: leadingInset > 0 ? Self.noteMaxWidthSideways
                                               : Self.noteMaxWidth,

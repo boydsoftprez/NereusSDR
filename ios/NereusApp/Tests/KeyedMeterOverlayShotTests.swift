@@ -206,6 +206,149 @@ struct KeyedMeterOverlayShotTests {
         await model.disconnect()
     }
 
+    /// DC15 as amended after the PR 653 review (the manager's ruling,
+    /// 2026-10-25, for JJ's veto): on the sideways phone the PTT moved past
+    /// a slice flag keys there and stays there for the whole key, whatever
+    /// the flags do, so a second tap at the same spot lands on it and
+    /// unkeys. The keyed meters narrow beside it on the wider side (option
+    /// 1). Unkeyed it takes its usual place again.
+    @Test("sideways, keyed where the PTT moved past a flag, it stays and a tap at that spot unkeys")
+    func keyedPttStaysWhereKeyed() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let defaults = try #require(UserDefaults(suiteName: "KeyedOverlayHeld-\(UUID().uuidString)"))
+        let platform = TestPlatform()
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults), platform: platform.platform)
+        model.main.transmit.thisDeviceId = TransmitScreenTests.thisDeviceId
+        let station = try FakeStation(additions: [.remoteTx, .txStageReadings])
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        await TransmitScreenTests.fillTransmit(station)
+        await station.deliver(.objectCreate(LinkMessage.ObjectCreate(
+            key: "txState", className: "TransmitState",
+            properties: TransmitScreenTests.holder("", short: "", keyed: false)
+                + [.init(ordinal: 3, name: "txSliceId", value: .i64(0)),
+                   .init(ordinal: 17, name: "stopSerial", value: .i64(0))])))
+        #expect(await settle { model.main.transmit.permitted && model.main.slices.entries.count == 2 })
+        model.main.band.endpointId = 1
+        model.main.band.receive(.context(try #require(BandFlagShotTests.context())))
+        #expect(!model.main.transmit.ptt.transmitting)
+        await TransmitScreenTests.barrier(model, station)
+        let before = significantCommands(station)
+
+        try await shoot("ptt-held-landscape", model: model, sideways: true, expectedKeyed: false) { window in
+            // The receive rule in the band's points, put on the screen: where
+            // the PTT goes for the flags as they stand.
+            let bandView = try #require(descendants(window).compactMap { $0 as? MTKView }.first)
+            let band = window.convert(window.convert(bandView.bounds, from: bandView), to: window.screen.coordinateSpace)
+            let home = PttButton.frame(bandSize: band.size, leadingInset: 62)
+            // The button column down the band's left, which reaches the PTT's row here.
+            let column = CGRect(x: 62 + BandColumnLayout.origin, y: 0,
+                                width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: band.height)),
+                                height: band.height)
+            @MainActor func usual() -> CGRect {
+                BandColumnLayout.pttFrame(home: home, avoid: [column], flags: model.main.slices.flagRects,
+                                          maxX: band.width - 62 - PttButton.inset)
+                    .offsetBy(dx: band.minX, dy: band.minY)
+            }
+            @MainActor func ptt() -> CGRect? { SetupTypedEntryTests.element("ptt", in: window)?.accessibilityFrame }
+            // Receiving: flag A reaches the PTT's row and the PTT has moved past it.
+            #expect(await settle {
+                guard let a = SetupTypedEntryTests.element("flagA", in: window)?.accessibilityFrame,
+                      let ptt = ptt() else { return false }
+                return ptt.minX > a.maxX && a.maxY > ptt.minY && a.minY < ptt.maxY
+            }, "the PTT did not move past flag A")
+            await ShotWait.laidOut(window)
+            let receive = try #require(await element("ptt", in: window)).accessibilityFrame
+            #expect(receive.minX > home.minX + band.minX + 100, "the PTT is not mid-band: \(receive)")
+            #expect(abs(receive.minX - usual().minX) < 0.5 && abs(receive.minY - usual().minY) < 0.5,
+                    "the receive rule does not match the screen: \(receive) vs \(usual())")
+            let spot = CGPoint(x: receive.midX, y: receive.midY)
+
+            // Keyed (whatever keyed it): the PTT stays put.
+            model.main.transmit.tapPtt()
+            try #require(await settle { model.main.transmit.ptt.transmitting })
+            await ShotWait.laidOut(window)
+            #expect(ptt() == receive, "the PTT moved when transmitting began: \(String(describing: ptt()))")
+            // The flags move while keyed (slice A tuned down 3 kHz, which
+            // would bring the receiving PTT left with it): the PTT stays.
+            let flagA = try #require(await element("flagA", in: window)).accessibilityFrame
+            await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+                .init(ordinal: 1, name: "frequency", value: .f64(7_233_400))])))
+            #expect(await settle {
+                (SetupTypedEntryTests.element("flagA", in: window)?.accessibilityFrame.minX ?? flagA.minX)
+                    < flagA.minX - 20
+            }, "flag A did not move")
+            await ShotWait.laidOut(window)
+            let held = try #require(ptt())
+            #expect(held == receive, "the PTT moved while keyed: \(held), keyed at \(receive)")
+            #expect(held.contains(spot))
+            // The keyed meters beside it, on the wider side, narrowed to fit
+            // with 44 point targets and clear of it (geometry's checks).
+            let gauges = try #require(SetupTypedEntryTests.element("keyedGauges", in: window)).accessibilityFrame
+            #expect(gauges.width < KeyedOverlay.gaugesWidth && gauges.width >= KeyedOverlay.gaugesNarrowest,
+                    "the keyed meters are not narrowed: \(gauges)")
+            #expect(gauges.maxY > held.minY && !gauges.intersects(held), "the meters are not beside the PTT: \(gauges)")
+            #expect(gauges.maxX <= held.minX - BandColumnLayout.clearance + 0.5
+                        || gauges.minX >= held.maxX + BandColumnLayout.clearance - 0.5)
+            try geometry(window, expectedKeyed: true)
+            // The PTT is what is drawn at the keyed spot, over any flag that
+            // opened under it, and SwiftUI hands a touch to what is drawn on top.
+            let face = pixel(at: CGPoint(x: spot.x, y: spot.y + 26), in: window)
+            #expect(face.red > 0.5 && face.red > 2 * face.green && face.red > 2 * face.blue,
+                    "the keyed PTT is not on top at its spot: \(face)")
+            try save(window, name: "ptt-held-landscape-keyed")
+
+            // A second tap at the same spot: the PTT takes it and unkeys.
+            let button = try #require(SetupTypedEntryTests.element("ptt", in: window))
+            #expect(button.accessibilityFrame.contains(spot))
+            #expect(button.accessibilityActivate(), "the PTT did not take the tap")
+            try #require(await settle { !model.main.transmit.ptt.transmitting })
+            await ShotWait.laidOut(window)
+
+            // Unkeyed it takes its usual place again, for the flags as they stand now.
+            #expect(await settle {
+                guard let frame = ptt() else { return false }
+                return abs(frame.minX - usual().minX) < 0.5 && frame.minX != receive.minX
+            }, "the PTT did not come back to its usual place after unkey: \(String(describing: ptt())), usual \(usual())")
+        }
+        await TransmitScreenTests.barrier(model, station)
+        #expect(significantCommands(station) == before + Array(repeating: "tx.key", count: PttController.copies)
+                + Array(repeating: "tx.unkey", count: PttController.copies))
+        await model.disconnect()
+    }
+
+    /// The colour drawn at a point on the screen, as the review pictures draw it.
+    private func pixel(at point: CGPoint, in window: UIWindow) -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
+        let local = window.convert(point, from: window.screen.coordinateSpace)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(bounds: CGRect(origin: local, size: CGSize(width: 1, height: 1)),
+                                            format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        var bytes = [UInt8](repeating: 0, count: 4)
+        guard let cgImage = image.cgImage,
+              let context = CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return (0, 0, 0)
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return (CGFloat(bytes[0]) / 255, CGFloat(bytes[1]) / 255, CGFloat(bytes[2]) / 255)
+    }
+
+    private func element(_ id: String, in window: UIWindow) async -> NSObject? {
+        for _ in 0..<250 {
+            if let found = SetupTypedEntryTests.element(id, in: window) { return found }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return nil
+    }
+
     private func significantCommands(_ station: FakeStation) -> [String] {
         station.messages.compactMap(TransmitScreenTests.invoke).map(\.verb)
             .filter { $0 != "tx.keepalive" && !$0.hasPrefix("test.barrier.") }
@@ -237,6 +380,11 @@ struct KeyedMeterOverlayShotTests {
         try await check(window)
         await ShotWait.laidOut(window)
         try geometry(window, expectedKeyed: expectedKeyed)
+        try save(window, name: name)
+        // An open chooser belongs to this view's key, never the next render's view instance.
+    }
+
+    private func save(_ window: UIWindow, name: String) throws {
         if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty {
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
@@ -244,7 +392,6 @@ struct KeyedMeterOverlayShotTests {
             try image.pngData()?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
             print("Wrote keyed overlay \(name)")
         }
-        // An open chooser belongs to this view's key, never the next render's view instance.
     }
 
     private func geometry(_ window: UIWindow, expectedKeyed: Bool) throws {

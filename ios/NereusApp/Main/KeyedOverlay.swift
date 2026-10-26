@@ -34,8 +34,18 @@ struct KeyedOverlay: View {
     /// Where the PTT sits when the column moved it (``BandColumnLayout``):
     /// the gauges go above it when there is no room beside the column.
     var movedPtt: CGRect?
+    /// The moved PTT is held where transmitting began (``PttLatch``): the
+    /// gauges go beside it, narrowed to fit if they must.
+    var heldPtt = false
+    /// The phone's rounded edges sideways, which narrowed gauges keep inside.
+    var leadingInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
 
     static let gaugesWidth: CGFloat = 330
+    /// The narrowest the gauges go beside a held PTT: four tabs of 44 points
+    /// 4 apart, inside the panel's 8 point sides, so every target keeps 44
+    /// points (the manager's ruling, 2026-10-25, for JJ's veto).
+    static let gaugesNarrowest: CGFloat = 4 * 44 + 3 * 4 + 2 * 8
 
     @State private var editingSlot: Int?
     @State private var panelHeight: CGFloat = 0
@@ -55,7 +65,9 @@ struct KeyedOverlay: View {
             let bottom = sideways ? proxy.size.height : PttButton.frame(bandSize: proxy.size, leadingInset: 0).minY - 8
             let keyedTop = transmit.ptt.transmitting ? min(usualTop, max(0, bottom - height)) : usualTop
             let place = BandColumnLayout.keyedPlace(top: keyedTop, height: height, bandWidth: proxy.size.width,
-                                                    needed: Self.gaugesWidth, avoid: avoid, ptt: movedPtt)
+                                                    needed: Self.gaugesWidth, avoid: avoid, ptt: movedPtt,
+                                                    held: heldPtt, narrowest: Self.gaugesNarrowest,
+                                                    leadingInset: leadingInset, trailingInset: trailingInset)
             let top = place.top
             VStack(spacing: 8) {
                 if transmit.ptt.transmitting {
@@ -75,6 +87,7 @@ struct KeyedOverlay: View {
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, alignment: place.alignLeading ? .leading : .center)
             .padding(.leading, place.leading)
+            .padding(.trailing, place.trailing)
             .offset(y: top)
         }
         .onChange(of: transmit.ptt.transmitting) { _, keyed in if !keyed { editingSlot = nil } }

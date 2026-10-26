@@ -85,6 +85,46 @@ struct BandButtonColumnTests {
         #expect(beside.minY == home.minY && beside.size == home.size)
     }
 
+    @Test("DC15 amended: keyed, the PTT stays where it was when transmitting began until unkey")
+    func keyedPttHeldWhereKeyed() {
+        let home = CGRect(x: 76, y: 94, width: 76, height: 76)
+        let maxX: CGFloat = 874 - 62 - PttButton.inset
+        let flag = CGRect(x: 20, y: 0, width: 252, height: 157)
+        func inputs(keyed: Bool, flags: [CGRect], home: CGRect = home, maxX: CGFloat = maxX) -> PttLatch.Inputs {
+            PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX,
+                            receive: BandColumnLayout.pttFrame(home: home, avoid: [], flags: flags, maxX: maxX),
+                            keyedRule: BandColumnLayout.pttFrame(home: home, avoid: [], flags: flags, keyed: true,
+                                                                 maxX: maxX))
+        }
+        // Receiving: past the flag, and the latch follows.
+        let receiving = inputs(keyed: false, flags: [flag])
+        let past = PttLatch.shown(nil, receiving)
+        #expect(past.minX == flag.maxX + BandColumnLayout.clearance)
+        var latch = PttLatch.next(nil, receiving)
+        #expect(latch.frame == past)
+        // Keyed: it stays there, not at home over the flag.
+        let keyed = inputs(keyed: true, flags: [flag])
+        #expect(PttLatch.shown(latch, keyed) == past)
+        latch = PttLatch.next(latch, keyed)
+        // The flag moves while keyed: still there.
+        let moved = inputs(keyed: true, flags: [flag.offsetBy(dx: -60, dy: 0)])
+        #expect(PttLatch.shown(latch, moved) == past)
+        latch = PttLatch.next(latch, moved)
+        #expect(latch.frame == past)
+        // Unkeyed: its usual place again, past the flag where it is now.
+        let after = inputs(keyed: false, flags: [flag.offsetBy(dx: -60, dy: 0)])
+        #expect(PttLatch.shown(latch, after).minX == flag.maxX - 60 + BandColumnLayout.clearance)
+        // Keyed with nothing held (the screen came up keyed): DC15's place.
+        #expect(PttLatch.shown(nil, keyed) == home)
+        // A new home (the phone turned) or a band too narrow for the held spot: DC15's place, held from then.
+        let turned = CGRect(x: 14, y: 786, width: 76, height: 76)
+        let turnedKeyed = inputs(keyed: true, flags: [], home: turned, maxX: 388)
+        #expect(PttLatch.shown(latch, turnedKeyed) == turned)
+        #expect(PttLatch.next(latch, turnedKeyed) == PttLatch(frame: turned, home: turned))
+        let narrow = inputs(keyed: true, flags: [flag], maxX: past.maxX - 1)
+        #expect(PttLatch.shown(latch, narrow) == home)
+    }
+
     @Test("the PTT moving past flags stops at the band's right edge")
     func pttStaysOnTheBand() {
         let home = CGRect(x: 76, y: 94, width: 76, height: 76)
@@ -144,6 +184,52 @@ struct BandButtonColumnTests {
         #expect(above.alignLeading)
         #expect(above.top + 104 <= ptt.minY)
         #expect(above.leading + 10 == ptt.minX)
+        // A PTT held far right (PttLatch) with room between it and the column: there, clear of both.
+        let column = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        let held = CGRect(x: 720, y: 94, width: 76, height: 76)
+        let between = BandColumnLayout.keyedPlace(top: 14, height: 148, bandWidth: 874, needed: needed,
+                                                  avoid: [column, held], ptt: held, held: true,
+                                                  narrowest: KeyedOverlay.gaugesNarrowest,
+                                                  leadingInset: 62, trailingInset: 62)
+        #expect(between.top == 14 && !between.alignLeading)
+        #expect(between.leading + 10 >= column.maxX + BandColumnLayout.clearance)
+        #expect(874 - between.trailing - 10 <= held.minX - BandColumnLayout.clearance)
+        #expect(874 - between.trailing - between.leading - 20 >= needed)
+    }
+
+    @Test("held mid-band sideways with no room for the keyed meters beside it: narrowed on the wider side")
+    func keyedMetersNarrowBesideAHeldPtt() {
+        let needed = KeyedOverlay.gaugesWidth
+        let narrowest = KeyedOverlay.gaugesNarrowest
+        // Four tabs keep 44 points each inside the narrowest gauges.
+        #expect((narrowest - 2 * 8 - 3 * 4) / 4 >= 44)
+        let width: CGFloat = 874
+        let column = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        func place(_ ptt: CGRect, held: Bool = true) -> BandColumnLayout.KeyedPlace {
+            BandColumnLayout.keyedPlace(top: 34, height: 148, bandWidth: width, needed: needed,
+                                        avoid: [column, ptt], ptt: ptt, held: held, narrowest: narrowest,
+                                        leadingInset: 62, trailingInset: 62)
+        }
+        func region(_ place: BandColumnLayout.KeyedPlace) -> (start: CGFloat, end: CGFloat) {
+            (place.leading + 10, width - place.trailing - 10)
+        }
+        // More room left of the PTT: there, between the column and the PTT, narrowed.
+        let leftOf = CGRect(x: 498, y: 94, width: 76, height: 76)
+        let left = region(place(leftOf))
+        #expect(left.start >= column.maxX + BandColumnLayout.clearance)
+        #expect(left.end <= leftOf.minX - BandColumnLayout.clearance)
+        #expect(left.end - left.start >= narrowest && left.end - left.start < needed)
+        #expect(place(leftOf).top == 34 && !place(leftOf).alignLeading)
+        // More room right of it: there, inside the phone's rounded edge.
+        let rightOf = CGRect(x: 420, y: 94, width: 76, height: 76)
+        let right = region(place(rightOf))
+        #expect(right.start >= rightOf.maxX + BandColumnLayout.clearance)
+        #expect(right.end <= width - 62)
+        #expect(right.end - right.start >= narrowest && right.end - right.start < needed)
+        // Not held (DC15's keyed place, or receiving): unchanged.
+        #expect(place(leftOf, held: false) == BandColumnLayout.keyedPlace(
+            top: 34, height: 148, bandWidth: width, needed: needed, avoid: [column, leftOf], ptt: leftOf))
+        #expect(place(leftOf, held: false).trailing == 0)
     }
 
     @Test("a stacked pan starts down the band where the pans' equal shares and hairlines put it")

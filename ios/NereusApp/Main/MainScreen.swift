@@ -86,6 +86,10 @@ struct MainScreen: View {
     @State private var columnBoxes: [CGRect] = []
     /// The band's size, for the PTT's place.
     @State private var bandSize: CGSize = .zero
+    /// Where the PTT was when transmitting began, held until unkey
+    /// (``PttLatch``). Held, not watched: only the views that place the PTT
+    /// redraw as it changes.
+    @State private var pttHold = PttHold()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
 
@@ -174,12 +178,14 @@ struct MainScreen: View {
     /// and the others) they fade with the band, so the cover's words, which
     /// already say the Core stops transmitting on its own, read alone.
     @ViewBuilder
-    private func keyedOverlay(sideways: Bool, avoid: [CGRect], movedPtt: CGRect?) -> some View {
+    private func keyedOverlay(sideways: Bool, avoid: [CGRect], movedPtt: CGRect?, heldPtt: Bool = false,
+                              leadingInset: CGFloat = 0, trailingInset: CGFloat = 0) -> some View {
         let overlay = KeyedOverlay(transmit: transmit, accessories: main.accessories, keyedMeters: main.keyedMeters,
                                    take: main.take, meters: main.band.catalog?.meters,
                                    showsStrip: main.band.settings.bandPlanStrip,
                                    spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
-                                   avoid: avoid, movedPtt: movedPtt)
+                                   avoid: avoid, movedPtt: movedPtt, heldPtt: heldPtt,
+                                   leadingInset: leadingInset, trailingInset: trailingInset)
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
         } else {
@@ -205,9 +211,11 @@ struct MainScreen: View {
             ? BandColumnLayout.panTop(index: panStack.open.count - 1, count: panStack.open.count,
                                       bandHeight: bandSize.height)
             : 0
-        // While keyed the PTT leaves the flags be and stays where the column
-        // puts it, so the keyed meters keep their room (DC15); it never
-        // moves past the band's right edge.
+        // While keyed the PTT stays where it was when transmitting began,
+        // whatever the flags do, so the tap that unkeys lands on it (DC15 as
+        // amended, the manager's ruling 2026-10-25 for JJ's veto; PttLatch);
+        // the keyed meters keep clear of it there.
+        // It never moves past the band's right edge.
         let keyed = transmit.ptt.transmitting
         let pttMaxX = bandSize.width - (sideways ? trailingInset : 0) - PttButton.inset
         // Two columns of four where one does not fit (DC14); the chip keeps right of them.
@@ -237,9 +245,11 @@ struct MainScreen: View {
                                      leadingInset: sideways ? leadingInset : 0)
             }
             PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
-                     maxX: pttMaxX) { placed in
+                     maxX: pttMaxX, hold: pttHold) { placed, held in
                 let moved = placed != pttHome
-                keyedOverlay(sideways: sideways, avoid: boxes + (moved ? [placed] : []), movedPtt: moved ? placed : nil)
+                keyedOverlay(sideways: sideways, avoid: boxes + (moved ? [placed] : []), movedPtt: moved ? placed : nil,
+                             heldPtt: held, leadingInset: sideways ? leadingInset : 0,
+                             trailingInset: sideways ? trailingInset : 0)
             }
             SharingChip(subscriber: main.subscriber, transmit: transmit)
             .padding(.top, 6)
@@ -266,11 +276,12 @@ struct MainScreen: View {
                                      openDescribedPage(pageId)
                                  }, onOpen: { pan in
                                      app.phoneNavigation?.followDisplayPan(pan)
-                                 })
+                                 }, pttHold: pttHold)
                     .environment(\.displayPeek, $displayPeek)
             }
+            // This one holds the PTT's place while keyed; the one above reads it.
             PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
-                     maxX: pttMaxX) { placed in
+                     maxX: pttMaxX, hold: pttHold, updatesHold: true) { placed, _ in
                 // Moved by an offset, not by its leading padding: padding
                 // past the safe area's width made the band wider than it was
                 // offered, which narrowed the band, moved the flags and so
@@ -612,9 +623,12 @@ struct MainScreen: View {
 }
 
 /// The PTT's place on the band (``BandColumnLayout/pttFrame(home:avoid:flags:keyed:maxX:)``):
-/// right of the column's frames that reach its row and, with `flags` and
-/// not `keyed`, of a full flag it would cover, never past `maxX`. Only this view follows the flags as they move,
-/// not the whole screen.
+/// right of the column's frames that reach its row and, with `flags`, of a
+/// full flag it would cover, never past `maxX`. While `keyed`, where it was
+/// when transmitting began (``PttLatch``, in `hold`), which the one view with
+/// `updatesHold` keeps; `content` is also told whether it is held away from
+/// DC15's keyed place. Only this view follows the flags as they move, not
+/// the whole screen.
 private struct PttPlace<Content: View>: View {
     let flags: BandSlicesModel?
     /// Where the flags' pan starts down the band: 0 but for a stacked pan.
@@ -623,30 +637,46 @@ private struct PttPlace<Content: View>: View {
     let boxes: [CGRect]
     var keyed = false
     var maxX: CGFloat = .infinity
-    @ViewBuilder let content: (CGRect) -> Content
+    @ObservedObject var hold: PttHold
+    var updatesHold = false
+    /// The PTT's frame, and whether it is held away from DC15's keyed place.
+    @ViewBuilder let content: (CGRect, Bool) -> Content
 
     var body: some View {
         if let flags {
-            Following(slices: flags, top: flagsTop, home: home, boxes: boxes, keyed: keyed, maxX: maxX,
-                      content: content)
+            Following(slices: flags, top: flagsTop, home: home, boxes: boxes, maxX: maxX) { receive, keyedRule in
+                placed(receive: receive, keyedRule: keyedRule)
+            }
         } else {
-            content(BandColumnLayout.pttFrame(home: home, avoid: boxes, maxX: maxX))
+            placed(receive: BandColumnLayout.pttFrame(home: home, avoid: boxes, maxX: maxX),
+                   keyedRule: BandColumnLayout.pttFrame(home: home, avoid: boxes, keyed: true, maxX: maxX))
         }
     }
 
-    private struct Following: View {
+    @ViewBuilder
+    private func placed(receive: CGRect, keyedRule: CGRect) -> some View {
+        let inputs = PttLatch.Inputs(keyed: keyed, home: home, maxX: maxX, receive: receive, keyedRule: keyedRule)
+        let shown = PttLatch.shown(hold.latch, inputs)
+        if updatesHold {
+            content(shown, keyed && shown != keyedRule)
+                .onChange(of: inputs, initial: true) { _, now in hold.update(now) }
+        } else {
+            content(shown, keyed && shown != keyedRule)
+        }
+    }
+
+    private struct Following<Placed: View>: View {
         @ObservedObject var slices: BandSlicesModel
         let top: CGFloat
         let home: CGRect
         let boxes: [CGRect]
-        let keyed: Bool
         let maxX: CGFloat
-        let content: (CGRect) -> Content
+        let content: (CGRect, CGRect) -> Placed
 
         var body: some View {
-            content(BandColumnLayout.pttFrame(home: home, avoid: boxes,
-                                              flags: slices.flagRects.map { $0.offsetBy(dx: 0, dy: top) },
-                                              keyed: keyed, maxX: maxX))
+            let flags = slices.flagRects.map { $0.offsetBy(dx: 0, dy: top) }
+            content(BandColumnLayout.pttFrame(home: home, avoid: boxes, flags: flags, maxX: maxX),
+                    BandColumnLayout.pttFrame(home: home, avoid: boxes, flags: flags, keyed: true, maxX: maxX))
         }
     }
 }
