@@ -147,8 +147,9 @@ public:
 
     // ── Thetis rotator control (MeterManager.cs:16402-16505 [v2.10.3.15]) ──
     // From Thetis MeterManager.cs:16428 [v2.10.3.15] (_alow_control = false;):
-    // off, nothing is sent on either command path. Turning it off cancels a
-    // press or drag in progress.
+    // a new item has it off; off, nothing is sent on either command path. A
+    // record saved before this field loads it on, so its rotor link control
+    // is kept. Turning it off cancels a press or drag in progress.
     void setAllowControl(bool on);
     bool allowControl() const { return m_allowControl; }
     // The drag line and the target marker. From Thetis MeterManager.cs:16426
@@ -329,7 +330,7 @@ private:
     bool   m_paddingLayout{true};
     bool   m_controlEnabled{true};
     // Appended fields 24-30 (serialize()). A record saved without them loads
-    // with control off, the rotor link path and the amber it was drawn in.
+    // with control on, the rotor link path and the amber it was drawn in.
     bool   m_allowControl{false};
     QColor m_controlColour{0x32, 0xcd, 0x32};      // LimeGreen
     CommandPath m_commandPath{CommandPath::RotorLink};

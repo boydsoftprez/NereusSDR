@@ -29,8 +29,9 @@
 //                 preview copies never send. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis rotator MMIO command path (container item
-//                 parity): Allow control gates both paths (off for new and
-//                 older items), the drag line and target in the control
+//                 parity): Allow control gates both paths (off for new
+//                 items as Thetis, on for a record saved before it so its
+//                 rotor link control is kept), the drag line and target in the control
 //                 colour (LimeGreen new, amber for an older record), and
 //                 SendRotatorMessage ported for the per-item MMIO path,
 //                 appended as fields 24-30. J.J. Boyd (KG4VCF), AI-assisted
@@ -1526,9 +1527,10 @@ bool RotatorItem::deserialize(const QString& data)
     m_fullBackground = parts.size() > 22 && parts[22] == QLatin1String("1");
     m_paddingLayout  = parts.size() > 23 && parts[23] == QLatin1String("1");
 
-    // Fields 24-30. A record saved before them cannot turn the rotor until
-    // Allow control is set, and keeps the amber its control was drawn in.
-    m_allowControl = parts.size() > 24 && parts[24] == QLatin1String("1");
+    // Fields 24-30. A record saved before them keeps the rotor link control
+    // it had (Allow control on, which only the rotor link path can use for
+    // it) and the amber its control was drawn in. A saved 0 stays off.
+    m_allowControl = parts.size() > 24 ? parts[24] == QLatin1String("1") : true;
     const QColor controlColour = parts.size() > 25 ? QColor(parts[25]) : QColor();
     m_controlColour = controlColour.isValid() ? controlColour : QColor(Style::kAmberText);
     m_commandPath = parts.size() > 26 && parts[26] == QLatin1String("1")

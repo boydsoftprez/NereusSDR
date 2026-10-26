@@ -12,11 +12,17 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  Created (container item parity, Task
 //                                    46). AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Fix round 1: a record saved before
+//                                    Allow control keeps its rotor link
+//                                    control. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QHostAddress>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QNetworkDatagram>
@@ -244,21 +250,93 @@ private slots:
         QCOMPARE(copy.stopControlString(), QStringLiteral("stop"));
         QCOMPARE(copy.serialize(), record);
 
-        // A record saved before fields 24-30: control off, the rotor link,
-        // the amber its control was drawn in, the pstRotator strings.
+        // A record saved before fields 24-30: control on (it could turn the
+        // rotor by the rotor link), the rotor link, the amber its control
+        // was drawn in, the pstRotator strings.
         const QString older = QStringLiteral(
             "ROTATOR|0|0|1|1|300|3|2|1|0|0|30|0.6|0|0.5|"
             "#ffff0000|#ffffffff|#ff808080|#ffffffff|#ff404040|#ff202020||1|1");
         RotatorItem old;
-        old.setAllowControl(true);
         QVERIFY(old.deserialize(older));
-        QVERIFY(!old.allowControl());
+        QVERIFY(old.allowControl());
         QCOMPARE(old.controlColour(), QColor(0xff, 0xb8, 0x00));
         QCOMPARE(old.commandPath(), RotatorItem::CommandPath::RotorLink);
         QVERIFY(old.commandEndpointGuid().isNull());
         QCOMPARE(old.azControlString(), kPstAz);
         QCOMPARE(old.stopControlString(), kPstStop);
-        QVERIFY(old.serialize().startsWith(older + QStringLiteral("|0|")));
+        QVERIFY(old.serialize().startsWith(older + QStringLiteral("|1|")));
+
+        // An explicitly saved off stays off.
+        RotatorItem fresh;
+        QVERIFY(!fresh.allowControl());
+        RotatorItem reloaded;
+        QVERIFY(reloaded.deserialize(fresh.serialize()));
+        QVERIFY(!reloaded.allowControl());
+        old.setAllowControl(false);
+        QVERIFY(reloaded.deserialize(old.serialize()));
+        QVERIFY(!reloaded.allowControl());
+    }
+
+    void anOlderRecordStillTurnsTheRotorByTheRotorLink()
+    {
+        // Saved before this task (24 fields): Both, rotor link control.
+        const QString older = QStringLiteral(
+            "ROTATOR|0|0|1|1|300|3|2|1|0|0|30|0.6|0|0.5|"
+            "#ffff0000|#ffffffff|#ff808080|#ffffffff|#ff404040|#ff202020||1|1");
+        RotorModel rotor;
+        rotor.setState(connectedRotor());
+        FakeCommands commands;
+        ContainerContentRegistry registry;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("ROTATOR"));
+        entry.config.insert(QStringLiteral("legacyRecord"), older);
+        entry.canvasRect = {};
+        entry.paintOrder = 3;  // the record's z-order
+
+        MeterWidget liveWidget;
+        auto* live = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &liveWidget, ContentRenderMode::Live));
+        QVERIFY(live);
+        QCOMPARE(live->commandPath(), RotatorItem::CommandPath::RotorLink);
+        live->setRotor(&rotor, &commands);
+        QVERIFY(live->rotorControllable());
+        dragAzimuthThenStop(*live, 7.5);
+        QCOMPARE(commands.azimuths, QList<double>{7.0});
+        QCOMPARE(commands.stops, 2);
+        // Captured again, it keeps no override: the record is unchanged.
+        const ContentEntry captured = registry.captureMeterItem(*live, entry);
+        QCOMPARE(captured.config.value(QStringLiteral("legacyRecord")).toString(), older);
+        const QJsonObject overrides = captured.config.value(QStringLiteral("overrides")).toObject();
+        QVERIFY2(overrides.isEmpty(), qPrintable(QJsonDocument(overrides).toJson(QJsonDocument::Compact)));
+
+        // Its preview copy still refuses.
+        MeterWidget previewWidget;
+        auto* preview = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(entry, &previewWidget, ContentRenderMode::Preview));
+        QVERIFY(preview);
+        QVERIFY(preview->allowControl());
+        preview->setRotor(&rotor, &commands);
+        QVERIFY(!preview->rotorControllable());
+        dragAzimuthThenStop(*preview, 100.5);
+        QCOMPARE(commands.azimuths.size(), 1);
+        QCOMPARE(commands.stops, 2);
+
+        // A new item sends nothing until Allow control is turned on.
+        const ContentEntry fresh = registry.makeEntry(QStringLiteral("ROTATOR"));
+        MeterWidget newWidget;
+        auto* added = qobject_cast<RotatorItem*>(
+            registry.createMeterItem(fresh, &newWidget, ContentRenderMode::Live));
+        QVERIFY(added);
+        QVERIFY(!added->allowControl());
+        added->setRotor(&rotor, &commands);
+        QVERIFY(!added->rotorControllable());
+        dragAzimuthThenStop(*added, 200.5);
+        QCOMPARE(commands.azimuths.size(), 1);
+        QCOMPARE(commands.stops, 2);
+        added->setAllowControl(true);
+        dragAzimuthThenStop(*added, 200.5);
+        QCOMPARE(commands.azimuths.size(), 2);
+        QCOMPARE(commands.azimuths.last(), 200.0);
+        QCOMPARE(commands.stops, 4);
     }
 
     void withControlOffNothingIsSent()

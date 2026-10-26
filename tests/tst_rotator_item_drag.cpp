@@ -380,8 +380,9 @@ private slots:
         QCOMPARE(item.beamWidth(), 45.5f);
         QVERIFY(item.darkMode());
         // The 22 fields come back as saved; the appended pair reads off,
-        // and control is off on the rotor link path (fields 24-30).
-        QVERIFY(item.serialize().startsWith(record + QStringLiteral("|0|0|0|")));
+        // and control stays on, on the rotor link path (fields 24-30).
+        QVERIFY(item.allowControl());
+        QVERIFY(item.serialize().startsWith(record + QStringLiteral("|0|0|1|")));
         QCOMPARE(item.serialize().split(QLatin1Char('|')).size(), 31);
         RotatorItem again;
         QVERIFY(again.deserialize(item.serialize()));
