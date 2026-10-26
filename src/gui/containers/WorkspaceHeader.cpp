@@ -55,6 +55,11 @@
 //                 window is not kept on top, the pinned art when it is,
 //                 in the header's glyph colours. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The group header's title shortens with "…" (its
+//                 full text in a tooltip) instead of raising the
+//                 container's minimum width past the side strip's
+//                 thickness. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -277,6 +282,57 @@ QLabel* makeGrip(int px, const char* colour, const char* hover, int w, int h, QW
     return grip;
 }
 
+// The group header's title. It asks for its full text's width but makes do
+// with less: given less, it shortens the text with "…" and shows the
+// full text as a tooltip. A long title therefore never raises the
+// header's, and so the container's, minimum width past what a side strip
+// is designed to give it.
+class ElidedHeaderTitle final : public QLabel {
+public:
+    explicit ElidedHeaderTitle(QWidget* parent) : QLabel(parent) {}
+
+    void setFullText(const QString& text)
+    {
+        m_full = text;
+        updateGeometry();
+        refresh();
+    }
+    QString fullText() const { return m_full; }
+
+    QSize sizeHint() const override
+    {
+        return QSize(widthFor(m_full), QLabel::sizeHint().height());
+    }
+    QSize minimumSizeHint() const override
+    {
+        return QSize(widthFor(QString(QChar(0x2026))), QLabel::minimumSizeHint().height());
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QLabel::resizeEvent(event);
+        refresh();
+    }
+
+private:
+    int widthFor(const QString& text) const
+    {
+        const QMargins m = contentsMargins();
+        return fontMetrics().horizontalAdvance(text) + m.left() + m.right() + 2 * margin();
+    }
+    void refresh()
+    {
+        const QString shown = fontMetrics().elidedText(m_full, Qt::ElideRight, contentsRect().width() - 2 * margin());
+        if (shown != text()) {
+            setText(shown);
+        }
+        setToolTip(shown == m_full ? QString() : m_full);
+    }
+
+    QString m_full;
+};
+
 } // namespace
 
 // ---- WorkspaceSourceChip ----------------------------------------------------
@@ -396,7 +452,9 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
     m_grip->setToolTip(tr("Drag to move"));
     row->addWidget(m_grip);
 
-    m_title = new QLabel(this);
+    // NereusSDR: the title shortens with "…" when the header is too
+    // narrow for it (ElidedHeaderTitle).
+    m_title = new ElidedHeaderTitle(this);
     m_title->setObjectName(QStringLiteral("workspaceGroupTitle"));
     // Versal mit weiter Laufweite (Hausstil Regel 3, umgesetzt mit der
     // Richtung "Glas & Tiefe" am 2026-09-17). Die Groesse kommt aus
@@ -477,8 +535,11 @@ void WorkspaceGroupHeader::applyStyle()
     setStyleSheet(css);
 }
 
-void WorkspaceGroupHeader::setTitle(const QString& title) { m_title->setText(title); }
-QString WorkspaceGroupHeader::title() const { return m_title->text(); }
+void WorkspaceGroupHeader::setTitle(const QString& title)
+{
+    static_cast<ElidedHeaderTitle*>(m_title)->setFullText(title);
+}
+QString WorkspaceGroupHeader::title() const { return static_cast<ElidedHeaderTitle*>(m_title)->fullText(); }
 void WorkspaceGroupHeader::setSource(const QString& text, const QColor& colour)
 {
     m_chip->setSource(text, colour);

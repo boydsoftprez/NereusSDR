@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original workspace preview four-edge strip regressions.
 // Modification history (NereusSDR):
+//   2026-10-26 - A header title wider than the strip shortens instead of
+//                 widening the side strip. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - emptyStripTakesNoSpace sets the split at the 260 px
 //                 floor and raises it only to the content's minimum, as
 //                 the strip does; a longer default header title no longer
@@ -36,6 +39,7 @@
 //                 Claude Code.
 #include <QtTest>
 #include <QApplication>
+#include <QLabel>
 #include <QMainWindow>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -243,6 +247,37 @@ private slots:
         QCOMPARE(saved.extents.value("a"), after[0]);
         QCOMPARE(saved.extents.value("b"), after[1]);
         QVERIFY(!f.store.snapshot().extensions.contains("splitterSizes"));
+    }
+
+    // A header title wider than the strip shortens with "…"; it never
+    // raises the container's minimum width past the strip's thickness.
+    // Linux fonts made "Signal max bin bar" alone widen the left strip
+    // to 286 px in CI; this title is long enough to do so on every
+    // platform.
+    void aLongHeaderTitleKeepsTheSideStripThickness()
+    {
+        EdgeFixture f;
+        const QString title = QStringLiteral("A container title much wider than any side strip can show");
+        ContainerDocument longTitle = f.container("long", DockEdge::Left);
+        longTitle.contents.first().name = title;
+        QVERIFY(f.commit({longTitle, f.container("main", DockEdge::Right)}));
+        f.show();
+        EdgeDockStrip* left = f.area->strip(DockEdge::Left);
+        QVERIFY(left->isVisible());
+        QCOMPARE(left->width(), EdgeDockStrip::kSideThicknessPx);
+        ContainerWidget* container = f.manager->container("long");
+        QVERIFY(container);
+        QVERIFY2(container->minimumSizeHint().width() <= EdgeDockStrip::kSideThicknessPx,
+                 qPrintable(QString::number(container->minimumSizeHint().width())));
+        WorkspaceGroupHeader* header = container->workspaceHeader();
+        QVERIFY(header);
+        QCOMPARE(header->title(), title);
+        auto* label = header->findChild<QLabel*>(QStringLiteral("workspaceGroupTitle"));
+        QVERIFY(label);
+        QVERIFY(label->text() != title);
+        QVERIFY(label->text().endsWith(QChar(0x2026)));
+        QCOMPARE(label->toolTip(), title);
+        QVERIFY(label->geometry().right() < header->width());
     }
 
     void emptyStripTakesNoSpace()
