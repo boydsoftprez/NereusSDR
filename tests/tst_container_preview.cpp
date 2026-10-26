@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original actual native inert draft preview regressions.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSignalSpy>
@@ -283,6 +286,7 @@ private slots:
         }
     }
     void nativeFreeLeafCompositionPreflight() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         ContainerContentRegistry registry;
         QWidget root;
         root.resize(800,520);
@@ -382,6 +386,7 @@ private slots:
         QTest::newRow("mixed-640")<<mixed<<640; QTest::newRow("mixed-360")<<mixed<<360;
     }
     void verticalStackKeepsConfiguredRowsInSmallViewport() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QFETCH(QStringList,types); QFETCH(int,width);
         ContainerContentRegistry registry; MeterPoller poller; int sourceReads=0;
         poller.setRxReadingSource([&](const QJsonObject&,int){ ++sourceReads; return -73.0; });
@@ -514,6 +519,7 @@ private slots:
         for(auto* item:legacy) { QVERIFY(qAbs(item->x()-.12f)<1e-6); QVERIFY(qAbs(item->y()-.23f)<1e-6); QVERIFY(qAbs(item->itemHeight()-.19f)<1e-6); }
     }
     void unpolledSourcesSharedCadenceAndNativeInertness() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QWidget liveParent; QWidget singleton(&liveParent); ContainerContentRegistry registry; registry.attachSingleton("applet:rx",&singleton);
         MeterPoller poller; double value=-72; poller.setRxReadingSource([&](const QJsonObject& context,int){ return context.value("sliceId").toInt()==1 ? value : -400.0; });
         ContainerPreviewWidget preview(registry,poller); ContainerDocument d; d.id="A"; d.layout=ContentLayout::VerticalStack;
@@ -614,6 +620,7 @@ private slots:
         QVERIFY(clockFace->clockDisplay()->bindingUnavailableReason(MeterBinding::TxPower).isEmpty());
     }
     void actualMainPreviewUsesSanctionedSliceCacheAndNeverActions() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         AppSettings::setProfileOverride(QStringLiteral("container-preview-%1").arg(QCoreApplication::applicationPid()));
         AppSettings::instance().clear(); QVERIFY(AppSettings::instance().save());
         RadioDiscovery discovery; discovery.holdOffScans(std::chrono::minutes(5));

@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  J.J. Boyd / KG4VCF. CI load round: four ctest entries,
+//                each function in one by its place in the list.
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF. A local slice keyed to a pan the layout
 //                does not show is rehomed onto the window's pan, with no
 //                hidden pan. AI-assisted via Anthropic Claude Code.
@@ -46,6 +49,8 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include "TestFunctionGroups.h"
+#include <QApplication>
 
 #include <QAbstractSlider>
 #include <QAction>
@@ -1232,5 +1237,29 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestPanActionsPerPan)
+// CI load round, 2026-10-26: the whole run took 66 to 69 s on a quiet
+// Linux runner and timed out in a busy one (PR 657, run 40260509791).
+// 4 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3, _part4 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestPanActionsPerPan test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 4;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 4 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_PAN_ACTIONS_PER_PAN_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_pan_actions_per_pan.moc"

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Modification history (NereusSDR):
+// 2026-10-26  J.J. Boyd / KG4VCF; skip the GPU frame case where QRhi is unavailable. AI tooling: Anthropic Claude Code.
 // 2026-10-11  J.J. Boyd / KG4VCF; original waveform observation. AI tooling: OpenAI Codex.
 // no-port-check: Original fake-data native QRhi dynamic-layer regression.
 #include "NativeWindowFrames.h"
@@ -14,6 +15,7 @@ class TestWaveformNative : public QObject
   private slots:
     void dynamicTraceUpdatesNativeTexture()
     {
+        NEREUS_SKIP_WITHOUT_QRHI();
         MeterWidget meter;
         meter.resize(500, 300);
         auto face = std::make_unique<WaveformMeterItem>();

@@ -112,6 +112,11 @@
 // busy machine's `-LE realtime` run leaves them out (Task 77 fix wave, M4);
 // the other two entries skip them.
 //
+// NEREUS_LINK_SHARE deals the fixture rows to kLinkShares entries, every
+// kLinkShares-th row from its own: "rest" takes the first share and every
+// other check, "part2" and "part3" the next shares and nothing else, and
+// unset runs every row (CI load round, 2026-10-26).
+//
 //   cmake --build build --target tst_link_conformance_session
 //   QT_QPA_PLATFORM=offscreen ctest --test-dir build \
 //       -R '^tst_link_conformance_session(_connectable)?$' --output-on-failure
@@ -303,6 +308,10 @@
 //               offset: a meter refresh inside the first block sent the
 //               S-meter's seed (-399.02 dBm) in the station object.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CI load round: NEREUS_LINK_SHARE
+//                                    deals the fixture rows to three
+//                                    entries. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -418,6 +427,28 @@ ConnectableSelection realtimeSelection()
         return ConnectableSelection::Skip;
     }
     return ConnectableSelection::All;
+}
+
+// NEREUS_LINK_SHARE (see the file comment): the share of the fixture rows
+// this entry runs, or -1 for every row. Three shares, as tests/
+// CMakeLists.txt names them.
+constexpr int kLinkShares = 3;
+
+int linkShare()
+{
+    const QByteArray value = qgetenv("NEREUS_LINK_SHARE");
+    if (value == "rest") {
+        return 0;
+    }
+    if (value.startsWith("part")) {
+        bool ok = false;
+        const int part = value.mid(4).toInt(&ok);
+        if (ok && part >= 2 && part <= kLinkShares) {
+            return part - 1;
+        }
+        qFatal("NEREUS_LINK_SHARE names no share: %s", value.constData());
+    }
+    return -1;
 }
 
 // Task 28: which transports the fixture rows run over. NEREUS_LINK_MODE
@@ -1360,6 +1391,12 @@ void TstLinkConformanceSession::init()
         && qstrcmp(QTest::currentTestFunction(), "sessionFixturesOverADataChannel") != 0) {
         QSKIP("NEREUS_LINK_MODE=datachannel runs the data-channel fixtures alone");
     }
+    // CI load round, 2026-10-26: a share past the first runs its rows alone.
+    if (linkShare() > 0
+        && qstrcmp(QTest::currentTestFunction(), "sessionFixtures") != 0
+        && qstrcmp(QTest::currentTestFunction(), "sessionFixturesOverADataChannel") != 0) {
+        QSKIP("NEREUS_LINK_SHARE past the first runs its share of the fixture rows alone");
+    }
 }
 
 void TstLinkConformanceSession::cleanupTestCase()
@@ -1493,6 +1530,8 @@ void TstLinkConformanceSession::sessionFixtures_data()
     QVERIFY(!entries.isEmpty());
     const ConnectableSelection selection = connectableSelection();
     const ConnectableSelection realtime = realtimeSelection();
+    const int share = linkShare();
+    int row = 0;
     // Once per link major the suite covers (manifest linkMajors).
     for (const quint16 major : LinkFixtures::linkMajors(m_manifest)) {
         for (const LinkFixtures::Entry& entry : entries) {
@@ -1507,6 +1546,9 @@ void TstLinkConformanceSession::sessionFixtures_data()
             const bool walksInRealTime = setup.value(QStringLiteral("unkeyWalkMs")).toDouble(0.0) > 0.0;
             if ((realtime == ConnectableSelection::Only && !walksInRealTime)
                 || (realtime == ConnectableSelection::Skip && walksInRealTime)) {
+                continue;
+            }
+            if (share >= 0 && row++ % kLinkShares != share) {
                 continue;
             }
             QTest::newRow(qPrintable(QStringLiteral("%1 link %2").arg(entry.id).arg(major)))

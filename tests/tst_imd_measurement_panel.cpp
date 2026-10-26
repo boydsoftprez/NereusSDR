@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original GUI contracts and synthetic presentation fixtures.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QDir>
 #include <QGridLayout>
@@ -346,6 +349,7 @@ private slots:
         }
     }
     void renderedFixtures() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QFETCH(int, width); QFETCH(bool, modern); QFETCH(int, condition); QFETCH(bool, inspector);
         WorkspacePreview::setEnabledForTest(modern);
         PanadapterApplet pan(QStringLiteral("Synthetic RF fixture · no hardware"));

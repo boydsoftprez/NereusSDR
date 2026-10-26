@@ -1,4 +1,7 @@
 // no-port-check: Independent source trace and native renderer checks.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
 #include <QDir>
@@ -97,6 +100,7 @@ private slots:
 
     }
     void nativeFrames() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         const QString dump=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR");
         for(int width:{260,434,640}) {
             MeterWidget widget; widget.resize(width,144);

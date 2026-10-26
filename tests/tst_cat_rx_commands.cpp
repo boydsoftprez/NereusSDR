@@ -11,6 +11,9 @@
 //            SH cases expect the 10 Hz minimum width (110, was 0).
 //            J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //            Claude Code.
+// 2026-10-26 CI load round: the fixture rows in two ctest entries (it
+//            timed out at six times its quiet 20 s on a busy runner).
+//            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #define private public
 #include "core/MoxController.h"
@@ -23,11 +26,13 @@
 #define private public
 #include "core/MoxController.h"
 #undef private
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "TestFunctionGroups.h"
 using namespace NereusSDR;
 class RxCatMockConnection : public RadioConnection {
     Q_OBJECT
@@ -72,6 +77,14 @@ public:
 
 
 
+// The fixtures this file executes: fixtureExecution's rows and the
+// entries main() deals them to read this one list.
+static bool executedHere(const QJsonObject& fixture)
+{
+    return fixture.value(QStringLiteral("executionStatus")).toString()
+        == QStringLiteral("executed-task-5");
+}
+
 class TstCatRxCommands : public QObject {
  Q_OBJECT
     quint64 start(RadioModel& model, bool secondary=true) {
@@ -97,7 +110,7 @@ private slots:
     QFile file(QFINDTESTDATA("data/cat/requests.json")); QVERIFY(file.open(QIODevice::ReadOnly));
     const QJsonArray fixtures=QJsonDocument::fromJson(file.readAll()).array(); int count=0;
     for (const QJsonValue& value : fixtures) {
-        const QJsonObject fixture=value.toObject(); if (fixture.value("executionStatus").toString() != "executed-task-5") { continue; }
+        const QJsonObject fixture=value.toObject(); if (!executedHere(fixture)) { continue; }
         QTest::newRow(qPrintable(fixture.value("id").toString())) << fixture; ++count;
     }
     QCOMPARE(count,158);
@@ -409,5 +422,34 @@ private slots:
   QCOMPARE(service.processFrame(id,"ZZML;"),QByteArray("ZZML LSB00: USB01: DSB02: CWL03: CWU04:  FM05:  AM06:DIGU07:SPEC08:DIGL09: SAM10: DRM11;"));
  }
 };
-QTEST_GUILESS_MAIN(TstCatRxCommands)
+// CI load round, 2026-10-26: 20 s on a quiet Linux runner, most of it the
+// fixture rows, each on a model of its own; it timed out on a busy one.
+// fixtureExecution's rows go in turn to 2 entries, _fixtures1 to
+// _fixtures2, built from the same list its _data function reads, so
+// a new fixture lands in one with no list to edit; the rest runs the other
+// functions (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    TstCatRxCommands test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    QFile file(QFINDTESTDATA("data/cat/requests.json"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCritical("tests/data/cat/requests.json not found");
+        return 1;
+    }
+    constexpr int kFixtureEntries = 2;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("fixtures1"), {}}, {QStringLiteral("fixtures2"), {}}};
+    int index = 0;
+    for (const QJsonValue& record : QJsonDocument::fromJson(file.readAll()).array()) {
+        if (!executedHere(record.toObject())) {
+            continue;
+        }
+        groups[index++ % kFixtureEntries].entries.append(
+            QStringLiteral("fixtureExecution:") + record.toObject().value(QStringLiteral("id")).toString());
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_CAT_RX_COMMANDS_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_cat_rx_commands.moc"

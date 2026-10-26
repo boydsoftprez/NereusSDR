@@ -4,8 +4,12 @@
 // no-port-check: NereusSDR-original test infrastructure.
 //
 // Phase 3F Sub-Epic D Task 3: PanadapterStack skeleton (default single layout).
+// 2026-10-26 CI load round: four ctest entries, each function in one by
+// its place in the list. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
+#include "TestFunctionGroups.h"
+#include <QApplication>
 #include <QPointer>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -683,6 +687,17 @@ private slots:
         QCOMPARE(f.pan->centerFrequency(), kCtunPanCentreHz - halfWindow + halfView);
         QVERIFY(std::abs(f.slice->frequency() - f.pan->centerFrequency()) <= halfView);
         QVERIFY(f.pan->ctunEnabled());
+
+        // The next tune stays on the view, which no longer sits on the DDC.
+        // Its shift is still measured from the DDC: the view centre would
+        // put the receiver off the flag by the distance between the two.
+        const double nextHz = kTunedHz + 1'000.0;
+        QVERIFY(std::abs(nextHz - f.pan->centerFrequency()) < halfView);
+        QVERIFY(f.pan->centerFrequency() != f.pan->ddcCenterFrequency());
+        f.slice->setFrequency(nextHz);
+        QCOMPARE(hardwareHz(f), kCtunPanCentreHz);
+        QCOMPARE(f.slice->shiftOffsetHz(), nextHz - kCtunPanCentreHz);
+        QCOMPARE(hardwareHz(f) + f.slice->shiftOffsetHz(), f.slice->frequency());
     }
 
     void stack_starts_with_layout_single()
@@ -1199,5 +1214,29 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestPanadapterStackLayouts)
+// CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet
+// Linux runner and timed out in a busy one (PR 657, run 40260509791).
+// 4 entries, each function in one by its place in the list, so a new
+// function lands in one with no list to edit: in declaration order they go
+// in turn to the rest, _part2, _part3, _part4 (tests/CMakeLists.txt).
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestPanadapterStackLayouts test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    constexpr int kEntries = 4;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // The first of every 4 stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_PANADAPTER_STACK_LAYOUTS_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_panadapter_stack_layouts.moc"

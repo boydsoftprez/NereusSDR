@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original test helper.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // NativeWindowFrames: waits for a QRhiWidget in a NATIVE_WINDOW test to
 // submit GPU frames, and tells a hidden window apart from a stalled one.
@@ -28,6 +31,13 @@
 // the timeout is Stalled, the product failure these waits exist to catch;
 // the timeouts are the callers' own and unchanged.
 //
+// Some platforms cannot render QRhi frames at all: Qt's `offscreen` platform
+// reports no RhiBasedRendering capability, and QRhiWidget then logs "QRhi is
+// not supported on this platform" and never submits a frame. A case that needs
+// GPU frames starts with NEREUS_SKIP_WITHOUT_QRHI(), which skips it there with
+// a reason and does nothing where QRhi works (CI runs these under xvfb). The
+// skip covers only that missing capability; Hidden and Stalled stay failures.
+//
 // See docs/development/fast-test-loop.md, "Test windows".
 #pragma once
 
@@ -35,6 +45,13 @@
 #include <QWidget>
 #include <QWindow>
 #include <QtTest>
+
+#ifdef NEREUS_GPU_SPECTRUM
+#include <QByteArray>
+#include <QGuiApplication>
+#include <QtGui/private/qguiapplication_p.h>
+#include <qpa/qplatformintegration.h>
+#endif
 
 namespace NereusSDR::NativeWindowFrames {
 
@@ -111,6 +128,30 @@ inline FrameWait requestFrame(QWidget& widget, const QSignalSpy& frames,
     return waitForFrames(widget, frames, before + 1, timeoutMs, raises);
 }
 
+#ifdef NEREUS_GPU_SPECTRUM
+/// True when this process's platform plugin can render QRhi frames. It asks
+/// the same question QRhiWidget's constructor asks before it turns on QRhi
+/// flushing (QPlatformIntegration::RhiBasedRendering, Qt 6.11); without that
+/// capability QRhiWidget logs "QRhi is not supported on this platform" and no
+/// frame is ever submitted. QRhi::probe() answers a different question:
+/// whether a graphics API (Metal, Vulkan, OpenGL) can start in this process,
+/// not whether this platform's widgets render through QRhi.
+inline bool canRenderRhiFrames()
+{
+    const QPlatformIntegration* integration = QGuiApplicationPrivate::platformIntegration();
+    return integration != nullptr
+        && integration->hasCapability(QPlatformIntegration::RhiBasedRendering);
+}
+
+/// The reason a case reports when it is skipped for want of QRhi.
+inline QByteArray noRhiSkipReason()
+{
+    return QByteArrayLiteral("QRhi is unavailable on the '")
+        + QGuiApplication::platformName().toUtf8()
+        + QByteArrayLiteral("' platform; this case needs GPU frames and runs in CI under xvfb");
+}
+#endif
+
 } // namespace NereusSDR::NativeWindowFrames
 
 // QVERIFY-style check of a FrameWait: passes on Submitted and fails with the
@@ -124,3 +165,24 @@ inline FrameWait requestFrame(QWidget& widget, const QSignalSpy& frames,
                      ? ::NereusSDR::NativeWindowFrames::kHiddenFailure                      \
                      : ::NereusSDR::NativeWindowFrames::kStalledFailure);                   \
     } while (false)
+
+// Skips the calling case, with a reason naming the platform, when this process
+// cannot render QRhi frames (Qt's offscreen platform). Does nothing where QRhi
+// works, and nothing in a build without GPU rendering, whose cases grab widget
+// images instead of waiting for GPU frames. Like QSKIP it returns from the
+// calling function, so call it first, before any setup. It never excuses a
+// Hidden or Stalled wait: NEREUS_VERIFY_FRAME still fails those.
+#ifdef NEREUS_GPU_SPECTRUM
+#define NEREUS_SKIP_WITHOUT_QRHI()                                                          \
+    do {                                                                                    \
+        if (!::NereusSDR::NativeWindowFrames::canRenderRhiFrames()) {                       \
+            const QByteArray nereusNoRhiReason =                                            \
+                ::NereusSDR::NativeWindowFrames::noRhiSkipReason();                         \
+            QSKIP(nereusNoRhiReason.constData());                                           \
+        }                                                                                   \
+    } while (false)
+#else
+#define NEREUS_SKIP_WITHOUT_QRHI() \
+    do {                           \
+    } while (false)
+#endif

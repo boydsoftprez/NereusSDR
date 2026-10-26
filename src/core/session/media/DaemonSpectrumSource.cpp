@@ -46,6 +46,11 @@
 // within four windows of the last one is let through once a frame has
 // come since the last reset; the drain's comment says so. J.J. Boyd
 // (KG4VCF), with AI-assisted implementation via Claude Code.
+// 2026-10-26: setEngineFrameGapClockForTest. J.J. Boyd (KG4VCF), with
+// AI-assisted implementation via Claude Code.
+// 2026-10-26: setEngineFrameGapClockForTest refuses once a drain has
+// started (inputDrainStarted, under the mutex) and sets the clock under
+// it. J.J. Boyd (KG4VCF), with AI-assisted implementation via Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -100,6 +105,10 @@ struct DaemonSpectrumSource::FrameState {
     QVector<int> gapsAtFloat;
     quint64 inputFramesDropped{0};
     quint64 completedInputHandoffs{0};
+    /// A drain has taken input for the engine (set under the mutex as it
+    /// takes it, before feedIQ): setEngineFrameGapClockForTest refuses
+    /// from then on.
+    bool inputDrainStarted{false};
     quint64 publishedFrames{0};
     quint64 inputHistoryResets{0};
     /// Frames replaced in `latest` since the last one taken, with nobody
@@ -459,6 +468,23 @@ quint64 DaemonSpectrumSource::engineMinimumGapSkips(const MediaSourceKey& key) c
     return it->engine->minimumGapSkips();
 }
 
+bool DaemonSpectrumSource::setEngineFrameGapClockForTest(const MediaSourceKey& key,
+                                                         std::function<qint64()> clockMs)
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend() || !it->engine) { return false; }
+    // Before any input, so the worker thread is not reading it yet: a
+    // drain marks its start under this mutex before it feeds the engine,
+    // and the clock is set under it too, so a drain that starts later sees
+    // it.
+    QMutexLocker lock(&it->state->mutex);
+    if (it->state->inputDrainStarted) {
+        return false;
+    }
+    it->engine->setFrameGapClockForTest(std::move(clockMs));
+    return true;
+}
+
 quint64 DaemonSpectrumSource::engineWindowResets(const MediaSourceKey& key) const
 {
     const auto it = m_sources.constFind(key);
@@ -732,6 +758,7 @@ void DaemonSpectrumSource::drainInput(FFTEngine* engine,
         iq.swap(state->pendingIq);
         gapsAtFloat.swap(state->gapsAtFloat);
         state->iqDrainQueued = false;
+        state->inputDrainStarted = true;
         if (resetInputHistory) {
             ++state->inputHistoryResets;
             // The samples before the reset and after it are not continuous.
