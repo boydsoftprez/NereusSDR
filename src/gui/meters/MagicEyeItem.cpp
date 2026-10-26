@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - VHF S9 rule per slice: the eye's signal-strength scale
+//                 moves 20 dB at or above 30 MHz (aboveS9Frequency).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -53,6 +56,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MagicEyeItem.h"
+#include "AboveS9Frequency.h"
 
 // From Thetis clsMagicEyeItem (MeterManager.cs:15855+)
 
@@ -130,7 +134,11 @@ void MagicEyeItem::paint(QPainter& p, int widgetW, int widgetH)
     // Step 5: shadow wedge — dark pie slice, symmetric about 12 o'clock
     // Shadow narrows as signal strength increases (fraction → 1.0)
     // From Thetis clsMagicEyeItem (MeterManager.cs:15855+)
-    float fraction  = dbmToFraction(m_smoothedDbm);
+    // VHF S9 rule: a signal-strength eye moves 20 dB at or above the S9
+    // frequency, as the meter's other S-unit scales do.
+    // From Thetis MeterManager.cs:37253, 41049-41052 [v2.10.3.15] (getPerc)
+    float fraction  = dbmToFraction(static_cast<float>(
+        aboveS9Adjusted(m_bindingId, m_smoothedDbm, m_aboveS9Frequency)));
     float shadowDeg = kMaxShadowDeg - fraction * (kMaxShadowDeg - kMinShadowDeg);
     float halfShadow = shadowDeg / 2.0f;
 

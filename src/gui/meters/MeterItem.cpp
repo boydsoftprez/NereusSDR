@@ -5,9 +5,16 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/common.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
+//                 aboveS9Frequency(), a formatValue overload taking the
+//                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
+//                 / kS9DbmAboveS9Frequency from common.cs); BarItem, TextItem
+//                 and NeedleItem S-unit text and calibration use it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Per-item update interval (acceptsUpdate); new items take
 //                 kDefaultUpdateIntervalMs. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -147,10 +154,56 @@ mw0lge@grange-lane.co.uk
 //                 meter canvas in both looks, preserving ticks and fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
+// --- From common.cs ---
+//=================================================================
+// common.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2012  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include "core/ControlRanges.h"
 #include "MeterItem.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
+#include "AboveS9Frequency.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -256,11 +309,19 @@ QString MeterItem::noReadingText(MeterUnit unit)
 // ---------------------------------------------------------------------------
 QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 {
+    return formatValue(dBm, unit, decimal, false);
+}
+
+// aboveS9: the item's slice is at or above the S9 frequency, where S9 is
+// -93 dBm instead of -73 dBm.
+// From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal, bool aboveS9)
+{
     switch (unit) {
         case MeterUnit::S: {
             // IARU S-meter: S9 = -73 dBm, 6 dB/S-unit
             // From Thetis console.cs getMeterData dBm→S conversion [v2.10.3.13]
-            const float diff = dBm - (-73.0f);
+            const float diff = dBm - s9Dbm(aboveS9);
             const int sUnits = qBound(0, qRound(9.0f + diff / 6.0f), 19);
             if (sUnits <= 9) {
                 return QStringLiteral("S%1").arg(sUnits);
@@ -599,6 +660,11 @@ float BarItem::valueToNormalizedX(double value) const
         return static_cast<float>(frac);
     }
 
+    // A signal-strength reading on a slice at or above the S9 frequency is
+    // raised 20 dB, so the calibrated S9 point (-73) reads -93 dBm.
+    // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
+    value = aboveS9Adjusted(m_bindingId, value, m_aboveS9Frequency);
+
     // Clamp below the first waypoint.
     auto itFirst = m_scaleCalibration.constBegin();
     if (value <= itFirst.key()) {
@@ -676,14 +742,16 @@ QString BarItem::valueText() const
     }
     // Task 3.2: unit-mode fan-out; signal-level bars route through
     // formatValue so the MultimeterPage unit combo drives the readout.
-    return formatValue(static_cast<float>(m_smoothedValue), m_unitMode, m_showDecimal);
+    return formatValue(static_cast<float>(m_smoothedValue), m_unitMode, m_showDecimal,
+                       m_aboveS9Frequency);
 }
 
 QString BarItem::peakValueText() const
 {
     return std::isfinite(m_peakValue)
         // Task 3.2: peak value also routed through formatValue
-        ? formatValue(static_cast<float>(m_peakValue), m_unitMode, m_showDecimal)
+        ? formatValue(static_cast<float>(m_peakValue), m_unitMode, m_showDecimal,
+                      m_aboveS9Frequency)
         : QStringLiteral("--");
 }
 
@@ -1418,7 +1486,8 @@ QString TextItem::displayText() const
         if (m_suffix == QStringLiteral(" dBm") &&
             (m_unitMode == MeterUnit::S || m_unitMode == MeterUnit::uV))
         {
-            text = formatValue(static_cast<float>(m_value), m_unitMode, m_showDecimal);
+            text = formatValue(static_cast<float>(m_value), m_unitMode, m_showDecimal,
+                               m_aboveS9Frequency);
         } else {
             // Honor m_showDecimal for dBm mode — matches Thetis
             // chkDisplayMeterShowDecimal [v2.10.3.13]
@@ -1597,6 +1666,15 @@ float NeedleItem::dbmToFraction(float dbm) const
     return 0.6f + 0.4f * (clamped - kS9Dbm) / (kMaxDbm - kS9Dbm);
 }
 
+// The built-in arc is an S-unit scale with S9 at kS9Dbm; at or above the S9
+// frequency a reading moves 20 dB up it so -93 dBm sits on S9, as the S-unit
+// text does (sUnitsText). The tick labels stay where they are.
+// From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
+float NeedleItem::arcFraction(float dbm) const
+{
+    return dbmToFraction(dbm + kS9Dbm - s9Dbm(m_aboveS9Frequency));
+}
+
 // Interpolate needle position from scale calibration map.
 // From Thetis MeterManager.cs calibration point interpolation.
 // Finds the two calibration points bracketing `value` and linearly
@@ -1642,6 +1720,10 @@ QPointF NeedleItem::calibratedPosition(float value) const
 // From AetherSDR SMeterWidget.cpp sUnitsText()
 QString NeedleItem::sUnitsText(float dbm) const
 {
+    // The scale below keeps S9 at kS9Dbm; at or above the S9 frequency the
+    // reading moves 20 dB up it so -93 dBm reads S9.
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+    dbm += kS9Dbm - s9Dbm(m_aboveS9Frequency);
     if (dbm <= kS0Dbm) {
         return QStringLiteral("S0");
     }
@@ -1674,7 +1756,8 @@ QString NeedleItem::valueReadout() const
     }
     // S / uV: noReadingText() with no reading, formatValue() otherwise.
     return isNoReading(m_value) ? noReadingText(m_unitMode)
-                                : formatValue(m_smoothedDbm, m_unitMode, m_showDecimal);
+                                : formatValue(m_smoothedDbm, m_unitMode, m_showDecimal,
+                                              m_aboveS9Frequency);
 }
 
 void NeedleItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
@@ -1707,7 +1790,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
     const float pivotY = rect.top() + ph + 6.0f;
 
-    const float frac = dbmToFraction(m_smoothedDbm);
+    const float frac = arcFraction(m_smoothedDbm);
     const float angleRad = qDegreesToRadians(kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg));
     const float tipDist = radius + 14.0f;
     const float tipX = cx + tipDist * std::cos(angleRad);
@@ -1820,7 +1903,10 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
         // Tip: calibrated normalized position for the current value,
         // then apply per-axis radius ratio and length factor as an
         // offset from the pivot.
-        const QPointF tipNorm = calibratedPosition(static_cast<float>(m_smoothedDbm));
+        // A signal-strength face moves 20 dB at or above the S9 frequency.
+        // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
+        const QPointF tipNorm = calibratedPosition(static_cast<float>(
+            aboveS9Adjusted(m_bindingId, m_smoothedDbm, m_aboveS9Frequency)));
         const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
                         * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
         const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
@@ -1836,7 +1922,7 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
         pivotX = arcCx;
         pivotY = rect.top() + ph + 6.0f;
 
-        const float frac = dbmToFraction(m_smoothedDbm);
+        const float frac = arcFraction(m_smoothedDbm);
         const float angleDeg = kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg);
         const float angleRad = qDegreesToRadians(angleDeg);
 
@@ -1908,7 +1994,7 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) has no
     // peak marker — skip emitting the triangle entirely.
     if (!calibrated && m_peakDbm > m_smoothedDbm + 1.0f) {
-        const float peakFrac = dbmToFraction(m_peakDbm);
+        const float peakFrac = arcFraction(m_peakDbm);
         const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
         const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
 

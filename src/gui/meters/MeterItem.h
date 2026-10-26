@@ -8,12 +8,19 @@
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/common.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/setup.designer.cs (update interval range
 //     and default): upstream source has no top-of-file GPL header, the
 //     setup.cs header below covers its partial class
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
+//                 aboveS9Frequency(), a formatValue overload taking the
+//                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
+//                 / kS9DbmAboveS9Frequency from common.cs); BarItem, TextItem
+//                 and NeedleItem S-unit text and calibration use it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Per-item update interval: setUpdateIntervalMs(),
 //                 updateIntervalMs() (0 = every poll), acceptsUpdate();
 //                 new items take Thetis's 100 ms. J.J. Boyd (KG4VCF),
@@ -186,6 +193,51 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From common.cs ---
+//=================================================================
+// common.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2012  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include <QObject>
 #include <QSet>
 #include <QHash>
@@ -279,6 +331,25 @@ public:
     // Always a number: whether a value is no reading is the item's call
     // (isNoReading(), from its binding); noReadingText() is what it shows.
     static QString formatValue(float dBm, MeterUnit unit, bool decimal = true);
+    // The same, with S9 at -93 dBm when the item's slice is at or above the
+    // S9 frequency (AboveS9Frequency.h). dBm and uV are unaffected.
+    static QString formatValue(float dBm, MeterUnit unit, bool decimal, bool aboveS9);
+
+    // S9 level of the S-unit scale below and at or above the S9 frequency.
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+    static constexpr float kS9DbmBelowS9Frequency = -73.0f;
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits: //MW0LGE_[2.9.0.7] fixed to 93)
+    static constexpr float kS9DbmAboveS9Frequency = -93.0f;
+    static constexpr float s9Dbm(bool aboveS9)
+    {
+        return aboveS9 ? kS9DbmAboveS9Frequency : kS9DbmBelowS9Frequency;
+    }
+
+    // Whether the item's slice is at or above the S9 frequency
+    // (isAboveS9Frequency, AboveS9Frequency.h). MainWindow sets it on every
+    // item from the slice each entry resolves to. Runtime only, not saved.
+    virtual void setAboveS9Frequency(bool above) { m_aboveS9Frequency = above; }
+    bool aboveS9Frequency() const               { return m_aboveS9Frequency; }
     // No reading in the requested unit: "--" for dBm and S, "-- µV" for uV.
     static QString noReadingText(MeterUnit unit);
 
@@ -508,6 +579,8 @@ protected:
     // m_showDecimal in their paint() text-format path.
     MeterUnit m_unitMode{MeterUnit::dBm};
     bool      m_showDecimal{true};
+    // VHF S9 rule (setAboveS9Frequency): S9 = -93 dBm at or above 30 MHz.
+    bool      m_aboveS9Frequency{false};
 };
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1145,8 @@ public:
 private:
     // From AetherSDR SMeterWidget.cpp dbmToFraction()
     float dbmToFraction(float dbm) const;
+    // dbmToFraction of a reading, moved for the VHF S9 rule.
+    float arcFraction(float dbm) const;
     // From AetherSDR SMeterWidget.cpp sUnitsText()
     QString sUnitsText(float dbm) const;
 

@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - VHF S9 rule per slice: refreshContainerMeter sets
+//                 isAboveS9Frequency (at or above 30 MHz) on every item from
+//                 the slice its entry resolves to. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-24: A remote window's slice access changes reach the container
 //               instruments (sliceAccessChanged, watchSliceAccess). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1220,6 +1224,7 @@ warren@wpratt.com
 #include "containers/ContainerSourceAdapter.h"
 #include "meters/presets/CompositePresetItem.h"
 #include "meters/presets/BarPresetItem.h"
+#include "meters/AboveS9Frequency.h"
 #include <QJsonArray>
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
@@ -15054,7 +15059,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     if (items.isEmpty()) { return; }
     // Snapshot actual child presentation rather than dirtying equal model pushes.
     const auto signature = [](MeterItem* item) {
-        QString value = item->serialize();
+        QString value = item->serialize() + QString::number(item->aboveS9Frequency());
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             for (int i=0;i<box->buttonCount();++i) { value += QString::number(box->isButtonAvailable(i))+box->buttonUnavailableReason(i)+box->button(i).text+QString::number(box->button(i).on); }
         }
@@ -15185,12 +15190,14 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         : QString::number(widthHz);
     const Band band = bandFromFrequency(slice->frequency());
 
+    // VHF S9 rule, per entry: each item takes the scale of the slice its
+    // entry resolves to (a fixed slice, or the selected one when it follows).
+    const bool aboveS9 = isAboveS9Frequency(slice->frequency());
     const auto applyTo = [&](MeterItem* item) {
-        if (auto* bar = qobject_cast<BarPresetItem*>(item)) { bar->setAboveS9Frequency(slice->frequency() > 30000000.0); }
+        item->setAboveS9Frequency(aboveS9);
         if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
             face->setUnavailableText({}); face->setFrequency(qint64(std::llround(slice->frequency())));
             face->setModeLabel(modeName); face->setBandLabel(bandLabel(band));
-            face->setAboveS9Frequency(slice->frequency() > 30000000.0);
         }
         if (frequencyOnly) {
             if (auto* bandItem = qobject_cast<BandButtonItem*>(item)) { m_containerButtons->applyBand(bandItem, rxSource); }

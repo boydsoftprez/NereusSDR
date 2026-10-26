@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - VHF S9 rule per slice: S-unit text reads S9 at -93 dBm
+//                 when the slice is at or above 30 MHz (aboveS9Frequency).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -214,6 +217,10 @@ QString SignalTextItem::formatDbm(float dbm) const
 // ---------------------------------------------------------------------------
 QString SignalTextItem::formatSUnits(float dbm) const
 {
+    // VHF S9 rule: at or above the S9 frequency S9 is -93 dBm
+    // (MeterItem::s9Dbm), so the reading moves 20 dB up the -73 dBm scale
+    // below.
+    dbm += kS9DbmBelowS9Frequency - s9Dbm(m_aboveS9Frequency);
     if (dbm <= -73.0f) {
         // S0..S9 range
         const int sUnit = std::clamp(static_cast<int>((dbm + 127.0f) / 6.0f), 0, 9);
