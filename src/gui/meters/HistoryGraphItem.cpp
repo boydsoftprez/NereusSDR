@@ -80,9 +80,21 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - A graph whose length the operator set in its editor
+//                 (hasOwnLength, saved as field [17]) keeps it; the
+//                 Multimeter history duration applies only to graphs that
+//                 never set one (followGlobalDurationMs). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A saved capacity loads as written; deserialize no longer
 //                 lets the saved duration recompute it, and clamps it to
 //                 kMaxCapacity. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - deserialize comments give the field counts it reads
+//                 (16, 17, 18). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - hasOwnLength is written at [25], after the v3 fields
+//                 [17]..[24] (v4, 26 fields); an 18-field record still
+//                 loads it from [17]. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
@@ -273,6 +285,19 @@ void HistoryGraphItem::setSecondaryValue(int index, double value)
 {
     if (index != 1 || !std::isfinite(value)) { return; }
     m_buf1.push(static_cast<float>(value));
+}
+
+// ---------------------------------------------------------------------------
+// followGlobalDurationMs()
+// NereusSDR: the Multimeter history duration reaches only graphs that never
+// set their own length.
+// ---------------------------------------------------------------------------
+void HistoryGraphItem::followGlobalDurationMs(int ms)
+{
+    if (m_hasOwnLength) {
+        return;
+    }
+    setDurationMs(ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -527,13 +552,15 @@ QString HistoryGraphItem::serialize() const
         .arg(manual(m_min0Manual))
         .arg(manual(m_max0Manual))
         .arg(manual(m_min1Manual))
-        .arg(manual(m_max1Manual));
+        .arg(manual(m_max1Manual))
+        // NereusSDR v4: appended, never renumbered.
+        + QLatin1Char('|') + QString::number(m_hasOwnLength ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected parts:
-// v1 (15 fields): [0]=HISTORY [1]=x [2]=y [3]=w [4]=h [5]=bindingId [6]=zOrder
+// v1 (16 fields): [0]=HISTORY [1]=x [2]=y [3]=w [4]=h [5]=bindingId [6]=zOrder
 //                 [7]=capacity [8]=lineColor0 [9]=lineColor1
 //                 [10]=showGrid [11]=autoScale0 [12]=autoScale1
 //                 [13]=showScale0 [14]=showScale1 [15]=bindingId1
@@ -541,13 +568,18 @@ QString HistoryGraphItem::serialize() const
 // v3 (25 fields): ...all v2... [17]=verticalRatio [18]=backColour
 //                 [19]=linesColour [20]=timeColour [21]=min0 [22]=max0
 //                 [23]=min1 [24]=max1 (min/max empty: no manual range)
-// Task 3.3: both v1 and v2 supported for backward compatibility; v1 and v2
-// records keep their look (older colours, no manual range).
+// v4 (26 fields): ...all v3... [25]=hasOwnLength (0/1)
+// An 18-field record (v2 plus hasOwnLength at [17]) was written by a build
+// that had the own-length field before the v3 fields; it loads with the
+// older look and its own-length flag.
+// Task 3.3: v1 to v4 all load, for backward compatibility; v1, v2 and
+// 18-field records keep their look (older colours, no manual range).
 // ---------------------------------------------------------------------------
 bool HistoryGraphItem::deserialize(const QString& data)
 {
     const QStringList parts = data.split(QLatin1Char('|'));
-    // Accept 16 parts (v1) or 17 parts (v2)
+    // Accept 16 parts (v1), 17 parts (v2), 18 parts (own length, before
+    // v3), 25 parts (v3) or 26 parts (v4)
     if (parts.size() < 16 || parts[0] != QLatin1String("HISTORY")) {
         return false;
     }
@@ -582,6 +614,14 @@ bool HistoryGraphItem::deserialize(const QString& data)
     int durationMs = m_durationMs;  // default to current value
     if (parts.size() >= 17) {
         durationMs = parts[16].toInt(&ok);  if (!ok) { durationMs = m_durationMs; }
+    }
+    // NereusSDR: a record without the field never set its own length. v4
+    // holds it at [25]; an 18-field record (before the v3 fields) at [17].
+    bool hasOwnLength = false;
+    if (parts.size() >= 26) {
+        hasOwnLength = (parts[25].toInt(&ok) != 0) && ok;
+    } else if (parts.size() == 18) {
+        hasOwnLength = (parts[17].toInt(&ok) != 0) && ok;
     }
 
     setRect(x, y, w, h);
@@ -630,6 +670,7 @@ bool HistoryGraphItem::deserialize(const QString& data)
     // The saved capacity is applied after the duration, so it loads as
     // written rather than as the capacity the duration implies.
     setCapacity(capacity);
+    m_hasOwnLength = hasOwnLength;
 
     return true;
 }

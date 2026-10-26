@@ -1,6 +1,14 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - "Follow the Multimeter setting": changing Capacity gives
+//                 the graph its own length, which the Multimeter history
+//                 duration then leaves alone; turning the choice back on
+//                 returns the graph to that setting. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+
 #include "HistoryGraphItemEditor.h"
 #include "../../meters/HistoryGraphItem.h"
 #include "../../meters/MeterPoller.h"
+#include "../../setup/MultimeterPage.h"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -32,6 +40,7 @@ void HistoryGraphItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
 
     m_spinCapacity->setValue(x->capacity());
+    m_chkFollowMultimeter->setChecked(!x->hasOwnLength());
     applyColor(m_btnLineColor0, x->lineColor0());
     applyColor(m_btnLineColor1, x->lineColor1());
     m_chkShowGrid->setChecked(x->showGrid());
@@ -75,6 +84,32 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
         if (!x) { return; }
         x->setCapacity(v);
+        // The operator chose this graph's length; the Multimeter history
+        // duration no longer changes it.
+        x->setHasOwnLength(true);
+        beginProgrammaticUpdate();
+        m_chkFollowMultimeter->setChecked(false);
+        endProgrammaticUpdate();
+        notifyChanged();
+    });
+
+    m_chkFollowMultimeter = makeCheckRow(QStringLiteral("Follow the Multimeter setting"));
+    m_chkFollowMultimeter->setObjectName(QStringLiteral("followMultimeterLength"));
+    m_chkFollowMultimeter->setToolTip(QStringLiteral(
+        "When on, this graph's length follows the history duration in the "
+        "Multimeter settings. Changing Capacity gives the graph its own "
+        "length and turns this off."));
+    connect(m_chkFollowMultimeter, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
+        if (!x) { return; }
+        x->setHasOwnLength(!on);
+        if (on) {
+            x->followGlobalDurationMs(MultimeterPage::persistedHistoryDurationMs());
+            beginProgrammaticUpdate();
+            m_spinCapacity->setValue(x->capacity());
+            endProgrammaticUpdate();
+        }
         notifyChanged();
     });
 

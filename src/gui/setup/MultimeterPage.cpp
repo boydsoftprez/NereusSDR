@@ -49,6 +49,10 @@
 //   2026-09-28 - R-IOS-18 (Display V12): decimal, units and history
 //                 duration carry Setup description ids. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The history duration reaches only history graphs that
+//                 never set their own length (followGlobalDurationMs);
+//                 persistedHistoryDurationMs() for the graph editor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -287,14 +291,19 @@ void MultimeterPage::applyPersistedSettingsTo(MeterItem* item)
     const bool dec =
         s.value(QStringLiteral("MultimeterShowDecimal"), QStringLiteral("True")).toString()
             == QStringLiteral("True");
-    // From Thetis udSignalHistoryDuration [v2.10.3.13]
-    const int historyMs =
-        s.value(QStringLiteral("MultimeterSignalHistoryDurationMs"), 60000).toInt();
     item->setUnitMode(unit);
     item->setShowDecimal(dec);
+    // A graph whose length the operator set in its editor keeps it.
     if (auto* h = qobject_cast<HistoryGraphItem*>(item)) {
-        h->setDurationMs(historyMs);
+        h->followGlobalDurationMs(persistedHistoryDurationMs());
     }
+}
+
+int MultimeterPage::persistedHistoryDurationMs()
+{
+    // From Thetis udSignalHistoryDuration [v2.10.3.13]
+    return AppSettings::instance()
+        .value(QStringLiteral("MultimeterSignalHistoryDurationMs"), 60000).toInt();
 }
 
 void MultimeterPage::loadSettings()
@@ -448,10 +457,11 @@ void MultimeterPage::connectSignals()
         [this](int v) {
             AppSettings::instance().setValue(QStringLiteral("MultimeterSignalHistoryDurationMs"), v);
             // Task 3.3: broadcast duration to all HistoryGraphItem instances
+            // that never set their own length.
             if (auto* cm = model() ? model()->containerManager() : nullptr) {
                 cm->forEachMeterItem([v](MeterItem* item) {
                     if (auto* h = qobject_cast<HistoryGraphItem*>(item)) {
-                        h->setDurationMs(v);
+                        h->followGlobalDurationMs(v);
                     }
                 });
             }

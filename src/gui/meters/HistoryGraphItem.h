@@ -27,11 +27,21 @@
 //   2026-10-26 - kMinHistoryKeepForMs / kMaxHistoryKeepForMs (1-1800 s);
 //                 readingBindingsBesideMmio for axis 1. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A graph whose length the operator set in its editor
+//                 (hasOwnLength, saved as field [17]) keeps it; the
+//                 Multimeter history duration applies only to graphs that
+//                 never set one (followGlobalDurationMs). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - kMaxCapacity: deserialize clamps a loaded capacity to the
 //                 largest one NereusSDR produces. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The own-length cite names Thetis clsHistoryItem._keep_for.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - kMaxCapacity follows the 1800 s Keep For maximum
 //                 (18001), so a long graph reloads at its saved length.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - hasOwnLength moves to field [25], after this branch's v3
+//                 fields [17]..[24]; an 18-field record keeps it at [17].
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -213,6 +223,22 @@ public:
     int durationMs() const { return m_durationMs; }
     void setDurationMs(int ms);
 
+    // NereusSDR: true once the operator sets this graph's length in its
+    // editor. Thetis keeps a history length on each history item:
+    // clsHistoryItem._keep_for, in seconds, default 60 (MeterManager.cs:17485,
+    // :17538, KeepFor at :17708 [v2.10.3.15]), loaded per item clamped to
+    // 1..86400 (history_keep_for, MeterManager.cs:26937 [v2.10.3.15]).
+    // Thetis history items never follow a global duration; following the
+    // Multimeter setting until an own length is set is NereusSDR's choice.
+    // With an own length, the Multimeter history duration leaves this
+    // graph alone.
+    bool hasOwnLength() const { return m_hasOwnLength; }
+    void setHasOwnLength(bool v) { m_hasOwnLength = v; }
+
+    // Applies the Multimeter history duration (setDurationMs) unless this
+    // graph has its own length.
+    void followGlobalDurationMs(int ms);
+
     QColor lineColor0() const { return m_lineColor0; }
     void setLineColor0(const QColor& c) { m_lineColor0 = c; }
 
@@ -302,8 +328,12 @@ public:
     // Tag: HISTORY
     // Format: HISTORY|x|y|w|h|bindingId|zOrder|capacity|lineColor0|lineColor1|
     //         showGrid|autoScale0|autoScale1|showScale0|showScale1|bindingId1|durationMs (v2)|
-    //         verticalRatio|backColour|linesColour|timeColour|min0|max0|min1|max1 (v3)
-    // (v2 adds durationMs at index [16]; v1 stops at [15]; v3 appends [17]..[24])
+    //         verticalRatio|backColour|linesColour|timeColour|min0|max0|min1|max1 (v3)|
+    //         hasOwnLength (v4)
+    // (v2 adds durationMs at index [16]; v1 stops at [15]; v3 appends [17]..[24];
+    //  v4 adds hasOwnLength 0/1 at [25], and a record without it follows the
+    //  Multimeter setting. An 18-field record, written before the v3 fields
+    //  joined it, holds hasOwnLength at [17].)
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
@@ -316,6 +346,7 @@ private:
 
     int     m_capacity{kDefaultCapacity};
     int     m_durationMs{60000};  // Task 3.3: default 60 s, corresponds to AppSettings default
+    bool    m_hasOwnLength{false};
     // From Thetis clsHistoryItem _history_data_list_0 / _history_data_list_1
     RingBuffer m_buf0;
     RingBuffer m_buf1;

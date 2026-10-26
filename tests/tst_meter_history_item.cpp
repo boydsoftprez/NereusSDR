@@ -6,6 +6,8 @@
 //                 auto scale off, v3 record round trip, older records keep
 //                 their look, new items take the clsHistoryItem values.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The record now ends with the own-length flag (26 fields).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 #include <QImage>
@@ -173,7 +175,8 @@ private slots:
         saved.setManualMin(1, 0.0f);
         saved.setManualMax(1, 100.0f);
         const QString record = saved.serialize();
-        QCOMPARE(record.split(QLatin1Char('|')).size(), 25);
+        // v3 fields [17]..[24], then the own-length flag at [25] (v4).
+        QCOMPARE(record.split(QLatin1Char('|')).size(), 26);
 
         HistoryGraphItem loaded;
         QVERIFY(loaded.deserialize(record));
