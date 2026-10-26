@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Click box actions (Thetis clsMeter.MouseUp): a click box
+//                 goes to a display group, steps the group (wrapping at the
+//                 highest group in use) or steps the units of the topmost
+//                 item under it with units; %group% text shows the group.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Data source (MMIO) readings for every variable an item
 //                 reads: index 1 and up reach setSecondaryValue, cached and
 //                 replayed like index 0. J.J. Boyd (KG4VCF), AI-assisted via
@@ -162,6 +167,7 @@ mw0lge@grange-lane.co.uk
 #include <QPaintEvent>
 #include <QToolTip>
 #include <QResizeEvent>
+#include <algorithm>
 #include <limits>
 #include <QMouseEvent>
 #include <QStringList>
@@ -173,6 +179,62 @@ mw0lge@grange-lane.co.uk
 #endif
 
 namespace NereusSDR {
+
+namespace {
+// The highest display group any item is in (0: none). Thetis wraps at its
+// container's group count (MeterManager.cs:31165-31174 [v2.10.3.15]);
+// NereusSDR containers keep no group list, so the groups in use stand in.
+int highestDisplayGroup(const QVector<MeterItem*>& items)
+{
+    int highest = 0;
+    for (const MeterItem* item : items) {
+        if (item) { highest = std::max(highest, item->displayGroup()); }
+    }
+    return highest;
+}
+
+// From Thetis MeterManager.cs:31165-31174 [v2.10.3.15]
+// (incrementDisplayGroup / decrementDisplayGroup).
+int steppedDisplayGroup(int group, int step, int highest)
+{
+    int next = group;
+    if (step > 0) {
+        next++;
+        if (next > highest) { next = 0; }
+    } else if (step < 0) {
+        next--;
+        if (next < 0) { next = highest; }
+    }
+    return next;
+}
+
+// An item's units as it shows them: a signal text's own units (a saved
+// record sets those alone), else the item's unit mode.
+MeterItem::MeterUnit shownUnit(const MeterItem* item)
+{
+    if (const auto* text = qobject_cast<const SignalTextItem*>(item)) {
+        switch (text->units()) {
+            case SignalTextItem::Units::SUnits: return MeterItem::MeterUnit::S;
+            case SignalTextItem::Units::Uv:     return MeterItem::MeterUnit::uV;
+            default:                            return MeterItem::MeterUnit::dBm;
+        }
+    }
+    return item->unitMode();
+}
+
+// %group% text: the shown group's number, or nothing in a container with
+// no groups (Thetis DisplayGroupText is empty with no group list,
+// MeterManager.cs:31215-31224 [v2.10.3.15]). NereusSDR groups have no
+// names, so the number stands in for one.
+void feedDisplayGroupText(const QVector<MeterItem*>& items, int group)
+{
+    const QString text = (group > 0 || highestDisplayGroup(items) > 0)
+        ? QString::number(group) : QString();
+    for (MeterItem* item : items) {
+        if (auto* textItem = qobject_cast<TextItem*>(item)) { textItem->setDisplayGroupText(text); }
+    }
+}
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor
@@ -234,6 +296,43 @@ void MeterWidget::addItem(MeterItem* item)
         connect(rotator, &RotatorItem::repaintRequested, this,
                 [this, rotator]() { invalidatePresentation(rotator); });
     }
+    // Container item parity Task 47: a click box acts on the widget that
+    // holds it, never on another (a preview copy acts on its own widget).
+    // From Thetis MeterManager.cs:29814-29848 [v2.10.3.15] (MouseUp).
+    if (auto* box = qobject_cast<ClickBoxItem*>(item)) {
+        connect(box, &ClickBoxItem::actionRequested, this,
+                [this, box](ClickBoxItem::Action action, int value) {
+            if (!m_items.contains(box)) { return; }
+            const int highest = highestDisplayGroup(m_items);
+            switch (action) {
+                case ClickBoxItem::Action::GoToGroup:
+                    // Thetis DisplayGroup clamps to its groups
+                    // (MeterManager.cs:31193-31200 [v2.10.3.15]).
+                    setDisplayGroup(qBound(0, value, highest));
+                    break;
+                case ClickBoxItem::Action::ChangeGroup:
+                    setDisplayGroup(steppedDisplayGroup(m_displayGroup, value, highest));
+                    break;
+                case ClickBoxItem::Action::CycleUnits: {
+                    // The topmost shown item under the box with units
+                    // (Thetis RelatedMeterItem, MeterManager.cs:31175-31186).
+                    const QRectF boxRect(box->x(), box->y(), box->itemWidth(), box->itemHeight());
+                    for (int i = m_items.size() - 1; i >= 0; --i) {
+                        MeterItem* target = m_items[i];
+                        if (target == box || !ClickBoxItem::supportsUnits(target) || !shouldRender(target)) { continue; }
+                        const QRectF rect(target->x(), target->y(), target->itemWidth(), target->itemHeight());
+                        if (!rect.intersects(boxRect)) { continue; }
+                        target->setUnitMode(ClickBoxItem::steppedUnit(
+                            shownUnit(target), value, target->bindingId() == MeterBinding::PbSnr));
+                        invalidateReadingLayers(true);
+                        update();
+                        break;
+                    }
+                    break;
+                }
+            }
+        });
+    }
     if (m_unitMode) { item->setUnitMode(*m_unitMode); }
     if (m_powerScale > 0) { if (m_explicitPowerScale) { item->setPowerScale(m_powerScale, m_powerScaleTop); } else { item->setPowerScale(m_powerScale); } }
     item->resetForTxTransition(m_mox);
@@ -248,6 +347,7 @@ void MeterWidget::addItem(MeterItem* item)
     markOverlayDirty();
     m_bgDirty = true;
 #endif
+    feedDisplayGroupText(m_items, m_displayGroup);
     update();
     if (item->hasMmioBinding()) {
         const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey());
@@ -991,6 +1091,7 @@ void MeterWidget::setDisplayGroup(int group)
 {
     if (m_displayGroup == group) { return; }
     m_displayGroup = group;
+    feedDisplayGroupText(m_items, m_displayGroup);
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
