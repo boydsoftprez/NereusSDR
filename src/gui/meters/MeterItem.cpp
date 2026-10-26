@@ -190,6 +190,9 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - Keep overflowing regular scale endpoint glyphs within the
 //                 meter canvas in both looks, preserving ticks and fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (image path, needle source label) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 // --- From common.cs ---
 //=================================================================
@@ -817,10 +820,10 @@ void ImageItem::paint(QPainter& p, int widgetW, int widgetH)
 
 QString ImageItem::serialize() const
 {
-    return QStringLiteral("IMAGE|%1|%2|%3")
-        .arg(baseFields(*this))
-        .arg(m_imagePath)
-        .arg(m_darkMode ? 1 : 0);
+    // Joined, not chained .arg(): a path holding "%1" must stay as written.
+    return QStringList{QStringLiteral("IMAGE"), baseFields(*this), m_imagePath,
+                       QString::number(m_darkMode ? 1 : 0)}
+        .join(QLatin1Char('|'));
 }
 
 bool ImageItem::deserialize(const QString& data)
@@ -2928,12 +2931,13 @@ void NeedleItem::paintOverlayDynamic(QPainter& p, int widgetW, int widgetH)
 // tail fields.
 QString NeedleItem::serialize() const
 {
-    QString s = QStringLiteral("NEEDLE|%1|%2|%3|%4|%5")
-        .arg(baseFields(*this))
-        .arg(m_sourceLabel)
-        .arg(m_onlyWhenRx ? 1 : 0)
-        .arg(m_onlyWhenTx ? 1 : 0)
-        .arg(m_displayGroup);
+    // Joined, not chained .arg(): a source label holding "%1" must stay as
+    // written.
+    QString s = QStringList{QStringLiteral("NEEDLE"), baseFields(*this), m_sourceLabel,
+                            QString::number(m_onlyWhenRx ? 1 : 0),
+                            QString::number(m_onlyWhenTx ? 1 : 0),
+                            QString::number(m_displayGroup)}
+                    .join(QLatin1Char('|'));
 
     // Calibration map — value:x:y triplets with a leading count.
     s += QStringLiteral("|%1").arg(m_scaleCalibration.size());
