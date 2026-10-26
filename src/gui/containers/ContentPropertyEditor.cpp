@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal text rows: Show type, Type color, Show µV and dBm
+//                 and µV and dBm color. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Magic eye rows: eye size and bezel size (0.01 to 1) and a
 //                 bezel image with a file picker. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -209,6 +212,10 @@ QString fieldLabel(QString key)
     if(key=="eyeScale") {return QObject::tr("Eye size");}
     if(key=="bezelScale") {return QObject::tr("Bezel size");}
     if(key=="bezelImage") {return QObject::tr("Bezel image");}
+    if(key=="showType") {return QObject::tr("Show type");}
+    if(key=="typeColor") {return QObject::tr("Type color");}
+    if(key=="showSubMarker") {return QObject::tr("Show µV and dBm");}
+    if(key=="subMarkerColor") {return QObject::tr("µV and dBm color");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;

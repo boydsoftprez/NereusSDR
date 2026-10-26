@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal text: signalSubLinePixels for the uV and dBm sub
+//                 line. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Magic eye: eye size, bezel size and bezel image keys,
 //                 the bezel image cache. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -134,6 +137,8 @@ public:
     bool channelVisible(int) const;
     QString channelUnits(int) const;
     QString signalReadout(double) const;
+    // Signal text sub line size: Thetis's FontSize * 0.55, in pixels.
+    int signalSubLinePixels() const;
     static QString formatSignalReading(double,MeterUnit,bool aboveS9,bool decimal=true);
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer l) const override { return l==Layer::Background || l==Layer::OverlayDynamic; }

@@ -18,6 +18,13 @@
 //                 floor; valueText() / peakValueText() read-only accessors.
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Thetis signal text options: PK / AVG / FFT type glyph and
+//                 type color, the uV and dBm sub lines and their color, the
+//                 background color, a peak value that shows without peak
+//                 hold (the most recent history peak), history and ignore
+//                 history, and kSignalTextThetisDefaults for new items. A
+//                 saved record keeps its look. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -112,7 +119,10 @@ mw0lge@grange-lane.co.uk
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "MeterItem.h"
+#include "MeterPoller.h"
 #include <QColor>
+#include <QRectF>
+#include <QVector>
 
 namespace NereusSDR {
 
@@ -176,6 +186,73 @@ public:
     void setBarStyleMode(BarStyle s) { m_barStyle = s; }
     BarStyle barStyleMode() const { return m_barStyle; }
 
+    // What Show type draws. UnitsLabel (a saved record's) is the units
+    // under the value; ReadingGlyph is Thetis's PK / AVG / FFT symbol for
+    // the reading (renderSignalTextDisplay, MeterManager.cs:40550-40578
+    // [v2.10.3.15]).
+    enum class TypeStyle { UnitsLabel, ReadingGlyph };
+    void setTypeStyle(TypeStyle s) { m_typeStyle = s; }
+    TypeStyle typeStyle() const { return m_typeStyle; }
+
+    // Thetis TypeColour: the type glyph, or the units label.
+    void setTypeColour(const QColor& c) { m_typeColour = c; }
+    QColor typeColour() const { return m_typeColour; }
+
+    // Thetis ShowSubMarker: the uV and dBm sub lines, in the sub color
+    // (Thetis HistoryColour), beside the value and the peak.
+    void setShowSubMarker(bool s) { m_showSubMarker = s; }
+    bool showSubMarker() const { return m_showSubMarker; }
+    void setSubMarkerColour(const QColor& c) { m_subMarkerColour = c; }
+    QColor subMarkerColour() const { return m_subMarkerColour; }
+
+    // The fill behind the text (Thetis's solid colour under the group).
+    void setBackgroundColour(const QColor& c) { m_backgroundColour = c; }
+    QColor backgroundColour() const { return m_backgroundColour; }
+
+    // True (a saved record's): the peak value shows only with peak hold
+    // and reads the held peak. False (Thetis): Show peak value alone shows
+    // it, reading the history peak (MaxHistory).
+    void setPeakValueNeedsPeakHold(bool on) { m_peakValueNeedsPeakHold = on; }
+    bool peakValueNeedsPeakHold() const { return m_peakValueNeedsPeakHold; }
+    bool peakValueShown() const
+    {
+        return m_showPeakValue && (m_peakHold || !m_peakValueNeedsPeakHold);
+    }
+
+    // Thetis HistoryDuration / IgnoreHistoryDuration. Clamped to
+    // kMinBarHistoryDurationMs..kMaxBarHistoryDurationMs and
+    // kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setHistoryDurationMs(int ms);
+    int historyDurationMs() const { return m_historyDurationMs; }
+    void setIgnoreHistoryMs(int ms);
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void clearHistory() override;
+    int ignoringReadings() const { return m_ignoringNext; }
+    int historySize() const { return static_cast<int>(m_history.size()); }
+    float maxHistory() const;
+
+    // The smoothed reading the value line shows.
+    float displayValue() const { return m_smoothedDbm; }
+
+    // Thetis's type glyph text for a reading: "PK" for SignalPeak, "AVG"
+    // for SignalAvg, "FFT" for SignalMaxBin, empty for any other.
+    static QString readingTypeGlyph(int bindingId);
+    // Draws that glyph (text and symbol) in the top right of `rect`, as
+    // Thetis's renderSignalTextDisplay does. Nothing for other readings.
+    static void paintReadingTypeGlyph(QPainter& p, const QRectF& rect, int bindingId,
+                                      const QColor& colour, const QString& fontFamily,
+                                      double fontPixels);
+
+    // The sub line texts: dBm and uV for the smoothed value and for the
+    // peak the peak value shows; "--" with the unit with no reading.
+    QString subDbmText() const;
+    QString subUvText() const;
+    QString peakSubDbmText() const;
+    QString peakSubUvText() const;
+
+    // New items (makeEntry) take kSignalTextThetisDefaults.
+    void applyNewItemDefaults() override;
+
     void setValue(double v) override;
 
     // The main and peak text paint() draws; "--" with the unit when there
@@ -195,6 +272,9 @@ private:
     QString formatUv(float dbm) const;
     QString formatValue(float dbm) const;
     QString noReadingLabel() const;
+    float peakValueDbm() const;
+    int historyIntervalMs() const;
+    void appendHistory();
 
     // From Thetis Common.UVfromDBM
     static double uvFromDbm(double dbm);
@@ -217,6 +297,63 @@ private:
     float m_smoothedDbm{-140.0f};
     float m_peakDbm{-140.0f};
     int   m_peakHoldCounter{0};
+
+    // Appended options. These starting values paint as a saved record did
+    // before the options existed; new items take kSignalTextThetisDefaults.
+    TypeStyle m_typeStyle{TypeStyle::UnitsLabel};
+    QColor    m_typeColour{0x80, 0x90, 0xa0};        // the units label's ink
+    bool      m_showSubMarker{false};
+    QColor    m_subMarkerColour{0x80, 0x80, 0x80};   // Gray
+    QColor    m_backgroundColour{0x0a, 0x0a, 0x18};
+    bool      m_peakValueNeedsPeakHold{true};
+    // From Thetis MeterManager.cs:21647-21648 [v2.10.3.15]
+    int       m_historyDurationMs{2000};
+    int       m_ignoreHistoryMs{2000};
+    int       m_ignoringNext{0};
+    QVector<float> m_history;
+};
+
+// New SIGNALTEXT items (makeEntry) and new meter.signalText presets take
+// Thetis's signal text. From Thetis MeterManager.cs:23001-23062
+// [v2.10.3.15] (AddSMeterBarText) and the clsSignalText constructor
+// :21644-21676.
+struct SignalTextItemThetisDefaults {
+    QRgb  backgroundColour;
+    int   bindingId;
+    float attackRatio;
+    float decayRatio;
+    int   historyDurationMs;
+    int   ignoreHistoryMs;
+    bool  showHistory;
+    QRgb  subMarkerColour;
+    bool  showValue;
+    bool  showPeakValue;
+    QRgb  fontColour;
+    float fontSize;
+    QRgb  peakValueColour;
+    bool  peakHold;
+    bool  showSubMarker;
+    bool  showType;
+    QRgb  typeColour;
+};
+inline constexpr SignalTextItemThetisDefaults kSignalTextThetisDefaults{
+    qRgb(32, 32, 32),               // sc.Colour = Color.FromArgb(32, 32, 32) (:23012)
+    MeterBinding::SignalAvg,        // Reading.AVG_SIGNAL_STRENGTH (:23021)
+    0.8f,                           // cst.AttackRatio = 0.8f (:23023)
+    0.2f,                           // cst.DecayRatio = 0.2f (:23024)
+    4000,                           // cst.HistoryDuration = 4000 (:23026)
+    2000,                           // _msIgnoreHistoryDuration = 2000 (:21648)
+    false,                          // cst.ShowHistory = false (:23027)
+    qRgb(0x80, 0x80, 0x80),         // cst.HistoryColour = Color.Gray (:23028)
+    true,                           // cst.ShowValue = true (:23029)
+    true,                           // cst.ShowPeakValue = true (:23030)
+    qRgb(0xff, 0xff, 0x00),         // cst.FontColour = Color.Yellow (:23031)
+    56.0f,                          // cst.FontSize = 56f (:23032)
+    qRgb(0xff, 0x00, 0x00),         // _peakValueColour = Color.Red (:21655)
+    false,                          // _peakHold = false (:21656)
+    true,                           // _showSubMarker = true (:21658)
+    true,                           // _showType = true (:21667)
+    qRgb(0x80, 0x80, 0x80),         // _typeColor = Color.Gray (:21668)
 };
 
 } // namespace NereusSDR
