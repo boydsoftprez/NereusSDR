@@ -53,10 +53,8 @@ struct BandView: UIViewRepresentable {
         private(set) var currentDrawKey: BandModel.DrawKey?
         #endif
         private var changes: AnyCancellable?
-        /// When the last 3D draw began, and whether a later one is waiting
-        /// for the least interval between 3D draws.
-        private var lastStackDraw: CFTimeInterval = 0
-        private var stackDrawWaiting = false
+        /// The least interval between 3D draws, from when each was due.
+        private var stackDraws = StackedDrawThrottle()
         private static let logger = Logger(subsystem: "NereusSDR", category: "band")
 
         init(model: BandModel) {
@@ -86,19 +84,17 @@ struct BandView: UIViewRepresentable {
                 view.setNeedsDisplay()
                 return
             }
-            let wait = lastStackDraw + model.stackDrawInterval - CACurrentMediaTime()
-            guard wait > 0 else {
+            switch stackDraws.request(at: CACurrentMediaTime(), interval: model.stackDrawInterval) {
+            case .now:
                 view.setNeedsDisplay()
+            case .waiting:
                 return
-            }
-            guard !stackDrawWaiting else {
-                return
-            }
-            stackDrawWaiting = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self, weak view] in
-                MainActor.assumeIsolated {
-                    self?.stackDrawWaiting = false
-                    view?.setNeedsDisplay()
+            case .after(let wait):
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self, weak view] in
+                    MainActor.assumeIsolated {
+                        self?.stackDraws.waited()
+                        view?.setNeedsDisplay()
+                    }
                 }
             }
         }
@@ -122,9 +118,6 @@ struct BandView: UIViewRepresentable {
             let scale = view.contentScaleFactor
             let state = model.prepareToDraw(size: view.drawableSize, scale: scale)
             let stacked = model.drawsStack
-            if stacked {
-                lastStackDraw = CACurrentMediaTime()
-            }
             // What a 3D frame cost to draw, for the pacer (recommendation 3).
             var timing: (@Sendable (Double) -> Void)?
             if stacked {

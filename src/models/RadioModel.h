@@ -5201,6 +5201,9 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    // The connect-time restore of a slice's last band, for the antenna
+    // table tests (a radio switched off and on again).
+    void loadSliceStateForTest(SliceModel* slice) { loadSliceState(slice); }
     // iPhone app Task 73: the frequency the FreeDV Reporter lists (the
     // station-level active slice's), whether or not it is connected.
     quint64 freedvWantedFrequencyHzForTest() const { return m_freedvWantedHz; }
@@ -7009,6 +7012,14 @@ private:
     // per-band Alex state. Called at every authority boundary (slice edit,
     // TX handoff, and immediately before MOX routing).
     void applyTxAntennaFromBoundSlice();
+    /// Name the slice's RX and TX antennas from Setup's per-band antenna
+    /// table for the band its frequency is in. The table is the only store
+    /// of a band's antennas; a slice keeps no copy of its own.
+    void refreshSliceAntennasFromAlex(SliceModel* slice);
+    // A slice tuned onto the station's current band (no crossing) takes
+    // that band's antenna labels; while the receive antenna is kept, the
+    // transmit label only.
+    void refreshSliceLabelsOnStationBand(SliceModel* slice, Band band);
 
     void connectToRadioImpl(const RadioInfo& info, bool preserveSlices);
     void wireConnectionSignals(int wdspInSize);

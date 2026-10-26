@@ -91,4 +91,11 @@ public struct BandLayout: Equatable, Sendable {
 
     /// How many waterfall lines fit: one per pixel row.
     public var waterfallLines: Int { max(1, Int(waterfall.height)) }
+
+    /// The waterfall's height in points: what the 3D view's Match divides
+    /// by its 96 rows, as the desktop divides its waterfall's height in
+    /// Qt's logical pixels (SpectrumWidget::effectiveDssRowDivider). Pixel
+    /// rows at 3x made a row of ten lines on an iPhone 18 Pro Max, three
+    /// times the desktop's, and the 3D view crept (2026-10-24).
+    public var waterfallPoints: Int { max(0, Int((waterfall.height / scale).rounded())) }
 }

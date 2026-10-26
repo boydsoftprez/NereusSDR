@@ -27,6 +27,15 @@
 //                filter is restored; a remote window follows the Core's
 //                copy. J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Claude Code.
+//   2026-10-23 - refreshSliceAntennasFromAlex: a slice names its antennas
+//                from Setup's per-band antenna table when it is made and on
+//                every connect, now that it saves no antenna of its own. A
+//                table edit sets the transmit slice's TX label, and a slice
+//                tuned onto the station's band takes that band's labels
+//                (refreshSliceLabelsOnStationBand), so key-down never writes
+//                an older label back.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-23 - reportDspDiagnostics logs the I/Q chunks a slice's channel
 //                silenced because their size was not its WDSP input block
 //                (inputSizeMismatchLogLine) with the chunk size and input
@@ -2404,6 +2413,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // issue #98's protocol-layer gap.
     connect(&m_alexController, &AlexController::antennaChanged, this,
             [this](Band b) {
+        // The transmit slice's TX label follows its band's row, active or
+        // not: key-down writes that label back into the row
+        // (applyTxAntennaFromBoundSlice), so an older label would undo a
+        // Setup edit. The receive label is left to the active-slice refresh
+        // below. A remote window's labels are the Core's.
+        if (m_role == Role::Local) {
+            SliceModel* const txSlice = txBoundSlice();
+            if (txSlice && bandFromFrequency(txSlice->frequency()) == b) {
+                txSlice->setTxAntenna(QStringLiteral("ANT%1").arg(m_alexController.txAnt(b)));
+            }
+        }
         // Persist on every controller mutation so the per-band
         // selection survives app restart. Without this, AlexController
         // state lived only in memory — caught during PR #N bench
@@ -16148,6 +16168,15 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             restoredSavedState = true;
         }
     }
+    // Every slice names its antennas from Setup's antenna table for the band
+    // it starts on; it keeps none of its own. Before it is appended, so the
+    // label the transmit binding writes back (applyTxAntennaFromBoundSlice)
+    // is the table's own. Not wired yet, so this sets the labels and writes
+    // nothing.
+    if (m_role == Role::Local) {
+        refreshSliceAntennasFromAlex(slice);
+        if (!self || !added) { return -1; }
+    }
     m_slices.append(slice);
     m_slicePublications[slice].constructing = false;
     const auto currentAdded = [&] {
@@ -24599,6 +24628,23 @@ void RadioModel::crossBandForSlice(SliceModel* slice, Band newBand)
     }
 }
 
+// A slice tuned onto the band the station is already on changes band
+// without a crossing (crossBandForSlice runs only when the station's band
+// changes), so its labels still name its old band's row; as the transmit
+// slice it would write that TX label into this band's row at key-down.
+void RadioModel::refreshSliceLabelsOnStationBand(SliceModel* slice, Band band)
+{
+    // While the receive antenna is kept, the receive label names the relay's
+    // antenna and writing it would store the kept antenna as this band's
+    // (crossBandForSlice), so only the transmit label follows the row.
+    if (m_keptRxAntennaBand) {
+        slice->setTxAntenna(QStringLiteral("ANT%1").arg(m_alexController.txAnt(band)));
+        return;
+    }
+    const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+    slice->refreshAntennasFromAlex(m_alexController, band, &sku);
+}
+
 bool RadioModel::receiveAntennaDiffers(Band a, Band b) const
 {
     // iPhone app Task 75: whether the relay's receive side would move from
@@ -24677,10 +24723,14 @@ void RadioModel::wireBandTrackingForTest(SliceModel* slice)
 {
     // The frequency handler's band test, for a model with no connection
     // (wireSliceSignals runs only once a radio connects).
-    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double freq) {
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, slice, sliceBand = bandFromFrequency(slice->frequency())](double freq) mutable {
         const Band newBand = bandFromFrequency(freq);
+        const Band oldSliceBand = std::exchange(sliceBand, newBand);
         if (newBand != m_lastBand) {
             crossBandForSlice(slice, newBand);
+        } else if (oldSliceBand != newBand) {
+            refreshSliceLabelsOnStationBand(slice, newBand);
         }
     });
 }
@@ -24711,7 +24761,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // Reporter frequency now follows the station-level active slice from
     // addSliceImpl, iPhone app Task 73; the simplex TX-follows-RX push has
     // lived there longer.)
-    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double freq) {
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, slice, sliceBand = bandFromFrequency(slice->frequency())](double freq) mutable {
         // The FreeDV Reporter push moved to addSliceImpl (iPhone app Task
         // 73), wired once for every slice whatever the connection does, so
         // it follows the station-level active slice alone.
@@ -24735,11 +24786,14 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         // for that band. Letting the coalesced scheduleSettingsSave() flush
         // keeps the CURRENT band's slot up to date without either bug.
         Band newBand = bandFromFrequency(freq);
+        const Band oldSliceBand = std::exchange(sliceBand, newBand);
         if (newBand != m_lastBand) {
             qCDebug(lcConnection) << "T10: band crossing" << bandLabel(m_lastBand)
                                   << "→" << bandLabel(newBand)
                                   << "(freq=" << freq << "Hz)";
             crossBandForSlice(slice, newBand);
+        } else if (oldSliceBand != newBand) {
+            refreshSliceLabelsOnStationBand(slice, newBand);
         }
         scheduleSettingsSave(slice);
     });
@@ -25651,6 +25705,11 @@ void RadioModel::loadSliceState(SliceModel* slice)
 
     slice->restoreFromSettings(currentBand);
 
+    // The restored band's antennas come from Setup's antenna table. The
+    // slice used to restore a saved label of its own here and write it
+    // over that band's row of the table when the radio connected again.
+    refreshSliceAntennasFromAlex(slice);
+
     // And put the restored rate on the DDC, not just on the menu. Codex
     // review round 7, PR #293. Same call as the band-change path: this is
     // the launch-time restore, and it was equally display-only.
@@ -25784,6 +25843,22 @@ void RadioModel::clearStationModMonitor()
 {
     m_stationModMonitor[0].reset();
     m_stationModMonitor[1].reset();
+}
+
+void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)
+{
+    // Setup's per-band antenna table (AlexController) is the only store of
+    // a band's antennas, as in Thetis, whose band stack entry holds no
+    // antenna (clsBandStackManager.cs:114-142 [v2.10.3.15]); the antennas
+    // live in Alex alone. The band is the one the slice's frequency is in,
+    // which is the band the slice's rxAntennaChanged / txAntennaChanged
+    // handlers write back to, so the write-back finds the values it would
+    // write and changes nothing.
+    if (slice == nullptr) {
+        return;
+    }
+    const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+    slice->refreshAntennasFromAlex(m_alexController, bandFromFrequency(slice->frequency()), &sku);
 }
 
 void RadioModel::applyTxAntennaFromBoundSlice()
@@ -29338,6 +29413,15 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // fresh connection. Matches Thetis's initial UpdateAlexAntSelection
         // call path on radio startup (HPSDR/Alex.cs:310 [@501e3f5]).
         applyAlexAntennaForBand(m_lastBand);
+        // And every slice names its antennas from the table for its own
+        // band, so a label restored or kept from before the connection
+        // never reaches the table as a new choice. A remote window's
+        // labels are the Core's and are left alone.
+        if (m_role == Role::Local) {
+            for (SliceModel* slice : std::as_const(m_slices)) {
+                refreshSliceAntennasFromAlex(slice);
+            }
+        }
         // Phase 3F: same for the per-ADC band-pass. The slice set survives a
         // reconnect, so the fresh connection has to be told which chain is
         // filtered and which is wide before the first tune moves anything.
