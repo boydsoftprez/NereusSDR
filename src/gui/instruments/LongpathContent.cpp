@@ -99,6 +99,10 @@
 //                 sits at -93 dBm there, as Thetis getPerc does. Max Bin
 //                 and the TX readings are unchanged. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The five types declare "Fade on RX" and "Fade on TX"
+//                 (ContentFade::properties); the container host gives a
+//                 row with either on its fade overlay. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -109,6 +113,7 @@
 #include "core/SliceOwnership.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
 #include "gui/instruments/NeedleInstrument.h"
@@ -427,10 +432,12 @@ QVector<ContentProperty> meterProperties(const QString& typeId)
         compact.defaultValue = true;
         out.append(compact);
     }
+    out += ContentFade::properties();
     return out;
 }
 
-QVector<ContentProperty> frequencyProperties()
+// The rows both frequency types share; each appends the fade toggles last.
+QVector<ContentProperty> frequencyBaseProperties()
 {
     ContentProperty form;
     form.key = QLatin1String(kFormKey);
@@ -457,9 +464,14 @@ QVector<ContentProperty> frequencyProperties()
     return {form, second};
 }
 
+QVector<ContentProperty> frequencyProperties()
+{
+    return frequencyBaseProperties() + ContentFade::properties();
+}
+
 QVector<ContentProperty> frequencyDisplayProperties()
 {
-    QVector<ContentProperty> out = frequencyProperties();
+    QVector<ContentProperty> out = frequencyBaseProperties();
 
     ContentProperty size;
     size.key = QLatin1String(kFontSizeKey);
@@ -501,6 +513,7 @@ QVector<ContentProperty> frequencyDisplayProperties()
     other.defaultValue = true;
 
     out << size << fit << color << center << own << other;
+    out += ContentFade::properties();
     return out;
 }
 
@@ -511,7 +524,7 @@ QVector<ContentProperty> filterProperties()
     label.label = QObject::tr("Label");
     label.kind = ContentProperty::Kind::Text;
     label.placeholder = QObject::tr("The source slice, for example RX A");
-    return {label};
+    return QVector<ContentProperty>{label} + ContentFade::properties();
 }
 
 } // namespace
