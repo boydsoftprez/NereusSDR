@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
+//                 hook (no-op in the base), SolidColourItem override. Saved
+//                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -285,6 +289,8 @@ QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 // Format: x|y|w|h|bindingId|zOrder
 // ---------------------------------------------------------------------------
 
+void MeterItem::applyNewItemDefaults() {}
+
 void MeterItem::resetForTxTransition(bool inTx)
 {
     if (!inTx && bindingId() >= MeterBinding::TxPower && bindingId() < MeterBinding::HwVolts) {
@@ -451,6 +457,21 @@ static bool parseBaseFields(MeterItem& item, const QStringList& parts)
 // SolidColourItem
 // Format: SOLID|x|y|w|h|bindingId|zOrder|#aarrggbb
 // ---------------------------------------------------------------------------
+
+namespace {
+// New-item defaults (clsSolidColour constructor).
+struct SolidThetisDefaults {
+    QRgb colour;
+};
+// From Thetis MeterManager.cs:7663 [v2.10.3.15] (_colour = System.Drawing.Color.Black)
+constexpr SolidThetisDefaults kSolidThetisDefaults{qRgb(0, 0, 0)};
+} // namespace
+
+void SolidColourItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    m_colour = QColor::fromRgb(kSolidThetisDefaults.colour);
+}
 
 void SolidColourItem::paint(QPainter& p, int widgetW, int widgetH)
 {

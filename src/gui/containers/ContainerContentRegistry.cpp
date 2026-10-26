@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-25 - makeEntry applies MeterItem::applyNewItemDefaults() to new
+//                 items. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
@@ -344,6 +347,8 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
         return entry;
     }
     const auto item = allocate(typeId);
+    // New items take Thetis defaults; restored items never pass through here.
+    if (item) { item->applyNewItemDefaults(); }
     if (const auto* waveform=qobject_cast<const WaveformMeterItem*>(item.get())) { entry.config.insert("properties",waveform->configuration()); }
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }

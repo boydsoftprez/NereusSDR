@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
+//                 hook (no-op in the base), SolidColourItem override. Saved
+//                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -319,6 +323,13 @@ public:
     virtual QString serialize() const;
     virtual bool deserialize(const QString& data);
 
+    // New items only: ContainerContentRegistry::makeEntry calls this on the
+    // item it allocates, before taking its record. Overrides call the base
+    // first, then copy their k<Item>ThetisDefaults table onto the item.
+    // Constructors keep the older values, so a saved record (or one with
+    // fields missing) restores exactly as before. No-op in the base.
+    virtual void applyNewItemDefaults();
+
     // --- Mouse interaction (Phase 3G-5) ---
     virtual bool hitTest(const QPointF& pos, int widgetW, int widgetH) const;
     virtual bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH);
@@ -438,6 +449,7 @@ public:
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QColor m_colour{0x0f, 0x0f, 0x1a};

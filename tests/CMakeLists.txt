@@ -772,6 +772,8 @@ nereus_add_test(tst_container_document)
 # Container item colours and button grid styling survive a save and reload;
 # records saved before those fields existed still load.
 nereus_add_test(tst_container_item_persistence)
+# New container items take Thetis defaults; saved items keep their look.
+nereus_add_test(tst_meter_new_item_defaults)
 # Transmit state reaches fade covers, VFO displays and button grids through ContainerManager (offscreen).
 nereus_add_test(tst_container_item_tx_state)
 nereus_add_test(tst_container_workspace_store)
