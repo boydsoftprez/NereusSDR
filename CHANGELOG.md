@@ -357,6 +357,11 @@ still connect to each other as before.
 - For support: the Core logs each receiver's I/Q level, and any noise
   reduction call that takes longer than 50 ms, with the stage that ran.
   ([#617](https://github.com/boydsoftprez/NereusSDR/pull/617))
+- For support: when a remote connection attempt ends with no answer, the log
+  line now says how long after the start it ended and what it met, such as a
+  refused connection, a connection closed during the secure handshake, or a
+  close before the Core's hello.
+  ([#646](https://github.com/boydsoftprez/NereusSDR/pull/646))
 
 ## [2026.10.1] - 2026-10-17
 
