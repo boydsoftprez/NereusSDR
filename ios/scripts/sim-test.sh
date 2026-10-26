@@ -18,13 +18,22 @@
 #      folder, no test diagnostics, no parallel testing, -jobs
 #      SIM_TEST_JOBS (default 2) and the arguments given,
 #   3. keeps xcodebuild's output in the logs folder below and prints its
-#      counts and failures; when xcodebuild fails, for a test that failed or for "The test runner
+#      failures and counts; when xcodebuild fails, for a test that failed or for "The test runner
 #      hung before establishing connection", copies out what the next look
 #      needs before Xcode prunes it: the run's result bundle, the
 #      simulator's log of the last 15 minutes for testmanagerd, CoreSimulator
 #      and the app (whose launch line names each process's arguments), the
 #      load average and the simulators' states. They go in
-#      SIM_TEST_LOGS (default <folder>/Logs/sim-test) under the time.
+#      SIM_TEST_LOGS (default <folder>/Logs/sim-test) under the time,
+#   4. prunes those logs: it keeps the newest 10 run folders, and any older
+#      one from a run that failed if it is less than a day old, and deletes
+#      the rest. It only ever deletes folders it made itself (named by the
+#      time, holding its .sim-test-run mark), so nothing else put in
+#      SIM_TEST_LOGS is touched.
+#
+# The summary prints the failures first, in the order xcodebuild wrote them
+# (XCTest's "error: -[...]" and "Test Case '...' failed" lines and Swift
+# Testing's "✘" lines, each once), and then the counts.
 #
 # Exits with xcodebuild's status, or sim-ready.sh's when that fails.
 
@@ -54,9 +63,40 @@ fi
 
 "$here/sim-ready.sh" "$name" "$app" || exit $?
 
+# How many run folders to keep, and the mark that says sim-test made one.
+keep=10
+mark=.sim-test-run
+
+# Deletes the run folders past the newest $keep, except those of a failed
+# run less than a day old. Only folders named by the time and holding the
+# mark are considered.
+prune() {
+    find "$base" -mindepth 1 -maxdepth 1 -type d -name '????-??-??T??????' 2>/dev/null |
+        sort -r | tail -n +$((keep + 1)) |
+        while IFS= read -r old; do
+            if [ ! -f "$old/$mark" ]; then
+                continue
+            fi
+            if [ -f "$old/status" ] && [ "$(cat "$old/status")" != 0 ] &&
+                [ -n "$(find "$old/$mark" -mtime -1 2>/dev/null)" ]; then
+                continue
+            fi
+            rm -rf "$old"
+        done
+}
+
+# Writes the run's exit status beside its logs, prunes, and exits with it.
+finish() {
+    echo "$1" > "$logs/status"
+    prune
+    exit "$1"
+}
+
 started=$(date +%Y-%m-%dT%H%M%S)
-logs=${SIM_TEST_LOGS:-$derived/Logs/sim-test}/$started
+base=${SIM_TEST_LOGS:-$derived/Logs/sim-test}
+logs=$base/$started
 mkdir -p "$logs"
+: > "$logs/$mark"
 say "xcodebuild's output: $logs/xcodebuild.log"
 
 xcodebuild -project "$root/ios/NereusSDR.xcodeproj" -scheme NereusSDR \
@@ -64,12 +104,16 @@ xcodebuild -project "$root/ios/NereusSDR.xcodeproj" -scheme NereusSDR \
     -collect-test-diagnostics never -parallel-testing-enabled NO -jobs "$jobs" \
     test-without-building "$@" > "$logs/xcodebuild.log" 2>&1
 status=$?
-# The counts and any failures, from XCTest and Swift Testing.
-grep -E "Executed [0-9]+ test|Test run with|✘|Test cancelled|TEST EXECUTE|TEST SUCCEEDED|hung before" \
-    "$logs/xcodebuild.log" | sort -u | tail -n 20
+# The failures first, from XCTest and Swift Testing, each once and in
+# xcodebuild's order, then the counts. Swift Testing's closing "✘ Test run
+# with ..." line is a count.
+counts="Executed [0-9]+ test|Test run with|Test cancelled|TEST EXECUTE|TEST SUCCEEDED"
+grep -E "✘|error: -\[|Test Case .* failed|hung before" "$logs/xcodebuild.log" |
+    grep -v -E "Test run with" | awk '!seen[$0]++'
+grep -E "$counts" "$logs/xcodebuild.log" | awk '!seen[$0]++'
 
 if [ "$status" -eq 0 ]; then
-    exit 0
+    finish 0
 fi
 
 if grep -q "hung before establishing connection" "$logs/xcodebuild.log"; then
@@ -96,4 +140,4 @@ if [ -n "$udid" ]; then
 fi
 uptime > "$logs/load.txt" 2>&1
 xcrun simctl list devices > "$logs/simulators.txt" 2>&1
-exit "$status"
+finish "$status"

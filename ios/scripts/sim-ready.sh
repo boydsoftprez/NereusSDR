@@ -17,7 +17,9 @@
 #   3. installs the app when a path is given, then launches it and
 #      terminates it again, retrying until one launch succeeds,
 #   4. waits until that launch's process has really gone (launchd no
-#      longer lists the app), and fails if it has not.
+#      longer lists the app), and fails if it has not. A `launchctl list`
+#      that fails or prints nothing says nothing about the app: it is tried
+#      again, and five such in a row fail the script.
 #
 # Always pass the app you are about to test. Without an app path step 3
 # launches the build already installed there, and the first launch of the
@@ -31,7 +33,8 @@
 #
 # Gives up with exit 1 after SIM_READY_TIMEOUT seconds (default 900), or
 # when the warm launch's process is still there SIM_READY_EXIT_TIMEOUT
-# seconds (default 30) after it was terminated.
+# seconds (default 30) after it was terminated. Both must be whole numbers
+# of seconds; anything else exits 2 at once.
 
 set -u
 
@@ -46,6 +49,17 @@ bundle=com.boydsoftprez.NereusSDR.ios
 timeout=${SIM_READY_TIMEOUT:-900}
 exit_timeout=${SIM_READY_EXIT_TIMEOUT:-30}
 started=$(date +%s)
+# The most `launchctl list` failures in a row step 4 takes before it gives up.
+listing_tries=5
+
+for setting in "SIM_READY_TIMEOUT=$timeout" "SIM_READY_EXIT_TIMEOUT=$exit_timeout"; do
+    case ${setting#*=} in
+        '' | *[!0-9]*)
+            echo "$0: ${setting%%=*} must be a whole number of seconds, not \"${setting#*=}\"" >&2
+            exit 2
+            ;;
+    esac
+done
 
 say() {
     echo "sim-ready: $*"
@@ -118,10 +132,21 @@ fi
 
 # Whether launchd still runs a process of the app on the simulator: a line
 # "<pid> <status> UIKitApplication:<bundle>[...]" with a pid (a job that has
-# ended shows "-" there).
+# ended shows "-" there). Exits 0 when it does, 1 when it does not, and 2
+# when `launchctl list` failed or printed nothing, so the answer is unknown;
+# the failure's words are then in $listing_error.
+listing_error=
 app_running() {
-    xcrun simctl spawn "$udid" launchctl list 2>/dev/null |
-        awk -v job="UIKitApplication:$bundle[" '$1 ~ /^[0-9]+$/ && index($3, job) == 1 { found = 1 } END { exit !found }'
+    if ! listing=$(xcrun simctl spawn "$udid" launchctl list 2>&1); then
+        listing_error=$(printf '%s\n' "$listing" | head -n 1)
+        return 2
+    fi
+    if [ -z "$listing" ]; then
+        listing_error="it printed nothing"
+        return 2
+    fi
+    printf '%s\n' "$listing" |
+        awk -v job="UIKitApplication:${bundle}[" '$1 ~ /^[0-9]+$/ && index($3, job) == 1 { found = 1 } END { exit !found }'
 }
 
 attempt=0
@@ -132,7 +157,25 @@ while :; do
         xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1
         terminated=$?
         waited=0
-        while app_running; do
+        failed_listings=0
+        while :; do
+            app_running
+            running=$?
+            if [ "$running" -eq 1 ]; then
+                break
+            fi
+            if [ "$running" -eq 2 ]; then
+                failed_listings=$((failed_listings + 1))
+                say "launchctl list on $name failed ($listing_error); try $failed_listings of $listing_tries"
+                if [ "$failed_listings" -ge "$listing_tries" ]; then
+                    echo "$0: launchctl list on $name failed $listing_tries times in a row ($listing_error)," \
+                        "so whether the warm launch's process ($launched) has gone is unknown; a UI test" \
+                        "launched now may show that process, without its arguments" >&2
+                    exit 1
+                fi
+            else
+                failed_listings=0
+            fi
             if [ "$waited" -ge "$exit_timeout" ]; then
                 echo "$0: the warm launch's process ($launched) is still running on $name" \
                     "${exit_timeout}s after simctl terminate (exit $terminated); a UI test launched now" \
