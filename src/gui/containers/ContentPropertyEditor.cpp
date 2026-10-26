@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal history: a "Trace 2 source" row (Off, Slice A-D,
+//                 Follow selected RX) writes the face's trace2Context.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Power limit row for the PWR and Reverse PWR bars.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Bar preset rows for the Thetis colour set: show title,
@@ -638,6 +641,31 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         if(source->currentData().toString()==QStringLiteral("followSelectedRx")) {m_entry.context["rxSourceMode"]=QStringLiteral("followSelectedRx");}
         else if(source->currentData().toInt()>=0) {m_entry.context["sliceId"]=source->currentData().toInt();} publish();
     });
+    if(composite && composite->typeId()=="meter.historyGraph") {
+        // Signal history trace 2 picks its own slice (Off leaves it off).
+        auto* trace2=new QComboBox(advanced); trace2->setObjectName("historyTrace2Source");
+        trace2->addItem(tr("Off"),QStringLiteral("off"));
+        for(int i=0;i<4;++i) { trace2->addItem(tr("Slice %1").arg(QChar('A'+i)),i); }
+        trace2->addItem(tr("Follow selected RX"),QStringLiteral("followSelectedRx"));
+        const QJsonValue stored=composite->configuration().value("trace2Context");
+        const QJsonObject current=stored.toObject();
+        const QVariant chosen=!stored.isObject() ? QVariant(QStringLiteral("off"))
+            : current.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx") ? QVariant(QStringLiteral("followSelectedRx"))
+            : QVariant(current.contains("sliceId")?current["sliceId"].toInt():current["rxSource"].toInt()-1);
+        trace2->setCurrentIndex(qMax(0,trace2->findData(chosen))); bindings->addRow(tr("Trace 2 source"),trace2);
+        connect(trace2,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,trace2]{
+            const QVariant data=trace2->currentData();
+            if(data.toString()==QStringLiteral("off")) { property("trace2Context",QJsonValue(QJsonValue::Null)); return; }
+            auto* face=qobject_cast<CompositePresetItem*>(m_item.get());
+            QJsonObject next;
+            // A radio session the trace names is kept.
+            const QJsonObject before=face?face->trace2Context():QJsonObject();
+            if(before.contains("sessionId")) { next["sessionId"]=before["sessionId"]; }
+            if(data.toString()==QStringLiteral("followSelectedRx")) { next["rxSourceMode"]=QStringLiteral("followSelectedRx"); }
+            else { next["sliceId"]=data.toInt(); }
+            property("trace2Context",next);
+        });
+    }
     for(const QString& key:{QStringLiteral("sessionId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable")}) {
         // Declared widget types read no MMIO source.
         if((applet || declared || qobject_cast<WaveformMeterItem*>(m_item.get())) && key!="sessionId") {continue;}

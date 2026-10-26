@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal history trace 2 reads its own slice: each live
+//                 history face registers it as a reading consumer
+//                 (HistoryGraphPresetItem::attachTrace2); refreshContainerMeter
+//                 veils it when it names another session's radio; previews
+//                 replay its cached reading. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / TX: refreshContainerMeter marks the items of
 //                 an entry on another session's radio (setForeignSession);
 //                 a slice band change clears container item history
@@ -1248,6 +1254,7 @@ warren@wpratt.com
 #include "containers/ContainerWorkspaceStore.h"
 #include "containers/ContainerSourceAdapter.h"
 #include "meters/presets/CompositePresetItem.h"
+#include "meters/presets/HistoryGraphPresetItem.h"
 #include "meters/presets/BarPresetItem.h"
 #include "meters/AboveS9Frequency.h"
 #include <QJsonArray>
@@ -9398,9 +9405,25 @@ void MainWindow::buildUI()
         for(auto* item:meter->items()) {
             const auto source=item->property("containerSourceContext");
             refreshContainerMeter(nullptr,meter,item,source.isValid()?source.toJsonObject():context);
+            // An inert preview's trace 2 shows its slice's cached reading.
+            if(auto* history=qobject_cast<HistoryGraphPresetItem*>(item)) {
+                history->replayTrace2(*m_meterPoller,source.isValid()?source.toJsonObject():context,containerSessionId());
+            }
         }
     });
     connect(m_containerManager, &ContainerManager::meterContextReady, m_meterPoller, &MeterPoller::setTargetContext);
+    // Signal history trace 2 reads its own slice (D2): the entry's context
+    // feeds trace 1 through the meter's target; trace 2 registers its own.
+    const auto attachHistoryTraces = [this](MeterWidget* meter, const QJsonObject& context) {
+        if (!meter || !m_meterPoller) { return; }
+        for (MeterItem* item : meter->items()) {
+            if (auto* history = qobject_cast<HistoryGraphPresetItem*>(item)) {
+                const QVariant own = item->property("containerSourceContext");
+                history->attachTrace2(m_meterPoller, own.isValid() ? own.toJsonObject() : context, containerSessionId());
+            }
+        }
+    };
+    connect(m_containerManager, &ContainerManager::meterContextReady, this, attachHistoryTraces);
     connect(m_containerManager, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
         if (!meter || !m_meterPoller) { return; }
         if (!m_containerManager->workspaceStore()) { m_meterPoller->addTarget(meter); }
@@ -9414,7 +9437,10 @@ void MainWindow::buildUI()
     for (auto* c : m_containerManager->allContainers()) {
         wireContainerControls(c);
         if (auto* host = m_containerManager->contentHost(c->id())) {
-            for (MeterWidget* meter : host->meterSurfaces()) { m_meterPoller->setTargetContext(meter, host->sourceContext(meter)); }
+            for (MeterWidget* meter : host->meterSurfaces()) {
+                m_meterPoller->setTargetContext(meter, host->sourceContext(meter));
+                attachHistoryTraces(meter, host->sourceContext(meter));
+            }
         }
     }
     if (m_containerManager->containerCount() == 0 && !m_containerManager->workspaceStore()) {
@@ -15254,6 +15280,11 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     const QString entrySession = context.value(QStringLiteral("sessionId")).toString();
     const bool foreignSession = !entrySession.isEmpty() && entrySession != containerSessionId();
     for (MeterItem* item : items) { item->setForeignSession(foreignSession); }
+    // Signal history trace 2 names its own source, which may be another
+    // session's radio while the entry's is this one (or the other way).
+    for (MeterItem* item : items) {
+        if (auto* history = qobject_cast<HistoryGraphPresetItem*>(item)) { history->updateTrace2Session(context, containerSessionId()); }
+    }
     // Snapshot actual child presentation rather than dirtying equal model pushes.
     const auto signature = [](MeterItem* item) {
         QString value = item->serialize() + QString::number(item->aboveS9Frequency());

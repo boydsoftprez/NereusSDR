@@ -31,6 +31,10 @@
 //                 back, lines and time colours and manual min/max per axis
 //                 (record v3); kHistoryThetisDefaults for new items.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Keep for up to 1800 s, as Thetis's Keep For control;
+//                 axis 1 keeps its reading while data source variable 1
+//                 feeds axis 0 (readingBindingsBesideMmio). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -125,9 +129,11 @@ void HistoryGraphItem::setCapacity(int cap)
 // ---------------------------------------------------------------------------
 void HistoryGraphItem::setDurationMs(int ms)
 {
-    // Clamp to valid range (1 s — 10 min)
-    if (ms < 1000) { ms = 1000; }
-    if (ms > 600000) { ms = 600000; }
+    // Clamp to Thetis's Keep For range, 1 s to 1800 s.
+    // From Thetis setup.designer.cs:62510-62519 [v2.10.3.15] (nudHistory_keep_for
+    // Maximum 1800, Minimum 1, in seconds)
+    if (ms < kMinHistoryKeepForMs) { ms = kMinHistoryKeepForMs; }
+    if (ms > kMaxHistoryKeepForMs) { ms = kMaxHistoryKeepForMs; }
 
     m_durationMs = ms;
 
@@ -218,9 +224,18 @@ QSet<int> HistoryGraphItem::readingBindings() const
     return bindings;
 }
 
+QSet<int> HistoryGraphItem::readingBindingsBesideMmio() const
+{
+    // From Thetis MeterManager.cs:18101-18165 [v2.10.3.15]: each axis reads
+    // its data source or its reading on its own.
+    if (m_bindingId1 >= 0 && !hasMmioBinding(1)) { return {m_bindingId1}; }
+    return {};
+}
+
 void HistoryGraphItem::pushBindingValue(int binding, double value)
 {
-    if (binding >= 0 && binding == m_bindingId && axisAccepts(0)) {
+    // Data source variable 1 feeds axis 0 (setValue through MeterWidget).
+    if (binding >= 0 && binding == m_bindingId && !hasMmioBinding() && axisAccepts(0)) {
         setValue(value);
     }
     if (binding >= 0 && binding == m_bindingId1 && !hasMmioBinding(1) && axisAccepts(1)) {

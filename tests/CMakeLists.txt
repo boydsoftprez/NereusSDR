@@ -878,6 +878,9 @@ nereus_add_test(tst_meter_power_swr_bars)
 # variable 2, per-axis update interval, manual range, v3 record, older
 # records' look, clsHistoryItem defaults for new items.
 nereus_add_test(tst_meter_history_item)
+# Signal history: trace 2 on its own slice (D2), a saved one-trace face,
+# data source variable 2, HISTORY axis 1 beside a data source.
+nereus_add_test(tst_meter_history_two_trace)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
 # Verifies the existing 3G-8 widget machinery (setTransmitting / isTransmitting

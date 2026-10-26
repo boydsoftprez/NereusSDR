@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Signal history: a second trace with its own source
+//                 (trace2Context; D2, a slice per trace), fed by its own
+//                 reading consumer or data source variable 2; a saved
+//                 one-trace face loads padded with trace 2 off.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal text: signalSubLinePixels for the uV and dBm sub
 //                 line. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -100,8 +105,31 @@ public:
     // The ANAN face art this item paints: its -dark variant in dark mode
     // when that file exists (ImageItem::variantPath), else the normal art.
     QString faceArtPath(double diagonalPx) const;
+    // Signal history trace 2 (channel 1). It reads its own source, the
+    // configuration's trace2Context (Slice A-D or Follow selected RX),
+    // never the entry's: the entry's readings (readingBindings) feed trace
+    // 1 alone. Absent, trace 2 is off; data source variable 2 also turns
+    // it on and feeds it, as Thetis axis 1 reads its MMIO variable
+    // (MeterManager.cs:18132-18163 [v2.10.3.15]).
+    bool trace2Shown() const;
+    bool trace2FromDataSource() const { return m_face==Face::History && channelFromMmio(1); }
+    QJsonObject trace2Context() const { return m_config.value(QStringLiteral("trace2Context")).toObject(); }
+    // The context trace 2 reads: trace2Context, with the entry's radio
+    // session when it names none. Empty while trace 2 is off.
+    QJsonObject trace2SourceContext(const QJsonObject& entryContext) const;
+    int trace2Binding() const { return m_face==Face::History && m_channels.size()>1 ? m_channels[1].binding : -1; }
+    void pushTrace2Value(double reading);
+    // Trace 2's source changed (rxSourceChanged): its reading and samples go.
+    void resetTrace2();
+    // Why trace 2 has no reading here (another session's radio); empty when
+    // it can read. Trace 2 alone shows the unavailable veil.
+    void setTrace2Unavailable(const QString& reason);
+    QString trace2UnavailableReason() const { return m_trace2Unavailable; }
+    // Where trace 2's readout and veil are drawn in a face of this size.
+    QRectF trace2ReadoutRect(int width,int height) const;
 #ifdef NEREUS_BUILD_TESTS
     int historySampleCountForTest() const { return m_samples.size(); }
+    int trace2SampleCountForTest() const { return m_samples2.size(); }
     void setFaceArtBaseForTest(const QString& path) { m_faceArtBase=path; markPresentationDirty(true); }
 #endif
     void setPowerScale(int) override;
@@ -157,6 +185,8 @@ private:
     // Channel fed by MMIO variable `index`, or -1.
     int mmioChannel(int index) const;
     bool channelFromMmio(int channel) const { return channel>=1 && hasMmioBinding(channel) && mmioChannel(channel)==channel; }
+    // Signal history trace 2 reads its own source, not the entry's.
+    bool readsOwnSource(int channel) const { return m_face==Face::History && channel==1; }
     bool primaryNeedle(int channel) const;
     // A blank optional color key falls back to the face's own ink.
     QColor optionalColor(const char* key,const QColor& fallback) const;
@@ -184,6 +214,11 @@ private:
     QString m_stateMode,m_stateBand,m_stateUnavailable;
     struct Sample { qint64 time; double value; };
     QVector<Sample> m_samples;
+    // Signal history trace 2: its samples, its last sample time and why it
+    // has no reading here.
+    QVector<Sample> m_samples2;
+    qint64 m_lastHistorySample2=-1;
+    QString m_trace2Unavailable;
     BandButtonItem* m_bands=nullptr; ModeButtonItem* m_modes=nullptr;
     VfoDisplayItem* m_vfo=nullptr; ClockItem* m_clock=nullptr;
     QString m_faceArtBase;
