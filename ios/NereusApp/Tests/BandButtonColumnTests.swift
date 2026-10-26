@@ -275,6 +275,77 @@ struct BandButtonColumnTests {
         #expect(place(leftOf, held: false).trailing == 0)
     }
 
+    /// The PR 653 re-review, Minor 1: with no room for 44 point targets on
+    /// either side of a held PTT (the iPhone SE sideways, held near x 384,
+    /// about 198 points each side), the meters went above it at its left and
+    /// ran on to the band's edge, narrower than the floor.
+    @Test("held with no room either side: the keyed meters go above the PTT at their full width")
+    func keyedMetersAboveAHeldPttKeepTheirWidth() {
+        let needed = KeyedOverlay.gaugesWidth
+        let width: CGFloat = 667
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 300)
+        let ptt = CGRect(x: 384, y: 162, width: 76, height: 76)
+        let place = BandColumnLayout.keyedPlace(top: 60, height: 104, bandWidth: width, needed: needed,
+                                                avoid: [column, ptt], ptt: ptt, held: true,
+                                                narrowest: KeyedOverlay.gaugesNarrowest)
+        // Neither side has the narrowest gauges' room.
+        #expect(ptt.minX - BandColumnLayout.clearance - (column.maxX + BandColumnLayout.clearance)
+                < KeyedOverlay.gaugesNarrowest)
+        #expect(width - (ptt.maxX + BandColumnLayout.clearance) < KeyedOverlay.gaugesNarrowest)
+        #expect(place.alignLeading)
+        #expect(place.top + 104 <= ptt.minY - 6 + 0.5)
+        // Moved left from the PTT's left edge just far enough for their full width, clear of the column.
+        #expect(width - place.trailing - place.leading - 20 >= needed)
+        #expect(place.leading + 10 < ptt.minX)
+        #expect(place.leading + 10 >= column.maxX + BandColumnLayout.clearance)
+        // Never onto the column: where the band is too narrow even for that, they start right of it.
+        let tight = BandColumnLayout.keyedPlace(top: 60, height: 104, bandWidth: 500, needed: needed,
+                                                avoid: [column, ptt], ptt: ptt, held: true,
+                                                narrowest: KeyedOverlay.gaugesNarrowest)
+        #expect(tight.leading + 10 == column.maxX + BandColumnLayout.clearance)
+    }
+
+    /// The PR 653 re-review, Minor 4: right of a held PTT the meters ran to
+    /// the band's right inset, over zoom and the tuning dial in their rows.
+    @Test("beside a held PTT the keyed meters keep clear of zoom and the tuning dial")
+    func keyedMetersBesideAHeldPttKeepOffTheBandsControls() {
+        let needed = KeyedOverlay.gaugesWidth
+        let width: CGFloat = 874
+        let column = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 300)
+        let ptt = CGRect(x: 300, y: 250, width: 76, height: 76)
+        let zoom = CGRect(x: 600, y: 260, width: ZoomButtons.size.width, height: ZoomButtons.size.height)
+        func place(_ controls: [CGRect]) -> BandColumnLayout.KeyedPlace {
+            BandColumnLayout.keyedPlace(top: 200, height: 104, bandWidth: width, needed: needed,
+                                        avoid: [column, ptt], ptt: ptt, held: true,
+                                        narrowest: KeyedOverlay.gaugesNarrowest, leadingInset: 62,
+                                        trailingInset: 62, bandControls: controls)
+        }
+        // Without the band's controls: full width right of the PTT, over zoom.
+        let over = place([])
+        #expect(over.leading + 10 >= ptt.maxX + BandColumnLayout.clearance)
+        #expect(width - over.trailing - 10 > zoom.minX)
+        // With them: right of the PTT, narrowed to end before zoom.
+        let clear = place([zoom])
+        #expect(clear.leading + 10 >= ptt.maxX + BandColumnLayout.clearance)
+        #expect(width - clear.trailing - 10 == zoom.minX - BandColumnLayout.clearance)
+        #expect(width - clear.trailing - clear.leading - 20 >= KeyedOverlay.gaugesNarrowest)
+        // A control out of the meters' rows changes nothing.
+        #expect(place([zoom.offsetBy(dx: 0, dy: 200)]) == over)
+        // The controls are where BandGestureLayer draws them: zoom, and the knob or the wheel.
+        let waterfall = CGRect(x: 0, y: 150, width: width, height: 230)
+        #expect(DialLayer.controlFrames(kind: .off, waterfall: waterfall, sideways: true, trailingInset: 62)
+                == [CGRect(origin: DialLayer.zoomOrigin(kind: .off, waterfall: waterfall, sideways: true,
+                                                        trailingInset: 62), size: ZoomButtons.size)])
+        let knob = DialLayer.controlFrames(kind: .waterfallKnob, waterfall: waterfall, sideways: true,
+                                           trailingInset: 62)
+        #expect(knob.count == 2
+                && knob[1] == DialLayer.knobFrame(waterfall: waterfall, sideways: true, trailingInset: 62))
+        let wheel = DialLayer.controlFrames(kind: .thumbwheel, waterfall: waterfall, sideways: true,
+                                            trailingInset: 62, uprightWidth: 402)
+        #expect(wheel.count == 2 && wheel[1] == DialLayer.wheelFrame(waterfall: waterfall, sideways: true,
+                                                                      uprightWidth: 402, trailingInset: 62))
+    }
+
     @Test("a stacked pan starts down the band where the pans' equal shares and hairlines put it")
     func panTop() {
         #expect(BandColumnLayout.panTop(index: 0, count: 1, bandHeight: 600) == 0)

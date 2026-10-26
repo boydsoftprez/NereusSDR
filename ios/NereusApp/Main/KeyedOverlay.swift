@@ -40,6 +40,9 @@ struct KeyedOverlay: View {
     /// The phone's rounded edges sideways, which narrowed gauges keep inside.
     var leadingInset: CGFloat = 0
     var trailingInset: CGFloat = 0
+    /// The tuning dial on the band (off with no tuning), whose knob or
+    /// thumbwheel and zoom the gauges beside a held PTT keep clear of.
+    var dialKind: DialKind = .off
 
     static let gaugesWidth: CGFloat = 330
     /// The narrowest the gauges go beside a held PTT: four tabs of 44 points
@@ -51,6 +54,7 @@ struct KeyedOverlay: View {
     @State private var panelHeight: CGFloat = 0
     @State private var suppressTapUntil: TimeInterval = 0
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.uprightBandWidth) private var uprightWidth
 
     private var availability: KeyedMeterAvailability {
         KeyedMeterReadings.availability(transmit: transmit, accessories: accessories)
@@ -67,7 +71,11 @@ struct KeyedOverlay: View {
             let place = BandColumnLayout.keyedPlace(top: keyedTop, height: height, bandWidth: proxy.size.width,
                                                     needed: Self.gaugesWidth, avoid: avoid, ptt: movedPtt,
                                                     held: heldPtt, narrowest: Self.gaugesNarrowest,
-                                                    leadingInset: leadingInset, trailingInset: trailingInset)
+                                                    leadingInset: leadingInset, trailingInset: trailingInset,
+                                                    bandControls: DialLayer.controlFrames(
+                                                        kind: dialKind, waterfall: layout.waterfall,
+                                                        sideways: sideways, trailingInset: trailingInset,
+                                                        uprightWidth: uprightWidth))
             let top = place.top
             VStack(spacing: 8) {
                 if transmit.ptt.transmitting {

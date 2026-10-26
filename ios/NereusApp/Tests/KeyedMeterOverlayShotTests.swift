@@ -323,9 +323,11 @@ struct KeyedMeterOverlayShotTests {
             spot = CGPoint(x: lowered.midX, y: lowered.midY)
             try save(window, name: "ptt-held-landscape-shorter")
 
-            // A second tap at the same spot: the PTT takes it and unkeys.
-            let button = try #require(SetupTypedEntryTests.element("ptt", in: window))
-            #expect(button.accessibilityFrame.contains(spot))
+            // A second tap at the same spot: what is on top there takes it,
+            // and that is the PTT, which unkeys.
+            let button = try #require(tapTarget(at: spot, in: window), "nothing at the PTT's spot takes a touch")
+            #expect(SetupTypedEntryTests.identifier(button) == "ptt",
+                    "the tap at the PTT's spot lands on \(String(describing: SetupTypedEntryTests.identifier(button)))")
             #expect(button.accessibilityActivate(), "the PTT did not take the tap")
             try #require(await settle { !model.main.transmit.ptt.transmitting })
             await ShotWait.laidOut(window)
@@ -360,6 +362,54 @@ struct KeyedMeterOverlayShotTests {
         }
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         return (CGFloat(bytes[0]) / 255, CGFloat(bytes[1]) / 255, CGFloat(bytes[2]) / 255)
+    }
+
+    /// What a tap at `point` (in the screen's points) lands on, as near as
+    /// this in-process host can tell without making touches: UIKit's hit
+    /// test must not find one of the band's UIKit views there (its Metal
+    /// view, or the surface that times its hold) over what SwiftUI draws.
+    /// Then the accessibility hit test, asked of each view from the one the
+    /// touch lands in up to the window, gives the element there; where it
+    /// answers nothing (SwiftUI's host on iOS 27.1 in this test host does
+    /// not), the element `id` counts as hit only if its frame holds the
+    /// point and the PTT's red face is what is drawn there. Nil when a band
+    /// view is on top.
+    private func tapTarget(at point: CGPoint, in window: UIWindow, id: String = "ptt") -> NSObject? {
+        let local = window.convert(point, from: window.screen.coordinateSpace)
+        let hit = window.hitTest(local, with: nil)
+        var view = hit
+        while let current = view {
+            let holds = current.gestureRecognizers?.contains {
+                ($0 as? UILongPressGestureRecognizer)?.minimumPressDuration == BandMenuHit.holdSeconds
+            } ?? false
+            if current is MTKView || holds {
+                Issue.record("a band view takes the tap at \(point): \(current)")
+                return nil
+            }
+            view = current.superview
+        }
+        guard #available(iOS 18.0, *) else {
+            Issue.record("the accessibility hit test needs iOS 18")
+            return nil
+        }
+        // Asked of the view the touch lands in, then each one up to the
+        // window: the SwiftUI host answers for what it draws.
+        view = hit
+        while let current = view {
+            if let element = current.accessibilityHitTest(current.convert(local, from: window), event: nil) as? NSObject {
+                return element
+            }
+            view = current.superview
+        }
+        let face = pixel(at: CGPoint(x: point.x, y: point.y + 26), in: window)
+        guard face.red > 0.5 && face.red > 2 * face.green && face.red > 2 * face.blue else {
+            Issue.record("the PTT's face is not what is drawn at \(point): \(face)")
+            return nil
+        }
+        guard let element = SetupTypedEntryTests.element(id, in: window), element.accessibilityFrame.contains(point) else {
+            return nil
+        }
+        return element
     }
 
     private func element(_ id: String, in window: UIWindow) async -> NSObject? {

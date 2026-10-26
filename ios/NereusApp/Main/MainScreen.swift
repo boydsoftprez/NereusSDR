@@ -180,12 +180,14 @@ struct MainScreen: View {
     @ViewBuilder
     private func keyedOverlay(sideways: Bool, avoid: [CGRect], movedPtt: CGRect?, heldPtt: Bool = false,
                               leadingInset: CGFloat = 0, trailingInset: CGFloat = 0) -> some View {
+        // Every pan's band has its tuning, so the dial is the one Setup chose.
+        let dialKind = app.phoneSettings.dialKind
         let overlay = KeyedOverlay(transmit: transmit, accessories: main.accessories, keyedMeters: main.keyedMeters,
                                    take: main.take, meters: main.band.catalog?.meters,
                                    showsStrip: main.band.settings.bandPlanStrip,
                                    spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                    avoid: avoid, movedPtt: movedPtt, heldPtt: heldPtt,
-                                   leadingInset: leadingInset, trailingInset: trailingInset)
+                                   leadingInset: leadingInset, trailingInset: trailingInset, dialKind: dialKind)
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
         } else {
@@ -501,7 +503,9 @@ struct MainScreen: View {
                              }, onOpen: { pan in
                                  panStack.lastTouched = pan
                                  app.phoneNavigation?.followDisplayPan(pan)
-                             })
+                             },
+                             // The PTT sits on the pan at the foot: that pan's note keeps clear of it where it is held.
+                             pttHold: pan == panStack.open.last ? pttHold : nil)
                 .environment(\.displayPeek, $displayPeek)
             if let anchor = menu.wrappedValue {
                 BandMenuLayer(anchor: anchor, display: controls.display, scale: controls.bandScale,
