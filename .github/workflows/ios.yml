@@ -258,6 +258,7 @@ jobs:
         run: ios/scripts/sim-settle.sh 'iPhone 17'
 
       - name: Test the scroll view identifiers in a process of their own
+        id: scroll-view-identifiers
         # ScrollViewIdentifierTests only catches a regression when its walk
         # is the first in the test process to turn application accessibility
         # on, and that switch belongs to the simulator, not the process: a
@@ -286,11 +287,13 @@ jobs:
           fi
 
       - name: Test on an iPhone 17 simulator
-        # Also after the step above fails, so its failure hides no other.
-        # Part 1 runs without ScrollViewIdentifierTests, which ran alone
-        # above: in a process where an earlier suite has turned
-        # accessibility on, it can only cancel itself.
-        if: ${{ !cancelled() }}
+        # Also after the step above fails, so its failure hides no other,
+        # but not after a build or boot failure: that step runs only when
+        # every step before it succeeded. Part 1 runs without
+        # ScrollViewIdentifierTests, which ran alone above: in a process
+        # where an earlier suite has turned accessibility on, it can only
+        # cancel itself.
+        if: ${{ success() || steps.scroll-view-identifiers.outcome == 'failure' }}
         shell: bash
         env:
           PART: ${{ matrix.part }}
