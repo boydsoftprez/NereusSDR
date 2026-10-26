@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I4, M4): a same-type paste keeps a
+//                 web image's own guid as an LED's, so its 4-char ID stays;
+//                 the legacy paste keeps the item's place as the draft
+//                 paste does (M4); Duplicate object gives a copied LED or
+//                 web image its own guid (I5). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - The workspace Available list shows its types under six
 //                 headings (Ready-made meters, Building blocks, Buttons,
 //                 Panels, Panel sections, Longpath instruments); a heading
@@ -629,7 +635,10 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
                 if(c.contents[row].typeId.startsWith("applet:")) {m_transactionStatus->setText(tr("Singleton applets offer Move; they cannot be duplicated."));return;}
                 auto imported=ContainerDocumentCodec::importEntries(ContainerDocumentCodec::exportEntries({c.contents[row]}));
                 if(!imported.ok) {m_transactionStatus->setText(imported.error);return;}
-                auto e=imported.document.containers.first().contents.first();e.returnLocation.reset();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
+                auto e=imported.document.containers.first().contents.first();
+                // A copied LED or web image gets its own 4-char ID.
+                if(m_manager && m_manager->contentRegistry()) {e=m_manager->contentRegistry()->withNewItemIdentity(e);}
+                e.returnLocation.reset();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
             }
             m_editSession->setDraft(d);loadCurrentDraft();m_itemList->setCurrentRow(row+1);
         });
@@ -2159,12 +2168,15 @@ bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized,
     const QString toTypeId = pasteTypeId(target);
     if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
     if (fromTypeId == toTypeId) {
-        // An LED keeps its own guid, so its 4-character ID stays (Thetis
-        // pastes settings into the target's item group, keeping its ID).
+        // An LED and a web image keep their own guid, so their 4-character
+        // ID stays (Thetis pastes settings into the target's item group,
+        // keeping its ID).
         auto* led = qobject_cast<LEDItem*>(&target);
-        const QUuid ownGuid = led ? led->guid() : QUuid();
+        auto* web = qobject_cast<WebImageItem*>(&target);
+        const QUuid ownGuid = led ? led->guid() : (web ? web->guid() : QUuid());
         const bool pasted = target.deserialize(copiedSerialized);
         if (pasted && led) { led->setGuid(ownGuid); }
+        if (pasted && web) { web->setGuid(ownGuid); }
         return pasted;
     }
 
@@ -2289,8 +2301,13 @@ void ContainerSettingsDialog::onPasteItemSettings()
     // Type check: paste only between items whose settings are
     // compatible (canPasteSettings) so we don't try to deserialize
     // NEEDLE bytes into a TEXT item. Matches Thetis paste-settings
-    // behavior.
+    // behavior. The object keeps its place, as in the draft path above.
+    const float x = item->x();
+    const float y = item->y();
+    const float w = item->itemWidth();
+    const float h = item->itemHeight();
     if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
+    item->setRect(x, y, w, h);
     if (m_editSession) { updatePreview(); } else { applyToContainer(); }
 
     // Force the editor stack to rebuild so the property fields

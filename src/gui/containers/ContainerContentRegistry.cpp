@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5, I9): withNewItemIdentity; a new
+//                 frequency instrument's second line is the transmit slice
+//                 ("tx"). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Picker names: every type's title is in plain words (bar
 //                 titles from a readable-name map, full maker and model
 //                 names for the amp, tuner and RF2K-S panels, applet titles
@@ -69,6 +73,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
 #include "ContentFade.h"
+#include "gui/instruments/LongpathContent.h"
 #include "gui/meters/WaveformMeterItem.h"
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
@@ -425,6 +430,13 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     for (const auto& descriptor : descriptors()) {
         if (descriptor.typeId == catalogType(typeId)) { entry.name = descriptor.title; break; }
     }
+    // A new frequency instrument's second line is the transmit slice; a
+    // record without the key is one saved before the pick (migrateEntryOnLoad).
+    if (typeId == QLatin1String(LongpathContent::kFrequencyType)
+        || typeId == QLatin1String(LongpathContent::kFrequencyCustomType)) {
+        entry.config.insert(QString::fromLatin1(LongpathContent::kSecondSliceKey),
+                            QString::fromLatin1(LongpathContent::kSecondSliceTx));
+    }
     for (const auto& control : supportedContainerControls()) {
         if (typeId != control.creationId) { continue; }
         OtherButtonItem item;
@@ -636,6 +648,17 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     }
     return tile;
 }
+ContentEntry ContainerContentRegistry::withNewItemIdentity(const ContentEntry& entry) const
+{
+    if (entry.typeId != QLatin1String("LED") && entry.typeId != QLatin1String("WEBIMAGE")) { return entry; }
+    const std::unique_ptr<MeterItem> item(createMeterItem(entry, nullptr, ContentRenderMode::Validation));
+    if (!item) { return entry; }
+    if (auto* led = qobject_cast<LEDItem*>(item.get())) { led->setGuid(QUuid::createUuid()); }
+    else if (auto* web = qobject_cast<WebImageItem*>(item.get())) { web->setGuid(QUuid::createUuid()); }
+    else { return entry; }
+    return captureMeterItem(*item, entry);
+}
+
 ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, const ContentEntry& prior) const {
     ContentEntry entry = prior.id.isEmpty() ? item.property(kEntryProperty).value<ContentEntry>() : prior;
     const QString serialized = item.serialize();

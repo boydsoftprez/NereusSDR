@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5): Duplicate container gives each
+//                 copied LED and web image its own guid. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - clearItemHistory() also clears each added S-meter dial's
 //                 history and peak hold (SMeterWidget::clearHistory).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2267,7 +2270,11 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
                 m_storageError=QStringLiteral("A singleton applet already has a placement; move it instead of duplicating it"); emit workspaceError(m_storageError); return nullptr;
             } }
             auto copy=source; copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.dockMode=DockMode::Floating;
-            for (auto& entry : copy.contents) { entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset(); }
+            for (auto& entry : copy.contents) {
+                // A copied LED or web image gets its own 4-char ID.
+                if (m_registry) { entry=m_registry->withNewItemIdentity(entry); }
+                entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset();
+            }
             showDuplicate(copy, source);
             document.containers.append(copy);
             if(commitWorkspace(document,document.revision).status!=CommitStatus::Saved) { return nullptr; }

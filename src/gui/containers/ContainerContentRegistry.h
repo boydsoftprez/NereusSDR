@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5): withNewItemIdentity gives a
+//                 copied LED or web image a guid of its own. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - ContentGroup: the heading a descriptor is listed under in
 //                 the Available list; groupTitle names it. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -122,6 +125,11 @@ public:
     // context (ContainerContentHost::effectiveContext) the live host uses.
     QWidget* createPreview(const ContentEntry& entry, QWidget* parent, const QJsonObject& context) const;
     ContentEntry captureMeterItem(const MeterItem& item, const ContentEntry& prior = {}) const;
+    // A copy of `entry` for a duplicate: an LED or a web image gets a new
+    // guid, so its 4-char ID is its own and gates and background chains on
+    // the original keep following the original. Other entries come back
+    // unchanged.
+    ContentEntry withNewItemIdentity(const ContentEntry& entry) const;
 
     // Per-instance QWidget content (workspace preview: the Longpath
     // instruments). Unlike attachSingleton, the host creates one widget per

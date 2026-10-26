@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original migration of saved container entries.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a new frequency instrument
+//                 stores "tx" (the transmit slice); a record saved before
+//                 the pick existed loads as "first", the first other slice
+//                 it showed then (D5). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - An entry still named its type's old picker label takes
 //                 the new label on load; a name the operator chose is
 //                 kept. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -30,6 +35,22 @@ void migrateLongpathDirection(ContentEntry& entry)
         entry.config.insert(bindingKey, LongpathContent::primaryBinding(entry.typeId, entry.config));
     }
     entry.config.remove(directionKey);
+}
+
+// A frequency instrument saved before the second-line pick existed showed
+// the first other open slice; it keeps doing so (D5). One made since
+// carries its pick, "tx" by default (ContainerContentRegistry::makeEntry).
+void migrateLongpathSecondSlice(ContentEntry& entry)
+{
+    if (entry.typeId != QLatin1String(LongpathContent::kFrequencyType)
+        && entry.typeId != QLatin1String(LongpathContent::kFrequencyCustomType)) {
+        return;
+    }
+    const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+    if (entry.config.contains(key)) {
+        return;
+    }
+    entry.config.insert(key, QString::fromLatin1(LongpathContent::kSecondSliceFirstOther));
 }
 
 struct LabelRename {
@@ -114,6 +135,7 @@ void migrateDefaultName(ContentEntry& entry)
 void migrateEntryOnLoad(ContentEntry& entry)
 {
     migrateLongpathDirection(entry);
+    migrateLongpathSecondSlice(entry);
     migrateDefaultName(entry);
 }
 

@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original checks for the ported Longpath
 // instruments and their container-content registration (workspace preview).
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a saved frequency instrument
+//                 keeps its first other slice; a new one follows transmit.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Picker names without the "(Longpath)" suffix. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
@@ -99,6 +102,7 @@
 #include "core/antenna/AmateurBands.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContentEntryMigration.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerPreviewWidget.h"
@@ -1936,6 +1940,70 @@ private slots:
         QVERIFY(!editor.findChild<QCheckBox*>(QStringLiteral("property_center")));
     }
 
+    // Fix wave I9 (D5): a frequency instrument saved before the second-line
+    // pick (no "secondSlice" key) loads as "first" and keeps showing the
+    // first other open slice, even while its own slice transmits; a new
+    // one stores "tx" and shows the transmit slice.
+    void savedFrequencyKeepsItsFirstOtherSlice()
+    {
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        SliceModel* sliceC = model.slices().at(2);
+        sliceA->setFrequency(14074000.0);
+        sliceB->setFrequency(7074000.0);
+        sliceC->setFrequency(21300000.0);
+        // The item's own slice B transmits; C is not the first other slice.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
+        sliceC->setTxSlice(false);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+        QWidget parent;
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            ContentEntry saved = registry.makeEntry(QString::fromLatin1(type));
+            saved.config.remove(key);   // as written before the pick existed
+            migrateEntryOnLoad(saved);
+            QCOMPARE(saved.config.value(key).toString(), QStringLiteral("first"));
+            ContentEntry again = saved;
+            migrateEntryOnLoad(again);
+            QCOMPARE(again, saved);
+            std::unique_ptr<QWidget> legacy(registry.createWidget(saved, &parent));
+            auto* old = qobject_cast<FrequencyInstrument*>(legacy.get());
+            QVERIFY(old);
+            QVERIFY(old->otherSliceLineVisible());
+            QCOMPARE(old->otherLetter(), QLatin1Char('A'));
+            QCOMPARE(old->otherFrequency(), 14074000.0);
+
+            // A new instrument: "tx", unchanged by the load migration; its
+            // own slice transmits, so the second line is hidden.
+            ContentEntry fresh = registry.makeEntry(QString::fromLatin1(type));
+            QCOMPARE(fresh.config.value(key).toString(), QStringLiteral("tx"));
+            ContentEntry loaded = fresh;
+            migrateEntryOnLoad(loaded);
+            QCOMPARE(loaded, fresh);
+            std::unique_ptr<QWidget> made(registry.createWidget(fresh, &parent));
+            auto* neu = qobject_cast<FrequencyInstrument*>(made.get());
+            QVERIFY(neu);
+            QVERIFY(!neu->otherSliceLineVisible());
+            // Transmit moves to C: the new one shows C, the old one still A.
+            sliceB->setTxSlice(false);
+            sliceC->setTxSlice(true);
+            QTRY_VERIFY(neu->otherSliceLineVisible());
+            QCOMPARE(neu->otherLetter(), QLatin1Char('C'));
+            QCOMPARE(old->otherLetter(), QLatin1Char('A'));
+            sliceC->setTxSlice(false);
+            sliceB->setTxSlice(true);
+        }
+    }
+
     void frequencyEditorsNameSlices()
     {
         ContainerContentRegistry registry;
@@ -1948,7 +2016,8 @@ private slots:
             QVERIFY(second);
             QStringList items;
             for (int i = 0; i < second->count(); ++i) { items.append(second->itemText(i)); }
-            QCOMPARE(items, (QStringList{QStringLiteral("Transmit slice"), QStringLiteral("None"),
+            QCOMPARE(items, (QStringList{QStringLiteral("Transmit slice"),
+                                         QStringLiteral("First other slice"), QStringLiteral("None"),
                                          QStringLiteral("Slice A"), QStringLiteral("Slice B"),
                                          QStringLiteral("Slice C"), QStringLiteral("Slice D")}));
             QCOMPARE(second->currentIndex(), 0);
@@ -1963,10 +2032,12 @@ private slots:
             entry = edited.takeLast().at(0).value<ContentEntry>();
             QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
                      QStringLiteral("none"));
-            // Back to the transmit slice: the key goes away.
+            // Back to the transmit slice: stored as "tx", so a reload does
+            // not take it for a record saved before the pick (fix wave I9).
             second->setCurrentIndex(0);
             entry = edited.takeLast().at(0).value<ContentEntry>();
-            QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kSecondSliceKey)));
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("tx"));
 
             QStringList texts = items;
             for (const QLabel* l : editor.findChildren<QLabel*>()) { texts.append(l->text()); }

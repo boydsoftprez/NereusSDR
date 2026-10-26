@@ -5,12 +5,17 @@
 //                target's reading, units and average marker; other types
 //                paste only onto the same type. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I4): a same-type paste keeps a web
+//                image's and an LED's own guid and 4-char ID. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QJsonObject>
 
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/meters/MeterPoller.h"  // MeterBinding
+#include "gui/meters/LEDItem.h"
+#include "gui/meters/WebImageItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/SMeterPresetItem.h"
 
@@ -29,6 +34,7 @@ private slots:
     void sourceWithoutAverageMarkerKeepsTargetsMarker();
     void refusedPasteLeavesTargetUnchanged();
     void sameTypePasteCopiesTheWholeRecord();
+    void pasteKeepsTheTargetsFourCharId();
 };
 
 void TstContainerCopyPaste::compatibleBarsPaste()
@@ -142,6 +148,28 @@ void TstContainerCopyPaste::sameTypePasteCopiesTheWholeRecord()
 
     QVERIFY(ContainerSettingsDialog::pasteItemSettings(source.serialize(), QStringLiteral("meter.customBar"), target));
     QCOMPARE(target.serialize(), source.serialize());
+}
+
+// Fix wave I4: a web image and an LED keep their own guid and 4-char ID
+// across a same-type paste; the other settings come from the source.
+void TstContainerCopyPaste::pasteKeepsTheTargetsFourCharId()
+{
+    WebImageItem webSource; webSource.setGuid(QUuid::createUuid());
+    WebImageItem webTarget; webTarget.setGuid(QUuid::createUuid());
+    const QUuid webGuid = webTarget.guid();
+    const QString webId = webTarget.fourChar();
+    QVERIFY(webId != webSource.fourChar());
+    QVERIFY(ContainerSettingsDialog::pasteItemSettings(
+        webSource.serialize(), ContainerSettingsDialog::pasteTypeId(webSource), webTarget));
+    QCOMPARE(webTarget.guid(), webGuid);
+    QCOMPARE(webTarget.fourChar(), webId);
+
+    LEDItem ledSource; ledSource.setGuid(QUuid::createUuid());
+    LEDItem ledTarget; ledTarget.setGuid(QUuid::createUuid());
+    const QUuid ledGuid = ledTarget.guid();
+    QVERIFY(ContainerSettingsDialog::pasteItemSettings(
+        ledSource.serialize(), ContainerSettingsDialog::pasteTypeId(ledSource), ledTarget));
+    QCOMPARE(ledTarget.guid(), ledGuid);
 }
 
 QTEST_MAIN(TstContainerCopyPaste)

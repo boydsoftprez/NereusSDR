@@ -34,6 +34,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a new frequency instrument
+//                 stores "tx" (the transmit slice); a record saved before
+//                 the pick existed loads as "first", the first other slice
+//                 it showed then (D5). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Picker names: Frequency, Custom frequency, Needle meter,
 //                 Bar meter and Filter passband, listed under the
 //                 "Longpath instruments" heading instead of a suffix.
@@ -252,12 +257,12 @@ private:
     bool m_bound = false;
 };
 
-// Whether the entry's second line follows the transmit slice (the
-// default: "secondSlice" absent).
+// Whether the entry's second line follows the transmit slice ("tx", what
+// a new instrument gets; absent or null also).
 bool secondLineIsTxSlice(const QJsonObject& config)
 {
     const QJsonValue pick = config.value(QLatin1String(kSecondSliceKey));
-    return pick.isUndefined() || pick.isNull();
+    return pick.isUndefined() || pick.isNull() || pick.toString() == QLatin1String(kSecondSliceTx);
 }
 
 // The slice the second line shows (config "secondSlice"): absent, the
@@ -268,6 +273,14 @@ bool secondLineIsTxSlice(const QJsonObject& config)
 SliceModel* secondSlice(const Sources& sources, const SliceModel* slice, const QJsonObject& config)
 {
     if (!sources.radio || !slice) { return nullptr; }
+    // A record saved before the pick existed keeps what it showed then:
+    // the first slice in RadioModel::slices() that is not this one.
+    if (config.value(QLatin1String(kSecondSliceKey)).toString() == QLatin1String(kSecondSliceFirstOther)) {
+        for (SliceModel* s : sources.radio->slices()) {
+            if (s && s != slice) { return s; }
+        }
+        return nullptr;
+    }
     const bool tx = secondLineIsTxSlice(config);
     const QString letter = tx ? QString() : config.value(QLatin1String(kSecondSliceKey)).toString();
     if (!tx && letter.size() != 1) { return nullptr; }
@@ -456,18 +469,20 @@ QVector<ContentProperty> frequencyBaseProperties()
     form.defaultValue = QStringLiteral("numberOnly");
 
     // The slice the second line shows. The transmit slice is the default
-    // and is stored as no key.
+    // and is stored as "tx"; "First other slice" is what a record saved
+    // before the pick existed shows.
     ContentProperty second;
     second.key = QLatin1String(kSecondSliceKey);
     second.label = QObject::tr("Second line");
     second.kind = ContentProperty::Kind::Choice;
-    second.choices = {{QObject::tr("Transmit slice"), QJsonValue(QJsonValue::Null), true, {}},
+    second.choices = {{QObject::tr("Transmit slice"), QString::fromLatin1(kSecondSliceTx), true, {}},
+                      {QObject::tr("First other slice"), QString::fromLatin1(kSecondSliceFirstOther), true, {}},
                       {QObject::tr("None"), QStringLiteral("none"), true, {}},
                       {QObject::tr("Slice A"), QStringLiteral("A"), true, {}},
                       {QObject::tr("Slice B"), QStringLiteral("B"), true, {}},
                       {QObject::tr("Slice C"), QStringLiteral("C"), true, {}},
                       {QObject::tr("Slice D"), QStringLiteral("D"), true, {}}};
-    second.defaultValue = QJsonValue(QJsonValue::Null);
+    second.defaultValue = QString::fromLatin1(kSecondSliceTx);
     return {form, second};
 }
 

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original atomic layout transactions; no radio/model access.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5): a duplicated LED or web image
+//                 gets its own guid. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-08 - Workspace preview only: the header's hide button hides the
 //                 entry or container (Containers > Hidden brings it back).
@@ -531,6 +534,8 @@ ArrangeResult ContainerArrangeController::duplicateEntry(const QString& id,
     if (insertion < 0 || insertion > d.containers[target].contents.size()) {
         return failure(tr("Invalid insertion position"));
     }
+    // A copied LED or web image gets its own 4-char ID.
+    entry = ContainerContentRegistry().withNewItemIdentity(entry);
     entry.id = newId();
     entry.returnLocation.reset();
     d.containers[target].contents.insert(insertion, entry);
