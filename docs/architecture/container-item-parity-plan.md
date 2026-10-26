@@ -228,7 +228,7 @@ labels them "Unsupported configuration". Same check for PR 635's `rx.*` items
 
 **Acceptance:**
 - Opening the property editor for any `tx.*` or `rx.*` entry shows no "Unsupported configuration" text. It shows the normal entry rows (name, geometry and whatever general rows every entry gets) and no item-specific group.
-- An entry whose typeId the registry does not know at all (a layout from a newer build) still shows "Unsupported configuration. Original data is retained; this object can be removed explicitly."
+- An entry whose typeId the registry does not know at all (a layout from a newer build) still shows the registry's unknown-type text, "Unknown content type; original data retained".
 - An entry with an `unavailableReason` still shows that reason.
 
 **Verification:** risk tier: low (one condition, UI text). Build and run
@@ -1525,8 +1525,7 @@ labels them "Unsupported configuration". Same check for PR 635's `rx.*` items
 
 **Requirements:**
 - A web image item can feed a pan's spectrum background (`MeterManager.cs:15578-15720`): a pan picker in the editor and an image override on `SpectrumWidget` beside the per-pan background fields (`SpectrumWidget.h:1130-1151`).
-- Another web image item can name a web image by its 4-char ID to share its image.
-- Background refreshes use Thetis's 5 s background interval.
+- Ruled 2026-10-26 (replaces an earlier "share an image" reading of the same lines): Thetis runs a timed background rotation. Each item names the next item's 4-char ID (`backgroundFourChar`) and holds the background for `backgroundIntervalSecs` (5-3600, default 5, `MeterManager.cs:27259`, `:15655-15670`) before handing over (`:15696-15706`). NereusSDR runs one rotation per pan (`targetPan`, -1 = none, the per-pan form of the Background check box); the editor's Show next selects the named item (`setup.cs:33212-33260`). A preview copy never joins a rotation. An old record without a guid gets a stable one derived from its record text, written on the next save.
 
 **Files:**
 - Modify: `src/gui/meters/WebImageItem.h`/`.cpp`, `src/gui/SpectrumWidget.h`/`.cpp`
