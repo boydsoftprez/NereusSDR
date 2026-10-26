@@ -168,6 +168,22 @@ final class PanStackModel: ObservableObject {
                 band.slices.thisDeviceId = id
             }
         }.store(in: &watches)
+        // Add a pan greys from every slice (addPanState), which no pan's
+        // sheet observes itself: a spare appearing on another pan redraws
+        // the button through this model. Only what the rule reads (each
+        // controlled slice's pan), so a slice's tuning or meter redraws nothing.
+        everySlice.$entries
+            .map { entries in entries.filter { !$0.listening }.map { SpareInput(id: $0.id, panKey: $0.panKey) } }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &watches)
+    }
+
+    /// What ``addPanState()`` reads from each controlled slice.
+    private struct SpareInput: Equatable {
+        let id: Int
+        let panKey: String?
     }
 
     /// Every open pan's band but Pan 1's.
@@ -334,6 +350,11 @@ final class PanStackModel: ObservableObject {
         guard closePanState(pan).enabled, let band = bands[pan] else {
             return
         }
+        // The slices the mirror holds on the pan now: its redraw of this
+        // pan's list may still be queued, and a slice just moved onto the pan
+        // would stay on a pan no longer shown, one just moved off would be
+        // pulled back to Pan 1.
+        band.slices.catchUp()
         let moving = band.slices.entries.filter { $0.panKey == pan.corePanKey && !$0.listening }
         let home = first.band.requestedView
         retire(pan)

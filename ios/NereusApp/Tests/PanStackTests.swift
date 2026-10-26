@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the iPad's pans against a fake Core: the radio's limit, Add a pan, Close this pan, a smaller radio, the iPhone
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
+import Combine
 import CoreGraphics
 import Foundation
 import NereusBand
@@ -308,6 +309,52 @@ struct PanStackTests {
         stack.closePan(Self.second)
         #expect(await settle { stack.status == BandSlicesModel.refusedText })
         #expect(rig.station.panKey(ofSlice: 1) == "pan-1")
+        await rig.model.disconnect()
+    }
+
+    /// Close this pan reads the slices the mirror holds on the pan when it
+    /// acts, not the copy the mirror's change queued for a later main-actor
+    /// turn (the PR 653 review i): a slice the Core has just moved onto the
+    /// pan still moves to Pan 1, and one it has just moved off is left
+    /// where the Core put it.
+    @Test("Close this pan moves a slice the mirror has just put on the pan, before its queued redraw has run")
+    func closeMovesASliceTheMirrorJustMovedOn() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        // Slice C on Pan 1, beside A.
+        main.pan.addSlice(on: .first)
+        #expect(await settle { main.slices.entries.map(\.id) == [0, 2] })
+        await quiet()
+        let before = panKeyWrites(rig.station).count
+        // The Core moves C onto Pan 2. Close this pan acts on the same turn, before the redraws the change queued.
+        rig.model.mirror.apply(.delta(LinkMessage.Delta(key: "slice:2", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-1")),
+        ])))
+        rig.stack.closePan(Self.second)
+        #expect(await settle { panKeyWrites(rig.station).count == before + 2 })
+        let sent = panKeyWrites(rig.station).dropFirst(before)
+        #expect(sent.map(\.key).sorted() == ["slice:1", "slice:2"])
+        #expect(sent.map(\.pan) == ["pan-0", "pan-0"])
+        #expect(rig.stack.status?.hasPrefix("Pan 2 closed. Slices B and C moved to Pan 1, at ") == true)
+        await rig.model.disconnect()
+    }
+
+    @Test("Close this pan leaves a slice the mirror has just moved off the pan where the Core put it")
+    func closeLeavesASliceTheMirrorJustMovedOff() async throws {
+        let rig = try await connected()
+        try await twoPans(rig)
+        await quiet()
+        let before = panKeyWrites(rig.station).count
+        // The Core moves B to a pan this iPad does not show. Close this pan acts on the same turn.
+        rig.model.mirror.apply(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-3")),
+        ])))
+        rig.stack.closePan(Self.second)
+        #expect(rig.stack.open == [.first])
+        await quiet()
+        #expect(panKeyWrites(rig.station).count == before)
+        #expect(rig.stack.status == "Pan 2 closed. Pan 2's own values are kept for next time.")
         await rig.model.disconnect()
     }
 
@@ -715,6 +762,45 @@ struct PanStackTests {
         rig.stack.addPan()
         await quiet()
         #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        await rig.model.disconnect()
+    }
+
+    /// Add a pan greys from every slice the Core holds, which Pan 2's sheet
+    /// does not observe itself (PanSheetPans watches the stack and Pan 2's
+    /// own slices): a spare appearing on Pan 1 redraws the button there
+    /// through the stack (the PR 653 review i).
+    @Test("on Pan 2's sheet at the slice limit, a spare appearing on Pan 1 redraws Add a pan")
+    func addRedrawsWhenASpareAppearsOnAnotherPan() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        let three = rig.model.mirror.capabilities.map { name, value in
+            LinkMessage.PropertyEntry(ordinal: 0, name: name, value: name == "effectiveMaxSlices" ? .i64(3)
+                                          : name == "userDdcCount" ? .i64(3) : value.wireValue)
+        }
+        await rig.station.deliver(.capabilities(LinkMessage.Capabilities(properties: three)))
+        #expect(await settle { rig.stack.limit == 3 })
+        try await twoPans(rig)
+        // Slice C on Pan 1, then moved by the Core to a pan not shown: no pan holds two, and all three run.
+        main.pan.addSlice(on: .first)
+        #expect(await settle { main.slices.entries.map(\.id) == [0, 2] })
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:2", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-3")),
+        ])))
+        #expect(await settle { rig.stack.addPanState() == (false, "The ANAN-G2 runs three slices.") })
+        await quiet()
+        // What Pan 2's sheet observes.
+        var redraws = 0
+        let watches = [rig.stack.objectWillChange.sink { _ in redraws += 1 },
+                       rig.stack.band(for: Self.second).slices.objectWillChange.sink { _ in redraws += 1 }]
+        // The Core moves C back to Pan 1, beside A: a spare.
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:2", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-0")),
+        ])))
+        #expect(await settle { main.slices.entries.first { $0.id == 2 }?.panKey == "pan-0" })
+        await quiet()
+        #expect(redraws > 0)
+        #expect(rig.stack.addPanState() == (true, nil))
+        withExtendedLifetime(watches) {}
         await rig.model.disconnect()
     }
 
