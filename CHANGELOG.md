@@ -343,6 +343,11 @@ still connect to each other as before.
   longer freezes the waterfall, and it hides at most two rows in a row. It also
   starts fresh when you stop transmitting. The threshold setting is unchanged.
   ([#626](https://github.com/boydsoftprez/NereusSDR/pull/626))
+- The 3D waterfall on the phone now draws every frame the Core sends, up to 60
+  a second, instead of about 16, and its rows move at the desktop's rate. It
+  used to look slow and jerky. This changes the phone's drawing only; the
+  Core's frames are unchanged.
+  ([#643](https://github.com/boydsoftprez/NereusSDR/pull/643))
 
 ### Fixes
 
