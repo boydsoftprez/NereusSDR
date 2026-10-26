@@ -149,13 +149,13 @@ Task 1 (shared build dir); touches different files.
 ## Task 3: TX section items show "Unsupported configuration"
 
 **Requirements:** audit Part E summary item 5 and open question 6: the seven `tx.*`
-items (`TxSectionContent.cpp`) have no options, and `ContentPropertyEditor.cpp:306-309`
+items (`src/gui/applets/TxSectionContent.cpp`) have no options, and `ContentPropertyEditor.cpp:306-309`
 labels them "Unsupported configuration". Same check for PR 635's `rx.*` items
-(`RxSectionContent.cpp`).
+(`src/gui/applets/RxSectionContent.cpp`).
 
 **Files:**
 - Modify: `src/gui/containers/ContentPropertyEditor.cpp` (the condition at about :306)
-- Test: `tests/tst_tx_section_content.cpp` (extend)
+- Test: `tests/tst_tx_section_content.cpp`, `tests/tst_rx_section_content.cpp` (extend)
 
 **Interfaces:**
 - Consumes: `ContainerContentRegistry::declaredProperties(typeId)`, `isAvailable`, `unavailableReason`.
@@ -167,8 +167,7 @@ labels them "Unsupported configuration". Same check for PR 635's `rx.*` items
 - An entry with an `unavailableReason` still shows that reason.
 
 **Verification:** risk tier: low (one condition, UI text). Build and run
-`tst_tx_section_content` offscreen; add an `rx.*` case there or in the nearest RX
-section test (`ls tests | grep -i rx_section`).
+`tst_tx_section_content` offscreen; add an `rx.*` case in `tests/tst_rx_section_content.cpp`.
 
 **Execution note (advisory):** opus. No device or transmit path. Runs after Task 2.
 
