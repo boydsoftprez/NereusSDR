@@ -16,6 +16,11 @@
 //                 or Any slice) and the top buttons stepping slices; the
 //                 appended settings and kDialThetisDefaults for new dials.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix round 1 (ruling D5): new dials draw Thetis's look
+//                 (renderDialDisplay); a saved dial keeps the look it had
+//                 (the marker shows only while it is dragged, which starts
+//                 from a press and a move). The look is saved.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -210,6 +215,15 @@ public:
     // Tests: the clock the mouse handlers read.
     void setClockForTest(std::function<qint64()> clock) { m_clockForTest = std::move(clock); }
 
+    // Which look the dial draws (ruling D5). Thetis: renderDialDisplay's
+    // corner buttons, ring and marker; new dials take it. Saved: the look
+    // dials had before the tuning port (a saved record without the field),
+    // whose marker shows only while it is dragged.
+    void setThetisLook(bool thetis) { m_thetisLook = thetis; }
+    bool thetisLook() const { return m_thetisLook; }
+    // Whether the marker is drawn now.
+    bool drawsMarker() const { return m_thetisLook || m_pressed; }
+
     // Multi-layer
     bool participatesIn(Layer layer) const override;
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
@@ -241,6 +255,8 @@ signals:
 private:
     void paintStatic(QPainter& p, const QRect& dialRect);
     void paintDynamic(QPainter& p, const QRect& dialRect);
+    void paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int widgetH);
+    void paintMarker(QPainter& p, const QRect& dialRect);
     QRect squareRect(int widgetW, int widgetH) const;
     // 0 top left, 1 top right, 2 bottom left, 3 bottom right; -1 outside
     // the dial, inside its centre or on the marker.
@@ -279,7 +295,8 @@ private:
     SliceSelect m_sliceSelect{SliceSelect::SourceSlice};
 
     // State
-    int m_activeQuadrant{-1};
+    int m_activeQuadrant{0};  // 0=top-left lit by default (the saved look)
+    bool m_thetisLook{false};
     SpeedState m_speedState{SpeedState::Slow};
     bool m_accelEnabled{false};
     bool m_lockEnabled{false};
@@ -311,6 +328,9 @@ private:
     // Input
     int m_hoverQuadrant{-1};
     int m_pressQuadrant{-1};
+    // Saved look: a press arms a drag that starts once the pointer moves.
+    bool m_dragArmed{false};
+    QPointF m_pressPos;
     QElapsedTimer m_clock;
     std::function<qint64()> m_clockForTest;
 };
@@ -340,6 +360,7 @@ struct DialItemThetisDefaults {
     float verticalRatio;
     float fontScale;
     bool accelerate;
+    bool thetisLook;
 };
 inline constexpr DialItemThetisDefaults kDialThetisDefaults{
     qRgb(255, 255, 255),        // _text_colour = Color.White (:16797)
@@ -362,6 +383,7 @@ inline constexpr DialItemThetisDefaults kDialThetisDefaults{
     1.0f,                       // _vscale = 1f (:16780)
     1.0f,                       // _font_scale = 1f (:16781)
     false,                      // _accelerate = false (:16770)
+    true,                       // renderDialDisplay's look (:35284-35460)
 };
 
 } // namespace NereusSDR

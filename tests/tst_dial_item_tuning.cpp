@@ -6,10 +6,16 @@
 //                 copies, old and new records, and MainWindow's routing
 //                 (align, step, select, lock, another radio's entry).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix round 1: an old record keeps its look (top-left lit,
+//                 no marker but while dragged, no centre letter) and still
+//                 tunes by drag; a new dial draws Thetis's look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 #include <QApplication>
 #include <QFile>
+#include <QImage>
+#include <QPainter>
 #include <QJsonObject>
 #include <QMouseEvent>
 #include <QScopeGuard>
@@ -104,6 +110,16 @@ bool wheel(DialItem& dial, int angle)
     return dial.handleWheel(&e, kW, kH);
 }
 
+QImage render(DialItem& dial)
+{
+    QImage image(kW, kH, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    dial.paint(painter, kW, kH);
+    painter.end();
+    return image;
+}
+
 qint64 sumOf(const QSignalSpy& spy)
 {
     qint64 sum = 0;
@@ -154,6 +170,7 @@ private slots:
     void mouseDragOnTheMarkerTunes()
     {
         DialItem dial;
+        dial.setThetisLook(true);
         setUp(dial, 100);
         QSignalSpy tune(&dial, &DialItem::tuneRequested);
         QVERIFY(press(dial, onRing(0)));
@@ -394,7 +411,8 @@ private slots:
 
         const QString saved = dial.serialize();
         const QStringList parts = saved.split(QLatin1Char('|'));
-        QCOMPARE(parts.size(), 28);
+        QCOMPARE(parts.size(), 29);
+        QCOMPARE(parts.last(), QStringLiteral("0"));  // the saved look
         QCOMPARE(QStringList(parts.mid(0, 17)).join(QLatin1Char('|')), kOldRecord);
         DialItem again;
         QVERIFY(again.deserialize(saved));
@@ -454,6 +472,67 @@ private slots:
         QCOMPARE(dial->verticalRatio(), 1.0f);
         QCOMPARE(dial->fontScale(), 1.0f);
         QVERIFY(!dial->accelEnabled());
+        QVERIFY(dial->thetisLook());
+        QVERIFY(dial->drawsMarker());
+        // Thetis's marker (pad colour) sits on the ring at 0 degrees.
+        dial->setRect(0, 0, 1, 1);
+        QCOMPARE(render(*dial).pixelColor(165, 112), QColor(0, 0, 255));
+        DialItem again;
+        QVERIFY(again.deserialize(dial->serialize()));
+        QVERIFY(again.thetisLook());
+    }
+
+    // Ruling D5: today's record paints as it did before the tuning port:
+    // the top-left quadrant lit, no marker, no centre letter. It still
+    // tunes by drag (the marker shows only while dragged) and wheel.
+    void oldRecordPaintsAsBefore()
+    {
+        DialItem dial;
+        QVERIFY(dial.deserialize(kOldRecord));
+        dial.setRect(0, 0, 1, 1);
+        QVERIFY(!dial.thetisLook());
+        QCOMPARE(dial.activeQuadrant(), 0);
+        QVERIFY(!dial.drawsMarker());
+        const QColor circle(QStringLiteral("#ff1a2a3a"));
+        const QImage unfed = render(dial);
+        // Top-right is the bare circle; top-left carries the lit tint.
+        QCOMPARE(unfed.pixelColor(130, 75), circle);
+        QVERIFY(unfed.pixelColor(70, 75) != circle);
+        // Where a marker at 0 degrees would be: the bare circle.
+        QCOMPARE(unfed.pixelColor(165, 112), circle);
+
+        // Fed with slices, the centre is unchanged (no centre letter).
+        for (int i = 0; i < 3; ++i) { dial.setSliceState(sliceAt(i, 100)); }
+        dial.setSourceSliceIndex(0);
+        dial.setActiveSliceIndex(0);
+        const QImage fed = render(dial);
+        QCOMPARE(fed.copy(70, 70, 60, 60), unfed.copy(70, 70, 60, 60));
+        QCOMPARE(fed.pixelColor(165, 112), circle);
+
+        // Round trip keeps the look and the picture.
+        DialItem again;
+        QVERIFY(again.deserialize(dial.serialize()));
+        again.setRect(0, 0, 1, 1);
+        QVERIFY(!again.thetisLook());
+        QCOMPARE(again.activeQuadrant(), 0);
+        QCOMPARE(render(again), unfed);
+
+        // A press and a move drag it; the marker shows only meanwhile.
+        QSignalSpy tune(&dial, &DialItem::tuneRequested);
+        QVERIFY(press(dial, onRing(90)));
+        QVERIFY(!dial.pressed());
+        for (int k = 1; k <= 30; ++k) { move(dial, onRing(90 - 2 * k)); }
+        QVERIFY(dial.pressed());
+        QVERIFY(dial.drawsMarker());
+        QVERIFY(tune.count() >= 8);
+        for (const QList<QVariant>& args : tune) { QCOMPARE(args.at(1).toLongLong(), 100LL); }
+        QVERIFY(release(dial, onRing(30)));
+        QVERIFY(!dial.drawsMarker());
+        QCOMPARE(render(dial).pixelColor(165, 112), circle);
+        // A press and release without moving is still the button.
+        QVERIFY(!dial.accelEnabled());
+        click(dial, kBottomLeft);
+        QVERIFY(dial.accelEnabled());
     }
 
     // MainWindow: each request acts on the slice it names; Align rounds;

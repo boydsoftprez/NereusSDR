@@ -17,6 +17,11 @@
 //                 replace Thetis's VFOA / VFOB); appended settings and
 //                 kDialThetisDefaults. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Fix round 1 (ruling D5): paintThetis draws
+//                 renderDialDisplay's look for new dials; a saved dial draws
+//                 as before (no marker but while dragged, top-left lit, no
+//                 centre letter) and starts a drag from a press and a move.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -138,6 +143,8 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QPainterPath>
 #include <QStringList>
+#include <QGuiApplication>
+#include <QStyleHints>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -186,6 +193,18 @@ constexpr float kRingDiameterRatio = 0.65f;
 constexpr float kMarkerRadiusRatio = 0.125f;
 // NereusSDR: the centre disc (the speed dot and the slice letter) inside
 // the ring's inner edge is not a button.
+// From Thetis MeterManager.cs:35364 [v2.10.3.15]:
+//   if (dial.Pressed && Math.Abs(dial.SmoothedSpeed) >= 0.1f)
+constexpr float kSpeedRingMin = 0.1f;
+// From Thetis MeterManager.cs:35377 [v2.10.3.15]: (w * 0.025f)
+constexpr double kSpeedRingWidthRatio = 0.025;
+// From Thetis MeterManager.cs:35381 [v2.10.3.15]: (w * 0.005f)
+constexpr double kDottedRingWidthRatio = 0.005;
+// From Thetis MeterManager.cs:35425-35426 [v2.10.3.15]: 38f * dial.FontScale,
+// / 16f, * (rect.Width / 52f)
+constexpr double kThetisFontSize = 38.0;
+constexpr double kThetisFontEmDivisor = 16.0;
+constexpr double kThetisFontWidthDivisor = 52.0;
 constexpr float kInnerDiscRatio = kRingDiameterRatio / 2.0f - kMarkerRadiusRatio;
 
 constexpr int kTopLeft = 0;
@@ -545,7 +564,7 @@ bool DialItem::interactive() const
 bool DialItem::hitTest(const QPointF& pos, int widgetW, int widgetH) const
 {
     // A held marker keeps the drag (and its release) wherever the pointer goes.
-    return m_pressed || MeterItem::hitTest(pos, widgetW, widgetH);
+    return m_pressed || m_dragArmed || MeterItem::hitTest(pos, widgetW, widgetH);
 }
 
 float DialItem::angleAt(const QPointF& pos, const QRect& dialRect) const
@@ -580,7 +599,7 @@ bool DialItem::onMarker(const QPointF& pos, const QRect& dialRect) const
 
 int DialItem::buttonAt(const QPointF& pos, const QRect& dialRect) const
 {
-    if (!QRectF(dialRect).contains(pos) || onMarker(pos, dialRect)) { return -1; }
+    if (!QRectF(dialRect).contains(pos) || (m_thetisLook && onMarker(pos, dialRect))) { return -1; }
     const QPointF centre = QRectF(dialRect).center();
     const double dx = pos.x() - centre.x();
     const double dy = pos.y() - centre.y();
@@ -612,6 +631,16 @@ bool DialItem::handleMousePress(QMouseEvent* event, int widgetW, int widgetH)
     const QPointF pos = event->position();
     // From Thetis MeterManager.cs:35395-35399 [v2.10.3.15]: the marker is
     // pressed when the button goes down on it.
+    if (!m_thetisLook) {
+        // The saved look shows no marker: a press anywhere on the dial arms
+        // a drag, which starts once the pointer moves; a press and release
+        // without moving is the quadrant's button.
+        if (!QRectF(dialRect).contains(pos)) { return false; }
+        m_dragArmed = true;
+        m_pressPos = pos;
+        m_pressQuadrant = buttonAt(pos, dialRect);
+        return true;
+    }
     if (onMarker(pos, dialRect)) {
         m_pressQuadrant = -1;
         m_hoverQuadrant = -1;
@@ -630,6 +659,15 @@ bool DialItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
     if (!event || !interactive()) { return false; }
     const QRect dialRect = squareRect(widgetW, widgetH);
     const QPointF pos = event->position();
+    if (m_dragArmed && !m_pressed) {
+        const QPointF moved = pos - m_pressPos;
+        if (moved.manhattanLength() < QGuiApplication::styleHints()->startDragDistance()) { return false; }
+        m_pressQuadrant = -1;
+        setPressed(true);
+        // The first update after a press only moves the marker (to where
+        // the drag started).
+        setDegrees(angleAt(m_pressPos, dialRect), nowMs());
+    }
     if (m_pressed) {
         const qint64 now = nowMs();
         updateSpeed(now);
@@ -637,7 +675,9 @@ bool DialItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
         return true;
     }
     // From Thetis MeterManager.cs:35335-35338 [v2.10.3.15]: a button
-    // highlights under the mouse while the marker is not held.
+    // highlights under the mouse while the marker is not held (the Thetis
+    // look; the saved look had no highlight).
+    if (!m_thetisLook) { return false; }
     int hover = buttonAt(pos, dialRect);
     if (!buttonEnabled(hover)) { hover = -1; }
     if (hover == m_hoverQuadrant) { return false; }
@@ -649,6 +689,7 @@ bool DialItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
 bool DialItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH)
 {
     if (!event || event->button() != Qt::LeftButton) { return false; }
+    m_dragArmed = false;
     if (m_pressed) {
         // The render loop drops Pressed when the button is up
         // (MeterManager.cs:35418-35421 [v2.10.3.15]).
@@ -733,6 +774,7 @@ void DialItem::applyNewItemDefaults()
     m_verticalRatio           = d.verticalRatio;
     m_fontScale               = d.fontScale;
     m_accelEnabled            = d.accelerate;
+    m_thetisLook              = d.thetisLook;
 }
 
 // ---------------------------------------------------------------------------
@@ -818,8 +860,10 @@ void DialItem::paintStatic(QPainter& p, const QRect& dialRect)
 
 // ---------------------------------------------------------------------------
 // paintDynamic()
-// From Thetis renderDialDisplay() (MeterManager.cs:35284-35460 [v2.10.3.15])
-// Draws: button states, slice labels, speed indicator dot, marker.
+// The saved look (dials placed before the tuning port), as it was drawn:
+// active quadrant, accel/lock tints, speed indicator dot. The top labels
+// name slices (decision 2's wording) and sit under the fills as the old
+// static labels did. The marker shows only while it is dragged.
 // ---------------------------------------------------------------------------
 void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
 {
@@ -857,14 +901,23 @@ void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
         QRect(l + hw, t + hh, hw, hh),   // 3: LOCK bottom-right
     };
 
+    // Top labels: the slice each button selects ("<" / ">" when none).
+    const double size = 9 * objectTextScale(dialRect, {120, 120}) * static_cast<double>(m_fontScale);
+    QFont labelFont;
+    labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
+    p.setFont(labelFont);
+    p.setPen(m_textColour);
+    p.setBrush(Qt::NoBrush);
+    const int previous = sliceStepEnabled() ? previousSlice() : -1;
+    const int next = sliceStepEnabled() ? nextSlice() : -1;
+    drawObjectText(p, quadRects[0],
+                   previous >= 0 ? QStringLiteral("< ") + sliceLetter(previous) : QStringLiteral("<"), size);
+    drawObjectText(p, quadRects[1],
+                   next >= 0 ? sliceLetter(next) + QStringLiteral(" >") : QStringLiteral(">"), size);
+
     // Step 1: highlight active quadrant at alpha 0.3 (≈76/255)
     if (m_activeQuadrant >= 0 && m_activeQuadrant <= 3) {
         fillQuadrant(quadRects[m_activeQuadrant], m_btnOnColour, 76);
-    }
-    // The button under the mouse (Thetis button_highlight,
-    // MeterManager.cs:35341-35344 [v2.10.3.15]).
-    if (!m_pressed && m_hoverQuadrant >= 0 && m_hoverQuadrant <= 3 && buttonEnabled(m_hoverQuadrant)) {
-        fillQuadrant(quadRects[m_hoverQuadrant], m_btnHighlight, 76);
     }
 
     // Step 2: accel tint (bottom-left) at alpha 0.2 (≈51/255)
@@ -877,25 +930,7 @@ void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
         fillQuadrant(quadRects[3], m_btnOnColour, 51);
     }
 
-    // Step 4: the top labels name the slice each button selects, and the
-    // centre names the slice the dial tunes.
-    const double size = 9 * objectTextScale(dialRect, {120, 120}) * static_cast<double>(m_fontScale);
-    QFont labelFont;
-    labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
-    p.setFont(labelFont);
-    const int previous = sliceStepEnabled() ? previousSlice() : -1;
-    const int next = sliceStepEnabled() ? nextSlice() : -1;
-    QColor dimText = m_textColour;
-    dimText.setAlphaF(m_textColour.alphaF() * 0.5f);
-    p.setBrush(Qt::NoBrush);
-    p.setPen(previous >= 0 ? m_textColour : dimText);
-    drawObjectText(p, quadRects[0],
-                   previous >= 0 ? QStringLiteral("< ") + sliceLetter(previous) : QStringLiteral("<"), size);
-    p.setPen(next >= 0 ? m_textColour : dimText);
-    drawObjectText(p, quadRects[1],
-                   next >= 0 ? sliceLetter(next) + QStringLiteral(" >") : QStringLiteral(">"), size);
-
-    // Step 5: speed indicator dot at center
+    // Step 4: speed indicator dot at center
     QColor speedColor;
     switch (m_speedState) {
         case SpeedState::Slow: speedColor = m_slowColour; break;
@@ -908,36 +943,137 @@ void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
     p.setPen(Qt::NoPen);
     p.drawEllipse(center, dotR, dotR);
 
-    const int tuned = tunedSlice();
-    if (tuned >= 0) {
-        p.setPen(m_textColour);
-        p.setBrush(Qt::NoBrush);
-        drawObjectText(p, QRect(center.x() - dotR * 2, center.y() - dotR * 2, dotR * 4, dotR * 4),
-                       sliceLetter(tuned), size);
-    }
+    if (m_pressed) { paintMarker(p, dialRect); }
+}
 
+// ---------------------------------------------------------------------------
+// paintMarker()
+// From Thetis MeterManager.cs:35435-35441 [v2.10.3.15]: the pad on the ring
+// at the dial's angle, in the pressed colour while held.
+// ---------------------------------------------------------------------------
+void DialItem::paintMarker(QPainter& p, const QRect& dialRect)
+{
     //marker circle
-    // From Thetis MeterManager.cs:35435-35441 [v2.10.3.15]: the pad on the
-    // ring at the dial's angle, in the pressed colour while held.
     const double w = dialRect.width();
     const double ringRadius = (w * kRingDiameterRatio) / 2.0;
     const double markerRadius = w * kMarkerRadiusRatio;
     const double radians = static_cast<double>(m_degrees) * std::numbers::pi / static_cast<double>(kHalfTurn);
-    const QPointF centreF = QRectF(dialRect).center();
-    const QPointF marker(centreF.x() + std::cos(radians) * ringRadius,
-                         centreF.y() - std::sin(radians) * ringRadius);
+    const QPointF centre = QRectF(dialRect).center();
+    const QPointF marker(centre.x() + std::cos(radians) * ringRadius,
+                         centre.y() - std::sin(radians) * ringRadius);
     p.setBrush(m_pressed ? m_padPressedColour : m_padColour);
     p.setPen(Qt::NoPen);
     p.drawEllipse(marker, markerRadius, markerRadius);
 }
 
 // ---------------------------------------------------------------------------
+// paintThetis()
+// From Thetis renderDialDisplay() (MeterManager.cs:35284-35460 [v2.10.3.15]):
+// the four corner zones, the large circle, the speed ring while
+// accelerating, the dotted ring, the corner labels and the marker.
+// ---------------------------------------------------------------------------
+void DialItem::paintThetis(QPainter& p, const QRect& dialRect, int widgetW, int widgetH)
+{
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF r(dialRect);
+    const double x = r.left();
+    const double y = r.top();
+    const double w = r.width();
+    const double h = r.height();
+    const QPointF centre = r.center();
+
+    //corner buttons
+    //quadrant,     0 1
+    //              2 3
+    const QRectF zones[4] = {
+        QRectF(x, y, w / 2, h / 2),
+        QRectF(x + (w / 2), y, w / 2, h / 2),
+        QRectF(x, y + (h / 2), w / 2, h / 2),
+        QRectF(x + (w / 2), y + (h / 2), w / 2, h / 2),
+    };
+    // From Thetis MeterManager.cs:35341-35344 [v2.10.3.15]: a zone is on,
+    // else highlighted under the mouse, else off. The slice buttons are
+    // never "on": they select, they are not a state.
+    const auto zoneColour = [&](int zone, bool on) {
+        if (on) { return m_btnOnColour; }
+        const bool highlighted = !m_pressed && m_hoverQuadrant == zone && buttonEnabled(zone);
+        return highlighted ? m_btnHighlight : m_btnOffColour;
+    };
+    p.setPen(Qt::NoPen);
+    p.fillRect(zones[0], zoneColour(0, false));
+    p.fillRect(zones[1], zoneColour(1, false));
+    p.fillRect(zones[2], zoneColour(2, m_accelEnabled));
+    p.fillRect(zones[3], zoneColour(3, m_lockEnabled));
+
+    //large circle
+    p.setBrush(m_circleColour);
+    p.drawEllipse(centre, w / 2.0, w / 2.0);
+
+    const double ringRadius = (w * kRingDiameterRatio) / 2.0;
+
+    //acceleration colour
+    // From Thetis MeterManager.cs:35359-35378 [v2.10.3.15]
+    if (m_accelEnabled) {
+        if (m_pressed && std::abs(m_smoothedSpeed) >= kSpeedRingMin) {
+            QColor speed;
+            switch (m_tuneStepDirection) {
+                case -1: speed = m_slowColour; break;
+                case 1:  speed = m_fastColour; break;
+                default: speed = m_holdColour; break;
+            }
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(speed, std::max(1.0, w * kSpeedRingWidthRatio)));
+            p.drawEllipse(centre, ringRadius, ringRadius);
+        }
+    }
+    //dotted ring
+    // From Thetis MeterManager.cs:35380-35381 [v2.10.3.15]
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(m_ringColour, std::max(1.0, w * kDottedRingWidthRatio), Qt::DotLine));
+    p.drawEllipse(centre, ringRadius, ringRadius);
+
+    //button text
+    // From Thetis MeterManager.cs:35424-35433 [v2.10.3.15]:
+    //   float font_size_scaled = 38f * dial.FontScale;
+    //   float fontSizeEmScaled = (font_size_scaled / 16f) * (rect.Width / 52f);
+    // rect is the whole meter's width, so the text does not shrink with the
+    // dial's size.
+    const double meterWidth = pixelRect(widgetW, widgetH).width();
+    const double size = (kThetisFontSize * static_cast<double>(m_fontScale) / kThetisFontEmDivisor)
+        * (meterWidth / kThetisFontWidthDivisor);
+    QFont font;
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
+    p.setFont(font);
+    const int previous = sliceStepEnabled() ? previousSlice() : -1;
+    const int next = sliceStepEnabled() ? nextSlice() : -1;
+    QColor dimText = m_textColour;
+    dimText.setAlphaF(m_textColour.alphaF() * 0.5f);
+    const auto label = [&](int zone, const QString& text, int alignment, bool enabled) {
+        p.setPen(enabled ? m_textColour : dimText);
+        drawObjectText(p, zones[zone], text, size, alignment);
+    };
+    label(0, previous >= 0 ? QStringLiteral(" < ") + sliceLetter(previous) + QStringLiteral(" ") : QStringLiteral(" < "),
+          Qt::AlignLeft | Qt::AlignTop, previous >= 0);
+    label(1, next >= 0 ? QStringLiteral(" ") + sliceLetter(next) + QStringLiteral(" > ") : QStringLiteral(" > "),
+          Qt::AlignRight | Qt::AlignTop, next >= 0);
+    label(2, QStringLiteral(" ACCEL "), Qt::AlignLeft | Qt::AlignBottom, true);
+    label(3, QStringLiteral(" LOCK "), Qt::AlignRight | Qt::AlignBottom, tunedSlice() >= 0);
+
+    paintMarker(p, dialRect);
+}
+
+// ---------------------------------------------------------------------------
 // paintForLayer()
-// Dispatch to static or dynamic paint based on pipeline layer.
+// Dispatch to static or dynamic paint based on pipeline layer. The Thetis
+// look draws on the dynamic layer only (its zones follow the mouse).
 // ---------------------------------------------------------------------------
 void DialItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
 {
     const QRect dr = squareRect(widgetW, widgetH);
+    if (m_thetisLook) {
+        if (layer == Layer::OverlayDynamic) { paintThetis(p, dr, widgetW, widgetH); }
+        return;
+    }
     if (layer == Layer::OverlayStatic) {
         paintStatic(p, dr);
     } else if (layer == Layer::OverlayDynamic) {
@@ -952,6 +1088,10 @@ void DialItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
 void DialItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect dr = squareRect(widgetW, widgetH);
+    if (m_thetisLook) {
+        paintThetis(p, dr, widgetW, widgetH);
+        return;
+    }
     paintStatic(p, dr);
     paintDynamic(p, dr);
 }
@@ -962,8 +1102,9 @@ void DialItem::paint(QPainter& p, int widgetW, int widgetH)
 //         ringColour|btnOnColour|btnOffColour|btnHighlight|slowColour|holdColour|fastColour
 //         |padPressedColour|verticalRatio|fontScale|upThreshold|downThreshold
 //         |intervalSeconds|maxChanges|degreesPerChange|align|accelerate|sliceSelect
-//         [17-27], appended 2026-10-26; a record without them keeps the
-//         constructor's values.
+//         |thetisLook
+//         [17-28], appended 2026-10-26; a record without them keeps the
+//         constructor's values (and the saved look).
 // ---------------------------------------------------------------------------
 QString DialItem::serialize() const
 {
@@ -996,6 +1137,7 @@ QString DialItem::serialize() const
         QString::number(m_alignWithTuneStep ? 1 : 0),
         QString::number(m_accelEnabled ? 1 : 0),
         QString::number(static_cast<int>(m_sliceSelect)),
+        QString::number(m_thetisLook ? 1 : 0),
     };
     return parts.join(QLatin1Char('|'));
 }
@@ -1003,7 +1145,7 @@ QString DialItem::serialize() const
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected parts (17 or more):
-// [0]=DIAL [1-6]=base fields [7-16]=colour fields [17-27]=appended settings
+// [0]=DIAL [1-6]=base fields [7-16]=colour fields [17-28]=appended settings
 // ---------------------------------------------------------------------------
 bool DialItem::deserialize(const QString& data)
 {
@@ -1087,6 +1229,7 @@ bool DialItem::deserialize(const QString& data)
     if (intAt(24, value)) { setDegreesPerChange(value); }
     if (intAt(25, value)) { m_alignWithTuneStep = value != 0; }
     if (intAt(26, value)) { m_accelEnabled = value != 0; }
+    m_thetisLook = intAt(28, value) && value != 0;
     if (intAt(27, value)) {
         setSliceSelect(value == static_cast<int>(SliceSelect::AnySlice) ? SliceSelect::AnySlice
                                                                          : SliceSelect::SourceSlice);
