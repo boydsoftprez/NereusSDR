@@ -2124,6 +2124,7 @@ set(GUI_SOURCES
     src/gui/meters/FilterButtonItem.cpp
     src/gui/meters/AntennaButtonItem.cpp
     src/gui/meters/TuneStepButtonItem.cpp
+    src/gui/meters/OtherButtonCatalog.cpp
     src/gui/meters/OtherButtonItem.cpp
     src/gui/meters/VoiceRecordPlayItem.cpp
     src/gui/meters/VfoDisplayItem.cpp

@@ -434,8 +434,11 @@ private slots:
         QSplitter splitter;
         QString savedId;
         const QString savedItem = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967295");
-        // Saving appends the default grid styling after the older fields.
-        const QString savedWithoutPower = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967294|0.005|0|3|1|0|0");
+        // Saving appends the default grid styling after the older fields,
+        // then the Thetis id scheme, the 12 group bitfields and the
+        // (identity, so empty) button order.
+        const QString savedWithoutPower = QStringLiteral("OTHERBTNS|0|0|1|0.5|0|10|6|4294967294|0.005|0|3|1|0|0"
+                                                         "|2|2046|1568|0|16383|119|0|0|0|0|0|0|0|");
         {
             ContainerManager mgr(&dockParent, &splitter);
             ContainerWidget* c = mgr.createContainer(1, DockMode::Floating);

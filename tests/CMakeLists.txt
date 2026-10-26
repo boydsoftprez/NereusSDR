@@ -9111,6 +9111,9 @@ endif()
 # behind them are hidden through the unbuilt list.
 nereus_add_test(tst_other_button_item)
 target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 58: other buttons use Thetis button numbers
+# and every button's visibility is saved; older records still load.
+nereus_add_test(tst_other_button_ids)
 # R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
 # builds, local or remote, carries a not-yet-implemented mark or tooltip,
 # including the surfaces hidden until their feature is built.

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original editor for existing native action visibility.
 // Modification history (NereusSDR):
+//   2026-10-25 - Visibility by Thetis button number. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Keep the full replacement warning visible in the local form by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Explicit individual control selection by J.J. Boyd (KG4VCF),
@@ -30,13 +32,13 @@ void OtherButtonItemEditor::refreshSelection()
     beginProgrammaticUpdate();
     int selected = -1;
     const auto controls = supportedContainerControls();
+    const bool single = isSingleContainerControl(other);
     for (int i = 0; i < controls.size(); ++i) {
-        const uint32_t bit = 1u << int(controls[i].buttonId);
-        m_visibility[i]->setChecked(other->visibleBits() & bit);
-        if (other->columns() == 1 && other->visibleBits() == bit) { selected = int(controls[i].buttonId); }
+        m_visibility[i]->setChecked(other->isButtonVisible(controls[i].buttonId));
+        if (single && other->isButtonShown(controls[i].buttonId)) { selected = int(controls[i].buttonId); }
     }
     m_singleControl->setCurrentIndex(m_singleControl->findData(selected));
-    other->setProperty("containerSingleControl", isSingleContainerControl(other));
+    other->setProperty("containerSingleControl", single);
     endProgrammaticUpdate();
 }
 void OtherButtonItemEditor::buildOtherSpecific()
@@ -61,7 +63,7 @@ void OtherButtonItemEditor::buildOtherSpecific()
         auto* other = qobject_cast<OtherButtonItem*>(m_item);
         const int id = m_singleControl->currentData().toInt();
         if (!other || id < 0) { return; }
-        other->setVisibleBits(1u << id);
+        other->setOnlyVisible(static_cast<OtherButtonItem::ButtonId>(id));
         other->setColumns(1);
         // Update common Columns and the visibility rows without dispatching.
         setItem(other);
@@ -76,8 +78,7 @@ void OtherButtonItemEditor::buildOtherSpecific()
             if (isProgrammaticUpdate()) { return; }
             auto* other = qobject_cast<OtherButtonItem*>(m_item);
             if (!other) { return; }
-            const uint32_t bit = 1u << int(id);
-            other->setVisibleBits(visible ? other->visibleBits() | bit : other->visibleBits() & ~bit);
+            other->setButtonVisible(id, visible);
             refreshSelection();
             notifyChanged();
         });

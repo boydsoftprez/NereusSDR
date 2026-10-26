@@ -22,8 +22,11 @@ namespace {
 const QString kSavedSolidRecord =
     QStringLiteral("SOLID|0.1|0.2|0.3|0.4|-1|3|#ff0f0f1a");
 
-// makeEntry("control.mox") as it was before this change.
-const QString kMoxRecordToday = QStringLiteral("OTHERBTNS|0|0|1|1|-1|0|1|16|0.005|0|3|1|0|0");
+// makeEntry("control.mox") as it was before this change, then (parity
+// Task 58) the Thetis id scheme, the 12 group bitfields (MOX is group 0
+// bit 4) and the identity button order.
+const QString kMoxRecordToday = QStringLiteral("OTHERBTNS|0|0|1|1|-1|0|1|16|0.005|0|3|1|0|0"
+                                               "|2|16|0|0|0|0|0|0|0|0|0|0|0|");
 
 } // namespace
 

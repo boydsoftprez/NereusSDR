@@ -24,6 +24,10 @@
 //                 corner radius, height ratio, fade on RX/TX) after the
 //                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - Grids of more than 32 buttons: each button's grid
+//                 position is cached, and a subclass may read the
+//                 visibility mask its own way. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -144,8 +148,10 @@ public:
     ButtonState& button(int index);
     const ButtonState& button(int index) const;
 
-    // Visibility bitmask (from Thetis clsButtonBox _visible_bits)
-    void setVisibleBits(uint32_t bits);
+    // Visibility bitmask (from Thetis clsButtonBox _visible_bits) of
+    // buttons 0-31. A grid of more buttons (OtherButtonItem) keeps the
+    // visibility of the rest itself and reads the mask its own way.
+    virtual void setVisibleBits(uint32_t bits);
     uint32_t visibleBits() const { return m_visibleBits; }
 
     // R-R3-49: hide a button whose feature is not built, at layout time.
@@ -153,6 +159,9 @@ public:
     void setButtonHiddenUntilBuilt(int index, bool hidden);
     // Drawn and clickable: saved visible and not hidden until built.
     bool isButtonShown(int index) const;
+    // How many buttons are drawn. Cached with each button's grid position,
+    // so a large grid does not recount for every button it lays out.
+    int shownButtonCount() const;
 
     // R-R3-21: an unavailable button is dimmed, a click on it changes
     // nothing and emits unavailableButtonClicked with the reason.
@@ -210,12 +219,22 @@ protected:
     // current value.
     void deserializeGridStyle(const QStringList& parts, int first);
 
+    // Stores the mask visibleBits() reports without touching any button
+    // (a subclass that keeps its visibility elsewhere).
+    void setVisibleBitsValue(uint32_t bits) { m_visibleBits = bits; }
+    // A subclass that changes m_buttons[i].visible or hiddenUntilBuilt
+    // directly calls this so the grid positions are worked out again.
+    void invalidateShownLayout() { m_shownDirty = true; }
+
     int m_buttonCount{0};
     QVector<ButtonState> m_buttons;
 
 private:
     // From Thetis clsButtonBox layout calculation
     QRectF buttonRect(int index, const QRectF& area) const;
+    // The grid position of each shown button (-1 when not shown) and the
+    // shown count, recomputed only after visibility changes.
+    void ensureShownLayout() const;
     void paintIndicator(QPainter& p, int index, const QRectF& rect);
 
     int m_columns{4};
@@ -234,6 +253,10 @@ private:
     int m_unavailablePressedIndex{-1};
     QTimer m_clickTimer;
     bool m_interactionDirty{false};
+
+    mutable QVector<int> m_shownOrdinal;
+    mutable int m_shownCount{0};
+    mutable bool m_shownDirty{true};
 };
 
 } // namespace NereusSDR
