@@ -43,6 +43,12 @@
 //               frequency beside the count (fitCount), so a 10-character
 //               frequency fits 260 px with Linux and Mac fonts. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: a rebuilt section's body shows as soon as it is filled
+//               (showFreshBodies), not on the show its layout queues, so no
+//               layout pass sees the section empty and pulls a view that is
+//               not at the newest message up by its height (the readings,
+//               rebuilt every second). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
@@ -87,6 +93,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <memory>
 
 namespace NereusSDR {
@@ -333,6 +340,23 @@ QWidget* freshBody(QWidget* section)
     auto* body = new QWidget(section);
     layout->addWidget(body);
     return body;
+}
+
+// The body freshBody() put in each section shows now that it is filled.
+// Added to a visible section, the layout only queues its show
+// (QLayout::addChildWidget); a layout pass that ran first laid the section
+// out empty, the scroll range shrank by its height and a view that was not
+// at the newest message stayed that much higher when the body showed. The
+// rule is the queued show's: a body hidden on purpose stays hidden.
+void showFreshBodies(std::initializer_list<QWidget*> sections)
+{
+    for (QWidget* section : sections) {
+        QLayoutItem* item = section->layout() != nullptr ? section->layout()->itemAt(0) : nullptr;
+        QWidget* body = item != nullptr ? item->widget() : nullptr;
+        if (body != nullptr && body->isHidden() && !body->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+            body->show();
+        }
+    }
 }
 
 QWidget* makeSection(QWidget* parent, const QString& name)
@@ -1169,6 +1193,7 @@ void RoundtablePanel::rebuild()
         }
         m_empty->show();
         rebuildEmpty();
+        showFreshBodies({m_empty});
         updateConnectionLine({});
         m_connection->show();
         updateFooter();
@@ -1196,6 +1221,7 @@ void RoundtablePanel::rebuild()
     rebuildReadings(room);
     rebuildEarlier(room);
     rebuildMessages(room);
+    showFreshBodies({m_head, m_txLine, m_talker, m_readings, m_earlier, m_messages});
     updateFooter();
 
     const bool wasKeyed = property("roundtableKeyed").toBool();
@@ -2838,6 +2864,7 @@ void RoundtablePanel::refreshNow()
     updateConnectionLine(room);
     rebuildTalker(room);
     rebuildReadings(room);
+    showFreshBodies({m_txLine, m_talker, m_readings});
     checkOnScreen();
 }
 
@@ -2847,6 +2874,7 @@ void RoundtablePanel::setOwnReading(double dbm, qint64 takenMs)
     m_ownReadingMs = takenMs;
     if (m_model && m_model->linkState() == RoundtableModel::LinkState::Hidden && tunedHere()) {
         rebuildReadings(m_model->room(roomId()));
+        showFreshBodies({m_readings});
     }
 }
 

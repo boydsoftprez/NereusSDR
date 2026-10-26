@@ -1481,6 +1481,50 @@ private slots:
         QVERIFY(!pill->isVisible());
     }
 
+    // The readings are rebuilt every second (refreshNow). A layout pass that
+    // runs before the new readings show must not lay that section out empty:
+    // the scroll range shrank by its height, a view near the end but not at
+    // it was pulled up that far, and it stayed there when the readings came
+    // back (the window-of-Core flow's "mention read" screen on Windows).
+    void aRefreshKeepsAViewNearTheEnd()
+    {
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/PanelOpensOn"), QStringLiteral("Messages"));
+        Posed p;
+        QJsonArray many;
+        for (int i = 1; i <= 30; ++i) {
+            many.append(message(i, QStringLiteral("a"), QStringLiteral("W4ABC"),
+                                QStringLiteral("line %1").arg(i)));
+        }
+        p.model.applyRoom(talkingRoom(many));
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 600);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        auto* readings = child<QWidget>(&panel, QStringLiteral("roundtableReadings"));
+        QScrollBar* bar = child<QScrollArea>(&panel, QStringLiteral("roundtableScroll"))->verticalScrollBar();
+        QCOMPARE(bar->value(), bar->maximum());
+        constexpr int kAboveTheEnd = 20;
+        QVERIFY2(readings->height() > kAboveTheEnd, qPrintable(QString::number(readings->height())));
+        bar->setValue(bar->maximum() - kAboveTheEnd);
+        settle();
+        const int max = bar->maximum();
+        const int value = bar->value();
+        QCOMPARE(value, max - kAboveTheEnd);
+
+        panel.refreshNow();
+        // The layout passes alone, before any other posted event (the order
+        // a slower machine met).
+        for (int i = 0; i < 6; ++i) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        }
+        QCOMPARE(bar->maximum(), max);
+        QCOMPARE(bar->value(), value);
+        settle();
+        QCOMPARE(bar->maximum(), max);
+        QCOMPARE(bar->value(), value);
+    }
+
     void mentionPillFirstAndReadAfterTwoSeconds()
     {
         AppSettings::instance().setValue(QStringLiteral("Roundtable/PanelOpensOn"), QStringLiteral("Readings"));
