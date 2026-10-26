@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - setItemTxState: the transmit state ContainerManager
+//                 receives reaches fade covers, VFO displays and button
+//                 grids, including items added later. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -172,6 +176,14 @@ public:
     void setDisplayGroup(int group);
     int  displayGroup() const { return m_displayGroup; }
 
+    // NereusSDR: the transmit state for items that change on transmit
+    // (FadeCoverItem::setTxState, VfoDisplayItem and ButtonBoxItem
+    // setTransmitting). ContainerManager::setTransmitting feeds it; every
+    // item added later takes it at once. Applied to every item on each call
+    // (an item's own default need not match), then the widget repaints.
+    void setItemTxState(bool tx);
+    bool itemTxState() const { return m_itemTxState; }
+
     // Returns true if an item should paint under the current mode/group.
     // Mirrors Thetis MeterManager.cs:31366-31368 verbatim.
     bool shouldRender(const MeterItem* item) const;
@@ -238,6 +250,7 @@ protected:
 private:
     friend class ItemGroup; // Legacy preset transfer retains inert serialized siblings.
     void drawItems(QPainter& p);
+    static bool applyItemTxState(MeterItem* item, bool tx);
     // Task 39: dims each drawn item whose binding is unavailable.
     void drawUnavailableVeils(QPainter& p) const;
     QHash<int, QString> m_unavailableBindings;
@@ -249,6 +262,8 @@ private:
     // Visibility filter state — see setMox/setDisplayGroup doc.
     bool m_mox{false};
     int  m_displayGroup{0};
+    // See setItemTxState.
+    bool m_itemTxState{false};
 
     // Raw latest values seed new items; delivery still occurs on each poll.
     QHash<int, double> m_lastBindingValue;

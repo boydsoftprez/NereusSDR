@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The cover keeps the last transmit state, so turning Fade
+//                 on RX / TX on or off, or loading the flags, takes effect at
+//                 once. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -65,10 +69,10 @@ public:
     explicit FadeCoverItem(QObject* parent = nullptr);
 
     // From Thetis MeterManager.cs:1900 — FadeOnRx / FadeOnTx
-    void setFadeOnRx(bool on) { m_fadeOnRx = on; }
+    void setFadeOnRx(bool on) { m_fadeOnRx = on; updateActive(); }
     bool fadeOnRx() const { return m_fadeOnRx; }
 
-    void setFadeOnTx(bool on) { m_fadeOnTx = on; }
+    void setFadeOnTx(bool on) { m_fadeOnTx = on; updateActive(); }
     bool fadeOnTx() const { return m_fadeOnTx; }
 
     // Overlay colours (gradient if they differ, solid if equal)
@@ -86,6 +90,7 @@ public:
     // Call this when MOX state changes to update m_active.
     // m_active = (isTx && m_fadeOnTx) || (!isTx && m_fadeOnRx)
     void setTxState(bool isTx);
+    bool txState() const { return m_isTx; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
@@ -93,11 +98,15 @@ public:
     bool deserialize(const QString& data) override;
 
 private:
+    // NereusSDR: recomputes m_active from the last transmit state.
+    void updateActive();
+
     QColor m_colour1{0x20, 0x20, 0x20};
     QColor m_colour2{0x20, 0x20, 0x20};
     float  m_alpha{0.75f};
     bool   m_fadeOnRx{false};
     bool   m_fadeOnTx{false};
+    bool   m_isTx{false};
     bool   m_active{false};
 };
 

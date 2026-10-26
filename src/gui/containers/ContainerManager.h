@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - setTransmitting also reaches the items that change on
+//                 transmit. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-16 - bringAppletOnScreen, hiddenByOwnFlags, keepWindowReachable
 //                 and keepWindowsReachable: a floating window is shown where
 //                 its header can be reached, and Containers > Hidden lists
@@ -204,6 +207,9 @@ public:
     ContainerContentHost* contentHost(const QString& id) const;
     void reconcileWorkspace(const WorkspaceDocument& document);
     CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
+    // Shows or hides containers by Show on RX / TX, and hands the state to
+    // every container meter's fade covers, VFO displays and button grids
+    // (MeterWidget::setItemTxState); meters announced later take it too.
     void setTransmitting(bool transmitting);
     void setPreviewPoller(MeterPoller* poller);
     MeterPoller* previewPoller() const;

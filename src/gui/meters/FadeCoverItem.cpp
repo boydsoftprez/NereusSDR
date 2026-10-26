@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - setTxState keeps the state; updateActive applies it when
+//                 the Fade on RX / TX flags change or load. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -83,7 +86,13 @@ FadeCoverItem::FadeCoverItem(QObject* parent)
 // ---------------------------------------------------------------------------
 void FadeCoverItem::setTxState(bool isTx)
 {
-    m_active = (isTx && m_fadeOnTx) || (!isTx && m_fadeOnRx);
+    m_isTx = isTx;
+    updateActive();
+}
+
+void FadeCoverItem::updateActive()
+{
+    m_active = (m_isTx && m_fadeOnTx) || (!m_isTx && m_fadeOnRx);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +204,7 @@ bool FadeCoverItem::deserialize(const QString& data)
     m_alpha     = alpha;
     m_fadeOnRx  = (flags & 2) != 0;
     m_fadeOnTx  = (flags & 1) != 0;
+    updateActive();
     return true;
 }
 

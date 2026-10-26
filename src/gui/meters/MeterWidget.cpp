@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - setItemTxState gives fade covers, VFO displays and button
+//                 grids the transmit state, on change and when added.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -128,6 +131,7 @@ mw0lge@grange-lane.co.uk
 #include "AntennaButtonItem.h"
 #include "TuneStepButtonItem.h"
 #include "OtherButtonItem.h"
+#include "ButtonBoxItem.h"
 #include "VoiceRecordPlayItem.h"
 #include "VfoDisplayItem.h"
 #include "ClockItem.h"
@@ -212,6 +216,7 @@ void MeterWidget::addItem(MeterItem* item)
     if (m_unitMode) { item->setUnitMode(*m_unitMode); }
     if (m_powerScale > 0) { if (m_explicitPowerScale) { item->setPowerScale(m_powerScale, m_powerScaleTop); } else { item->setPowerScale(m_powerScale); } }
     item->resetForTxTransition(m_mox);
+    applyItemTxState(item, m_itemTxState);
     for (int binding : item->readingBindings()) {
         if (!item->hasMmioBinding()) { item->setBindingSupport(binding, bindingSupport(binding)); }
         if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
@@ -861,6 +866,38 @@ void MeterWidget::setMox(bool mox)
 #endif
     update();
     emit displayVisibilityChanged();
+}
+
+// NereusSDR: hands the transmit state to the item types that react to it.
+// Returns true when the item is one of them.
+bool MeterWidget::applyItemTxState(MeterItem* item, bool tx)
+{
+    if (auto* cover = qobject_cast<FadeCoverItem*>(item)) {
+        cover->setTxState(tx);
+        return true;
+    }
+    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
+        vfo->setTransmitting(tx);
+        return true;
+    }
+    if (auto* buttons = qobject_cast<ButtonBoxItem*>(item)) {
+        buttons->setTransmitting(tx);
+        return true;
+    }
+    return false;
+}
+
+void MeterWidget::setItemTxState(bool tx)
+{
+    m_itemTxState = tx;
+    bool any = false;
+    for (MeterItem* item : m_items) {
+        any = applyItemTxState(item, tx) || any;
+    }
+    if (any) {
+        invalidateReadingLayers(true);
+        update();
+    }
 }
 
 void MeterWidget::setDisplayGroup(int group)

@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - setTransmitting hands the transmit state to every
+//                 container meter's fade covers, VFO displays and button
+//                 grids (MeterWidget::setItemTxState), and each meter that
+//                 is announced later takes the current state at once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16 - Bench fix (JJ's Rotor window created at (0,1337) on a
 //                 1512 x 982 screen): a floating window is given a place
 //                 where its header can be reached every time it is shown,
@@ -379,6 +384,14 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     , m_splitter(splitter)
 {
     m_screens = ScreenSource::system();
+    // Every meter announced for polling (created, restored, rebuilt or
+    // moved) starts in the current transmit state, so an item loaded or
+    // added while transmitting does not wait for the next change.
+    connect(this, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
+        if (meter) {
+            meter->setItemTxState(m_transmitting);
+        }
+    });
     m_geometryCommit.setSingleShot(true);
     m_geometryCommit.setInterval(200);
     connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
@@ -672,6 +685,21 @@ bool ContainerManager::hiddenByOwnFlags(const ContainerDocument &document) const
 void ContainerManager::setTransmitting(bool transmitting)
 {
     m_transmitting = transmitting;
+    // Items that change on transmit (fade cover, VFO display, button grids)
+    // hear it from here; the radio has no other subscription for them.
+    for (ContainerWidget* c : std::as_const(m_containers)) {
+        if (!c || !c->content()) {
+            continue;
+        }
+        QList<MeterWidget*> meters;
+        if (auto* direct = qobject_cast<MeterWidget*>(c->content())) {
+            meters.append(direct);
+        }
+        meters += c->content()->findChildren<MeterWidget*>();
+        for (MeterWidget* meter : std::as_const(meters)) {
+            meter->setItemTxState(transmitting);
+        }
+    }
     if (!m_store) {
         return;
     }
