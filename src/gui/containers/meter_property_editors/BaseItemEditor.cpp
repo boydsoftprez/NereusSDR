@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The Reading list offers the six TX stage peak readings
+//                 (Mic, EQ, Leveler, ALC, Compressor, CFC). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setUpdateIntervalRange(): a type editor can set the
 //                 update interval row's range (the LED takes 50-10000).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -365,6 +368,12 @@ void BaseItemEditor::populateReadingCombo(QComboBox* combo)
         {MeterBinding::TxAlcGroup,   "TX: ALC Group"},
         {MeterBinding::TxCfc,        "TX: CFC"},
         {MeterBinding::TxCfcGain,    "TX: CFC Gain"},
+        {MeterBinding::TxMicPeak,    "TX: Mic Peak"},
+        {MeterBinding::TxEqPeak,     "TX: EQ Peak"},
+        {MeterBinding::TxLevelerPeak,"TX: Leveler Peak"},
+        {MeterBinding::TxAlcPeak,    "TX: ALC Peak"},
+        {MeterBinding::TxCompPeak,   "TX: Compressor Peak"},
+        {MeterBinding::TxCfcPeak,    "TX: CFC Peak"},
         {MeterBinding::HwVolts,      "HW: Volts"},
         {MeterBinding::HwAmps,       "HW: Amps"},
         {MeterBinding::HwTemperature,"HW: Temperature"},

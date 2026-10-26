@@ -780,6 +780,9 @@ nereus_add_test(tst_meter_item_serialize_placeholders)
 nereus_add_test(tst_meter_new_item_defaults)
 # Per-item update interval: throttle, saved entries, new-item default, editor.
 nereus_add_test(tst_meter_item_update_interval)
+# Container item parity Task 28: the building-block Reading list offers the
+# six TX stage peak readings under plain labels, and choosing one saves its id.
+nereus_add_test(tst_meter_reading_list)
 # Thetis reading names for meter bindings and the readings a clock publishes.
 nereus_add_test(tst_meter_published_readings)
 # Data out: Thetis-format payload by slice and radio, send interval, endpoint
@@ -797,6 +800,9 @@ nereus_add_test(tst_container_item_tx_state)
 # veil, persistence, legacy composite fade, fade cover, widget overlay,
 # preview transmit look, repaint and history clearing (offscreen).
 nereus_add_test(tst_meter_item_fade)
+# TX stage bars (EQ, Leveler, CFC, compander) dim while the stage is off
+# (Thetis DisableMeterType).
+nereus_add_test(tst_meter_tx_stage_disabled)
 # Several data source (MMIO) variables per item (Thetis MeterVariables):
 # the second variable's marker, the mmioVariables key and the editor rows.
 nereus_add_test(tst_meter_mmio_variables)

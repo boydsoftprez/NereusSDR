@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setStageDisabled() / stageDisabled(): a TX stage that is
+//                 off (Thetis clsMeterItem.Disabled) dims the item whatever
+//                 its fade options; never for a foreign session's entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - setUpdateIntervalMs() is virtual: the LED raises an
 //                 interval under 50 ms to 100 ms. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -489,6 +493,14 @@ public:
     // in the receive state whatever this window transmits.
     void setForeignSession(bool foreign) { m_foreignSession = foreign; }
     bool foreignSession() const { return m_foreignSession; }
+    // A TX stage that is off (Thetis clsMeterItem.Disabled, set by
+    // DisableMeterType, MeterManager.cs:26773-26792 [v2.10.3.15]): the fade
+    // steps as if both fade flags were on, so the item dims to
+    // kDimmedLevel over 500 ms whatever its own fade options, and recovers
+    // when cleared. A foreign session's entry is not dimmed by this
+    // window's TX stages. Runtime state, not saved.
+    void setStageDisabled(bool disabled) { m_stageDisabled = disabled; }
+    bool stageDisabled() const { return m_stageDisabled; }
     // The fade step interval: the item's update interval when set, else
     // kDefaultUpdateIntervalMs, at most 500 ms.
     int fadeIntervalMs() const;
@@ -683,6 +695,7 @@ protected:
     bool   m_explicitFade{false};
     bool   m_transmitting{false};
     bool   m_foreignSession{false};
+    bool   m_stageDisabled{false};
     // From Thetis MeterManager.cs:6778 [v2.10.3.15] (_fadeValue = 255)
     int    m_fadeValue{255};
     qint64 m_lastFadeStepMs{-1};

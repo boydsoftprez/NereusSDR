@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - advanceFade: a stage-disabled item (setStageDisabled,
+//                 Thetis clsMeterItem.Disabled) steps toward 48 whatever its
+//                 fade options; never for a foreign session's entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - mmioVariableCount: HISTORY reads 2 (axis 0, then axis 1),
 //                 as Thetis clsHistoryItem's per-axis MMIO does. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -518,8 +522,13 @@ bool MeterItem::advanceFade(qint64 monotonicMs)
     const int interval = fadeIntervalMs();
     // A foreign session's entry does not follow this window's transmit.
     const bool tx = m_transmitting && !m_foreignSession;
-    const bool rx = fadeOnRx();
-    const bool txFade = fadeOnTx();
+    // From Thetis MeterManager.cs:33156-33157,33166 [v2.10.3.15]: a
+    // Disabled item dims whatever its fade flags, which ContentFade::nextValue
+    // takes as both flags true. Not for a foreign session's entry.
+    // [2.10.1.0] MW0LGE
+    const bool disabled = m_stageDisabled && !m_foreignSession;
+    const bool rx = disabled || fadeOnRx();
+    const bool txFade = disabled || fadeOnTx();
     bool changed = false;
     while (monotonicMs - m_lastFadeStepMs >= interval) {
         const int next = ContentFade::nextValue(m_fadeValue, rx, txFade, tx, interval);
