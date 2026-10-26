@@ -472,8 +472,9 @@ signals:
     void contentChanged(QWidget* widget);
 
     // --- Phase 3G-5 interactive item signals ---
-    void bandClicked(int bandIndex);
-    void bandStackRequested(int bandIndex);
+    // The band's number (static_cast<int>(Band)), from a band grid.
+    void bandClicked(int band);
+    void bandStackRequested(int band);
     void modeClicked(int modeIndex);
     void filterClicked(int filterIndex);
     void filterContextRequested(int filterIndex);

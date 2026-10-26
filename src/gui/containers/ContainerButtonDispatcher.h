@@ -222,8 +222,9 @@ public:
     void applySliceAvailability(ButtonBoxItem* box, int rxSource) const;
     // Light the band of the container's slice (none when it is not open).
     void applyBand(BandButtonItem* item, int rxSource) const;
-    // A band button click: that band on the container's own slice.
-    QString clickBand(int bandUiIndex, int rxSource);
+    // A band button click: that band (its number, static_cast<int>(Band))
+    // on the container's own slice.
+    QString clickBand(int band, int rxSource);
 
     // Plain reasons, exposed for tests.
     static QString noRadioTransmitReason();

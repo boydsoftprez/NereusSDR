@@ -23,6 +23,10 @@
 //                 corner radius, height ratio, fade on RX/TX) after the
 //                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - The Thetis band groups from BandButtonItem; the record
+//                 ends with its layout marker so the visibility bits keep
+//                 their meaning. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -257,7 +261,8 @@ QString NereusBandButtonItem::serialize() const
         + QLatin1Char('|') + m_backgroundBottom.name(QColor::HexArgb)
         + QLatin1Char('|') + m_selectedTop.name(QColor::HexArgb)
         + QLatin1Char('|') + m_selectedBottom.name(QColor::HexArgb)
-        + serializeGridStyle();
+        + serializeGridStyle()
+        + layoutMarkerField();
 }
 
 bool NereusBandButtonItem::deserialize(const QString& data)
@@ -274,7 +279,8 @@ bool NereusBandButtonItem::deserialize(const QString& data)
     m_zOrder = parts[6].toInt();
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
     if (parts.size() > 8) { setActiveBand(parts[8].toInt()); }
-    if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
+    // The layout marker follows the grid styling (fields 15-20).
+    deserializeVisibility(parts, 9, 21);
     if (parts.size() > 10) {
         const QColor text(parts[10]);
         if (text.isValid()) { m_textColor = text; }

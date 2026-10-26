@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Band grids: the slice's band and group (setSliceBand), the
+//                 2 m reason kept with its band, clicks by band number.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30 - Fix round 1 (minor 4): MOX, TUNE and 2-TONE on a remote
 //                 window give the link-down words by state. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1198,21 +1201,27 @@ void ContainerButtonDispatcher::applyBand(BandButtonItem* item, int rxSource) co
     applySliceAvailability(item, rxSource);
     SliceModel* slice = sliceFor(rxSource);
     // R-IOS-26: a remote window's 2 m button, disabled with the reason
-    // when its Core does not have the 2 m band.
+    // when its Core does not have the 2 m band. The reason stays with the
+    // band in whichever group shows it.
+    QString reason2m;
     if (slice && m_model->stationLink() != nullptr) {
-        const QString reason = m_model->stationLink()->band2mUnavailableReason();
-        if (!reason.isEmpty()) {
-            item->setButtonAvailable(uiIndexFromBand(Band::Band2m), false, reason);
-        }
+        reason2m = m_model->stationLink()->band2mUnavailableReason();
     }
-    item->setActiveBand(slice ? uiIndexFromBand(bandFromFrequency(slice->frequency())) : -1);
+    item->setBandUnavailableReason(Band::Band2m, reason2m);
+    // The slice's own band group (each slice keeps its own).
+    if (slice) {
+        item->setSliceBand(slice->sliceIndex(), bandFromFrequency(slice->frequency()));
+    } else {
+        item->clearSliceBand();
+    }
 }
 
-QString ContainerButtonDispatcher::clickBand(int bandUiIndex, int rxSource)
+QString ContainerButtonDispatcher::clickBand(int band, int rxSource)
 {
     SliceModel* slice = sliceFor(rxSource);
     if (!slice) { return sliceUnavailableReason(rxSource); }
-    m_model->onBandButtonClicked(slice, bandFromUiIndex(bandUiIndex));
+    if (band < 0 || band >= static_cast<int>(Band::Count)) { return QString(); }
+    m_model->onBandButtonClicked(slice, static_cast<Band>(band));
     return QString();
 }
 

@@ -24,6 +24,10 @@
 //                 dynamic shows, the order, the editor and the store round
 //                 trip. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - The Thetis band groups: the layouts, the jumps, a group
+//                 per slice, the Nereus grid's same buttons and the saved
+//                 visibility bits. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -56,6 +60,8 @@
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/meters/BandButtonItem.h"
+#include "gui/meters/BandGroups.h"
 #include "gui/meters/NereusBandButtonItem.h"
 #include "gui/meters/NereusButtonFace.h"
 #include "gui/widgets/VfoWidget.h"
@@ -1097,6 +1103,232 @@ private slots:
         QVERIFY(filterCopy->widthLabel()->isHidden());
         QCOMPARE(filterCopy->columns(), 2);
         QCOMPARE(columnIndex(filterCopy, filterCopy->passband()), 0);
+    }
+
+    // Task 35: the Thetis band groups (MeterManager.cs setupButtons), one
+    // table for both band grids.
+    void theBandGroupLayoutsAreThetis()
+    {
+        const QVector<BandGroupSlot>& hf = bandGroupLayout(BandGroup::Hf);
+        QCOMPARE(hf.size(), kBandGroupButtons);
+        const Band hfBands[] = {Band::Band160m, Band::Band80m, Band::Band60m, Band::Band40m,
+                                Band::Band30m, Band::Band20m, Band::Band17m, Band::Band15m,
+                                Band::Band12m, Band::Band10m, Band::Band6m};
+        for (int i = 0; i < 11; ++i) {
+            QCOMPARE(hf[i].kind, BandGroupSlot::Band);
+            QCOMPARE(hf[i].band, hfBands[i]);
+        }
+        QCOMPARE(hf[11].kind, BandGroupSlot::Blank);
+        QCOMPARE(hf[12].kind, BandGroupSlot::JumpVhf);
+        QCOMPARE(hf[13].kind, BandGroupSlot::Band);
+        QCOMPARE(hf[13].band, Band::WWV);
+        QCOMPARE(hf[14].kind, BandGroupSlot::JumpGen);
+
+        const QVector<BandGroupSlot>& gen = bandGroupLayout(BandGroup::Gen);
+        QCOMPARE(gen.size(), kBandGroupButtons);
+        QCOMPARE(gen[0].kind, BandGroupSlot::Band);
+        QCOMPARE(gen[0].band, Band::GEN);
+        for (int i = 1; i <= kSwlBandCount; ++i) {
+            QCOMPARE(gen[i].kind, BandGroupSlot::Band);
+            QCOMPARE(gen[i].band, static_cast<Band>(static_cast<int>(Band::SwlFirst) + i - 1));
+        }
+        QCOMPARE(gen[13].band, Band::Band11m);
+        QCOMPARE(gen[14].kind, BandGroupSlot::JumpHf);
+
+        const QVector<BandGroupSlot>& vhf = bandGroupLayout(BandGroup::Vhf);
+        QCOMPARE(vhf.size(), kBandGroupButtons);
+        QCOMPARE(vhf[0].band, Band::Band2m);
+        QCOMPARE(vhf[1].band, Band::XVTR);
+        for (int i = 2; i < 14; ++i) { QCOMPARE(vhf[i].kind, BandGroupSlot::Blank); }
+        QCOMPARE(vhf[14].kind, BandGroupSlot::JumpHf);
+
+        QCOMPARE(bandGroupForBand(Band::Band20m), BandGroup::Hf);
+        QCOMPARE(bandGroupForBand(Band::WWV), BandGroup::Hf);
+        QCOMPARE(bandGroupForBand(Band::Band31m), BandGroup::Gen);
+        QCOMPARE(bandGroupForBand(Band::GEN), BandGroup::Gen);
+        QCOMPARE(bandGroupForBand(Band::Band2m), BandGroup::Vhf);
+        QCOMPARE(bandGroupForBand(Band::XVTR), BandGroup::Vhf);
+        QCOMPARE(bandGroupPosition(BandGroup::Hf, Band::WWV), 13);
+        QCOMPARE(bandGroupPosition(BandGroup::Hf, Band::Band2m), -1);
+
+        // A new grid shows the whole HF group, its blank included.
+        BandButtonItem grid;
+        grid.setSliceBand(0, Band::Band20m);
+        QCOMPARE(grid.buttonCount(), kBandGroupButtons);
+        QCOMPARE(grid.button(11).text, QString());
+        QVERIFY(grid.isButtonShown(11));
+        QCOMPARE(grid.button(12).text, QStringLiteral("VHF"));
+        QCOMPARE(grid.button(13).text, QStringLiteral("WWV"));
+        QCOMPARE(grid.button(14).text, QStringLiteral("SWL"));
+        QVERIFY(grid.button(5).on);
+    }
+
+    void aBandGridJumpsBetweenGroups()
+    {
+        BandButtonItem grid;
+        grid.setSliceBand(0, Band::Band20m);
+        // bandClicked is on BandButtonItem, which the GUI DLL does not
+        // export on Windows; the string form finds it through the object.
+        QSignalSpy bands(&grid, SIGNAL(bandClicked(int)));
+        QSignalSpy stacks(&grid, SIGNAL(bandStackRequested(int)));
+        QVERIFY(bands.isValid());
+
+        grid.buttonClicked(14, Qt::LeftButton);  // SWL
+        QCOMPARE(grid.shownGroup(), BandGroup::Gen);
+        QCOMPARE(grid.group(0), BandGroup::Gen);
+        QCOMPARE(grid.button(1).text, QStringLiteral("120m"));
+        QCOMPARE(grid.button(14).text, QStringLiteral("HF"));
+        QCOMPARE(bands.count(), 0);  // a jump chooses no band
+
+        grid.buttonClicked(6, Qt::LeftButton);  // 31m
+        QCOMPARE(bands.count(), 1);
+        QCOMPARE(bands.last().at(0).toInt(), static_cast<int>(Band::Band31m));
+
+        grid.buttonClicked(14, Qt::LeftButton);  // HF
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+        grid.buttonClicked(12, Qt::LeftButton);  // VHF
+        QCOMPARE(grid.shownGroup(), BandGroup::Vhf);
+        QCOMPARE(grid.button(0).text, QStringLiteral("2m"));
+        QCOMPARE(grid.button(14).text, QStringLiteral("HF"));
+        grid.buttonClicked(14, Qt::RightButton);  // a jump takes either button
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+
+        // WWV sets the band for either button; it has no band stack.
+        grid.buttonClicked(13, Qt::RightButton);
+        QCOMPARE(bands.count(), 2);
+        QCOMPARE(bands.last().at(0).toInt(), static_cast<int>(Band::WWV));
+        QCOMPARE(stacks.count(), 0);
+        // A band's right-click asks for its stack.
+        grid.buttonClicked(3, Qt::RightButton);
+        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::Band40m));
+        // The blank does nothing.
+        grid.buttonClicked(11, Qt::LeftButton);
+        QCOMPARE(bands.count(), 2);
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+
+        // A jumped-to group stays while the band stays in its own group,
+        // and follows the band into another group.
+        grid.buttonClicked(14, Qt::LeftButton);
+        grid.setSliceBand(0, Band::Band40m);
+        QCOMPARE(grid.shownGroup(), BandGroup::Gen);
+        grid.setSliceBand(0, Band::Band2m);
+        QCOMPARE(grid.shownGroup(), BandGroup::Vhf);
+        QVERIFY(grid.button(0).on);
+        grid.setSliceBand(0, Band::WWV);
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+        QVERIFY(!grid.button(13).on);  // WWV is never lit, as in Thetis
+    }
+
+    void eachSliceKeepsItsOwnBandGroup()
+    {
+        BandButtonItem grid;
+        grid.setSliceBand(0, Band::Band20m);
+        grid.buttonClicked(14, Qt::LeftButton);  // Slice A: GEN
+        grid.setSliceBand(1, Band::Band80m);
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);  // Slice B: HF
+        QCOMPARE(grid.group(0), BandGroup::Gen);
+        QCOMPARE(grid.group(1), BandGroup::Hf);
+        grid.setSliceBand(0, Band::Band20m);
+        QCOMPARE(grid.shownGroup(), BandGroup::Gen);
+        QCOMPARE(grid.group(1), BandGroup::Hf);
+        // With no slice, nothing is lit and the group stays.
+        grid.clearSliceBand();
+        QCOMPARE(grid.activeBand(), -1);
+        QCOMPARE(grid.shownGroup(), BandGroup::Gen);
+    }
+
+    void theNereusBandGridShowsTheSameButtons()
+    {
+        for (BandGroup g : {BandGroup::Gen, BandGroup::Hf, BandGroup::Vhf}) {
+            BandButtonItem classic;
+            NereusBandButtonItem nereus;
+            QCOMPARE(nereus.buttonCount(), classic.buttonCount());
+            classic.setSliceBand(0, Band::Band20m);
+            nereus.setSliceBand(0, Band::Band20m);
+            classic.setGroup(0, g);
+            nereus.setGroup(0, g);
+            for (int i = 0; i < classic.buttonCount(); ++i) {
+                QCOMPARE(nereus.button(i).text, classic.button(i).text);
+                QCOMPARE(nereus.isButtonShown(i), classic.isButtonShown(i));
+                QCOMPARE(nereus.button(i).on, classic.button(i).on);
+            }
+        }
+        NereusBandButtonItem nereus;
+        nereus.setSliceBand(0, Band::Band20m);
+        nereus.buttonClicked(14, Qt::LeftButton);
+        QCOMPARE(nereus.shownGroup(), BandGroup::Gen);
+        QCOMPARE(nereus.button(1).text, QStringLiteral("120m"));
+    }
+
+    void savedBandGridVisibleBitsKeepTheirMeaning()
+    {
+        // Saved before the groups: GEN (slot 11) and WWV (slot 12) hidden.
+        const uint32_t legacy = 0x7FFFu & ~(1u << 11) & ~(1u << 12);
+        BandButtonItem grid;
+        QVERIFY(grid.deserialize(QStringLiteral("BANDBTNS|0|0|1|1|-1|0|4|5|%1|0.005|0|3|1|0|0")
+                                     .arg(legacy)));
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+        QVERIFY(grid.isButtonShown(5));    // 20m
+        QVERIFY(!grid.isButtonShown(13));  // WWV stays hidden
+        QVERIFY(grid.isButtonShown(12));   // the jumps came after: shown
+        QVERIFY(grid.isButtonShown(14));
+        QVERIFY(!grid.isButtonShown(11));  // a group with a hidden button has no blank
+        grid.setGroup(grid.shownSlice(), BandGroup::Gen);
+        QVERIFY(!grid.isButtonShown(0));   // GEN stays hidden
+        QVERIFY(grid.isButtonShown(1));    // 120m came after: shown
+        grid.setGroup(grid.shownSlice(), BandGroup::Vhf);
+        QVERIFY(grid.isButtonShown(0));    // 2m (slot 14) stays shown
+
+        // Saved again, the old record comes back as it was, and reloads the
+        // same way.
+        const QString saved = grid.serialize();
+        QVERIFY(saved.startsWith(QStringLiteral("BANDBTNS|0|0|1|1|-1|0|4|5|%1|").arg(legacy)));
+        QVERIFY(!saved.endsWith(QStringLiteral("|BG1")));
+        BandButtonItem reloaded;
+        QVERIFY(reloaded.deserialize(saved));
+        QCOMPARE(reloaded.visibleBits(), legacy);
+        QVERIFY(!reloaded.isButtonShown(13));
+        QVERIFY(reloaded.isButtonShown(14));
+
+        // Once its visibility is set, every bit has its meaning: the record
+        // carries the marker.
+        grid.setVisibleBits(legacy);
+        QVERIFY(grid.serialize().endsWith(QStringLiteral("|BG1")));
+        QVERIFY(!grid.isButtonShown(14));
+
+        // With the marker, a hidden jump stays hidden.
+        const int swlJump = BandButtonItem::visibleBitFor({Band::GEN, BandGroupSlot::JumpGen});
+        BandButtonItem hiding;
+        hiding.setVisibleBits(0xFFFFFFFFu & ~(1u << swlJump));
+        BandButtonItem hidden;
+        QVERIFY(hidden.deserialize(hiding.serialize()));
+        QCOMPARE(hidden.shownGroup(), BandGroup::Hf);
+        QVERIFY(!hidden.isButtonShown(14));
+        QVERIFY(hidden.isButtonShown(12));
+
+        // The Nereus grid's record, saved before the groups.
+        NereusBandButtonItem nereus;
+        QVERIFY(nereus.deserialize(
+            QStringLiteral("NEREUSBAND|0|0|1|1|-1|0|4|5|%1|#ffffffff|#ff000000|#ff111111|#ff222222|#ff333333")
+                .arg(legacy)));
+        QVERIFY(!nereus.isButtonShown(13));
+        QVERIFY(nereus.isButtonShown(14));
+        QCOMPARE(nereus.buttonTextColor(), QColor(QStringLiteral("#ffffffff")));
+        const QString nereusSaved = nereus.serialize();
+        QVERIFY(!nereusSaved.endsWith(QStringLiteral("|BG1")));
+        NereusBandButtonItem nereusReloaded;
+        QVERIFY(nereusReloaded.deserialize(nereusSaved));
+        QCOMPARE(nereusReloaded.visibleBits(), nereus.visibleBits());
+        QCOMPARE(nereusReloaded.buttonTextColor(), nereus.buttonTextColor());
+        QVERIFY(nereusReloaded.isButtonShown(14));
+        nereusReloaded.setVisibleBits(0xFFFFFFFFu);
+        const QString nereusMarked = nereusReloaded.serialize();
+        QVERIFY(nereusMarked.endsWith(QStringLiteral("|BG1")));
+        NereusBandButtonItem nereusMarkedReloaded;
+        QVERIFY(nereusMarkedReloaded.deserialize(nereusMarked));
+        QCOMPARE(nereusMarkedReloaded.serialize(), nereusMarked);
+        QCOMPARE(nereusMarkedReloaded.selectedBottomColor(), nereusReloaded.selectedBottomColor());
     }
 };
 
