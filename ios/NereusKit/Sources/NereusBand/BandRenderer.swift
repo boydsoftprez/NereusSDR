@@ -79,8 +79,6 @@ public final class BandRenderer {
     static let stackScaleBackground = SIMD4<Float>(10.0 / 255, 10.0 / 255, 24.0 / 255, 220.0 / 255)
     static let stackScaleEdge = SIMD4<Float>(48.0 / 255, 64.0 / 255, 80.0 / 255, 1)
     static let stackScaleTick = SIMD4<Float>(80.0 / 255, 112.0 / 255, 128.0 / 255, 1)
-    /// The ridge line along each row's top, in points.
-    static let stackRidgePoints: CGFloat = 1
     static let spotColour = SIMD4<Float>(1, 1, 1, 1)
     /// The extras' line width, in points. The trace's is the pan's
     /// setting (``BandDisplaySettings/traceWidthPixels(scale:)``).
@@ -1578,8 +1576,9 @@ public final class BandRenderer {
         blit.endEncoding()
     }
 
-    /// The stacked trace over the spectrum's plot, oldest row first, the
-    /// newest growing in at the front as the glide runs.
+    /// The stacked trace over the spectrum's plot, oldest row first, each
+    /// row a curtain to the floor, the newest growing in at the front as
+    /// the glide runs.
     private func drawStack(_ stack: StackedTraceHistory, overlay: StackedTraceOverlay, geometry: StackedTraceGeometry,
                            settings: BandDisplaySettings, markers: [SliceMarkers.Marker], view: BandCoverage,
                            scale: CGFloat, target: CGSize, encoder: any MTLRenderCommandEncoder,
@@ -1597,8 +1596,8 @@ public final class BandRenderer {
                                 Float(geometry.colourRangeDb), Float(geometry.gamma))
         let rowSpan = StackedTrace.rowSpan(spanPercent: settings.threeDSpan, shape: geometry.shape,
                                            availableFactor: overlay.availableSpanFactor)
-        uniforms.look = SIMD4(Float(StackedTrace.haze), Float(StackedTrace.fillShare),
-                              Float(max(1, Self.stackRidgePoints * scale)), Float(rowSpan))
+        uniforms.look = SIMD4(Float(StackedTrace.haze), Float(StackedTrace.curtainFootColour),
+                              Float(StackedTrace.lineHalfWidthPixels), Float(rowSpan))
         uniforms.view = SIMD4(Float(view.lowHz - stackReferenceHz), Float(view.spanHz),
                               Float(min(max(overlay.glide, 0), 1)), Float(StackedTrace.visibleRows))
         var shadows = Array(repeating: SIMD4<Float>(0, 0, 0, 0), count: StackedUniforms.shadowSlots)
@@ -1637,9 +1636,10 @@ public final class BandRenderer {
         encoder.setVertexTexture(rows, index: 0)
         encoder.setVertexTexture(windows, index: 1)
         encoder.setFragmentTexture(palette, index: 0)
-        // Every row but the newest glides; the front draws two layers.
+        // The back's two layers, the rows that glide between, the front's
+        // two layers; the shader leaves out the rows the stack does not hold.
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
-                               instanceCount: min(stack.count, stack.capacity) + 1)
+                               instanceCount: StackedTrace.visibleRows + 2)
         // The ridge lines over the whole stack, one at each row's depth from
         // the front back, each in two layers.
         let lineDepths = min(stack.count, stack.capacity, StackedTrace.visibleRows)

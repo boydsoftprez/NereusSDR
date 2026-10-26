@@ -161,8 +161,7 @@ import Testing
         #expect(StackedTraceGeometry.depth(age: 1, glide: 0) == 0, "the row before the newest starts at the front")
         #expect(StackedTraceGeometry.depth(age: 1, glide: 0.5) == 0.5 / 96)
         #expect(StackedTraceGeometry.depth(age: 4, glide: 0.5) == 3.5 / 96)
-        #expect(StackedTraceGeometry.depth(age: 96, glide: 1) == 1)
-        #expect(StackedTraceGeometry.depth(age: 97, glide: 0) == 1)
+        #expect(StackedTraceGeometry.depth(age: 94, glide: 0.5) == 93.5 / 96, "the last row that glides")
         #expect(StackedTraceGeometry.frontOpacity(glide: 0) == 0, "a new row starts clear")
         #expect(StackedTraceGeometry.frontOpacity(glide: 0.25) == 0.25)
         #expect(StackedTraceGeometry.frontOpacity(glide: 1.5) == 1)
@@ -674,10 +673,138 @@ import Testing
             }
         }
         // Behind the front, a light line runs along every row's ridge over
-        // the whole stack: no pixel there falls back to a row's dimmer
-        // body, as it did between the rows' own top edges.
+        // the whole stack, the rows a pixel or two apart there: every pixel
+        // is lighter than the front's curtain just under its ridge, where
+        // the rows' curtains alone, fading with depth, would be darker.
         let body = start.grey(middle, ridge + 3)
         let darkest = ((ridge - 8)..<ridge).map { start.grey(middle, $0) }.min() ?? 0
-        #expect(darkest > body + 40, "darkest \(darkest) over a body of \(body)")
+        #expect(darkest > body + 5, "darkest \(darkest) over a body of \(body)")
+    }
+
+    // MARK: The surface's shape (the desktop's, 2026-10-26)
+
+    /// The back stays put as the front does: the oldest row whole one row
+    /// short of the deepest, and the row after it growing in over it. The
+    /// back row used to glide out past the back edge and be cut off there.
+    @Test func theBackStaysPutAndGrowsTheNextRowIn() {
+        #expect(StackedTraceGeometry.backDepth == 95.0 / 96)
+        for glide in [0.0, 0.3, 0.999] {
+            #expect(StackedTraceGeometry.depth(age: 95, glide: glide) == 95.0 / 96)
+            #expect(StackedTraceGeometry.depth(age: 96, glide: glide) == 95.0 / 96)
+        }
+        #expect(StackedTraceGeometry.backOpacity(glide: 0) == 0, "the next row starts clear at the back")
+        #expect(StackedTraceGeometry.backOpacity(glide: 0.4) == 0.4)
+        #expect(StackedTraceGeometry.backOpacity(glide: 2) == 1)
+    }
+
+    /// The height curve lifts the band just over the floor (0.6), each
+    /// curtain's colour falls to 0.6 of the ridge's share at the floor,
+    /// the rows' ends fade over 8 pixels, and a row keeps 768 columns.
+    @Test func theSurfaceIsShapedLikeTheDesktops() {
+        let geometry = Self.geometry()
+        // Floor -126 (-120 less 3D Floor's 6), height range 100 dB.
+        #expect(abs(geometry.heightShare(dbm: -101) - pow(0.25, 0.6)) < 1e-12)
+        #expect(abs(geometry.heightShare(dbm: -101) - 0.43528) < 1e-5)
+        #expect(geometry.heightShare(dbm: -126) == 0 && geometry.heightShare(dbm: -26) == 1)
+        let straight = Self.geometry { $0.threeDGain = 50 }
+        let top = straight.floorDbm + straight.colourRangeDb
+        #expect(straight.curtainColourPosition(dbm: top, down: 0) == 1)
+        #expect(abs(straight.curtainColourPosition(dbm: top, down: 1) - 0.6) < 1e-12)
+        #expect(abs(straight.curtainColourPosition(dbm: top, down: 0.5) - 0.8) < 1e-12)
+        #expect(straight.colourPosition(dbm: top) == 1)
+        #expect(StackedTraceGeometry.sideFade(pixels: 0) == 0)
+        #expect(StackedTraceGeometry.sideFade(pixels: 4) == 0.5)
+        #expect(StackedTraceGeometry.sideFade(pixels: 8) == 1 && StackedTraceGeometry.sideFade(pixels: 30) == 1)
+        #expect(StackedTrace.lineHalfWidthPixels == 1)
+        #expect(StackedTrace.maxColumns == 768)
+        var stack = StackedTraceHistory(smoothsRows: false)
+        stack.append(frame: BandFixtures.frame(trace: [Float](repeating: -120, count: 400)),
+                     coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000), wide: nil, time: 1)
+        #expect(stack.columns == 768, "400 samples across the pan, 1143 across the widest row, kept to 768")
+    }
+
+    /// Draws `stack` over a plain band at `glide`.
+    private func renderStack(_ stack: StackedTraceHistory, glide: Double, target: Offscreen,
+                             renderer: BandRenderer, settings: BandDisplaySettings) throws -> Image {
+        var state = BandState(waterfallLines: 10)
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        state.note(context: 1, coverage: coverage)
+        state.receive(frame: BandFixtures.frame(trace: [Float](repeating: -125, count: 200)),
+                      manualLevels: .init(lowDbm: -130, highDbm: -60))
+        var overlays = BandRendererTests.overlays(settings)
+        overlays.frameCoverage = coverage
+        overlays.stacked = StackedTraceOverlay(noiseFloorDbm: -125, glide: glide, availableSpanFactor: 1)
+        renderer.draw(frame: state.frame, history: state.history, stack: stack, extras: nil,
+                      overlays: overlays, into: target.texture)?.waitUntilCompleted()
+        return try target.read()
+    }
+
+    /// Every row's curtain hangs to the plot's floor, as the desktop's do:
+    /// where the nearer rows hold no level, a row behind them shows down
+    /// to the floor. Each row used to end at the row in front of it.
+    @Test func everyCurtainHangsToTheFloor() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        var stack = StackedTraceHistory(smoothsRows: false)
+        var signal = [Float](repeating: -125, count: 200)
+        for index in 90..<110 {
+            signal[index] = -50
+        }
+        let empty = [Float](repeating: .nan, count: 200)
+        for sequence in 1...30 {
+            stack.append(frame: BandFixtures.frame(trace: sequence <= 20 ? signal : empty, sequence: UInt32(sequence)),
+                         coverage: coverage, wide: nil, time: Double(sequence))
+        }
+        let image = try renderStack(stack, glide: 0, target: target, renderer: renderer, settings: settings)
+        let plot = BandRendererTests.geometry(settings)
+        let middle = BandRendererTests.width / 2
+        // The ten newest rows hold nothing; the nearest signal row, ten
+        // rows old, stands nine rows deep, its curtain to the floor.
+        let floor = Int(plot.size.height) - 2
+        #expect(image.grey(middle, floor) > 40, "the curtain reaches the floor: \(image.grey(middle, floor))")
+        #expect(image.grey(middle, floor - 3) > 40)
+    }
+
+    /// The back grows its next row in over the oldest, as the front does:
+    /// a row one younger than the oldest is clear at the back as it gets
+    /// there and whole by the time the next row is due. It used to stand
+    /// whole a row nearer and glide back.
+    @Test func theBackGrowsItsNextRowIn() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        var stack = StackedTraceHistory(smoothsRows: false)
+        let flat = [Float](repeating: -125, count: 200)
+        var signal = flat
+        for index in 90..<110 {
+            signal[index] = -50
+        }
+        // 97 rows: the oldest flat, the one after it the signal, the rest flat.
+        for sequence in 1...97 {
+            stack.append(frame: BandFixtures.frame(trace: sequence == 2 ? signal : flat, sequence: UInt32(sequence)),
+                         coverage: coverage, wide: nil, time: Double(sequence))
+        }
+        #expect(stack.row(age: 95)!.contains(-50) && !stack.row(age: 96)!.contains(-50))
+        let plot = BandRendererTests.geometry(settings)
+        let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
+                                            scale: settings.scaleRange)
+        let middle = BandRendererTests.width / 2
+        // Just under the signal's peak at the back, clear of its ridge line.
+        let probe = Int(geometry.ridgeY(dbm: -50, depth: StackedTraceGeometry.backDepth)) + 4
+        let clear = try renderStack(stack, glide: 0, target: target, renderer: renderer, settings: settings)
+            .grey(middle, probe)
+        let half = try renderStack(stack, glide: 0.5, target: target, renderer: renderer, settings: settings)
+            .grey(middle, probe)
+        let whole = try renderStack(stack, glide: 0.999, target: target, renderer: renderer, settings: settings)
+            .grey(middle, probe)
+        #expect(clear < 30, "the row is clear as it reaches the back: \(clear)")
+        #expect(whole > 40, "and whole by the next row: \(whole)")
+        let share = Double(half - clear) / Double(max(whole - clear, 1))
+        #expect(share > 0.3 && share < 0.7, "half way, half grown in: \(share)")
     }
 }

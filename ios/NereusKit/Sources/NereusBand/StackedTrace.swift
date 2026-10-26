@@ -68,13 +68,18 @@ public enum StackedTrace {
     /// top does not turn every signal blue.
     public static let colourSpanDb = 45.0
     /// The height curve: a strength's height is its share to this power.
-    /// Straight, as JJ's approved board draws the stack (the desktop lifts
-    /// the band just over the floor with 0.6; on the board's example
-    /// signals that stood the noise up as dense spikes that hid the rows).
-    public static let heightCurve = 1.0
-    /// The fill under each row's ridge is the ridge's colour at this share
-    /// over the background; the ridge line itself is the whole colour.
-    public static let fillShare = 0.5
+    /// Below 1 it lifts the band just over the floor, as the desktop's 3D
+    /// does (JJ, 2026-10-26: the phone's 3D should look and feel like the
+    /// desktop's, so the board's straight 1.0 gave way).
+    public static let heightCurve = 0.6
+    /// Each row hangs a curtain from its ridge to the plot's floor. Its
+    /// colour runs from the level's place in the colour span at the ridge
+    /// down to this share of it at the floor, through the palette.
+    public static let curtainFootColour = 0.6
+    /// The rows' ends fade out over this many pixels, so the stacked ends
+    /// do not stand as a hard comb against the dark outside the surface.
+    /// The shader draws with the same number.
+    public static let sideFadePixels = 8.0
 
     /// The ridge lines over the stack (the desktop's values): a light grey
     /// ``lineGrey`` over the background, at ``lineFarStrength`` at the back
@@ -87,6 +92,9 @@ public enum StackedTrace {
     public static let lineNearExtra = 0.5
     public static let lineOverFloorShare = 0.42
     public static let lineFloorSpan = 0.035
+    /// Each ridge line is a ribbon this many pixels either side of the
+    /// ridge, its edges softened, so it is thin at any screen scale.
+    public static let lineHalfWidthPixels = 1.0
 
     /// The 3D Angle's curves: the back row's width and the rise of the back
     /// row's foot, from angle 0 to angle 100, and the tallest ridge allowed.
@@ -114,9 +122,9 @@ public enum StackedTrace {
     public static let shadowCueStrength = 0.36
 
     /// The most samples one stored row keeps across its window: the
-    /// board's 457 across the widest row, about 160 across the pan, so each
-    /// row reads as a trace rather than a comb of single-sample spikes.
-    public static let maxColumns = 457
+    /// desktop's 768, here across the widest row, so about 270 across the
+    /// pan (the desktop keeps its 768 across the pan alone).
+    public static let maxColumns = 768
 
     /// The five settings' defaults and limits (the Core's V12 rows).
     public static let floorDefaultDb = 6
@@ -229,12 +237,28 @@ public struct StackedTraceGeometry: Equatable, Sendable {
     /// front, at depth 0, stays put: it shows the row before the newest,
     /// and the newest grows in over it (``frontOpacity(glide:)``). Every
     /// older row glides back from the front, so the row one before the
-    /// newest leaves the front as the newest takes its place.
+    /// newest leaves the front as the newest takes its place. The back
+    /// stays put too, at ``backDepth``: it shows the oldest row whole and
+    /// the one after it growing in (``backOpacity(glide:)``), so the stack
+    /// never slides a row out past its back edge.
     public static func depth(age: Int, glide: Double) -> Double {
         guard age > 0 else {
             return 0
         }
+        guard age < StackedTrace.visibleRows - 1 else {
+            return backDepth
+        }
         return (Double(age) - 1 + min(max(glide, 0), 1)) / Double(StackedTrace.visibleRows)
+    }
+
+    /// The back's depth: one row short of 1.
+    public static let backDepth = Double(StackedTrace.visibleRows - 1) / Double(StackedTrace.visibleRows)
+
+    /// How much of the row one younger than the oldest the back shows over
+    /// the oldest: none when a row arrives, all of it when the next is due,
+    /// when it becomes the oldest and is shown whole.
+    public static func backOpacity(glide: Double) -> Double {
+        min(max(glide, 0), 1)
     }
 
     /// How much of the newest row the front shows over the row before it:
@@ -302,10 +326,25 @@ public struct StackedTraceGeometry: Equatable, Sendable {
 
     /// A level's place in the palette, 0 at the floor to 1 at the colour span's top.
     public func colourPosition(dbm: Double) -> Double {
+        curtainColourPosition(dbm: dbm, down: 0)
+    }
+
+    /// The palette place on the curtain under a ridge at `dbm`, `down` of
+    /// the way from the ridge (0) to the plot's floor (1).
+    public func curtainColourPosition(dbm: Double, down: Double) -> Double {
         guard dbm.isFinite else {
             return 0
         }
-        return pow(min(max((dbm - floorDbm) / colourRangeDb, 0), 1), gamma)
+        let share = min(max((dbm - floorDbm) / colourRangeDb, 0), 1)
+        let along = 1 - min(max(down, 0), 1) * (1 - StackedTrace.curtainFootColour)
+        return pow(share * along, gamma)
+    }
+
+    /// How much of a row shows `pixels` in from its end: none at the end,
+    /// all of it from ``StackedTrace/sideFadePixels`` in, on an S curve.
+    public static func sideFade(pixels: Double) -> Double {
+        let t = min(max(pixels / StackedTrace.sideFadePixels, 0), 1)
+        return t * t * (3 - 2 * t)
     }
 
     /// The dBm scale in 3D: levels every `stepDb` from the floor up to the
