@@ -69,6 +69,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (font families) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "TextOverlayItem.h"
@@ -280,12 +283,10 @@ QString TextOverlayItem::serialize() const
     const QString text1B64 = QString::fromLatin1(m_text1.toUtf8().toBase64());
     const QString text2B64 = QString::fromLatin1(m_text2.toUtf8().toBase64());
 
+    // The font families are joined, not substituted: chained .arg() would
+    // read a "%1" in one as a placeholder. Field positions are unchanged.
     return QStringLiteral("TEXTOVERLAY|%1|%2|%3|%4|%5|%6"
-                          "|%7|%8|%9|%10|%11"
-                          "|%12|%13|%14"
-                          "|%15|%16|%17"
-                          "|%18|%19"
-                          "|%20|%21")
+                          "|%7|%8|%9|%10|%11")
         .arg(static_cast<double>(x()))
         .arg(static_cast<double>(y()))
         .arg(static_cast<double>(itemWidth()))
@@ -297,10 +298,12 @@ QString TextOverlayItem::serialize() const
         .arg(m_panelBack1.name(QColor::HexArgb))
         .arg(m_panelBack2.name(QColor::HexArgb))
         .arg(m_showBackPanel ? 1 : 0)
-        .arg(m_fontFamily1)
+        + QLatin1Char('|') + m_fontFamily1
+        + QStringLiteral("|%1|%2")
         .arg(static_cast<double>(m_fontSize1))
         .arg(m_fontBold1 ? 1 : 0)
-        .arg(m_fontFamily2)
+        + QLatin1Char('|') + m_fontFamily2
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6")
         .arg(static_cast<double>(m_fontSize2))
         .arg(m_fontBold2 ? 1 : 0)
         .arg(static_cast<double>(m_scrollX))

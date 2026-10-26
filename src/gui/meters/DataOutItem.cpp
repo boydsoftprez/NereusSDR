@@ -17,6 +17,9 @@
 //   2026-10-26 - A copy with sending disabled (a preview) runs no timer and
 //                 sends nothing. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - User text in the record (MMIO guid and variable) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -244,11 +247,15 @@ QString DataOutItem::serialize() const
 {
     // Fields 11 and 12 (send interval, endpoint guid) follow the ten that
     // records written before them carry.
-    return QStringLiteral("DATAOUT|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10")
+    // The MMIO guid and variable are joined, not substituted: chained .arg()
+    // would read a "%1" in them as a placeholder.
+    return QStringLiteral("DATAOUT|%1|%2|%3|%4|%5|%6")
         .arg(m_x).arg(m_y).arg(m_w).arg(m_h)
         .arg(m_bindingId).arg(m_zOrder)
-        .arg(m_mmioGuid).arg(m_mmioVariable)
-        .arg(static_cast<int>(m_outputFormat)).arg(static_cast<int>(m_transportMode))
+        + QLatin1Char('|') + m_mmioGuid
+        + QLatin1Char('|') + m_mmioVariable
+        + QLatin1Char('|') + QString::number(static_cast<int>(m_outputFormat))
+        + QLatin1Char('|') + QString::number(static_cast<int>(m_transportMode))
         + QLatin1Char('|') + QString::number(m_sendIntervalMs)
         + QLatin1Char('|')
         + (m_endpointGuid.isNull() ? QString() : m_endpointGuid.toString(QUuid::WithoutBraces));

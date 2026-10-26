@@ -62,6 +62,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (font family) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "NeedleScalePwrItem.h"
@@ -215,7 +218,9 @@ void NeedleScalePwrItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 QString NeedleScalePwrItem::serialize() const
 {
-    QString s = QStringLiteral("NEEDLESCALEPWR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15")
+    // The font family is joined, not substituted: chained .arg() would
+    // read a "%1" in it as a placeholder.
+    QString s = QStringLiteral("NEEDLESCALEPWR|%1|%2|%3|%4|%5|%6|%7|%8")
         .arg(static_cast<double>(m_x))
         .arg(static_cast<double>(m_y))
         .arg(static_cast<double>(m_w))
@@ -224,7 +229,8 @@ QString NeedleScalePwrItem::serialize() const
         .arg(m_zOrder)
         .arg(m_lowColour.name(QColor::HexArgb))
         .arg(m_highColour.name(QColor::HexArgb))
-        .arg(m_fontFamily)
+        + QLatin1Char('|') + m_fontFamily
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6")
         .arg(static_cast<double>(m_fontSize))
         .arg(m_fontBold ? 1 : 0)
         .arg(m_marks)

@@ -154,7 +154,9 @@ private slots:
         QCOMPARE(decoded.document.extensions.value("legacyClipboardText").toString(),text);
         QVERIFY(!LegacyContainerImporter::fromClipboard(text+"!").ok);
         for (const auto& d : registry.descriptors()) {
-            if (d.typeId == "CLICKBOX" || d.typeId == "VOICERECPLAY") { QVERIFY(!d.available); QVERIFY(!d.unavailableReason.isEmpty()); }
+            // The click box task (Task 47) built CLICKBOX, so it is available.
+            if (d.typeId == "CLICKBOX") { QVERIFY(d.available); QVERIFY(d.unavailableReason.isEmpty()); }
+            if (d.typeId == "VOICERECPLAY") { QVERIFY(!d.available); QVERIFY(!d.unavailableReason.isEmpty()); }
         }
     }
     void defaultsAndUnknownTailsRemainRaw() {
