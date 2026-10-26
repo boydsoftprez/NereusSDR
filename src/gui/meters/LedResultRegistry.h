@@ -36,14 +36,14 @@ public:
     // holds that ID.
     std::optional<bool> get(const QString& id) const;
 
-    // Owner-aware forms used by LEDItem. `owner` is the publishing LED; it
-    // only identifies the entry and is never dereferenced. remove() clears
-    // the entry only when `owner` is the one that published it last, so an
-    // LED destroyed after a replacement with the same ID took over (an
-    // edited entry is rebuilt before the old copy goes) leaves the
-    // replacement's result in place.
-    void set(const QString& id, bool value, const void* owner);
-    void remove(const QString& id, const void* owner);
+    // Registrant-aware forms used by LEDItem. `registrant` is the
+    // publishing LED; it only identifies the entry and is never
+    // dereferenced. remove() clears the entry only when `registrant` is the
+    // one that published it last, so an LED destroyed after a replacement
+    // with the same ID took over (an edited entry is rebuilt before the old
+    // copy goes) leaves the replacement's result in place.
+    void set(const QString& id, bool value, const void* registrant);
+    void remove(const QString& id, const void* registrant);
 
     // Clears every entry (tests).
     void clear();
@@ -53,7 +53,7 @@ private:
 
     struct Entry {
         bool        value{false};
-        const void* owner{nullptr};
+        const void* registrant{nullptr};
     };
     mutable QMutex         m_mutex;
     QHash<QString, Entry>  m_results;

@@ -26,13 +26,13 @@ void LedResultRegistry::set(const QString& id, bool value)
     set(id, value, nullptr);
 }
 
-void LedResultRegistry::set(const QString& id, bool value, const void* owner)
+void LedResultRegistry::set(const QString& id, bool value, const void* registrant)
 {
     if (id.isEmpty()) {
         return;
     }
     const QMutexLocker locker(&m_mutex);
-    m_results.insert(id, Entry{value, owner});
+    m_results.insert(id, Entry{value, registrant});
 }
 
 std::optional<bool> LedResultRegistry::get(const QString& id) const
@@ -45,14 +45,14 @@ std::optional<bool> LedResultRegistry::get(const QString& id) const
     return it->value;
 }
 
-void LedResultRegistry::remove(const QString& id, const void* owner)
+void LedResultRegistry::remove(const QString& id, const void* registrant)
 {
     if (id.isEmpty()) {
         return;
     }
     const QMutexLocker locker(&m_mutex);
     const auto it = m_results.find(id);
-    if (it != m_results.end() && it->owner == owner) {
+    if (it != m_results.end() && it->registrant == registrant) {
         m_results.erase(it);
     }
 }
