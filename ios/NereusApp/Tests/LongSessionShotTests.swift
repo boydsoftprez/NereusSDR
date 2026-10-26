@@ -50,7 +50,7 @@ struct LongSessionShotTests {
                                  traffic: { traffic.totals }, now: { clock.now }, tick: .seconds(3600)))
         let station = try FakeStation()
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         #expect(await settle(seconds: 5) { model.main.slices.entries.count == 2 && model.main.coreName != nil })

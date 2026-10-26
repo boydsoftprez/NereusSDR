@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Verify overlay anchoring with final pane dimensions by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 - Check the Linux compositing window for embedded QRhi meters
@@ -138,6 +140,7 @@ class TstContainerChrome : public QObject
     }
     void nativeMixedGripsDropPopReturnAndLegacyBounds()
     {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QTemporaryDir dir;
         AppSettings settings(dir.filePath("settings.xml"));
         ContainerWorkspaceStore store(settings);

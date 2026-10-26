@@ -153,6 +153,51 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - enqueueTrxState: a key going on names the receiver that
 //                transmits and says nothing of the other. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Ported from Longpath src/core/TciServer.{h,cpp}
+//                [@383f058] by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code: a browser
+//                origin is refused before the WebSocket upgrade on every
+//                listener (TciAllowedOrigins), and a keyed-client watchdog
+//                pings the app that holds a TCI key and releases that key
+//                through the disconnect path after three unanswered pings.
+
+// --- From TciServer.h ---
+// no-port-check: AetherSDR-derived Longpath file.  Transport lifecycle
+// (start/stop/onNewConnection/onClientDisconnected) is adapted from
+// AetherSDR src/core/TciServer.{h,cpp} [@0cd4559]; Longpath diverges in
+// bind address, double-start contract, signal set, and client table type.
+// Registered in docs/attribution/aethersdr-reconciliation.md.
+
+// src/core/TciServer.h  (Longpath)
+// Longpath-original — TCI WebSocket server.
+//
+// Transport pattern ported from AetherSDR src/core/TciServer.{h,cpp} [@0cd4559].
+// Per-client field set condensed from Thetis TCIServer.cs:684-790 [v2.10.3.13]
+// (49 Thetis fields → 14 Longpath fields; see TciClientSession.h for the
+// detailed divergence rationale).
+//
+// Key Longpath divergences from AetherSDR:
+//   - Bind address: QHostAddress::LocalHost (AetherSDR binds to Any).
+//     Per design doc Q7 lock-in — TCI is a local-process IPC bus in Longpath.
+//   - double-start contract: returns false + logs warning (AetherSDR returns
+//     true, treating double-start as idempotent).
+//   - Signals: finer-grained clientConnected / clientDisconnected carrying
+//     QWebSocket* (AetherSDR emits clientCountChanged(int) only).
+//   - Client table: QHash<QWebSocket*, shared_ptr<TciClientSession>> instead of
+//     QList<ClientState> — O(1) lookup by socket pointer in disconnect handler.
+//
+// Modification history (Longpath):
+//   2026-05-10 — Phase 3J-1 Task 2.1 by J.J. Boyd (KG4VCF);
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-17 — MOX release on client loss (NereusSDR-original, no Thetis
+//                equivalent — Thetis's ClientDisconnectedHandler only
+//                refreshes stream state). The server remembers which client
+//                keyed the radio through `trx:N,true` and unkeys it when
+//                that client's socket goes away. Prompted by a review of
+//                other station protocols (2026-09-17), where transmit is a
+//                lease with a heartbeat; this is the smallest version of
+//                the same rule. Martin Fischer, AI-assisted via Anthropic
+//                Claude.
 
 #pragma once
 #ifdef HAVE_WEBSOCKETS
@@ -420,6 +465,15 @@ public:
     // interval takes effect immediately.
     void setPingIntervalMs(int ms);
 
+    // From Longpath src/core/TciServer.h:139-145 [@383f058]
+    // Keyed-client watchdog (2026-09-17): while a client owns MOX it is
+    // pinged every intervalMs and MOX is released after maxUnanswered pings
+    // in a row went without a pong — a HUNG client (frozen event loop)
+    // keeps its socket, so onClientDisconnected() alone would never fire.
+    // Defaults: 1000 ms, 3 pings (≈ 3 s keyed with nobody home). Exposed
+    // for tests; the app keeps the defaults.
+    void setKeyedWatchdog(int intervalMs, int maxUnanswered);
+
     // Receiver and transmit gaps plan, Task 10 (R-R3-49): the shortest gap
     // in ms between outgoing vfo / if, dds and tx_frequency updates to each
     // app (Thetis udTCIRateLimit, 0..1000, default 100; see TciUpdateGap.h).
@@ -549,6 +603,13 @@ private slots:
 
     // From AetherSDR src/core/TciServer.cpp:275+ [@0cd4559] — cleanup on disconnect
     void onClientDisconnected();
+
+    // From Longpath src/core/TciServer.h:304-308 [@383f058]
+    // Keyed-client watchdog (2026-09-17): a pong from the MOX owner resets
+    // its unanswered-ping count; the watchdog tick pings the owner and
+    // releases MOX once too many pings went unanswered.
+    void onPong(quint64 elapsedTime, const QByteArray& payload);
+    void onKeyedWatchdogTick();
 
     // Text-frame handler — Phase 3 Task 3.2 wires TciProtocol dispatch here.
     void onTextMessageReceived(const QString& msg);
@@ -915,6 +976,42 @@ private:
     // MoxController::onTciPtt(false), and a TCI level no app owns (fix
     // round 1). False when a callback destroyed this server meanwhile.
     bool releaseAppTciKey(QWebSocket* client);
+
+    // The key `client` holds, released as its disconnect releases it: the
+    // desktop program key, the TCI PTT level (and a level no app owns, as
+    // on a disconnect) and a remote window's forwarded key. Shared by
+    // onClientDisconnected() and the keyed-client watchdog. False when a
+    // callback destroyed this server or the socket, or dropped the client,
+    // meanwhile.
+    bool releaseKeyHeldBy(QWebSocket* client);
+    // The app whose trx holds a key now (desktop program key, TCI PTT
+    // level, or a remote window's forwarded key), or null.
+    QWebSocket* keyHoldingClient() const;
+    // The TX audio lock `client` holds, released as its disconnect
+    // releases it, with TX_CHRONO; `why` goes to the log.
+    void releaseTxAudioLockHeldBy(QWebSocket* client, const char* why);
+
+    // From Longpath src/core/TciServer.h:644-654 [@383f058]
+    // Keyed-client watchdog state. The timer runs only while m_moxOwner is
+    // set (started in the trx path, stopped in releaseMoxHeldBy / when the
+    // owner is cleared). Pings carry the payload "Longpath-keyed" so the
+    // ping test can tell them from the 20 s "Thetis" keepalive.
+    //
+    // NereusSDR: the owner is keyHoldingClient() (m_moxOwner does not
+    // exist here); m_watchdogClient is the one the count belongs to, and
+    // the payload is "NereusSDR-keyed".
+    void startKeyedWatchdog();
+    void stopKeyedWatchdog();
+    QTimer* m_keyedWatchdog{nullptr};
+    QPointer<QWebSocket> m_watchdogClient;
+    int     m_keyedWatchdogIntervalMs{1000};
+    int     m_keyedWatchdogMaxUnanswered{3};
+    int     m_ownerPingsUnanswered{0};
+
+    // Browser origins (Longpath, 2026-09-30): every listening server
+    // refuses a WebSocket upgrade whose Origin is not listed in
+    // TciAllowedOrigins; native apps send no Origin and are accepted.
+    void refuseBrowserOrigins(QWebSocketServer* server);
 
     // ── Phase 19: sensor broadcast timers ────────────────────────────────────
     //

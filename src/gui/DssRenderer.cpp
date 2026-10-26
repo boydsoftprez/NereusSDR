@@ -12,8 +12,56 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
 //
+// --- From DssRenderer.cpp (Longpath, oe5sos/Longpath @bb9f675c) ---
+// Longpath banner, byte for byte. The AetherSDR attribution it names is the
+// one above. Only resampledRawRow()'s equal-width windows are taken from it.
+// =================================================================
+// src/gui/DssRenderer.cpp  (Longpath)
+// =================================================================
+// Ported from AetherSDR `src/gui/DssRenderer.cpp` (AetherSDR 31b29583),
+// reduced scope — see the header for what was left out and why.
+//
+// rebuild() no longer paints through QPainter. AetherSDR's CPU fallback
+// fills one trapezoid per column and strokes one anti-aliased line per
+// column, back to front: 96 rows x 767 polygons + 767 lines = ~147k
+// QPainter calls per frame, and every pixel is overpainted up to 96
+// times. Measured on an Apple-silicon MacBook Air (-O3, 2026-09-03):
+// 620 ms per rebuild at 1400x450 px, 1320 ms at Retina 2800x900 px --
+// about one frame per second, with the GUI thread frozen in between.
+// AetherSDR only ever runs that path when its GPU mesh cannot be created.
+//
+// The rasteriser below produces an equivalent picture (same geometry, same
+// per-column colours, the crest's pen width reproduced as coverage) at
+// ~7-10 ms:
+// traces are walked FRONT to back and a per-x "horizon" remembers how far
+// up a nearer trace has already claimed the column, so a farther trace
+// only fills the part of its curtain that is still visible -- each curtain
+// pixel is written once. Because every curtain reaches the plot floor,
+// "the last trace painted back-to-front" and "the nearest trace whose
+// ridge lies above the pixel" are the same trace, so the result matches
+// the painter's-algorithm original. The crest's partially covered pixels
+// (the pen's anti-aliasing) are the one thing that cannot be resolved
+// front to back; they are collected and blended at the end in painter's
+// order (see PartialCrest in the header).
+//
+// Modification history (Longpath):
+//   2026-09-03 — Ported in C++20/Qt6 for NereusSDR by Martin Fischer
+//                 (OE5SOS), AI-assisted via Anthropic Claude Code.
+//   2026-09-03 — rebuild(): QPainter polygon/line painting replaced by a
+//                 direct horizon rasteriser with coverage-based crest
+//                 anti-aliasing; geometry and colour formulas unchanged.
+//                 Martin Fischer (OE5SOS), AI-assisted via Anthropic
+//                 Claude Code.
+// =================================================================
+
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - resampledRawRow() reduces each column over windows of one
+//                 width, ported from Longpath (src/gui/DssRenderer.cpp:128-177
+//                 [@bb9f675c]). Floor/ceil windows of three and four bins sat
+//                 on the same columns in every row and stacked into false
+//                 ridges. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Retain measured folded-row quiet levels for uncovered
 //                 3D overhang. J.J. Boyd (KG4VCF), OpenAI Codex assisted.
 //   2026-08-08 — Ported/adapted in C++20/Qt6 for NereusSDR by
@@ -120,12 +168,54 @@ std::array<float, kDssCols> resampledRawRow(const QVector<float>& binsDbm,
             row[c] = std::isfinite(binsDbm[c]) ? binsDbm[c] : fallback;
         }
     } else {
-        const double step = static_cast<double>(n) / kDssCols;
+        // From Longpath src/gui/DssRenderer.cpp:128-177 [@bb9f675c].
+        // Peak-preserving downsample (or upsample by nearest-max over a
+        // fractional window): a narrow carrier landing between display
+        // columns must not vanish because a plain average smeared it.
+        //
+        // ── GLEICH BREITE Fenster, sonst entsteht ein Lattenzaun ─────
+        //
+        // Hier stand `[floor(c*step), ceil((c+1)*step))`. Bei einem
+        // krummen Verhaeltnis — bei Martins Fenster 2270 Punkte auf
+        // 768 Spalten, also 2,956 — ist dieses Fenster mal drei und
+        // mal vier Werte breit. Das Maximum ueber vier Werte liegt im
+        // Mittel HOEHER als ueber drei, und welche Spalte welches
+        // Fenster bekommt, haengt nur am Index: in JEDER Zeile
+        // dieselben Spalten.
+        //
+        // Gemessen am 2026-10-22 mit 96 unabhaengigen Rauschzeilen:
+        //   Fensterbreiten          36x drei, 732x vier
+        //   Korrelation Breite <-> Spaltenmittel   +0,44
+        //   Welligkeit der Spaltenmittel            0,236
+        // und mit gleich breiten Fenstern 0,101 — der Rest ist die
+        // Ueberlappung benachbarter Fenster und kein fester Versatz.
+        //
+        // Allein waere das ein halbes dB und unsichtbar. Im 3D-Bild
+        // ist es das nicht: die Glaettung schleift das Rauschen weg
+        // und laesst den festen Anteil stehen, und `zCurve` spreizt
+        // genau am Rauschteppich — dort sind 1 dB rund 3 Bildpunkte.
+        // Ueber 96 gestapelte Zeilen wird daraus eine durchgehende
+        // Rippe nach hinten. Der Betreiber sah ein Band voller
+        // Stationen, wo keine waren („keine signale obwohl
+        // wasserfall", „hier hat es was von grund auf").
+        //
+        // Also: feste Breite `ceil(step)`, Anfang bei `round(c*step)`.
+        // Der Abstand zweier Anfaenge bleibt damit hoechstens so gross
+        // wie das Fenster — es wird kein Wert uebersprungen, und ein
+        // schmaler Traeger kann nicht verschwinden. Beim Aufweiten
+        // (step < 1) ist die Breite 1, also genau das Verhalten von
+        // vorher.
+        //
+        // NereusSDR note: not quite. Below 768 bins (a pane narrower than
+        // 768 pixels) the old window took one or two bins from
+        // floor(c*step); this one takes exactly one, at round(c*step), so
+        // a one-bin feature there is about a column narrower than before.
+        const double step  = static_cast<double>(n) / kDssCols;
+        const int    breit = std::max(1, static_cast<int>(std::ceil(step)));
         for (int c = 0; c < kDssCols; ++c) {
-            int i0 = static_cast<int>(std::floor(c * step));
-            int i1 = static_cast<int>(std::ceil((c + 1) * step));
-            i0 = std::clamp(i0, 0, n - 1);
-            i1 = std::clamp(i1, i0 + 1, n);
+            int i0 = static_cast<int>(std::lround(c * step));
+            i0 = std::clamp(i0, 0, std::max(0, n - breit));
+            const int i1 = std::min(n, i0 + breit);
             float mx = std::isfinite(binsDbm[i0]) ? binsDbm[i0] : fallback;
             for (int i = i0 + 1; i < i1; ++i) {
                 if (std::isfinite(binsDbm[i])) {

@@ -156,29 +156,89 @@ struct BandFlagShotTests {
 
     /// Band noise and the three slices' signals, drifting a little.
     static func feed(_ band: BandModel, width: Int, lines: Int) {
-        var seed: UInt64 = 7
-        func random() -> Float {
-            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            return Float(seed >> 40) / Float(1 << 24)
-        }
-        let low = centre - span / 2
-        let stations: [(hz: Double, dbm: Float, width: Double)] = [(7_234_900, -72, 2_600), (7_247_500, -84, 2_600),
-                                                                   (7_261_000, -96, 2_400)]
+        let traces = Self.traces(width: width, lines: lines, low: centre - span / 2, stations: stations)
         for sequence in 1...lines {
-            let trace = (0..<width).map { index -> Float in
-                let hz = low + (Double(index) + 0.5) / Double(width) * span
-                var level = -128 + random() * 12
-                for station in stations where abs(hz - station.hz) < station.width / 2 && sequence % 40 < 32 {
-                    level = max(level, station.dbm - random() * 8)
-                }
-                return level
-            }
+            let trace = traces[sequence - 1]
             band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
                                                     encoderSequence: UInt32(sequence),
                                                     producerTimestamp: UInt64(sequence) * 33_000_000,
                                                     isKeyframe: sequence == 1, waterfallAdvance: true, minDbm: -160,
                                                     maxDbm: 0, traceDbm: trace, waterfallDbm: trace, wideDbm: [])))
         }
+    }
+
+    /// The three slices' stations as ``feed(_:width:lines:)`` draws them:
+    /// centre, level and width.
+    static let stations: [(hz: Double, dbm: Float, width: Double)] = [(7_234_900, -72, 2_600), (7_247_500, -84, 2_600),
+                                                                      (7_261_000, -96, 2_400)]
+
+    /// The lines ``traces(width:lines:low:stations:)`` has made for one view.
+    private struct TraceKey: Hashable {
+        let width: Int
+        let low: Double
+        let hz: [Double]
+        let dbm: [Float]
+        let widths: [Double]
+    }
+
+    private struct MadeTraces {
+        /// The noise's state after the last line made.
+        var seed: UInt64 = 7
+        var lines: [[Float]] = []
+    }
+
+    /// The views whose lines are kept, the last used last. Four views'
+    /// lines are a few tens of megabytes at most.
+    private static var madeTraces: [TraceKey: MadeTraces] = [:]
+    private static var madeOrder: [TraceKey] = []
+    private static let keptViews = 4
+
+    /// The first `lines` lines of band noise and `stations`' signals across
+    /// `width` pixels from `low` over ``span``: the numbers the pictures
+    /// have always fed, in the same order from the same seed. Each picture
+    /// started the noise from that seed again, so line n of a view is the
+    /// same whichever picture asks for it: lines made once are kept, and a
+    /// longer run is made on from where the last one stopped. Made afresh
+    /// by `map` over tuples in a debug build, they were three quarters of
+    /// the main thread's time in the several-devices pictures (sampled on
+    /// the simulator, 2026-10-25), more than the band spent drawing them.
+    static func traces(width: Int, lines: Int, low: Double,
+                       stations: [(hz: Double, dbm: Float, width: Double)]) -> [[Float]] {
+        let key = TraceKey(width: width, low: low, hz: stations.map(\.hz), dbm: stations.map(\.dbm),
+                           widths: stations.map(\.width))
+        var made = madeTraces[key] ?? MadeTraces()
+        if made.lines.count < lines {
+            var seed = made.seed
+            let count = key.hz.count
+            made.lines.reserveCapacity(lines)
+            for sequence in (made.lines.count + 1)...lines {
+                var trace = [Float](repeating: 0, count: width)
+                let drawn = sequence % 40 < 32
+                for index in 0..<width {
+                    let hz = low + (Double(index) + 0.5) / Double(width) * span
+                    seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                    var level = -128 + Float(seed >> 40) / Float(1 << 24) * 12
+                    var station = 0
+                    while station < count {
+                        if abs(hz - key.hz[station]) < key.widths[station] / 2 && drawn {
+                            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                            level = max(level, key.dbm[station] - Float(seed >> 40) / Float(1 << 24) * 8)
+                        }
+                        station += 1
+                    }
+                    trace[index] = level
+                }
+                made.lines.append(trace)
+            }
+            made.seed = seed
+        }
+        madeTraces[key] = made
+        madeOrder.removeAll { $0 == key }
+        madeOrder.append(key)
+        while madeOrder.count > keptViews {
+            madeTraces[madeOrder.removeFirst()] = nil
+        }
+        return Array(made.lines.prefix(lines))
     }
 
     /// The Core's catalogue from the conformance suite, or nil when the

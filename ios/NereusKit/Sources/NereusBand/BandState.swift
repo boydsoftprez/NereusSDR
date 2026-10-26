@@ -42,14 +42,50 @@ public struct BandState: Equatable, Sendable {
     }
     private var blanker = WaterfallBlanker()
     public var stackRowDivider = 0
-    /// Visible waterfall geometry, independent of retained rewind capacity.
+    /// The waterfall height in points that Match counts, independent of
+    /// the retained rewind capacity. Upright it is the visible height
+    /// (``BandLayout/waterfallPoints``); sideways it is the upright height
+    /// the band last had, or an estimate of it (``noteVisibleWaterfall(_:)``).
     public var stackVisibleWaterfallRows = 0
+    /// The waterfall's height in points the last time the band stood
+    /// upright; nil before it has.
+    public private(set) var stackUprightWaterfallPoints: Int?
     private var stackFold = StackTraceFold()
     /// Native Match is round(visible/96), clamped1...64; explicit1...10
-    /// keeps its selected cadence (SpectrumWidget.cpp:5533–5548).
+    /// keeps its selected cadence (SpectrumWidget.cpp:5533–5548). The
+    /// phone's visible height stays the upright one when it turns
+    /// (``noteVisibleWaterfall(_:)``).
     public var effectiveStackRowDivider: Int {
         if stackRowDivider > 0 { return min(stackRowDivider, 10) }
         return min(max(Int((Double(max(0, stackVisibleWaterfallRows)) / Double(StackedTrace.visibleRows)).rounded()), 1), 64)
+    }
+
+    /// The band's layout before a draw: Match's rows follow the waterfall's
+    /// height in points while the band stands upright (taller than wide).
+    /// Lying sideways it keeps the last upright height, so turning the
+    /// phone or iPad keeps the 3D's rows a second: on an iPhone 18 Pro Max
+    /// the sideways waterfall is about 93 points against 393 upright, and
+    /// Match went from 4 lines a row to 1, the 3D four times as fast (JJ,
+    /// 2026-10-25: smooth both ways with no setting changed). The desktop
+    /// follows its pane's height as it is.
+    ///
+    /// Before the band has stood upright, Match estimates the upright height
+    /// as the sideways waterfall's share of the band's height, taken over
+    /// the band's width, which is its height upright.
+    public mutating func noteVisibleWaterfall(_ layout: BandLayout) {
+        // A band not laid out yet (no size, or no waterfall) says nothing.
+        if layout.size.width > 0, layout.size.height >= layout.size.width, layout.waterfallPoints > 0 {
+            stackUprightWaterfallPoints = layout.waterfallPoints
+        }
+        stackVisibleWaterfallRows = stackUprightWaterfallPoints ?? Self.uprightEstimate(layout)
+    }
+
+    private static func uprightEstimate(_ layout: BandLayout) -> Int {
+        guard layout.size.height > 0, layout.scale > 0 else {
+            return layout.waterfallPoints
+        }
+        let points = layout.waterfall.height / layout.size.height * layout.size.width / layout.scale
+        return points.isFinite ? max(0, Int(points.rounded())) : layout.waterfallPoints
     }
 
     /// The phone sets the waterfall's levels itself (Use spectrum min/max):
@@ -98,6 +134,7 @@ public struct BandState: Equatable, Sendable {
             && lhs.transmittingWaterfall == rhs.transmittingWaterfall
             && lhs.stackRowDivider == rhs.stackRowDivider && lhs.stackFold == rhs.stackFold
             && lhs.stackVisibleWaterfallRows == rhs.stackVisibleWaterfallRows
+            && lhs.stackUprightWaterfallPoints == rhs.stackUprightWaterfallPoints
             && lhs.stack == rhs.stack && lhs.stacksRows == rhs.stacksRows && lhs.wideContexts == rhs.wideContexts
     }
 

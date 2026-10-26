@@ -4,6 +4,9 @@
 // unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
 // range, so a parallel test cannot take one between the pick and the listen.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26: lastPeerCancelsPttBeforeNotificationAndPreservesNewOwner waits for
+// the TX->RX walk to reach Rx before the second session's TX;, which CAT refuses
+// until then. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/AppSettings.h"
@@ -169,6 +172,9 @@ private slots:
         connect(&service, &CatService::sessionClosed, &model, [&](quint64 id) { if (id == old) { QVERIFY(!model.moxController()->isMox()); QVERIFY(!service.session(id)); } });
         peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(!model.moxController()->isMox());
         QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1); QVERIFY(!model.moxController()->isMox());
+        // isMox() drops at the release, but the TX->RX walk still takes event-loop turns,
+        // and CAT TX is refused until it is back at Rx (CatTxCoordinator::idle()).
+        QTRY_VERIFY(model.moxController()->state() == MoxState::Rx);
         QVERIFY(peer.send("TX;")); QTRY_VERIFY(model.moxController()->isMox()); model.moxController()->setMox(true);
         peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(model.moxController()->isMox());
         model.moxController()->setMox(false); model.injectConnectionForTest(nullptr);
