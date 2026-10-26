@@ -69,6 +69,10 @@
 //               checks sessionTransmitRefusal first, so a take-over from
 //               a session that may not transmit is refused. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: TGXL tune lane: the tuner's own front-panel TUNE gives
+//               back the transmit and the flag it took when its cycle
+//               ends (noteTunerLoan, returnTunerLoan). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -76,6 +80,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
+#include <QTimer>
 
 #include <memory>
 
@@ -321,6 +327,126 @@ void StationServer::settleTakerWithoutSession(const QByteArray& taker)
         qCInfo(lcDsp) << "Transmit taken by" << taker << "which left during the take; released";
         m_transmitHolder->release(taker, QStringLiteral("The device left the Core."));
     }
+}
+
+void StationServer::noteTunerLoan()
+{
+    if (m_tunerLoan || !m_transmitHolder || m_radioModel.isNull()) {
+        return;
+    }
+    // The cycle's first key: what it finds is what goes back.
+    TunerLoan loan;
+    if (m_transmitHolder->state() == TransmitHolder::State::Held) {
+        loan.holder = m_transmitHolder->holder();
+    }
+    loan.epoch = m_transmitHolder->epoch();
+    if (const TxSliceArbiter* arbiter = m_radioModel->txSliceArbiter()) {
+        loan.flagSlice = arbiter->txBoundSliceId();
+    }
+    m_tunerLoan = loan;
+}
+
+void StationServer::returnTunerLoan()
+{
+    if (!m_tunerLoan) {
+        return;
+    }
+    if (!m_transmitHolder || m_radioModel.isNull()) {
+        m_tunerLoan.reset();
+        return;
+    }
+    // Another tuner cycle carries the loan on; its end comes back here.
+    if (m_radioModel->isTgxlAutotuneInProgress()) {
+        m_tunerLoan->waits = 0;
+        return;
+    }
+    // The carrier walks back to receive, or the take still runs (the tuner
+    // let go meanwhile): nothing goes back until both are done.
+    const MoxController* mox = m_radioModel->moxController();
+    const bool moxOn = mox != nullptr && (mox->isMox() || mox->state() != MoxState::Rx);
+    if (moxOn || m_transmitHolder->state() == TransmitHolder::State::Transferring
+        || m_transmitHolder->isFenced() || m_transmitHolder->isStopUnconfirmed()) {
+        if (++m_tunerLoan->waits * kUnstartedTakeRecheckMs > kTunerLoanWaitMs) {
+            qCWarning(lcDsp) << "The tuner's tune ended but the radio did not settle; transmit"
+                                " stays with the station";
+            m_tunerLoan.reset();
+            return;
+        }
+        if (!m_tunerLoan->rechecking) {
+            m_tunerLoan->rechecking = true;
+            QTimer::singleShot(kUnstartedTakeRecheckMs, this, [this]() {
+                if (m_tunerLoan) {
+                    m_tunerLoan->rechecking = false;
+                    returnTunerLoan();
+                }
+            });
+        }
+        return;
+    }
+    const TunerLoan loan = *m_tunerLoan;
+    m_tunerLoan.reset();
+    const QByteArray station(KeyerIdentity::kStationDeviceId);
+    const std::optional<TransmitHolder::Holder> now =
+        m_transmitHolder->state() == TransmitHolder::State::Held ? m_transmitHolder->holder()
+                                                                 : std::nullopt;
+    // The tune's own take is the only change of holder since the press:
+    // the station holds by the radio's PTT, one epoch on.
+    const bool tookForTune = now && now->deviceId == station
+        && now->source == TransmitHolder::Source::RadioPtt
+        && m_transmitHolder->epoch() == loan.epoch + 1
+        && !(loan.holder && loan.holder->deviceId == station);
+    if (!tookForTune) {
+        restoreTunerLoanFlag(loan, now ? now->deviceId : QByteArray());
+        return;
+    }
+    const QByteArray back = loan.holder ? loan.holder->deviceId : QByteArray();
+    if (back.isEmpty() || !m_deviceSessions->entry(back)) {
+        // Nobody held transmit before the press (or that device has left
+        // the Core since): it is let go again.
+        qCInfo(lcDsp) << "The tuner's tune ended; transmit is let go, as before the tune";
+        m_transmitHolder->release(station, QStringLiteral("The tuner's tune ended."));
+        restoreTunerLoanFlag(loan, QByteArray());
+        return;
+    }
+    qCInfo(lcDsp) << "The tuner's tune ended; transmit goes back to" << back.toHex().constData();
+    TransmitHolder::Holder next;
+    next.deviceId = back;
+    next.source = TransmitHolder::Source::Device;
+    const QPointer<StationServer> self(this);
+    m_transmitHolder->transferTo(
+        next, QStringLiteral("The tuner's tune ended."), [self, back, loan](bool assigned) {
+            if (self.isNull() || !assigned) {
+                return;
+            }
+            // The "Take it back" the press offered has nothing left to take.
+            self->m_confirm->forgetTakeBacks(back, [](const ConfirmStep::Notice& notice) {
+                return notice.prompt.kind == QLatin1String("transmitTaken")
+                    && notice.taker == QByteArray(KeyerIdentity::kStationDeviceId);
+            });
+            // Away or gone during the tune: held away, or let go.
+            self->settleTakerWithoutSession(back);
+            self->restoreTunerLoanFlag(loan, back);
+        });
+}
+
+void StationServer::restoreTunerLoanFlag(const TunerLoan& loan, const QByteArray& holder)
+{
+    if (loan.flagMovedTo < 0 || loan.flagSlice < 0 || loan.flagSlice == loan.flagMovedTo
+        || m_radioModel.isNull()) {
+        return;
+    }
+    TxSliceArbiter* arbiter = m_radioModel->txSliceArbiter();
+    // Only a flag still where the tune put it goes back (a holder's own
+    // binding, or a later choice, stays), and only to a slice still open.
+    if (arbiter == nullptr || arbiter->txBoundSliceId() != loan.flagMovedTo
+        || m_radioModel->sliceById(loan.flagSlice) == nullptr) {
+        return;
+    }
+    const bool device = !holder.isEmpty() && holder != KeyerIdentity::kStationDeviceId;
+    const bool moved = device ? arbiter->requestHandoff(loan.flagSlice, holder)
+                              : arbiter->requestHandoff(loan.flagSlice);
+    qCInfo(lcDsp) << "The tuner's tune ended; the transmit flag" << (moved ? "went" : "could not go")
+                  << "back to slice" << loan.flagSlice;
 }
 
 void StationServer::takeTransmit(SessionTransport* transport, const SessionMessage& invoke,

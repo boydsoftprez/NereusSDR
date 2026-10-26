@@ -57,6 +57,10 @@
 //               waits for A's own settle callback instead of a wall-clock
 //               window, so machine load cannot fail its setup. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: the tuner's own TUNE gives back what it took when its
+//               cycle ends: the device's transmit, unheld transmit, and
+//               the flag on a hosting desktop; a take meanwhile stands.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1027,6 +1031,107 @@ private slots:
         QTRY_VERIFY(!core.model->isTune());
         QVERIFY(!core.model->isTgxlAutotuneInProgress());
         QCOMPARE(tuner.count(QStringLiteral("autotune")), 1);   // only the device's
+
+        // TGXL tune lane (JJ, 2026-10-26): the tune only borrowed transmit.
+        // It goes back to the device when the cycle ends, and its key is
+        // admitted again.
+        QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
+        QCOMPARE(holder->holder()->source, TransmitHolder::Source::Device);
+        QVERIFY(holder->keyRefusalFor(a.key.fingerprint()).isEmpty());
+    }
+
+    // Another take while the tuner's TUNE runs stands: the end of the cycle
+    // gives nothing back over it.
+    void aTakeDuringTheTunersTuneStands()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        LoopbackTransport* appB = core.signIn(b, kTransmitter);
+        QVERIFY(admitted(appA));
+        QVERIFY(admitted(appB));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        tuner.lan.send(QStringLiteral("transmit tune on"));
+        QTRY_VERIFY(mox->isMox());
+        QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
+
+        TransmitHolder::Holder next;
+        next.deviceId = b.key.fingerprint();
+        bool assigned = false;
+        holder->transferTo(next, QStringLiteral("test"), [&assigned](bool ok) { assigned = ok; });
+        QTRY_VERIFY(assigned);
+        tuner.lan.send(QStringLiteral("transmit tune off"));
+        tuner.push(QStringLiteral("S0|state tuning=0"));
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
+        QTest::qWait(300);
+        QVERIFY(holder->isHeldBy(b.key.fingerprint()));
+    }
+
+    // On a hosting desktop the tuner's TUNE keys the desktop's active slice
+    // (ruling 8.11), moving the flag off the device's slice; the flag goes
+    // back there with the device's transmit when the cycle ends.
+    void theTunersTuneGivesTheFlagBackOnAHostingDesktop()
+    {
+        TuningCore core;
+        core.model->configureStreamPool(3, 5, 192000);
+        allowTransmit(core);
+        const QByteArray station = SliceOwnership::stationDevice();
+        core.server->deviceSessions()->registerHostingDevice(station, QStringLiteral("Mac"),
+                                                             QStringLiteral("Mac"));
+        core.server->setStationDeviceWords(QStringLiteral("Mac"), QStringLiteral("Mac"));
+        // A hosting desktop takes its notices (Slice control plan Task 10),
+        // which makes it a keyer that shares slices.
+        core.server->setStationNoticeHandler([](const SessionMessage&) {});
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        if (!ownership->adoptUnowned(station).isEmpty()) {
+            core.model->setActiveSliceByIdFor(station, ownership->activeFor(station));
+        }
+        const int desktopSlice = ownership->activeRxFor(station);
+        QVERIFY(desktopSlice >= 0);
+        const QHash<QByteArray, int> sharesTx{
+            {"deviceAuth", 1}, {"sessionHolder", 1}, {"sliceAccess", 2}, {"remoteTx", 1}};
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, sharesTx);
+        QVERIFY(admitted(appA));
+        if (ownership->ownedBy(a.key.fingerprint()).isEmpty()) {
+            core.invoke(appA, "addSlice", {utf8("initialPanId", QString())});
+        }
+        QVERIFY(!ownership->ownedBy(a.key.fingerprint()).isEmpty());
+        const int p = ownership->ownedBy(a.key.fingerprint()).first();
+        QVERIFY(p != desktopSlice);
+        core.invoke(appA, "tx.take");
+        TransmitHolder* holder = core.server->transmitHolder();
+        QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
+        core.invoke(appA, "tx.setTxSlice", {int64("sliceId", p)});
+        TxSliceArbiter* arbiter = core.model->txSliceArbiter();
+        QTRY_COMPARE(arbiter->txBoundSliceId(), p);
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        MoxController* mox = core.model->moxController();
+
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        tuner.lan.send(QStringLiteral("transmit tune on"));
+        QTRY_VERIFY(mox->isMox());
+        QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
+        QCOMPARE(arbiter->txBoundSliceId(), desktopSlice);
+
+        tuner.lan.send(QStringLiteral("transmit tune off"));
+        tuner.push(QStringLiteral("S0|state tuning=0"));
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
+        QTRY_COMPARE(arbiter->txBoundSliceId(), p);
     }
 
     // C1: `transmit tune on` from any other SmartSDR-API client is not the
@@ -1623,6 +1728,9 @@ private slots:
         QVERIFY(!mox->isMox());
         QVERIFY(!core.model->isTune());
         QCOMPARE(mox->state(), MoxState::Rx);
+        // TGXL tune lane (JJ, 2026-10-26): the take ended after the cycle;
+        // transmit still goes back to the device.
+        QTRY_VERIFY(core.server->transmitHolder()->isHeldBy(a.key.fingerprint()));
     }
 
     // M2: a take that does not finish ends the cycle; nothing keys after.
@@ -1785,6 +1893,9 @@ private slots:
         QTRY_VERIFY(!core.model->isTune());
         QVERIFY(!core.model->isTgxlAutotuneInProgress());
         QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+        // TGXL tune lane (JJ, 2026-10-26): nobody held transmit before the
+        // press, so nobody holds it after the cycle.
+        QTRY_VERIFY(!core.server->transmitHolder()->holder().has_value());
     }
 
     // Bug 1 replay (23:30:30.091): the tuner answers a device's autotune

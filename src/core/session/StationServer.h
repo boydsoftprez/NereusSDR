@@ -181,6 +181,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: TunerLoan: the tuner's own front-panel TUNE gives transmit
+//               and the flag back when its cycle ends. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
 //               a desktop window before its radio connects. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2502,6 +2505,34 @@ private:
     /// away (holderDropped, its 180 s running); gone (it left, or a token
     /// window): released. A taker with a live session is left as it is.
     void settleTakerWithoutSession(const QByteArray& taker);
+    /// TGXL tune lane (JJ, 2026-10-26): the tuner's own front-panel TUNE
+    /// takes transmit as the radio's PTT does (ruling 8.9), but only for
+    /// its cycle. What it found (the holder, the holder epoch, the flag's
+    /// slice) is noted at its first key; when the cycle ends, transmit
+    /// goes back to that holder (or is let go, when nobody held it) and
+    /// the flag back to its slice, unless something else changed them
+    /// meanwhile (another take, another key at the station).
+    struct TunerLoan {
+        /// Who held transmit when the press came; nullopt: nobody.
+        std::optional<TransmitHolder::Holder> holder;
+        quint64 epoch = 0;
+        int flagSlice = -1;
+        /// Where the tune moved the flag (ruling 8.11 on a hosting
+        /// desktop); -1 when it did not move it.
+        int flagMovedTo = -1;
+        /// Rechecks while the radio walks back to receive, and whether
+        /// one is due.
+        int waits = 0;
+        bool rechecking = false;
+    };
+    void noteTunerLoan();
+    /// Gives back what the tuner's cycle took, once MOX reads off and no
+    /// transfer runs (rechecked every kUnstartedTakeRecheckMs, up to
+    /// kTunerLoanWaitMs; a new tuner cycle carries the loan on).
+    void returnTunerLoan();
+    void restoreTunerLoanFlag(const TunerLoan& loan, const QByteArray& holder);
+    static constexpr int kTunerLoanWaitMs = 5000;
+    std::optional<TunerLoan> m_tunerLoan;
     /// Fix wave M6: a tx.take and its copies (the same command id on the
     /// same session): the first is run; a copy while it runs is answered by
     /// its one result, and a later copy gets the same answer. Never a second

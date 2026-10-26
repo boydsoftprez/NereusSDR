@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: The keying gate notes the tuner's own TUNE (noteTunerLoan)
+//               and the cycle's end gives transmit back (returnTunerLoan).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -2726,7 +2729,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         && m_radioModel->moxController() != nullptr) {
         MoxController* mox = m_radioModel->moxController();
         // Rulings 8.8 and 8.13: every key, local or remote, asks here first.
-        mox->setKeyingGate([this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
+        const auto answerKey = [this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
             if (!keyer.isStation()) {
                 // A remote key: the session's own gate first (remote_transmit,
                 // its hello, its pairing, its snapshot).
@@ -2910,6 +2913,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                 ? TxRefusals::radioOnAir()
                                 : TxRefusals::noTransmitSlice()};
                 }
+                // TGXL tune lane (JJ, 2026-10-26): where the tuner's TUNE
+                // moved the flag, so it goes back when the cycle ends.
+                if (keyer.tunerPress && m_tunerLoan) {
+                    m_tunerLoan->flagMovedTo = moveTo;
+                }
             }
             // Fix wave 2, Important 2: a take whose key never starts (a
             // TUNE or two-tone refused after the gate) is released.
@@ -2918,7 +2926,33 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 watchUnstartedTake(m_transmitHolder->epoch());
             }
             return answer;
+        };
+        mox->setKeyingGate([this, answerKey](PttMode source,
+                                             const KeyerIdentity& keyer) -> KeyingAnswer {
+            // TGXL tune lane (JJ, 2026-10-26): the tuner's own front-panel
+            // TUNE borrows transmit and the flag for its cycle, and gives
+            // them back when the cycle ends (returnTunerLoan).
+            if (keyer.isStation() && keyer.tunerPress) {
+                noteTunerLoan();
+            }
+            const KeyingAnswer answer = answerKey(source, keyer);
+            // Any other key at the station meanwhile (its PTT, its MOX or
+            // TUNE, VOX) is the station's own: what the tune took stays.
+            if (m_tunerLoan && keyer.isStation() && !keyer.tunerPress
+                && answer.verdict != KeyingVerdict::Refuse) {
+                qCInfo(lcDsp) << "Another key at the station during the tuner's tune: transmit"
+                                 " stays with the station when the tune ends";
+                m_tunerLoan.reset();
+            }
+            return answer;
         });
+        // TGXL tune lane: the tuner's own cycle (no device's) has ended.
+        connect(m_radioModel, &RadioModel::tgxlAutotuneEnded, this,
+                [this](const QByteArray& deviceId, const QString&) {
+                    if (deviceId.isEmpty() && m_tunerLoan) {
+                        returnTunerLoan();
+                    }
+                });
         // iPhone app plan Task 77 fix wave, I1 (ruling 8.9): the radio's
         // PTT press asks the gate while another device holds transmit,
         // whatever that device's key (TUNE, two-tone, a tuner autotune,
