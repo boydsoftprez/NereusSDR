@@ -305,6 +305,69 @@ struct BandButtonColumnTests {
         #expect(tight.leading + 10 == column.maxX + BandColumnLayout.clearance)
     }
 
+    /// The PR 653 re-review d, Minor 1: above a held PTT on a short band
+    /// (the iPhone SE sideways is about 180 points) the meters' top was
+    /// held at the band's top and their foot ran over the PTT's top. They
+    /// are cut to the room over the PTT, giving up only the reasons, so
+    /// every tab and gauge keeps its 44 points (the controller's ruling for
+    /// JJ's veto).
+    @Test("above a held PTT with less room than the meters' height, they are cut to fit and never overlap it")
+    func keyedMetersAboveAHeldPttFitTheRoom() {
+        let width: CGFloat = 667
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        // No room for the narrowest gauges either side: above it.
+        let ptt = CGRect(x: 384, y: 140, width: 76, height: 76)
+        // The sideways gauges with their reasons, which can give up all but a line.
+        let height: CGFloat = 148
+        let least = height - (KeyedOverlay.reasonsHeight(sideways: true) - KeyedOverlay.reasonsLeast)
+        #expect(ptt.minY < height + 6, "the PTT leaves room for the meters at their own height")
+        #expect(ptt.minY - 6 >= least)
+        let place = BandColumnLayout.keyedPlace(top: 14, height: height, bandWidth: width,
+                                                needed: KeyedOverlay.gaugesWidth, avoid: [column, ptt], ptt: ptt,
+                                                held: true, narrowest: KeyedOverlay.gaugesNarrowest,
+                                                minHeight: least)
+        #expect(place.alignLeading)
+        let shown = place.shortened ?? height
+        #expect(place.top + shown <= ptt.minY - 6 + 0.5,
+                "the meters (\(place.top) + \(shown)) run over the PTT's top at \(ptt.minY)")
+        #expect(place.top >= 0)
+        // Only the reasons give way: the tabs and gauges keep their 44 points.
+        #expect(shown >= least)
+        #expect(height - shown <= KeyedOverlay.reasonsHeight(sideways: true) - KeyedOverlay.reasonsLeast)
+        // Room enough over it: their own height, as before.
+        let roomy = CGRect(x: 384, y: 200, width: 76, height: 76)
+        let full = BandColumnLayout.keyedPlace(top: 100, height: height, bandWidth: width,
+                                               needed: KeyedOverlay.gaugesWidth, avoid: [column, roomy], ptt: roomy,
+                                               held: true, narrowest: KeyedOverlay.gaugesNarrowest,
+                                               minHeight: least)
+        #expect(full.shortened == nil && full.top + height == roomy.minY - 6)
+    }
+
+    /// The same, on a band too short even for the cut meters: they start at
+    /// the band's top at their shortest, under the PTT, which draws on top
+    /// of them (MainScreen lays PTT after the keyed overlay) and stays
+    /// tappable (KeyedMeterOverlayShotTests' tapTarget, KeyedPttUITests).
+    @Test("above a held PTT with too little room even for the cut meters, they sit at the top, PTT over them")
+    func keyedMetersAboveAHeldPttOnABandTooShort() {
+        let width: CGFloat = 667
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        // The SE sideways: a band of about 180, the PTT 12 above its foot.
+        let ptt = CGRect(x: 384, y: 180 - PttButton.bottomInset - PttButton.diameter, width: 76, height: 76)
+        func place(height: CGFloat, least: CGFloat) -> BandColumnLayout.KeyedPlace {
+            BandColumnLayout.keyedPlace(top: 14, height: height, bandWidth: width, needed: KeyedOverlay.gaugesWidth,
+                                        avoid: [column, ptt], ptt: ptt, held: true,
+                                        narrowest: KeyedOverlay.gaugesNarrowest, minHeight: least)
+        }
+        // No reasons (104 points, nothing to give up): at the top, at their height.
+        let bare = place(height: 104, least: 104)
+        #expect(bare.top == 0 && bare.shortened == nil && bare.alignLeading)
+        #expect(bare.top + 104 > ptt.minY, "the band leaves room: this is not the too-short case")
+        // With reasons: cut to their shortest, still at the top.
+        let least = 148 - (KeyedOverlay.reasonsHeight(sideways: true) - KeyedOverlay.reasonsLeast)
+        let reasons = place(height: 148, least: least)
+        #expect(reasons.top == 0 && reasons.shortened == least)
+    }
+
     /// The PR 653 re-review, Minor 4: right of a held PTT the meters ran to
     /// the band's right inset, over zoom and the tuning dial in their rows.
     @Test("beside a held PTT the keyed meters keep clear of zoom and the tuning dial")

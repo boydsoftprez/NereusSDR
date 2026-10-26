@@ -179,6 +179,9 @@ enum BandColumnLayout {
         /// The region ends this far in from the band's right: beside a PTT
         /// held in their rows (``PttLatch``).
         var trailing: CGFloat = 0
+        /// The height the meters are cut to, above a PTT with less room over
+        /// it than their height; nil at their own height.
+        var shortened: CGFloat?
     }
 
     /// The keyed meters' place: as today while nothing of the column's
@@ -193,10 +196,18 @@ enum BandColumnLayout {
     /// `trailingInset` and clear of the band's own `bandControls` (zoom, the
     /// knob or the thumbwheel) in their rows; else above it (the PR 653
     /// re-review, Minors 1 and 4).
+    ///
+    /// Above the PTT they never overlap it: with less room over it than
+    /// their `height` they are cut to fit that room, down to `minHeight`,
+    /// the shortest that keeps every button and tab in them a 44 point
+    /// target; only where even that does not fit do they start at the
+    /// band's top at `minHeight`, under the PTT, which draws on top and
+    /// stays tappable (the controller's ruling for JJ's veto, the PR 653
+    /// re-review d, Minor 1).
     static func keyedPlace(top: CGFloat, height: CGFloat, bandWidth: CGFloat, needed: CGFloat,
                            avoid: [CGRect], ptt: CGRect?, held: Bool = false, narrowest: CGFloat = .infinity,
                            leadingInset: CGFloat = 0, trailingInset: CGFloat = 0,
-                           bandControls: [CGRect] = []) -> KeyedPlace {
+                           bandControls: [CGRect] = [], minHeight: CGFloat? = nil) -> KeyedPlace {
         let inRows = { (rect: CGRect) in rect.minY < top + height && rect.maxY > top }
         let reaching = avoid.filter(inRows)
         guard let edge = reaching.map(\.maxX).max() else {
@@ -207,10 +218,15 @@ enum BandColumnLayout {
         // beside a held PTT), but never onto what is left of the PTT in
         // their rows.
         func above(_ ptt: CGRect, insets: Bool) -> KeyedPlace {
+            // The room over the PTT: their own height, else cut to fit, never below `minHeight`.
+            let room = ptt.minY - 6
+            let shortest = min(height, minHeight ?? height)
+            let shown = room >= height ? height : max(shortest, room)
             let before = reaching.filter { $0 != ptt && $0.midX < ptt.midX }.map(\.maxX).max()
             let floor = max(0, insets ? leadingInset - 10 : 0, before.map { $0 + clearance - 10 } ?? 0)
             let leading = max(floor, min(ptt.minX - 10, bandWidth - (insets ? trailingInset : 0) - needed - 20))
-            return KeyedPlace(top: max(0, ptt.minY - 6 - height), leading: leading, alignLeading: true)
+            return KeyedPlace(top: max(0, room - shown), leading: leading, alignLeading: true,
+                              shortened: shown < height ? shown : nil)
         }
         if held, let ptt, reaching.contains(ptt) {
             let others = reaching.filter { $0 != ptt } + bandControls.filter(inRows)
