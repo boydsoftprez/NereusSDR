@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The dynamic shows and hides of PS-A, the holder line and
+//                 Take transmit go through each row's parts, so a container
+//                 copy that hides one keeps it hidden. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - A TX Keying copy can hide its slice indicators.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-21 - Copies of a row carry the gates, follow the Core's 2-TONE
@@ -2171,7 +2175,9 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
     m_holderOnAir = holderOnAir;
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->takeTransmitButton()) { continue; }
-        s->takeTransmitButton()->setVisible(offered && !s->sliceIndicatorsHidden());
+        // Through the parts: a copy that hides its slice indicators keeps
+        // Take transmit hidden.
+        s->parts().setDynamicVisible(s->takeTransmitButton(), offered);
         s->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
         s->takeTransmitButton()->setStyleSheet(offered && holderOnAir
             ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
@@ -2191,7 +2197,7 @@ void TxApplet::setTransmitHolderText(const QString& text)
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->holderLabel()) { continue; }
         s->holderLabel()->setText(text);
-        s->holderLabel()->setVisible(!text.isEmpty() && !s->sliceIndicatorsHidden());
+        s->parts().setDynamicVisible(s->holderLabel(), !text.isEmpty());
     }
 }
 
@@ -2244,7 +2250,8 @@ void TxApplet::setBoardCapabilities(const NereusSDR::BoardCapabilities& caps)
     const bool boardUnknown = caps.board == HPSDRHW::Unknown;
     m_psBoardUnknown = boardUnknown && !caps.hasPureSignal;
     for (TxProcessingSection* s : allProcessingSections()) {
-        s->psaButton()->setVisible(caps.hasPureSignal || boardUnknown);
+        // Through the parts: a copy that hides PS-A keeps it hidden.
+        s->parts().setDynamicVisible(QStringLiteral("psa"), caps.hasPureSignal || boardUnknown);
     }
     syncPsaFromFacade();
 }
@@ -3689,7 +3696,7 @@ void TxApplet::reapplyGates()
         const bool shown = !m_processingSection->psaButton()->isHidden();
         for (TxProcessingSection* s : allProcessingSections()) {
             if (s->psaButton()) {
-                s->psaButton()->setVisible(shown);
+                s->parts().setDynamicVisible(QStringLiteral("psa"), shown);
             }
         }
     }

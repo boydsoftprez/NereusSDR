@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - A container copy can hide the slice-letter row.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-20 - A copy of this row in a container is told the outer
@@ -93,6 +96,8 @@
 #include <QString>
 #include <QWidget>
 
+#include "SectionParts.h"
+
 class QHBoxLayout;
 class QLabel;
 class QPushButton;
@@ -133,8 +138,15 @@ public:
     // Container setting. Hides the slice-letter row, and keeps the holder
     // line and Take transmit from appearing, so the copy shows TUNE and MOX.
     void setSliceIndicatorsHidden(bool hidden);
-    bool sliceIndicatorsHidden() const { return m_hideSliceIndicators; }
+    // The sliceIndicators part (SectionParts), whose hide key is
+    // hideSliceIndicators.
+    bool sliceIndicatorsHidden() const { return m_parts.isHidden(QStringLiteral("sliceIndicators")); }
     QWidget* sliceIndicatorRow() const { return m_sliceIndicatorRow; }
+
+    // The row's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own row never applies a config.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 
 private:
     void buildUI(int rowSpacing);
@@ -143,6 +155,7 @@ private:
     // in a container has no column of its own, so it gives itself the
     // margins the column would have given it.
     QMargins m_outerMargins;
+    SectionParts m_parts{this};
 
     QPushButton* m_tuneBtn = nullptr;
     QPushButton* m_moxBtn = nullptr;
@@ -152,7 +165,6 @@ private:
     QWidget* m_sliceIndicatorRow = nullptr;
     QHBoxLayout* m_txSliceRow = nullptr;
     QList<QPushButton*> m_txSliceButtons;
-    bool m_hideSliceIndicators = false;
 };
 
 } // namespace NereusSDR

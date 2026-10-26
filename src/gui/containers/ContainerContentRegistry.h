@@ -17,6 +17,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-20 - Integer and Color property kinds for Frequency (Custom).
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-25 - Order property kind: the order of a TX section row's
+//                 parts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -43,7 +46,11 @@ struct ContentPropertyChoice {
 // goes to the draft like every other property. A Reading is a choice of
 // reading binding and sits with the other bindings.
 struct ContentProperty {
-    enum class Kind { Reading, Choice, Toggle, Text, Integer, Color };
+    // Order: a reorderable list. Each choice is one item: its label, and
+    // as its value an object {"id": <item id>, "line": <shared line, or
+    // -1>}; items on one shared line move together. The value is the array
+    // of item ids, and the default (built) order is not written.
+    enum class Kind { Reading, Choice, Toggle, Text, Integer, Color, Order };
     QString key, label;
     Kind kind = Kind::Choice;
     QVector<ContentPropertyChoice> choices;

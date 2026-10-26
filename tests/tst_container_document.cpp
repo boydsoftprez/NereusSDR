@@ -18,6 +18,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - geometryPane round trip, absent and malformed. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - A TX section row's part keys and order round trip.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - longpathDirectionBecomesBindingOnLoad. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Container edge and workspace arrangement round trips for
@@ -91,6 +93,32 @@ private slots:
         QCOMPARE(int(DockMode::OverlayDocked), 1);
         QCOMPARE(int(DockMode::Floating), 2);
         QCOMPARE(int(AxisLock::BottomLeft), 7);
+    }
+    // A TX section row's hide keys and part order survive a save and a
+    // load, as the workspace store writes them.
+    void txSectionPartsRoundTrip()
+    {
+        WorkspaceDocument doc = sample();
+        ContentEntry keying;
+        keying.id = QStringLiteral("tx-keying-1");
+        keying.typeId = QStringLiteral("tx.keying");
+        keying.name = QStringLiteral("TX Keying");
+        keying.config = {{"hideSliceIndicators", true}, {"hideMox", false},
+                         {"order", QJsonArray{"mox", "tune", "sliceIndicators"}}};
+        doc.containers[0].contents.append(keying);
+        ContentEntry monitor;
+        monitor.id = QStringLiteral("tx-monitor-1");
+        monitor.typeId = QStringLiteral("tx.monitor");
+        monitor.config = {{"hideNotice", true}, {"order", QJsonArray{"volume", "mon"}}};
+        doc.containers[0].contents.append(monitor);
+
+        const DocumentResult decoded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        const ContentEntry& loaded = decoded.document.containers[0].contents.at(doc.containers[0].contents.size() - 2);
+        QCOMPARE(loaded.typeId, QStringLiteral("tx.keying"));
+        QCOMPARE(loaded.config.value("order").toArray(), (QJsonArray{"mox", "tune", "sliceIndicators"}));
+        QCOMPARE(loaded.config.value("hideSliceIndicators"), QJsonValue(true));
     }
     void lockedIsWrittenOnlyWhenTrue()
     {

@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-25 - An Order control (a TX section row's parts, with Move up
+//                 and Move down), and a TX section row's Advanced bindings
+//                 stay disabled with the reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The MMIO source row also takes a data source's
 //                 4-character ID and stores that source's UUID. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -32,6 +36,7 @@
 #include "gui/meters/WaveformMeterItem.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/styles/WorkspacePalette.h"
+#include "gui/applets/SectionParts.h"
 #include <QFormLayout>
 #include <algorithm>
 #include <QVBoxLayout>
@@ -42,6 +47,7 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QListWidget>
 #include <QJsonArray>
 #include <QColor>
 #include <QColorDialog>
@@ -154,11 +160,111 @@ QJsonValue declaredValue(const ContentProperty& property, const QJsonObject& con
     return property.defaultValue;
 }
 }
+namespace {
+// An Order property's items: each choice's id and shared line, in built
+// order (ContentProperty::Kind::Order).
+QVector<QPair<QString,int>> orderItems(const ContentProperty& p)
+{
+    QVector<QPair<QString,int>> items;
+    for(const auto& choice:p.choices) {
+        const QJsonObject item=choice.value.toObject();
+        items.append({item.value(QStringLiteral("id")).toString(),item.value(QStringLiteral("line")).toInt(-1)});
+    }
+    return items;
+}
+
+// Moves the item at `row` one place up (step -1) or down (step +1). An item
+// on a shared line swaps with its neighbour on the same line; otherwise its
+// whole unit (the line, or the item alone) swaps with the next unit.
+QStringList movedOrder(const QStringList& order,const QHash<QString,int>& lineOf,int row,int step)
+{
+    if(row<0 || row>=order.size()) {return order;}
+    const int line=lineOf.value(order.at(row),-1);
+    const int neighbour=row+step;
+    QStringList result=order;
+    if(line>=0 && neighbour>=0 && neighbour<order.size() && lineOf.value(order.at(neighbour),-1)==line) {
+        result.swapItemsAt(row,neighbour);
+        return result;
+    }
+    // The units, each a run of rows: one shared line, or one item.
+    QVector<QStringList> units;
+    int unitOfRow=-1;
+    for(int i=0;i<order.size();++i) {
+        const int itemLine=lineOf.value(order.at(i),-1);
+        const bool joins=itemLine>=0 && i>0 && lineOf.value(order.at(i-1),-1)==itemLine;
+        if(!joins) {units.append(QStringList{});}
+        units.last().append(order.at(i));
+        if(i==row) {unitOfRow=units.size()-1;}
+    }
+    const int other=unitOfRow+step;
+    if(other<0 || other>=units.size()) {return order;}
+    units.swapItemsAt(unitOfRow,other);
+    result.clear();
+    for(const auto& unit:units) {result.append(unit);}
+    return result;
+}
+}
 QWidget* ContentPropertyEditor::declaredControl(const ContentProperty& p, QWidget* parent)
 {
     const QJsonValue value=declaredValue(p,m_entry.config);
     QWidget* widget=nullptr;
-    if(p.kind==ContentProperty::Kind::Toggle) {
+    if(p.kind==ContentProperty::Kind::Order) {
+        const QVector<QPair<QString,int>> items=orderItems(p);
+        QStringList built;
+        QHash<QString,int> lineOf;
+        QHash<QString,QString> labelOf;
+        for(int i=0;i<items.size();++i) {
+            built.append(items.at(i).first);
+            lineOf.insert(items.at(i).first,items.at(i).second);
+            labelOf.insert(items.at(i).first,p.choices.at(i).label);
+        }
+        const QString tip=tr("Controls on one line stay together.");
+        auto* box=new QWidget(parent);
+        box->setToolTip(tip);
+        auto* layout=new QHBoxLayout(box);
+        layout->setContentsMargins(0,0,0,0);
+        auto* list=new QListWidget(box);
+        list->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("List"));
+        list->setToolTip(tip);
+        layout->addWidget(list,1);
+        auto* buttons=new QVBoxLayout;
+        auto* up=new QPushButton(tr("Move up"),box);
+        up->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("Up"));
+        up->setAutoDefault(false);
+        auto* down=new QPushButton(tr("Move down"),box);
+        down->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("Down"));
+        down->setAutoDefault(false);
+        buttons->addWidget(up);
+        buttons->addWidget(down);
+        buttons->addStretch();
+        layout->addLayout(buttons);
+        const auto fill=[list,labelOf](const QStringList& order,const QString& selected){
+            const QSignalBlocker block(list);
+            list->clear();
+            for(const QString& id:order) {
+                auto* item=new QListWidgetItem(labelOf.value(id,id),list);
+                item->setData(Qt::UserRole,id);
+                if(id==selected) {list->setCurrentItem(item);}
+            }
+        };
+        fill(SectionParts::effectiveOrder(items,value.toArray()),QString());
+        const auto move=[this,list,fill,lineOf,built,key=p.key](int step){
+            QStringList order;
+            for(int i=0;i<list->count();++i) {order.append(list->item(i)->data(Qt::UserRole).toString());}
+            const int row=list->currentRow();
+            if(row<0) {return;}
+            const QString selected=order.at(row);
+            const QStringList moved=movedOrder(order,lineOf,row,step);
+            if(moved==order) {return;}
+            fill(moved,selected);
+            // The built order is not written.
+            if(moved==built) {m_entry.config.remove(key);} else {m_entry.config[key]=QJsonArray::fromStringList(moved);}
+            publish();
+        };
+        connect(up,&QPushButton::clicked,this,[move]{move(-1);});
+        connect(down,&QPushButton::clicked,this,[move]{move(+1);});
+        widget=box;
+    } else if(p.kind==ContentProperty::Kind::Toggle) {
         auto* check=new QCheckBox(parent);check->setChecked(value.toBool());
         connect(check,&QCheckBox::toggled,this,[this,key=p.key](bool on){m_entry.config[key]=on;publish();});
         widget=check;
@@ -399,7 +505,11 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         }
     }
     const bool applet=entry.typeId.startsWith("applet:");
-    if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
+    if(entry.typeId.startsWith(QStringLiteral("tx.")) && m_registry.hasWidgetFactory(entry.typeId)) {
+        // A TX section row is a copy the TX applet makes and wires; the
+        // factory never reads the entry's context.
+        advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the TX panel; they have no source of their own."));
+    } else if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
     } else if((applet && entry.typeId!="applet:s_meter") || (widgetType && !declared)) {
         // A TX or RX section row is a copy its applet makes and wires, so it
