@@ -859,6 +859,11 @@ nereus_add_test(tst_meter_spacer)
 # show true / show false, the update interval floor, saved records keep the
 # fill look and thresholds, and new-item defaults.
 nereus_add_test(tst_meter_led_options)
+# Container item parity Task 26: the LED condition. The expression language
+# over a table (its subset, errors and malformed input), and LEDItem reading
+# slice readings, clock values and a loopback meter data source; the
+# editor's inline error; no condition keeps the thresholds; save and load.
+nereus_add_test(tst_led_condition_expression)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.

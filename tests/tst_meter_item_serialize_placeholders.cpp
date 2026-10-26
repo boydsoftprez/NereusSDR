@@ -8,6 +8,8 @@
 //                 save in every type's record (chained QString::arg re-scans
 //                 substituted text).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The LED condition is free text too.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 #include <QJsonArray>
@@ -21,6 +23,7 @@
 #include "core/UnbuiltFeatureList.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/meters/DataOutItem.h"
+#include "gui/meters/LEDItem.h"
 #include "gui/meters/MagicEyeItem.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/NeedleScalePwrItem.h"
@@ -77,7 +80,7 @@ TextField field(const QString& name, void (T::*setter)(const QString&), QString 
 // Every free-text field a pipe-record serializer writes, read from each
 // serializer (MeterItem.cpp, MagicEyeItem.cpp, NeedleScalePwrItem.cpp,
 // SignalTextItem.cpp, TextOverlayItem.cpp, WebImageItem.cpp,
-// RotatorItem.cpp, DataOutItem.cpp). Every other pipe record holds only
+// RotatorItem.cpp, DataOutItem.cpp, LEDItem.cpp). Every other pipe record holds only
 // numbers, flags, colours and GUIDs.
 QVector<TextField> textFieldsOf(MeterItem* item)
 {
@@ -110,6 +113,7 @@ QVector<TextField> textFieldsOf(MeterItem* item)
               &RotatorItem::stopControlString),
         field(QStringLiteral("mmioGuid"), &DataOutItem::setMmioGuid, &DataOutItem::mmioGuid),
         field(QStringLiteral("mmioVariable"), &DataOutItem::setMmioVariable, &DataOutItem::mmioVariable),
+        field(QStringLiteral("condition"), &LEDItem::setCondition, &LEDItem::condition),
     };
     QVector<TextField> applied;
     for (const auto& f : all) {

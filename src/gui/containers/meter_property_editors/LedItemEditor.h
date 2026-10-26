@@ -5,6 +5,8 @@ class QCheckBox;
 class QPushButton;
 class QDoubleSpinBox;
 class QComboBox;
+class QLabel;
+class QLineEdit;
 
 namespace NereusSDR {
 
@@ -21,6 +23,9 @@ private:
     // Padding range and the offset / size rows follow the look: placed,
     // a ratio of the width; fill, pixels.
     void applyPlacedRows(bool placed);
+    // The condition's inline error, and the thresholds enabled only while
+    // no condition is set.
+    void refreshConditionRows();
 
     QComboBox*      m_comboShape{nullptr};
     QComboBox*      m_comboStyle{nullptr};
@@ -40,6 +45,8 @@ private:
     QCheckBox*      m_chkShowTrue{nullptr};
     QCheckBox*      m_chkShowFalse{nullptr};
     QCheckBox*      m_chkProcessWhenHidden{nullptr};
+    QLineEdit*      m_editCondition{nullptr};
+    QLabel*         m_lblConditionError{nullptr};
     QDoubleSpinBox* m_spinGreenThreshold{nullptr};
     QDoubleSpinBox* m_spinAmberThreshold{nullptr};
     QDoubleSpinBox* m_spinRedThreshold{nullptr};

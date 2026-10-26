@@ -21,6 +21,12 @@
 //                 options are appended to the record; absent, a saved LED
 //                 keeps the fill look. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Condition: evaluated with evaluateLedCondition (not C#)
+//                 per reading and per update interval; %name% values from
+//                 the hosting meter's slice readings, published clock
+//                 values and meter data sources; saved base64 after the
+//                 options. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -64,6 +70,11 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "LEDItem.h"
+#include "ClockItem.h"
+#include "MeterWidget.h"
+#include "ThetisReadingNames.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContentFade.h"
 
 // From Thetis clsLed (MeterManager.cs:19448+)
@@ -72,6 +83,7 @@ mw0lge@grange-lane.co.uk
 #include <QLinearGradient>
 #include <QRadialGradient>
 #include <QPainterPath>
+#include <QDateTime>
 #include <QStringList>
 
 #include <algorithm>
@@ -158,6 +170,12 @@ void LEDItem::setValue(double v)
 {
     MeterItem::setValue(v);
 
+    // A condition decides alone; the reading may be one of its names.
+    if (hasCondition()) {
+        evaluateCondition();
+        return;
+    }
+
     if (v >= m_redThreshold) {
         m_ledOn = true;   // color determined by currentColor()
     } else if (v >= m_amberThreshold) {
@@ -170,6 +188,146 @@ void LEDItem::setValue(double v)
     // The fill look's blink toggles m_ledOn while painting; the true state
     // is kept apart.
     m_isTrue = m_ledOn;
+}
+
+// ---------------------------------------------------------------------------
+// Condition
+// Thetis compiles the condition as C# (clsMeterScriptEngine.cs:325-381
+// [v2.10.3.15]) after expand_placeholders turns each %name% into a lookup
+// (MeterManager.cs:21007-21066 [v2.10.3.15]); an invalid script leaves the
+// LED false (Update, MeterManager.cs:21179 [v2.10.3.15]). NereusSDR
+// evaluates its own expression language with the same names.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Clock values. From Thetis MeterManager.cs:31096-31099 [v2.10.3.15]
+// (published by ClockItem::publishedReadings).
+bool isClockName(const QString& name)
+{
+    static const QStringList kClockNames{QStringLiteral("time_utc"), QStringLiteral("time_loc"),
+                                         QStringLiteral("date_utc"), QStringLiteral("date_loc")};
+    return kClockNames.contains(name, Qt::CaseInsensitive);
+}
+
+} // namespace
+
+bool LEDItem::hasCondition() const
+{
+    return !m_condition.trimmed().isEmpty();
+}
+
+void LEDItem::setCondition(const QString& expression)
+{
+    const bool had = hasCondition();
+    m_condition = expression;
+    m_lastConditionMs = -1;
+    if (hasCondition()) {
+        evaluateCondition();
+        return;
+    }
+    m_conditionError.clear();
+    // Back to the thresholds, from the latest reading.
+    if (had) {
+        setValue(value());
+    }
+}
+
+MeterWidget* LEDItem::hostMeter() const
+{
+    for (QObject* p = parent(); p; p = p->parent()) {
+        if (auto* meter = qobject_cast<MeterWidget*>(p)) {
+            return meter;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<QVariant> LEDItem::conditionValue(const QString& name) const
+{
+    const QString key = name.trimmed();
+    MeterWidget* meter = hostMeter();
+
+    // Values other items publish (the clock's time_utc and the like), named
+    // in lowercase as Thetis custom strings are (MeterManager.cs:21035-21039
+    // [v2.10.3.15]).
+    if (meter) {
+        const QString lower = key.toLower();
+        for (MeterItem* item : meter->items()) {
+            if (!item || item == this) {
+                continue;
+            }
+            const QHash<QString, QVariant> published = item->publishedReadings();
+            const auto it = published.constFind(lower);
+            if (it != published.cend()) {
+                return it.value();
+            }
+        }
+    }
+    // A clock value with no clock in the meter: the 24 hour time and the date.
+    if (isClockName(key)) {
+        const bool utc = key.startsWith(QLatin1String("time_utc"), Qt::CaseInsensitive)
+            || key.startsWith(QLatin1String("date_utc"), Qt::CaseInsensitive);
+        const QDateTime now = utc ? QDateTime::currentDateTimeUtc() : QDateTime::currentDateTime();
+        const bool isTime = key.startsWith(QLatin1String("time"), Qt::CaseInsensitive);
+        return QVariant(isTime ? ClockItem::thetisTime(now, true) : ClockItem::thetisDate(now));
+    }
+
+    // A Thetis reading name, from the entry's slice readings.
+    const int binding = bindingForThetisReadingName(key);
+    if (binding >= 0) {
+        if (meter) {
+            const QHash<int, double> readings = meter->lastBindingValues();
+            const auto it = readings.constFind(binding);
+            if (it != readings.cend()) {
+                return QVariant(it.value());
+            }
+        }
+        return QVariant();
+    }
+
+    // A meter data source value: <4 character ID>.<value name>.
+    const qsizetype dot = key.indexOf(QLatin1Char('.'));
+    if (dot > 0 && dot + 1 < key.size()) {
+        if (MmioEndpoint* ep = ExternalVariableEngine::instance().endpointByFourChar(key.left(dot))) {
+            return ep->valueForName(key.mid(dot + 1));
+        }
+    }
+    return std::nullopt;
+}
+
+LedConditionResult LEDItem::checkCondition(const QString& expression) const
+{
+    return evaluateLedCondition(expression, [this](const QString& name) -> std::optional<QVariant> {
+        std::optional<QVariant> v = conditionValue(name);
+        if (v && !v->isValid()) {
+            return isClockName(name.trimmed()) ? QVariant(QString()) : QVariant(0.0);
+        }
+        return v;
+    });
+}
+
+bool LEDItem::evaluateCondition()
+{
+    const bool before = m_isTrue;
+    const QString errorBefore = m_conditionError;
+    const LedConditionResult result = evaluateLedCondition(
+        m_condition, [this](const QString& name) { return conditionValue(name); });
+    m_isTrue = result.ok && result.value;
+    m_conditionError = result.ok ? QString() : result.error;
+    // The fill look's blink toggles m_ledOn while painting.
+    m_ledOn = m_isTrue;
+    return m_isTrue != before || m_conditionError != errorBefore;
+}
+
+bool LEDItem::stepCondition(qint64 monotonicMs)
+{
+    const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+    if (m_lastConditionMs >= 0 && monotonicMs >= m_lastConditionMs
+        && monotonicMs - m_lastConditionMs < interval) {
+        return false;
+    }
+    m_lastConditionMs = monotonicMs;
+    return evaluateCondition();
 }
 
 void LEDItem::setTransmitting(bool tx)
@@ -282,10 +440,11 @@ bool LEDItem::stepPlaced(int updateIntervalMs)
 
 bool LEDItem::advanceMeter(qint64 monotonicMs)
 {
+    bool changed = hasCondition() && stepCondition(monotonicMs);
     if (!m_placed) {
-        return false;
+        return changed;
     }
-    bool changed = checkPanelFlip();
+    changed = checkPanelFlip() || changed;
     const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
     // The first call, or a clock that moved backwards, only takes the time.
     if (m_lastStepMs < 0 || monotonicMs < m_lastStepMs) {
@@ -308,6 +467,9 @@ bool LEDItem::advanceMeter(qint64 monotonicMs)
 
 QColor LEDItem::trueEndColour() const
 {
+    if (hasCondition()) {
+        return m_trueColour;
+    }
     const double v = value();
     if (v >= m_redThreshold) {
         return m_redColour;
@@ -383,6 +545,9 @@ QRectF LEDItem::placedLightRect(int widgetW, int widgetH) const
 // ---------------------------------------------------------------------------
 QColor LEDItem::currentColor() const
 {
+    if (hasCondition()) {
+        return m_ledOn ? m_trueColour : m_falseColour;
+    }
     const double v = value();
     if (v >= m_redThreshold) {
         return m_redColour;
@@ -560,6 +725,8 @@ void LEDItem::drawShape(QPainter& p, const QRect& ledRect, const QColor& color)
 //             |placed|offsetX|offsetY|sizeX|sizeY|showTrue|showFalse|
 //             processWhenHidden   (appended at [20]; absent = fill look, Thetis
 //             offset and size, shown true and false, not when hidden)
+//             |condition          (base64 UTF-8, after the options; written
+//             only when set; absent or empty = the thresholds decide)
 // ---------------------------------------------------------------------------
 
 static QString ledBaseFields(const MeterItem& item)
@@ -613,7 +780,13 @@ QString LEDItem::serialize() const
             .arg(static_cast<double>(m_sizeY))
             .arg(m_showTrue ? 1 : 0)
             .arg(m_showFalse ? 1 : 0)
-            .arg(m_processWhenHidden ? 1 : 0);
+            .arg(m_processWhenHidden ? 1 : 0)
+        // The condition is user text: base64, joined rather than passed
+        // through .arg(), so neither '|' nor '%' can change the record.
+        // Written only when set, so an LED without one saves as before.
+        + (hasCondition()
+               ? QLatin1Char('|') + QString::fromLatin1(m_condition.toUtf8().toBase64())
+               : QString());
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +799,7 @@ QString LEDItem::serialize() const
 // (unfilled placeholders), and are read as having no options.
 // Appended, each optional: [20]=placed [21]=offsetX [22]=offsetY
 // [23]=sizeX [24]=sizeY [25]=showTrue [26]=showFalse [27]=processWhenHidden
+// [28]=condition (base64; at opt + 8 when the old placeholders shift opt)
 // ---------------------------------------------------------------------------
 bool LEDItem::deserialize(const QString& data)
 {
@@ -712,6 +886,15 @@ bool LEDItem::deserialize(const QString& data)
         || !optFlag(opt + 7, false, &processWhenHidden)) {
         return false;
     }
+    QString condition;
+    if (parts.size() > opt + 8) {
+        const auto decoded = QByteArray::fromBase64Encoding(parts[opt + 8].toLatin1(),
+                                                            QByteArray::AbortOnBase64DecodingErrors);
+        if (!decoded) {
+            return false;
+        }
+        condition = QString::fromUtf8(*decoded);
+    }
 
     m_shape         = static_cast<LedShape>(shape);
     m_style         = static_cast<LedStyle>(style);
@@ -734,6 +917,12 @@ bool LEDItem::deserialize(const QString& data)
     m_showTrue          = showTrue;
     m_showFalse         = showFalse;
     m_processWhenHidden = processWhenHidden;
+    m_condition         = condition;
+    m_conditionError.clear();
+    m_lastConditionMs   = -1;
+    if (hasCondition()) {
+        evaluateCondition();
+    }
 
     return true;
 }
