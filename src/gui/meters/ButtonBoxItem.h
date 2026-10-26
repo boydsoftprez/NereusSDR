@@ -32,6 +32,9 @@
 //                 position is cached, and a subclass may read the
 //                 visibility mask its own way. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The fade click guard and a shown button's rectangle are
+//                 open to a subclass (other buttons' reorder drag).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -217,6 +220,13 @@ protected:
 
     // Thetis face. A subclass may draw its own face without changing hits or clicks.
     virtual void paintButton(QPainter& p, int index, const QRectF& rect);
+
+    // True while Fade on RX / TX covers the grid: a press does nothing
+    // (MeterManager.cs:9324-9325 [v2.10.3.15]).
+    bool inputFaded() const;
+    // Where button `index` is drawn on a widget of this size (its grid
+    // position among the shown buttons).
+    QRectF shownButtonRect(int index, int widgetW, int widgetH) const;
 
     // Grid styling every button grid saves after its own fields:
     // "|borderWidth|margin|cornerRadius|heightRatio|fadeOnRx|fadeOnTx".

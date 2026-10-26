@@ -37,6 +37,9 @@
 //                 position is cached, and a single control is one shown
 //                 button rather than one mask bit. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The fade click guard and a shown button's rectangle are
+//                 open to a subclass (other buttons' reorder drag).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -422,10 +425,19 @@ void ButtonBoxItem::paintIndicator(QPainter& p, int index, const QRectF& rect)
 // Mouse Interaction
 // ============================================================================
 
+bool ButtonBoxItem::inputFaded() const
+{
+    return (m_fadeOnTx && m_transmitting) || (m_fadeOnRx && !m_transmitting);
+}
+
+QRectF ButtonBoxItem::shownButtonRect(int index, int widgetW, int widgetH) const
+{
+    return buttonRect(index, pixelRect(widgetW, widgetH));
+}
+
 bool ButtonBoxItem::handleMousePress(QMouseEvent* event, int widgetW, int widgetH)
 {
-    if (m_fadeOnTx && m_transmitting) { return false; }
-    if (m_fadeOnRx && !m_transmitting) { return false; }
+    if (inputFaded()) { return false; }
 
     const int idx = buttonAt(event->position(), widgetW, widgetH);
     if (idx < 0) { return false; }

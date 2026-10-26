@@ -857,6 +857,10 @@ nereus_add_test(tst_rotator_item_drag)
 # a direction-In data source and preview copies send nothing. Loopback UDP
 # data sources inside the test only; no rotor.
 nereus_add_test(tst_rotator_item_mmio)
+# Container item parity Task 47: the click box's button mask and its go to
+# group, change group and cycle units actions (Thetis clsClickBox,
+# clsMeter.MouseUp); preview copies never act on the live container.
+nereus_add_test(tst_click_box_item)
 # Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.
@@ -9162,6 +9166,10 @@ target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 58: other buttons use Thetis button numbers
 # and every button's visibility is saved; older records still load.
 nereus_add_test(tst_other_button_ids)
+# Container item parity Task 59: Alt-drag reorders the other buttons (Shift
+# swaps), the order is saved, and the editor lists every offered button.
+nereus_add_test(tst_other_button_reorder)
+target_compile_definitions(tst_other_button_reorder PRIVATE NEREUS_BUILD_TESTS)
 # R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
 # builds, local or remote, carries a not-yet-implemented mark or tooltip,
 # including the surfaces hidden until their feature is built.

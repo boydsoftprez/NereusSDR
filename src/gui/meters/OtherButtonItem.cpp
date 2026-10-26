@@ -33,6 +33,10 @@
 //                 button order saved; earlier records load through the old
 //                 numbering. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Reorder: Alt-drag a button onto another to move it there,
+//                 with Shift to swap the two; the order is saved. The
+//                 dragged button follows the pointer in NereusSDR colours.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -123,8 +127,15 @@ mw0lge@grange-lane.co.uk
 
 #include "OtherButtonCatalog.h"
 #include "core/LogCategories.h"
+#include "gui/containers/ContainerContentRegistry.h"
 
+#include <QJsonObject>
+
+#include <QMouseEvent>
+#include <QPainter>
 #include <QStringList>
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -157,6 +168,14 @@ const char* const kCoreLabels[] = {
     "WF", "HIST", "PANF", "PANS", "SPCS", "OFF"
 };
 constexpr int kCoreLabelCount = static_cast<int>(sizeof(kCoreLabels) / sizeof(kCoreLabels[0]));
+
+// NereusSDR-original drag face (Thetis's lime / dark red outline,
+// MeterManager.cs:39797-39815 [v2.10.3.15], is not ported): the accent outline over a
+// button it can drop on, the border colour elsewhere.
+const QColor kDragTargetOutline{0x00, 0xb4, 0xd8};  // STYLEGUIDE accent
+const QColor kDragNoTargetOutline{0x20, 0x50, 0x70}; // STYLEGUIDE border
+constexpr qreal kDragFaceOpacity = 0.85;
+constexpr qreal kDragOutlineWidth = 2.0;
 
 bool isMacroId(int id)
 {
@@ -198,6 +217,7 @@ OtherButtonItem::OtherButtonItem(QObject* parent)
     applyAllSlots();
 
     connect(this, &ButtonBoxItem::buttonClicked, this, &OtherButtonItem::onButtonClicked);
+    m_configNotifier = new ContentConfigNotifier(this);
 }
 
 bool OtherButtonItem::isValidId(int id)
@@ -442,6 +462,117 @@ void OtherButtonItem::onButtonClicked(int index, Qt::MouseButton btn)
     } else {
         emit otherButtonClicked(mapped);
     }
+}
+
+void OtherButtonItem::paint(QPainter& p, int widgetW, int widgetH)
+{
+    ButtonBoxItem::paint(p, widgetW, widgetH);
+    if (m_dragIndex < 0 || !m_dragMoved || !ButtonBoxItem::isButtonShown(m_dragIndex)) { return; }
+    // The dragged button follows the pointer, centred on it, the way
+    // Thetis moves its drag rectangle (MeterManager.cs:39797-39804 [v2.10.3.15]).
+    QRectF face = shownButtonRect(m_dragIndex, widgetW, widgetH);
+    if (!face.isValid()) { return; }
+    face.moveCenter(m_dragPoint);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    if (m_dragTarget >= 0 && m_dragTarget != m_dragIndex) {
+        const QRectF target = shownButtonRect(m_dragTarget, widgetW, widgetH);
+        p.setPen(QPen(kDragTargetOutline, kDragOutlineWidth));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(target, cornerRadius(), cornerRadius());
+    }
+    p.setOpacity(kDragFaceOpacity);
+    paintButton(p, m_dragIndex, face);
+    p.setOpacity(1.0);
+    p.setPen(QPen(m_dragTarget >= 0 ? kDragTargetOutline : kDragNoTargetOutline, kDragOutlineWidth));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(face, cornerRadius(), cornerRadius());
+    p.restore();
+}
+
+bool OtherButtonItem::handleMousePress(QMouseEvent* event, int widgetW, int widgetH)
+{
+    // From Thetis MeterManager.cs:9322-9344 [v2.10.3.15]
+    if (inputFaded()) { return false; }
+
+    const int index = buttonAt(event->position(), widgetW, widgetH);
+    if (index == -1) { return false; }
+
+    m_dragTarget = -1;
+    m_dragMoved = false;
+    if (event->modifiers().testFlag(Qt::AltModifier)) {
+        m_dragIndex = index;
+        m_dragPoint = event->position();
+        return true;
+    }
+    m_dragIndex = -1;
+
+    return ButtonBoxItem::handleMousePress(event, widgetW, widgetH);
+}
+
+bool OtherButtonItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
+{
+    if (m_dragIndex < 0) { return ButtonBoxItem::handleMouseMove(event, widgetW, widgetH); }
+    if (event->buttons() == Qt::NoButton) {
+        // The release went elsewhere (outside this grid): the drag ends
+        // with nothing moved.
+        m_dragIndex = -1;
+        m_dragTarget = -1;
+        m_dragMoved = false;
+        ButtonBoxItem::handleMouseMove(event, widgetW, widgetH);
+        return true;
+    }
+    // From Thetis MeterManager.cs:9546-9550 [v2.10.3.15] (MoveButton): the
+    // button under the pointer is the target, -1 when there is none.
+    m_dragPoint = event->position();
+    m_dragMoved = true;
+    m_dragTarget = buttonAt(m_dragPoint, widgetW, widgetH);
+    ButtonBoxItem::handleMouseMove(event, widgetW, widgetH);
+    return true;
+}
+
+bool OtherButtonItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH)
+{
+    if (m_dragIndex < 0) { return ButtonBoxItem::handleMouseRelease(event, widgetW, widgetH); }
+
+    const int from = m_dragIndex;
+    m_dragIndex = -1;
+    m_dragMoved = false;
+    // From Thetis MeterManager.cs:9348-9349 [v2.10.3.15]: nothing while the
+    // fade covers the grid.
+    if (inputFaded()) {
+        m_dragTarget = -1;
+        return true;
+    }
+    // The button under the pointer at the release (Thetis keeps the last
+    // one its paint saw, MeterManager.cs:39817 [v2.10.3.15]).
+    const int to = buttonAt(event->position(), widgetW, widgetH);
+    m_dragTarget = -1;
+
+    // From Thetis MeterManager.cs:9353-9389 [v2.10.3.15]
+    if (to != -1 && from != to) {
+        QVector<short> map = m_map;
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+            std::swap(map[to], map[from]);
+        } else {
+            const short moving = map[from];
+
+            if (from < to) {
+                std::copy(map.begin() + from + 1, map.begin() + to + 1, map.begin() + from);
+                map[to] = moving;
+            } else {
+                std::copy_backward(map.begin() + to, map.begin() + from, map.begin() + from + 1);
+                map[to] = moving;
+            }
+        }
+        //Debug.Print($"{_dragging_index} to {_last_draged_to}");
+        // [original inline comment from MeterManager.cs:9381]
+        setButtonMap(map);
+        // The new order is saved with the layout.
+        emit m_configNotifier->configEdited(
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()}});
+    }
+    return true;
 }
 
 QString OtherButtonItem::serialize() const

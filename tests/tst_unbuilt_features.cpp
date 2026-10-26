@@ -810,18 +810,6 @@ QMap<F, QList<Surface>> surfaces()
                                 }
                                 return false;
                             }}};
-    map[F::ContainerClickBox] = {
-        Surface{QStringLiteral("container Click Box render"), Host::Container,
-                [](Hosts& h) {
-                    for (const MeterItem* item : h.containerMeter()->items()) {
-                        if (qobject_cast<const ClickBoxItem*>(item)) {
-                            return h.containerMeter()->shouldRender(item);
-                        }
-                    }
-                    return false;
-                }},
-        Surface{QStringLiteral("container Click Box Add"), Host::Container,
-                [](Hosts& h) { return actionShown(h.containerDialog(), QStringLiteral("Click Box")); }}};
     map[F::AudioBitDepth] = {onPage(QStringLiteral("Microphone"), QStringLiteral("bit depth"),
                                    text(QStringLiteral("Bit depth:")))};
     map[F::AudioAutoMatch] = {onPage(QStringLiteral("Microphone"), QStringLiteral("auto match"),
@@ -913,20 +901,29 @@ private slots:
         QCOMPARE(map.size(), list.size());
     }
 
-    void builtFilterDisplayIsVisibleInLocalAndRemoteContainers()
+    // The click box is built too (container item parity Task 47): checked
+    // in the same windows, which are slow to build.
+    void builtFilterDisplayAndClickBoxAreVisibleInLocalAndRemoteContainers()
     {
         QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerFilterDisplay));
+        QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerClickBox));
         GuiSessionCoordinator sessions;
         for (bool remote : {false, true}) {
             Hosts hosts(sessions, remote);
             bool renders = false;
+            bool clickBoxRenders = false;
             for (const MeterItem* item : hosts.containerMeter()->items()) {
                 if (qobject_cast<const FilterDisplayItem*>(item)) {
                     renders = hosts.containerMeter()->shouldRender(item);
                 }
+                if (qobject_cast<const ClickBoxItem*>(item)) {
+                    clickBoxRenders = hosts.containerMeter()->shouldRender(item);
+                }
             }
             QVERIFY(renders);
+            QVERIFY(clickBoxRenders);
             QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Filter Display")));
+            QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Click Box")));
         }
     }
 
