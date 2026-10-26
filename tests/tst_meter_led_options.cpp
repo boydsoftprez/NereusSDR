@@ -4,6 +4,9 @@
 // tests/tst_meter_led_options.cpp  (NereusSDR)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave M7: the offset tooltip names the item's width,
+//                 American spelling. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - The appended options are read by place; the LED record
 //                 now ends with the condition, No TX fields and guid.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -428,7 +431,9 @@ private slots:
         QCOMPARE(padding->minimum(), 0.001);
         QCOMPARE(padding->maximum(), 10.0);
 
-        QDoubleSpinBox* offsetX = spinWithTip(editor, QStringLiteral("Centre of the light from the left"));
+        QDoubleSpinBox* offsetX = spinWithTip(editor, QStringLiteral("Center of the light from the left"));
+        // Fix wave M7: Thetis scales the offset by the item's width.
+        QVERIFY(offsetX && offsetX->toolTip().contains(QStringLiteral("item's width")));
         QVERIFY(offsetX);
         QCOMPARE(offsetX->minimum(), -10.0);
         QCOMPARE(offsetX->maximum(), 10.0);
