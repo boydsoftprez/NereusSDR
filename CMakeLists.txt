@@ -2034,6 +2034,7 @@ set(GUI_SOURCES
     src/core/mmio/ITransportWorker.cpp
     src/core/mmio/MmioEndpoint.cpp
     src/core/mmio/ExternalVariableEngine.cpp
+    src/core/mmio/FourChar.cpp
     src/core/mmio/FormatParser.cpp
     src/core/mmio/UdpEndpointWorker.cpp
     src/core/mmio/TcpListenerEndpointWorker.cpp
