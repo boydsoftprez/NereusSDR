@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native mixed-host and Main wiring evidence.
 // Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The VFO display's frequency request names its slice
 //                 (Task 36). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -64,6 +66,7 @@ private slots:
     void cleanupTestCase() { QFile::remove(AppSettings::instance().filePath()); RadioDiscovery::clearHoldOffForTest(); }
     void independentControlsNativeStateScopePlacementAndLifecycle()
     {
+        NEREUS_SKIP_WITHOUT_QRHI();
         auto window=std::make_unique<MainWindow>(RemoteStationOptions{},nullptr,MainWindow::ConnectionStartup::Deferred);
         window->resize(1100,760);window->show();
         auto* manager=window->findChild<ContainerManager*>();QVERIFY(manager);
@@ -128,6 +131,7 @@ private slots:
     }
     void productionSourcesOfflineCadenceNativeMovesAndShutdown()
     {
+        NEREUS_SKIP_WITHOUT_QRHI();
         auto* window=new MainWindow({},nullptr,MainWindow::ConnectionStartup::Deferred);
         const auto cleanup=qScopeGuard([&]{delete window;});
         window->resize(1200,850); window->show();

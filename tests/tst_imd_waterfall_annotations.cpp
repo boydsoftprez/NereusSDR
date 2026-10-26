@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original GUI history regression.
 // Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 row handed over early and put in before its trace is
 //                 accepted takes the event on the frame where the source
@@ -320,6 +322,7 @@ private slots:
     }
     void nativeGpuWrapPauseRewindGlideCapture()
     {
+        NEREUS_SKIP_WITHOUT_QRHI();
 #ifdef NEREUS_GPU_SPECTRUM
         SpectrumWidget widget;
         widget.resize(640, 240);

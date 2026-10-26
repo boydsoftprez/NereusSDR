@@ -1,5 +1,7 @@
 // no-port-check: Independent numeric oracles and real native rendering fixtures.
 // Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and a legacy image's
 //                 Dark mode are shown disabled when no dark art exists.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1286,6 +1288,7 @@ private slots:
         QVERIFY(shown.contains(QStringLiteral("Display mode"))); QVERIFY(shown.contains(QStringLiteral("TX label color")));
     }
     void primitiveClockSharesCadence() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         ContainerContentRegistry registry; MeterWidget widget; widget.resize(360,120); auto* item=registry.createMeterItem(registry.makeEntry("CLOCK"),&widget); QVERIFY(item); widget.addItem(item); widget.show();
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted); widget.advanceMeters(0); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage first=widget.grabFramebuffer();
@@ -1301,6 +1304,7 @@ private slots:
         QVERIFY(!first.isNull()); QVERIFY(first!=last);
     }
     void nativeFamilyFrames() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         const QString destination=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR"); ContainerContentRegistry registry;
         for(const QString& type:{"meter.powerSwr","meter.crossNeedle","meter.ananMulti","meter.magicEye","meter.signalText","meter.historyGraph","meter.vfoDisplay","meter.clock","meter.contest","meter.eq"}) {
             for(int width:{360,640}) {

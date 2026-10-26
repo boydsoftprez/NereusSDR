@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original free Canvas native interaction and transaction tests.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSplitter>
@@ -242,6 +245,7 @@ private slots:
         auto* grip=host->findChild<QWidget*>("freeCanvasGrip_"+a.id);QVERIFY(grip);gesture(grip,{45,35});QCOMPARE(store.snapshot(),before);QCOMPARE(host->entryBoundary(a.id),boundary);QCOMPARE(host->meterSurfaces()[0],stable.data());
     }
     void nativeLayeringFramesAndSmallViewport() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         ContainerContentRegistry registry;MeterPoller poller;ContainerDocument c;c.id="frames";c.layout=ContentLayout::FreeCanvas;
         auto a=registry.makeEntry("meter.ananMulti"),b=registry.makeEntry("meter.sMeter"),clock=registry.makeEntry("meter.clock");
         a.id="a";b.id="b";clock.id="c";a.paintOrder=5;b.paintOrder=2;clock.paintOrder=7;
