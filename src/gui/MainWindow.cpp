@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - refreshContainerMeter gives each data out item the slice
+//                 letter its entry's Source resolves to and the session id
+//                 (radio). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-25 - VHF S9 rule per slice: refreshContainerMeter sets
 //                 isAboveS9Frequency (at or above 30 MHz) on every item from
 //                 the slice its entry resolves to. J.J. Boyd (KG4VCF),
@@ -1242,6 +1246,7 @@ warren@wpratt.com
 #include "meters/TuneStepButtonItem.h"
 #include "meters/BandButtonItem.h"
 #include "meters/RotatorItem.h"
+#include "meters/DataOutItem.h"
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -15057,6 +15062,14 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         if (auto* face = qobject_cast<CompositePresetItem*>(root)) { items += face->internalItems(); }
     }
     if (items.isEmpty()) { return; }
+    // Data out names the slice the entry's Source resolves to (none when it
+    // resolves to no slice) and this session's radio in what it sends.
+    for (MeterItem* item : items) {
+        if (auto* out = qobject_cast<DataOutItem*>(item)) {
+            out->setSliceLetter(source ? QChar(u'A' + source->sliceIndex()) : QChar());
+            out->setRadioId(containerSessionId());
+        }
+    }
     // Snapshot actual child presentation rather than dirtying equal model pushes.
     const auto signature = [](MeterItem* item) {
         QString value = item->serialize() + QString::number(item->aboveS9Frequency());

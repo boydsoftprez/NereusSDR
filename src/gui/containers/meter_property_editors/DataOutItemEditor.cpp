@@ -1,8 +1,16 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - "MMIO 4-char ID" picks the endpoint data out sends to;
+//                 "Send interval (ms)" 100-5000 in steps of 10. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "DataOutItemEditor.h"
 #include "../../meters/DataOutItem.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 
 #include <QComboBox>
 #include <QLineEdit>
+#include <QSpinBox>
 
 namespace NereusSDR {
 
@@ -44,6 +52,10 @@ void DataOutItemEditor::setItem(MeterItem* item)
         m_comboTransport->findData(static_cast<int>(d->transportMode())));
     m_editGuid->setText(d->mmioGuid());
     m_editVariable->setText(d->mmioVariable());
+    const MmioEndpoint* ep = d->endpointGuid().isNull()
+        ? nullptr : ExternalVariableEngine::instance().endpoint(d->endpointGuid());
+    m_editFourChar->setText(ep ? ep->fourChar() : QString());
+    m_spinSendInterval->setValue(d->sendIntervalMs());
     endProgrammaticUpdate();
 }
 
@@ -88,6 +100,43 @@ void DataOutItemEditor::buildTypeSpecific()
         if (!d) { return; }
         d->setTransportMode(static_cast<DataOutItem::TransportMode>(
             m_comboTransport->currentData().toInt()));
+        notifyChanged();
+    });
+
+    // The endpoint the readings go to, by its 4-char ID (Thetis
+    // txtDataOutNode_4charID, MaxLength 4). An ID no endpoint has sends
+    // nothing.
+    m_editFourChar = new QLineEdit(this);
+    m_editFourChar->setObjectName(QStringLiteral("dataOutFourCharId"));
+    m_editFourChar->setStyleSheet(kLineStyle);
+    m_editFourChar->setMaxLength(4);
+    m_editFourChar->setPlaceholderText(QStringLiteral("ID"));
+    m_editFourChar->setToolTip(QStringLiteral(
+        "The 4-character ID of the MMIO endpoint the readings are sent to"));
+    addRow(QStringLiteral("MMIO 4-char ID"), m_editFourChar);
+    connect(m_editFourChar, &QLineEdit::editingFinished, this, [this]() {
+        if (isProgrammaticUpdate()) { return; }
+        DataOutItem* d = qobject_cast<DataOutItem*>(m_item);
+        if (!d) { return; }
+        const MmioEndpoint* ep =
+            ExternalVariableEngine::instance().endpointByFourChar(m_editFourChar->text().trimmed());
+        const QUuid guid = ep ? ep->guid() : QUuid();
+        if (guid == d->endpointGuid()) { return; }
+        d->setEndpointGuid(guid);
+        notifyChanged();
+    });
+
+    m_spinSendInterval = makeIntRow(QStringLiteral("Send interval (ms)"),
+                                    kDataOutMinMs, kDataOutMaxMs);
+    m_spinSendInterval->setObjectName(QStringLiteral("dataOutSendIntervalMs"));
+    m_spinSendInterval->setSingleStep(kDataOutStepMs);
+    m_spinSendInterval->setValue(kDataOutNewIntervalMs);
+    m_spinSendInterval->setToolTip(QStringLiteral("The interval that the data is sent."));
+    connect(m_spinSendInterval, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        if (isProgrammaticUpdate()) { return; }
+        DataOutItem* d = qobject_cast<DataOutItem*>(m_item);
+        if (!d) { return; }
+        d->setSendIntervalMs(v);
         notifyChanged();
     });
 

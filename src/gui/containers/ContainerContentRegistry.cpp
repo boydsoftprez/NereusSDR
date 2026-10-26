@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - createMeterItem: a data out item made in Preview or
+//                 Validation mode never sends (no timer, no outbound
+//                 message); previews never act. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - A control.* shortcut shows its one button by Thetis button
 //                 number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -385,6 +389,12 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (!item) { return nullptr; }
     auto* web = qobject_cast<WebImageItem*>(item.get());
     if (web) { web->setFetchEnabled(false); }
+    // Previews never act: a data out copy outside the live host sends
+    // nothing. Set before its record (and endpoint) is read, so its timer
+    // never starts.
+    if (auto* out = qobject_cast<DataOutItem*>(item.get())) {
+        out->setSendEnabled(mode == ContentRenderMode::Live);
+    }
     const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
     auto* face=qobject_cast<BarPresetItem*>(item.get());
     auto* composite=qobject_cast<CompositePresetItem*>(item.get());

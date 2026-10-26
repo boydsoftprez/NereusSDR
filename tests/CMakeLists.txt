@@ -780,6 +780,9 @@ nereus_add_test(tst_meter_new_item_defaults)
 nereus_add_test(tst_meter_item_update_interval)
 # Thetis reading names for meter bindings and the readings a clock publishes.
 nereus_add_test(tst_meter_published_readings)
+# Data out: Thetis-format payload by slice and radio, send interval, endpoint
+# by 4-char ID, and nothing sent to a direction-In endpoint.
+nereus_add_test(tst_data_out_item_send)
 # VHF S9 rule per slice: the 30 MHz boundary, every S-unit item, two slices
 # in one container and a Follow selected RX entry (real MainWindow offscreen).
 nereus_add_test(tst_meter_vhf_s9)
