@@ -121,6 +121,10 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-10-25 - pureSignalActive() is the PS-A state
+//                (PureSignal::isAutoCalEnabled), as Thetis console.cs:
+//                46819-46826 [v2.10.3.15] gates on chkFWCATUBypass.Checked.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-18 - setTunePowerForTxBand no longer sets the tune drive
 //                source (Thetis parity; Setup alone chooses it). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -647,16 +651,16 @@ public:
     /// set, returns false (matches Phase 3A pre-3M-4 behaviour: gate
     /// dormant but present).
     ///
-    /// "Active" tracks PureSignal::correctionsBeingApplied — true ⟺ calcc
-    /// has a valid correction set in flight (PSForm.cs:1100-1102
-    /// CorrectionsBeingApplied [v2.10.3.13]).  Mirrors Thetis's
-    /// chkFWCATUBypass.Checked-and-actively-correcting semantics.
+    /// "Active" is the PS-A button state, PureSignal::isAutoCalEnabled(),
+    /// as Thetis's power-change gate tests chkFWCATUBypass.Checked
+    /// (console.cs:46819-46826 [v2.10.3.15]).  It is not PSEnabled and
+    /// not CorrectionsBeingApplied.
     bool pureSignalActive() const noexcept;
 
     /// Inject the PureSignal coordinator (Phase 3M-4 Task 7).  Non-owning
     /// pointer; RadioModel owns via std::unique_ptr.  Pass nullptr to
     /// detach (e.g. on disconnect).  When non-null, pureSignalActive()
-    /// reads PureSignal::correctionsBeingApplied().
+    /// reads PureSignal::isAutoCalEnabled() (the PS-A state).
     void setPureSignal(PureSignal* ps) noexcept { m_pureSignal = ps; }
     PureSignal* pureSignal() const noexcept { return m_pureSignal; }
 
@@ -891,8 +895,8 @@ public:
     ///      forceAttwhenPowerChangesWhenPSAon && (new_pwr > m_lastPower ||
     ///      _anddecreased), pushes ATT_on_TX = 31 dB via
     ///      stepAttenuatorController->setAttOnTxValue(31).  Updates
-    ///      m_lastPower (console.cs:46740-46748 [v2.10.3.13]
-    ///      //[2.10.3.5]MW0LGE).
+    ///      m_lastPower (console.cs:46819-46826 [v2.10.3.15]
+    ///      //[2.10.3.5]MW0LGE).  pureSignalActive() is the PS-A state.
     ///   3. Emits audioVolumeChanged(audio_volume) signal so RadioModel
     ///      call sites can pump it to TxChannel + RadioConnection.
     ///
@@ -2794,7 +2798,8 @@ private:
     StepAttenuatorController* m_stepAttCtrl{nullptr};
 
     // 3M-4 Task 7: live PureSignal coordinator.  Non-owning view; owned by
-    // RadioModel via std::unique_ptr.  Read by pureSignalActive() — the
+    // RadioModel via std::unique_ptr.  Read by pureSignalActive() (the
+    // PS-A state, PureSignal::isAutoCalEnabled) — the
     // ATT-on-TX-on-power-change gate inside setPowerUsingTargetDbm uses
     // this to decide whether the safety force-31-dB lift fires.  When
     // null (pre-connect or post-teardown), pureSignalActive() falls back

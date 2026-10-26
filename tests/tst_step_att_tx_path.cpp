@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — The key-down force-31 follows PS-A (autoCalEnabledChanged)
+//                 through RadioModel's wiring, not PSEnabled: a pending
+//                 Single Cal keys at 31. NereusSDR-original test; no new
+//                 Thetis logic.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16 — Issue #434 follow-up: a save or a band change (RX1 or
 //                 RX2) while keyed keeps each band's RX S-ATT and preamp.
 //                 NereusSDR-original tests; no new Thetis logic.
@@ -85,8 +90,10 @@
 
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
+#include "core/PureSignal.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
+#include "core/TxChannel.h"
 #include "core/WdspTypes.h"
 #include "models/Band.h"
 
@@ -163,6 +170,20 @@ static StepAttenuatorController* makeStdCtrl(int txAtt20m = 10)
     return ctrl;
 }
 
+// Wire a controller to a PureSignal exactly as RadioModel does in its
+// WDSP-init late-bind block: the PS-A state (autoCalEnabledChanged) drives
+// setPsActive, with an initial push from isAutoCalEnabled().  RadioModel's
+// own wiring runs only after WDSP channels open, so it is not reachable from
+// a unit test; this mirrors it line for line.
+static void wirePsActiveLikeRadioModel(PureSignal& ps,
+                                       StepAttenuatorController& ctrl)
+{
+    QObject::connect(&ps, &PureSignal::autoCalEnabledChanged,
+                     &ctrl, &StepAttenuatorController::setPsActive,
+                     Qt::UniqueConnection);
+    ctrl.setPsActive(ps.isAutoCalEnabled());
+}
+
 // ── Test class ───────────────────────────────────────────────────────────────
 class TestStepAttTxPath : public QObject {
     Q_OBJECT
@@ -227,6 +248,72 @@ private slots:
         ctrl->setRadioConnection(nullptr);
         delete ctrl;
         delete mock;
+    }
+
+    // ── PS-A, not PSEnabled, gates the key-down force-31 ────────────────────
+    // From Thetis console.cs:29612-29616 [v2.10.3.15]:
+    //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+    //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) || CW) txAtt = 31;
+    // chkFWCATUBypass is the PS-A button.  Single Cal turns it off
+    // (PSForm.cs:475 [v2.10.3.15]) while PSEnabled is on, so Thetis keys a
+    // Single Cal at 31 dB; with Auto-Cal on it keys at the band's TX ATT.
+    void isTxTrue_singleCalPending_psAOff_forces31_autoCalOn_appliesBand()
+    {
+        TxChannel tx(1);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setEnabled(true);
+        ps.setTimersEnabled(false);
+
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setForceAttWhenPsOff(true);
+        ctrl.setCurrentDspMode(DSPMode::USB);
+        ctrl.setBand(Band::Band20m);
+        ctrl.setTxAttenuationForBand(Band::Band20m, 12);
+        wirePsActiveLikeRadioModel(ps, ctrl);
+        QVERIFY(!ctrl.psActive());
+
+        auto mock = std::make_unique<MockTxConnection>();
+        ctrl.setRadioConnection(mock.get());
+
+        // Single Cal: PSEnabled goes on, PS-A stays off.
+        ps.singleCalibrate();
+        int info[16] = {};
+        info[5] = 1;
+        ps.processNewInfo(info);   // Off -> TurnOnSingleCalibrate
+        info[5] = 2;
+        ps.processNewInfo(info);   // TurnOnSingleCalibrate -> SingleCalibrate
+        QVERIFY(ps.isPsEnabled());
+        QVERIFY(!ps.isAutoCalEnabled());
+        QVERIFY(!ctrl.psActive());
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(ctrl.lastTxStepAttForTest(), 31);
+        QCOMPARE(mock->lastTxStepAtt, 31);
+        ctrl.onMoxHardwareFlipped(false);
+        QCoreApplication::processEvents();
+
+        // Auto-Cal on: PS-A on, the band's TX ATT applies.
+        ps.setAutoCalEnabled(true);
+        QVERIFY(ctrl.psActive());
+        ctrl.onMoxHardwareFlipped(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(ctrl.lastTxStepAttForTest(), 12);
+        QCOMPARE(mock->lastTxStepAtt, 12);
+        ctrl.onMoxHardwareFlipped(false);
+        QCoreApplication::processEvents();
+
+        // PS-A off again (the button, or Reset): back to 31.
+        ps.setAutoCalEnabled(false);
+        QVERIFY(!ctrl.psActive());
+        ctrl.onMoxHardwareFlipped(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(ctrl.lastTxStepAttForTest(), 31);
+
+        ctrl.setRadioConnection(nullptr);
     }
 
     // ── Test 3: PS off + forceAttWhenPsOff → force 31 dB ────────────────────

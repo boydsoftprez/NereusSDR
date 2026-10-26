@@ -15,6 +15,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - pureSignalActive() reads the PS-A state
+//                (PureSignal::isAutoCalEnabled) for the power-change
+//                force-31 dB gate, as Thetis console.cs:46819-46826
+//                [v2.10.3.15] gates on chkFWCATUBypass.Checked; it read
+//                correctionsBeingApplied before. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
 //                exists: greyed on Windows with the PC Mic route, a saved
 //                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
@@ -1580,18 +1586,22 @@ void TransmitModel::setLastPower(int value)
 
 bool TransmitModel::pureSignalActive() const noexcept
 {
-    // Phase 3M-4 Task 7 — live read of PureSignal::correctionsBeingApplied.
-    // From Thetis console.cs:46740-46748 [v2.10.3.13]:
+    // Live read of the PS-A button state (PureSignal::isAutoCalEnabled).
+    // From Thetis console.cs:46819-46826 [v2.10.3.15]:
     //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
-    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon) ...
-    // setPowerUsingTargetDbm uses chkFWCATUBypass.Checked as the predicate
-    // (active when PS-A is enabled).  The Thetis predicate is "PS-A
-    // enabled" (UI-state); NereusSDR uses "calcc has corrections in
-    // flight" (PSForm.cs:1100-1102 [v2.10.3.13] CorrectionsBeingApplied
-    // == _info[14] == 1) which is the runtime equivalent: only when
-    // calcc has a valid correction set does the safety lift to 31 dB
-    // make sense (the gate exists to prevent power surges destabilising
-    // the live correction).
+    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
+    //   {
+    //       if(new_pwr > _lastPower || _forceATTwhenPowerChangesWhenPSAon_anddecreased)
+    //           SetupForm.ATTOnTX = 31;
+    //
+    //       _lastPower = new_pwr;
+    //   }
+    // The gate is chkFWCATUBypass.Checked, the PS-A button: not PSEnabled
+    // and not "calcc is applying a correction".  NereusSDR's PS-A state is
+    // PureSignal::isAutoCalEnabled(): the PS-A buttons call
+    // setAutoCalEnabled, and Single Cal / Reset / Restore call
+    // forceAutoCalDisable (ForcePureSignalAutoCalDisable,
+    // console.cs:43776-43779 [v2.10.3.15]).
 #ifdef NEREUS_BUILD_TESTS
     // Phase 3C test seam — exercise the ATT-on-TX gate without
     // constructing a full RadioModel + PureSignal coordinator.  Tri-state:
@@ -1604,9 +1614,12 @@ bool TransmitModel::pureSignalActive() const noexcept
     }
 #endif
     if (m_pureSignal != nullptr) {
-        // PureSignal::correctionsBeingApplied is std::atomic<bool>::load,
-        // safe to call from any thread.  noexcept-compatible.
-        return m_pureSignal->correctionsBeingApplied();
+        // Thread: PureSignal and TransmitModel both live on the main
+        // thread.  RadioModel owns PureSignal with no parent and never
+        // moveToThread()s it (only TxChannel moves, to TxWorkerThread), and
+        // setPowerUsingTargetDbm runs on the main thread, so this plain
+        // read of the settings-backed bool is same-thread.
+        return m_pureSignal->isAutoCalEnabled();
     }
     return false;
 }
@@ -2034,8 +2047,9 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
     //   if (!bSetPower) return new_pwr;
     if (!bSetPower) { return result; }
 
-    // ATT-on-TX-on-power-change safety gate.
-    // From Thetis console.cs:46740-46748 [v2.10.3.13]:
+    // ATT-on-TX-on-power-change safety gate.  pureSignalActive() is the
+    // PS-A button state (chkFWCATUBypass.Checked), see its definition.
+    // From Thetis console.cs:46819-46826 [v2.10.3.15]:
     //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
     //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
     //   {

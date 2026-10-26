@@ -1032,13 +1032,15 @@ void StepAttenuatorController::restoreRxPreampMode()
 }
 
 // --- shouldForce31Db predicate (F.2) ---
-// From Thetis console.cs:29563-29566 [v2.10.3.13] //MW0LGE [2.9.0.7] added:
+// From Thetis console.cs:29612-29616 [v2.10.3.15] //MW0LGE [2.9.0.7] added:
 //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) ||
 //          (radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWL ||
 //           radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWU)) txAtt = 31;
 //
 // NereusSDR mapping:
-//   !chkFWCATUBypass.Checked  ≡  !m_psActive  (PS-A not active)
+//   !chkFWCATUBypass.Checked  ≡  !m_psActive  (PS-A not active; RadioModel
+//                                 feeds m_psActive from
+//                                 PureSignal::autoCalEnabledChanged)
 //   _forceATTwhenPSAoff        ≡  m_forceAttWhenPsOff
 //   isPsOff                    ≡  !m_psActive  (passed by caller)
 
@@ -1133,7 +1135,9 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             }
         } else {
             // Non-HPSDR standard board: TX ATT lookup + force-31 override.
-            // From Thetis console.cs:29562-29568 [v2.10.3.13]:
+            // m_psActive is the PS-A state (chkFWCATUBypass.Checked), fed by
+            // RadioModel from PureSignal::autoCalEnabledChanged.
+            // From Thetis console.cs:29612-29619 [v2.10.3.15]:
             //   int txAtt = getTXstepAttenuatorForBand(_tx_band);
             //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
             //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) ||

@@ -39,6 +39,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — Single Cal leaves PS-A off while PSEnabled is on (the
+//                 ATT-on-TX gates follow PS-A).  J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-05-06 — New test file for Phase 3M-4 Task 7: PureSignal
 //                 coordinator unit tests.  J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
@@ -1471,6 +1474,12 @@ private slots:
     // machine on each PSEnabled flip.  RadioModel reroutes the radio/DDC
     // fan-out from autoCalEnabledChanged to psEnabledChanged.
     // autoCalEnabledChanged stays live for the PS-A button visual state.
+    //
+    // 2026-10-25: the StepAttenuatorController setPsActive wire went back to
+    // autoCalEnabledChanged.  It is not part of the PSEnabled setter: Thetis's
+    // key-down force-31 dB rule tests the PS-A button, chkFWCATUBypass.Checked
+    // (console.cs:29612-29616 [v2.10.3.15]).  See
+    // singleCal_psEnabledOn_butPsAOff below.
 
     void psEnabledChanged_emittedOnTurnOnAutoCalibrate()
     {
@@ -1594,6 +1603,47 @@ private slots:
         // visits which only happen during a poll tick.
         QCOMPARE(autoCal.count(),   1);
         QCOMPARE(psEnabled.count(), 0);
+    }
+
+    void singleCal_psEnabledOn_butPsAOff()
+    {
+        // The ATT-on-TX force-31 dB gates follow PS-A (autoCalEnabled), not
+        // PSEnabled.  Single Cal turns PS-A off in Thetis
+        // (btnPSCalibrate_Click calls console.ForcePureSignalAutoCalDisable(),
+        // PSForm.cs:475 [v2.10.3.15]) while the cmd-state machine sets
+        // PSEnabled true at TurnOnSingleCalibrate (PSForm.cs:662).  So during
+        // a Single Cal the two disagree, and only PS-A may drive the gates.
+        TxChannel tx(kTxChannelId);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setEnabled(true);
+        ps.setTimersEnabled(false);
+
+        QSignalSpy autoCal(&ps, &PureSignal::autoCalEnabledChanged);
+        QSignalSpy psEnabled(&ps, &PureSignal::psEnabledChanged);
+
+        ps.singleCalibrate();
+        int info[16] = {};
+        info[5] = 1;
+        ps.processNewInfo(info);   // Off -> TurnOnSingleCalibrate
+        info[5] = 2;
+        ps.processNewInfo(info);   // TurnOnSingleCalibrate -> SingleCalibrate
+
+        // PSEnabled is on and waiting for the cal ...
+        QVERIFY(psEnabled.count() >= 1);
+        QCOMPARE(psEnabled.takeFirst().at(0).toBool(), true);
+        QVERIFY(ps.isPsEnabled());
+        // ... but PS-A is off, and nothing announced PS-A on.
+        QVERIFY(!ps.isAutoCalEnabled());
+        for (int i = 0; i < autoCal.count(); ++i) {
+            QCOMPARE(autoCal.at(i).at(0).toBool(), false);
+        }
+        autoCal.clear();
+
+        // Pressing PS-A is what announces it.
+        ps.setAutoCalEnabled(true);
+        QCOMPARE(autoCal.count(), 1);
+        QCOMPARE(autoCal.takeFirst().at(0).toBool(), true);
+        QVERIFY(ps.isAutoCalEnabled());
     }
 
     // ── Codex Fix E: _performing_single_cal retry loop in StayON ───────────

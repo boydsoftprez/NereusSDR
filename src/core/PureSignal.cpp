@@ -575,8 +575,11 @@ void PureSignal::setPsEnabledWithFanOut(bool on)
     // fan-out itself — it calls UpdateDDCs / SetPureSignal / SendHighPriority
     // / setPSRunCal.  In NereusSDR the calcc-side setPSRunCal is already
     // wired inline at each cmd-state case (see pollTimerTick); the radio /
-    // DDC / step-attenuator side moves to subscribers of psEnabledChanged
-    // (RadioModel::wireConnectionSignals).
+    // DDC side moves to subscribers of psEnabledChanged
+    // (RadioModel::wireConnectionSignals).  The step attenuator's
+    // ATT-on-TX gate is not part of this setter: it follows the PS-A state
+    // (autoCalEnabledChanged), as console.cs:29612-29616 [v2.10.3.15]
+    // tests chkFWCATUBypass.Checked.
     if (on == m_psEnabled) {
         return;
     }
@@ -1596,7 +1599,7 @@ void PureSignal::processNewInfo(const int newInfo[16], std::uint64_t controlSeri
         // Codex Fix C — PSForm.cs:646 [v2.10.3.13]:
         //   if (!PSEnabled) PSEnabled = true;
         // Fans out the radio/DDC ON state to subscribers of psEnabledChanged
-        // (UpdateDDCs / SetPureSignal / setPuresignalRun / setPsActive).
+        // (UpdateDDCs / SetPureSignal / setPuresignalRun).
         setPsEnabledWithFanOut(true);
         m_cmdState = CommandState::AutoCalibrate;
         break;

@@ -25,6 +25,7 @@
 //   §11 K2GX integration regression (ANAN-8000DLE 80m TUN slider 50)
 //   §12 No XVTR live wiring — sentinel fallback in computeAudioVolume
 //   §13 Edge case: power=0
+//   §14 ATT-on-TX gate live read follows PS-A (a real PureSignal attached)
 //
 // Source references (cite comments only — no Thetis logic in tests):
 //   console.cs:46645-46762 [v2.10.3.13] — full SetPowerUsingTargetDBM
@@ -38,7 +39,9 @@
 #include "core/AppSettings.h"
 #include "core/HpsdrModel.h"
 #include "core/PaProfile.h"
+#include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
+#include "core/TxChannel.h"
 #include "models/Band.h"
 #include "models/TransmitModel.h"
 
@@ -349,6 +352,101 @@ private slots:
         // false, so the entire block is skipped — including the
         // _lastPower = new_pwr update.
         QCOMPARE(t.lastPower(), -1);
+    }
+
+    // =========================================================================
+    // §14 ATT-on-TX gate live read follows PS-A, not corrections applied
+    // =========================================================================
+    //
+    // From Thetis console.cs:46819-46826 [v2.10.3.15]:
+    //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
+    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
+    // chkFWCATUBypass is the PS-A button (PureSignal::isAutoCalEnabled).
+    // No test seam here: a real PureSignal is attached via setPureSignal.
+
+    // PS-A on, no correction applied yet (first key on a band, or before
+    // calcc converges): a power increase forces 31.
+    void attOnTxGate_liveRead_psAOnNoCorrection_forces31() {
+        TxChannel tx(1);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setTimersEnabled(false);
+        ps.setAutoCalEnabled(true);
+        QVERIFY(ps.isAutoCalEnabled());
+        QVERIFY(!ps.correctionsBeingApplied());
+
+        TransmitModel t;
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.setAttOnTxValue(7);
+        t.setStepAttenuatorController(&ctrl);
+        t.setPureSignal(&ps);
+        QVERIFY(t.pureSignalActive());
+
+        const PaProfile p = makeProfile8000d();
+        t.setMox(false);
+        t.setTune(false);
+        t.setTwoToneActive(false);
+        t.setPower(60);
+        t.setLastPower(-1);
+
+        t.setPowerUsingTargetDbm(p, Band::Band20m,
+                                 /*bSetPower=*/true,
+                                 /*bFromTune=*/false,
+                                 /*bTwoTone=*/false);
+
+        QCOMPARE(ctrl.attOnTxValue(), 31);
+        QCOMPARE(t.lastPower(), 60);
+        t.setPureSignal(nullptr);
+    }
+
+    // Stay-on after a Single Cal: PS-A off, correction applied.  The gate
+    // does not fire (it read correctionsBeingApplied before 2026-10-25 and
+    // forced 31 here; Thetis does not).
+    void attOnTxGate_liveRead_stayOnPsAOffCorrectionApplied_noForce() {
+        TxChannel tx(1);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setEnabled(true);
+        ps.setTimersEnabled(false);
+
+        // Single Cal through to Stay-on with calcc applying a correction.
+        ps.singleCalibrate();
+        int info[16] = {};
+        info[5] = 1;
+        ps.processNewInfo(info);   // Off -> TurnOnSingleCalibrate
+        info[5] = 2;
+        ps.processNewInfo(info);   // TurnOnSingleCalibrate -> SingleCalibrate
+        info[14] = 1;              // CorrectionsBeingApplied
+        info[5] = 3;
+        ps.processNewInfo(info);   // SingleCalibrate -> StayOn
+        QVERIFY(ps.correctionsBeingApplied());
+        QVERIFY(!ps.isAutoCalEnabled());
+
+        TransmitModel t;
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.setAttOnTxValue(7);
+        t.setStepAttenuatorController(&ctrl);
+        t.setPureSignal(&ps);
+        QVERIFY(!t.pureSignalActive());
+
+        const PaProfile p = makeProfile8000d();
+        t.setMox(false);
+        t.setTune(false);
+        t.setTwoToneActive(false);
+        t.setPower(60);
+        t.setLastPower(-1);
+
+        t.setPowerUsingTargetDbm(p, Band::Band20m,
+                                 /*bSetPower=*/true,
+                                 /*bFromTune=*/false,
+                                 /*bTwoTone=*/false);
+
+        // Gate skipped entirely: ATT unchanged, _lastPower not advanced.
+        QCOMPARE(ctrl.attOnTxValue(), 7);
+        QCOMPARE(t.lastPower(), -1);
+        t.setPureSignal(nullptr);
     }
 
     // =========================================================================

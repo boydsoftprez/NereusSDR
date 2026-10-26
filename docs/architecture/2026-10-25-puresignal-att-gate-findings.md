@@ -1,11 +1,13 @@
 # PureSignal ATT-on-TX gates: PS-A versus PSEnabled
 
-Date: 2026-10-25. Status: findings only, no code changed. The fix below waits
-for JJ's go-ahead.
+Date: 2026-10-25. Status: the proposed fix below is applied on branch
+`claude/puresignal-psa-att-gate`. "What NereusSDR does" describes the tree
+before that fix; its line cites point at the fixed tree on that branch.
 
 Thetis pin: v2.10.3.15 (`3759d09`). mi0bot-Thetis v2.10.3.13-beta2 has the
 same two gates (`console.cs:30310`, `:47752`), so HL2 behaves the same.
-NereusSDR at `5898faddc`.
+NereusSDR line cites: branch `claude/puresignal-psa-att-gate` (base
+`08a525895`), after the fix.
 
 ## Short answer
 
@@ -97,10 +99,10 @@ The gate is PS-A again, not PSEnabled and not "corrections applied".
 ## What NereusSDR does
 
 * Key-down: `StepAttenuatorController::onMoxHardwareFlipped`
-  (`src/core/StepAttenuatorController.cpp:532-536`) forces 31 when
+  (`src/core/StepAttenuatorController.cpp:1137-1151`) forces 31 when
   `!m_psActive`. `m_psActive` is fed from `PureSignal::psEnabledChanged`
-  (`src/models/RadioModel.cpp:6664-6675`). The comment at
-  `StepAttenuatorController.cpp:464` already maps `!chkFWCATUBypass.Checked`
+  (`src/models/RadioModel.cpp:20679-20727`). The comment at
+  `StepAttenuatorController.cpp:1041` already maps `!chkFWCATUBypass.Checked`
   to "PS-A not active", but the wire carries PSEnabled.
 * That wire came from `e5114f22f` (2026-05-07, "Codex Fix C"), which moved
   three connections from `autoCalEnabledChanged` to `psEnabledChanged`. Two
@@ -109,9 +111,9 @@ The gate is PS-A again, not PSEnabled and not "corrections applied".
   `PSEnabled` setter body. The third, `setPsActive`, is not part of that
   setter in Thetis; it belongs to the PS-A button.
 * Power change: `TransmitModel::setPowerUsingTargetDbm`
-  (`src/models/TransmitModel.cpp:1124-1141`) gates on `pureSignalActive()`,
+  (`src/models/TransmitModel.cpp:2050-2080`) gates on `pureSignalActive()`,
   which returns `PureSignal::correctionsBeingApplied()`
-  (`TransmitModel.cpp:690-722`). Its comment calls this "the runtime
+  (`TransmitModel.cpp:1587-1625`). Its comment calls this "the runtime
   equivalent" of PS-A. It is not.
 
 ## Where they disagree
@@ -167,7 +169,7 @@ setup.
 
 ## Proposed fix (not applied)
 
-1. **Key-down gate follows PS-A.** In `RadioModel.cpp:6664-6675`, connect
+1. **Key-down gate follows PS-A.** In `RadioModel.cpp:20679-20727`, connect
    `PureSignal::autoCalEnabledChanged` (not `psEnabledChanged`) to
    `StepAttenuatorController::setPsActive`, and make the initial push
    `setPsActive(m_pureSignal->isAutoCalEnabled())`. Leave the other two
@@ -175,8 +177,8 @@ setup.
    tracks PS-A exactly: the applet and TX-applet PS-A buttons call
    `setAutoCalEnabled`, and `singleCalibrate`, `reset`, `restoreCorrections`
    and `setEnabled(false)` all call `forceAutoCalDisable()`, the port of
-   `ForcePureSignalAutoCalDisable` (`src/core/PureSignal.cpp:130-157`,
-   `:299-324`, `:364-380`). Cite `console.cs:29612-29616` and
+   `ForcePureSignalAutoCalDisable` (`src/core/PureSignal.cpp:546`, `:599`,
+   `:680`, `:848`, port at `:688-696`). Cite `console.cs:29612-29616` and
    `console.cs:43782-43787` [v2.10.3.15].
 2. **Power-change gate follows PS-A.** In `TransmitModel::pureSignalActive()`,
    return `m_pureSignal->isAutoCalEnabled()` instead of
@@ -190,7 +192,7 @@ setup.
    `tests/tst_transmit_model_set_power_using_dbm.cpp`: with PS-A on and no
    correction, a power increase forces 31; in Stay-on with PS-A off, it does
    not.
-4. **Comments.** Fix the Codex Fix C rationale at `RadioModel.cpp:6653-6663`.
+4. **Comments.** Fix the Codex Fix C rationale at `RadioModel.cpp:20679-20716`.
    It says the PSEnabled wire was needed to "lift the 31 dB safety pin" for
    Single Cal. Thetis keeps the pin for Single Cal and relies on
    auto-attenuate to walk it down.
@@ -206,6 +208,6 @@ When Thetis forces 31 at key-down it goes through `SetupForm.ATTOnTX` →
 `TxAttenData`, which also stores 31 as that band's TX ATT
 (`console.cs:10613-10625`, `setTXstepAttenuatorForBand`). NereusSDR sends 31
 to the radio but leaves `m_txAttByBand` unchanged
-(`StepAttenuatorController.cpp:532-572`). So after a forced key, Thetis shows
+(`StepAttenuatorController.cpp:1137-1201`). So after a forced key, Thetis shows
 and keeps 31 for that band while NereusSDR keeps the earlier value. That is a
 separate question from the gates and should be checked on its own.

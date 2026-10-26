@@ -20,6 +20,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - PureSignal ATT-on-TX: StepAttenuatorController::setPsActive
+//                follows the PS-A state (autoCalEnabledChanged), not
+//                PSEnabled, as Thetis console.cs:29612-29616 [v2.10.3.15]
+//                gates the key-down force-31 dB rule on chkFWCATUBypass.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
 //                setting (Setup's "Limit filter edges to sidebands", Thetis
 //                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
@@ -20671,29 +20676,54 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                     m_connection, &RadioConnection::setPuresignalRun,
                     Qt::UniqueConnection);
 
-            // Tell StepAttenuatorController that PS is active.  Without this,
-            // m_psActive stays false → on every MOX-on edge,
-            // onMoxHardwareFlipped sees psOff=true and forces
-            // setTxStepAttenuation(31) (the "PS off, force 31 dB" Thetis
-            // safety per console.cs:29562-29568 [v2.10.3.13]).  That OVERRIDES
-            // PureSignal::autoAttentionTick's adjustments, pinning ATT-on-TX
-            // at 31 forever and starving the PS feedback ADC so calcc never
-            // converges feedbackLevel into [128, 181].
-            // Codex Fix C: rerouted from autoCalEnabledChanged to
-            // psEnabledChanged so Single Cal / Restore paths also lift the
-            // 31 dB safety pin.
+            // Tell StepAttenuatorController whether the PS-A button is on.
+            // The key-down "force 31 dB when PS is off" rule asks about PS-A,
+            // not about PSEnabled.
+            // From Thetis console.cs:29612-29616 [v2.10.3.15]:
+            //   //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+            //   int txAtt = getTXstepAttenuatorForBand(_tx_band);
+            //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) ||
+            //                   (radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWL ||
+            //                    radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWU)) txAtt = 31; // reset when PS is OFF or in CW mode
+            // chkFWCATUBypass is the PS-A button, and its handler drives
+            // AutoCalEnabled from it.
+            // From Thetis console.cs:43782-43787 [v2.10.3.15]:
+            //   private void chkFWCATUBypass_CheckedChanged(object sender, EventArgs e)
+            //   {
+            //       //PS-A button
+            //
+            //       bool oldState = psform.AutoCalEnabled;
+            //       psform.AutoCalEnabled = chkFWCATUBypass.Checked;
+            // PureSignal::autoCalEnabledChanged is that state: the PS-A
+            // buttons call setAutoCalEnabled, and Single Cal, Reset, Restore
+            // and setEnabled(false) call forceAutoCalDisable (the port of
+            // ForcePureSignalAutoCalDisable).
+            //
+            // Why PS-A and not PSEnabled: Single Cal, Reset and Restore turn
+            // PS-A off in Thetis (PSForm.cs:475/488/541 [v2.10.3.15],
+            // console.ForcePureSignalAutoCalDisable()) while the cmd-state
+            // machine holds PSEnabled true until the cal or restore lands.
+            // So Thetis keys a Single Cal or a Restore at 31 dB and lets
+            // auto-attenuate (PSForm.cs timer2code, not gated on PS-A) walk
+            // the value down mid-transmission.  Following psEnabledChanged
+            // here keyed those at the band's stored TX ATT instead.  The
+            // other two psEnabledChanged wires above (ReceiverManager and
+            // setPuresignalRun) stay: they mirror the PSEnabled setter body
+            // (PSForm.cs:235-269 [v2.10.3.15]), which touches no attenuator.
+            //
+            // Pointer-to-member slot, not a lambda: Qt::UniqueConnection
+            // needs one (see the refreshDdcAssignmentForRadioState note).
             if (m_stepAttController) {
                 connect(m_pureSignal.get(),
-                        &PureSignal::psEnabledChanged,
+                        &PureSignal::autoCalEnabledChanged,
                         m_stepAttController,
                         &StepAttenuatorController::setPsActive,
                         Qt::UniqueConnection);
-                // Initial state push: psEnabledChanged only fires when the
-                // cmd-state machine flips PSEnabled, so a connect-time sync
-                // for the controller starts from false (the cmd-state
-                // machine starts in Off; PSEnabled flips on the first
-                // TurnOn* visit after singleCalibrate / setAutoCalEnabled).
-                m_stepAttController->setPsActive(false);
+                // Initial state push: autoCalEnabledChanged fires only on a
+                // change, and the preference may already be on here
+                // (initializeAutoCalPreference above), so sync the
+                // controller from the current PS-A state.
+                m_stepAttController->setPsActive(m_pureSignal->isAutoCalEnabled());
             }
 
             // ── Task 17 chunk C/D/E — pscc() driver (PsccPump) ─────────────────
