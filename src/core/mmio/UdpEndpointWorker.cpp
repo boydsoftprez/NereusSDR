@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): outbound
+//                 send to the UDP send target; inbound data read only
+//                 for IN or BOTH. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -115,6 +119,9 @@ void UdpEndpointWorker::start()
                    << "for endpoint" << m_endpoint->name();
 
     setState(State::Connected);
+
+    // Anything queued while the worker was stopped goes out now.
+    flushOutbound();
 }
 
 void UdpEndpointWorker::stop()
@@ -127,6 +134,12 @@ void UdpEndpointWorker::stop()
     delete m_socket;
     m_socket = nullptr;
 
+    if (m_sendSocket) {
+        m_sendSocket->close();
+        delete m_sendSocket;
+        m_sendSocket = nullptr;
+    }
+
     qCInfo(lcMmio) << "UDP endpoint stopped for endpoint" << m_endpoint->name();
 
     setState(State::Disconnected);
@@ -137,6 +150,12 @@ void UdpEndpointWorker::onReadyRead()
     while (m_socket->hasPendingDatagrams()) {
         QNetworkDatagram datagram = m_socket->receiveDatagram();
         if (datagram.isNull()) {
+            continue;
+        }
+
+        // From Thetis MeterManager.cs:42384, :42388 [v2.10.3.15] — data is
+        // only read in when the direction is IN or BOTH.
+        if (m_endpoint->direction() == MmioEndpoint::Direction::Out) {
             continue;
         }
 
@@ -162,6 +181,40 @@ void UdpEndpointWorker::onReadyRead()
         }
 
         emit valueBatchReceived(batch);
+    }
+}
+
+// From Thetis MeterManager.cs:42444-42496 [v2.10.3.15] — UdpListener
+// outbound: up to 20 queued messages per datagram, sent as ASCII to the
+// endpoint's UDP send target from a separate sender socket.
+void UdpEndpointWorker::flushOutbound()
+{
+    if (!m_socket || m_endpoint->direction() == MmioEndpoint::Direction::In) {
+        return;
+    }
+
+    const QHostAddress target(m_endpoint->udpTargetHost());
+    if (target.isNull()) {
+        qCWarning(lcMmio) << "UDP send target" << m_endpoint->udpTargetHost()
+                          << "is not an IP address for endpoint" << m_endpoint->name();
+        return;
+    }
+    const quint16 targetPort = m_endpoint->udpTargetPort();
+
+    if (!m_sendSocket) {
+        m_sendSocket = new QUdpSocket(this);
+    }
+
+    while (true) {
+        const QByteArray sendBytes = m_endpoint->takeOutboundPayload();
+        if (sendBytes.isEmpty()) {
+            break;
+        }
+        if (m_sendSocket->writeDatagram(sendBytes, target, targetPort) < 0) {
+            qCWarning(lcMmio) << "UDP send failed for endpoint" << m_endpoint->name()
+                              << ":" << m_sendSocket->errorString();
+            break;
+        }
     }
 }
 

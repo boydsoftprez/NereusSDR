@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): endpointByFourChar (GuidfromFourChar),
+//                 enqueueOutbound (SendDataMMIO), and the new endpoint
+//                 settings. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -117,6 +121,46 @@ MmioEndpoint::Format formatFromString(const QString& s)
     return MmioEndpoint::Format::Json;
 }
 
+QString directionToString(MmioEndpoint::Direction d)
+{
+    switch (d) {
+    case MmioEndpoint::Direction::In:   return QStringLiteral("In");
+    case MmioEndpoint::Direction::Out:  return QStringLiteral("Out");
+    case MmioEndpoint::Direction::Both: return QStringLiteral("Both");
+    }
+    return QStringLiteral("In");
+}
+
+// A missing or unknown value is In: endpoints saved before the setting
+// existed only received data.
+MmioEndpoint::Direction directionFromString(const QString& s)
+{
+    if (s == QLatin1String("Out"))  { return MmioEndpoint::Direction::Out; }
+    if (s == QLatin1String("Both")) { return MmioEndpoint::Direction::Both; }
+    return MmioEndpoint::Direction::In;
+}
+
+QString terminatorToString(MmioEndpoint::Terminator t)
+{
+    switch (t) {
+    case MmioEndpoint::Terminator::None:   return QStringLiteral("None");
+    case MmioEndpoint::Terminator::Cr:     return QStringLiteral("CR");
+    case MmioEndpoint::Terminator::Lf:     return QStringLiteral("LF");
+    case MmioEndpoint::Terminator::CrLf:   return QStringLiteral("CRLF");
+    case MmioEndpoint::Terminator::Custom: return QStringLiteral("Custom");
+    }
+    return QStringLiteral("None");
+}
+
+MmioEndpoint::Terminator terminatorFromString(const QString& s)
+{
+    if (s == QLatin1String("CR"))     { return MmioEndpoint::Terminator::Cr; }
+    if (s == QLatin1String("LF"))     { return MmioEndpoint::Terminator::Lf; }
+    if (s == QLatin1String("CRLF"))   { return MmioEndpoint::Terminator::CrLf; }
+    if (s == QLatin1String("Custom")) { return MmioEndpoint::Terminator::Custom; }
+    return MmioEndpoint::Terminator::None;
+}
+
 } // namespace
 
 ExternalVariableEngine& ExternalVariableEngine::instance()
@@ -176,6 +220,33 @@ MmioEndpoint* ExternalVariableEngine::endpoint(const QUuid& guid) const
 {
     QReadLocker locker(&m_registryLock);
     return m_endpoints.value(guid, nullptr);
+}
+
+MmioEndpoint* ExternalVariableEngine::endpointByFourChar(const QString& id) const
+{
+    if (id.isEmpty()) {
+        return nullptr;
+    }
+    QReadLocker locker(&m_registryLock);
+    for (MmioEndpoint* ep : m_endpoints) {
+        if (ep->fourChar() == id) {
+            return ep;
+        }
+    }
+    return nullptr;
+}
+
+void ExternalVariableEngine::enqueueOutbound(const QUuid& guid, const QString& message)
+{
+    QReadLocker locker(&m_registryLock);
+    MmioEndpoint* ep = m_endpoints.value(guid, nullptr);
+    if (!ep || !ep->enqueueOutbound(message)) {
+        return;
+    }
+    ITransportWorker* worker = m_workers.value(guid, nullptr);
+    if (worker) {
+        QMetaObject::invokeMethod(worker, "flushOutbound", Qt::QueuedConnection);
+    }
 }
 
 void ExternalVariableEngine::addEndpoint(MmioEndpoint* ep)
@@ -322,6 +393,22 @@ void ExternalVariableEngine::loadFromSettings()
         ep->setPort(static_cast<quint16>(props.value(QStringLiteral("Port"), QStringLiteral("0")).toUInt()));
         ep->setSerialDevice(props.value(QStringLiteral("Device")));
         ep->setSerialBaud(props.value(QStringLiteral("Baud"), QStringLiteral("9600")).toInt());
+        ep->setDirection(directionFromString(props.value(QStringLiteral("Direction"))));
+        ep->setTerminator(terminatorFromString(props.value(QStringLiteral("Terminator"))));
+        ep->setCustomTerminator(props.value(QStringLiteral("CustomTerminator")));
+        ep->setUdpTargetHost(props.value(QStringLiteral("UdpTargetHost"), QStringLiteral("127.0.0.1")));
+        ep->setUdpTargetPort(static_cast<quint16>(
+            props.value(QStringLiteral("UdpTargetPort"), QStringLiteral("10000")).toUInt()));
+        const QString storedId = props.value(QStringLiteral("FourChar"));
+        if (storedId.isEmpty()) {
+            // An endpoint saved before IDs existed gets one now, from
+            // its guid, host and port, and keeps it from here on.
+            s.setValue(QStringLiteral("%1%2/FourChar")
+                           .arg(QLatin1String(kSettingsPrefix), it.key()),
+                       ep->fourChar());
+        } else {
+            ep->setFourChar(storedId);
+        }
 
         {
             QWriteLocker locker(&m_registryLock);
@@ -344,6 +431,12 @@ void ExternalVariableEngine::saveEndpointToSettings(const MmioEndpoint* ep)
     s.setValue(prefix + QStringLiteral("Port"),      QString::number(ep->port()));
     s.setValue(prefix + QStringLiteral("Device"),    ep->serialDevice());
     s.setValue(prefix + QStringLiteral("Baud"),      QString::number(ep->serialBaud()));
+    s.setValue(prefix + QStringLiteral("Direction"), directionToString(ep->direction()));
+    s.setValue(prefix + QStringLiteral("Terminator"), terminatorToString(ep->terminator()));
+    s.setValue(prefix + QStringLiteral("CustomTerminator"), ep->customTerminator());
+    s.setValue(prefix + QStringLiteral("UdpTargetHost"), ep->udpTargetHost());
+    s.setValue(prefix + QStringLiteral("UdpTargetPort"), QString::number(ep->udpTargetPort()));
+    s.setValue(prefix + QStringLiteral("FourChar"),  ep->fourChar());
 }
 
 void ExternalVariableEngine::removeEndpointFromSettings(const QUuid& guid)

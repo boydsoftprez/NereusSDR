@@ -36,8 +36,23 @@
 //                 AI-assisted via xAI Grok.
 //   2026-10-24 - frequencyShowsWhenRemoteSliceAccessArrives. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - everyThetisReadingHasItsThetisScale,
+//                 readingsThetisDoesNotScaleStayUnscaled,
+//                 newReadingsDriveNeedleAndBar,
+//                 reversePowerBarFollowsThePowerScale,
+//                 editorListsEveryScaledReading and
+//                 alreadyScaledReadingsAreUnchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The second frequency line shows the transmit slice by
+//                 default or the slice picked in "Second line":
+//                 secondLinePicksItsSlice, secondLineFollowsTheTransmitSlice,
+//                 frequencyEditorsNameSlices; the slice-letter, follow and
+//                 Custom cases set a transmit slice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
+#include <optional>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -80,6 +95,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/BandwidthFilterPane.h"
+#include "models/MainPowerMeter.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -172,6 +188,60 @@ QString footerValueText(const QWidget& instrument)
     if (!footer || !footer->layout() || footer->layout()->count() == 0) { return {}; }
     const auto* value = qobject_cast<QLabel*>(footer->layout()->itemAt(footer->layout()->count() - 1)->widget());
     return value ? value->text() : QString();
+}
+
+
+// One reading Thetis draws on a calibrated bar or needle: its binding,
+// picker label and calibration (key, position). The red threshold is the
+// HighPoint key; none for the ANANMM volts and amps needles (linear).
+struct ThetisScaleCase {
+    int binding;
+    const char* label;
+    QList<QPair<double, double>> calibration;
+    std::optional<double> threshold;
+};
+
+QList<ThetisScaleCase> thetisScaleCases()
+{
+    // Thetis MeterManager.cs [v2.10.3.15] ScaleCalibration and HighPoint.
+    const QList<QPair<double, double>> adc{{-120.0, 0.0}, {-20.0, 0.8333}, {0.0, 0.99}};
+    const QList<QPair<double, double>> agc{{-125.0, 0.0}, {0.0, 0.5}, {125.0, 0.99}};
+    const QList<QPair<double, double>> agcGain{{-50.0, 0.0}, {100.0, 0.857}, {125.0, 0.99}};
+    const QList<QPair<double, double>> pbSnr{{0.0, 0.0}, {50.0, 0.8333}, {60.0, 0.99}};
+    const QList<QPair<double, double>> power{{0.0, 0.0}, {5.0, 0.1875}, {10.0, 0.375},
+                                             {50.0, 0.5625}, {100.0, 0.75}, {120.0, 0.99}};
+    const QList<QPair<double, double>> stage{{-30.0, 0.0}, {0.0, 0.665}, {12.0, 0.99}};
+    const QList<QPair<double, double>> gain{{0.0, 0.0}, {20.0, 0.8}, {25.0, 0.99}};
+    const QList<QPair<double, double>> group{{-30.0, 0.0}, {0.0, 0.5}, {25.0, 0.99}};
+    const QList<QPair<double, double>> volts{{10.0, 0.0}, {12.5, 0.5}, {15.0, 1.0}};
+    const QList<QPair<double, double>> amps{{0.0, 0.0}, {10.0, 0.5}, {20.0, 1.0}};
+    return {
+        {MeterBinding::AdcPeak, "RX: ADC Peak", adc, -20.0},
+        {MeterBinding::AdcAvg, "RX: ADC Avg", adc, -20.0},
+        {MeterBinding::AgcPeak, "RX: AGC Peak", agc, 0.0},
+        {MeterBinding::AgcAvg, "RX: AGC Avg", agc, 0.0},
+        {MeterBinding::AgcGain, "RX: AGC Gain", agcGain, 100.0},
+        {MeterBinding::PbSnr, "RX: PB SNR", pbSnr, 50.0},
+        // AddPWRBar's HighPoint is ElementAt(4), 100 W.
+        {MeterBinding::TxReversePower, "TX: Reverse Power", power, 100.0},
+        {MeterBinding::TxMic, "TX: Mic", stage, 0.0},
+        {MeterBinding::TxMicPeak, "TX: Mic Peak", stage, 0.0},
+        {MeterBinding::TxEq, "TX: EQ", stage, 0.0},
+        {MeterBinding::TxEqPeak, "TX: EQ Peak", stage, 0.0},
+        {MeterBinding::TxLeveler, "TX: Leveler", stage, 0.0},
+        {MeterBinding::TxLevelerPeak, "TX: Leveler Peak", stage, 0.0},
+        {MeterBinding::TxAlcPeak, "TX: ALC Peak", stage, 0.0},
+        {MeterBinding::TxCfc, "TX: CFC", stage, 0.0},
+        {MeterBinding::TxCfcPeak, "TX: CFC Peak", stage, 0.0},
+        {MeterBinding::TxComp, "TX: Compressor", stage, 0.0},
+        {MeterBinding::TxCompPeak, "TX: Compressor Peak", stage, 0.0},
+        {MeterBinding::TxLevelerGain, "TX: Leveler Gain", gain, 20.0},
+        {MeterBinding::TxAlcGain, "TX: ALC Gain", gain, 20.0},
+        {MeterBinding::TxCfcGain, "TX: CFC Gain", gain, 20.0},
+        {MeterBinding::TxAlcGroup, "TX: ALC Group", group, 0.0},
+        {MeterBinding::HwVolts, "HW: Volts", volts, std::nullopt},
+        {MeterBinding::HwAmps, "HW: Amps", amps, std::nullopt},
+    };
 }
 
 } // namespace
@@ -438,6 +508,207 @@ private slots:
         QVERIFY(bar.hasValue());
     }
 
+    void everyThetisReadingHasItsThetisScale()
+    {
+        for (const ThetisScaleCase& c : thetisScaleCases()) {
+            const ReadingDescriptor* d = readingFor(c.binding);
+            QVERIFY2(d, c.label);
+            QCOMPARE(d->label, QString::fromLatin1(c.label));
+            QVERIFY2(d->hasScale, c.label);
+            QVERIFY2(d->available, c.label);
+            QCOMPARE(d->min, c.calibration.first().first);
+            QCOMPARE(d->max, c.calibration.last().first);
+            for (const auto& point : c.calibration) {
+                QVERIFY2(qAbs(d->fraction(point.first) - point.second) < 1e-9,
+                         qPrintable(QStringLiteral("%1 at %2: %3, expected %4")
+                                        .arg(QString::fromLatin1(c.label)).arg(point.first)
+                                        .arg(d->fraction(point.first)).arg(point.second)));
+            }
+            QCOMPARE(d->threshold.has_value(), c.threshold.has_value());
+            if (c.threshold) { QCOMPARE(*d->threshold, *c.threshold); }
+            QVERIFY2(!d->ticks.isEmpty(), c.label);
+            QVERIFY2(readingsWithScale().contains(d), c.label);
+        }
+        // Between two calibration points the bar moves linearly, and it
+        // stays at the end positions outside them.
+        const ReadingDescriptor* agcGain = readingFor(MeterBinding::AgcGain);
+        QVERIFY(qAbs(agcGain->fraction(25.0) - 0.857 / 2.0) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(112.5) - (0.857 + 0.99) / 2.0) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(-80.0)) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(200.0) - 0.99) < 1e-9);
+        // generalScale's labels (MeterManager.cs:33442, 33689).
+        QStringList agcLabels;
+        for (const ReadingTick& tick : readingFor(MeterBinding::AgcPeak)->ticks) { agcLabels.append(tick.label); }
+        QCOMPARE(agcLabels, (QStringList{QStringLiteral("-100"), QStringLiteral("-75"), QStringLiteral("-50"),
+                                         QStringLiteral("-25"), QStringLiteral("0"), QStringLiteral("25"),
+                                         QStringLiteral("50"), QStringLiteral("75"), QStringLiteral("100"),
+                                         QStringLiteral("125")}));
+        QCOMPARE(readingFor(MeterBinding::TxAlcGain)->ticks.last().label, QStringLiteral("25+"));
+        // The TX stage readings share the TX: ALC scale's ticks.
+        const ReadingDescriptor* alc = readingFor(MeterBinding::TxAlc);
+        const ReadingDescriptor* mic = readingFor(MeterBinding::TxMicPeak);
+        QCOMPARE(mic->ticks.size(), alc->ticks.size());
+        for (int i = 0; i < alc->ticks.size(); ++i) {
+            QCOMPARE(mic->ticks.at(i).value, alc->ticks.at(i).value);
+            QCOMPARE(mic->ticks.at(i).label, alc->ticks.at(i).label);
+        }
+        QCOMPARE(mic->minorTicks, alc->minorTicks);
+    }
+
+    void readingsThetisDoesNotScaleStayUnscaled()
+    {
+        for (int binding : {int(MeterBinding::HwTemperature), int(MeterBinding::RotatorAz),
+                            int(MeterBinding::RotatorEle)}) {
+            const ReadingDescriptor* d = readingFor(binding);
+            QVERIFY(d);
+            QVERIFY(!d->hasScale);
+            QVERIFY(!readingsWithScale().contains(d));
+            NeedleInstrument needle;
+            QVERIFY(!needle.setPrimary(binding));
+            BarInstrument bar;
+            QVERIFY(!bar.setPrimary(binding));
+        }
+    }
+
+    void newReadingsDriveNeedleAndBar()
+    {
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        QWidget parent;
+        for (const ThetisScaleCase& c : thetisScaleCases()) {
+            const double value = c.calibration.at(1).first;
+            ContentEntry needleEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+            needleEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.binding);
+            needleEntry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+            std::unique_ptr<QWidget> a(registry.createWidget(needleEntry, &parent));
+            auto* needle = qobject_cast<NeedleInstrument*>(a.get());
+            QVERIFY2(needle, c.label);
+            QCOMPARE(needle->primary(), c.binding);
+            QVERIFY2(needle->isOffline(), c.label);
+            emit poller.readingUpdated(needleEntry.context, c.binding, value);
+            QVERIFY2(needle->hasValue(), c.label);
+            QVERIFY2(!needle->isOffline(), c.label);
+
+            ContentEntry barEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+            barEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.binding);
+            barEntry.context = needleEntry.context;
+            std::unique_ptr<QWidget> b(registry.createWidget(barEntry, &parent));
+            auto* bar = qobject_cast<BarInstrument*>(b.get());
+            QVERIFY2(bar, c.label);
+            QVERIFY2(!bar->hasValue(), c.label);
+            emit poller.readingUpdated(barEntry.context, c.binding, value);
+            QVERIFY2(bar->hasValue(), c.label);
+            QCOMPARE(bar->value(), value);
+        }
+    }
+
+    void reversePowerBarFollowsThePowerScale()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        MainPowerMeter* meter = model.mainPowerMeter();
+        QVERIFY(meter);
+        meter->setHardwareModel(HPSDRModel::ANAN8000D);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        QWidget parent;
+        ContentEntry forwardEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        forwardEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), int(MeterBinding::TxPower));
+        ContentEntry reverseEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        reverseEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey),
+                                   int(MeterBinding::TxReversePower));
+        std::unique_ptr<QWidget> a(registry.createWidget(forwardEntry, &parent));
+        std::unique_ptr<QWidget> b(registry.createWidget(reverseEntry, &parent));
+        auto* forward = qobject_cast<BarInstrument*>(a.get());
+        auto* reverse = qobject_cast<BarInstrument*>(b.get());
+        QVERIFY(forward && reverse);
+        QCOMPARE(reverse->primary(), int(MeterBinding::TxReversePower));
+        QCOMPARE(reverse->reading()->max, double(meter->scaleTopW()));
+        QCOMPARE(reverse->reading()->max, forward->reading()->max);
+        QCOMPARE(*reverse->reading()->threshold, double(meter->visualLimitW()));
+        QCOMPARE(reverse->reading()->bindingId, int(MeterBinding::TxReversePower));
+        QCOMPARE(reverse->reading()->label, QStringLiteral("TX: Reverse Power"));
+        QCOMPARE(reverse->reading()->thetisName(), readingFor(MeterBinding::TxReversePower)->thetisName());
+
+        const double before = reverse->reading()->max;
+        meter->setHardwareModel(HPSDRModel::HERMESLITE);
+        QVERIFY(meter->scaleTopW() != before);
+        QCOMPARE(reverse->reading()->max, double(meter->scaleTopW()));
+        QCOMPARE(reverse->reading()->max, forward->reading()->max);
+        QCOMPARE(*reverse->reading()->threshold, double(meter->visualLimitW()));
+        QCOMPARE(reverse->reading()->bindingId, int(MeterBinding::TxReversePower));
+    }
+
+    void editorListsEveryScaledReading()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        for (const char* type : {LongpathContent::kNeedleType, LongpathContent::kBarType}) {
+            editor.setEntry(registry.makeEntry(QString::fromLatin1(type)));
+            auto* binding = editor.findChild<QComboBox*>(QStringLiteral("property_binding"));
+            QVERIFY(binding);
+            auto* model = qobject_cast<QStandardItemModel*>(binding->model());
+            QVERIFY(model);
+            for (const ThetisScaleCase& c : thetisScaleCases()) {
+                const int row = binding->findData(c.binding);
+                QVERIFY2(row >= 0, c.label);
+                QCOMPARE(binding->itemText(row), QString::fromLatin1(c.label));
+                QVERIFY2(model->item(row)->isEnabled(), c.label);
+            }
+            for (int binding_id : {int(MeterBinding::HwTemperature), int(MeterBinding::RotatorAz),
+                                   int(MeterBinding::RotatorEle)}) {
+                QCOMPARE(binding->findData(binding_id), -1);
+            }
+        }
+    }
+
+    void alreadyScaledReadingsAreUnchanged()
+    {
+        // A saved needle or bar on a reading that already had a scale draws
+        // as before: the descriptors keep their range, red zone and shape.
+        const ReadingDescriptor* sig = readingFor(MeterBinding::SignalPeak);
+        QCOMPARE(sig->min, kS0Dbm);
+        QCOMPARE(sig->max, kSMaxDbm);
+        QVERIFY(!sig->threshold.has_value());
+        QCOMPARE(sig->fraction(kS9Dbm), kS9Fraction);
+        const ReadingDescriptor* fwd = readingFor(MeterBinding::TxPower);
+        QCOMPARE(fwd->min, 0.0);
+        QCOMPARE(fwd->max, 120.0);
+        QCOMPARE(*fwd->threshold, 100.0);
+        QVERIFY(fwd->fractionOf == nullptr);
+        QCOMPARE(fwd->ticks.size(), 5);
+        const ReadingDescriptor* swr = readingFor(MeterBinding::TxSwr);
+        QCOMPARE(swr->min, 1.0);
+        QCOMPARE(swr->max, 3.0);
+        QCOMPARE(*swr->threshold, 2.5);
+        QVERIFY(swr->fractionOf == nullptr);
+        const ReadingDescriptor* noise = readingFor(kNoiseFloorReading);
+        QCOMPARE(noise->min, -140.0);
+        QCOMPARE(noise->max, -40.0);
+        QVERIFY(!noise->available);
+        const ReadingDescriptor* rade = readingFor(kRadeSnrReading);
+        QCOMPARE(rade->min, -21.0);
+        QCOMPARE(rade->max, 30.0);
+        QVERIFY(!rade->available);
+
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        QWidget parent;
+        ContentEntry saved = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        saved.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), int(MeterBinding::TxSwr));
+        std::unique_ptr<QWidget> widget(registry.createWidget(saved, &parent));
+        auto* bar = qobject_cast<BarInstrument*>(widget.get());
+        QVERIFY(bar);
+        QCOMPARE(bar->reading(), swr);
+    }
+
     void registryRoundTripCreatesTwoNeedles()
     {
         ContainerContentRegistry registry;
@@ -528,6 +799,9 @@ private slots:
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
         sliceA->setFrequency(7185000.0);
         sliceB->setFrequency(14225000.0);
+        // The second line shows the transmit slice (the default).
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
 
         SliceModel* target = sliceB;
         LongpathContent::Sources sources;
@@ -548,6 +822,9 @@ private slots:
         QVERIFY2(rowB.contains(QStringLiteral(">A 7.185.000<")), qPrintable(rowB));
         QVERIFY(rowB.indexOf(QStringLiteral(">B ")) < rowB.indexOf(QStringLiteral(">A ")));
 
+        // On A, B transmitting: A's own letter first, then B.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         target = sliceA;
         std::unique_ptr<QWidget> onA(registry.createWidget(entry, &parent));
         auto* freqA = qobject_cast<FrequencyInstrument*>(onA.get());
@@ -570,6 +847,7 @@ private slots:
         QCOMPARE(model.slices().size(), 1);
         SliceModel* sliceA = model.slices().at(0);
         sliceA->setFrequency(7185000.0);
+        sliceA->setTxSlice(false);
 
         LongpathContent::Sources sources;
         sources.radio = &model;
@@ -588,6 +866,10 @@ private slots:
         QCOMPARE(model.slices().size(), 2);
         SliceModel* sliceB = model.slices().at(1);
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
+        // B transmits, so the second line shows it.
+        // The transmit arbiter binds A again when B is added.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         sliceB->setFrequency(14225000.0);
         QCOMPARE(freq->otherFrequency(), 14225000.0);
         QCOMPARE(freq->ownLetter(), QLatin1Char('A'));
@@ -604,6 +886,154 @@ private slots:
         // The own slice's binding survives the refreshes.
         sliceA->setFrequency(7190000.0);
         QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
+    void secondLineFollowsTheTransmitSlice()
+    {
+        // Slices A and B, the item on B. The second line shows the
+        // transmit slice while that is not B, and nothing otherwise.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14225000.0);
+        model.setActiveSlice(0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            sliceA->setTxSlice(true);
+            sliceB->setTxSlice(false);
+            const ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            QWidget parent;
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+            QVERIFY(freq);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(freq->otherSliceLineVisible());
+            QCOMPARE(freq->otherLetter(), QLatin1Char('A'));
+            QCOMPARE(freq->otherFrequency(), 7185000.0);
+            const QString row = vfoRowText(*freq);
+            QVERIFY2(row.contains(QStringLiteral(">A 7.185.000<")), qPrintable(row));
+            // A is active and shown, so this line is the dim one.
+            QVERIFY(!freq->activeIsThis());
+
+            // B becomes the transmit slice: it is the item's own slice.
+            sliceA->setTxSlice(false);
+            sliceB->setTxSlice(true);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(!freq->otherSliceLineVisible());
+            // The active marker compares with the slice shown: none.
+            QVERIFY(freq->activeIsThis());
+
+            // No transmit slice: hidden.
+            sliceB->setTxSlice(false);
+            QVERIFY(!freq->otherSliceLineVisible());
+
+            // A transmits again: shown, and it follows A's frequency.
+            sliceA->setTxSlice(true);
+            QVERIFY(freq->otherSliceLineVisible());
+            sliceA->setFrequency(7190000.0);
+            QCOMPARE(freq->otherFrequency(), 7190000.0);
+            sliceA->setFrequency(7185000.0);
+        }
+    }
+
+    void secondLinePicksItsSlice()
+    {
+        // Slices A, B and C, the item on B, A transmitting.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        SliceModel* sliceC = model.slices().at(2);
+        QCOMPARE(sliceC->sliceLetter(), QLatin1Char('C'));
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        sliceC->setTxSlice(false);
+        sliceC->setFrequency(21300000.0);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+        QCOMPARE(key, QStringLiteral("secondSlice"));
+        QWidget parent;
+        const auto build = [&](const char* type, const QJsonObject& extra) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            for (auto it = extra.constBegin(); it != extra.constEnd(); ++it) { entry.config.insert(it.key(), it.value()); }
+            return std::unique_ptr<QWidget>(registry.createWidget(entry, &parent));
+        };
+
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            // "Slice C" with C open shows C, not the transmit slice.
+            std::unique_ptr<QWidget> onC = build(type, {{key, QStringLiteral("C")}});
+            auto* freqC = qobject_cast<FrequencyInstrument*>(onC.get());
+            QVERIFY(freqC);
+            QVERIFY(freqC->otherSliceLineVisible());
+            QCOMPARE(freqC->otherLetter(), QLatin1Char('C'));
+            QCOMPARE(freqC->otherFrequency(), 21300000.0);
+
+            // The item's own letter hides the line.
+            std::unique_ptr<QWidget> onOwn = build(type, {{key, QStringLiteral("B")}});
+            auto* freqOwn = qobject_cast<FrequencyInstrument*>(onOwn.get());
+            QVERIFY(freqOwn);
+            QVERIFY(freqOwn->ownSliceLineVisible());
+            QVERIFY(!freqOwn->otherSliceLineVisible());
+
+            // "None" hides it.
+            std::unique_ptr<QWidget> none = build(type, {{key, QStringLiteral("none")}});
+            auto* freqNone = qobject_cast<FrequencyInstrument*>(none.get());
+            QVERIFY(freqNone);
+            QVERIFY(!freqNone->otherSliceLineVisible());
+
+            // A slice that is not open hides it.
+            std::unique_ptr<QWidget> onD = build(type, {{key, QStringLiteral("D")}});
+            auto* freqD = qobject_cast<FrequencyInstrument*>(onD.get());
+            QVERIFY(freqD);
+            QVERIFY(!freqD->otherSliceLineVisible());
+        }
+
+        // Custom: "Show the second line" off hides it whatever the picker says.
+        for (const QJsonValue pick : {QJsonValue(QStringLiteral("C")), QJsonValue(QJsonValue::Undefined)}) {
+            QJsonObject extra{{QString::fromLatin1(LongpathContent::kShowOtherKey), false}};
+            if (!pick.isUndefined()) { extra.insert(key, pick); }
+            std::unique_ptr<QWidget> off = build(LongpathContent::kFrequencyCustomType, extra);
+            auto* freqOff = qobject_cast<FrequencyInstrument*>(off.get());
+            QVERIFY(freqOff);
+            QVERIFY(freqOff->ownSliceLineVisible());
+            QVERIFY(!freqOff->otherSliceLineVisible());
+        }
+
+        // C closes: hidden; C opens again: shown.
+        std::unique_ptr<QWidget> follows = build(LongpathContent::kFrequencyType, {{key, QStringLiteral("C")}});
+        auto* freq = qobject_cast<FrequencyInstrument*>(follows.get());
+        QVERIFY(freq);
+        QVERIFY(freq->otherSliceLineVisible());
+        model.removeSlice(2);
+        QCOMPARE(model.slices().size(), 2);
+        QVERIFY(!freq->otherSliceLineVisible());
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        QCOMPARE(model.slices().at(2)->sliceLetter(), QLatin1Char('C'));
+        QVERIFY(freq->otherSliceLineVisible());
+        QCOMPARE(freq->otherLetter(), QLatin1Char('C'));
     }
 
     void frequencyShowsAfterTheStationAdoptsTheSlice()
@@ -1203,10 +1633,76 @@ private slots:
         QVERIFY(!editor.findChild<QCheckBox*>(QStringLiteral("property_center")));
     }
 
-    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    void frequencyEditorsNameSlices()
     {
         ContainerContentRegistry registry;
         LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            editor.setEntry(registry.makeEntry(QString::fromLatin1(type)));
+            auto* second = editor.findChild<QComboBox*>(QStringLiteral("property_secondSlice"));
+            QVERIFY(second);
+            QStringList items;
+            for (int i = 0; i < second->count(); ++i) { items.append(second->itemText(i)); }
+            QCOMPARE(items, (QStringList{QStringLiteral("Transmit slice"), QStringLiteral("None"),
+                                         QStringLiteral("Slice A"), QStringLiteral("Slice B"),
+                                         QStringLiteral("Slice C"), QStringLiteral("Slice D")}));
+            QCOMPARE(second->currentIndex(), 0);
+
+            edited.clear();
+            second->setCurrentIndex(second->findText(QStringLiteral("Slice C")));
+            QCOMPARE(edited.size(), 1);
+            auto entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("C"));
+            second->setCurrentIndex(second->findText(QStringLiteral("None")));
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("none"));
+            // Back to the transmit slice: the key goes away.
+            second->setCurrentIndex(0);
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kSecondSliceKey)));
+
+            QStringList texts = items;
+            for (const QLabel* l : editor.findChildren<QLabel*>()) { texts.append(l->text()); }
+            for (const QAbstractButton* b : editor.findChildren<QAbstractButton*>()) { texts.append(b->text()); }
+            for (const QComboBox* c : editor.findChildren<QComboBox*>()) {
+                for (int i = 0; i < c->count(); ++i) { texts.append(c->itemText(i)); }
+            }
+            for (const QString& text : std::as_const(texts)) {
+                for (const char* banned : {"A/B", "VFO A", "VFO B", "RX1", "RX2"}) {
+                    QVERIFY2(!text.contains(QLatin1String(banned)), qPrintable(text));
+                }
+            }
+            if (QLatin1String(type) == QLatin1String(LongpathContent::kFrequencyCustomType)) {
+                QVERIFY2(texts.contains(QStringLiteral("Show this slice's line")), qPrintable(texts.join('|')));
+                QVERIFY2(texts.contains(QStringLiteral("Show the second line")), qPrintable(texts.join('|')));
+            }
+        }
+    }
+
+    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    {
+        // The item is on slice B and A transmits, so both lines have a
+        // slice to show (the second line is the transmit slice).
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14200000.0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
         QWidget parent;
 
         ContentEntry plain = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
@@ -1249,6 +1745,9 @@ private slots:
         freq->show();
         settle();
         QVERIFY(freq->vfoRowVisible());
+        // The slice's frequency built the digit row before the font size
+        // rebuilt it; drop the replaced labels (deleteLater) first.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
         QLabel* digit = nullptr;
         QString row;
@@ -1263,8 +1762,9 @@ private slots:
         QVERIFY(digit);
         QCOMPARE(digit->font().pixelSize(), 36);
         QVERIFY(digit->styleSheet().contains(QStringLiteral("#44aaff")));
-        QVERIFY2(row.contains(QStringLiteral(">B ")), qPrintable(row));
-        QVERIFY2(!row.contains(QStringLiteral(">A ")), qPrintable(row));
+        // This slice's line (B) is off; the second line shows A.
+        QVERIFY2(row.contains(QStringLiteral(">A ")), qPrintable(row));
+        QVERIFY2(!row.contains(QStringLiteral(">B ")), qPrintable(row));
 
         freq->setParent(nullptr);
         freq->resize(720, 260);

@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): outbound
+//                 send; inbound data read only for IN or BOTH. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -156,6 +160,9 @@ void TcpClientEndpointWorker::onConnected()
     qCInfo(lcMmio) << "TCP client connected to" << m_endpoint->host()
                    << ":" << m_endpoint->port()
                    << "for endpoint" << m_endpoint->name();
+
+    // Anything queued while disconnected goes out now.
+    flushOutbound();
 }
 
 void TcpClientEndpointWorker::onDisconnected()
@@ -178,7 +185,13 @@ void TcpClientEndpointWorker::onReadyRead()
     // Append all available data to the line buffer, then drain complete lines.
     // From Thetis MeterManager.cs:40320-40353 — messages are newline-delimited;
     // strip any trailing carriage return for cross-platform robustness.
-    m_lineBuffer.append(m_socket->readAll());
+    const QByteArray received = m_socket->readAll();
+    // From Thetis MeterManager.cs:42171, :42174 [v2.10.3.15] — data is
+    // only read in when the direction is IN or BOTH.
+    if (m_endpoint->direction() == MmioEndpoint::Direction::Out) {
+        return;
+    }
+    m_lineBuffer.append(received);
 
     while (true) {
         const int nlIndex = m_lineBuffer.indexOf('\n');
@@ -251,6 +264,29 @@ void TcpClientEndpointWorker::attemptReconnect()
 
     m_socket->abort();
     m_socket->connectToHost(host, port);
+}
+
+// From Thetis MeterManager.cs:42236-42283 [v2.10.3.15] — TcpClientHandler
+// outbound: up to 20 queued messages per write, as ASCII. Nothing is
+// sent, and the queue keeps its messages, while disconnected.
+void TcpClientEndpointWorker::flushOutbound()
+{
+    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState
+        || m_endpoint->direction() == MmioEndpoint::Direction::In) {
+        return;
+    }
+
+    while (true) {
+        const QByteArray sendBytes = m_endpoint->takeOutboundPayload();
+        if (sendBytes.isEmpty()) {
+            break;
+        }
+        if (m_socket->write(sendBytes) < 0) {
+            qCWarning(lcMmio) << "TCP client send failed for endpoint"
+                              << m_endpoint->name() << ":" << m_socket->errorString();
+            break;
+        }
+    }
 }
 
 } // namespace NereusSDR

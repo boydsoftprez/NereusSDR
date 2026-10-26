@@ -412,24 +412,91 @@ private slots:
     for(auto* button:singletonDialog.findChildren<QPushButton*>()) {if(button->text()=="Duplicate") {button->click();break;}}
     QCOMPARE(singletonDialog.editSession()->draft(),unchanged);QCOMPARE(registry.singletonView("applet:rx"),static_cast<QWidget*>(&singleton));
  }
- void unsupportedContainerOptionsKeepRawValues_data() {
+ void containerOptionsKeepRawValuesUntilChanged_data() {
     QTest::addColumn<QJsonValue>("minimises");QTest::addColumn<QJsonValue>("unused");
     QTest::newRow("booleans")<<QJsonValue(true)<<QJsonValue(false);
     QTest::newRow("raw")<<QJsonValue("legacy preference")<<QJsonValue(QJsonObject{{"unknown",19}});
  }
- void unsupportedContainerOptionsKeepRawValues() {
+ // Minimizes and Hide when slice not open are available; a saved value is
+ // kept as it is until its checkbox changes.
+ void containerOptionsKeepRawValuesUntilChanged() {
     QFETCH(QJsonValue,minimises);QFETCH(QJsonValue,unused);
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
     WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a,b;a.id="A";b.id="B";a.config={{"containerMinimises",minimises},{"hidesWhenRxNotUsed",unused}};d.containers={a,b};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
     ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);const auto original=dialog.editSession()->draft();
-    int found=0;for(auto* check:dialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {++found;QVERIFY(!check->isEnabled());QVERIFY(!check->toolTip().isEmpty());check->click();}}
-    QCOMPARE(found,2);dialog.selectDraftContainer("B");dialog.selectDraftContainer("A");QCOMPARE(dialog.editSession()->draft(),original);
+    QList<QCheckBox*> checks;for(auto* check:dialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when slice not open") {QVERIFY(check->isEnabled());QVERIFY(!check->toolTip().isEmpty());checks.append(check);}}
+    QCOMPARE(checks.size(),2);dialog.selectDraftContainer("B");dialog.selectDraftContainer("A");QCOMPARE(dialog.editSession()->draft(),original);
     QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document.containers[0].config,a.config);
     const auto portable=ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(store.snapshot().containers[0]));QVERIFY(portable.ok);QCOMPARE(portable.document.containers[0].config,a.config);
+    for(auto* check:checks) {check->click();}
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);const auto changed=store.snapshot().containers[0].config;
+    QCOMPARE(changed.value("containerMinimises"),QJsonValue(!minimises.toBool()));QCOMPARE(changed.value("hidesWhenRxNotUsed"),QJsonValue(!unused.toBool()));
+    QCOMPARE(manager.container("A")->containerMinimises(),!minimises.toBool());QCOMPARE(manager.container("A")->containerHidesWhenRxNotUsed(),!unused.toBool());
     ContainerWidget legacy;legacy.setContainerMinimises(true);legacy.setContainerHidesWhenRxNotUsed(true);ContainerSettingsDialog legacyDialog(&legacy);
-    for(auto* check:legacyDialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {QVERIFY(!check->isEnabled());check->click();}}
-    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.containerMinimises());QVERIFY(legacy.containerHidesWhenRxNotUsed());
+    for(auto* check:legacyDialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when slice not open") {QVERIFY(check->isEnabled());check->click();}}
+    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(!legacy.containerMinimises());QVERIFY(!legacy.containerHidesWhenRxNotUsed());
+ }
+ // The Slice combo offers Active slice, saved as rxSourceMode
+ // followSelectedRx as the header source menu saves it; a slice choice
+ // clears it again.
+ void activeSliceChoiceSavesFollowSelectedRx() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a;a.id="A";a.config={{"sliceId",2}};d.containers={a};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");QVERIFY(source);
+        QCOMPARE(source->currentData().toInt(),3);
+        const int active=source->findText("Active slice");QVERIFY(active>=0);QCOMPARE(source->itemData(active).toInt(),ContainerWidget::kActiveSliceSource);
+        source->setCurrentIndex(active);QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("rxSourceMode").toString(),QStringLiteral("followSelectedRx"));
+        QCOMPARE(store.snapshot().containers[0].config.value("sliceId").toInt(),2);
+    }
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");QVERIFY(source);
+        QCOMPARE(source->currentData().toInt(),ContainerWidget::kActiveSliceSource);
+        // Untouched, Apply keeps it.
+        QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("rxSourceMode").toString(),QStringLiteral("followSelectedRx"));
+        source->setCurrentIndex(source->findData(2));QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        const auto config=store.snapshot().containers[0].config;
+        QVERIFY(!config.contains("rxSourceMode"));QCOMPARE(config.value("sliceId").toInt(),1);
+    }
+    {
+        // Picking the same slice it had before following clears the mode.
+        auto followed=store.snapshot();followed.containers[0].config["rxSourceMode"]="followSelectedRx";
+        QCOMPARE(manager.commitWorkspace(followed,followed.revision).status,CommitStatus::Saved);
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");
+        source->setCurrentIndex(source->findData(2));QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QVERIFY(!store.snapshot().containers[0].config.contains("rxSourceMode"));
+    }
+    ContainerWidget legacy;ContainerSettingsDialog legacyDialog(&legacy);
+    auto* legacySource=legacyDialog.findChild<QComboBox*>("containerRxSource");QVERIFY(legacySource);QCOMPARE(legacySource->findText("Active slice"),-1);
+ }
+ // No controls round-trips through the draft, the store and the widget.
+ void noControlsRoundTrips() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a;a.id="A";d.containers={a};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* check=dialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check);QCOMPARE(check->text(),QStringLiteral("No controls"));QVERIFY(!check->isChecked());
+        check->click();QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("noControls"),QJsonValue(true));QVERIFY(manager.container("A")->noControls());
+    }
+    ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document.containers[0].config.value("noControls"),QJsonValue(true));
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* check=dialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check->isChecked());
+        check->click();QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("noControls"),QJsonValue(false));QVERIFY(!manager.container("A")->noControls());
+    }
+    ContainerWidget legacy;ContainerSettingsDialog legacyDialog(&legacy);
+    auto* check=legacyDialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check);check->click();
+    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.noControls());
  }
  void legacySignalUnitsUseGlobalPreferences() {
     ContainerContentRegistry registry;ContentPropertyEditor editor(registry);editor.setEntry(registry.makeEntry("SIGNALTEXT"));

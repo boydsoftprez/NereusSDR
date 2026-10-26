@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - Hide when slice not open hides a container while its slice
+//                 is not open (onSliceOpenChanged), for every slice where
+//                 Thetis asks it only of RX2; Minimizes follows the main
+//                 window for every floating container
+//                 (onMainWindowStateChanged). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - setTransmitting hands the transmit state to every
 //                 container meter's fade covers, VFO displays and button
 //                 grids (MeterWidget::setItemTxState), and each meter that
@@ -663,6 +669,17 @@ bool ContainerManager::hideRevealHeaders(WorkspaceDocument& document)
 }
 bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
 {
+    // From Thetis MeterManager.cs:2799-2801 [v2.10.3.15]
+    //hide if this is for an rx that is not in use, otherwise show it
+    //atm this is only a consideration for rx2
+    // Here every slice is: the container's own slice, or any slice for
+    // Active slice.
+    const bool hide = document.config.value("hidesWhenRxNotUsed").toBool(false)
+        && !containerSliceOpen(document);
+    return !hide && visibleBesidesSlice(document);
+}
+bool ContainerManager::visibleBesidesSlice(const ContainerDocument &document) const
+{
     // Workspace preview: a container whose entries are all hidden (the
     // entry header's hide button, Containers > Applets) leaves the screen
     // with them and comes back when any of them is shown. An empty
@@ -707,6 +724,70 @@ void ContainerManager::setTransmitting(bool transmitting)
         if (auto *c = container(document.id)) {
             (c->isFloating() ? c->window() : c)->setVisible(effectiveVisible(document));
         }
+    }
+}
+bool ContainerManager::containerSliceOpen(const ContainerDocument &document) const
+{
+    if (!m_sliceOpenKnown) {
+        return true;
+    }
+    if (document.config.value("rxSourceMode").toString() == QStringLiteral("followSelectedRx")) {
+        return !m_openSlices.isEmpty();
+    }
+    const int slice = document.config.contains("sliceId") ? document.config.value("sliceId").toInt()
+                                                          : document.config.value("rxSource").toInt(1) - 1;
+    return m_openSlices.contains(slice);
+}
+void ContainerManager::onSliceOpenChanged(int sliceIndex, bool open)
+{
+    if (open) {
+        m_openSlices.insert(sliceIndex);
+    } else {
+        m_openSlices.remove(sliceIndex);
+    }
+    m_sliceOpenKnown = true;
+    if (!m_store) {
+        return;
+    }
+    for (const auto &document : m_store->snapshot().containers) {
+        if (!document.config.value("hidesWhenRxNotUsed").toBool(false)) {
+            continue;
+        }
+        auto *c = container(document.id);
+        if (!c) {
+            continue;
+        }
+        bool visible = effectiveVisible(document);
+        // A window that minimizes stays hidden while the main window is
+        // minimized; restoring the main window shows it.
+        if (c->isFloating() && m_mainWindowMinimized
+            && document.config.value("containerMinimises").toBool(false)) {
+            visible = false;
+        }
+        (c->isFloating() ? c->window() : c)->setVisible(visible);
+    }
+}
+void ContainerManager::onMainWindowStateChanged(Qt::WindowStates state)
+{
+    m_mainWindowMinimized = state.testFlag(Qt::WindowMinimized);
+    if (!m_store) {
+        return;
+    }
+    for (const auto &document : m_store->snapshot().containers) {
+        if (document.dockMode != DockMode::Floating) {
+            continue;
+        }
+        FloatingContainer *form = m_floatingForms.value(document.id);
+        if (!form) {
+            continue;
+        }
+        // The form decides from its own flags; they are the document's.
+        form->setContainerFloating(true);
+        form->setContainerMinimises(document.config.value("containerMinimises").toBool(false));
+        form->setContainerHidesWhenRxNotUsed(document.config.value("hidesWhenRxNotUsed").toBool(false));
+        form->setHiddenByMacro(document.config.value("hiddenByMacro").toBool(false));
+        form->setFormEnabled(visibleBesidesSlice(document));
+        form->onMainWindowStateChanged(state, containerSliceOpen(document));
     }
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)

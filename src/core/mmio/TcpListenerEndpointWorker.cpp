@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): outbound
+//                 send to the connected client; inbound data read only
+//                 for IN or BOTH. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -162,11 +166,20 @@ void TcpListenerEndpointWorker::onNewConnection()
     qCInfo(lcMmio) << "TcpListenerEndpointWorker: client connected from"
                    << m_client->peerAddress().toString()
                    << ":" << m_client->peerPort();
+
+    // Anything queued while no client was connected goes out now.
+    flushOutbound();
 }
 
 void TcpListenerEndpointWorker::onClientReadyRead()
 {
-    m_lineBuffer.append(m_client->readAll());
+    const QByteArray received = m_client->readAll();
+    // From Thetis MeterManager.cs:41921, :41924 [v2.10.3.15] — data is
+    // only read in when the direction is IN or BOTH.
+    if (m_endpoint->direction() == MmioEndpoint::Direction::Out) {
+        return;
+    }
+    m_lineBuffer.append(received);
 
     // Process all complete newline-delimited messages in the buffer.
     while (true) {
@@ -219,6 +232,30 @@ void TcpListenerEndpointWorker::onClientDisconnected()
     m_lineBuffer.clear();
     // Keep the server alive — return to listening for the next client.
     setState(State::Listening);
+}
+
+// From Thetis MeterManager.cs:41984-42029 [v2.10.3.15] — TcpListener
+// outbound: up to 20 queued messages per write to the connected client,
+// as ASCII. Nothing is sent, and the queue keeps its messages, while no
+// client is connected.
+void TcpListenerEndpointWorker::flushOutbound()
+{
+    if (!m_client || m_client->state() != QAbstractSocket::ConnectedState
+        || m_endpoint->direction() == MmioEndpoint::Direction::In) {
+        return;
+    }
+
+    while (true) {
+        const QByteArray sendBytes = m_endpoint->takeOutboundPayload();
+        if (sendBytes.isEmpty()) {
+            break;
+        }
+        if (m_client->write(sendBytes) < 0) {
+            qCWarning(lcMmio) << "TcpListenerEndpointWorker: send failed:"
+                              << m_client->errorString();
+            break;
+        }
+    }
 }
 
 } // namespace NereusSDR

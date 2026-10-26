@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - onMainWindowStateChanged replaces onConsoleWindowStateChanged:
+//                 Minimizes and Hide when slice not open apply to every
+//                 slice, not only the second receiver. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - setScreenSource, sizeWithin, fittedSize and
 //                 refreshDesktopLimit: a floating window is never wider or
 //                 taller than all the screens together. J.J. Boyd
@@ -142,8 +146,13 @@ public:
     bool isContainerFloating() const { return m_floating; }
     void setContainerFloating(bool floating);
 
-    // From Thetis frmMeterDisplay.cs:114-139
-    void onConsoleWindowStateChanged(Qt::WindowStates state, bool rx2Enabled);
+    // From Thetis frmMeterDisplay.cs:114-139 [v2.10.3.15]
+    // The main window was minimized or restored. A floating, enabled form
+    // that minimizes hides with it, and on restore shows again unless a
+    // macro hid it or its slice is not open while it hides then. Thetis
+    // asks this only of RX2 (`rx2Enabled`); here `sliceOpen` is whether
+    // the form's own slice is open, whichever slice that is.
+    void onMainWindowStateChanged(Qt::WindowStates state, bool sliceOpen);
 
     void saveGeometry();
     void restoreGeometry();

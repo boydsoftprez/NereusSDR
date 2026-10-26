@@ -18,6 +18,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - geometryPane round trip, absent and malformed. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - longpathDirectionBecomesBindingOnLoad. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Container edge and workspace arrangement round trips for
 //                 the workspace preview by J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -597,6 +599,80 @@ private slots:
         containers[0] = first;
         root["containers"] = containers;
         QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+    }
+    void longpathDirectionBecomesBindingOnLoad()
+    {
+        // A needle or bar saved with "direction" and no "binding" loads
+        // with the binding that direction meant (LongpathContent::
+        // primaryBinding) and without "direction"; one with both keeps its
+        // binding. The ids: SignalPeak 0, TxPower 100, TxSwr 102.
+        const auto entryFor = [](const QString& id, const QString& typeId, const QJsonObject& config) {
+            ContentEntry entry;
+            entry.id = id;
+            entry.typeId = typeId;
+            entry.name = id;
+            entry.config = config;
+            return entry;
+        };
+        WorkspaceDocument doc = sample();
+        QVector<ContentEntry>& contents = doc.containers[0].contents;
+        const QVector<ContentEntry> untouched = contents;
+        contents.append(entryFor(QStringLiteral("needle-tx"), QStringLiteral("longpath.needle"),
+                                 {{"direction", "tx"}}));
+        contents.append(entryFor(QStringLiteral("needle-rx"), QStringLiteral("longpath.needle"),
+                                 {{"direction", "rx"}}));
+        contents.append(entryFor(QStringLiteral("bar-tx"), QStringLiteral("longpath.bar"),
+                                 {{"direction", "tx"}, {"compact", false}}));
+        contents.append(entryFor(QStringLiteral("needle-both"), QStringLiteral("longpath.needle"),
+                                 {{"direction", "tx"}, {"binding", 7}}));
+        contents.append(entryFor(QStringLiteral("needle-bound"), QStringLiteral("longpath.needle"),
+                                 {{"binding", 7}}));
+        contents.append(entryFor(QStringLiteral("other-direction"), QStringLiteral("longpath.frequency"),
+                                 {{"direction", "tx"}}));
+
+        const DocumentResult decoded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        const QVector<ContentEntry>& loaded = decoded.document.containers[0].contents;
+        QCOMPARE(loaded.size(), untouched.size() + 6);
+        const auto configOf = [&loaded](const QString& id) {
+            for (const ContentEntry& e : loaded) {
+                if (e.id == id) { return e.config; }
+            }
+            return QJsonObject{{"missing", true}};
+        };
+        QCOMPARE(configOf(QStringLiteral("needle-tx")), (QJsonObject{{"binding", 100}}));
+        QCOMPARE(configOf(QStringLiteral("needle-rx")), (QJsonObject{{"binding", 0}}));
+        QCOMPARE(configOf(QStringLiteral("bar-tx")), (QJsonObject{{"binding", 102}, {"compact", false}}));
+        QCOMPARE(configOf(QStringLiteral("needle-both")), (QJsonObject{{"binding", 7}}));
+        QCOMPARE(configOf(QStringLiteral("needle-bound")), (QJsonObject{{"binding", 7}}));
+        // Not a needle or bar: left as saved.
+        QCOMPARE(configOf(QStringLiteral("other-direction")), (QJsonObject{{"direction", "tx"}}));
+        for (int i = 0; i < untouched.size(); ++i) {
+            QCOMPARE(loaded.at(i), untouched.at(i));
+        }
+
+        // Decoding again changes nothing.
+        const QByteArray once = ContainerDocumentCodec::encode(decoded.document);
+        const DocumentResult again = ContainerDocumentCodec::decode(once);
+        QVERIFY2(again.ok, qPrintable(again.error));
+        QCOMPARE(again.document, decoded.document);
+        QCOMPARE(ContainerDocumentCodec::encode(again.document), once);
+
+        // An imported container takes the same path.
+        ContainerDocument single = doc.containers[0];
+        const DocumentResult imported =
+            ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(single));
+        QVERIFY2(imported.ok, qPrintable(imported.error));
+        bool sawNeedle = false;
+        for (const ContainerDocument& c : imported.document.containers) {
+            for (const ContentEntry& e : c.contents) {
+                if (e.name == QStringLiteral("needle-tx")) {
+                    sawNeedle = true;
+                    QCOMPARE(e.config, (QJsonObject{{"binding", 100}}));
+                }
+            }
+        }
+        QVERIFY(sawNeedle);
     }
     void documentWithoutEdgesStaysByteIdentical()
     {

@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — The 4-character ID with a Copy button, Direction,
+//                 Terminator and the UDP send target; new data
+//                 sources start on 127.0.0.1:9000 as in Thetis. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -90,6 +94,8 @@ private slots:
     void onRemoveEndpoint();
     void onApplyEdits();
     void onVariablesDiscovered();
+    void onCopyId();
+    void updateFieldStates();
 
 private:
     void rebuildEndpointList();
@@ -104,12 +110,19 @@ private:
 
     // Center column: endpoint editor
     QLineEdit*   m_editName{nullptr};
+    QLineEdit*   m_editId{nullptr};
+    QPushButton* m_btnCopyId{nullptr};
     QComboBox*   m_comboTransport{nullptr};
     QComboBox*   m_comboFormat{nullptr};
     QLineEdit*   m_editHost{nullptr};
     QSpinBox*    m_spinPort{nullptr};
     QLineEdit*   m_editDevice{nullptr};
     QSpinBox*    m_spinBaud{nullptr};
+    QComboBox*   m_comboDirection{nullptr};
+    QComboBox*   m_comboTerminator{nullptr};
+    QLineEdit*   m_editCustomTerminator{nullptr};
+    QLineEdit*   m_editUdpTargetHost{nullptr};
+    QSpinBox*    m_spinUdpTargetPort{nullptr};
     QPushButton* m_btnApply{nullptr};
     QLabel*      m_lblStatus{nullptr};
 

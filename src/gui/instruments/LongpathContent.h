@@ -36,6 +36,10 @@
 //   2026-10-24 - Sources::watchSliceAccess: a remote window's slice
 //                 followers rebind when the Core's slice access changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - kSecondSliceKey: the frequency types' second line picks
+//                 its slice (transmit slice by default, none, or Slice A
+//                 to D). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -66,13 +70,16 @@ inline constexpr auto kFilterType          = "longpath.filter";
 
 // Entry config keys. "binding" / "secondaryBinding" are MeterBinding ids;
 // "direction" ("rx" or "tx") picks the needle default when "binding" is
-// absent; "form" ("numberOnly", "bandStrip", "flatArc") is the frequency
-// form; "compact" (bool, default true) is the bar's footerless form;
-// "label" overrides the filter pane's slice label. Frequency (Custom)
-// adds "fontSize" (px), "fitWidth", "fontColor" (#rrggbb), "center",
-// "showOwnSlice" and "showOtherSlice". Each type declares the ones the
-// Container Settings property editor offers
-// (ContentDescriptor::properties).
+// absent (a saved entry's "direction" becomes "binding" on load,
+// migrateEntryOnLoad); "form" ("numberOnly", "bandStrip", "flatArc") is
+// the frequency form; "compact" (bool, default true) is the bar's
+// footerless form; "label" overrides the filter pane's slice label.
+// Frequency (Custom) adds "fontSize" (px), "fitWidth", "fontColor"
+// (#rrggbb), "center", "showOwnSlice" and "showOtherSlice". Both
+// frequency types take "secondSlice", the slice the second line shows:
+// absent, the transmit slice; "none", no second line; "A" to "D", that
+// slice. Each type declares the ones the Container Settings property
+// editor offers (ContentDescriptor::properties).
 inline constexpr auto kBindingKey   = "binding";
 inline constexpr auto kSecondaryKey = "secondaryBinding";
 inline constexpr auto kDirectionKey = "direction";
@@ -85,6 +92,7 @@ inline constexpr auto kFontColorKey = "fontColor";
 inline constexpr auto kCenterKey    = "center";
 inline constexpr auto kShowOwnKey   = "showOwnSlice";
 inline constexpr auto kShowOtherKey = "showOtherSlice";
+inline constexpr auto kSecondSliceKey = "secondSlice";
 
 struct Sources {
     MeterPoller* poller = nullptr;

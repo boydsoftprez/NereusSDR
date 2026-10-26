@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-25 - The MMIO source row also takes a data source's
+//                 4-character ID and stores that source's UUID. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - A registered widget type with no declared properties (the
 //                 TX and RX section rows) is no longer labelled an
 //                 unsupported configuration; it gets the applet's binding
@@ -49,6 +52,8 @@
 #include <QStandardItemModel>
 #include <limits>
 #include "gui/meters/MeterPoller.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 namespace NereusSDR {
 ContentPropertyEditor::ContentPropertyEditor(ContainerContentRegistry& registry,QWidget* parent):QWidget(parent),m_registry(registry) {}
 void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
@@ -422,7 +427,15 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         auto* edit=new QLineEdit(entry.context[key].toString(),advanced); edit->setObjectName(key);
         edit->setPlaceholderText(key=="sessionId"?tr("Container default — %1").arg(m_defaults[key].toString(tr("current session"))):tr("Unassigned"));
         bindings->addRow(key=="sessionId"?tr("Radio session"):key=="mmioGuid"?tr("MMIO source UUID"):tr("MMIO variable"),edit);
-        connect(edit,&QLineEdit::editingFinished,this,[this,edit,key]{ if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
+        if(key=="mmioGuid") {edit->setToolTip(tr("A data source's UUID or its 4-character ID"));}
+        connect(edit,&QLineEdit::editingFinished,this,[this,edit,key]{
+            // A 4-character data source ID is stored as that source's UUID.
+            if(key=="mmioGuid" && edit->text().trimmed().size()==4 && QUuid(edit->text().trimmed()).isNull()) {
+                if(MmioEndpoint* ep=ExternalVariableEngine::instance().endpointByFourChar(edit->text().trimmed())) {
+                    QSignalBlocker block(edit); edit->setText(ep->guid().toString(QUuid::WithoutBraces));
+                }
+            }
+            if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
             if(m_item && (key=="mmioGuid" || key=="mmioVariable")) {m_item->setMmioBinding(QUuid(m_entry.context["mmioGuid"].toString()),m_entry.context["mmioVariable"].toString());}
             publish(); });
     }

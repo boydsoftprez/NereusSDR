@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The Slice combo offers Active slice (saved as rxSourceMode
+//                 followSelectedRx, as the workspace header's source menu
+//                 does); Minimizes and Hide when slice not open are
+//                 available and act on every slice; No controls checkbox.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
 //                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
@@ -1055,12 +1060,17 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     for (int rx = 1; rx <= 4; ++rx) {
         m_rxSourceCombo->addItem(ContainerWidget::sliceNameForRxSource(rx), rx);
     }
+    // Active slice follows the selected slice; it is saved in the
+    // workspace document (rxSourceMode), so only a draft offers it.
+    if (m_editSession) {
+        m_rxSourceCombo->addItem(tr("Active slice"), ContainerWidget::kActiveSliceSource);
+    }
     m_rxSourceCombo->setStyleSheet(
         "QComboBox { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px 4px; }"
         "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
-    m_rxSourceCombo->setFixedWidth(76);
+    m_rxSourceCombo->setFixedWidth(96);
 
     // Show on RX / TX
     QLabel* showRxLabel = new QLabel(QStringLiteral("Show RX:"), bar);
@@ -1125,12 +1135,14 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                                          m_container && m_container->containerMinimises());
     m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
                                          m_container && m_container->autoHeight());
-    m_hidesWhenRxNotUsedCheck = makeCheck(QStringLiteral("Hide when RX unused"),
+    m_hidesWhenRxNotUsedCheck = makeCheck(tr("Hide when slice not open"),
                                          m_container && m_container->containerHidesWhenRxNotUsed());
-    m_minimisesCheck->setEnabled(false);
-    m_minimisesCheck->setToolTip(tr("Minimizing with the main window is unavailable. Saved values are retained."));
-    m_hidesWhenRxNotUsedCheck->setEnabled(false);
-    m_hidesWhenRxNotUsedCheck->setToolTip(tr("Hiding unused receivers is unavailable. Saved values are retained."));
+    m_noControlsCheck        = makeCheck(tr("No controls"),
+                                         m_container && m_container->noControls());
+    m_minimisesCheck->setToolTip(tr("A floating container hides while the main window is minimized."));
+    m_hidesWhenRxNotUsedCheck->setToolTip(tr("Hide this container while its slice is not open."));
+    m_noControlsCheck->setObjectName("containerNoControls");
+    m_noControlsCheck->setToolTip(tr("No move or resize handles; hold Shift to use them."));
     m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
                                          m_container && m_container->isHighlighted());
 
@@ -1172,6 +1184,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     row2->addWidget(m_minimisesCheck);
     row2->addWidget(m_autoHeightCheck);
     row2->addWidget(m_hidesWhenRxNotUsedCheck);
+    row2->addWidget(m_noControlsCheck);
     row2->addWidget(m_highlightCheck);
     row2->addStretch();
 
@@ -2003,6 +2016,7 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
     if (m_hidesWhenRxNotUsedCheck) {
         m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
     }
+    if (m_noControlsCheck) { m_noControlsCheck->setChecked(m_container->noControls()); }
     if (m_highlightCheck) { m_highlightCheck->setChecked(m_container->isHighlighted()); }
 
     // Take a fresh snapshot of the new container so Cancel reverts
@@ -2156,7 +2170,9 @@ void ContainerSettingsDialog::loadCurrentDraft()
         m_bgColorBtn->setProperty("draftColor",c.config.value("backgroundColor").toString("#0f0f1a"));
         m_bgColorBtn->setStyleSheet(QStringLiteral("background:%1; min-width:32px;").arg(m_bgColorBtn->property("draftColor").toString()));
         m_titleEdit->setText(c.name); m_borderCheck->setChecked(c.config.value("border").toBool(true));
-        m_rxSourceCombo->setCurrentIndex(m_rxSourceCombo->findData(c.config.contains("sliceId") ? c.config.value("sliceId").toInt()+1 : c.config.value("rxSource").toInt(1)));
+        const bool follows=c.config.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx");
+        m_rxSourceCombo->setCurrentIndex(m_rxSourceCombo->findData(follows ? ContainerWidget::kActiveSliceSource
+            : c.config.contains("sliceId") ? c.config.value("sliceId").toInt()+1 : c.config.value("rxSource").toInt(1)));
         m_showOnRxCheck->setChecked(c.config.value("showOnRx").toBool(true));
         m_showOnTxCheck->setChecked(c.config.value("showOnTx").toBool(true));
         if(m_lockCheck) { m_lockCheck->setChecked(c.locked); }
@@ -2166,6 +2182,7 @@ void ContainerSettingsDialog::loadCurrentDraft()
         if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
+        if(m_noControlsCheck) { m_noControlsCheck->setChecked(c.config.value("noControls").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
         if(m_headerCombo) {
             // Workspace preview: there is no Reveal item; it reads as Hidden.
@@ -2211,10 +2228,18 @@ void ContainerSettingsDialog::saveCurrentDraft()
             const QString background=m_bgColorBtn->property("draftColor").toString();
             if(!background.isEmpty() && background!=d.config.value("backgroundColor").toString("#0f0f1a")) {d.config["backgroundColor"]=background;}
             d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);
+            const bool follows=d.config.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx");
             const int source=d.config.contains("sliceId") ? d.config.value("sliceId").toInt()+1 : d.config.value("rxSource").toInt(1);
-            if (m_rxSourceCombo->currentData().toInt()!=source) {
-                // The workspace header's source menu writes through the same call.
-                ContainerSourceAdapter::writeContainerSource(d.config,m_rxSourceCombo->currentData().toInt());
+            const int chosen=m_rxSourceCombo->currentData().toInt();
+            // The same config writes as the workspace header's source menu
+            // (ContainerManager::commitContainerSource). A saved slice the
+            // combo does not list (no current item) is left as it is.
+            const bool listed=m_rxSourceCombo->currentIndex()>=0;
+            if (listed && chosen==ContainerWidget::kActiveSliceSource) {
+                if (!follows) { d.config["rxSourceMode"]=QStringLiteral("followSelectedRx"); }
+            } else if (listed && (follows || chosen!=source)) {
+                d.config.remove("rxSourceMode");
+                ContainerSourceAdapter::writeContainerSource(d.config,chosen);
             }
             setBool("highlight",m_highlightCheck->isChecked());
             setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);
@@ -2223,9 +2248,10 @@ void ContainerSettingsDialog::saveCurrentDraft()
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
                 else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Shown;}
             }
-            if (m_minimisesCheck && m_minimisesCheck->isEnabled()) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
+            if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
-            if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            if (m_noControlsCheck) { setBool("noControls",m_noControlsCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
             if(m_layoutCombo) {
                 const auto desired=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());
@@ -2265,15 +2291,18 @@ void ContainerSettingsDialog::applyToContainer()
     if (m_hideTitleCheck) {
         m_container->setTitleBarVisible(!m_hideTitleCheck->isChecked());
     }
-    if (m_minimisesCheck && m_minimisesCheck->isEnabled()) {
+    if (m_minimisesCheck) {
         m_container->setContainerMinimises(m_minimisesCheck->isChecked());
     }
     if (m_autoHeightCheck) {
         m_container->setAutoHeight(m_autoHeightCheck->isChecked());
     }
-    if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) {
+    if (m_hidesWhenRxNotUsedCheck) {
         m_container->setContainerHidesWhenRxNotUsed(
             m_hidesWhenRxNotUsedCheck->isChecked());
+    }
+    if (m_noControlsCheck) {
+        m_container->setNoControls(m_noControlsCheck->isChecked());
     }
 
     // Write items back to the real MeterWidget
