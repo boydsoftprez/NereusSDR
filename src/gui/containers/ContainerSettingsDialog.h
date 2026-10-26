@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - canPasteSettings, pasteItemSettings and pasteTypeId:
+//                 copied settings paste between compatible bar meters
+//                 (Thetis setup.cs canPasteSettings). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - m_noControlsCheck. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
@@ -133,6 +137,20 @@ public:
     // instantiating the dialog.
     static float nextStackYPos(const QVector<MeterItem*>& items);
 
+    // Copy / Paste settings. Settings paste onto an item of the same type,
+    // or between the bar meters that share one settings record (every bar
+    // flavor except the custom bar); every other type pastes only onto
+    // its own type.
+    static bool canPasteSettings(const QString& fromTypeId, const QString& toTypeId);
+    // Pastes settings copied (serialize()) from an item of fromTypeId onto
+    // target. A paste between two bar types keeps the target's reading,
+    // title, scale, units and place; returns false, leaving the target
+    // unchanged, when the types are not compatible.
+    static bool pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target);
+    // The type a copy or paste names: the bar and composite faces' typeId,
+    // otherwise the serialized record's type tag.
+    static QString pasteTypeId(const MeterItem& item);
+
 private slots:
     void onItemSelectionChanged();
     void onAddItem();
@@ -224,9 +242,9 @@ private:
     void onContainerDropdownChanged(int index);
 
     // Block 7 commit 2: in-memory copy/paste clipboard, keyed by
-    // type tag (the prefix of the serialized form). Paste is only
-    // enabled when the clipboard type matches the currently-
-    // selected item's type — Thetis behavior.
+    // pasteTypeId. Paste is only enabled when canPasteSettings allows
+    // the clipboard type onto the currently-selected item's type —
+    // Thetis behavior.
     QString m_clipboardSerialized;
     QString m_clipboardTypeTag;
     void onCopyItemSettings();
