@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - mmioVariableCount: HISTORY reads 2 (axis 0, then axis 1),
+//                 as Thetis clsHistoryItem's per-axis MMIO does. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - mmioVariableCount: ROTATOR reads 2 (AZ, then ELE), as
 //                 Thetis MeterVariables does. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -485,6 +488,7 @@ int MeterItem::mmioVariableCount(const QString& typeId)
         {QStringLiteral("meter.spacer"), 0},       // MeterType.SPACER
         {QStringLiteral("ROTATOR"), 2},            // MeterType.ROTATOR (AZ, ELE)
         {QStringLiteral("meter.historyGraph"), 2}, // MeterType.HISTORY
+        {QStringLiteral("HISTORY"), 2},            // clsHistoryItem axis 0 and axis 1 (MeterManager.cs:26952-26955 [v2.10.3.15])
         {QStringLiteral("meter.customBar"), 2},    // MeterType.CUSTOM_METER_BAR
     };
     return kVariables.value(typeId, 1);

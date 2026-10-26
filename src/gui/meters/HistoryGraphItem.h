@@ -17,6 +17,13 @@
 //                 sampleCount0() / sampleCount1() read-only accessors.
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-10-26 - HISTORY building block: axis 1 is fed through the base
+//                 reading path (readingBindings / pushBindingValue, and
+//                 data source variable 2 via setSecondaryValue), each axis
+//                 keeps its own update interval; vertical ratio, back,
+//                 lines and time colours, manual min/max per axis appended
+//                 to the record; kHistoryThetisDefaults for new items.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -60,10 +67,73 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "MeterPoller.h"
 #include <QColor>
+#include <array>
 #include <vector>
 
 namespace NereusSDR {
+
+// Option ranges, from the Thetis setup designer.
+// From Thetis setup.designer.cs:62576-62580 [v2.10.3.15] (nudHistory_vertical_ratio.Minimum, 130 scale 3)
+constexpr float kMinHistoryVerticalRatio = 0.130f;
+// From Thetis setup.designer.cs:62571-62575 [v2.10.3.15] (nudHistory_vertical_ratio.Maximum)
+constexpr float kMaxHistoryVerticalRatio = 1.0f;
+// From Thetis setup.designer.cs:62485-62489 [v2.10.3.15] (nudHistory_axis0_min.Minimum)
+constexpr float kMinHistoryAxisMin = -40000.0f;
+// From Thetis setup.designer.cs:62480-62484 [v2.10.3.15] (nudHistory_axis0_min.Maximum)
+constexpr float kMaxHistoryAxisMin = 200.0f;
+// From Thetis setup.designer.cs:62454-62458 [v2.10.3.15] (nudHistory_axis0_max.Minimum)
+constexpr float kMinHistoryAxisMax = -200.0f;
+// From Thetis setup.designer.cs:62449-62453 [v2.10.3.15] (nudHistory_axis0_max.Maximum)
+constexpr float kMaxHistoryAxisMax = 40000.0f;
+// From Thetis setup.designer.cs:62443-62447 [v2.10.3.15] (nudHistory_axis0_max.Increment, 1 scale 1; DecimalPlaces = 1)
+constexpr double kHistoryAxisStep = 0.1;
+// From Thetis setup.designer.cs:62565-62569 [v2.10.3.15] (nudHistory_vertical_ratio.Increment, 1 scale 3; DecimalPlaces = 3)
+constexpr double kHistoryVerticalRatioStep = 0.001;
+
+// New HISTORY items (makeEntry) take the clsHistoryItem constructor's values.
+// From Thetis MeterManager.cs:17528-17555 [v2.10.3.15]; the update interval
+// is the constructor's UpdateInterval = 100 (MeterManager.cs:17571), which
+// is also the designer's value (setup.designer.cs:62555-62559).
+struct HistoryItemThetisDefaults {
+    float verticalRatio;
+    QRgb  backColour;
+    QRgb  axis0Colour;
+    QRgb  axis1Colour;
+    QRgb  linesColour;
+    QRgb  timeColour;
+    int   reading0;
+    int   reading1;
+    int   keepForMs;
+    float min0Manual;
+    float max0Manual;
+    float min1Manual;
+    float max1Manual;
+    bool  autoScale0;
+    bool  autoScale1;
+    bool  showScale1;
+    int   updateIntervalMs;
+};
+inline constexpr HistoryItemThetisDefaults kHistoryThetisDefaults{
+    0.5f,                       // _vertical_ratio = 0.5f
+    qRgb(0x00, 0x00, 0x00),     // _back_colour = System.Drawing.Color.Black
+    qRgb(0xff, 0x00, 0x00),     // _axis0_colour = System.Drawing.Color.Red
+    qRgb(0xff, 0xff, 0x00),     // _axis1_colour = System.Drawing.Color.Yellow
+    qRgb(0xff, 0xff, 0xff),     // _lines_colour = System.Drawing.Color.White
+    qRgb(0x80, 0x80, 0x80),     // _time_colour = System.Drawing.Color.Gray
+    MeterBinding::SignalPeak,   // _reading_0 = Reading.SIGNAL_STRENGTH
+    MeterBinding::SignalPeak,   // _reading_1 = Reading.SIGNAL_STRENGTH
+    60000,                      // _keep_for = 60; // seconds
+    -150.0f,                    // _min_0_manual = -150f
+    0.0f,                       // _max_0_manual = 0f
+    -150.0f,                    // _min_1_manual = -150f
+    0.0f,                       // _max_1_manual = 0f
+    true,                       // _auto_scale_0 = true
+    true,                       // _auto_scale_1 = true
+    false,                      // _show_scale_1 = false
+    100,                        // UpdateInterval = 100
+};
 
 // From Thetis clsHistoryItem (MeterManager.cs:16149+)
 // Scrolling time-series graph with dual-axis ring buffer.
@@ -146,9 +216,53 @@ public:
     int bindingId1() const { return m_bindingId1; }
     void setBindingId1(int id) { m_bindingId1 = id; }
 
+    // Thetis VerticalRatio (height compared to width), 0.130 .. 1. Saved
+    // for the history composite; the primitive keeps its own rect.
+    float verticalRatio() const { return m_verticalRatio; }
+    void setVerticalRatio(float ratio);
+
+    QColor backColour() const { return m_backColour; }
+    void setBackColour(const QColor& c) { m_backColour = c; }
+    // Border and grid lines.
+    QColor linesColour() const { return m_linesColour; }
+    void setLinesColour(const QColor& c) { m_linesColour = c; }
+    // Thetis TimeColour, the time label colour. The primitive has no time
+    // axis, so its scale labels take this colour.
+    QColor timeColour() const { return m_timeColour; }
+    void setTimeColour(const QColor& c) { m_timeColour = c; }
+
+    // Manual range per axis (axis 0 or 1), used while that axis's auto
+    // scale is off. A record saved before these fields existed has no
+    // manual range and keeps auto ranging (hasManualRange() false).
+    float manualMin(int axis) const { return axis == 1 ? m_min1Manual : m_min0Manual; }
+    float manualMax(int axis) const { return axis == 1 ? m_max1Manual : m_max0Manual; }
+    void setManualMin(int axis, float v);
+    void setManualMax(int axis, float v);
+    bool hasManualRange() const { return m_manualRange; }
+
+    // The range axis 0 or 1 is drawn against: auto scaled from its samples,
+    // or its manual range when auto scale is off.
+    void axisRange(int axis, float& yMin, float& yMax) const;
+
+    void applyNewItemDefaults() override;
+
     // --- Data ---
-    void setValue(double v) override;   // axis 0 — called by MeterWidget
-    void setValue1(double v);           // axis 1 — called by MeterWidget for bindingId1
+    void setValue(double v) override;   // axis 0
+    void setValue1(double v);           // axis 1
+
+    // Both axes read through the base reading path: readingBindings() is
+    // {bindingId(), bindingId1()} (each when set), and pushBindingValue()
+    // feeds axis 0 for bindingId() and axis 1 for bindingId1(), both when
+    // the two are the same reading. Each axis keeps the item's update
+    // interval on its own clock: acceptsUpdate() only records the time
+    // MeterWidget delivers at, and pushBindingValue() drops a sample that
+    // arrives within the interval of that axis's last one.
+    QSet<int> readingBindings() const override;
+    void pushBindingValue(int binding, double value) override;
+    bool acceptsUpdate(qint64 monotonicMs) override;
+    // Data source variable 2 (index 1) feeds axis 1; a non-finite value
+    // means the source has no reading and is not plotted.
+    void setSecondaryValue(int index, double value) override;
 
     // Samples held per axis (R-R3-13: no-reading samples are skipped).
     int sampleCount0() const { return m_buf0.count; }
@@ -163,8 +277,9 @@ public:
     // --- Serialization ---
     // Tag: HISTORY
     // Format: HISTORY|x|y|w|h|bindingId|zOrder|capacity|lineColor0|lineColor1|
-    //         showGrid|autoScale0|autoScale1|showScale0|showScale1|bindingId1|durationMs (v2)
-    // (v2 adds durationMs at index [16]; v1 stops at [15])
+    //         showGrid|autoScale0|autoScale1|showScale0|showScale1|bindingId1|durationMs (v2)|
+    //         verticalRatio|backColour|linesColour|timeColour|min0|max0|min1|max1 (v3)
+    // (v2 adds durationMs at index [16]; v1 stops at [15]; v3 appends [17]..[24])
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
@@ -173,6 +288,7 @@ private:
     void paintLine(QPainter& p, const QRect& rect, const RingBuffer& buf,
                    const QColor& color, float yMin, float yMax);
     void computeScale(const RingBuffer& buf, float& yMin, float& yMax) const;
+    bool axisAccepts(int axis);
 
     int     m_capacity{kDefaultCapacity};
     int     m_durationMs{60000};  // Task 3.3: default 60 s, corresponds to AppSettings default
@@ -189,6 +305,26 @@ private:
     bool    m_showScale0{true};
     bool    m_showScale1{false};
     int     m_bindingId1{-1};
+
+    // The look of records saved before these options existed.
+    static constexpr QRgb kLegacyBackColour  = qRgb(0x0a, 0x0a, 0x18);
+    static constexpr QRgb kLegacyLinesColour = qRgb(0x20, 0x30, 0x40);
+    static constexpr QRgb kLegacyTimeColour  = qRgb(0x80, 0x90, 0xa0);
+
+    float   m_verticalRatio{kHistoryThetisDefaults.verticalRatio};
+    QColor  m_backColour{QColor::fromRgb(kLegacyBackColour)};
+    QColor  m_linesColour{QColor::fromRgb(kLegacyLinesColour)};
+    QColor  m_timeColour{QColor::fromRgb(kLegacyTimeColour)};
+    float   m_min0Manual{kHistoryThetisDefaults.min0Manual};
+    float   m_max0Manual{kHistoryThetisDefaults.max0Manual};
+    float   m_min1Manual{kHistoryThetisDefaults.min1Manual};
+    float   m_max1Manual{kHistoryThetisDefaults.max1Manual};
+    bool    m_manualRange{false};
+
+    // Per-axis update interval clocks (-1: none yet). m_deliveryMs is the
+    // time of the delivery in progress, -1 outside one.
+    qint64  m_deliveryMs{-1};
+    std::array<qint64, 2> m_lastAxisMs{{-1, -1}};
 };
 
 } // namespace NereusSDR

@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - acceptsUpdate() is virtual: the HISTORY item keeps the
+//                 update interval per axis. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Magic eye and bezel size range (kMinMeterEyeScale,
 //                 kMaxMeterEyeScale, kDefaultMeterEyeScale). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -494,7 +497,9 @@ public:
     // Negative values are stored as 0.
     void setUpdateIntervalMs(int ms);
     int updateIntervalMs() const { return m_updateIntervalMs; }
-    bool acceptsUpdate(qint64 monotonicMs);
+    // Virtual so an item with more than one reading (HistoryGraphItem) can
+    // keep the interval per reading.
+    virtual bool acceptsUpdate(qint64 monotonicMs);
 
     // Phase 3G-6 block 5 — MMIO binding. Null guid + empty (or
     // "--DEFAULT--") variable name means "no MMIO binding, fall back

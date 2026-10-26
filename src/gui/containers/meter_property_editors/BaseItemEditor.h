@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - populateReadingCombo(): the Reading row's list for other
+//                 reading rows (the history graph's axis 1). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
 //                 RX / TX". J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -133,6 +136,10 @@ protected:
 
     // Append a pre-made widget under a new label.
     void addRow(const QString& label, QWidget* widget);
+
+    // Fills a combo with "(none)" and every reading the Reading row offers,
+    // each item's data the MeterBinding id (-1 for none).
+    static void populateReadingCombo(QComboBox* combo);
 
     // Append a section header row (bold, slightly-highlighted).
     void addHeader(const QString& text);
