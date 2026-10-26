@@ -1003,6 +1003,11 @@
 //                the entry's slice to kTuneStepList[index], all 26 steps,
 //                and the lit step is the slice's list index. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 50: the antenna grid lights
+//                from its entry's slice (receive) and the transmit slice
+//                (transmit) with Thetis's on-state rules, and lights again
+//                when the transmit slice moves. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -10763,6 +10768,10 @@ void MainWindow::buildUI()
                           .arg(QChar(QLatin1Char('A' + newId))),
                       ToastSeverity::Info, 2000);
         });
+        // A container antenna grid's Tx Ant buttons show the transmit
+        // slice's antenna, so they light again when it moves.
+        connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int, int) { refreshContainerControls(); });
         // A handoff waiting for the unkey gate counts its slice as on the
         // air (StationServer::sliceTransmitting).
         connect(arb, &TxSliceArbiter::pendingHandoffChanged, this,
@@ -15894,12 +15903,14 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     // Button i is kTuneStepList[i]; a step off the list lights nothing.
     const int stepIndex = tuneStepIndexForHz(slice->stepHz());
 
-    const auto antIndex = [](const QString& ant) {
-        if (ant == QLatin1String("ANT1")) { return 0; }
-        if (ant == QLatin1String("ANT2")) { return 1; }
-        if (ant == QLatin1String("ANT3")) { return 2; }
-        return -1;
-    };
+    // The antenna grid's receive buttons follow the entry's slice; its
+    // transmit buttons show the transmit slice's antenna, the slice a TX
+    // click writes (onContainerAntennaSelected). Thetis lights them from
+    // VFO A's band and the TX band (MeterManager.cs:9701-9705 [v2.10.3.15]).
+    SliceModel* const txSlice = m_radioModel->txBoundSlice();
+    const QString txAntenna = (txSlice ? txSlice : slice)->txAntenna();
+    const std::array<QString, 3> rxOnlyInputs =
+        skuUiProfileFor(m_radioModel->hardwareProfile().model).rxOnlyLabels;
 
     const QString filterText = filterTextFor(slice);
     const Band band = bandFromFrequency(slice->frequency());
@@ -15947,8 +15958,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         } else if (auto* step = qobject_cast<TuneStepButtonItem*>(item)) {
             step->setActiveStep(stepIndex);
         } else if (auto* ant = qobject_cast<AntennaButtonItem*>(item)) {
-            ant->setActiveRxAntenna(antIndex(slice->rxAntenna()));
-            ant->setActiveTxAntenna(antIndex(slice->txAntenna()));
+            ant->setAntennas(slice->rxAntenna(), txAntenna, rxOnlyInputs);
         } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
             vfo->setUnavailableText(QString());
             vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
@@ -16132,7 +16142,8 @@ void MainWindow::onContainerAntennaSelected(ContainerWidget* c, int index)
         // R-R3-49, R-R3-21 (parity Task 11): the transmit slice's txAntenna,
         // as the VFO flag's TX antenna button writes it: a slice setting,
         // written in a remote window too (the Core's slice follows), not
-        // tied to the transmit permission.
+        // tied to the transmit permission. It only names the antenna;
+        // nothing here keys the radio.
         SliceModel* tx = m_radioModel->txBoundSlice();
         (tx ? tx : slice)->setTxAntenna(QStringLiteral("ANT%1").arg(index - 5));
     }

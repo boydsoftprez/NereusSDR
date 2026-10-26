@@ -9221,6 +9221,11 @@ target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 58: other buttons use Thetis button numbers
 # and every button's visibility is saved; older records still load.
 nereus_add_test(tst_other_button_ids)
+# Container item parity Task 50: the antenna grid follows its slice with
+# Thetis's on-state rules; a Tx Ant click writes the transmit slice only and
+# never keys.
+nereus_add_test(tst_antenna_button_item)
+target_compile_definitions(tst_antenna_button_item PRIVATE NEREUS_BUILD_TESTS)
 # Container item parity Task 59: Alt-drag reorders the other buttons (Shift
 # swaps), the order is saved, and the editor lists every offered button.
 nereus_add_test(tst_other_button_reorder)

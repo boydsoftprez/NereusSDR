@@ -18,6 +18,11 @@
 //   2026-10-26 - Column range from Thetis setup.cs (columnRange), which
 //                 the editor clamps to. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - On-state logic from Thetis setupButtons (setAntennas):
+//                 Rx Ant 1-3 lit only while no receive-only input is in
+//                 use, the receive-only and XVTR inputs lit by name, Tx Ant
+//                 1-3 from the transmit slice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -123,13 +128,28 @@ static const char* const kAntennaLabels[] = {
     "XVTR", "Tx1", "Tx2", "Tx3", "Rx/Tx"
 };
 
+namespace {
+// From Thetis MeterManager.cs:9651 [v2.10.3.15]:
+//   VisibleBits = (1 << 10) - 1; //1023, 10 bits
+constexpr uint32_t kNewGridVisibleBits = (1u << 10) - 1;
+
+// "ANT1" .. "ANT3" as port 0-2; anything else -1.
+int antennaPort(const QString& name)
+{
+    if (name == QLatin1String("ANT1")) { return 0; }
+    if (name == QLatin1String("ANT2")) { return 1; }
+    if (name == QLatin1String("ANT3")) { return 2; }
+    return -1;
+}
+} // namespace
+
 AntennaButtonItem::AntennaButtonItem(QObject* parent)
     : ButtonBoxItem(parent)
 {
     setButtonCount(kAntennaCount);
     setColumns(5);
     setCornerRadius(3.0f);
-    setVisibleBits(1023);
+    setVisibleBits(kNewGridVisibleBits);
 
     for (int i = 0; i < kAntennaCount; ++i) {
         setupButton(i, QString::fromLatin1(kAntennaLabels[i]));
@@ -155,18 +175,73 @@ AntennaButtonItem::AntennaButtonItem(QObject* parent)
 
 void AntennaButtonItem::setActiveRxAntenna(int index)
 {
+    if (index < 0 || index >= kFirstTxButton) { index = -1; }
     if (m_activeRxAnt == index) { return; }
-    if (m_activeRxAnt >= 0 && m_activeRxAnt < 3) { button(m_activeRxAnt).on = false; }
+    if (m_activeRxAnt >= 0) { button(m_activeRxAnt).on = false; }
     m_activeRxAnt = index;
-    if (m_activeRxAnt >= 0 && m_activeRxAnt < 3) { button(m_activeRxAnt).on = true; }
+    if (m_activeRxAnt >= 0) { button(m_activeRxAnt).on = true; }
 }
 
 void AntennaButtonItem::setActiveTxAntenna(int index)
 {
+    if (index < 0 || index >= 3) { index = -1; }
     if (m_activeTxAnt == index) { return; }
-    if (m_activeTxAnt >= 0 && m_activeTxAnt < 3) { button(6 + m_activeTxAnt).on = false; }
+    if (m_activeTxAnt >= 0) { button(kFirstTxButton + m_activeTxAnt).on = false; }
     m_activeTxAnt = index;
-    if (m_activeTxAnt >= 0 && m_activeTxAnt < 3) { button(6 + m_activeTxAnt).on = true; }
+    if (m_activeTxAnt >= 0) { button(kFirstTxButton + m_activeTxAnt).on = true; }
+}
+
+void AntennaButtonItem::setAntennas(const QString& rxAntenna, const QString& txAntenna,
+                                    const std::array<QString, 3>& rxOnlyInputs)
+{
+    // From Thetis MeterManager.cs:9689 [v2.10.3.15]: every button starts
+    // off (SetOn(1, i, false)); setActive* below light at most one receive
+    // and one transmit button.
+    //
+    // From Thetis MeterManager.cs:9708-9717 [v2.10.3.15]:
+    //   bool using_xvtr = ((int)rx_band >= (int)Band.VHF0 && (int)rx_band <= (int)Band.VHF13);
+    //   bool is_xvtr_rx = false;
+    //   ...
+    //   bool using_byp_ext1 = !using_xvtr && (GetRXAuxState(rx_band, 0) || GetRXAuxState(rx_band, 1));
+    // NereusSDR: the slice names its receive input itself, so the transverter
+    // input and the receive-only inputs are found by the radio's names for
+    // them (the names a click on buttons 3-4 writes), not from the band.
+    const auto isInput = [&rxAntenna, &rxOnlyInputs](size_t n) {
+        return !rxAntenna.isEmpty() && rxAntenna == rxOnlyInputs[n];
+    };
+    const bool isXvtrRx = isInput(2);
+    const bool usingBypExt1 = !isXvtrRx && (isInput(0) || isInput(1));
+
+    int rx = -1;
+    if (!usingBypExt1 && !isXvtrRx) {
+        // From Thetis MeterManager.cs:9721, :9725, :9729 [v2.10.3.15]:
+        //   if (!using_byp_ext1 && !is_xvtr_rx) SetOn(1, n, MeterManager.GetRXAntState(rx_band, n));
+        rx = antennaPort(rxAntenna);
+    } else if (usingBypExt1) {
+        // From Thetis MeterManager.cs:9734, :9738 [v2.10.3.15]:
+        //   if (!is_xvtr_rx && using_byp_ext1) SetOn(1, 3 + n, MeterManager.GetRXAuxState(rx_band, n));
+        rx = isInput(0) ? 3 : 4;
+    } else {
+        // From Thetis MeterManager.cs:9742 [v2.10.3.15]:
+        //   if (!using_byp_ext1 && using_xvtr) SetOn(1, 5, MeterManager.GetRXAuxState(rx_band, 2));
+        rx = kXvtrButton;
+    }
+    setActiveRxAntenna(rx);
+
+    // From Thetis MeterManager.cs:9748-9779 [v2.10.3.15]: Tx Ant n is lit
+    // from the transmit band's antenna, SetOn(1, 6 + n,
+    // MeterManager.GetTXAntState(tx_band, n)), unless the receive antenna on
+    // the transmit band is a port marked do-not-transmit (GetNoTX), which
+    // greys it. NereusSDR keeps a port blocked for transmit off a band's
+    // transmit antenna (AlexAntennaFacade::setTxAntForBand), so the
+    // transmit slice's antenna is never such a port.
+    setActiveTxAntenna(antennaPort(txAntenna));
+
+    // From Thetis MeterManager.cs:9781-9799 [v2.10.3.15]: Rx/Tx is lit only
+    // while the receive and transmit antennas are swapped (_rxtx_swap).
+    // NereusSDR has no swap (UnbuiltFeature::AntennaRxTxSplit), so it is
+    // never lit.
+    button(kRxTxButton).on = false;
 }
 
 void AntennaButtonItem::onButtonClicked(int index, Qt::MouseButton btn)

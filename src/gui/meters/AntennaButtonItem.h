@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - The grid lights from its slice's receive input and the
+//                 transmit slice's antenna, as Thetis's setupButtons does
+//                 (setAntennas). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -56,6 +60,8 @@ mw0lge@grange-lane.co.uk
 
 #include "ButtonBoxItem.h"
 
+#include <array>
+
 namespace NereusSDR {
 
 enum class HPSDRModel : int;  // forward declaration — Phase 3P-I-b T10
@@ -68,8 +74,28 @@ class AntennaButtonItem : public ButtonBoxItem {
 public:
     explicit AntennaButtonItem(QObject* parent = nullptr);
 
+    // From Thetis MeterManager.cs:9650 [v2.10.3.15]: Buttons = 10;
+    static constexpr int kAntennaCount = 10;
+    // Buttons 0-2 Rx Ant 1-3, 3-4 the receive-only inputs, 5 XVTR,
+    // 6-8 Tx Ant 1-3, 9 the Rx/Tx swap (MeterManager.cs:9719-9799).
+    static constexpr int kFirstTxButton = 6;
+    static constexpr int kXvtrButton = 5;
+    static constexpr int kRxTxButton = 9;
+
+    // The lit receive button (0-5, -1 for none) and transmit antenna
+    // (0-2 for Tx Ant 1-3, -1 for none).
     void setActiveRxAntenna(int index);
     void setActiveTxAntenna(int index);
+    int activeRxAntenna() const { return m_activeRxAnt; }
+    int activeTxAntenna() const { return m_activeTxAnt; }
+
+    // Lights the grid from a slice's receive input (`rxAntenna`: "ANT1" ..
+    // "ANT3", or one of the radio's receive-only input names
+    // `rxOnlyInputs`, SkuUiProfile::rxOnlyLabels, for buttons 3-5) and the
+    // transmit slice's antenna (`txAntenna`, "ANT1" .. "ANT3"), as Thetis's
+    // setupButtons does (MeterManager.cs:9689-9779). Rx/Tx is never lit.
+    void setAntennas(const QString& rxAntenna, const QString& txAntenna,
+                     const std::array<QString, 3>& rxOnlyInputs);
 
     // Phase 3P-I-a T17 — suppress click handling when the connected
     // board has no Alex. Rendered label still shows antennas but
@@ -100,10 +126,11 @@ signals:
 
 private:
     void onButtonClicked(int index, Qt::MouseButton button);
-    int m_activeRxAnt{0};
-    int m_activeTxAnt{0};
+    // Nothing is lit until the grid is told: a fresh grid lit nothing but
+    // said 0, so a slice on ANT1 never lit Rx Ant 1 or Tx Ant 1.
+    int m_activeRxAnt{-1};
+    int m_activeTxAnt{-1};
     bool m_hasAlex{true};
-    static constexpr int kAntennaCount = 10;
 };
 
 } // namespace NereusSDR
