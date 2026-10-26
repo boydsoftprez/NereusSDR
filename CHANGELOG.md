@@ -104,6 +104,12 @@ still connect to each other as before.
   pan, the flag, RIT and XIT, notch width, zoom, reference level and the dBm
   strip.
   ([#594](https://github.com/boydsoftprez/NereusSDR/pull/594))
+- With CTUN on, tuning to a frequency outside the zoomed view (typed entry or
+  a large jump) now moves the receiver there. Before, the flag showed the new
+  frequency but the receiver stayed on the old one. This touches the receive
+  path and has not been checked on a radio.
+  ([#655](https://github.com/boydsoftprez/NereusSDR/pull/655), issue
+  [#648](https://github.com/boydsoftprez/NereusSDR/issues/648))
 
 ### Transmit
 
