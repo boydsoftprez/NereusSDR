@@ -368,6 +368,11 @@ still connect to each other as before.
 - For support: the Core logs each receiver's I/Q level, and any noise
   reduction call that takes longer than 50 ms, with the stage that ran.
   ([#617](https://github.com/boydsoftprez/NereusSDR/pull/617))
+- Windows no longer logs an Application Error for `nereus-audio-capture.exe`
+  each time the Core starts. The audio capture helper now ends cleanly when the
+  Core closes it. Tested on Windows; an installed Core has not been checked
+  yet.
+  ([#633](https://github.com/boydsoftprez/NereusSDR/pull/633))
 - For support: when a remote connection attempt ends with no answer, the log
   line now says how long after the start it ended and what it met, such as a
   refused connection, a connection closed during the secure handshake, or a
