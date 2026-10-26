@@ -47,6 +47,11 @@
 //                 CFC EQ, Leveler, PhaRot and the MIC, COMP, VOX, drive and
 //                 tune power steps). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Display and window buttons (container item parity Task
+//                 62): 12 more ids are offered (NF, Peak Blobs, Cur Info,
+//                 Spots, Fill, ZTB, A-Peak, MAF+/-, Setup, Diversity,
+//                 Linearity). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -224,6 +229,18 @@ constexpr OtherButtonItem::ButtonId kTransmitSettingButtons[] = {
     OtherButtonItem::ButtonId::Drive0, OtherButtonItem::ButtonId::Tun0,
 };
 
+// Container item parity Task 62: the display and window buttons NereusSDR
+// acts on (ContainerButtonDispatcher): the panadapter toggles, Spots, the
+// master volume steps and the Setup, Diversity and Linearity windows.
+constexpr OtherButtonItem::ButtonId kDisplayAndWindowButtons[] = {
+    OtherButtonItem::ButtonId::Nf, OtherButtonItem::ButtonId::PeakBlobs,
+    OtherButtonItem::ButtonId::CursorInfo, OtherButtonItem::ButtonId::Spots,
+    OtherButtonItem::ButtonId::FillSpectrum, OtherButtonItem::ButtonId::Ztb,
+    OtherButtonItem::ButtonId::ActivePeak, OtherButtonItem::ButtonId::MafP5,
+    OtherButtonItem::ButtonId::MafM5, OtherButtonItem::ButtonId::FormSetup,
+    OtherButtonItem::ButtonId::FormDiversity, OtherButtonItem::ButtonId::FormLinearity,
+};
+
 bool isReceiveButton(OtherButtonItem::ButtonId id)
 {
     return std::find(std::begin(kReceiveButtons), std::end(kReceiveButtons), id)
@@ -234,6 +251,12 @@ bool isTransmitSettingButton(OtherButtonItem::ButtonId id)
 {
     return std::find(std::begin(kTransmitSettingButtons), std::end(kTransmitSettingButtons), id)
         != std::end(kTransmitSettingButtons);
+}
+
+bool isDisplayOrWindowButton(OtherButtonItem::ButtonId id)
+{
+    return std::find(std::begin(kDisplayAndWindowButtons), std::end(kDisplayAndWindowButtons), id)
+        != std::end(kDisplayAndWindowButtons);
 }
 
 bool isMacroId(int id)
@@ -464,7 +487,9 @@ bool OtherButtonItem::isOffered(ButtonId id) const
     if (isMacroId(value)) { return true; }
     // Power is not a NereusSDR button (maintainer decision 2026-09-30).
     if (id == ButtonId::Power) { return false; }
-    if (isReceiveButton(id) || isTransmitSettingButton(id)) { return true; }
+    if (isReceiveButton(id) || isTransmitSettingButton(id) || isDisplayOrWindowButton(id)) {
+        return true;
+    }
     const int old = OtherButtonCatalog::buttonIdToLegacy(id);
     return old >= 0 && old < kCoreLabelCount;
 }

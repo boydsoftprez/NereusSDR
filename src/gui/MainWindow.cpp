@@ -937,6 +937,12 @@
 //                transmit model's COMP, VOX, DEXP, TX EQ, CFC, CFC EQ,
 //                leveler and phase rotator. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 62: the container display and
+//                window buttons' hooks: Spots on every pan, MAF+/- through
+//                the title bar's volume slider, and Setup, Diversity and
+//                Linearity opened as their menu entries open them, under
+//                the same rules. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -9282,6 +9288,43 @@ void MainWindow::buildUI()
         hooks.setDisplayDuplex = [this](bool on) { setDisplayDuplexSetting(on); };
         hooks.displayDuplexReason = [this] {
             return MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+        };
+        // Container item parity Task 62: Spots, the Spot Hub's switch;
+        // saved, and every pan follows (the Spot Hub reloads only the
+        // active one).
+        hooks.spotsShown = [] { return ContainerButtonDispatcher::spotsShownSetting(); };
+        hooks.setSpotsShown = [this](bool on) {
+            QList<SpectrumWidget*> pans;
+            if (m_panStack) {
+                for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                    if (applet) { pans.append(applet->spectrumWidget()); }
+                }
+            }
+            ContainerButtonDispatcher::showSpotsOnPans(on, pans);
+        };
+        // Task 62: MAF+ / MAF- move the title bar's PC volume slider, live
+        // in every window (this computer's speakers).
+        hooks.stepMasterVolume = [this](double delta) {
+            if (m_titleBar && m_titleBar->masterOutput()) {
+                m_titleBar->masterOutput()->stepVolume(delta);
+            }
+        };
+        // Task 62: File > Settings..., Tools > Diversity... and Tools >
+        // PureSignal..., with the PureSignal entry's own gate (a remote
+        // window's applyRemoteRoleGating disables it, with its reason,
+        // until the Core advertises PureSignal 3).
+        hooks.openSetup = [this] {
+            auto* dialog = createSetupDialog();
+            if (dialog == nullptr) {
+                return;  // the gate refused and has already said why
+            }
+            dialog->show();
+        };
+        hooks.openDiversity = [this] { openDiversityDialog(); };
+        hooks.openLinearity = [this] { openPureSignalDialog(); };
+        hooks.linearityRefusal = [this] {
+            return m_actPureSignal && !m_actPureSignal->isEnabled() ? m_actPureSignal->toolTip()
+                                                                    : QString();
         };
         // R-R3-49: VAX 1 / VAX 2 open and close this computer's VAX
         // outputs, as Setup > Audio > VAX does (live in a remote window).

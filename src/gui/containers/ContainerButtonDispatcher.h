@@ -43,6 +43,14 @@
 // Core still decides. VOX arms voice keying as the TX applet's VOX does;
 // no button keys the radio.
 //
+// Display and window buttons (container item parity Task 62): NF, Peak
+// Blobs, Cur Info, Fill, ZTB and A-Peak act on the panadapter that shows the
+// container's slice (spectrumFor), through the setters its Display pill and
+// Setup call; Thetis's are console-wide. Spots is saved as the Spot Hub
+// saves it and every panadapter follows. MAF+ and MAF- move this computer's
+// master volume through its slider. Setup, Diversity and Linearity open the
+// windows their menu entries open, under the same rules. None keys.
+//
 // The dispatcher holds no state of its own: every lit state is read from
 // the target each time apply() runs.
 //
@@ -83,6 +91,12 @@
 //                                    (transmitSettingsRefusal, voxRefusal);
 //                                    none keys. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 62: the
+//                                    display and window buttons (spotsShown,
+//                                    setSpotsShown, stepMasterVolume,
+//                                    openSetup, openDiversity, openLinearity,
+//                                    linearityRefusal); none keys.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -156,6 +170,26 @@ public:
         std::function<bool()> displayDuplexOn;
         std::function<void(bool)> setDisplayDuplex;
         std::function<QString()> displayDuplexReason;
+        // Container item parity Task 62: Spots, the Spot Hub's "Spots"
+        // switch (IsSpotsEnabled): whether it is on, and the click, which
+        // saves it and has every panadapter follow (spotsShownSetting and
+        // showSpotsOnPans are the window's own).
+        std::function<bool()> spotsShown;
+        std::function<void(bool)> setSpotsShown;
+        // Task 62: MAF+ / MAF-, this computer's master volume moved by
+        // `delta` (linear, 0..1) through the title bar's slider
+        // (MasterOutputWidget::stepVolume).
+        std::function<void(double delta)> stepMasterVolume;
+        // Task 62: the Setup, Diversity and Linearity (PureSignal) windows,
+        // as File > Settings..., Tools > Diversity... and Tools >
+        // PureSignal... open them.
+        std::function<void()> openSetup;
+        std::function<void()> openDiversity;
+        std::function<void()> openLinearity;
+        // Task 62: why Tools > PureSignal... is disabled here now (a remote
+        // window whose Core has not advertised PureSignal 3), empty when it
+        // is enabled.
+        std::function<QString()> linearityRefusal;
     };
 
     struct State {
@@ -194,6 +228,15 @@ public:
     // Plain reasons, exposed for tests.
     static QString noRadioTransmitReason();
     static QString notchWhileTransmittingReason();
+    // Task 62 (and Peak, CTUN): no panadapter shows the container's slice.
+    static QString noPanadapterReason();
+
+    // Task 62: the Spot Hub's "Spots" switch as saved (IsSpotsEnabled, on
+    // by default, as SpectrumWidget::loadSpotDisplaySettings reads it).
+    static bool spotsShownSetting();
+    // Task 62: save the switch as the Spot Hub does, then have each pan
+    // re-read its spot settings (loadSpotDisplaySettings).
+    static void showSpotsOnPans(bool on, const QList<SpectrumWidget*>& pans);
 
 private:
     QString sliceUnavailableReason(int rxSource) const;
@@ -207,6 +250,10 @@ private:
     void transmitSettingState(Id id, State& st) const;
     // Task 61: a transmit setting button's click.
     QString clickTransmitSetting(Id id, int rxSource);
+    // Task 62: a display or window button's lit state and gate.
+    void displayOrWindowState(Id id, int rxSource, State& st) const;
+    // Task 62: a display or window button's click.
+    void clickDisplayOrWindow(Id id, int rxSource, bool turnOn);
     // Task 61: the band whose tune power a TUN step changes until the
     // transmit band is known (the TX applet's m_currentBand).
     Band tunePowerBand(int rxSource) const;

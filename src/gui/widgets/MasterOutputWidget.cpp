@@ -52,6 +52,10 @@
 //                sliders keep their filled side in the workspace preview
 //                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Container item parity Task 62: stepVolume() moves the
+//                slider, so the container MAF+ / MAF- buttons take the
+//                slider's own path (engine, audio/Master/Volume, signal).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
@@ -84,6 +88,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <optional>
 
@@ -123,6 +128,9 @@ static const char* kPcMutedIcon = "pc-muted";
 namespace {
 
 constexpr char kSpeakersPrefix[] = "audio/Speakers";
+
+// The slider's steps per unit of linear volume (0-100 for 0-1).
+constexpr double kSliderPerUnitVolume = 100.0;
 
 // D10: the saved WASAPI option keys stay in the file, never rewritten (as
 // the Outputs card keeps them).
@@ -918,6 +926,15 @@ void MasterOutputWidget::setStacked(bool stacked, int stackedLabelWidth)
     m_iconPx = HeaderVolumeStyle::applyForm(m_speakerBtn, m_pcLabel, m_slider, m_dbLabel,
                                             stacked, stackedLabelWidth, kDbLabelStyle);
     applySpeakerIcon(m_speakerBtn->isChecked());
+}
+
+void MasterOutputWidget::stepVolume(double delta)
+{
+    // The slider is 0-100 for a linear volume of 0-1.
+    const int step = static_cast<int>(std::lround(delta * kSliderPerUnitVolume));
+    // setValue runs the slider's valueChanged path: engine, saved, emitted.
+    m_slider->setValue(std::clamp(m_slider->value() + step, m_slider->minimum(),
+                                  m_slider->maximum()));
 }
 
 void MasterOutputWidget::onSpeakersConfigChanged(const AudioDeviceConfig& cfg)

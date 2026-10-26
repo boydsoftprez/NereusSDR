@@ -34,6 +34,19 @@
 //     rises by 5.
 //   - None keys the radio; a preview's click goes nowhere.
 //
+// Container item parity Task 62: 12 display and window buttons (Thetis
+// console.cs:51498-51618 [v2.10.3.15]):
+//   - NF, Peak Blobs, Cur Info, Fill and A-Peak toggle the panadapter that
+//     shows the container's slice, not another pan, and light from it;
+//     Peak Blobs and A-Peak are saved as that pan's own value. ZTB zooms
+//     that pan. With no pan showing the slice they say so.
+//   - Spots is saved and every pan follows.
+//   - MAF+ and MAF- move the master volume through its slider, saved and
+//     clamped to 0..1.
+//   - Setup, Diversity and Linearity open their windows; Linearity follows
+//     its menu entry's gate.
+//   - None keys; a preview's click toggles no pan and opens no window.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 60.
@@ -45,6 +58,11 @@
 //                                    pushed" warning, which tuning with no
 //                                    radio raises. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Container item parity Task 62: the
+//                                    display and window buttons; the
+//                                    fixture has a panadapter for each
+//                                    slice and counts the windows opened.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -53,6 +71,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QSignalSpy>
+#include <QSlider>
 #include <QSplitter>
 #include <QTemporaryDir>
 
@@ -66,9 +85,11 @@
 #include "core/session/IStationLink.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
+#include "core/settings/PanDisplayKeys.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "gui/containers/ContainerContentHost.h"
@@ -82,7 +103,9 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "gui/widgets/MasterOutputWidget.h"
 #include "models/Band.h"
+#include "models/BandPlanManager.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -117,6 +140,47 @@ const QList<Id> kTransmitSettings = {
     Id::DriveP5, Id::DriveM5, Id::TuneP5, Id::TuneM5, Id::Drive0, Id::Tun0,
 };
 
+// The 12 display and window buttons of Task 62, in Thetis id order.
+const QList<Id> kDisplayAndWindow = {
+    Id::Nf, Id::PeakBlobs, Id::CursorInfo, Id::Spots, Id::FillSpectrum, Id::Ztb,
+    Id::ActivePeak, Id::MafP5, Id::MafM5, Id::FormSetup, Id::FormDiversity, Id::FormLinearity,
+};
+
+// Task 62: the panadapter toggles and their getters.
+struct PanToggle {
+    Id id;
+    QString keyBase;  // the pan's saved display key
+    bool (SpectrumWidget::*get)() const;
+};
+const QList<PanToggle> kPanToggles = {
+    {Id::Nf, QStringLiteral("DisplayShowNoiseFloor"), &SpectrumWidget::showNoiseFloor},
+    {Id::PeakBlobs, QStringLiteral("DisplayPeakBlobsEnabled"), &SpectrumWidget::peakBlobsEnabled},
+    {Id::CursorInfo, QStringLiteral("DisplayShowCursorFreq"), &SpectrumWidget::cursorFreqVisible},
+    {Id::FillSpectrum, QStringLiteral("DisplayPanFill"), &SpectrumWidget::panFillEnabled},
+    {Id::ActivePeak, QStringLiteral("DisplayActivePeakHoldEnabled"),
+     &SpectrumWidget::activePeakHoldEnabled},
+};
+
+// Everything a display button may change on a pan.
+struct PanSnapshot {
+    QList<bool> toggles;
+    bool spots;
+    double centre;
+    double bandwidth;
+
+    static PanSnapshot of(const SpectrumWidget& w)
+    {
+        PanSnapshot snap{{}, w.showSpots(), w.centerFrequency(), w.bandwidth()};
+        for (const PanToggle& t : kPanToggles) { snap.toggles << (w.*t.get)(); }
+        return snap;
+    }
+    bool operator==(const PanSnapshot& o) const
+    {
+        return toggles == o.toggles && spots == o.spots && centre == o.centre
+            && bandwidth == o.bandwidth;
+    }
+};
+
 // RadioModel warns that it cannot push the transmit frequency each time the
 // transmit slice is tuned with no radio connected (pushTxFrequencyFromTxSlice).
 // These tests tune with no radio on purpose; every other message passes.
@@ -132,6 +196,28 @@ private:
     {
         if (type == QtWarningMsg
             && message.startsWith(QStringLiteral("TX frequency NOT pushed: no connection yet"))) {
+            return;
+        }
+        if (s_previous) { s_previous(type, context, message); }
+    }
+    static inline QtMessageHandler s_previous = nullptr;
+};
+
+// Task 62: a SpectrumWidget built on the offscreen platform says once per
+// GPU child that the platform has no QRhi; the fixture's two pans would say
+// it for every case. Only that line is dropped; every other message passes.
+class QuietOffscreenRhi {
+public:
+    QuietOffscreenRhi() { s_previous = qInstallMessageHandler(&drop); }
+    ~QuietOffscreenRhi() { qInstallMessageHandler(s_previous); }
+    QuietOffscreenRhi(const QuietOffscreenRhi&) = delete;
+    QuietOffscreenRhi& operator=(const QuietOffscreenRhi&) = delete;
+
+private:
+    static void drop(QtMsgType type, const QMessageLogContext& context, const QString& message)
+    {
+        if (type == QtWarningMsg
+            && message == QStringLiteral("QRhiWidget: QRhi is not supported on this platform.")) {
             return;
         }
         if (s_previous) { s_previous(type, context, message); }
@@ -355,11 +441,26 @@ private:
     struct Fixture {
         // First, so it outlives the model's own messages.
         QuietUnconnectedTxFrequency quiet;
+        // Task 62: and the pans' offscreen QRhi line.
+        QuietOffscreenRhi quietRhi;
         RadioModel model;
         SliceModel* a{nullptr};
         SliceModel* b{nullptr};
+        // Task 62: the panadapter showing each slice.
+        SpectrumWidget spectrumA;
+        SpectrumWidget spectrumB;
         // Slice ids this window may not change (another device's).
         QSet<int> refused;
+        // Task 62: slice ids no panadapter shows.
+        QSet<int> noPan;
+        // Task 62: the windows opened and the volume steps asked for; the
+        // master volume widget, when a test has one.
+        int setups{0};
+        int diversities{0};
+        int linearities{0};
+        QString linearityRefusal;
+        QList<double> volumeSteps;
+        MasterOutputWidget* master{nullptr};
         std::unique_ptr<ContainerButtonDispatcher> dispatcher;
 
         Fixture()
@@ -378,6 +479,23 @@ private:
                 return refused.contains(sliceId)
                     ? QStringLiteral("Another device controls this slice.") : QString();
             };
+            hooks.spectrumFor = [this](SliceModel* s) -> SpectrumWidget* {
+                if (!s || noPan.contains(s->sliceIndex())) { return nullptr; }
+                return s == a ? &spectrumA : (s == b ? &spectrumB : nullptr);
+            };
+            // MainWindow's Spots hooks, over this window's two pans.
+            hooks.spotsShown = [] { return ContainerButtonDispatcher::spotsShownSetting(); };
+            hooks.setSpotsShown = [this](bool on) {
+                ContainerButtonDispatcher::showSpotsOnPans(on, {&spectrumA, &spectrumB});
+            };
+            hooks.stepMasterVolume = [this](double delta) {
+                volumeSteps << delta;
+                if (master) { master->stepVolume(delta); }
+            };
+            hooks.openSetup = [this] { ++setups; };
+            hooks.openDiversity = [this] { ++diversities; };
+            hooks.openLinearity = [this] { ++linearities; };
+            hooks.linearityRefusal = [this] { return linearityRefusal; };
             dispatcher = std::make_unique<ContainerButtonDispatcher>(&model, std::move(hooks));
         }
     };
@@ -762,6 +880,8 @@ private slots:
             for (Id id : kReceive) { f.dispatcher->click(id, kSliceA); }
             // Task 61: and the transmit setting buttons, VOX included.
             for (Id id : kTransmitSettings) { f.dispatcher->click(id, kSliceA); }
+            // Task 62: and the display and window buttons.
+            for (Id id : kDisplayAndWindow) { f.dispatcher->click(id, kSliceA); }
         }
         QVERIFY(!f.model.isTransmitting());
         QVERIFY(!f.model.transmitModel().isTune());
@@ -1041,19 +1161,261 @@ private slots:
             QVERIFY(meter->testAttribute(Qt::WA_TransparentForMouseEvents));
         }
         const TransmitSnapshot txBefore = TransmitSnapshot::of(f.model.transmitModel());
+        const PanSnapshot panABefore = PanSnapshot::of(f.spectrumA);
+        const PanSnapshot panBBefore = PanSnapshot::of(f.spectrumB);
         emit copy->otherButtonClicked(int(Id::Nr));
         for (Id id : kReceive) { emit copy->otherButtonClicked(int(id)); }
         // Task 61: and the transmit setting buttons.
         for (Id id : kTransmitSettings) { emit copy->otherButtonClicked(int(id)); }
+        // Task 62: and the display and window buttons: no live pan
+        // toggles and no window opens.
+        for (Id id : kDisplayAndWindow) { emit copy->otherButtonClicked(int(id)); }
         QCOMPARE(dispatched, 0);
         QCOMPARE(f.a->activeNr(), NrSlot::Off);
         QVERIFY(TransmitSnapshot::of(f.model.transmitModel()) == txBefore);
+        QVERIFY(PanSnapshot::of(f.spectrumA) == panABefore);
+        QVERIFY(PanSnapshot::of(f.spectrumB) == panBBefore);
+        QCOMPARE(f.setups + f.diversities + f.linearities, 0);
+        QVERIFY(f.volumeSteps.isEmpty());
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("IsSpotsEnabled")));
 
         // The live grid's click reaches it (the wiring above is real).
         emit live->otherButtonClicked(int(Id::Nr));
         QCOMPARE(dispatched, 1);
         QCOMPARE(f.a->activeNr(), NrSlot::NR1);
         dialog.reject();
+    }
+
+    // Task 62: each display and window button is offered under its Thetis
+    // caption, and its editor row is enabled.
+    void everyDisplayAndWindowButtonIsOfferedAndItsEditorRowEnabled()
+    {
+        checkOfferedWithEnabledEditorRows(kDisplayAndWindow, {
+            "NF", "Peak Blobs", "Cur Info", "Spots", "Fill", "ZTB", "A-Peak", "MAF+", "MAF-",
+            "Setup", "Diversity", "Linearity"});
+    }
+
+    // Task 62 acceptance: each toggle changes the panadapter of the
+    // container's slice (A's, while slice B is active and has its own) and
+    // lights from it at once; slice B's container lights from B's pan.
+    void displayTogglesActOnTheContainerSlicesPanadapter()
+    {
+        for (const PanToggle& t : kPanToggles) {
+            Fixture f;
+            const QByteArray name = QByteArray::number(int(t.id));
+            const bool a0 = (f.spectrumA.*t.get)();
+            const bool b0 = (f.spectrumB.*t.get)();
+            const auto before = f.dispatcher->stateOf(t.id, kSliceA);
+            QVERIFY2(before.available, name.constData());
+            QCOMPARE(before.on, a0);
+
+            QCOMPARE(f.dispatcher->click(t.id, kSliceA), QString());
+            QCOMPARE((f.spectrumA.*t.get)(), !a0);
+            QCOMPARE((f.spectrumB.*t.get)(), b0);
+            QCOMPARE(f.dispatcher->stateOf(t.id, kSliceA).on, !a0);
+            QCOMPARE(f.dispatcher->stateOf(t.id, kSliceA + 1).on, b0);
+            QCOMPARE(f.model.activeSlice(), f.b);
+            // The pan's own value, as its pill and Setup read it.
+            QCOMPARE(f.spectrumA.perPanDisplayValue(t.keyBase),
+                     !a0 ? QStringLiteral("True") : QStringLiteral("False"));
+            OtherButtonItem item;
+            f.dispatcher->apply(&item, kSliceA);
+            QCOMPARE(item.buttonState(t.id), !a0);
+            QVERIFY(item.isButtonAvailable(t.id));
+
+            QCOMPARE(f.dispatcher->click(t.id, kSliceA), QString());
+            QCOMPARE((f.spectrumA.*t.get)(), a0);
+            QCOMPARE((f.spectrumB.*t.get)(), b0);
+        }
+    }
+
+    // Task 62: Peak Blobs and A-Peak are saved as the pan's own value (the
+    // per-pan path Setup's Peaks page takes for a selected pan), never as
+    // the Setup default every pan inherits.
+    void peakBlobsAndActivePeakSaveThePansOwnValue()
+    {
+        for (const QString& key : {QStringLiteral("DisplayPeakBlobsEnabled"),
+                                   QStringLiteral("DisplayActivePeakHoldEnabled")}) {
+            Fixture f;
+            const Id id = key == QStringLiteral("DisplayPeakBlobsEnabled") ? Id::PeakBlobs
+                                                                           : Id::ActivePeak;
+            QCOMPARE(f.dispatcher->click(id, kSliceA), QString());
+            QTRY_VERIFY2(PanDisplayKeys::hasOverride(key, f.spectrumA.panIndex()),
+                         qPrintable(key));
+            QVERIFY(!AppSettings::instance().contains(PanDisplayKeys::defaultKey(key)));
+        }
+    }
+
+    // Task 62: ZTB zooms the container slice's pan only, and never lights.
+    void ztbZoomsTheContainerSlicesPanadapter()
+    {
+        BandPlanManager plans;
+        plans.loadPlans();
+        QVERIFY(!plans.segments().isEmpty());
+        Fixture f;
+        for (SpectrumWidget* w : {&f.spectrumA, &f.spectrumB}) {
+            w->setBandPlanManager(&plans);
+            w->setVfoFrequency(14'100'000.0);
+            w->setFrequencyRange(14'100'000.0, 48'000.0);
+        }
+        QSignalSpy zoomA(&f.spectrumA, &SpectrumWidget::bandwidthChangeRequested);
+        QSignalSpy zoomB(&f.spectrumB, &SpectrumWidget::bandwidthChangeRequested);
+        QVERIFY(f.dispatcher->stateOf(Id::Ztb, kSliceA).available);
+        QCOMPARE(f.dispatcher->click(Id::Ztb, kSliceA), QString());
+        QCOMPARE(zoomA.count(), 1);
+        QCOMPARE(zoomB.count(), 0);
+        QVERIFY(!f.dispatcher->stateOf(Id::Ztb, kSliceA).on);
+        for (SpectrumWidget* w : {&f.spectrumA, &f.spectrumB}) { w->setBandPlanManager(nullptr); }
+    }
+
+    // Task 62 acceptance: with no panadapter showing the slice, the pan
+    // buttons say so and a click changes nothing; a slice that is not open
+    // says that instead. Spots, MAF and the windows are not the slice's.
+    void withNoPanadapterThePanButtonsSaySo()
+    {
+        Fixture f;
+        f.noPan.insert(0);  // slice A
+        const PanSnapshot a = PanSnapshot::of(f.spectrumA);
+        const PanSnapshot b = PanSnapshot::of(f.spectrumB);
+        for (Id id : {Id::Nf, Id::PeakBlobs, Id::CursorInfo, Id::FillSpectrum, Id::Ztb,
+                      Id::ActivePeak}) {
+            const auto st = f.dispatcher->stateOf(id, kSliceA);
+            QVERIFY2(!st.available, qPrintable(QString::number(int(id))));
+            QCOMPARE(st.reason, QStringLiteral("No panadapter shows this slice."));
+            QCOMPARE(st.reason, ContainerButtonDispatcher::noPanadapterReason());
+            QCOMPARE(f.dispatcher->click(id, kSliceA), st.reason);
+            QCOMPARE(f.dispatcher->stateOf(id, kSliceC).reason,
+                     ContainerButtonDispatcher::noSliceReason(kSliceC));
+        }
+        QVERIFY(PanSnapshot::of(f.spectrumA) == a);
+        QVERIFY(PanSnapshot::of(f.spectrumB) == b);
+        for (Id id : {Id::Spots, Id::MafP5, Id::MafM5, Id::FormSetup, Id::FormDiversity,
+                      Id::FormLinearity}) {
+            QVERIFY2(f.dispatcher->stateOf(id, kSliceA).available,
+                     qPrintable(QString::number(int(id))));
+            QVERIFY(f.dispatcher->stateOf(id, kSliceC).available);
+        }
+        // Peak keeps the same words.
+        QCOMPARE(f.dispatcher->stateOf(Id::PeakHold, kSliceA).reason,
+                 ContainerButtonDispatcher::noPanadapterReason());
+    }
+
+    // Task 62 acceptance: Spots is saved as the Spot Hub saves it, and
+    // every pan follows, slice B's included.
+    void spotsPersistAndEveryPanFollows()
+    {
+        Fixture f;
+        QVERIFY(f.spectrumA.showSpots());
+        QVERIFY(f.spectrumB.showSpots());
+        QVERIFY(f.dispatcher->stateOf(Id::Spots, kSliceA).on);
+        QCOMPARE(f.dispatcher->click(Id::Spots, kSliceA), QString());
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("IsSpotsEnabled")).toString(),
+                 QStringLiteral("False"));
+        QVERIFY(!f.spectrumA.showSpots());
+        QVERIFY(!f.spectrumB.showSpots());
+        QVERIFY(!f.dispatcher->stateOf(Id::Spots, kSliceA).on);
+        // A container on any slice shows the same.
+        QVERIFY(!f.dispatcher->stateOf(Id::Spots, kSliceC).on);
+        // A pan that reads its spot settings later (a new pan) follows.
+        SpectrumWidget later;
+        later.loadSpotDisplaySettings();
+        QVERIFY(!later.showSpots());
+        QCOMPARE(f.dispatcher->click(Id::Spots, kSliceC), QString());
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("IsSpotsEnabled")).toString(),
+                 QStringLiteral("True"));
+        QVERIFY(f.spectrumA.showSpots());
+        QVERIFY(f.spectrumB.showSpots());
+        QVERIFY(f.dispatcher->stateOf(Id::Spots, kSliceA).on);
+    }
+
+    // Task 62 acceptance: MAF+ and MAF- move the master volume by 5 on the
+    // slider (0.05), saved and announced as the slider does, clamped to
+    // 0..1; they never light.
+    void mafStepsTheMasterVolumeLikeItsSlider()
+    {
+        AppSettings::instance().setValue(QStringLiteral("audio/Master/Volume"),
+                                         QStringLiteral("0.500"));
+        Fixture f;
+        MasterOutputWidget widget(nullptr);
+        f.master = &widget;
+        auto* slider = widget.findChild<QSlider*>();
+        QVERIFY(slider);
+        QCOMPARE(slider->value(), 50);
+        QSignalSpy changed(&widget, &MasterOutputWidget::volumeChanged);
+        const auto saved = [] {
+            return AppSettings::instance().value(QStringLiteral("audio/Master/Volume")).toString();
+        };
+
+        QCOMPARE(f.dispatcher->click(Id::MafP5, kSliceA), QString());
+        QCOMPARE(slider->value(), 55);
+        QCOMPARE(saved(), QStringLiteral("0.550"));
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.last().first().toFloat(), 0.55f);
+        QCOMPARE(f.dispatcher->click(Id::MafM5, kSliceA), QString());
+        QCOMPARE(f.dispatcher->click(Id::MafM5, kSliceA), QString());
+        QCOMPARE(slider->value(), 45);
+        QCOMPARE(saved(), QStringLiteral("0.450"));
+        QCOMPARE(f.volumeSteps, (QList<double>{0.05, -0.05, -0.05}));
+
+        slider->setValue(97);
+        f.dispatcher->click(Id::MafP5, kSliceA);
+        QCOMPARE(slider->value(), 100);
+        QCOMPARE(saved(), QStringLiteral("1.000"));
+        const int atTop = changed.count();
+        f.dispatcher->click(Id::MafP5, kSliceA);
+        QCOMPARE(slider->value(), 100);
+        QCOMPARE(changed.count(), atTop);
+        slider->setValue(3);
+        f.dispatcher->click(Id::MafM5, kSliceA);
+        QCOMPARE(slider->value(), 0);
+        QCOMPARE(saved(), QStringLiteral("0.000"));
+        f.dispatcher->click(Id::MafM5, kSliceA);
+        QCOMPARE(slider->value(), 0);
+        QVERIFY(!f.dispatcher->stateOf(Id::MafP5, kSliceA).on);
+        QVERIFY(!f.dispatcher->stateOf(Id::MafM5, kSliceA).on);
+        f.master = nullptr;
+    }
+
+    // Task 62 acceptance: Setup, Diversity and Linearity open their
+    // windows and never light; Linearity follows its menu entry's gate
+    // (disabled with the entry's reason, never hidden); with no window to
+    // open the button says it does nothing.
+    void windowButtonsOpenTheirWindowsUnderTheirMenusRules()
+    {
+        Fixture f;
+        QCOMPARE(f.dispatcher->click(Id::FormSetup, kSliceA), QString());
+        QCOMPARE(f.dispatcher->click(Id::FormDiversity, kSliceA), QString());
+        QCOMPARE(f.dispatcher->click(Id::FormLinearity, kSliceA), QString());
+        QCOMPARE(f.setups, 1);
+        QCOMPARE(f.diversities, 1);
+        QCOMPARE(f.linearities, 1);
+        for (Id id : {Id::FormSetup, Id::FormDiversity, Id::FormLinearity}) {
+            QVERIFY(!f.dispatcher->stateOf(id, kSliceA).on);
+        }
+
+        f.linearityRefusal = QStringLiteral("The connected Core has not advertised PureSignal 3.");
+        const auto st = f.dispatcher->stateOf(Id::FormLinearity, kSliceA);
+        QVERIFY(!st.available);
+        QCOMPARE(st.reason, f.linearityRefusal);
+        QCOMPARE(f.dispatcher->click(Id::FormLinearity, kSliceA), f.linearityRefusal);
+        QCOMPARE(f.linearities, 1);
+        OtherButtonItem item;
+        item.setButtonVisible(Id::FormLinearity, true);
+        f.dispatcher->apply(&item, kSliceA);
+        QVERIFY(!item.isButtonAvailable(Id::FormLinearity));
+        QVERIFY(item.isButtonShown(Id::FormLinearity));
+        // Setup and Diversity stay open to a click, as their menu entries.
+        QVERIFY(f.dispatcher->stateOf(Id::FormSetup, kSliceA).available);
+        QVERIFY(f.dispatcher->stateOf(Id::FormDiversity, kSliceA).available);
+
+        // A window that supplies none of these hooks.
+        ContainerButtonDispatcher bare(&f.model, ContainerButtonDispatcher::Hooks{});
+        for (Id id : kDisplayAndWindow) {
+            const auto none = bare.stateOf(id, kSliceA);
+            QVERIFY2(!none.available, qPrintable(QString::number(int(id))));
+            QVERIFY(!none.reason.isEmpty());
+            QCOMPARE(bare.click(id, kSliceA), none.reason);
+        }
     }
 
     // UI evidence: a grid of every receive button, lit from slice A.
@@ -1079,6 +1441,30 @@ private slots:
         p.end();
         QVERIFY(QDir().mkpath(dir));
         QVERIFY(image.save(QDir(dir).filePath(QStringLiteral("receive-buttons-grid.png"))));
+    }
+
+    // Task 62 UI evidence: the display and window buttons, NF and Fill lit
+    // from slice A's pan, Linearity disabled with its menu entry's reason.
+    void captureTheDisplayAndWindowGrid()
+    {
+        const QString dir = qEnvironmentVariable("NEREUS_OTHER_BUTTONS_CAPTURE_DIR");
+        if (dir.isEmpty()) { QSKIP("Set NEREUS_OTHER_BUTTONS_CAPTURE_DIR to capture the grid."); }
+        Fixture f;
+        f.spectrumA.setShowNoiseFloor(true);
+        f.spectrumA.setPanFillEnabled(true);
+        f.linearityRefusal = QStringLiteral("The connected Core has not advertised PureSignal 3.");
+        OtherButtonItem item;
+        item.setVisibleGroups(QVector<qint32>(OtherButtonItem::kGroupCount, 0));
+        for (Id id : kDisplayAndWindow) { item.setButtonVisible(id, true); }
+        item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        f.dispatcher->apply(&item, kSliceA);
+        QImage image(kSize, kSize, QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor(0x0f, 0x0f, 0x1a));
+        QPainter p(&image);
+        item.paint(p, kSize, kSize);
+        p.end();
+        QVERIFY(QDir().mkpath(dir));
+        QVERIFY(image.save(QDir(dir).filePath(QStringLiteral("display-window-buttons-grid.png"))));
     }
 };
 

@@ -42,6 +42,11 @@
 //                 MIC+/-, COMP+/-, VOX+/-, DRI+/-, DRI-0, TUN+/- and TUN-0
 //                 are named and offered. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - Display and window buttons (container item parity Task
+//                 62): NF, Peak Blobs, Cur Info, Spots, Fill, ZTB, A-Peak,
+//                 MAF+/-, Setup, Diversity and Linearity are named and
+//                 offered. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -165,21 +170,26 @@ public:
         Xpa = 8, Rec = 9, Play = 10,
         Nr = 32, Nr1 = 33, Nr2 = 34, Nr3 = 35, Nr4 = 36,
         Anf = 37, Nb = 38, Nb1 = 39, Nb2 = 40, Snb = 41, Mnf = 42, MnfPlus = 43,
+        Nf = 53,
         Rit = 70, Rit0 = 71, Xit = 72, Xit0 = 73, LockA = 75,
         TuneStepUp = 77, TuneStepDown = 78,
         Avg = 96, PeakHold = 97, Ctun = 98,
         Spectrum = 99, Panadapter = 100, Scope = 101, Scope2 = 102, Phase = 103,
         Waterfall = 104, Histogram = 105, Panafall = 106, Panascope = 107,
         Spectrascope = 108, DisplayOff = 109,
+        PeakBlobs = 111, CursorInfo = 112, Spots = 113, FillSpectrum = 114, Ztb = 118,
+        ActivePeak = 123,
         Vac1 = 128, Vac2 = 129, Mute = 130, MuteAll = 131, Bin = 132, SubRx = 133,
         PanSwap = 134, SqlVsql = 137,
         Comp = 141, Vox = 142, Dexp = 143, TxEq = 145, Cfc = 147, CfcEq = 148,
+        MafP5 = 149, MafM5 = 150,
         AfP5 = 151, AfM5 = 152, BalP5 = 153, BalM5 = 154,
         MicP1 = 160, MicM1 = 161, CompP1 = 163, CompM1 = 164, VoxP1 = 165, VoxM1 = 166,
         Leveler = 167, PhaseRot = 168,
         AgcFixed = 192, AgcLong = 193, AgcSlow = 194, AgcMedium = 195, AgcFast = 196,
         AgcCustom = 197, AgcAuto = 198, AgcP5 = 199, AgcM5 = 200,
         DriveP5 = 256, DriveM5 = 257, TuneP5 = 258, TuneM5 = 259, Drive0 = 260, Tun0 = 261,
+        FormSetup = 288, FormDiversity = 296, FormLinearity = 297,
         Macro0 = 352
     };
 
