@@ -13,6 +13,33 @@ LedItemEditor::LedItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
 {
     buildTypeSpecific();
+    // Update interval range from Thetis setup.designer.cs:63735-63744 [v2.10.3.15]
+    // (nudLedIndicator_UpdateInterval: 50-10000)
+    setUpdateIntervalRange(kLedMinUpdateIntervalMs, kLedMaxUpdateIntervalMs);
+}
+
+void LedItemEditor::applyPlacedRows(bool placed)
+{
+    beginProgrammaticUpdate();
+    if (placed) {
+        // Padding range from Thetis setup.designer.cs:63987-64005 [v2.10.3.15]
+        // (nudLedIndicator_PanelPadding: 0.001-10, step 0.001)
+        m_spinPadding->setDecimals(3);
+        m_spinPadding->setRange(kLedMinPanelPadding, kLedMaxPanelPadding);
+        m_spinPadding->setSingleStep(0.001);
+        m_spinPadding->setToolTip(QStringLiteral(
+            "Height of the panel as a ratio of the width."));
+    } else {
+        m_spinPadding->setDecimals(1);
+        m_spinPadding->setRange(0.0, 50.0);
+        m_spinPadding->setSingleStep(0.5);
+        m_spinPadding->setToolTip(QStringLiteral(
+            "Space in pixels between the light and the edge of the item."));
+    }
+    for (QDoubleSpinBox* spin : {m_spinOffsetX, m_spinOffsetY, m_spinSizeX, m_spinSizeY}) {
+        spin->setEnabled(placed);
+    }
+    endProgrammaticUpdate();
 }
 
 void LedItemEditor::setItem(MeterItem* item)
@@ -44,7 +71,16 @@ void LedItemEditor::setItem(MeterItem* item)
 
     m_chkBlink->setChecked(x->blink());
     m_chkPulsate->setChecked(x->pulsate());
+    m_chkPlaced->setChecked(x->placed());
+    applyPlacedRows(x->placed());
     m_spinPadding->setValue(static_cast<double>(x->padding()));
+    m_spinOffsetX->setValue(static_cast<double>(x->offsetX()));
+    m_spinOffsetY->setValue(static_cast<double>(x->offsetY()));
+    m_spinSizeX->setValue(static_cast<double>(x->sizeX()));
+    m_spinSizeY->setValue(static_cast<double>(x->sizeY()));
+    m_chkShowTrue->setChecked(x->showTrue());
+    m_chkShowFalse->setChecked(x->showFalse());
+    m_chkProcessWhenHidden->setChecked(x->processWhenHidden());
 
     m_spinGreenThreshold->setValue(x->greenThreshold());
     m_spinAmberThreshold->setValue(x->amberThreshold());
@@ -162,21 +198,44 @@ void LedItemEditor::buildTypeSpecific()
     // Animation
     addHeader(QStringLiteral("Animation"));
 
+    // A placed light takes one light mode (Thetis radLed_light_on_off /
+    // blink / pulsate), so checking one clears the other; the fill look
+    // keeps both.
     m_chkBlink = makeCheckRow(QStringLiteral("Blink"));
+    m_chkBlink->setToolTip(QStringLiteral(
+        "Placed light: flash twice when it turns true. "
+        "Fill light: flash on and off."));
     connect(m_chkBlink, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         LEDItem* x = qobject_cast<LEDItem*>(m_item);
         if (!x) { return; }
-        x->setBlink(on);
+        if (x->placed() && on) {
+            x->setLightMode(LEDItem::LightMode::Blink);
+            beginProgrammaticUpdate();
+            m_chkPulsate->setChecked(false);
+            endProgrammaticUpdate();
+        } else {
+            x->setBlink(on);
+        }
         notifyChanged();
     });
 
     m_chkPulsate = makeCheckRow(QStringLiteral("Pulsate"));
+    m_chkPulsate->setToolTip(QStringLiteral(
+        "Placed light: fade up and down while true. "
+        "Fill light: fade the light in and out."));
     connect(m_chkPulsate, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         LEDItem* x = qobject_cast<LEDItem*>(m_item);
         if (!x) { return; }
-        x->setPulsate(on);
+        if (x->placed() && on) {
+            x->setLightMode(LEDItem::LightMode::Pulsate);
+            beginProgrammaticUpdate();
+            m_chkBlink->setChecked(false);
+            endProgrammaticUpdate();
+        } else {
+            x->setPulsate(on);
+        }
         notifyChanged();
     });
 
@@ -186,6 +245,92 @@ void LedItemEditor::buildTypeSpecific()
         LEDItem* x = qobject_cast<LEDItem*>(m_item);
         if (!x) { return; }
         x->setPadding(static_cast<float>(v));
+        notifyChanged();
+    });
+
+    // Placement
+    addHeader(QStringLiteral("Placement"));
+
+    m_chkPlaced = makeCheckRow(QStringLiteral("Place by offset and size"));
+    m_chkPlaced->setToolTip(QStringLiteral(
+        "Draw the light at the offset and size below, inside a panel as tall as the width "
+        "times the padding, fading between its colors. Off: the light fills the item."));
+    connect(m_chkPlaced, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setPlaced(on);
+        // The padding changes unit with the look, so it starts again at
+        // that look's default.
+        x->setPadding(on ? kLedThetisDefaults.padding : kLedFillDefaultPadding);
+        if (on && x->blink() && x->pulsate()) {
+            x->setLightMode(LEDItem::LightMode::Blink);
+        }
+        applyPlacedRows(on);
+        beginProgrammaticUpdate();
+        m_spinPadding->setValue(static_cast<double>(x->padding()));
+        m_chkPulsate->setChecked(x->pulsate());
+        endProgrammaticUpdate();
+        notifyChanged();
+    });
+
+    // Offset and size range from Thetis setup.designer.cs:63894-63974 [v2.10.3.15]
+    // (nudLedIndicator_xSize / xOffset: -10..10, step 0.001)
+    auto offsetSizeRow = [this](const QString& label, const QString& tip,
+                                void (LEDItem::*setter)(float)) {
+        QDoubleSpinBox* spin = makeDoubleRow(label, kLedMinOffsetSize, kLedMaxOffsetSize, 0.001, 3);
+        spin->setToolTip(tip);
+        connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                [this, setter](double v) {
+            if (isProgrammaticUpdate()) { return; }
+            LEDItem* x = qobject_cast<LEDItem*>(m_item);
+            if (!x) { return; }
+            (x->*setter)(static_cast<float>(v));
+            notifyChanged();
+        });
+        return spin;
+    };
+    m_spinOffsetX = offsetSizeRow(QStringLiteral("Offset X"),
+        QStringLiteral("Centre of the light from the left, as a ratio of the width."),
+        &LEDItem::setOffsetX);
+    m_spinOffsetY = offsetSizeRow(QStringLiteral("Offset Y"),
+        QStringLiteral("Centre of the light from the top, as a ratio of the width."),
+        &LEDItem::setOffsetY);
+    m_spinSizeX = offsetSizeRow(QStringLiteral("Size X"),
+        QStringLiteral("Width of the light as a ratio of the width."),
+        &LEDItem::setSizeX);
+    m_spinSizeY = offsetSizeRow(QStringLiteral("Size Y"),
+        QStringLiteral("Height of the light as a ratio of the width."),
+        &LEDItem::setSizeY);
+
+    m_chkShowTrue = makeCheckRow(QStringLiteral("Show when true"));
+    m_chkShowTrue->setToolTip(QStringLiteral("Draw the light while it is true."));
+    connect(m_chkShowTrue, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setShowTrue(on);
+        notifyChanged();
+    });
+
+    m_chkShowFalse = makeCheckRow(QStringLiteral("Show when false"));
+    m_chkShowFalse->setToolTip(QStringLiteral("Draw the light while it is false."));
+    connect(m_chkShowFalse, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setShowFalse(on);
+        notifyChanged();
+    });
+
+    m_chkProcessWhenHidden = makeCheckRow(QStringLiteral("Process when hidden"));
+    m_chkProcessWhenHidden->setToolTip(QStringLiteral(
+        "Keep working out whether the light is true while its container is hidden."));
+    connect(m_chkProcessWhenHidden, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setProcessWhenHidden(on);
         notifyChanged();
     });
 

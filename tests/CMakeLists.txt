@@ -852,6 +852,11 @@ nereus_add_test(tst_meter_signal_text)
 # fade, padding sets height, saved records keep the gradient, and new-item
 # defaults.
 nereus_add_test(tst_meter_spacer)
+# Container item parity Task 25: LED options. The placed look (offset and
+# size, the 250 ms colour fade, blink and pulsate, the panel RX/TX colour),
+# show true / show false, the update interval floor, saved records keep the
+# fill look and thresholds, and new-item defaults.
+nereus_add_test(tst_meter_led_options)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.

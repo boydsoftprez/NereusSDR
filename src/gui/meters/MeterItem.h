@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setUpdateIntervalMs() is virtual: the LED raises an
+//                 interval under 50 ms to 100 ms. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - readingBindingsBesideMmio(): the readings an item still
 //                 takes while data source variable 1 feeds it (a HISTORY
 //                 item's axis 1). J.J. Boyd (KG4VCF), AI-assisted via
@@ -503,8 +506,9 @@ public:
     // one) takes every poll. MeterWidget::updateMeterValue asks
     // acceptsUpdate() before delivering a reading: true when the interval
     // has passed since the last accepted reading, which it then records.
-    // Negative values are stored as 0.
-    void setUpdateIntervalMs(int ms);
+    // Negative values are stored as 0. Virtual so an item can adjust the
+    // value it keeps (LEDItem raises 1-49 ms to 100 ms).
+    virtual void setUpdateIntervalMs(int ms);
     int updateIntervalMs() const { return m_updateIntervalMs; }
     // Virtual so an item with more than one reading (HistoryGraphItem) can
     // keep the interval per reading.
