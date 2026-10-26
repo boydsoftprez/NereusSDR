@@ -17,7 +17,8 @@
 #   2. runs `xcodebuild test-without-building` on that simulator with the
 #      folder, no test diagnostics, no parallel testing, -jobs
 #      SIM_TEST_JOBS (default 2) and the arguments given,
-#   3. when xcodebuild fails, for a test that failed or for "The test runner
+#   3. keeps xcodebuild's output in the logs folder below and prints its
+#      counts and failures; when xcodebuild fails, for a test that failed or for "The test runner
 #      hung before establishing connection", copies out what the next look
 #      needs before Xcode prunes it: the run's result bundle, the
 #      simulator's log of the last 15 minutes for testmanagerd, CoreSimulator
@@ -63,11 +64,11 @@ xcodebuild -project "$root/ios/NereusSDR.xcodeproj" -scheme NereusSDR \
     -collect-test-diagnostics never -parallel-testing-enabled NO -jobs "$jobs" \
     test-without-building "$@" > "$logs/xcodebuild.log" 2>&1
 status=$?
-tail -n 5 "$logs/xcodebuild.log"
+# The counts and any failures, from XCTest and Swift Testing.
+grep -E "Executed [0-9]+ test|Test run with|✘|Test cancelled|TEST EXECUTE|TEST SUCCEEDED|hung before" \
+    "$logs/xcodebuild.log" | sort -u | tail -n 20
 
 if [ "$status" -eq 0 ]; then
-    rm -f "$logs/xcodebuild.log"
-    rmdir "$logs" 2>/dev/null
     exit 0
 fi
 
