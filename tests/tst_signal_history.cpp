@@ -190,6 +190,36 @@ private slots:
         QCOMPARE(v1.durationMs(), 60000);
     }
 
+    void loaded_capacity_clamped_to_largest_produced()
+    {
+        // The largest capacity NereusSDR produces is 600000 ms / 100 + 1.
+        QCOMPARE(HistoryGraphItem::kMaxCapacity, 6001);
+        HistoryGraphItem longest;
+        longest.setDurationMs(600000);
+        QCOMPARE(longest.capacity(), HistoryGraphItem::kMaxCapacity);
+
+        const QStringList base = HistoryGraphItem().serialize().split(QLatin1Char('|'));
+
+        // A pasted record asking for INT_MAX loads at the bound instead of
+        // allocating two buffers of that size.
+        QStringList huge = base;
+        huge[7] = QStringLiteral("2147483647");
+        HistoryGraphItem hugeItem;
+        QVERIFY(hugeItem.deserialize(huge.join(QLatin1Char('|'))));
+        QCOMPARE(hugeItem.capacity(), HistoryGraphItem::kMaxCapacity);
+        QCOMPARE(hugeItem.serialize().split(QLatin1Char('|')).value(7),
+                 QStringLiteral("6001"));
+
+        // A record at the bound loads unchanged.
+        QStringList atBound = base;
+        atBound[7] = QStringLiteral("6001");
+        const QString atBoundRecord = atBound.join(QLatin1Char('|'));
+        HistoryGraphItem atBoundItem;
+        QVERIFY(atBoundItem.deserialize(atBoundRecord));
+        QCOMPARE(atBoundItem.capacity(), 6001);
+        QCOMPARE(atBoundItem.serialize(), atBoundRecord);
+    }
+
     void appsettings_persistence()
     {
         // Task 3.3: AppSettings should persist MultimeterSignalHistoryDurationMs

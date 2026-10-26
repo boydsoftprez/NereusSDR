@@ -489,6 +489,7 @@ void ImageItem::setImagePath(const QString& path)
 {
     m_imagePath = path;
     // An empty path is no image; it never reaches a file API.
+    // From Thetis MeterManager.cs:40639 [v2.10.3.15]
     if (path.isEmpty()) {
         m_image = QImage();
         return;

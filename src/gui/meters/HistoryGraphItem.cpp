@@ -71,8 +71,9 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26 - A saved capacity loads as written; deserialize no longer
-//                 lets the saved duration recompute it. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 lets the saved duration recompute it, and clamps it to
+//                 kMaxCapacity. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "HistoryGraphItem.h"
@@ -402,7 +403,10 @@ bool HistoryGraphItem::deserialize(const QString& data)
 
     const int bindingId = parts[5].toInt(&ok);  if (!ok) { return false; }
     const int zOrder    = parts[6].toInt(&ok);  if (!ok) { return false; }
-    const int capacity  = parts[7].toInt(&ok);  if (!ok || capacity < 2) { return false; }
+    int capacity = parts[7].toInt(&ok);  if (!ok || capacity < 2) { return false; }
+    // NereusSDR: a capacity above the largest NereusSDR produces (a pasted
+    // or hand-edited record) loads at that bound instead of allocating it.
+    capacity = std::min(capacity, kMaxCapacity);
 
     const QColor lineColor0(parts[8]);
     if (!lineColor0.isValid()) { return false; }
