@@ -774,6 +774,8 @@ nereus_add_test(tst_container_document)
 # Container item colours and button grid styling survive a save and reload;
 # records saved before those fields existed still load.
 nereus_add_test(tst_container_item_persistence)
+# Every meter item record fills every field it declares and round-trips.
+nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.
 nereus_add_test(tst_meter_new_item_defaults)
 # Per-item update interval: throttle, saved entries, new-item default, editor.
