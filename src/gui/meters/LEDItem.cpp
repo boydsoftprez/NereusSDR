@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - A condition name matches a published reading whatever its
+//                 case (the VFO display's sliceA_freq). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -275,6 +278,13 @@ std::optional<QVariant> LEDItem::conditionValue(const QString& name) const
             const auto it = published.constFind(lower);
             if (it != published.cend()) {
                 return it.value();
+            }
+            // Names with capitals (the VFO display's sliceA_freq) match
+            // whatever case the condition uses.
+            for (auto named = published.cbegin(); named != published.cend(); ++named) {
+                if (named.key().compare(lower, Qt::CaseInsensitive) == 0) {
+                    return named.value();
+                }
             }
         }
     }

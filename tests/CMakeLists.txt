@@ -925,6 +925,10 @@ nereus_add_test(tst_meter_history_two_trace)
 # directly to MoxController and drive setMox to exercise the Pre/Post emit
 # walk completion.
 nereus_add_test(tst_vfo_display_item_tx_badge)
+# VFO display: slice-letter modes (saved VFO B / Both), Thetis import map,
+# new-item colours, inactive slice fade, band text, split box, sliceX_*
+# readings and editor wording.
+nereus_add_test(tst_vfo_display_item_modes)
 
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - leaveEvent tells items the pointer left (hover boxes);
+//                 unavailableReasonAt asks the item for a reason at the
+//                 point first (MeterItem::reasonAt). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - An item whose variable 1 reads a data source still gets
 //                 the readings it takes beside it (readingBindingsBesideMmio:
 //                 a HISTORY item's axis 1). J.J. Boyd (KG4VCF), AI-assisted
@@ -860,6 +864,17 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
     MeterBaseClass::mouseMoveEvent(event);
 }
 
+void MeterWidget::leaveEvent(QEvent* event)
+{
+    // Items that draw a hover box drop it when the pointer leaves.
+    for (MeterItem* item : std::as_const(m_items)) {
+        if (item->handleMouseLeave()) {
+            invalidatePresentation(item);
+        }
+    }
+    MeterBaseClass::leaveEvent(event);
+}
+
 void MeterWidget::wheelEvent(QWheelEvent* event)
 {
     const int w = width();
@@ -979,6 +994,8 @@ QString MeterWidget::unavailableReasonAt(const QPointF& pos) const
         if (!shouldRender(item) || !item->hitTest(pos, w, h)) {
             continue;
         }
+        const QString partReason = item->reasonAt(pos, w, h);
+        if (!partReason.isEmpty()) { return partReason; }
         QStringList reasons;
         QSet<int> bindings = item->readingBindings();
         if (item->hasMmioBinding()) { bindings.insert(item->bindingId()); }

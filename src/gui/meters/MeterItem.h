@@ -74,6 +74,10 @@
 //                 (kTextThetisDefaults, kScaleThetisDefaults,
 //                 kImageThetisDefaults). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - handleMouseLeave() and reasonAt(): hover state cleared
+//                 when the pointer leaves the meter, and a tooltip reason
+//                 for a part of an item (the VFO display's split box).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - publishedReadings(): named values an item publishes for
 //                 data out and text overlay tokens (empty in the base).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -607,6 +611,16 @@ public:
     virtual bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH);
     virtual bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH);
     virtual bool handleWheel(QWheelEvent* event, int widgetW, int widgetH);
+    // The pointer left the meter (MeterWidget::leaveEvent); true when the
+    // item drew something for it (a hover box) and must repaint.
+    virtual bool handleMouseLeave() { return false; }
+    // A plain reason for a part of the item that cannot act (shown as the
+    // meter's tooltip, MeterWidget::unavailableReasonAt); empty for none.
+    virtual QString reasonAt(const QPointF& pos, int widgetW, int widgetH) const
+    {
+        Q_UNUSED(pos); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+        return {};
+    }
 
 public:
     // --- Stacked-row metadata (runtime only, not serialized) ---

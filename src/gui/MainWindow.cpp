@@ -11,6 +11,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display by slice letter: refreshContainerMeter feeds
+//                 every VFO display a VfoSliceState for each open slice
+//                 (frequency, mode, filter, band, band-plan text, step,
+//                 lock, transmit slice, active slice) and its Source slice;
+//                 a fixed-slice or All slices display follows tuning on any
+//                 slice; a transmit slice change refreshes containers.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - TX stage dim: the TX EQ, Leveler, CFC and compander
 //                 switches dim every container's EQ, Leveler, Leveler Gain,
 //                 CFC, CFC Gain and Compressor bars while the stage is off
@@ -15392,6 +15399,8 @@ void MainWindow::watchSlicesForContainers()
             << connect(slice, &SliceModel::ritEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::xitEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::lockedChanged, this, refresh)
+            // VFO display TX box and marker follow the transmit slice.
+            << connect(slice, &SliceModel::txSliceChanged, this, refresh)
             << connect(slice, &SliceModel::agcModeChanged, this, refresh)
             << connect(slice, &SliceModel::autoAgcEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::ssqlEnabledChanged, this, refresh);
@@ -15468,7 +15477,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         }
         if (auto* band = qobject_cast<BandButtonItem*>(item)) { value += QString::number(band->activeBand()); }
         if (auto* mode = qobject_cast<ModeButtonItem*>(item)) { value += QString::number(mode->activeMode()); }
-        if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += QString::number(vfo->frequency())+vfo->unavailableText(); }
+        if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += vfo->presentationKey(); }
         if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
             for (int i=0;i<other->buttonCount();++i) { value += QString::number(other->buttonState(static_cast<OtherButtonItem::ButtonId>(i))); }
         }
@@ -15516,6 +15525,43 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         return false;
     };
 
+    // The filter width a VFO display shows for a slice.
+    const auto filterTextFor = [](const SliceModel* s) {
+        const int widthHz = std::abs(s->filterHigh() - s->filterLow());
+        return widthHz >= 1000
+            ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
+            : QString::number(widthHz);
+    };
+    // VFO display: one state per open slice, so a display on its Source
+    // slice, a fixed slice or All slices draws from the same feed. The band
+    // text is the band-plan segment holding the frequency (Thetis
+    // DB.BandText, console.cs:31657-31668 [v2.10.3.15]).
+    const auto feedVfo = [&](VfoDisplayItem* vfo) {
+        vfo->clearSliceStates();
+        vfo->setSourceSliceIndex(slice ? slice->sliceIndex() : -1);
+        const QVector<BandSegment>& segments = m_radioModel->bandPlanManager().segments();
+        const SliceModel* active = m_radioModel->activeSlice();
+        for (SliceModel* s : m_radioModel->slices()) {
+            if (!s) { continue; }
+            VfoSliceState state;
+            state.index = s->sliceIndex();
+            state.frequencyHz = qint64(std::llround(s->frequency()));
+            state.mode = SliceModel::modeName(s->dspMode());
+            state.filter = filterTextFor(s);
+            state.band = bandLabel(bandFromFrequency(s->frequency()));
+            const double mhz = s->frequency() / 1.0e6;
+            for (const BandSegment& segment : segments) {
+                if (mhz >= segment.lowMhz && mhz <= segment.highMhz) { state.bandText = segment.label; break; }
+            }
+            state.stepHz = s->stepHz();
+            state.locked = s->locked();
+            state.transmitting = s->txSliceMarked();
+            state.active = s == active;
+            state.open = true;
+            vfo->setSliceState(state.index, state);
+        }
+    };
+
     if (!slice) {
         // Fix wave M2 (R-R3-49, R-R3-21): a slice that is not open (never
         // opened, or closed while this container was set to it) shows
@@ -15543,7 +15589,15 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 ant->setActiveRxAntenna(-1);
                 ant->setActiveTxAntenna(-1);
             } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
-                vfo->setUnavailableText(notOpen);
+                // A display on a fixed slice or on All slices does not
+                // follow the Source; it shows its own slices.
+                if (unsupported || vfo->displayMode() == VfoDisplayItem::DisplayMode::SourceSlice) {
+                    vfo->clearSliceStates();
+                    vfo->setUnavailableText(notOpen);
+                } else {
+                    vfo->setUnavailableText(QString());
+                    feedVfo(vfo);
+                }
             }
         };
         {
@@ -15587,10 +15641,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         return -1;
     };
 
-    const int widthHz = std::abs(slice->filterHigh() - slice->filterLow());
-    const QString filterText = widthHz >= 1000
-        ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
-        : QString::number(widthHz);
+    const QString filterText = filterTextFor(slice);
     const Band band = bandFromFrequency(slice->frequency());
 
     // VHF S9 rule, per entry: each item takes the scale of the slice its
@@ -15607,6 +15658,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
             if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
                 vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
                 vfo->setBandLabel(bandLabel(band));
+                feedVfo(vfo);
             }
             return;
         }
@@ -15640,6 +15692,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
             vfo->setModeLabel(modeName);
             vfo->setFilterLabel(filterText);
             vfo->setBandLabel(bandLabel(band));
+            feedVfo(vfo);
         }
     };
     {
@@ -15658,7 +15711,12 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                 const QVariant entryContext = root->property("containerSourceContext");
                 const QJsonObject context = entryContext.isValid() ? entryContext.toJsonObject() :
                     (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
-                if (containerSourceSlice(context) == slice) {
+                // A VFO display on a fixed slice or on All slices shows
+                // slices other than its Source, so any slice's tuning
+                // reaches it.
+                const auto* vfo = qobject_cast<const VfoDisplayItem*>(root);
+                const bool showsOtherSlices = vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice;
+                if (containerSourceSlice(context) == slice || showsOtherSlices) {
                     refreshContainerMeter(c, meter, root, context, true);
                 }
             }

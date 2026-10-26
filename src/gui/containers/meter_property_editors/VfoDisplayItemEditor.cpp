@@ -1,6 +1,14 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - Display mode by slice letter (Source slice, All slices,
+//                 Slice A and on) in place of VFO A / VFO B / Both; layout,
+//                 band text and the remaining VFO display colours, with a
+//                 "Copy to small digits" button. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+
 #include "VfoDisplayItemEditor.h"
 #include "../../meters/VfoDisplayItem.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QPushButton>
 #include <QColorDialog>
@@ -41,14 +49,13 @@ void VfoDisplayItemEditor::setItem(MeterItem* item)
     if (!v) { return; }
 
     beginProgrammaticUpdate();
-    m_comboDisplayMode->setCurrentIndex(
-        m_comboDisplayMode->findData(static_cast<int>(v->displayMode())));
-    applyBtnColor(m_btnFreqColour,   v->frequencyColour());
-    applyBtnColor(m_btnModeColour,   v->modeColour());
-    applyBtnColor(m_btnFilterColour, v->filterColour());
-    applyBtnColor(m_btnBandColour,   v->bandColour());
-    applyBtnColor(m_btnRxColour,     v->rxColour());
-    applyBtnColor(m_btnTxColour,     v->txColour());
+    m_comboDisplayMode->setCurrentIndex(m_comboDisplayMode->findData(v->displayModeValue()));
+    m_comboLayout->setCurrentIndex(m_comboLayout->findData(static_cast<int>(v->layout())));
+    m_chkBandText->setChecked(v->showBandText());
+    m_btnBandTextColour->setEnabled(v->showBandText());
+    for (const ColourRow& row : std::as_const(m_colourRows)) {
+        applyBtnColor(row.button, row.get(*v));
+    }
     endProgrammaticUpdate();
 }
 
@@ -57,28 +64,56 @@ void VfoDisplayItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("VFO Display"));
 
     m_comboDisplayMode = new QComboBox(this);
+    m_comboDisplayMode->setObjectName(QStringLiteral("vfoDisplayMode"));
     m_comboDisplayMode->setStyleSheet(kComboStyle);
-    m_comboDisplayMode->addItem(QStringLiteral("VFO A"),
-        static_cast<int>(VfoDisplayItem::DisplayMode::VfoA));
-    m_comboDisplayMode->addItem(QStringLiteral("VFO B"),
-        static_cast<int>(VfoDisplayItem::DisplayMode::VfoB));
-    m_comboDisplayMode->addItem(QStringLiteral("Both"),
-        static_cast<int>(VfoDisplayItem::DisplayMode::VfoBoth));
+    m_comboDisplayMode->addItem(QStringLiteral("Source slice"),
+        static_cast<int>(VfoDisplayItem::DisplayMode::SourceSlice));
+    m_comboDisplayMode->addItem(QStringLiteral("All slices"),
+        static_cast<int>(VfoDisplayItem::DisplayMode::AllSlices));
+    for (int i = 0; i < VfoDisplayItem::kMaxSliceCount; ++i) {
+        m_comboDisplayMode->addItem(
+            QStringLiteral("Slice ") + QChar(QLatin1Char(static_cast<char>('A' + i))),
+            VfoDisplayItem::fixedSliceMode(i));
+    }
     addRow(QStringLiteral("Display mode"), m_comboDisplayMode);
     connect(m_comboDisplayMode, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
         if (isProgrammaticUpdate()) { return; }
         VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
         if (!v) { return; }
-        v->setDisplayMode(static_cast<VfoDisplayItem::DisplayMode>(
-            m_comboDisplayMode->currentData().toInt()));
+        v->setDisplayModeValue(m_comboDisplayMode->currentData().toInt());
+        notifyChanged();
+    });
+
+    m_comboLayout = new QComboBox(this);
+    m_comboLayout->setObjectName(QStringLiteral("vfoLayout"));
+    m_comboLayout->setStyleSheet(kComboStyle);
+    m_comboLayout->addItem(QStringLiteral("Compact"), static_cast<int>(VfoDisplayItem::Layout::Compact));
+    m_comboLayout->addItem(QStringLiteral("Detailed"), static_cast<int>(VfoDisplayItem::Layout::Thetis));
+    addRow(QStringLiteral("Layout"), m_comboLayout);
+    connect(m_comboLayout, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (isProgrammaticUpdate()) { return; }
+        VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
+        if (!v) { return; }
+        v->setLayout(static_cast<VfoDisplayItem::Layout>(m_comboLayout->currentData().toInt()));
+        notifyChanged();
+    });
+
+    m_chkBandText = makeCheckRow(QStringLiteral("Show band text"));
+    m_chkBandText->setObjectName(QStringLiteral("vfoShowBandText"));
+    connect(m_chkBandText, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_btnBandTextColour) { m_btnBandTextColour->setEnabled(on); }
+        if (isProgrammaticUpdate()) { return; }
+        VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
+        if (!v) { return; }
+        v->setShowBandText(on);
         notifyChanged();
     });
 
     addHeader(QStringLiteral("Colors"));
 
     auto makeColorBtn = [this](const QString& label, QPushButton*& out,
-                               auto setter) {
+                               auto setter, auto getter) {
         out = new QPushButton(this);
         out->setFixedSize(40, 18);
         QPushButton* btn = out;
@@ -93,15 +128,45 @@ void VfoDisplayItemEditor::buildTypeSpecific()
                 notifyChanged();
             }
         });
+        m_colourRows.append({btn, [getter](const VfoDisplayItem& v) { return (v.*getter)(); }});
         addRow(label, out);
     };
 
-    makeColorBtn(QStringLiteral("Frequency"),  m_btnFreqColour,   &VfoDisplayItem::setFrequencyColour);
-    makeColorBtn(QStringLiteral("Mode"),       m_btnModeColour,   &VfoDisplayItem::setModeColour);
-    makeColorBtn(QStringLiteral("Filter"),     m_btnFilterColour, &VfoDisplayItem::setFilterColour);
-    makeColorBtn(QStringLiteral("Band"),       m_btnBandColour,   &VfoDisplayItem::setBandColour);
-    makeColorBtn(QStringLiteral("RX label"),   m_btnRxColour,     &VfoDisplayItem::setRxColour);
-    makeColorBtn(QStringLiteral("TX label"),   m_btnTxColour,     &VfoDisplayItem::setTxColour);
+    QPushButton* title = nullptr;
+    QPushButton* splitBack = nullptr;
+    QPushButton* split = nullptr;
+    QPushButton* highlight = nullptr;
+    QPushButton* lock = nullptr;
+    QPushButton* sync = nullptr;
+    QPushButton* back = nullptr;
+    makeColorBtn(QStringLiteral("Title"),        title,              &VfoDisplayItem::setTitleColour,          &VfoDisplayItem::titleColour);
+    makeColorBtn(QStringLiteral("Frequency"),    m_btnFreqColour,    &VfoDisplayItem::setFrequencyColour,      &VfoDisplayItem::frequencyColour);
+    makeColorBtn(QStringLiteral("Small digits"), m_btnFreqSmallColour, &VfoDisplayItem::setFrequencySmallColour, &VfoDisplayItem::frequencySmallColour);
+
+    // The small digits take the frequency colour.
+    m_btnCopyToSmall = new QPushButton(QStringLiteral("Copy to small digits"), this);
+    m_btnCopyToSmall->setObjectName(QStringLiteral("vfoCopyToSmallDigits"));
+    connect(m_btnCopyToSmall, &QPushButton::clicked, this, [this]() {
+        VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
+        if (!v) { return; }
+        v->setFrequencySmallColour(v->frequencyColour());
+        applyBtnColor(m_btnFreqSmallColour, v->frequencySmallColour());
+        notifyChanged();
+    });
+    addRow(QString(), m_btnCopyToSmall);
+
+    makeColorBtn(QStringLiteral("Mode"),            m_btnModeColour,     &VfoDisplayItem::setModeColour,           &VfoDisplayItem::modeColour);
+    makeColorBtn(QStringLiteral("Filter"),          m_btnFilterColour,   &VfoDisplayItem::setFilterColour,         &VfoDisplayItem::filterColour);
+    makeColorBtn(QStringLiteral("Band"),            m_btnBandColour,     &VfoDisplayItem::setBandColour,           &VfoDisplayItem::bandColour);
+    makeColorBtn(QStringLiteral("Band text"),       m_btnBandTextColour, &VfoDisplayItem::setBandTextColour,       &VfoDisplayItem::bandTextColour);
+    makeColorBtn(QStringLiteral("Split back"),      splitBack,           &VfoDisplayItem::setSplitBackColour,      &VfoDisplayItem::splitBackColour);
+    makeColorBtn(QStringLiteral("Split"),           split,               &VfoDisplayItem::setSplitColour,          &VfoDisplayItem::splitColour);
+    makeColorBtn(QStringLiteral("Digit highlight"), highlight,           &VfoDisplayItem::setDigitHighlightColour, &VfoDisplayItem::digitHighlightColour);
+    makeColorBtn(QStringLiteral("RX label"),        m_btnRxColour,       &VfoDisplayItem::setRxColour,             &VfoDisplayItem::rxColour);
+    makeColorBtn(QStringLiteral("TX label"),        m_btnTxColour,       &VfoDisplayItem::setTxColour,             &VfoDisplayItem::txColour);
+    makeColorBtn(QStringLiteral("Lock"),            lock,                &VfoDisplayItem::setLockColour,           &VfoDisplayItem::lockColour);
+    makeColorBtn(QStringLiteral("Sync"),            sync,                &VfoDisplayItem::setSyncColour,           &VfoDisplayItem::syncColour);
+    makeColorBtn(QStringLiteral("Background"),      back,                &VfoDisplayItem::setBackgroundColour,     &VfoDisplayItem::backgroundColour);
 }
 
 } // namespace NereusSDR

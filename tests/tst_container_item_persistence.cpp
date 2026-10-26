@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original tests for container item records.
 // Modification history (NereusSDR):
+//   2026-10-26 - VFO display: the new colours, band text, background,
+//                 layout and a fixed slice survive a save; the old-record
+//                 row saves Both (2), which loads as All slices and keeps 2.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Clock, VFO display, text overlay and filter display
 //                 colours, and button grid styling, survive a save and
 //                 reload; records saved before those fields existed still
@@ -55,6 +59,15 @@ const QColor kBack1(0x12, 0x34, 0x56);
 const QColor kBack2(0x65, 0x43, 0x21, 0x80);   // alpha kept
 const QColor kFilterText(0x33, 0x66, 0x99);
 const QColor kClockBack(0x21, 0x43, 0x65, 0x90);
+const QColor kVfoSmall(0x13, 0x14, 0x15);
+const QColor kVfoTitle(0x16, 0x17, 0x18);
+const QColor kVfoSplitBack(0x19, 0x1a, 0x1b);
+const QColor kVfoSplit(0x1c, 0x1d, 0x1e);
+const QColor kVfoHighlight(0x1f, 0x20, 0x21);
+const QColor kVfoBandText(0x22, 0x23, 0x24);
+const QColor kVfoLock(0x25, 0x26, 0x27);
+const QColor kVfoSync(0x28, 0x29, 0x2a);
+const QColor kVfoBack(0x2b, 0x2c, 0x2d, 0x70);
 constexpr float kBorder = 0.07f;
 constexpr float kMargin = 0.2f;
 constexpr float kRadius = 9.5f;
@@ -95,6 +108,18 @@ void setNonDefaults(MeterItem* item)
         vfo->setBandColour(kBand);
         vfo->setRxColour(kRx);
         vfo->setTxColour(kTx);
+        vfo->setFrequencySmallColour(kVfoSmall);
+        vfo->setTitleColour(kVfoTitle);
+        vfo->setSplitBackColour(kVfoSplitBack);
+        vfo->setSplitColour(kVfoSplit);
+        vfo->setDigitHighlightColour(kVfoHighlight);
+        vfo->setBandTextColour(kVfoBandText);
+        vfo->setLockColour(kVfoLock);
+        vfo->setSyncColour(kVfoSync);
+        vfo->setBackgroundColour(kVfoBack);
+        vfo->setShowBandText(true);
+        vfo->setLayout(VfoDisplayItem::Layout::Thetis);
+        vfo->setDisplayModeValue(VfoDisplayItem::fixedSliceMode(2));
     }
     if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) {
         overlay->setTextBackColour1(kBack1);
@@ -132,6 +157,18 @@ void verifyNonDefaults(const MeterItem* item)
         QCOMPARE(vfo->bandColour(), kBand);
         QCOMPARE(vfo->rxColour(), kRx);
         QCOMPARE(vfo->txColour(), kTx);
+        QCOMPARE(vfo->frequencySmallColour(), kVfoSmall);
+        QCOMPARE(vfo->titleColour(), kVfoTitle);
+        QCOMPARE(vfo->splitBackColour(), kVfoSplitBack);
+        QCOMPARE(vfo->splitColour(), kVfoSplit);
+        QCOMPARE(vfo->digitHighlightColour(), kVfoHighlight);
+        QCOMPARE(vfo->bandTextColour(), kVfoBandText);
+        QCOMPARE(vfo->lockColour(), kVfoLock);
+        QCOMPARE(vfo->syncColour(), kVfoSync);
+        QCOMPARE(vfo->backgroundColour(), kVfoBack);
+        QVERIFY(vfo->showBandText());
+        QCOMPARE(vfo->layout(), VfoDisplayItem::Layout::Thetis);
+        QCOMPARE(vfo->displayModeValue(), VfoDisplayItem::fixedSliceMode(2));
     }
     if (const auto* overlay = qobject_cast<const TextOverlayItem*>(item)) {
         QCOMPARE(overlay->textBackColour1(), kBack1);
@@ -172,6 +209,18 @@ void verifyDefaults(const MeterItem* item, const MeterItem* fresh)
         QCOMPARE(vfo->bandColour(), f->bandColour());
         QCOMPARE(vfo->rxColour(), f->rxColour());
         QCOMPARE(vfo->txColour(), f->txColour());
+        QCOMPARE(vfo->frequencySmallColour(), f->frequencySmallColour());
+        QCOMPARE(vfo->titleColour(), f->titleColour());
+        QCOMPARE(vfo->splitBackColour(), f->splitBackColour());
+        QCOMPARE(vfo->splitColour(), f->splitColour());
+        QCOMPARE(vfo->digitHighlightColour(), f->digitHighlightColour());
+        QCOMPARE(vfo->bandTextColour(), f->bandTextColour());
+        QCOMPARE(vfo->lockColour(), f->lockColour());
+        QCOMPARE(vfo->syncColour(), f->syncColour());
+        QCOMPARE(vfo->backgroundColour(), QColor(0x0a, 0x0a, 0x18));
+        QCOMPARE(vfo->showBandText(), f->showBandText());
+        QCOMPARE(vfo->layout(), VfoDisplayItem::Layout::Compact);
+        QCOMPARE(vfo->displayMode(), VfoDisplayItem::DisplayMode::AllSlices);
     }
     if (const auto* overlay = qobject_cast<const TextOverlayItem*>(item)) {
         const auto* f = qobject_cast<const TextOverlayItem*>(fresh);
@@ -206,7 +255,7 @@ class TstContainerItemPersistence : public QObject {
         QTest::addColumn<QString>("typeId");
         QTest::addColumn<QString>("oldRecord");
         QTest::newRow("CLOCK") << QStringLiteral("CLOCK") << QStringLiteral("CLOCK|0.1|0.2|0.3|0.4|5|6|0|0");
-        QTest::newRow("VFO") << QStringLiteral("VFO") << QStringLiteral("VFO|0.1|0.2|0.3|0.4|5|6|1");
+        QTest::newRow("VFO") << QStringLiteral("VFO") << QStringLiteral("VFO|0.1|0.2|0.3|0.4|5|6|2");
         QTest::newRow("TEXTOVERLAY") << QStringLiteral("TEXTOVERLAY")
             << QStringLiteral("TEXTOVERLAY|0.1|0.2|0.3|0.4|5|6|#ffff0000|#ff00ff00|#ff111111|#ff222222|0"
                "|Arial|12|1|Courier|14|0|-1|0.2|aGVsbG8=|d29ybGQ=");
