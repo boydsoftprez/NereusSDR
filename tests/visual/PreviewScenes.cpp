@@ -11,6 +11,9 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - container-parity-* round 4: the token picker opens where
+//                 its tool button opens it, below the button or above it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - container-parity-* round 3: a container's -content image
 //                 is the whole scrolled body; tooltips sit where Qt places
 //                 them for a pointer on the control; the signal text Units
@@ -417,6 +420,7 @@
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceHeader.h"
@@ -8564,17 +8568,36 @@ void sceneParityOverlayLed(SceneContext& ctx)
         } else {
             scrollParityEditorTo(editor, picker);
             // The menu InstantPopup opens, shown with popup() so the grab
-            // needs no nested loop. popup() keeps it on the screen as the
-            // tool button's own popup does; it is not moved after.
+            // needs no nested loop. The menu puts itself at its button as
+            // it shows (below it, or above it when below has no room); it
+            // is not moved after.
             menu->popup(globalOf(picker) + QPoint(0, picker->height()));
             pump(kFinalSettleMs);
+            // The menu places itself from mapToGlobal(), which for this
+            // never-shown (WA_DontShowOnScreen) window keeps a stale origin;
+            // the composite uses window geometry (globalOf). Move it by the
+            // difference, to where it sits on a shown window.
+            const QPoint stale = picker->mapToGlobal(QPoint(0, 0));
+            const QPoint actual = globalOf(picker);
+            if (stale != actual) {
+                menu->move(menu->pos() + (actual - stale));
+                pump(kFinalSettleMs);
+                ctx.notes.append(QStringLiteral("token picker: button at %1,%2 by mapToGlobal but %3,%4 by window "
+                                                "geometry; the menu is moved by %5,%6")
+                                     .arg(stale.x()).arg(stale.y()).arg(actual.x()).arg(actual.y())
+                                     .arg(actual.x() - stale.x()).arg(actual.y() - stale.y()));
+            }
             appendPopupImages(ctx, name + QStringLiteral("--token-picker"), dialog, {menu}, menu);
             const QRect screen = picker->screen() != nullptr ? picker->screen()->geometry() : QRect();
             const QRect placed = menu->geometry();
-            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3 at %4,%5; screen %6x%7, "
-                                            "menu inside the screen: %8")
+            const bool fitsBelow = placed.top() >= actual.y() + picker->height();
+            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3 at %4,%5 (%6 the button, "
+                                            "at most %7 rows); screen %8x%9, menu inside the screen: %10")
                                  .arg(menu->actions().size()).arg(placed.width()).arg(placed.height())
-                                 .arg(placed.x()).arg(placed.y()).arg(screen.width()).arg(screen.height())
+                                 .arg(placed.x()).arg(placed.y())
+                                 .arg(fitsBelow ? QStringLiteral("below") : QStringLiteral("above"))
+                                 .arg(TextOverlayItemEditor::kTokenMenuMaxRows)
+                                 .arg(screen.width()).arg(screen.height())
                                  .arg(screen.contains(placed) ? QStringLiteral("yes") : QStringLiteral("no")));
             menu->close();
             pump(kFinalSettleMs);

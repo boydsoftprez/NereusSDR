@@ -10,6 +10,7 @@
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QMenu>
+#include <QScreen>
 #include <QToolButton>
 
 namespace NereusSDR {
@@ -27,7 +28,78 @@ constexpr int kOffsetDecimals = 3;
 constexpr double kPaddingMax = 10.0;
 constexpr double kPaddingStep = 0.001;
 constexpr int kPaddingDecimals = 3;
+
+// The "%" token list. It is never taller than kTokenMenuMaxRows rows or the
+// available height of the screen its button is on, and scrolls for the rest.
+// It opens at its button: below it when it fits there, otherwise above it.
+class TokenMenu final : public QMenu {
+public:
+    explicit TokenMenu(QWidget* anchor) : QMenu(anchor), m_anchor(anchor)
+    {
+        // The cap is set as the list opens (aboutToShow comes before QMenu
+        // sizes it), from the rows it holds and the button's screen.
+        connect(this, &QMenu::aboutToShow, this, [this]() { setMaximumHeight(cappedHeight()); });
+    }
+    // QMenu shows its scroll arrows only when its size hint runs past the
+    // screen below the point it opens at. A list longer than the cap
+    // reports that much, so QMenu scrolls it; the maximum height then holds
+    // it to the cap and showEvent puts it at the button.
+    QSize sizeHint() const override
+    {
+        QSize hint = QMenu::sizeHint();
+        QScreen* screen = m_anchor != nullptr ? m_anchor->screen() : nullptr;
+        if (screen != nullptr && hint.height() > cappedHeight()) {
+            hint.setHeight(qMax(hint.height(), screen->availableGeometry().height() + 1));
+        }
+        return hint;
+    }
+
+protected:
+    void showEvent(QShowEvent* event) override
+    {
+        QMenu::showEvent(event);
+        if (m_anchor != nullptr) {
+            move(TextOverlayItemEditor::tokenMenuPosition(m_anchor, size()));
+        }
+    }
+
+private:
+    int cappedHeight() const
+    {
+        const int full = QMenu::sizeHint().height();
+        int cap = full;
+        const QList<QAction*> list = actions();
+        if (list.size() > TextOverlayItemEditor::kTokenMenuMaxRows) {
+            const QRect first = actionGeometry(list.first());
+            const QRect last = actionGeometry(list.last());
+            const int chrome = full - (last.bottom() - first.top() + 1);
+            cap = chrome + TextOverlayItemEditor::kTokenMenuMaxRows * first.height();
+        }
+        if (QScreen* screen = m_anchor != nullptr ? m_anchor->screen() : nullptr) {
+            cap = qMin(cap, screen->availableGeometry().height());
+        }
+        return cap;
+    }
+
+    QWidget* m_anchor{nullptr};
+};
 } // namespace
+
+QPoint TextOverlayItemEditor::tokenMenuPosition(const QWidget* anchor, const QSize& menuSize)
+{
+    const QPoint origin = anchor->mapToGlobal(QPoint(0, 0));
+    QScreen* screen = anchor->screen();
+    if (screen == nullptr) {
+        return origin + QPoint(0, anchor->height());
+    }
+    const QRect room = screen->availableGeometry();
+    int y = origin.y() + anchor->height();
+    if (y + menuSize.height() - 1 > room.bottom()) {
+        y = qMax(room.top(), origin.y() - menuSize.height());
+    }
+    const int x = qMax(room.left(), qMin(origin.x(), room.right() - menuSize.width() + 1));
+    return QPoint(x, y);
+}
 
 QCheckBox* TextOverlayItemEditor::makeFlagRow(const QString& label, void (TextOverlayItem::*setter)(bool))
 {
@@ -60,10 +132,11 @@ QWidget* TextOverlayItemEditor::makeTokenField(QLineEdit* edit,
     button->setText(QStringLiteral("%"));
     button->setToolTip(QStringLiteral("Insert a value token"));
     button->setPopupMode(QToolButton::InstantPopup);
-    auto* menu = new QMenu(button);
+    auto* menu = new TokenMenu(button);
     // The token list is longer than a screen: it scrolls in one column and
     // Qt keeps it inside the screen, instead of growing past the screen or
-    // spreading into columns across the dialog.
+    // spreading into columns across the dialog. TokenMenu caps its height
+    // and opens it at the button, leaving the dialog's buttons uncovered.
     menu->setStyleSheet(QStringLiteral("QMenu { menu-scrollable: 1; }"));
     for (const QString& token : offeredOverlayTokens()) {
         menu->addAction(token);

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original tests for the text overlay token table.
 // Modification history (NereusSDR):
+//   2026-10-26 - The picker's list has a row cap, opens at its button and
+//                 leaves the dialog's buttons uncovered. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The token picker's list scrolls inside the screen.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Token table: case-insensitive names, %precis=N% for the
@@ -12,6 +15,8 @@
 #include <QAction>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPushButton>
+#include <QTimer>
 #include <QScreen>
 #include <QStyle>
 #include <QGuiApplication>
@@ -251,6 +256,67 @@ private slots:
             menu->close();
             QTRY_VERIFY(!menu->isVisible());
         }
+    }
+
+    // The picker's list is at most kTokenMenuMaxRows rows and the available
+    // screen height, opens at its button (below it, or above when below has
+    // no room), scrolls to its last token, and at the parity scene's dialog
+    // size (1200x720, the "%" button at 1136,224) stays clear of the
+    // dialog's Apply / Cancel / OK row.
+    void pickerListIsCappedAndOpensAtItsButton()
+    {
+        auto item = std::make_unique<TextOverlayItem>();
+        QWidget dialog;
+        dialog.resize(1200, 720);
+        auto* editor = new TextOverlayItemEditor(&dialog);
+        editor->setItem(item.get());
+        editor->resize(780, editor->sizeHint().height());
+        QList<QPushButton*> buttonRow;
+        int x = 1030;
+        for (const char* text : {"Apply", "Cancel", "OK"}) {
+            auto* b = new QPushButton(QString::fromLatin1(text), &dialog);
+            b->setGeometry(x, 688, 52, 23);
+            buttonRow.append(b);
+            x += 56;
+        }
+        auto* picker = editor->findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QVERIFY(picker && picker->menu());
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        editor->move(QPoint(1136, 224) - picker->mapTo(&dialog, QPoint(0, 0)) + editor->pos());
+        QCOMPARE(picker->mapTo(&dialog, QPoint(0, 0)), QPoint(1136, 224));
+        QMenu* menu = picker->menu();
+        QVERIFY(menu->actions().size() > TextOverlayItemEditor::kTokenMenuMaxRows);
+        QRect placed;
+        bool lastShown = false;
+        QTimer::singleShot(0, menu, [&]() {
+            QTRY_VERIFY(menu->isVisible());
+            placed = menu->geometry();
+            QAction* last = menu->actions().constLast();
+            // End goes to the last token, scrolling the list to it.
+            QTest::keyClick(menu, Qt::Key_End);
+            QCoreApplication::processEvents();
+            lastShown = menu->rect().contains(menu->actionGeometry(last));
+            menu->close();
+        });
+        picker->showMenu();
+        QVERIFY(placed.isValid());
+        const QRect first = menu->actionGeometry(menu->actions().constFirst());
+        const int rows = TextOverlayItemEditor::kTokenMenuMaxRows;
+        // The rows plus the menu's frame and margins (a few pixels).
+        QVERIFY2(placed.height() <= rows * first.height() + 12,
+                 qPrintable(QStringLiteral("menu %1 px tall, row %2 px").arg(placed.height()).arg(first.height())));
+        QVERIFY(placed.height() <= picker->screen()->availableGeometry().height());
+        const QRect anchor(picker->mapToGlobal(QPoint(0, 0)), picker->size());
+        QVERIFY2(qAbs(placed.top() - (anchor.bottom() + 1)) <= 2 || qAbs(placed.bottom() - (anchor.top() - 1)) <= 2,
+                 qPrintable(QStringLiteral("menu %1,%2 %3x%4; button %5,%6 %7x%8").arg(placed.x()).arg(placed.y())
+                                .arg(placed.width()).arg(placed.height()).arg(anchor.x()).arg(anchor.y())
+                                .arg(anchor.width()).arg(anchor.height())));
+        for (QPushButton* b : buttonRow) {
+            const QRect r(b->mapToGlobal(QPoint(0, 0)), b->size());
+            QVERIFY2(!placed.intersects(r), qPrintable(b->text()));
+        }
+        QVERIFY2(lastShown, "the list does not scroll to its last token");
     }
 };
 

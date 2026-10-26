@@ -16,6 +16,14 @@ class TextOverlayItemEditor : public BaseItemEditor {
     Q_OBJECT
 public:
     explicit TextOverlayItemEditor(QWidget* parent = nullptr);
+    // The "%" token list shows at most this many rows and scrolls for the
+    // rest (NereusSDR's own value: it fits under the Text rows on a laptop
+    // screen without reaching the dialog's buttons).
+    static constexpr int kTokenMenuMaxRows = 16;
+    // Where a token list of `menuSize` opens for its "%" button `anchor`:
+    // below the button when it fits on the button's screen, otherwise above
+    // it; kept inside that screen.
+    static QPoint tokenMenuPosition(const QWidget* anchor, const QSize& menuSize);
     void setItem(MeterItem* item) override;
 
 private:
