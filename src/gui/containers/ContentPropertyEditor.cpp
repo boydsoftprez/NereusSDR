@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Clock: a "Thetis time and date format" row (thetisFormat).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history: a "Trace 2 source" row (Off, Slice A-D,
 //                 Follow selected RX) writes the face's trace2Context.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -222,6 +224,7 @@ QString fieldLabel(QString key)
     if(key=="eyeScale") {return QObject::tr("Eye size");}
     if(key=="bezelScale") {return QObject::tr("Bezel size");}
     if(key=="bezelImage") {return QObject::tr("Bezel image");}
+    if(key=="thetisFormat") {return QObject::tr("Thetis time and date format");}
     if(key=="showType") {return QObject::tr("Show type");}
     if(key=="typeColor") {return QObject::tr("Type color");}
     if(key=="showSubMarker") {return QObject::tr("Show µV and dBm");}

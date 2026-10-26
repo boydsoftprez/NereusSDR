@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Clock: the thetisFormat key (Thetis time and date strings)
+//                 and kClockPresetThetisDefaults for new clock faces.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history: a second trace with its own source
 //                 (trace2Context; D2, a slice per trace), fed by its own
 //                 reading consumer or data source variable 2; a saved
@@ -275,5 +278,19 @@ inline constexpr CompositeFaceThetisDefaults kPowerSwrThetisDefaults{
     0,                          // no sub needles
     true,                       // unused
     false,                      // unused
+};
+// New clock faces (makeEntry) draw Thetis's strings: 12 hour h:mm:ss with
+// am / pm apart, the date ddd d MMM yyyy and the titles local / utc
+// (thetisFormat). A saved clock without the key keeps yyyy-MM-dd and the
+// earlier time format. The face's clock mode and date toggle stay.
+struct ClockPresetThetisDefaults {
+    bool thetisFormat;
+    bool show24Hour;
+};
+// From Thetis MeterManager.cs:15407-15416 [v2.10.3.15] (clsClock), drawn
+// by renderClock :40474-40537.
+inline constexpr ClockPresetThetisDefaults kClockPresetThetisDefaults{
+    true,                       // renderClock's strings (:40489-40516)
+    true,                       // _24HourClock = true (:15416)
 };
 }

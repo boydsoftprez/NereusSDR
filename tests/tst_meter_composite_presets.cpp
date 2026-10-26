@@ -21,6 +21,7 @@
 #include "gui/meters/presets/MagicEyePresetItem.h"
 #include "gui/meters/presets/SignalTextPresetItem.h"
 #include "gui/meters/presets/ContestPresetItem.h"
+#include "gui/meters/presets/ClockPresetItem.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
@@ -1049,6 +1050,50 @@ private slots:
         QVERIFY(history.applyConfiguration({{"historyCapacity",2}})); QCOMPARE(trace(),0);
         for(int now=3000;now<=3900;now+=300) {history.pushBindingValue(MeterBinding::SignalAvg,now==3900?-30:-100);history.advanceMeter(now);}
         QVERIFY(trace()>100); QCOMPARE(trace(475),0); // Capacity retains only 3600→3900, at the right edge.
+    }
+    // A fixed local 2026-10-25 13:05:09 on a clock face; the painted text runs.
+    static QStringList clockTexts(CompositePresetItem& face,const QJsonObject& edit) {
+        face.clockDisplay()->setTimeSource([] { return QDateTime(QDate(2026,10,25),QTime(13,5,9)); });
+        if(!face.applyConfiguration(edit)) { return {QStringLiteral("rejected")}; }
+        const QSize size(640,240); TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        QStringList texts; for(const auto& text:device.texts()) { texts.append(text.value); } return texts;
+    }
+    void newClockTakesThetisFormat() {
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.clock"));
+        QCOMPARE(entry.config["properties"].toObject()["thetisFormat"],QJsonValue(true));
+        QCOMPARE(entry.config["properties"].toObject()["show24Hour"],QJsonValue(kClockPresetThetisDefaults.show24Hour));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QCOMPARE(face->configuration()["thetisFormat"],QJsonValue(true));
+        // 12 hour: "1:05:09" and "pm" are separate runs; the date reads as Thetis's.
+        QStringList texts=clockTexts(*face,{{"show24Hour",false},{"clockMode","Local"}});
+        QVERIFY2(texts.contains("1:05:09"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("pm"),qPrintable(texts.join(" | ")));
+        QVERIFY2(texts.contains("Sun 25 Oct 2026"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("local"),qPrintable(texts.join(" | ")));
+        for(const QString& text:texts) { QVERIFY2(!text.contains("PM") && text!="1:05:09pm" && !text.startsWith("01:"),qPrintable(text)); }
+        // 24 hour draws HH:mm:ss and no am / pm.
+        texts=clockTexts(*face,{{"show24Hour",true}});
+        QVERIFY2(texts.contains("13:05:09"),qPrintable(texts.join(" | "))); QVERIFY(!texts.contains("pm"));
+        // Both: the halves are titled local and utc.
+        texts=clockTexts(*face,{{"clockMode","Both"}});
+        QVERIFY2(texts.contains("local") && texts.contains("utc"),qPrintable(texts.join(" | ")));
+        // The Contest face's clock keeps the earlier format when placed new.
+        const ContentEntry contest=registry.makeEntry(QStringLiteral("meter.contest"));
+        QCOMPARE(contest.config["properties"].toObject()["thetisFormat"],QJsonValue(false));
+    }
+    void savedClockKeepsItsFormat() {
+        // A clock saved before the option: no thetisFormat key.
+        ClockPresetItem saved; QJsonObject record=QJsonDocument::fromJson(saved.serialize().toUtf8()).object();
+        record.remove("thetisFormat"); record["show24Hour"]=false; record["clockMode"]="Local";
+        ClockPresetItem restored; QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
+        QCOMPARE(restored.configuration()["thetisFormat"],QJsonValue(false));
+        QStringList texts=clockTexts(restored,{});
+        QVERIFY2(texts.contains("01:05:09 PM"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("2026-10-25"),qPrintable(texts.join(" | ")));
+        QVERIFY2(texts.contains("Local"),qPrintable(texts.join(" | "))); QVERIFY(!texts.contains("pm"));
+        texts=clockTexts(restored,{{"show24Hour",true}}); QVERIFY2(texts.contains("13:05:09"),qPrintable(texts.join(" | ")));
+        // The editor offers the row; a non-boolean value is rejected.
+        QVERIFY(restored.editableFields().contains("thetisFormat")); QVERIFY(!restored.applyConfiguration({{"thetisFormat","yes"}}));
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry); editor.setEntry(registry.makeEntry(QStringLiteral("meter.clock")));
+        QVERIFY(editor.findChild<QWidget*>(QStringLiteral("thetisFormat")));
     }
     void primitiveClockSharesCadence() {
         ContainerContentRegistry registry; MeterWidget widget; widget.resize(360,120); auto* item=registry.createMeterItem(registry.makeEntry("CLOCK"),&widget); QVERIFY(item); widget.addItem(item); widget.show();
