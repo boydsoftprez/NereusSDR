@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - updateMmioValue(item, index, ...): a data source reading
+//                 for each of an item's variables. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / TX for every item: setItemTxState reaches
 //                 every item and clears history on a change;
 //                 clearItemHistory(); drawFadeVeils(). J.J. Boyd (KG4VCF),
@@ -134,6 +137,10 @@ public:
     QHash<int, double> lastBindingValues() const { return m_lastBindingValue; }
     // MMIO remains an individual item's cached endpoint source.
     void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {},
+                         MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
+    // A reading for data source variable `index` (Thetis MeterVariables).
+    // Index 0 is the call above; index 1 and up reach setSecondaryValue.
+    void updateMmioValue(MeterItem* item, int index, double value, const QString& unavailableReason = {},
                          MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
     void advanceMeters(qint64 monotonicMs);
 #ifdef NEREUS_BUILD_TESTS

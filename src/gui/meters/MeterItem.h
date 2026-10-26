@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Several data source (MMIO) variables per item: index 0 is
+//                 the existing pair, index 1 and up feed setSecondaryValue;
+//                 mmioVariableCount() ports Thetis MeterVariables.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
 //                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
 //                 via ContentFade::nextValue), setForeignSession; a virtual
@@ -512,6 +516,25 @@ public:
 
     QString mmioSourceKey() const { return m_mmioGuid.toString(QUuid::WithoutBraces) + QChar(0) + m_mmioVariable; }
 
+    // Several variables per item (Thetis MeterVariables). Index 0 is the
+    // pair above; index 1 and up are delivered through setSecondaryValue
+    // and never replace the item's main reading. Indexes outside
+    // 0..kMaxMmioVariables-1 are ignored.
+    // From Thetis MeterManager.cs:22684-22738 [v2.10.3.15] — ANANMM reads 7.
+    static constexpr int kMaxMmioVariables = 7;
+    void    setMmioBinding(int index, const QUuid& guid, const QString& variableName);
+    QUuid   mmioGuid(int index) const;
+    QString mmioVariable(int index) const;
+    bool    hasMmioBinding(int index) const;
+    QString mmioSourceKey(int index) const;
+    // True when any index, 0 included, reads a data source.
+    bool    hasAnyMmioBinding() const;
+    // A data source reading for variable `index` (1 and up). A non-finite
+    // value means the source has no reading. No-op by default.
+    virtual void setSecondaryValue(int index, double value) { Q_UNUSED(index); Q_UNUSED(value); }
+    // How many variables a container item type reads (Thetis MeterVariables).
+    static int mmioVariableCount(const QString& typeId);
+
     virtual Layer renderLayer() const = 0;
     virtual void paint(QPainter& p, int widgetW, int widgetH) = 0;
     virtual void emitVertices(QVector<float>& verts, int widgetW, int widgetH) {
@@ -654,6 +677,9 @@ protected:
     // instead of the WDSP-backed bindingId() path.
     QUuid   m_mmioGuid;
     QString m_mmioVariable;
+    // Variables 1 and up (slot i holds index i + 1); empty when none.
+    struct MmioVariableBinding { QUuid guid; QString variable; };
+    QVector<MmioVariableBinding> m_extraMmio;
 
     // Task 3.2 — unit-mode fan-out (S / dBm / µV).
     // Set by MultimeterPage → ContainerManager::forEachMeterItem broadcast.

@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Rows for the ANAN, Cross and Power/SWR per-item options:
+//                 power limit (0 shows "Radio rating"), power scale, peak
+//                 hold, peak value and other needles colors (blank keeps
+//                 the face's ink), shadow and dark mode. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - One data source row pair per variable the item type reads
+//                 (MeterItem::mmioVariableCount, Thetis MeterVariables):
+//                 variables 2 and up are stored in mmioVariables.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / Fade on TX rows for bar presets, composites
 //                 and waveform faces (addFadeRows); a composite's edit turns
 //                 its legacy fadeRx / fadeTx off. J.J. Boyd (KG4VCF),
@@ -125,7 +134,7 @@ void ContentPropertyEditor::captureRenderer()
     // another axis changed during this editor selection.
     if(captured.config==m_hydrated.config) {captured.config=m_original.config;}
     if(captured.canvasRect==m_hydrated.canvasRect) {captured.canvasRect=m_original.canvasRect;}
-    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
+    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("mmioVariables"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
         if(captured.context[key]==m_hydrated.context[key]) {
             if(m_original.context.contains(key)) {captured.context[key]=m_original.context[key];} else {captured.context.remove(key);}
         }
@@ -186,6 +195,12 @@ QString fieldLabel(QString key)
     if(key=="secondaryBindingId") {return QObject::tr("Average reading");}
     if(key=="decay") {return QObject::tr("Release (0–1)");}
     if(key=="attack") {return QObject::tr("Attack (0–1)");}
+    if(key=="powerLimitW") {return QObject::tr("Power limit");}
+    if(key=="powerScaleColor") {return QObject::tr("Power scale color");}
+    if(key=="peakHoldColor") {return QObject::tr("Peak hold color");}
+    if(key=="peakValueColor") {return QObject::tr("Peak value color");}
+    if(key=="subNeedleColor") {return QObject::tr("Other needles color");}
+    if(key=="darkMode") {return QObject::tr("Dark mode");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;
@@ -404,13 +419,16 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* spin=new QDoubleSpinBox(this);spin->setDecimals(4);spin->setRange(-1000000,1000000);
             if(key=="attack" || key=="decay") {spin->setRange(0,1);spin->setSingleStep(.05);}
             if(key.startsWith("radius") || key=="strokeWidth" || key=="lengthFactor") {spin->setRange(.0001,1000);spin->setSingleStep(.05);}
+            // 0 follows the radio's rating; the face rejects 0-0.1.
+            if(key=="powerLimitW") {spin->setDecimals(1);spin->setRange(0,kMaxBarPowerLimitW);spin->setSingleStep(10);spin->setSuffix(tr(" W"));spin->setSpecialValueText(tr("Radio rating"));}
             spin->setValue(value.toDouble());connect(spin,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,key,channel,spin](double v){if(!property(key,v,channel)) {const QSignalBlocker block(spin);spin->setValue(effectiveProperty(key,channel).toDouble());spin->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=spin;
         }
     } else if(value.isString()) {
         auto* edit=new QLineEdit(value.toString(),this);edit->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));
         connect(edit,&QLineEdit::editingFinished,this,[this,edit,key,channel]{if(!property(key,edit->text(),channel)) {edit->setText(effectiveProperty(key,channel).toString());edit->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=edit;
         if(key.endsWith("Color") || key=="color") {
-            edit->setPlaceholderText(tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor"}.contains(key)?tr("Blank uses the face color")
+                :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
             connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
         }
@@ -595,6 +613,39 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
             if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
             if(m_item && (key=="mmioGuid" || key=="mmioVariable")) {m_item->setMmioBinding(QUuid(m_entry.context["mmioGuid"].toString()),m_entry.context["mmioVariable"].toString());}
             publish(); });
+    }
+    // Variables 2 and up, one row pair per variable the type reads.
+    const bool readsDataSource=m_item && !applet && !declared && !qobject_cast<WaveformMeterItem*>(m_item.get());
+    const int variableCount=readsDataSource?MeterItem::mmioVariableCount(entry.typeId):0;
+    for(int index=1;index<variableCount && index<MeterItem::kMaxMmioVariables;++index) {
+        const QJsonObject stored=entry.context.value("mmioVariables").toArray().at(index-1).toObject();
+        for(const QString& field:{QStringLiteral("guid"),QStringLiteral("variable")}) {
+            const bool guidField=field=="guid";
+            auto* edit=new QLineEdit(stored.value(field).toString(),advanced);
+            edit->setObjectName((guidField?QStringLiteral("mmioGuid"):QStringLiteral("mmioVariable"))+QString::number(index));
+            edit->setPlaceholderText(tr("Unassigned"));
+            bindings->addRow(guidField?tr("MMIO source UUID, variable %1").arg(index+1):tr("MMIO variable %1").arg(index+1),edit);
+            if(guidField) {edit->setToolTip(tr("A data source's UUID or its 4-character ID"));}
+            connect(edit,&QLineEdit::editingFinished,this,[this,edit,index,field,guidField]{
+                // A 4-character data source ID is stored as that source's UUID.
+                if(guidField && edit->text().trimmed().size()==4 && QUuid(edit->text().trimmed()).isNull()) {
+                    if(MmioEndpoint* ep=ExternalVariableEngine::instance().endpointByFourChar(edit->text().trimmed())) {
+                        QSignalBlocker block(edit); edit->setText(ep->guid().toString(QUuid::WithoutBraces));
+                    }
+                }
+                QJsonArray variables=m_entry.context.value("mmioVariables").toArray();
+                while(variables.size()<index) {variables.append(QJsonObject{{"guid",QString()},{"variable",QString()}});}
+                QJsonObject variable=variables.at(index-1).toObject();
+                variable[field]=edit->text();
+                if(!variable.contains("guid")) {variable["guid"]=QString();}
+                if(!variable.contains("variable")) {variable["variable"]=QString();}
+                variables[index-1]=variable;
+                // Trailing unassigned variables are not stored.
+                while(!variables.isEmpty() && variables.last().toObject().value("guid").toString().isEmpty() && variables.last().toObject().value("variable").toString().isEmpty()) {variables.removeLast();}
+                if(variables.isEmpty()) {m_entry.context.remove("mmioVariables");} else {m_entry.context["mmioVariables"]=variables;}
+                if(m_item) {m_item->setMmioBinding(index,QUuid(variable.value("guid").toString()),variable.value("variable").toString());}
+                publish(); });
+        }
     }
     m_error=new QLabel(this);m_error->setWordWrap(true);m_error->setStyleSheet("color:#ffb0b0");root->addWidget(m_error);
     for(auto* group:findChildren<QGroupBox*>()) {if(auto* form=qobject_cast<QFormLayout*>(group->layout())) {form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);form->setFormAlignment(Qt::AlignLeft|Qt::AlignTop);form->setLabelAlignment(Qt::AlignLeft);}}

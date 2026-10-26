@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - A second data source (MMIO) variable drives the average
+//                 marker (setSecondaryValue(1, ...)); the radio's average
+//                 reading then leaves it alone. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The meter.adcMax reason reads "ADC magnitude is not
 //                 available", which makes no promise. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -156,13 +160,17 @@ QSet<int> BarPresetItem::readingBindings() const {
 void BarPresetItem::pushBindingValue(int binding, double value) {
     const bool available=bindingUnavailableReason(binding).isEmpty() && std::isfinite(value) && (hasMmioBinding() || (m_flavor=="Custom" ? (!isNoReadingBinding(binding) || !isNoMeterReading(value)) : !isNoMeterReading(value)));
     if(binding==bindingId()) { m_value=value; m_primary.push(value,available); }
-    if(binding==m_secondary) { m_average.push(value,available); }
+    if(binding==m_secondary && !hasMmioBinding(1)) { m_average.push(value,available); }
+}
+void BarPresetItem::setSecondaryValue(int index, double value) {
+    // Variable 2 is the average marker's reading.
+    if(index==1) { m_average.push(value,std::isfinite(value)); }
 }
 void BarPresetItem::setBindingUnavailable(int binding, const QString& givenReason) {
     // A meter clearing availability cannot clear a reading no provider sends.
     const QString reason=(givenReason.isEmpty() && binding==bindingId() && adcMaxWithoutProvider(*this)) ? adcMaxUnavailableText() : givenReason;
     MeterItem::setBindingUnavailable(binding,reason);
-    if(!reason.isEmpty()) { if(binding==bindingId()) { m_primary.push(0,false); } if(binding==m_secondary) { m_average.push(0,false); } }
+    if(!reason.isEmpty()) { if(binding==bindingId()) { m_primary.push(0,false); } if(binding==m_secondary && !hasMmioBinding(1)) { m_average.push(0,false); } }
 }
 bool BarPresetItem::advanceMeter(qint64 time) { const bool primary=m_primary.advance(time); const bool average=m_average.advance(time); return primary || average; }
 void BarPresetItem::resetForTxTransition(bool inTx) { Q_UNUSED(inTx); m_primary.reset(m_minimum); m_average.reset(m_minimum); }
@@ -173,7 +181,7 @@ void BarPresetItem::resetRxSource()
         m_primary.reset(m_minimum);
         m_value = kNoMeterReadingDbm;
     }
-    if (m_secondary >= MeterBinding::SignalPeak && m_secondary <= MeterBinding::PbSnr) {
+    if (m_secondary >= MeterBinding::SignalPeak && m_secondary <= MeterBinding::PbSnr && !hasMmioBinding(1)) {
         m_average.reset(m_minimum);
     }
 }

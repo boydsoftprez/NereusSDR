@@ -10,6 +10,9 @@
 #include <QApplication>
 #include <QScopeGuard>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QTemporaryDir>
+#include <QDoubleSpinBox>
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CrossNeedleItem.h"
@@ -29,6 +32,7 @@
 #include "core/RadioStatus.h"
 #include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "models/SliceModel.h"
 #include "models/Band.h"
@@ -116,6 +120,35 @@ private:
     static QJsonArray configuredChannels(CompositePresetItem& face) {
         QJsonArray channels=face.configuration()["channels"].toArray();
         for(int i=0;i<channels.size();++i) { auto c=channels[i].toObject(); c["ignoreHistoryMs"]=0; channels[i]=c; } return channels;
+    }
+    static QJsonArray settledChannels(CompositePresetItem& face,bool peakHold) {
+        QJsonArray channels=configuredChannels(face);
+        for(int i=0;i<channels.size();++i) { auto c=channels[i].toObject(); c["attack"]=1.0; c["decay"]=1.0; c["peakHold"]=peakHold; c["showHistory"]=false; channels[i]=c; } return channels;
+    }
+    static void paintBoth(CompositePresetItem& face,QPaintDevice& device,QSize size) {
+        QPainter painter(&device);
+        face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::Background);
+        face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic);
+    }
+    static QImage rendered(CompositePresetItem& face,QSize size) {
+        QImage image(size,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::transparent); paintBoth(face,image,size); return image;
+    }
+    static bool paintsColour(CompositePresetItem& face,QSize size,const QColor& colour,MeterItem::Layer layer) {
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),layer); }
+        for(const auto& path:device.paths()) {
+            if((path.pen.style()!=Qt::NoPen && path.pen.color()==colour) || (path.brush.style()!=Qt::NoBrush && path.brush.color()==colour)) { return true; }
+        }
+        return false;
+    }
+    // The x of the live PWR marker of a Power/SWR face (yellow 3 px line).
+    static double powerMarkerX(CompositePresetItem& face,QSize size) {
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        for(const auto& path:device.paths()) {
+            if(path.pen.color()==QColor(Qt::yellow) && path.pen.widthF()==3 && path.path.elementCount()==2 && path.path.elementAt(0).x==path.path.elementAt(1).x) { return path.path.elementAt(0).x; }
+        }
+        return -1;
     }
 private slots:
     void ananIdleNeedlesRemainParkedWithoutMeasurements() {
@@ -684,6 +717,209 @@ private slots:
         const QString custom=face.serialize(); AnanMultiMeterItem loaded;
         QVERIFY(loaded.deserialize(custom)); QCOMPARE(loaded.serialize(),custom);
         QCOMPARE(loaded.configuration()["channels"].toArray()[6].toObject()["futureOrbMetadata"],alc["futureOrbMetadata"]);
+    }
+    void perItemOptionsAbsentKeepTheEarlierLook() {
+        const QStringList optionKeys{"powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode"};
+        using Face=CompositePresetItem::Face;
+        for(Face type:{Face::PowerSwr,Face::Anan,Face::Cross}) {
+            CompositePresetItem face(type);
+            const QJsonObject config=face.configuration();
+            // The starting values are the earlier look: shared power scale,
+            // the face's own ink, shadows on, no dark art.
+            QCOMPARE(config["powerLimitW"].toDouble(-1),0.0);
+            QCOMPARE(config["peakHoldColor"].toString("x"),QString());
+            if(type!=Face::Cross) { QCOMPARE(config["peakValueColor"].toString("x"),QString()); } else { QVERIFY(!config.contains("peakValueColor")); }
+            if(type!=Face::PowerSwr) { QCOMPARE(config["powerScaleColor"].toString("x"),QString()); QCOMPARE(config["subNeedleColor"].toString("x"),QString()); QCOMPARE(config["shadow"].toBool(false),true); }
+            if(type==Face::Anan) { QCOMPARE(config["darkMode"].toBool(true),false); } else { QVERIFY(!config.contains("darkMode")); }
+            QVERIFY(face.applyConfiguration({{"channels",settledChannels(face,true)}}));
+            // A record saved before the options existed.
+            QJsonObject old=QJsonDocument::fromJson(face.serialize().toUtf8()).object();
+            for(const QString& key:optionKeys) { old.remove(key); }
+            CompositePresetItem restored(type);
+            QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact))));
+            QCOMPARE(restored.serialize(),face.serialize());
+            for(CompositePresetItem* f:{&face,&restored}) {
+                f->setPowerScale(100); f->resetForTxTransition(type!=Face::Anan);
+                for(int binding:f->readingBindings()) { f->setBindingSupport(binding,MeterItem::BindingSupport::Supported); f->pushBindingValue(binding,binding==MeterBinding::SignalAvg?-60:binding==MeterBinding::TxSwr?2:50); }
+                f->advanceMeter(0);
+                for(int binding:f->readingBindings()) { f->pushBindingValue(binding,binding==MeterBinding::SignalAvg?-90:binding==MeterBinding::TxSwr?1.5:10); }
+                f->advanceMeter(100);
+            }
+            QCOMPARE(rendered(restored,QSize(720,420)),rendered(face,QSize(720,420)));
+            // Blank peak hold color keeps the high color marker.
+            if(type!=Face::Anan) { QVERIFY(paintsColour(restored,QSize(720,420),QColor("#ffff4444"),MeterItem::Layer::OverlayDynamic)); }
+        }
+    }
+    void perItemPowerLimitScalesEachItem() {
+        // Two ANAN items, limits 100 and 1000, beside the shared 500 W scale.
+        AnanMultiMeterItem low,high,shared;
+        QVERIFY(low.applyConfiguration({{"powerLimitW",100.0}})); QVERIFY(high.applyConfiguration({{"powerLimitW",1000.0}}));
+        for(auto* face:{&low,&high,&shared}) { face->setPowerScale(500); }
+        QCOMPARE(low.calibratedPoint(3,100),QPointF(.751,.272));
+        QCOMPARE(high.calibratedPoint(3,1000),QPointF(.751,.272));
+        QCOMPARE(high.calibratedPoint(3,100),QPointF(.224,.28));
+        QCOMPARE(shared.calibratedPoint(3,500),QPointF(.751,.272));
+        high.setPowerScale(1500,2000.0); QCOMPARE(high.calibratedPoint(3,1000),QPointF(.751,.272));
+        // Cross: the limit applies to Forward and Reflected, as MaxPower does.
+        CrossNeedleItem cross; QVERIFY(cross.applyConfiguration({{"powerLimitW",50.0}})); cross.setPowerScale(500);
+        QCOMPARE(cross.calibratedPoint(0,50),QPointF(.662,.083));
+        CrossNeedleItem crossShared; crossShared.setPowerScale(100); QCOMPARE(cross.calibratedPoint(1,2),crossShared.calibratedPoint(1,4));
+        // Power/SWR limit 50: 25 W lands where 50 W does on a 100 W scale.
+        PowerSwrPresetItem limited,reference;
+        QVERIFY(limited.applyConfiguration({{"powerLimitW",50.0},{"channels",settledChannels(limited,false)}}));
+        QVERIFY(reference.applyConfiguration({{"channels",settledChannels(reference,false)}}));
+        limited.setPowerScale(500); reference.setPowerScale(100);
+        QCOMPARE(limited.calibratedPoint(0,25),QPointF(.5625,0));
+        limited.resetForTxTransition(true); reference.resetForTxTransition(true);
+        limited.pushBindingValue(MeterBinding::TxPower,25); reference.pushBindingValue(MeterBinding::TxPower,50);
+        limited.advanceMeter(0); reference.advanceMeter(0);
+        const double x=powerMarkerX(limited,QSize(360,144));
+        QVERIFY(x>0); QVERIFY(qAbs(x-powerMarkerX(reference,QSize(360,144)))<1e-6);
+        // Saved, restored and range checked (0 is the radio's rating).
+        PowerSwrPresetItem copy; QVERIFY(copy.deserialize(limited.serialize())); QCOMPARE(copy.configuration()["powerLimitW"].toDouble(),50.0);
+        for(double bad:{0.05,5000.5,-1.0}) { QVERIFY(!copy.applyConfiguration({{"powerLimitW",bad}})); }
+        QVERIFY(!copy.applyConfiguration({{"powerLimitW","50"}}));
+        QVERIFY(copy.applyConfiguration({{"powerLimitW",0.0}})); copy.setPowerScale(100); QCOMPARE(copy.calibratedPoint(0,50),QPointF(.5625,0));
+    }
+    void peakHoldMarkerUsesItsColour() {
+        const QColor green(0,255,0);
+        PowerSwrPresetItem power; QVERIFY(power.applyConfiguration({{"channels",settledChannels(power,true)},{"peakHoldColor","#ff00ff00"}}));
+        CrossNeedleItem cross; QVERIFY(cross.applyConfiguration({{"channels",settledChannels(cross,true)},{"peakHoldColor","#ff00ff00"}}));
+        for(CompositePresetItem* face:{static_cast<CompositePresetItem*>(&power),static_cast<CompositePresetItem*>(&cross)}) {
+            face->setPowerScale(100); face->resetForTxTransition(true);
+            face->pushBindingValue(MeterBinding::TxPower,100); face->advanceMeter(0); face->pushBindingValue(MeterBinding::TxPower,10); face->advanceMeter(100);
+            QVERIFY(face->channelPeak(0)>face->channelValue(0));
+            QVERIFY(paintsColour(*face,QSize(360,260),green,MeterItem::Layer::OverlayDynamic));
+            QVERIFY(face->applyConfiguration({{"peakHoldColor",""}}));
+            QVERIFY(!paintsColour(*face,QSize(360,260),green,MeterItem::Layer::OverlayDynamic));
+        }
+        AnanMultiMeterItem anan; QVERIFY(anan.applyConfiguration({{"channels",settledChannels(anan,true)},{"peakHoldColor","#ff00ff00"}}));
+        for(int binding:anan.readingBindings()) { anan.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+        anan.pushBindingValue(MeterBinding::SignalAvg,-40); anan.advanceMeter(0); anan.pushBindingValue(MeterBinding::SignalAvg,-100); anan.advanceMeter(100);
+        QVERIFY(anan.channelPeak(0)>anan.channelValue(0));
+        QVERIFY(paintsColour(anan,QSize(720,420),green,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!anan.applyConfiguration({{"peakHoldColor","not a color"}}));
+    }
+    void powerScaleColourInksThePowerScale() {
+        const QColor green(0,255,0);
+        CrossNeedleItem cross; AnanMultiMeterItem anan;
+        for(CompositePresetItem* face:{static_cast<CompositePresetItem*>(&cross),static_cast<CompositePresetItem*>(&anan)}) {
+            face->resetForTxTransition(true);
+            QVERIFY(!paintsColour(*face,QSize(720,420),green,MeterItem::Layer::Background));
+            QVERIFY(face->applyConfiguration({{"powerScaleColor","#ff00ff00"}}));
+            QVERIFY(paintsColour(*face,QSize(720,420),green,MeterItem::Layer::Background));
+        }
+        // Power/SWR has no needle power scale.
+        PowerSwrPresetItem power; QVERIFY(!power.editableFields().contains("powerScaleColor"));
+    }
+    void otherNeedlesColourAndShadow() {
+        AnanMultiMeterItem anan; CrossNeedleItem cross;
+        const QString primaryAnan=anan.configuration()["channels"].toArray()[0].toObject()["color"].toString();
+        QVERIFY(anan.applyConfiguration({{"subNeedleColor","#ff112233"}}));
+        const QJsonArray channels=anan.configuration()["channels"].toArray();
+        for(int i=0;i<7;++i) {
+            const QString colour=channels[i].toObject()["color"].toString();
+            if(i==0 || i==3) { QVERIFY(colour!=QStringLiteral("#ff112233")); } else { QCOMPARE(colour,QStringLiteral("#ff112233")); }
+        }
+        QCOMPARE(channels[0].toObject()["color"].toString(),primaryAnan);
+        QVERIFY(cross.applyConfiguration({{"subNeedleColor","#ff112233"}}));
+        QCOMPARE(cross.configuration()["channels"].toArray()[1].toObject()["color"].toString(),QStringLiteral("#ff112233"));
+        QVERIFY(cross.configuration()["channels"].toArray()[0].toObject()["color"].toString()!=QStringLiteral("#ff112233"));
+        // A needle's own color survives restore: the record carries channels.
+        auto edited=cross.configuration()["channels"].toArray(); auto reflected=edited[1].toObject(); reflected["color"]="#ff445566"; edited[1]=reflected;
+        QVERIFY(cross.applyConfiguration({{"channels",edited}}));
+        CrossNeedleItem restored; QVERIFY(restored.deserialize(cross.serialize()));
+        QCOMPARE(restored.configuration()["channels"].toArray()[1].toObject()["color"].toString(),QStringLiteral("#ff445566"));
+        // Shadow off removes every needle shadow.
+        const QColor ananShadow(0,0,0,150),crossShadow(0,0,0,12);
+        for(int binding:anan.readingBindings()) { anan.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+        QVERIFY(anan.applyConfiguration({{"channels",settledChannels(anan,false)}}));
+        anan.pushBindingValue(MeterBinding::SignalAvg,-73); anan.advanceMeter(0);
+        cross.resetForTxTransition(true); QVERIFY(cross.applyConfiguration({{"channels",settledChannels(cross,false)}})); cross.pushBindingValue(MeterBinding::TxPower,50); cross.advanceMeter(0);
+        QVERIFY(paintsColour(anan,QSize(720,420),ananShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(paintsColour(cross,QSize(360,260),crossShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(anan.applyConfiguration({{"shadow",false}})); QVERIFY(cross.applyConfiguration({{"shadow",false}}));
+        QVERIFY(!paintsColour(anan,QSize(720,420),ananShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!paintsColour(cross,QSize(360,260),crossShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!anan.applyConfiguration({{"shadow","no"}}));
+    }
+    void darkModeUsesTheDarkFaceArtWhenPresent() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString base=dir.filePath("face.png"),dark=dir.filePath("face-dark.png");
+        QImage art(1855,848,QImage::Format_RGB32); art.fill(Qt::blue); QVERIFY(art.save(base));
+        art.fill(Qt::green); QVERIFY(art.save(dark));
+        AnanMultiMeterItem face; face.setFaceArtBaseForTest(base);
+        const QSize size(720,420); const QRectF skin=face.ananNeedleRect(size.width(),size.height());
+        const double scale=skin.width()/1855;
+        const QPoint corner=(skin.topLeft()+QPointF(30*scale,30*scale)).toPoint();
+        QCOMPARE(face.faceArtPath(1000),base);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::blue));
+        QVERIFY(face.applyConfiguration({{"darkMode",true}}));
+        QCOMPARE(face.faceArtPath(1000),dark);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::green));
+        // Without the -dark file the normal art is used.
+        QVERIFY(QFile::remove(dark));
+        QCOMPARE(face.faceArtPath(1000),base);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::blue));
+        AnanMultiMeterItem copy; QVERIFY(copy.deserialize(face.serialize())); QCOMPARE(copy.configuration()["darkMode"].toBool(),true);
+        CrossNeedleItem cross; QVERIFY(!cross.editableFields().contains("darkMode"));
+    }
+    void newItemsTakeTheThetisDefaults() {
+        ContainerContentRegistry registry;
+        const auto config=[&](const QString& type) {
+            std::unique_ptr<MeterItem> item(registry.createMeterItem(registry.makeEntry(type),nullptr));
+            return qobject_cast<CompositePresetItem*>(item.get())->configuration();
+        };
+        const auto name=[](QRgb rgb) { return QColor::fromRgba(rgb).name(QColor::HexArgb); };
+        const QJsonObject anan=config("meter.ananMulti");
+        QCOMPARE(anan["powerLimitW"].toDouble(-1),kAnanThetisDefaults.powerLimitW);
+        QCOMPARE(anan["powerScaleColor"].toString(),QStringLiteral("#ff808080"));
+        QCOMPARE(anan["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(anan["peakValueColor"].toString("x"),QString());
+        QCOMPARE(anan["subNeedleColor"].toString(),name(kAnanThetisDefaults.subNeedleColour));
+        QCOMPARE(anan["shadow"].toBool(false),true); QCOMPARE(anan["darkMode"].toBool(true),false);
+        const QJsonObject cross=config("meter.crossNeedle");
+        QCOMPARE(cross["powerScaleColor"].toString(),QStringLiteral("#ff808080"));
+        QCOMPARE(cross["subNeedleColor"].toString(),QStringLiteral("#ff000000"));
+        QCOMPARE(cross["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        const QJsonObject power=config("meter.powerSwr");
+        QCOMPARE(power["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(power["peakValueColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(power["powerLimitW"].toDouble(-1),0.0);
+        // A face built in code (a saved record's starting point) keeps blanks.
+        AnanMultiMeterItem plain; QCOMPARE(plain.configuration()["powerScaleColor"].toString("x"),QString());
+    }
+    void mmioVariablesDriveTheirNeedles() {
+        MeterWidget widget;
+        auto* cross=new CrossNeedleItem(&widget); QVERIFY(cross->applyConfiguration({{"channels",settledChannels(*cross,false)}}));
+        cross->setMmioBinding(1,QUuid::createUuid(),QStringLiteral("reflected"));
+        widget.addItem(cross); widget.resetForTxTransition(true);
+        widget.updateMmioValue(cross,1,7.0); widget.updateMeterValue(MeterBinding::TxReversePower,15.0); widget.updateMeterValue(MeterBinding::TxPower,40.0);
+        cross->advanceMeter(0);
+        QVERIFY(cross->channelHasReading(1)); QCOMPARE(cross->channelValue(1),7.0);
+        // Forward still follows the radio.
+        QCOMPARE(cross->channelValue(0),40.0);
+        widget.updateMmioValue(cross,1,-400.0,QStringLiteral("External meter source is unavailable."));
+        cross->advanceMeter(100); QVERIFY(!cross->channelHasReading(1));
+        auto* anan=new AnanMultiMeterItem(&widget); QVERIFY(anan->applyConfiguration({{"channels",settledChannels(*anan,false)}}));
+        anan->setMmioBinding(4,QUuid::createUuid(),QStringLiteral("swr"));
+        widget.addItem(anan);
+        widget.updateMmioValue(anan,4,2.5); widget.updateMeterValue(MeterBinding::TxSwr,1.2);
+        anan->advanceMeter(0); QCOMPARE(anan->channelValue(4),2.5);
+        // Power/SWR reads one variable: index 1 is not a needle.
+        PowerSwrPresetItem power; power.setSecondaryValue(1,3.0); power.advanceMeter(0); QVERIFY(!power.channelHasReading(1));
+    }
+    void editorOffersTheOptions() {
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        ContentEntry edited; connect(&editor,&ContentPropertyEditor::entryEdited,this,[&](const ContentEntry& e) { edited=e; });
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.ananMulti")));
+        auto* limit=editor.findChild<QDoubleSpinBox*>(QStringLiteral("powerLimitW")); QVERIFY(limit);
+        QCOMPARE(limit->specialValueText(),QStringLiteral("Radio rating")); QCOMPARE(limit->value(),0.0); QCOMPARE(limit->maximum(),5000.0);
+        for(const char* key:{"powerScaleColor","peakHoldColor","peakValueColor","subNeedleColor","shadow","darkMode"}) { QVERIFY2(editor.findChild<QWidget*>(QLatin1String(key)),key); }
+        limit->setValue(250); QCOMPARE(edited.config["properties"].toObject()["powerLimitW"].toDouble(),250.0);
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.powerSwr")));
+        QVERIFY(editor.findChild<QDoubleSpinBox*>(QStringLiteral("powerLimitW"))); QVERIFY(editor.findChild<QWidget*>(QStringLiteral("peakValueColor")));
+        QVERIFY(!editor.findChild<QWidget*>(QStringLiteral("subNeedleColor")));
     }
     void paletteRoundtrips() {
         ContainerContentRegistry registry; int complete=0;

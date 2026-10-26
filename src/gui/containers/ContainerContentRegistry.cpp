@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Context key mmioVariables: an array of {guid, variable}
+//                 for data source variables 2 and up (index 0 stays in
+//                 mmioGuid / mmioVariable); absent means none and is not
+//                 written. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Fade on RX / TX: fadeOnRx / fadeOnTx read from and
 //                 written to the entry context (written only when set).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -48,6 +53,7 @@
 #include "core/UnbuiltFeatureList.h"
 #include "gui/styles/WorkspacePreview.h"
 #include <QUuid>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/PowerSwrPresetItem.h"
@@ -431,6 +437,12 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (!waveform) {
         if (entry.context.contains(QStringLiteral("bindingId"))) { item->setBindingId(entry.context.value(QStringLiteral("bindingId")).toInt()); }
         item->setMmioBinding(QUuid(entry.context.value(QStringLiteral("mmioGuid")).toString()), entry.context.value(QStringLiteral("mmioVariable")).toString());
+        // Variables 2 and up: element i is index i + 1.
+        const QJsonArray variables = entry.context.value(QStringLiteral("mmioVariables")).toArray();
+        for (int i = 0; i < variables.size() && i + 1 < MeterItem::kMaxMmioVariables; ++i) {
+            const QJsonObject variable = variables.at(i).toObject();
+            item->setMmioBinding(i + 1, QUuid(variable.value(QStringLiteral("guid")).toString()), variable.value(QStringLiteral("variable")).toString());
+        }
     }
     if (entry.context.contains(QStringLiteral("stackSlot"))) {
         item->setStackSlot(entry.context.value(QStringLiteral("stackSlot")).toInt(-1));
@@ -575,6 +587,18 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
         entry.context.insert(QStringLiteral("bindingId"),item.bindingId());
         entry.context.insert(QStringLiteral("mmioGuid"),item.mmioGuid().toString(QUuid::WithoutBraces));
         entry.context.insert(QStringLiteral("mmioVariable"),item.mmioVariable());
+        QJsonArray variables;
+        int last = 0;
+        for (int index = 1; index < MeterItem::kMaxMmioVariables; ++index) {
+            if (!item.mmioGuid(index).isNull() || !item.mmioVariable(index).isEmpty()) { last = index; }
+        }
+        for (int index = 1; index <= last; ++index) {
+            const QUuid guid = item.mmioGuid(index);
+            variables.append(QJsonObject{{QStringLiteral("guid"), guid.isNull() ? QString() : guid.toString(QUuid::WithoutBraces)},
+                                         {QStringLiteral("variable"), item.mmioVariable(index)}});
+        }
+        if (variables.isEmpty()) { entry.context.remove(QStringLiteral("mmioVariables")); }
+        else { entry.context.insert(QStringLiteral("mmioVariables"), variables); }
     }
     entry.context.insert(QStringLiteral("stackSlot"),item.stackSlot());
     entry.context.insert(QStringLiteral("slotLocalY"),item.slotLocalY());

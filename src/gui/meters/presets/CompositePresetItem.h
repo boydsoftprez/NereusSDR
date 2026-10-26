@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - ANAN, Cross and Power/SWR per-item options (power limit,
+//                 power scale, peak hold and peak value colors, other
+//                 needles color, shadow, dark mode), their Thetis new-item
+//                 defaults, and MMIO variables 2+ for ANAN and Cross.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - setAboveS9Frequency overrides MeterItem's (VHF S9 rule
 //                 per slice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -59,6 +64,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterDynamics.h"
 #include <QJsonObject>
 #include <QDateTime>
+#include <QImage>
 namespace NereusSDR {
 class BandButtonItem; class ModeButtonItem; class VfoDisplayItem; class ClockItem;
 // GUI presentation only. Channels are supplied by the existing shared poller.
@@ -82,8 +88,15 @@ public:
     bool advanceMeter(qint64) override;
     void resetForTxTransition(bool) override;
     void resetRxSource() override;
+    // MMIO variable 2 and up drive the matching ANAN / Cross needle.
+    void setSecondaryValue(int index, double value) override;
+    void applyNewItemDefaults() override;
+    // The ANAN face art this item paints: its -dark variant in dark mode
+    // when that file exists (ImageItem::variantPath), else the normal art.
+    QString faceArtPath(double diagonalPx) const;
 #ifdef NEREUS_BUILD_TESTS
     int historySampleCountForTest() const { return m_samples.size(); }
+    void setFaceArtBaseForTest(const QString& path) { m_faceArtBase=path; markPresentationDirty(true); }
 #endif
     void setPowerScale(int) override;
     // Temporary display top and legal marker, independent of radio rating.
@@ -133,6 +146,13 @@ protected:
 private:
     void initialise();
     double powerBasisForChannel(int) const;
+    // Channel fed by MMIO variable `index`, or -1.
+    int mmioChannel(int index) const;
+    bool channelFromMmio(int channel) const { return channel>=1 && hasMmioBinding(channel) && mmioChannel(channel)==channel; }
+    bool primaryNeedle(int channel) const;
+    // A blank optional color key falls back to the face's own ink.
+    QColor optionalColor(const char* key,const QColor& fallback) const;
+    bool faceShadow() const { return m_config.value(QStringLiteral("shadow")).toBool(true); }
     bool hasLegalMarker(int) const;
     void configureDynamics();
     void layoutChildren(int,int);
@@ -158,5 +178,57 @@ private:
     QVector<Sample> m_samples;
     BandButtonItem* m_bands=nullptr; ModeButtonItem* m_modes=nullptr;
     VfoDisplayItem* m_vfo=nullptr; ClockItem* m_clock=nullptr;
+    QString m_faceArtBase;
+    QString m_faceArtLoaded;
+    QImage m_faceArtImage;
+};
+
+// New ANAN, Cross and Power/SWR items (makeEntry) take Thetis's values for
+// the per-item options. A blank color (0) keeps the face's own ink; a power
+// limit of 0 follows the radio's power rating, as Thetis's new needles do
+// (_maxPower = CurrentPowerRating, MeterManager.cs:6774 [v2.10.3.15]).
+// Saved items without these keys keep the earlier look.
+struct CompositeFaceThetisDefaults {
+    double powerLimitW;
+    QRgb   powerScaleColour;
+    QRgb   peakHoldColour;
+    QRgb   peakValueColour;
+    QRgb   subNeedleColour;
+    bool   shadow;
+    bool   darkMode;
+};
+// From Thetis MeterManager.cs:23784-24138 [v2.10.3.15] (AddAnanMM); the
+// needle constructor :21961-21963, the image constructor :16044. The VHF
+// rule at :23833 (start 20 dB lower above S9 frequencies) is the
+// configureDynamics() reset, not a setting.
+inline constexpr CompositeFaceThetisDefaults kAnanThetisDefaults{
+    0.0,                        // ni.MaxPower = CurrentPowerRating
+    qRgb(0x80, 0x80, 0x80),     // nspi.LowColour = Color.Gray (:23981)
+    qRgb(0xff, 0x00, 0x00),     // _peakHoldMarkerColour = Color.Red (:21963)
+    0,                          // no peak value on ANANMM: face ink
+    qRgb(0x00, 0x00, 0x00),     // ni2.Colour = Color.Black (:23849)
+    true,                       // _shadow = true (:21961)
+    false,                      // img _darkMode = false (:16044)
+};
+// From Thetis MeterManager.cs:24140-24326 [v2.10.3.15] (AddCrossNeedle).
+inline constexpr CompositeFaceThetisDefaults kCrossThetisDefaults{
+    0.0,                        // ni.MaxPower = CurrentPowerRating
+    qRgb(0x80, 0x80, 0x80),     // nspi.LowColour = Color.Gray (:24197)
+    qRgb(0xff, 0x00, 0x00),     // _peakHoldMarkerColour = Color.Red (:21963)
+    0,                          // no peak value on CROSS: face ink
+    qRgb(0x00, 0x00, 0x00),     // ni2.Colour = Color.Black (:24231)
+    true,                       // _shadow = true (:21961)
+    false,                      // img _darkMode = false (:16044)
+};
+// From Thetis MeterManager.cs:21284-21302 [v2.10.3.15] (clsBarItem, the
+// PWR bar of AddPWRBar).
+inline constexpr CompositeFaceThetisDefaults kPowerSwrThetisDefaults{
+    0.0,                        // MaxPower = CurrentPowerRating
+    0,                          // no power scale item
+    qRgb(0xff, 0x00, 0x00),     // _peakHoldMarkerColour = Color.Red
+    qRgb(0xff, 0x00, 0x00),     // _peakValueColour = Color.Red
+    0,                          // no sub needles
+    true,                       // unused
+    false,                      // unused
 };
 }
