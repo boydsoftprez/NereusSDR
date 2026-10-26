@@ -11,6 +11,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - LED No TX: onContainerItemAdded connects each live LED's
+//                 txStopRequested, queued as Thetis's BeginInvoke is
+//                 (MeterManager.cs:21206-21211 [v2.10.3.15]); a stop for
+//                 this window's session goes to stopTransmitForLed
+//                 (StopAllTx locally, the window's release at the Core
+//                 remotely, with the warning shown in NereusSDR's words,
+//                 kLedNoTxStopUserText). It never keys.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history trace 2 reads its own slice: each live
 //                 history face registers it as a reading consumer
 //                 (HistoryGraphPresetItem::attachTrace2); refreshContainerMeter
@@ -1278,6 +1286,7 @@ warren@wpratt.com
 #include "core/spectrum/SpectrumReducer.h"
 #include "meters/MeterItem.h"
 #include "meters/ItemGroup.h"
+#include "meters/LEDItem.h"
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
 #include "meters/ModeButtonItem.h"      // R-R3-21 container controls
@@ -15240,6 +15249,33 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     // local rotor or the remote Core).
     if (auto* rotator = qobject_cast<RotatorItem*>(item); rotator && m_radioModel) {
         rotator->setRotor(m_radioModel->rotorModel(), m_radioModel);
+    }
+    // Container item parity Task 27: LED No TX stops this window's radio,
+    // and only for an entry of this window's session. Queued, as Thetis's
+    // stopMox BeginInvokes StopAllTx (MeterManager.cs:21206-21211
+    // [v2.10.3.15]), so the stop never runs inside the LED's update.
+    QList<LEDItem*> leds = item->findChildren<LEDItem*>();
+    if (auto* led = qobject_cast<LEDItem*>(item)) { leds.prepend(led); }
+    for (LEDItem* led : std::as_const(leds)) {
+        if (led->property("ledNoTxWired").toBool()) { continue; }
+        led->setProperty("ledNoTxWired", true);
+        const QPointer<LEDItem> guard(led);
+        connect(led, &LEDItem::txStopRequested, this, [this, guard](const QString&) {
+            if (m_shuttingDown || !guard || !m_radioModel) { return; }
+            // The entry's context: the item's own, else its meter's.
+            QJsonObject context;
+            for (QObject* o = guard.data(); o; o = o->parent()) {
+                const QVariant v = o->property("containerSourceContext");
+                if (v.isValid()) { context = v.toJsonObject(); break; }
+            }
+            if (!ledStopAppliesToSession(context, containerSessionId())) { return; }
+            // The signal carries Thetis's text; the user reads NereusSDR's.
+            // A local stop's warning comes on RadioModel::transmitStopped.
+            const QString message = QString::fromLatin1(kLedNoTxStopUserText);
+            if (stopTransmitForLed(*m_radioModel, message) == LedStopRoute::Remote) {
+                showToast(message, ToastSeverity::Warning, 10000);
+            }
+        }, Qt::QueuedConnection);
     }
     refreshContainerControls(item);
     reconcileMiniDisplays();

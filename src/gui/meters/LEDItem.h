@@ -30,6 +30,21 @@
 //                 clock values and meter data sources, appended to the
 //                 record; empty, the thresholds decide as before.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - No TX (Thetis NoTxTrue, MeterManager.cs:21177-21211):
+//                 while transmitting, the LED turning true asks for a stop
+//                 (txStopRequested, "Led Indicator stopped MOX"), once per
+//                 transition; preview copies never ask. The session rule
+//                 (ledStopAppliesToSession) and the stop's route
+//                 (stopTransmitForLed: StopAllTx on a local radio, the
+//                 window's own release at the Core on a remote one). It
+//                 only ever stops; nothing here keys. Appended to the
+//                 record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Fix round 1: No TX when false (Thetis NoTxFalse), saved
+//                 after No TX; no stop while the condition has an error
+//                 (Thetis runs Update only for a valid script); the
+//                 warning the user sees in NereusSDR's words. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -121,6 +136,7 @@ mw0lge@grange-lane.co.uk
 #include "MeterItem.h"
 #include "core/LedConditionExpression.h"
 #include <QColor>
+#include <QJsonObject>
 #include <QVariant>
 
 #include <optional>
@@ -128,6 +144,15 @@ mw0lge@grange-lane.co.uk
 namespace NereusSDR {
 
 class MeterWidget;
+class RadioModel;
+
+// The No TX stop's message, as LEDItem::txStopRequested carries it.
+// From Thetis MeterManager.cs:21210 [v2.10.3.15]:
+//   _console.StopAllTx("Led Indicator stopped MOX");
+inline constexpr char kLedNoTxStopMessage[] = "Led Indicator stopped MOX";
+// The warning the user sees for that stop (MainWindow passes it to the
+// stop), in NereusSDR's wording for a transmit stop.
+inline constexpr char kLedNoTxStopUserText[] = "An LED stopped transmitting.";
 
 // LED update interval range.
 // From Thetis setup.designer.cs:63735-63744 [v2.10.3.15] (nudLedIndicator_UpdateInterval)
@@ -239,8 +264,31 @@ public:
     // Thetis UpdateAlways (key led_process_when_hidden): keep evaluating
     // while the container is hidden. Readings already reach a hidden
     // container's items, so this is kept for the condition and No TX.
-    void setProcessWhenHidden(bool on) { m_processWhenHidden = on; }
+    void setProcessWhenHidden(bool on);
     bool processWhenHidden() const { return m_processWhenHidden; }
+
+    // No TX (Thetis NoTxTrue, key led_notx_true): while this window's
+    // radio transmits, the LED turning true asks for a stop. Thetis
+    // checks it on every LED update (MeterManager.cs:21192-21195
+    // [v2.10.3.15]) and StopAllTx ends the key, so it stops once; here
+    // txStopRequested is emitted once per transition of (No TX on, true,
+    // transmitting, processed) to all four. An entry bound to another
+    // session's radio never asks (effectiveTransmitting), and neither
+    // does a hidden meter's LED unless processWhenHidden is on (Thetis
+    // updates a meter only while it is enabled or UpdateAlways,
+    // MeterManager.cs:2393 [v2.10.3.15]), nor an LED whose condition has
+    // an error (Thetis runs Update only while _valid, :21179).
+    void setNoTx(bool on);
+    bool noTx() const { return m_noTx; }
+    // No TX when false (Thetis NoTxFalse, key led_notx_false,
+    // MeterManager.cs:21196-21199 [v2.10.3.15]): the same, for the LED
+    // turning false.
+    void setNoTxFalse(bool on);
+    bool noTxFalse() const { return m_noTxFalse; }
+    // False for a copy that only shows the entry (ContentRenderMode
+    // Preview or Validation): it never asks for a stop. True by default.
+    void setStopEnabled(bool enabled);
+    bool stopEnabled() const { return m_stopEnabled; }
 
     // Threshold-based mode: value >= threshold activates that color
     void setGreenThreshold(double t) { m_greenThreshold = t; }
@@ -307,7 +355,16 @@ public:
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
+signals:
+    // No TX: stop transmitting on the radio this LED's entry belongs to,
+    // with `message` as the warning. MainWindow forwards it after the
+    // session check (ledStopAppliesToSession, stopTransmitForLed).
+    void txStopRequested(const QString& message);
+
 private:
+    // Emits txStopRequested on the No TX rising edge; called wherever the
+    // true state, transmit state or No TX changes.
+    void checkNoTx();
     QColor currentColor() const;
     // The colour the light shows when fully true: the true colour, or
     // amber / red above those thresholds.
@@ -353,6 +410,19 @@ private:
     QString  m_condition;
     QString  m_conditionError;
     qint64   m_lastConditionMs{-1};
+    // Appended after the condition; absent = off. Thetis's constructor
+    // (MeterManager.cs:20854-20855 [v2.10.3.15]) reads
+    //   _notxtrue = false;
+    //   _notxtrue = false;
+    // setting _notxtrue twice and never _notxfalse, an upstream slip that
+    // C#'s default of false hides; both are initialised here.
+    bool     m_noTx{false};
+    bool     m_noTxFalse{false};
+    // Runtime (not saved): a preview copy's false, and each No TX state
+    // last checked, so a stop is asked once per transition.
+    bool     m_stopEnabled{true};
+    bool     m_noTxLatched{false};
+    bool     m_noTxFalseLatched{false};
 
     // Threshold-based state
     double m_greenThreshold{0.0};
@@ -425,5 +495,29 @@ inline constexpr LedItemThetisDefaults kLedThetisDefaults{
     true,                       // _show_false = true (:20873)
     false,                      // led_process_when_hidden default false (:27492)
 };
+
+// Container item parity Task 27: an LED's stop applies to this window's
+// radio only when the entry's context names no session or names this
+// window's (MainWindow::containerSessionId()). An entry bound to another
+// session's radio follows that session, never this window.
+bool ledStopAppliesToSession(const QJsonObject& entryContext, const QString& currentSessionId);
+
+// How stopTransmitForLed reached the radio.
+enum class LedStopRoute {
+    None,    // a remote window that cannot reach the Core's transmit
+    Local,   // RadioModel::stopAllTx on this process's radio
+    Remote,  // this window's MOX, TUNE and two-tone released at the Core
+};
+
+// Forwards an LED's stop to `radio`. Only ever stops; nothing keys.
+// * A local radio: RadioModel::stopAllTx(message), the port of Thetis
+//   StopAllTx (MOX, manual MOX, TUNE and two-tone off, and the warning).
+// * A remote window: the Core takes no stop-all verb from a window, so the
+//   stop goes through the session's own release, the MOX button's off
+//   (RadioModel::setMoxFromButton(false)): TUNE and two-tone off, then
+//   this device's key (screen, program or VOX) released at the Core. The
+//   Core refuses to end another device's key, by its holder rule.
+//   Without remote transmit to the Core nothing is sent (None).
+LedStopRoute stopTransmitForLed(RadioModel& radio, const QString& message);
 
 } // namespace NereusSDR

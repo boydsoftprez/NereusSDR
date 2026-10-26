@@ -45,6 +45,8 @@ private:
     QCheckBox*      m_chkShowTrue{nullptr};
     QCheckBox*      m_chkShowFalse{nullptr};
     QCheckBox*      m_chkProcessWhenHidden{nullptr};
+    QCheckBox*      m_chkNoTxTrue{nullptr};
+    QCheckBox*      m_chkNoTxFalse{nullptr};
     QLineEdit*      m_editCondition{nullptr};
     QLabel*         m_lblConditionError{nullptr};
     QDoubleSpinBox* m_spinGreenThreshold{nullptr};

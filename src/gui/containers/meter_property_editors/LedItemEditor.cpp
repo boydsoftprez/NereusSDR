@@ -8,6 +8,7 @@
 #include <QColorDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QFormLayout>
 
 namespace NereusSDR {
 
@@ -100,6 +101,8 @@ void LedItemEditor::setItem(MeterItem* item)
     m_chkShowTrue->setChecked(x->showTrue());
     m_chkShowFalse->setChecked(x->showFalse());
     m_chkProcessWhenHidden->setChecked(x->processWhenHidden());
+    m_chkNoTxTrue->setChecked(x->noTx());
+    m_chkNoTxFalse->setChecked(x->noTxFalse());
 
     m_editCondition->setText(x->condition());
     m_spinGreenThreshold->setValue(x->greenThreshold());
@@ -354,6 +357,37 @@ void LedItemEditor::buildTypeSpecific()
         x->setProcessWhenHidden(on);
         notifyChanged();
     });
+
+    // No TX when true / false (Thetis chkLed_notx_true and chkLed_notx_false,
+    // setup.designer.cs:3995-3996 [v2.10.3.15]; LEDItem::setNoTx and
+    // setNoTxFalse).
+    m_chkNoTxTrue = makeCheckRow(QStringLiteral("Stop transmitting when the LED turns on"));
+    m_chkNoTxTrue->setObjectName(QStringLiteral("ledNoTxTrue"));
+    m_chkNoTxTrue->setToolTip(QStringLiteral(
+        "While this radio transmits, transmitting stops each time the LED turns on."));
+    connect(m_chkNoTxTrue, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setNoTx(on);
+        notifyChanged();
+    });
+
+    m_chkNoTxFalse = makeCheckRow(QStringLiteral("Stop transmitting when the LED turns off"));
+    m_chkNoTxFalse->setObjectName(QStringLiteral("ledNoTxFalse"));
+    m_chkNoTxFalse->setToolTip(QStringLiteral(
+        "While this radio transmits, transmitting stops each time the LED turns off."));
+    connect(m_chkNoTxFalse, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setNoTxFalse(on);
+        notifyChanged();
+    });
+    // The two long labels wrap rather than widen the label column.
+    for (QWidget* field : {static_cast<QWidget*>(m_chkNoTxTrue), static_cast<QWidget*>(m_chkNoTxFalse)}) {
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { label->setWordWrap(true); }
+    }
 
     // Condition, beside the thresholds (Thetis txtLedIndicator_condition).
     addHeader(QStringLiteral("Condition"));
