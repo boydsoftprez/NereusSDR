@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Dial tuning: onContainerItemAdded connects each live
+//                 dial (wireDialRequests); tuning, step changes, slice
+//                 select and lock act on the slice each request names after
+//                 vfoRequestSlice, and refreshContainerMeter feeds the dial
+//                 its slices. Nothing keys. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - VFO display clicks, wheel, keys and screens by slice:
 //                 onContainerItemAdded connects each live VFO display's
 //                 requests (wireVfoDisplayRequests); each acts on the slice
@@ -1325,6 +1331,7 @@ warren@wpratt.com
 #include "meters/LEDItem.h"
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
+#include "meters/DialItem.h"
 #include "meters/ModeButtonItem.h"      // R-R3-21 container controls
 #include "meters/FilterButtonItem.h"
 #include "meters/AntennaButtonItem.h"
@@ -15362,11 +15369,16 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
         }
     }
     for (VfoDisplayItem* vfo : std::as_const(vfos)) { wireVfoDisplayRequests(vfo); }
+    // Container item parity Task 37: a live dial tunes the slice each
+    // request names (preview copies never get here).
+    QList<DialItem*> dials = item->findChildren<DialItem*>();
+    if (auto* dial = qobject_cast<DialItem*>(item)) { dials.prepend(dial); }
+    for (DialItem* dial : std::as_const(dials)) { wireDialRequests(dial); }
     refreshContainerControls(item);
     reconcileMiniDisplays();
 }
 
-SliceModel* MainWindow::vfoRequestSlice(const VfoDisplayItem* vfo, int sliceId)
+SliceModel* MainWindow::vfoRequestSlice(const MeterItem* vfo, int sliceId)
 {
     if (m_shuttingDown || !vfo || !m_radioModel || !m_containerButtons) { return nullptr; }
     // As ContainerWidget relays a control's click: an entry whose source
@@ -15468,6 +15480,45 @@ void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
     // From Thetis MeterManager.cs:14879-14896 [v2.10.3.15] (setLock).
     connect(vfo, &VfoDisplayItem::lockToggleRequested, this,
             [this, guard](int sliceId) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice) { return; }
+        slice->setLocked(!slice->locked());
+    });
+}
+
+void MainWindow::wireDialRequests(DialItem* dial)
+{
+    if (!dial || dial->property("dialRequestsWired").toBool()) { return; }
+    dial->setProperty("dialRequestsWired", true);
+    const QPointer<DialItem> guard(dial);
+    // From Thetis MeterManager.cs:16949-16975 [v2.10.3.15] (Degrees setter:
+    // one tune step, aligned to the step when Align is on). Lock blocks it
+    // (if (Lock) return;, :16912).
+    connect(dial, &DialItem::tuneRequested, this, [this, guard](int sliceId, qint64 deltaHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || !guard || deltaHz == 0 || slice->locked()) { return; }
+        const qint64 current = qint64(std::llround(slice->frequency()));
+        slice->setFrequency(static_cast<double>(
+            DialItem::tunedFrequencyHz(current, deltaHz, guard->alignWithTuneStep())));
+    });
+    // From Thetis console.cs:6124-6134 [v2.10.3.15] (ChangeTuneStepUp /
+    // Down) and MeterManager.cs:17099-17111 [v2.10.3.15]
+    // (undoTuneStep).
+    connect(dial, &DialItem::stepChangeRequested, this, [this, guard](int sliceId, int hz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || tuneStepIndexForHz(hz) < 0) { return; }
+        slice->setStepHz(hz);
+    });
+    // The top buttons (Thetis's VFOA / VFOB, MeterManager.cs:17138-17139
+    // [v2.10.3.15])
+    // select the slice before or after the one the dial tunes.
+    connect(dial, &DialItem::sliceSelectRequested, this, [this, guard](int sliceId) {
+        if (!vfoRequestSlice(guard, sliceId)) { return; }
+        selectSliceForWindow(sliceId);
+    });
+    // From Thetis MeterManager.cs:17141-17154 [v2.10.3.15] (MouseUp: the
+    // VFO's lock toggles).
+    connect(dial, &DialItem::lockToggleRequested, this, [this, guard](int sliceId) {
         SliceModel* slice = vfoRequestSlice(guard, sliceId);
         if (!slice) { return; }
         slice->setLocked(!slice->locked());
@@ -15621,6 +15672,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         if (auto* band = qobject_cast<BandButtonItem*>(item)) { value += QString::number(band->activeBand()); }
         if (auto* mode = qobject_cast<ModeButtonItem*>(item)) { value += QString::number(mode->activeMode()); }
         if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += vfo->presentationKey(); }
+        if (auto* dial = qobject_cast<DialItem*>(item)) { value += dial->presentationKey(); }
         if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
             for (int i=0;i<other->buttonCount();++i) { value += QString::number(other->buttonState(static_cast<OtherButtonItem::ButtonId>(i))); }
         }
@@ -15717,6 +15769,29 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         }
     };
 
+    // Dial: the open slices, the one the entry's Source gives and the
+    // active one, so it tunes its Source slice or Any slice.
+    const auto feedDial = [&](DialItem* dial) {
+        dial->clearSliceStates();
+        dial->setSourceFollowsSelection(ContainerSourceAdapter::followsSelectedRx(context));
+        if (unsupported) {
+            dial->setSourceSliceIndex(-1);
+            dial->setActiveSliceIndex(-1);
+            return;
+        }
+        dial->setSourceSliceIndex(slice ? slice->sliceIndex() : -1);
+        const SliceModel* active = m_radioModel->activeSlice();
+        dial->setActiveSliceIndex(active ? active->sliceIndex() : -1);
+        for (SliceModel* s : m_radioModel->slices()) {
+            if (!s) { continue; }
+            DialSliceState state;
+            state.index = s->sliceIndex();
+            state.stepHz = s->stepHz();
+            state.locked = s->locked();
+            dial->setSliceState(state);
+        }
+    };
+
     if (!slice) {
         // Fix wave M2 (R-R3-49, R-R3-21): a slice that is not open (never
         // opened, or closed while this container was set to it) shows
@@ -15729,6 +15804,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 context.value("rxSource").toInt(c ? c->rxSource() : 0)));
         const auto applyNoSlice = [&](MeterItem* item) {
             if (auto* face = qobject_cast<CompositePresetItem*>(item)) { face->setUnavailableText(notOpen); }
+            if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
             if (applyAlways(item)) { return; }
             if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
                 m_containerButtons->applySliceAvailability(box, rxSource);
@@ -15817,6 +15893,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
             }
             return;
         }
+        if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
         if (applyAlways(item)) { return; }
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             m_containerButtons->applySliceAvailability(box, rxSource);

@@ -325,8 +325,8 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | src/gui/meters/ClockItem.cpp | Project Files/Source/Console/MeterManager.cs | full; 31073-31099; 40474-40537 | port | thetis-samphire | clsClockItem implementation; pairs with ClockItem.h; publishedReadings ports the clock readings with am/pm and ddd d MMM yyyy; renderClock ported as the Thetis layout [v2.10.3.15] |
 | src/gui/meters/DataOutItem.h | Project Files/Source/Console/MeterManager.cs | 16047+ | port | thetis-samphire | clsDataOut |
 | src/gui/meters/DataOutItem.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | clsDataOutItem implementation; pairs with DataOutItem.h |
-| src/gui/meters/DialItem.cpp | Project Files/Source/Console/MeterManager.cs | 15399+; 33750-33899 | port | thetis-samphire | clsDialDisplay, renderDialDisplay |
-| src/gui/meters/DialItem.h | Project Files/Source/Console/MeterManager.cs | 15399+ | port | thetis-samphire | clsDialDisplay |
+| src/gui/meters/DialItem.cpp | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | MeterManager.cs 16719-17173, 27749-27777, 35284-35460; console.cs 6124-6134 | port | thetis-samphire | clsDialDisplay (Degrees, Pressed, undoTuneStep, Update, MouseUp, MouseWheel, Lock, setup ranges), renderDialDisplay (marker, ring, buttons); ChangeTuneStepUp/Down wrap |
+| src/gui/meters/DialItem.h | Project Files/Source/Console/MeterManager.cs | 16719-16847, 16907-17173, 27749-27760 | port | thetis-samphire | clsDialDisplay fields, settings and setters; kDialThetisDefaults (constructor :16764-16812) |
 | src/gui/meters/FadeCoverItem.cpp | Project Files/Source/Console/MeterManager.cs | 7665+; 36292; 7887-7888; 1900 | port | thetis-samphire | clsFadeCover, renderFadeCover, FadeOnRx/Tx |
 | src/gui/meters/FadeCoverItem.h | Project Files/Source/Console/MeterManager.cs | 7665+; 1900 | port | thetis-samphire | clsFadeCover, FadeOnRx/Tx |
 | src/gui/containers/ContentFade.cpp | Project Files/Source/Console/MeterManager.cs | 33152-33177; 37826-37845; 6778 | port | thetis-samphire | fade() step, renderFadeCover rect and colour, fade overlay |

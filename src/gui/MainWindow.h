@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
+//               lock act on the slice they name, through vfoRequestSlice()
+//               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -294,6 +298,7 @@ enum class ToastSeverity : int;
 class RadioModel;
 class MeterItem;
 class VfoDisplayItem;
+class DialItem;
 class ContainerButtonDispatcher;
 class ConnectionPanel;
 class SupportDialog;
@@ -1155,10 +1160,12 @@ private slots:
     void onContainerItemAdded(MeterItem* item);
     // Task 36: a live VFO display's requests act on the slice each names.
     void wireVfoDisplayRequests(VfoDisplayItem* vfo);
-    // The slice a VFO display's request may act on, or null after saying
-    // why (an unsupported source, another radio's entry, a slice that is
-    // not open or that this window only listens to).
-    SliceModel* vfoRequestSlice(const VfoDisplayItem* vfo, int sliceId);
+    // Task 37: a live dial's tuning, step, slice select and lock requests.
+    void wireDialRequests(DialItem* dial);
+    // The slice a VFO display's (or dial's) request may act on, or null
+    // after saying why (an unsupported source, another radio's entry, a
+    // slice that is not open or that this window only listens to).
+    SliceModel* vfoRequestSlice(const MeterItem* item, int sliceId);
     void reconcileMiniDisplays();
     void presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                           const QVector<float>& waterfallDbm, double centreHz,

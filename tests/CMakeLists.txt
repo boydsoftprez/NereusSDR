@@ -939,6 +939,10 @@ nereus_add_test(tst_vfo_display_item_modes)
 # close, the meter's key and hover-leave dispatch, and MainWindow's routing
 # (TX is a handoff, never MOX).
 nereus_add_test(tst_vfo_display_item_input)
+# Container item parity Task 37: the dial tunes by drag and wheel, with
+# acceleration and its undo, the lock and slice select; MainWindow routes
+# each request to its slice (nothing keys).
+nereus_add_test(tst_dial_item_tuning)
 
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)
