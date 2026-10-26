@@ -176,6 +176,12 @@ while :; do
             else
                 failed_listings=0
             fi
+            if [ "$waited" -ge "$exit_timeout" ] && [ "$running" -eq 2 ]; then
+                echo "$0: launchctl list on $name failed ($listing_error), so whether the warm launch's" \
+                    "process ($launched) has gone ${exit_timeout}s after simctl terminate (exit $terminated)" \
+                    "is unknown; a UI test launched now may show that process, without its arguments" >&2
+                exit 1
+            fi
             if [ "$waited" -ge "$exit_timeout" ]; then
                 echo "$0: the warm launch's process ($launched) is still running on $name" \
                     "${exit_timeout}s after simctl terminate (exit $terminated); a UI test launched now" \

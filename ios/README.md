@@ -63,8 +63,17 @@ xcodegen`); the project itself is generated, never committed:
 ios/scripts/generate-project.sh
 xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
     -destination 'platform=iOS Simulator,name=iPhone 17' \
-    -collect-test-diagnostics never -parallel-testing-enabled NO -jobs 2 test
+    -collect-test-diagnostics never -parallel-testing-enabled NO -jobs 2 test \
+    -skip-testing:NereusSDRTests/ScrollViewIdentifierTests
+ios/scripts/sim-test.sh "iPhone 17" "<derived data folder>" \
+    -only-testing:NereusSDRTests/ScrollViewIdentifierTests
 ```
+
+`ScrollViewIdentifierTests` runs alone, as CI's first test step does: it only
+catches a regression when its walk is the first to turn application
+accessibility on, and that switch belongs to the simulator, so in a shared run
+(or on a simulator a run left it on) it cancels instead. It must report one
+test passed; a cancel is not a pass.
 
 The scheme's tests are the app's own (`NereusApp/Tests`, `NereusApp/UITests`)
 and NereusKit's, run on the simulator. On a busy Mac, build with
