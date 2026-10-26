@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - An empty bezel path clears the image without a file
+//                 read. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -72,6 +75,11 @@ namespace NereusSDR {
 void MagicEyeItem::setBezelImagePath(const QString& path)
 {
     m_bezelPath = path;
+    // An empty path is no bezel; it never reaches a file API.
+    if (path.isEmpty()) {
+        m_bezelImage = QImage();
+        return;
+    }
     m_bezelImage.load(path);
 }
 

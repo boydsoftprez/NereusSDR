@@ -40,6 +40,9 @@
 //                 container around its meter or the user's colour for that
 //                 container. Ink unchanged. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - ImageItem: an empty image path clears the image without a
+//                 file read. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -485,6 +488,11 @@ bool SolidColourItem::deserialize(const QString& data)
 void ImageItem::setImagePath(const QString& path)
 {
     m_imagePath = path;
+    // An empty path is no image; it never reaches a file API.
+    if (path.isEmpty()) {
+        m_image = QImage();
+        return;
+    }
     m_image.load(path);
 }
 
