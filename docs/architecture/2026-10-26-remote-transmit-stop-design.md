@@ -198,8 +198,10 @@ length and how it ended, so the numbers can be checked against real links.
 
 ## 6. PR 652, folded in
 
-PR 652 sends the session copy of each keepalive next to the "tx" channel copy.
-The review (`pr-review-20261021/review-652.md`) found it safe for the release
+PR 652 (head `c1ae7e7c0`) sends the session copy of each keepalive next to
+the "tx" channel copy. That head adds the review's two test fixes: two
+transmit tests now count the keyed session copy, and the release fence still
+holds. The review (`pr-review-20261021/review-652.md`) found it safe for the release
 fence and the copies, and raised one design point: it removes a cut (a dead
 "tx" channel with a live session no longer stops transmit), and in SSB a key
 with no audio could then stay up as long as the session lives.
@@ -207,8 +209,7 @@ with no audio could then stay up as long as the session lives.
 In this shape:
 
 - Sending on every open path is the keepalive rule, so PR 652's change is
-  part of the design and can merge with it (its two test fixes from the
-  review applied).
+  part of the design and can merge with it at `c1ae7e7c0`.
 - The cut it removes comes back where it belongs: the 10 s no-audio cut
   covers a dead audio path in every mode.
 - `tst_tx_link_loss_each_path::dataChannelSeveredStopsWithin500ms` becomes
