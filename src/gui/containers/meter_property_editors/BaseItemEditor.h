@@ -133,6 +133,10 @@ protected:
                                   int decimals = 3);
     QSpinBox*       makeIntRow(const QString& label, int min, int max);
     QCheckBox*      makeCheckRow(const QString& label);
+    // The update interval row's range (default kMinUpdateIntervalMs ..
+    // kMaxUpdateIntervalMs); a type editor whose item takes another range
+    // sets it once after the base form is built.
+    void            setUpdateIntervalRange(int minMs, int maxMs);
 
     // Append a pre-made widget under a new label.
     void addRow(const QString& label, QWidget* widget);

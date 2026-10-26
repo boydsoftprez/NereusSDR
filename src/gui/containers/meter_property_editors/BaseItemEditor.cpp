@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setUpdateIntervalRange(): a type editor can set the
+//                 update interval row's range (the LED takes 50-10000).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - populateReadingCombo(): the Reading row's list, shared
 //                 with the history graph's axis 1 row. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -411,6 +414,13 @@ void BaseItemEditor::loadBaseFields()
     m_spinUpdateInterval->setValue(interval > 0 ? interval : kDefaultUpdateIntervalMs);
     m_chkLimitUpdate->setChecked(interval > 0);
     m_spinUpdateInterval->setEnabled(interval > 0);
+    endProgrammaticUpdate();
+}
+
+void BaseItemEditor::setUpdateIntervalRange(int minMs, int maxMs)
+{
+    beginProgrammaticUpdate();
+    m_spinUpdateInterval->setRange(minMs, maxMs);
     endProgrammaticUpdate();
 }
 
