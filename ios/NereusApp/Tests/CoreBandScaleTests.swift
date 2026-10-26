@@ -18,19 +18,32 @@ import Testing
 @Suite("Core band scale", .serialized)
 @MainActor
 struct CoreBandScaleTests {
+    // Waits by the clock, not by a count of yields: a loaded simulator can
+    // spend a fixed count of yields before the fake Core's reply lands.
     private func settle(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<50_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if condition() {
                 return true
             }
             await Task.yield()
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
         }
         return condition()
     }
 
+    // At least the 5,000 yields it always gave, and at least a quarter of a
+    // second by the clock, so late work lands before what follows is checked.
     private func quiet() async {
+        let until = ContinuousClock.now + .milliseconds(250)
         for _ in 0..<5_000 {
             await Task.yield()
+        }
+        while ContinuousClock.now < until {
+            try? await Task.sleep(for: .milliseconds(5))
         }
     }
 
@@ -155,7 +168,13 @@ struct CoreBandScaleTests {
         await slice(station, band: 3)
         #expect(await settle { band.settings.scaleBand == "3" && scale.shownBand == 3 })
         display.nudgeTop(up: true)
-        #expect(await settle { self.gridWrites(station).last?.key == "DisplayGridMax_40m" })
+        // The ▲ writes 40 m's dB Max, and its dB Min with it, since the Core
+        // keeps none for 40 m yet (the desktop's storePerBandDb). Both are
+        // waited for: dB Max is the last write only until dB Min lands, a
+        // moment a loaded simulator passes before the check runs.
+        #expect(await settle { self.gridWrites(station).count >= 2 })
+        #expect(gridWrites(station).map(\.key) == ["DisplayGridMax_40m", "DisplayGridMin_40m"])
+        #expect(gridWrites(station).map(\.text) == ["-30", "-140"])
         main.displayEditScope = .pan(PanIdentity(number: 2))
         await slice(station, band: 6)
         #expect(await settle { band.settings.scaleBand == "6" && scale.shownBand == 6 })

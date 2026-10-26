@@ -44,12 +44,19 @@ struct FakeStationDisplayTests {
                    feeding: feeding)
     }
 
+    // Waits by the clock, not by a count of yields, which a loaded machine
+    // can spend before the fake Core's reply lands.
     private func poll(_ condition: @MainActor () -> Bool) async -> Bool {
-        for _ in 0..<20_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if condition() {
                 return true
             }
             await Task.yield()
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
         }
         return condition()
     }

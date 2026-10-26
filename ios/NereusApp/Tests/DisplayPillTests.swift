@@ -210,7 +210,8 @@ struct DisplayPillTests {
         let (rig, source, defaults) = try await Self.pill()
         defer { defaults.removePersistentDomain(forName: rig.suite) }
         rig.mirror.apply(.delta(.init(key: "txState", properties: [.init(ordinal: 0, name: "keyed", value: .bool(true))])))
-        for _ in 0..<100 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if rig.main.band.transmitOverlay { break }
             try await Task.sleep(for: .milliseconds(2))
         }
@@ -636,7 +637,8 @@ struct DisplayPillTests {
             .init(ordinal: 3, name: "txSliceId", value: .i64(0)),
         ])))
         rig.mirror.apply(.snapshotComplete)
-        for _ in 0..<100 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if feed.description(for: "display") != nil { break }
             try await Task.sleep(for: .milliseconds(2))
         }

@@ -18,19 +18,32 @@ import Testing
 @Suite("Band menu", .serialized)
 @MainActor
 struct BandMenuTests {
+    // Waits by the clock, not by a count of yields: a loaded simulator can
+    // spend a fixed count of yields before the fake Core's reply lands.
     private func settle(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<50_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if condition() {
                 return true
             }
             await Task.yield()
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
         }
         return condition()
     }
 
+    // At least the 5,000 yields it always gave, and at least a quarter of a
+    // second by the clock, so late work lands before what follows is checked.
     private func quiet() async {
+        let until = ContinuousClock.now + .milliseconds(250)
         for _ in 0..<5_000 {
             await Task.yield()
+        }
+        while ContinuousClock.now < until {
+            try? await Task.sleep(for: .milliseconds(5))
         }
     }
 
