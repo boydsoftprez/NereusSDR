@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed host integration invariants.
 // Modification history (NereusSDR):
+//   2026-10-26 - A stack holding one button grid shows whole rows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave round 2 (R2): a signal text unit chosen in the
 //                 editor, then changed by a click box, keeps the clicked unit
 //                 through the save and rebuild. J.J. Boyd (KG4VCF),
@@ -19,10 +21,12 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QGridLayout>
+#include <QScrollArea>
 #include <limits>
 #include "gui/meters/MeterItem.h"
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerControlCatalog.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/ContainerDocumentCodec.h"
@@ -349,6 +353,66 @@ private slots:
         QCOMPARE(host.captureDocument().contents[0].canvasRect,d.contents[0].canvasRect); QCOMPARE(host.captureDocument().contents[1].canvasRect,d.contents[1].canvasRect);
         host.meterSurfaces().first()->updateMeterValue(MeterBinding::TxMic,-20); QVERIFY(!qobject_cast<BarPresetItem*>(host.entryRows()[1].item.data())->hasPrimaryReading());
     }
+    // A stack holding one button grid shows whole rows at any height: its
+    // rows fit the view when they can, and a view too short for every row
+    // holds a whole number of them, never a half row at its bottom edge.
+    // The preferred height still counts the full rows.
+    void aLoneButtonGridShowsWholeRows_data()
+    {
+        QTest::addColumn<QString>("type");
+        QTest::addColumn<int>("height");
+        QTest::newRow("modes, the scene's 119 px view") << QStringLiteral("MODEBTNS") << 119;
+        QTest::newRow("other, the scene's 150 px view") << QStringLiteral("OTHERBTNS") << 150;
+        QTest::newRow("modes, 140 px: rows shrink to fit") << QStringLiteral("MODEBTNS") << 140;
+        QTest::newRow("modes, 300 px: preferred rows") << QStringLiteral("MODEBTNS") << 300;
+        QTest::newRow("steps, 60 px") << QStringLiteral("TUNESTEPBTNS") << 60;
+    }
+    void aLoneButtonGridShowsWholeRows()
+    {
+        QFETCH(QString, type);
+        QFETCH(int, height);
+        ContainerContentRegistry registry;
+        ContainerContentHost host(registry);
+        ContainerDocument d;
+        d.id = QStringLiteral("grid");
+        d.layout = ContentLayout::VerticalStack;
+        d.contents = {registry.makeEntry(type)};
+        host.reconcile(d);
+        QCOMPARE(host.meterSurfaces().size(), 1);
+        MeterWidget* meter = host.meterSurfaces().first();
+        const int rows = containerStackButtonRows(qobject_cast<const ButtonBoxItem*>(host.entryRows().first().item.data()));
+        QVERIFY(rows > 1);
+        const int preferred = rows * singleContainerControlSize().height();
+        auto* area = host.findChild<QScrollArea*>();
+        QVERIFY(area);
+        host.resize(408, height);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        const int view = area->viewport()->height();
+        // Wait for the projection: whole rows in the view (a fitted grid can
+        // equal the preferred height: four 44 px rows, two shown in 88 px).
+        const auto wholeRows = [&] {
+            if (view >= preferred) { return meter->height() == preferred; }
+            const double row = double(meter->height()) / rows;
+            const double shown = view / row;
+            return qAbs(shown - qRound(shown)) * row <= 1.0;
+        };
+        QTRY_VERIFY2(wholeRows(),
+                     qPrintable(QStringLiteral("grid %1 px in a %2 px view").arg(meter->height()).arg(view)));
+        const double rowHeight = double(meter->height()) / rows;
+        if (view >= preferred) {
+            QCOMPARE(meter->height(), preferred);
+        } else {
+            QVERIFY2(rowHeight >= singleContainerControlMinimum().height() - 0.5 || view < singleContainerControlMinimum().height() * 2,
+                     qPrintable(QStringLiteral("row %1 px").arg(rowHeight)));
+            const double shownRows = view / rowHeight;
+            QVERIFY2(qAbs(shownRows - qRound(shownRows)) * rowHeight <= 1.0,
+                     qPrintable(QStringLiteral("%1 px view over %2 px rows shows %3 rows")
+                                    .arg(view).arg(rowHeight).arg(shownRows)));
+        }
+        QCOMPARE(host.preferredContentHeight(), preferred);
+    }
+
     void malformedKnownEntryCreatesOnlyExplanationAndValidRun()
     {
         ContainerContentRegistry registry; ContainerContentHost host(registry); MeterPoller poller;

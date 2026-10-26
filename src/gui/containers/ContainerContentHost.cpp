@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - A stack holding one button grid fits its rows to the
+//                 view, so the last shown row is never cut in half; the
+//                 preferred height still counts the full rows. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fade on RX / Fade on TX for widget-factory rows: each row
 //                 gets ContentFade's overlay, setTransmitting hands it the
 //                 transmit state (a row created later starts in it), and a
@@ -996,8 +1000,27 @@ void ContainerContentHost::projectStackRows()
             fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
         }
     }
+    // A stack holding one button grid and nothing else, not auto height:
+    // the grid's rows fit the view (containerStackGridHeight), so its last
+    // shown row is never cut in half. Auto height keeps the preferred rows,
+    // the height it grows to.
+    int fittedGridHeight = -1;
+    if (!m_document.autoHeight) {
+        const EntryRow* only = nullptr;
+        int shown = 0;
+        for (const auto& row : std::as_const(m_rows)) {
+            if (row.widget && row.presentationVisible) { ++shown; only = &row; }
+        }
+        if (shown == 1 && only->item && only->item->property("containerStackGrid").toBool()) {
+            const int rows = containerStackButtonRows(qobject_cast<const ButtonBoxItem*>(only->item.data()));
+            const int available = m_scroll->viewport()->height() - margins.top() - margins.bottom()
+                - (m_bannerMenu ? 22 : 0) - headerGap;
+            fittedGridHeight = containerStackGridHeight(rows, available);
+            fixedHeight += fittedGridHeight - only->baseHeight;
+        }
+    }
     // Workspace preview: header slots still need placing without bar rows.
-    if (responsiveBaseHeight <= 0 && headerGap == 0) { return; }
+    if (responsiveBaseHeight <= 0 && headerGap == 0 && fittedGridHeight < 0) { return; }
     double scale = 1.0;
     if (responsiveBaseHeight > 0) {
         // Workspace preview, auto height: the bars scale by the width the
@@ -1031,6 +1054,9 @@ void ContainerContentHost::projectStackRows()
         for (auto& row : m_rows) {
             if (row.widget != meter || !row.item) { continue; }
             int height = row.baseHeight;
+            if (fittedGridHeight > 0 && row.item->property("containerStackGrid").toBool()) {
+                height = fittedGridHeight;
+            }
             if (qobject_cast<BarPresetItem*>(row.item.data())) {
                 responsiveOffset += row.baseHeight * scale;
                 const int bottom = qRound(responsiveOffset);
@@ -1122,6 +1148,14 @@ int ContainerContentHost::preferredContentHeight() const
         }
         height += m_document.layout == ContentLayout::VerticalStack ? preferredWidgetHeight(row.widget, usableWidth)
             : qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(), row.widget->maximumHeight());
+    }
+    // A grid fitted to the view (projectStackRows) still prefers its full
+    // rows: the strip and auto height size the container from this.
+    for (const auto& row : m_rows) {
+        if (m_document.layout == ContentLayout::VerticalStack && row.widget && row.presentationVisible && row.item
+            && row.item->property("containerStackGrid").toBool()) {
+            height += row.baseHeight - row.height;
+        }
     }
     return qMax(24, height + (m_bannerMenu ? 22 : 0));
 }

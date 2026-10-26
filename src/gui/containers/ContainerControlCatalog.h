@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original creation metadata for existing native actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - containerStackGridHeight(): a grid alone in a short view
+//                 shows whole rows, never a half row. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - A single control is one shown button, by Thetis button
 //                 number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -59,6 +62,20 @@ inline QSize containerStackButtonSize(const MeterItem* item)
     if (!rows) { return {}; }
     const QSize cell=singleContainerControlSize();
     return {box->columns()*cell.width(),rows*cell.height()};
+}
+// The height a stack grid of `rows` rows takes when `available` px of the
+// container's view hold it alone: its preferred rows when they fit; rows
+// shrunk to fill the view while they stay at least the minimum row; else
+// rows sized so the view holds a whole number of them, never a half row
+// at its bottom edge (the rest scroll into view a row at a time).
+inline int containerStackGridHeight(int rows, int available)
+{
+    const int preferred = singleContainerControlSize().height();
+    const int minimum = singleContainerControlMinimum().height();
+    if (rows <= 0 || available <= 0 || available >= rows * preferred) { return rows * preferred; }
+    if (available >= rows * minimum) { return available; }
+    const int whole = qMax(1, available / minimum);
+    return qRound(double(available) * rows / whole);
 }
 inline QSize containerStackButtonMinimum(const MeterItem* item)
 {
