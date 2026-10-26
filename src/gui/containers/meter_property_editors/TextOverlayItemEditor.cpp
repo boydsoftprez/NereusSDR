@@ -61,6 +61,10 @@ QWidget* TextOverlayItemEditor::makeTokenField(QLineEdit* edit,
     button->setToolTip(QStringLiteral("Insert a value token"));
     button->setPopupMode(QToolButton::InstantPopup);
     auto* menu = new QMenu(button);
+    // The token list is longer than a screen: it scrolls in one column and
+    // Qt keeps it inside the screen, instead of growing past the screen or
+    // spreading into columns across the dialog.
+    menu->setStyleSheet(QStringLiteral("QMenu { menu-scrollable: 1; }"));
     for (const QString& token : offeredOverlayTokens()) {
         menu->addAction(token);
     }

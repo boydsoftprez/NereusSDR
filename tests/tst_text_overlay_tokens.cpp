@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original tests for the text overlay token table.
 // Modification history (NereusSDR):
+//   2026-10-26 - The token picker's list scrolls inside the screen.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Token table: case-insensitive names, %precis=N% for the
 //                 line, time and date integers, slice-letter tokens, text
 //                 that is not a token kept as written, the Thetis text
@@ -10,6 +12,9 @@
 #include <QAction>
 #include <QLineEdit>
 #include <QMenu>
+#include <QScreen>
+#include <QStyle>
+#include <QGuiApplication>
 #include <QTimeZone>
 #include <QToolButton>
 #include <memory>
@@ -215,6 +220,37 @@ private slots:
         freq->trigger();
         QCOMPARE(item->text1(), QStringLiteral("F %sliceA_freq%"));
         QVERIFY(editor.findChild<QToolButton*>(QStringLiteral("overlayTokenPicker2")));
+    }
+
+    // The picker's list scrolls and stays inside the screen: it is never
+    // taller than the screen, whatever the number of tokens.
+    void pickerListScrollsInsideTheScreen()
+    {
+        auto item = std::make_unique<TextOverlayItem>();
+        TextOverlayItemEditor editor;
+        editor.setItem(item.get());
+        auto* picker = editor.findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QVERIFY(picker && picker->menu());
+        QMenu* menu = picker->menu();
+        QVERIFY(menu->style()->styleHint(QStyle::SH_Menu_Scrollable, nullptr, menu));
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        const QRect available = screen->availableGeometry();
+        // Many tokens: more than a screen of rows.
+        QVERIFY2(menu->sizeHint().height() > available.height() || menu->actions().size() * 16 > available.height(),
+                 qPrintable(QStringLiteral("%1 tokens, screen %2 px").arg(menu->actions().size()).arg(available.height())));
+        for (const QPoint at : {available.topLeft() + QPoint(20, 20),
+                                QPoint(available.left() + 20, available.bottom() - 40)}) {
+            menu->popup(at);
+            QTRY_VERIFY(menu->isVisible());
+            const QRect placed = menu->geometry();
+            QVERIFY2(placed.height() <= available.height() && available.contains(placed),
+                     qPrintable(QStringLiteral("menu %1x%2 at %3,%4; screen %5x%6 at %7,%8")
+                                    .arg(placed.width()).arg(placed.height()).arg(placed.x()).arg(placed.y())
+                                    .arg(available.width()).arg(available.height()).arg(available.x()).arg(available.y())));
+            menu->close();
+            QTRY_VERIFY(!menu->isVisible());
+        }
     }
 };
 
