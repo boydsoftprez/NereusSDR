@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The PureSignal button reads "PS-A", Thetis's button text,
+//                 as the editor's list does. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -230,7 +233,11 @@ constexpr qint32 kGroupBits = 0x7FFFFFFF;
 // earlier numbers 0-33. Power ("PWR") intentionally omitted in NereusSDR
 // (maintainer decision 2026-09-30): its label stays, never drawn.
 const char* const kCoreLabels[] = {
-    "PWR", "RX2", "MON", "TUN", "MOX", "2TON", "DUP", "PS",
+    // PureSignal reads "PS-A", Thetis's button text: the default case
+    // draws OtherButtonIdHelpers.BitToText (MeterManager.cs:9073-9075
+    // [v2.10.3.15]), CheckBoxData's caption "PS-A"
+    // (ucOtherButtonsOptionsGrid.cs:541 [v2.10.3.15]), as the editor lists it.
+    "PWR", "RX2", "MON", "TUN", "MOX", "2TON", "DUP", "PS-A",
     "PLAY", "REC", "ANF", "SNB", "MNF", "AVG", "PEAK", "CTUN",
     // R-R3-49: VAC1 / VAC2 read VAX 1 / VAX 2, NereusSDR's name for them.
     "VAX 1", "VAX 2", "MUTE", "BIN", "SUB", "SWAP", "XPA",

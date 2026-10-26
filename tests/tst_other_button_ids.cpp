@@ -28,6 +28,9 @@
 //                                    no-action case takes an id without
 //                                    one. AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  The PureSignal button reads "PS-A",
+//                                    as the editor lists it. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -398,6 +401,17 @@ private slots:
         macros.setButtonVisible(Id::Macro0, true);
         QVERIFY(macros.isButtonShown(Id::Macro0));
         QCOMPARE(macros.button(macros.indexOf(Id::Macro0)).text, QStringLiteral("M0"));
+    }
+
+    // The PureSignal button reads Thetis's button text, "PS-A", the same
+    // caption the editor's list shows (ucOtherButtonsOptionsGrid.cs:541,
+    // drawn by MeterManager.cs:9073-9075 [v2.10.3.15]).
+    void pureSignalReadsAsTheEditorLists()
+    {
+        OtherButtonItem item;
+        const auto id = OtherButtonItem::ButtonId::PsA;
+        QCOMPARE(OtherButtonCatalog::info(id).caption, QStringLiteral("PS-A"));
+        QCOMPARE(item.buttonLabel(id), OtherButtonCatalog::info(id).caption);
     }
 };
 
