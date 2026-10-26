@@ -50,6 +50,18 @@ public enum StackedTrace {
         return min(max(seconds / rowSeconds, 0), 1)
     }
 
+    /// How far the stack has glided toward its next row while the lines go
+    /// in by the row clock (``WaterfallRowClock``): `lines` put in since
+    /// the newest row and the clock's `progress` toward the last, over
+    /// `divider` lines a row, 0 to 1. A row completed by a line starts at 0
+    /// as that line goes in, and each line moves the stack on by a
+    /// `divider`th of a row by the time the next is due, so the glide comes
+    /// from the clock rather than from when a line arrived.
+    public static func glide(lines: Int, progress: Double, divider: Int) -> Double {
+        let share = (Double(max(lines, 0)) + min(max(progress, 0), 1)) / Double(max(divider, 1))
+        return min(max(share, 0), 1)
+    }
+
     /// Fade toward the background with depth, at the back row.
     public static let haze = 0.16
     /// Colour reads through a fixed 45 dB above the floor, so a high scale
