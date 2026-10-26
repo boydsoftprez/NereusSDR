@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The "Limit update rate" and "Update interval (ms)" labels
+//                 wrap, so a narrow Properties pane is no wider than before.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
 //                 spin box (15-5000) for the per-item update interval.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -215,6 +218,11 @@ void BaseItemEditor::buildBaseForm()
     m_spinUpdateInterval = makeIntRow(QStringLiteral("Update interval (ms)"),
                                       kMinUpdateIntervalMs, kMaxUpdateIntervalMs);
     m_spinUpdateInterval->setObjectName(QStringLiteral("updateIntervalMs"));
+    // The two longest base labels wrap rather than widen the label column,
+    // so a narrow Properties pane keeps the width it had before these rows.
+    for (QWidget* field : {static_cast<QWidget*>(m_chkLimitUpdate), static_cast<QWidget*>(m_spinUpdateInterval)}) {
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { label->setWordWrap(true); }
+    }
     m_spinUpdateInterval->setValue(kDefaultUpdateIntervalMs);
     m_spinUpdateInterval->setEnabled(false);
     m_spinUpdateInterval->setToolTip(QStringLiteral(
