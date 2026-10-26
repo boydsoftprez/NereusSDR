@@ -22,6 +22,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - longpathDirectionBecomesBindingOnLoad. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - longpathDirectionBecomesBindingOnLoad: the frequency
+//                 entry also loads with secondSlice "first". J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Container edge and workspace arrangement round trips for
 //                 the workspace preview by J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -673,8 +676,11 @@ private slots:
         QCOMPARE(configOf(QStringLiteral("bar-tx")), (QJsonObject{{"binding", 102}, {"compact", false}}));
         QCOMPARE(configOf(QStringLiteral("needle-both")), (QJsonObject{{"binding", 7}}));
         QCOMPARE(configOf(QStringLiteral("needle-bound")), (QJsonObject{{"binding", 7}}));
-        // Not a needle or bar: left as saved.
-        QCOMPARE(configOf(QStringLiteral("other-direction")), (QJsonObject{{"direction", "tx"}}));
+        // Not a needle or bar: "direction" is left as saved. A frequency
+        // instrument saved without "secondSlice" gets "first", so it keeps
+        // the second line it showed before the pick existed.
+        QCOMPARE(configOf(QStringLiteral("other-direction")),
+                 (QJsonObject{{"direction", "tx"}, {"secondSlice", "first"}}));
         for (int i = 0; i < untouched.size(); ++i) {
             QCOMPARE(loaded.at(i), untouched.at(i));
         }
