@@ -368,6 +368,60 @@ struct BandButtonColumnTests {
         #expect(reasons.top == 0 && reasons.shortened == least)
     }
 
+    /// The PR 653 re-review e, Minor N2: the cut is for a held PTT only.
+    /// Above a PTT that is not held (moved right of what the column has out,
+    /// keyed with nothing held), the meters keep their own height and their
+    /// top as before the cut, on a band of any height: the manager's ruling
+    /// leaves the keyed meters unchanged everywhere but beside or above a
+    /// PTT held mid-band. On e8d1d5018 the sideways SE band, keyed with the
+    /// Display pill open, cut them to the room over the PTT.
+    @Test("above a PTT that is not held, the keyed meters keep their height and their top as before the cut")
+    func keyedMetersAboveAPttNotHeldAreNotCut() {
+        let needed = KeyedOverlay.gaugesWidth
+        let width: CGFloat = 667
+        // The column with its pill open (340) reaching the meters' rows, so they do not fit right of it.
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2) + 340 + 8, height: 130)
+        let height: CGFloat = 148
+        let least = height - (KeyedOverlay.reasonsHeight(sideways: true) - KeyedOverlay.reasonsLeast)
+        for bandHeight: CGFloat in [180, 220, 260, 400] {
+            let ptt = CGRect(x: column.maxX + BandColumnLayout.clearance,
+                             y: bandHeight - PttButton.bottomInset - PttButton.diameter, width: 76, height: 76)
+            let place = BandColumnLayout.keyedPlace(top: 14, height: height, bandWidth: width, needed: needed,
+                                                    avoid: [column, ptt], ptt: ptt, minHeight: least)
+            #expect(width - (column.maxX + BandColumnLayout.clearance - 10) < needed + 20,
+                    "the meters fit right of the column: this is not the above path")
+            // As at 17a40b49a: their own height, the top clamped to the band's.
+            #expect(place.shortened == nil, "band \(bandHeight): cut to \(place.shortened ?? 0)")
+            #expect(place.top == max(0, ptt.minY - 6 - height), "band \(bandHeight): top \(place.top)")
+            #expect(place.alignLeading)
+            let floor = column.maxX + BandColumnLayout.clearance - 10
+            #expect(place.leading == max(floor, min(ptt.minX - 10, width - needed - 20)))
+        }
+    }
+
+    /// The PR 653 re-review e, Minor N2: moved left above a held PTT, the
+    /// meters keep clear of a control on its right only as far as the floor
+    /// (the box before the PTT) allows; past that they keep their full
+    /// width from the floor and reach over the control's left part, which
+    /// they draw over (DC15).
+    @Test("above a held PTT with the floor too near a control, the keyed meters keep their width from the floor")
+    func keyedMetersAboveAHeldPttStopAtTheFloor() {
+        let needed = KeyedOverlay.gaugesWidth
+        let width: CGFloat = 667
+        let column = CGRect(x: 4, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        let ptt = CGRect(x: 384, y: 162, width: 76, height: 76)
+        let floor = column.maxX + BandColumnLayout.clearance - 10
+        // A knob nearer the floor than the meters' full width.
+        let knob = CGRect(x: floor + 10 + needed - 40, y: 40, width: 60, height: 60)
+        #expect(knob.midX > ptt.midX)
+        let place = BandColumnLayout.keyedPlace(top: 60, height: 104, bandWidth: width, needed: needed,
+                                                avoid: [column, ptt], ptt: ptt, held: true,
+                                                narrowest: KeyedOverlay.gaugesNarrowest, bandControls: [knob])
+        #expect(place.alignLeading && place.top + 104 <= ptt.minY - 6)
+        #expect(place.leading == floor)
+        #expect(place.leading + 10 + needed > knob.minX, "the meters reach the knob's left part")
+    }
+
     /// The PR 653 re-review d, Minor A: moved left above a held PTT, the
     /// meters ran on to the band's right inset, over the tuning knob there.
     @Test("moved left above a held PTT, the keyed meters keep clear of the band's controls in their rows")

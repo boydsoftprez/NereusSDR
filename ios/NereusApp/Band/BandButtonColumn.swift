@@ -197,14 +197,21 @@ enum BandColumnLayout {
     /// knob or the thumbwheel) in their rows; else above it (the PR 653
     /// re-review, Minors 1 and 4).
     ///
-    /// Above the PTT they never overlap it: with less room over it than
-    /// their `height` they are cut to fit that room, down to `minHeight`,
-    /// the shortest that keeps every button and tab in them a 44 point
-    /// target; only where even that does not fit do they start at the
-    /// band's top at `minHeight`, under the PTT, which draws on top and
+    /// Above a `held` PTT they never overlap it: with less room over it
+    /// than their `height` they are cut to fit that room, down to
+    /// `minHeight`, the shortest that keeps every button and tab in them a
+    /// 44 point target; only where even that does not fit do they start at
+    /// the band's top at `minHeight`, under the PTT, which draws on top and
     /// stays tappable (the controller's ruling for JJ's veto, the PR 653
-    /// re-review d, Minor 1). Moved left, they keep clear of `bandControls`
-    /// in their rows too (Minor A).
+    /// re-review d, Minor 1). Above a PTT that is not held they keep their
+    /// own `height` and their top as before that ruling, which leaves the
+    /// keyed meters unchanged everywhere else (the manager's ruling; the
+    /// PR 653 re-review e, Minor N2). Moved left, either way, they keep
+    /// clear of `bandControls` in their rows (re-review d, Minor A), but
+    /// never past the floor (the leading inset, or the box before the PTT):
+    /// where the floor leaves too little room before a control, they keep
+    /// their full width from the floor and reach over that control's left
+    /// part, drawn over it.
     static func keyedPlace(top: CGFloat, height: CGFloat, bandWidth: CGFloat, needed: CGFloat,
                            avoid: [CGRect], ptt: CGRect?, held: Bool = false, narrowest: CGFloat = .infinity,
                            leadingInset: CGFloat = 0, trailingInset: CGFloat = 0,
@@ -215,20 +222,22 @@ enum BandColumnLayout {
             return KeyedPlace(top: top, leading: 0, alignLeading: false)
         }
         // Above the PTT, at its left: moved left as far as the meters must
-        // to keep their full width (inside the insets when `insets`, as
+        // to keep their full width (inside the insets when `held`, as
         // beside a held PTT, and clear of the band's controls in their
         // rows), but never onto what is left of the PTT in their rows.
-        func above(_ ptt: CGRect, insets: Bool) -> KeyedPlace {
-            // The room over the PTT: their own height, else cut to fit, never below `minHeight`.
+        func above(_ ptt: CGRect, held: Bool) -> KeyedPlace {
+            // The room over the PTT. Over a held one: their own height, else
+            // cut to fit, never below `minHeight`. Over one not held: their
+            // own height, as before the cut (re-review e, Minor N2).
             let room = ptt.minY - 6
-            let shortest = min(height, minHeight ?? height)
+            let shortest = held ? min(height, minHeight ?? height) : height
             let shown = room >= height ? height : max(shortest, room)
             let aboveTop = max(0, room - shown)
             let before = reaching.filter { $0 != ptt && $0.midX < ptt.midX }.map(\.maxX).max()
-            let floor = max(0, insets ? leadingInset - 10 : 0, before.map { $0 + clearance - 10 } ?? 0)
+            let floor = max(0, held ? leadingInset - 10 : 0, before.map { $0 + clearance - 10 } ?? 0)
             // Where the gauges must end: inside the band (and its inset), short of a control right of the PTT.
             let controls = bandControls.filter { $0.minY < aboveTop + shown && $0.maxY > aboveTop && $0.midX > ptt.midX }
-            let end = min(bandWidth - (insets ? trailingInset : 0) - 10,
+            let end = min(bandWidth - (held ? trailingInset : 0) - 10,
                           controls.map { $0.minX - clearance }.min() ?? .infinity)
             let leading = max(floor, min(ptt.minX - 10, end - needed - 10))
             return KeyedPlace(top: aboveTop, leading: leading, alignLeading: true,
@@ -253,7 +262,7 @@ enum BandColumnLayout {
                 return place(wider)
             }
             // Neither side keeps 44 point targets: above it.
-            return above(ptt, insets: true)
+            return above(ptt, held: true)
         }
         // The meters' own 10 point side margins sit inside the region.
         let leading = edge + clearance - 10
@@ -261,7 +270,7 @@ enum BandColumnLayout {
             return KeyedPlace(top: top, leading: leading, alignLeading: false)
         }
         if let ptt {
-            return above(ptt, insets: false)
+            return above(ptt, held: false)
         }
         return KeyedPlace(top: top, leading: leading, alignLeading: false)
     }
