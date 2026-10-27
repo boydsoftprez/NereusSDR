@@ -1503,6 +1503,40 @@ private slots:
         QCOMPARE(psEnabled.takeFirst().at(0).toBool(), true);
     }
 
+    void runCalibrationProcessing_reenabledResumesRequestedAutoCal()
+    {
+        // Thetis has no separate run-cal pause: AutoCalEnabled=true sets
+        // _autoON (PSForm.cs:272-289 [v2.10.3.15]) and TurnOnAutoCalibrate
+        // sets PSEnabled=true, whose setter turns PSRunCal on
+        // (PSForm.cs:235-251, 644-649 [v2.10.3.15]). Auto-cal turned on while
+        // the PS3 pause is off records intent only; lifting the pause must
+        // then start it, as on the STRIX 2026-10-26 19:33:28-19:33:41.
+        TxChannel tx(kTxChannelId);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setEnabled(true);
+        ps.setTimersEnabled(false);
+        ps.setCorrectionStateForTest(Ps3CorrectionState{false, false});
+
+        QSignalSpy psEnabled(&ps, &PureSignal::psEnabledChanged);
+
+        ps.setRunCalibrationProcessing(false);
+        ps.setAutoCalEnabled(true);
+        int info[16] = {};
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+        for (const QList<QVariant>& args : std::as_const(psEnabled)) {
+            QCOMPARE(args.at(0).toBool(), false);
+        }
+        psEnabled.clear();
+
+        ps.setRunCalibrationProcessing(true);
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+
+        QVERIFY(!psEnabled.isEmpty());
+        QCOMPARE(psEnabled.last().at(0).toBool(), true);
+    }
+
     void psEnabledChanged_emittedOnTurnOnSingleCalibrate()
     {
         // singleCalibrate() sets _singleCalON=true.  The next pollTimerTick
