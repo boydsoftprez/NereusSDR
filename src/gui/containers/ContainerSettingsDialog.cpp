@@ -8,6 +8,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I1, I2, settings M7, GUI M9):
+//                 paste ports Thetis's keep-current block
+//                 (btnMeterPasteSettings_Click, setup.cs:27001-27083
+//                 [v2.10.3.15]) for every type and keeps the target's
+//                 reading, layer and trace 2 source; the clipboard carries
+//                 picked colours, fade and update interval; the legacy
+//                 paste path drops a branch it could not take. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Max ADC Magnitude follows the content registry: its
 //                 Available list entry and its Presets menu entry are shown
 //                 disabled with the registry's reason, and adding it builds
@@ -255,6 +263,7 @@ mw0lge@grange-lane.co.uk
 #include "../meters/ItemGroup.h"
 #include "../meters/presets/BarPresetItem.h"
 #include "../meters/presets/CompositePresetItem.h"
+#include "../meters/WaveformMeterItem.h"
 
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
 //                                               ScaleItem, TextItem, NeedleItem)
@@ -310,6 +319,7 @@ mw0lge@grange-lane.co.uk
 #include <QFileDialog>
 #include <QSaveFile>
 #include <QJsonDocument>
+#include "core/LogCategories.h"
 #include <QJsonArray>
 #include <QFile>
 #include <QTextStream>
@@ -2228,31 +2238,17 @@ bool ContainerSettingsDialog::canPasteSettings(const QString& fromTypeId, const 
     return isSharedSettingsBar(fromTypeId) && isSharedSettingsBar(toTypeId);
 }
 
-// From Thetis setup.cs:26988 [v2.10.3.15] (btnMeterPasteSettings_Click; its
-// paste body, setup.cs:27001-27083, is cited where it is ported below).
-bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target)
-{
-    const QString toTypeId = pasteTypeId(target);
-    if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
-    if (fromTypeId == toTypeId) {
-        // An LED and a web image keep their own guid, so their 4-character
-        // ID stays (Thetis pastes settings into the target's item group,
-        // keeping its ID).
-        auto* led = qobject_cast<LEDItem*>(&target);
-        auto* web = qobject_cast<WebImageItem*>(&target);
-        const QUuid ownGuid = led ? led->guid() : (web ? web->guid() : QUuid());
-        const bool pasted = target.deserialize(copiedSerialized);
-        if (pasted && led) { led->setGuid(ownGuid); }
-        if (pasted && web) { web->setGuid(ownGuid); }
-        return pasted;
-    }
+namespace {
 
-    auto* bar = qobject_cast<BarPresetItem*>(&target);
-    if (!bar) { return false; }
+// A bar's paste (BarPresetItem's JSON record): the keep-current block of
+// Thetis btnMeterPasteSettings_Click, then what NereusSDR keeps. keptSub
+// reports that the target kept its own sub marker.
+bool pasteBarSettings(const QString& copiedSerialized, bool sameType, BarPresetItem& bar, bool& keptSub)
+{
     const QJsonDocument document = QJsonDocument::fromJson(copiedSerialized.toUtf8());
     if (!document.isObject()) { return false; }
     QJsonObject settings = document.object();
-    const QJsonObject currentSettings = bar->configuration();
+    const QJsonObject currentSettings = bar.configuration();
     const auto keepCurrent = [&](const QString& key) {
         if (currentSettings.contains(key)) { settings.insert(key, currentSettings.value(key)); }
         else { settings.remove(key); }
@@ -2265,28 +2261,150 @@ bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized,
     keepCurrent(QStringLiteral("units"));
 
     // A source with no average marker has no second reading.
-    if (settings.value(QStringLiteral("secondaryBindingId")).toInt(-1) < 0) {
+    keptSub = settings.value(QStringLiteral("secondaryBindingId")).toInt(-1) < 0;
+    if (keptSub) {
         // no sub indicators on the source, replace with current so we end up with no change on the paste
         // [Thetis also assigns ShowSubMarker from ShowMarker first, setup.cs:27012; the next line overwrites it]
         keepCurrent(QStringLiteral("showSub"));
         keepCurrent(QStringLiteral("subColor"));
     }
 
-    // NereusSDR: what Thetis builds per MeterType and leaves out of
-    // clsIGSettings (the reading, title and scale; MeterManager.cs:29275-29373
-    // [v2.10.3.15]) stays the target's, as does the item's place.
-    for (const QString& key : {QStringLiteral("kind"), QStringLiteral("flavor"), QStringLiteral("label"),
-                               QStringLiteral("bindingId"), QStringLiteral("secondaryBindingId"),
-                               QStringLiteral("minValue"), QStringLiteral("maxValue"), QStringLiteral("redThreshold"),
+    // NereusSDR: the item's readings and place stay the target's (Thetis
+    // pastes into the target's item group, whose readings and place are
+    // not settings).
+    for (const QString& key : {QStringLiteral("bindingId"), QStringLiteral("secondaryBindingId"),
                                QStringLiteral("aboveS9Frequency"), QStringLiteral("x"), QStringLiteral("y"),
-                               QStringLiteral("w"), QStringLiteral("h"), QStringLiteral("rowHeight")}) {
+                               QStringLiteral("w"), QStringLiteral("h")}) {
         keepCurrent(key);
     }
-    // Thetis copies MaxPower only from a PWR or REVERSE_PWR source
-    // (MeterManager.cs:29329 [v2.10.3.15]); otherwise the target keeps its own.
-    if (!settings.contains(QStringLiteral("powerLimitW"))) { keepCurrent(QStringLiteral("powerLimitW")); }
+    if (!sameType) {
+        // NereusSDR: what Thetis builds per MeterType and leaves out of
+        // clsIGSettings (the reading, title and scale; MeterManager.cs:29275-29373
+        // [v2.10.3.15]) stays the target's.
+        for (const QString& key : {QStringLiteral("kind"), QStringLiteral("flavor"), QStringLiteral("label"),
+                                   QStringLiteral("minValue"), QStringLiteral("maxValue"),
+                                   QStringLiteral("redThreshold"), QStringLiteral("rowHeight")}) {
+            keepCurrent(key);
+        }
+        // Thetis copies MaxPower only from a PWR or REVERSE_PWR source
+        // (MeterManager.cs:29329 [v2.10.3.15]); otherwise the target keeps its own.
+        if (!settings.contains(QStringLiteral("powerLimitW"))) { keepCurrent(QStringLiteral("powerLimitW")); }
+    }
 
-    return bar->deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
+    return bar.deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
+}
+
+// A same-type paste of any other item: the whole record, then the
+// target's own values Thetis protects and its reading.
+//
+// Thetis also restores the target's ShowSubMarker and SubMarkerColour for
+// every type (setup.cs:27009-27015 [v2.10.3.15]); other types reuse those
+// two fields for other colours (an LED's back panel, a VFO's mode colour),
+// so NereusSDR keeps that rule for bars only.
+bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target)
+{
+    // An LED and a web image keep their own guid, so their 4-character
+    // ID stays (Thetis pastes settings into the target's item group,
+    // keeping its ID).
+    auto* led = qobject_cast<LEDItem*>(&target);
+    auto* web = qobject_cast<WebImageItem*>(&target);
+    const QUuid ownGuid = led ? led->guid() : (web ? web->guid() : QUuid());
+    const int ownBinding = target.bindingId();
+    auto* face = qobject_cast<CompositePresetItem*>(&target);
+    const QJsonObject ownFace = face ? face->configuration() : QJsonObject{};
+
+    auto* other = qobject_cast<OtherButtonItem*>(&target);
+    QVector<short> ownMap;
+    QVector<qint32> ownGroups;
+    QVector<OtherButtonItem::MacroSettings> ownMacros;
+    if (other) {
+        ownMap = other->buttonMap();
+        ownGroups = other->visibleGroups();
+        for (int n = 0; n < OtherButtonItem::kMacroCount; ++n) { ownMacros.append(other->macroSettings(n)); }
+    }
+    auto* tuneStep = qobject_cast<TuneStepButtonItem*>(&target);
+    auto* antenna = qobject_cast<AntennaButtonItem*>(&target);
+    const uint32_t ownVisibleBits = tuneStep ? tuneStep->visibleBits() : (antenna ? antenna->visibleBits() : 0u);
+    const int ownActiveStep = tuneStep ? tuneStep->activeStep() : -1;
+
+    if (!target.deserialize(copiedSerialized)) { return false; }
+    if (led) { led->setGuid(ownGuid); }
+    if (web) { web->setGuid(ownGuid); }
+
+    // From Thetis setup.cs:27017-27080 [v2.10.3.15]
+    // VOICE_RECORD_PLAY_BUTTONS (setup.cs:27017-27041): NereusSDR's
+    // record and play grid has no slots, files or button map, so it has
+    // nothing to keep. NereusSDR has no WAVE_RECORD item (setup.cs:27042-27046).
+    if (other) {
+        // prevent overwrite of the following, copy from current settings
+        other->setButtonMap(ownMap);
+        other->setVisibleGroups(ownGroups);
+        for (int n = 0; n < OtherButtonItem::kMacroCount; ++n) { other->macroSettings(n) = ownMacros[n]; }
+    } else if (tuneStep) {
+        // prevent overwrite of the following, copy from current settings
+        tuneStep->setVisibleBits(ownVisibleBits);
+        // NereusSDR: the lit step is the radio's, not a setting.
+        tuneStep->setActiveStep(ownActiveStep);
+    } else if (antenna) {
+        // prevent overwrite of the following, copy from current settings
+        antenna->setVisibleBits(ownVisibleBits);
+    }
+
+    // NereusSDR: the reading stays the target's (a face's channel readings
+    // and its trace 2 source too).
+    if (face) {
+        QJsonObject keep{{QStringLiteral("bindingId"), ownFace.value(QStringLiteral("bindingId"))}};
+        const QJsonArray ownChannels = ownFace.value(QStringLiteral("channels")).toArray();
+        QJsonArray channels = face->configuration().value(QStringLiteral("channels")).toArray();
+        if (channels.size() == ownChannels.size()) {
+            for (int i = 0; i < channels.size(); ++i) {
+                QJsonObject channel = channels[i].toObject();
+                channel.insert(QStringLiteral("bindingId"), ownChannels[i].toObject().value(QStringLiteral("bindingId")));
+                channels[i] = channel;
+            }
+            keep.insert(QStringLiteral("channels"), channels);
+        }
+        if (face->typeId() == QLatin1String("meter.historyGraph")) {
+            keep.insert(QStringLiteral("trace2Context"), ownFace.contains(QStringLiteral("trace2Context"))
+                                                             ? ownFace.value(QStringLiteral("trace2Context"))
+                                                             : QJsonValue(QJsonValue::Null));
+        }
+        if (!face->applyConfiguration(keep)) {
+            qCWarning(lcContainer) << "Paste settings: the face did not keep its reading";
+        }
+    } else {
+        target.setBindingId(ownBinding);
+    }
+    return true;
+}
+
+} // namespace
+
+// From Thetis setup.cs:26988 [v2.10.3.15] (btnMeterPasteSettings_Click; its
+// paste body, setup.cs:27001-27083, is cited where it is ported in
+// pasteBarSettings and pasteSameTypeSettings above).
+bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId,
+                                                MeterItem& target, const QStringList& copiedUserColours)
+{
+    const QString toTypeId = pasteTypeId(target);
+    if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
+    // NereusSDR: the item's layer stays the target's, as its place does.
+    const int ownZOrder = target.zOrder();
+    const bool ownSubPicked = target.colourUserSet(QStringLiteral("BarPreset.subColor"));
+    bool keptSub = false;
+    bool pasted = false;
+    if (auto* bar = qobject_cast<BarPresetItem*>(&target)) {
+        pasted = pasteBarSettings(copiedSerialized, fromTypeId == toTypeId, *bar, keptSub);
+    } else if (fromTypeId == toTypeId) {
+        pasted = pasteSameTypeSettings(copiedSerialized, target);
+    }
+    if (!pasted) { return false; }
+    target.setZOrder(ownZOrder);
+    // The colours picked on the source arrive with them; a kept sub
+    // marker keeps the target's own pick.
+    target.setUserColourFields(copiedUserColours);
+    if (keptSub) { target.setColourUserSet(QStringLiteral("BarPreset.subColor"), ownSubPicked); }
+    return true;
 }
 
 bool ContainerSettingsDialog::selectedDraftEntry(ContentEntry& entry) const
@@ -2317,6 +2435,7 @@ void ContainerSettingsDialog::onCopyItemSettings()
         if (!item) { return; }
         m_clipboardSerialized = item->serialize();
         m_clipboardTypeTag = pasteTypeId(*item);
+        copyClipboardExtras(*item);
         updateCopyPasteButtonState();
         return;
     }
@@ -2327,7 +2446,33 @@ void ContainerSettingsDialog::onCopyItemSettings()
 
     m_clipboardSerialized = item->serialize();
     m_clipboardTypeTag = pasteTypeId(*item);
+    copyClipboardExtras(*item);
     updateCopyPasteButtonState();
+}
+
+void ContainerSettingsDialog::copyClipboardExtras(const MeterItem& item)
+{
+    m_clipboardUserColours = item.userColourFields();
+    m_clipboardHasFade = item.hasExplicitFade();
+    m_clipboardFadeRx = item.fadeOnRx();
+    m_clipboardFadeTx = item.fadeOnTx();
+    m_clipboardUpdateIntervalMs = item.updateIntervalMs();
+}
+
+void ContainerSettingsDialog::pasteClipboardExtras(MeterItem& item) const
+{
+    // Thetis's settings record carries the fade and the update interval
+    // (clsIGSettings); NereusSDR keeps them beside the record, so they
+    // paste here. A source without a fade of its own leaves the target's.
+    if (m_clipboardHasFade) {
+        item.setFadeOnRx(m_clipboardFadeRx);
+        item.setFadeOnTx(m_clipboardFadeTx);
+    }
+    // The faces, bars and waveform keep their interval in the record.
+    const bool recordHoldsInterval = qobject_cast<const BarPresetItem*>(&item) != nullptr
+        || qobject_cast<const CompositePresetItem*>(&item) != nullptr
+        || qobject_cast<const WaveformMeterItem*>(&item) != nullptr;
+    if (!recordHoldsInterval) { item.setUpdateIntervalMs(m_clipboardUpdateIntervalMs); }
 }
 
 void ContainerSettingsDialog::onPasteItemSettings()
@@ -2343,8 +2488,9 @@ void ContainerSettingsDialog::onPasteItemSettings()
         const float y = item->y();
         const float w = item->itemWidth();
         const float h = item->itemHeight();
-        if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
+        if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item, m_clipboardUserColours)) { return; }
         item->setRect(x, y, w, h);
+        pasteClipboardExtras(*item);
         const ContentEntry pasted = m_manager->contentRegistry()->captureMeterItem(*item, entry);
         auto draft = m_editSession->draft();
         for (auto& c : draft.containers) {
@@ -2373,9 +2519,10 @@ void ContainerSettingsDialog::onPasteItemSettings()
     const float y = item->y();
     const float w = item->itemWidth();
     const float h = item->itemHeight();
-    if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item)) { return; }
+    if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item, m_clipboardUserColours)) { return; }
     item->setRect(x, y, w, h);
-    if (m_editSession) { updatePreview(); } else { applyToContainer(); }
+    pasteClipboardExtras(*item);
+    applyToContainer();
 
     // Force the editor stack to rebuild so the property fields
     // reload from the freshly-pasted item state.

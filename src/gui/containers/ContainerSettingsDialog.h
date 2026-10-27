@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I1, I2, settings M7): paste keeps
+//                 what Thetis keeps and the target's reading and layer;
+//                 the clipboard carries picked colours, fade and update
+//                 interval. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - selectDraftWebImage: Show next in the live editor searches
 //                 every draft container. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -73,6 +78,7 @@ mw0lge@grange-lane.co.uk
 #include <QVector>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <memory>
 #include "ContainerDocument.h"
 
@@ -149,10 +155,15 @@ public:
     // its own type.
     static bool canPasteSettings(const QString& fromTypeId, const QString& toTypeId);
     // Pastes settings copied (serialize()) from an item of fromTypeId onto
-    // target. A paste between two bar types keeps the target's reading,
-    // title, scale, units and place; returns false, leaving the target
-    // unchanged, when the types are not compatible.
-    static bool pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target);
+    // target. The target keeps its reading, layer and units, and what
+    // Thetis keeps per type (a button grid's buttons, a bar's sub marker
+    // when the source has none); a paste between two bar types also keeps
+    // its title and scale. The target's picked colours become
+    // copiedUserColours (the source's MeterItem::userColourFields()).
+    // Returns false, leaving the target unchanged, when the types are not
+    // compatible.
+    static bool pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target,
+                                  const QStringList& copiedUserColours = {});
     // The type a copy or paste names: the bar and composite faces' typeId,
     // otherwise the serialized record's type tag.
     static QString pasteTypeId(const MeterItem& item);
@@ -253,6 +264,15 @@ private:
     // Thetis behavior.
     QString m_clipboardSerialized;
     QString m_clipboardTypeTag;
+    // Kept beside the record (the entry context holds them): the source's
+    // picked colours, its fade when set, and its update interval.
+    QStringList m_clipboardUserColours;
+    bool m_clipboardHasFade{false};
+    bool m_clipboardFadeRx{false};
+    bool m_clipboardFadeTx{false};
+    int m_clipboardUpdateIntervalMs{0};
+    void copyClipboardExtras(const MeterItem& item);
+    void pasteClipboardExtras(MeterItem& item) const;
     void onCopyItemSettings();
     void onPasteItemSettings();
     void updateCopyPasteButtonState();
