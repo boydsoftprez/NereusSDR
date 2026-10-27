@@ -1,4 +1,5 @@
 #include "LedItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/LEDItem.h"
 
 #include <QCheckBox>
@@ -126,10 +127,8 @@ void LedItemEditor::setItem(MeterItem* item)
     LEDItem* x = qobject_cast<LEDItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
@@ -142,12 +141,12 @@ void LedItemEditor::setItem(MeterItem* item)
     const int styleIdx = m_comboStyle->findData(static_cast<int>(x->ledStyle()));
     m_comboStyle->setCurrentIndex(styleIdx >= 0 ? styleIdx : 0);
 
-    applyColor(m_btnTrueColour, x->trueColour());
-    applyColor(m_btnFalseColour, x->falseColour());
+    applyColor(m_btnTrueColour, QStringLiteral("Led.trueColour"), x->trueColour());
+    applyColor(m_btnFalseColour, QStringLiteral("Led.falseColour"), x->falseColour());
 
     m_chkShowPanel->setChecked(x->showBackPanel());
-    applyColor(m_btnPanelBack1, x->panelBackColour1());
-    applyColor(m_btnPanelBack2, x->panelBackColour2());
+    applyColor(m_btnPanelBack1, QStringLiteral("Led.panelBackColour1"), x->panelBackColour1());
+    applyColor(m_btnPanelBack2, QStringLiteral("Led.panelBackColour2"), x->panelBackColour2());
 
     m_chkBlink->setChecked(x->blink());
     m_chkPulsate->setChecked(x->pulsate());
@@ -236,9 +235,7 @@ void LedItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->trueColour(), this);
         if (chosen.isValid()) {
             x->setTrueColour(chosen);
-            m_btnTrueColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnTrueColour, QStringLiteral("Led.trueColour"), chosen);
             notifyChanged();
         }
     });
@@ -252,9 +249,7 @@ void LedItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->falseColour(), this);
         if (chosen.isValid()) {
             x->setFalseColour(chosen);
-            m_btnFalseColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnFalseColour, QStringLiteral("Led.falseColour"), chosen);
             notifyChanged();
         }
     });
@@ -278,9 +273,7 @@ void LedItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->panelBackColour1(), this);
         if (chosen.isValid()) {
             x->setPanelBackColour1(chosen);
-            m_btnPanelBack1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack1, QStringLiteral("Led.panelBackColour1"), chosen);
             notifyChanged();
         }
     });
@@ -294,9 +287,7 @@ void LedItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->panelBackColour2(), this);
         if (chosen.isValid()) {
             x->setPanelBackColour2(chosen);
-            m_btnPanelBack2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack2, QStringLiteral("Led.panelBackColour2"), chosen);
             notifyChanged();
         }
     });

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -99,6 +102,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "HistoryGraphItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 // From Thetis clsHistoryItem (MeterManager.cs:16149+)
@@ -348,12 +352,12 @@ void HistoryGraphItem::paint(QPainter& p, int widgetW, int widgetH)
 
     float yMin0 = 0.0f, yMax0 = 1.0f;
     axisRange(0, yMin0, yMax0);
-    paintLine(p, rect, m_buf0, m_lineColor0, yMin0, yMax0);
+    paintLine(p, rect, m_buf0, ItemColourLook::effective("History.lineColor0", m_lineColor0, this), yMin0, yMax0);
 
     if (m_bindingId1 >= 0 || hasMmioBinding(1)) {
         float yMin1 = 0.0f, yMax1 = 1.0f;
         axisRange(1, yMin1, yMax1);
-        paintLine(p, rect, m_buf1, m_lineColor1, yMin1, yMax1);
+        paintLine(p, rect, m_buf1, ItemColourLook::effective("History.lineColor1", m_lineColor1, this), yMin1, yMax1);
     }
 }
 
@@ -369,12 +373,12 @@ void HistoryGraphItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Laye
     } else if (layer == Layer::OverlayDynamic) {
         float yMin0 = 0.0f, yMax0 = 1.0f;
         axisRange(0, yMin0, yMax0);
-        paintLine(p, rect, m_buf0, m_lineColor0, yMin0, yMax0);
+        paintLine(p, rect, m_buf0, ItemColourLook::effective("History.lineColor0", m_lineColor0, this), yMin0, yMax0);
 
         if (m_bindingId1 >= 0 || hasMmioBinding(1)) {
             float yMin1 = 0.0f, yMax1 = 1.0f;
             axisRange(1, yMin1, yMax1);
-            paintLine(p, rect, m_buf1, m_lineColor1, yMin1, yMax1);
+            paintLine(p, rect, m_buf1, ItemColourLook::effective("History.lineColor1", m_lineColor1, this), yMin1, yMax1);
         }
     }
 }
@@ -420,10 +424,10 @@ void HistoryGraphItem::paintGrid(QPainter& p, const QRect& rect)
     if (rect.isEmpty()) { return; }
 
     // Background fill
-    p.fillRect(rect, m_backColour);
+    p.fillRect(rect, ItemColourLook::effective("History.backColour", m_backColour, this));
 
     // Border
-    p.setPen(QPen(m_linesColour, 1));
+    p.setPen(QPen(ItemColourLook::effective("History.linesColour", m_linesColour, this), 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(rect.adjusted(0, 0, -1, -1));
 
@@ -432,7 +436,7 @@ void HistoryGraphItem::paintGrid(QPainter& p, const QRect& rect)
     // 5 horizontal grid lines evenly spaced
     // From Thetis clsHistoryItem — grid line rendering
     const int lineCount = 5;
-    p.setPen(QPen(m_linesColour, 1));
+    p.setPen(QPen(ItemColourLook::effective("History.linesColour", m_linesColour, this), 1));
 
     // Compute Y scale for label values using axis 0
     float yMin = 0.0f, yMax = 1.0f;
@@ -446,21 +450,21 @@ void HistoryGraphItem::paintGrid(QPainter& p, const QRect& rect)
     const double scale=objectTextScale(rect,{260,120});
     labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(9*scale))));
     p.setFont(labelFont);
-    p.setPen(m_timeColour);
+    p.setPen(ItemColourLook::effective("History.timeColour", m_timeColour, this));
 
     for (int i = 0; i <= lineCount; ++i) {
         const float fraction = static_cast<float>(i) / static_cast<float>(lineCount);
         const int y = rect.top() + static_cast<int>(fraction * rect.height());
 
         // Grid line
-        p.setPen(QPen(m_linesColour, 1));
+        p.setPen(QPen(ItemColourLook::effective("History.linesColour", m_linesColour, this), 1));
         p.drawLine(rect.left(), y, rect.right(), y);
 
         // Y-axis label (value at this grid line, top=yMax, bottom=yMin)
         if (m_showScale0) {
             const float labelVal = yMax - fraction * (yMax - yMin);
             const QString labelText = QString::number(static_cast<double>(labelVal), 'f', 1);
-            p.setPen(m_timeColour);
+            p.setPen(ItemColourLook::effective("History.timeColour", m_timeColour, this));
             const QFontMetricsF metrics(labelFont,p.device());
             const double textWidth=WorkspacePreview::enabled() ? qMax(40*scale,metrics.horizontalAdvance(labelText)+2) : 40*scale;
             const double textHeight=WorkspacePreview::enabled() ? qMax(12*scale,metrics.height()) : 12*scale;

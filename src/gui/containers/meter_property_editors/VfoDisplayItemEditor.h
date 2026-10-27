@@ -23,6 +23,7 @@ private:
 
     struct ColourRow {
         QPushButton* button{nullptr};
+        QString field;
         std::function<QColor(const VfoDisplayItem&)> get;
     };
 

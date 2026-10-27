@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis magic eye options: attack and decay, history and
 //                 ignore history, eye and bezel scale, scale calibration,
 //                 new-item defaults. Saved records keep the fixed smoothing
@@ -67,6 +70,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MagicEyeItem.h"
+#include "ItemColourLook.h"
 #include "AboveS9Frequency.h"
 
 // From Thetis clsMagicEyeItem (MeterManager.cs:15855+)
@@ -294,8 +298,8 @@ void MagicEyeItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Step 4: green phosphor glow via radial gradient
     QRadialGradient grad(eyeRect.center(), side / 2.0);
-    grad.setColorAt(0.0, m_glowColor);
-    grad.setColorAt(0.6, m_glowColor.darker(200));
+    grad.setColorAt(0.0, ItemColourLook::effective("MagicEye.glowColor", m_glowColor, this));
+    grad.setColorAt(0.6, ItemColourLook::effective("MagicEye.glowColor", m_glowColor, this).darker(200));
     grad.setColorAt(1.0, QColor(0x00, 0x44, 0x00, 0x40));
     p.setBrush(grad);
     p.drawEllipse(eyeRect);

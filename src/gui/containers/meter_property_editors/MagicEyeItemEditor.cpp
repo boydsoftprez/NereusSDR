@@ -1,4 +1,5 @@
 #include "MagicEyeItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MagicEyeItem.h"
 
 #include <QPushButton>
@@ -28,9 +29,7 @@ void MagicEyeItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
 
-    m_btnGlowColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(x->glowColor().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnGlowColor, QStringLiteral("MagicEye.glowColor"), x->glowColor());
     m_editBezelPath->setText(x->bezelImagePath());
     m_spinEyeScale->setValue(static_cast<double>(x->eyeScale()));
     m_spinBezelScale->setValue(static_cast<double>(x->bezelScale()));
@@ -38,9 +37,7 @@ void MagicEyeItemEditor::setItem(MeterItem* item)
     m_spinDecay->setValue(static_cast<double>(x->decayRatio()));
     m_chkShowHistory->setChecked(x->showHistory());
     m_spinHistoryMs->setValue(x->historyDurationMs());
-    m_btnHistoryColour->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(x->historyColour().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnHistoryColour, QStringLiteral("MagicEye.historyColour"), x->historyColour());
     m_spinIgnoreHistoryMs->setValue(x->ignoreHistoryMs());
     QStringList cal;
     const QMap<float, float> points = x->scaleCalibration();
@@ -61,9 +58,7 @@ void MagicEyeItemEditor::buildTypeSpecific()
     m_btnGlowColor = new QPushButton(this);
     m_btnGlowColor->setFixedSize(40, 18);
     auto applyGlowColor = [this](const QColor& c) {
-        m_btnGlowColor->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+        ItemColourLook::paintSwatch(m_btnGlowColor, QStringLiteral("MagicEye.glowColor"), c);
     };
     connect(m_btnGlowColor, &QPushButton::clicked, this, [this, applyGlowColor]() {
         MagicEyeItem* x = qobject_cast<MagicEyeItem*>(m_item);
@@ -172,9 +167,7 @@ void MagicEyeItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (!chosen.isValid()) { return; }
         x->setHistoryColour(chosen);
-        m_btnHistoryColour->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(chosen.name(QColor::HexArgb)));
+        ItemColourLook::paintSwatch(m_btnHistoryColour, QStringLiteral("MagicEye.historyColour"), chosen);
         notifyChanged();
     });
     addRow(QStringLiteral("History color"), m_btnHistoryColour);

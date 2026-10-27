@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I10): a needle applies its saved
 //                 attack ratio rising and decay ratio falling, and draws
 //                 with its saved stroke width; one saved without them
@@ -253,6 +256,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ControlRanges.h"
 #include "MeterItem.h"
+#include "ItemColourLook.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
 #include "AboveS9Frequency.h"
@@ -736,7 +740,7 @@ void SolidColourItem::applyNewItemDefaults()
 
 void SolidColourItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    p.fillRect(pixelRect(widgetW, widgetH), m_colour);
+    p.fillRect(pixelRect(widgetW, widgetH), ItemColourLook::effective("Solid.colour", m_colour, this));
 }
 
 QString SolidColourItem::serialize() const
@@ -1096,7 +1100,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
     const QRect rect = pixelRect(widgetW, widgetH);
     const QColor& fillColor = (m_smoothedValue >= m_redThreshold)
-                                  ? m_barRedColor : m_barColor;
+                                  ? ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this) : ItemColourLook::effective("Bar.barColor", m_barColor, this);
 
     // Bar body. Uses valueToNormalizedX() so both the linear min..max
     // fallback (empty calibration) and the Phase A4 piecewise-linear
@@ -1124,7 +1128,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // m_historyColour. Older samples fade via the alpha in the colour
     // itself; a stronger trail effect will come with VBO work later.
     if (m_showHistory && !m_history.isEmpty()) {
-        p.setPen(QPen(m_historyColour, 1));
+        p.setPen(QPen(ItemColourLook::effective("Bar.historyColour", m_historyColour, this), 1));
         for (double v : m_history) {
             const float hx = valueToNormalizedX(v);
             const int px = rect.left() + static_cast<int>(hx * rect.width());
@@ -1159,12 +1163,12 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // both use StrokeWidth. The live marker is drawn first, as NereusSDR
     // always has, so a saved bar paints as before.
     if (m_showMarker) {
-        p.setPen(QPen(m_markerColour, static_cast<double>(m_strokeWidth)));
+        p.setPen(QPen(ItemColourLook::effective("Bar.markerColour", m_markerColour, this), static_cast<double>(m_strokeWidth)));
         const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
         p.drawLine(liveX, rect.top(), liveX, rect.bottom());
     }
     if (peakHold() && std::isfinite(m_peakValue)) {
-        p.setPen(QPen(m_peakHoldMarkerColour, static_cast<double>(m_strokeWidth)));
+        p.setPen(QPen(ItemColourLook::effective("Bar.peakHoldMarkerColour", m_peakHoldMarkerColour, this), static_cast<double>(m_strokeWidth)));
         const float fracPeak = valueToNormalizedX(m_peakValue);
         const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
         p.drawLine(peakX, rect.top(), peakX, rect.bottom());
@@ -1189,7 +1193,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
         if (m_showValue
             && (std::isfinite(m_smoothedValue) || isNoReading(m_value))) {
-            p.setPen(m_fontColour);
+            p.setPen(ItemColourLook::effective("Bar.fontColour", m_fontColour, this));
             const QString s = valueText();
             p.drawText(rect.left() + 2,
                        rect.top() + fm.ascent(),
@@ -1197,7 +1201,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
         }
         if (m_showPeakValue) {
             const QString s = peakValueText();
-            p.setPen(peakFontColour());
+            p.setPen(ItemColourLook::effective("Bar.peakFontColour", peakFontColour(), this));
             const int w = fm.horizontalAdvance(s);
             p.drawText(rect.right() - w - 2,
                        rect.top() + fm.ascent(),
@@ -1212,6 +1216,8 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 // transition is redThreshold() on the bar's scale (Thetis HighPoint).
 void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLive)
 {
+    const QColor barColour = ItemColourLook::effective("Bar.barColor", m_barColor, this);
+    const QColor barRedColour = ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this);
     const float x = static_cast<float>(rect.left());
     const float y = static_cast<float>(rect.top());
     const float w = static_cast<float>(rect.width());
@@ -1240,11 +1246,11 @@ void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLiv
     if (m_barStyle == BarStyle::Solid) {
         // From Thetis MeterManager.cs:37532-37547 [v2.10.3.15]
         const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
-        fill(x, fEnd - x, m_barColor);
+        fill(x, fEnd - x, barColour);
         if (fEnd < xPos) // the area in the high range
         {
             // complete the bar
-            fill(fEnd, xPos - fEnd, m_barRedColor);
+            fill(fEnd, xPos - fEnd, barRedColour);
         }
         return;
     }
@@ -1254,29 +1260,29 @@ void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLiv
     const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
 
     for (i = x; i < fEnd - segmentStep; i += segmentStep) {
-        fill(i, segmentBlockSize, m_barColor);
+        fill(i, segmentBlockSize, barColour);
     }
 
     // complete the end sliver up to the high transition
     if (i < fEnd) {
-        fill(i, fEnd - i, m_barColor);
+        fill(i, fEnd - i, barColour);
     }
 
     if (xPos > fHighXPosTransition) // the area in the high range
     {
         // sliver to complete block at high transition
         if (i < fEnd) {
-            fill(fEnd, i + segmentBlockSize - fEnd, m_barRedColor);
+            fill(fEnd, i + segmentBlockSize - fEnd, barRedColour);
         }
 
         float j;
         for (j = i + segmentStep; j < xPos - segmentStep; j += segmentStep) {
-            fill(j, segmentBlockSize, m_barRedColor);
+            fill(j, segmentBlockSize, barRedColour);
         }
 
         // complete the end sliver
         if (j < xPos) {
-            fill(j, xPos - j, m_barRedColor);
+            fill(j, xPos - j, barRedColour);
         }
     }
 }
@@ -1296,7 +1302,7 @@ void BarItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     const float ndcT = 1.0f - m_y * 2.0f;
     const float ndcB = 1.0f - (m_y + m_h) * 2.0f;
 
-    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? m_barRedColor : m_barColor;
+    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this) : ItemColourLook::effective("Bar.barColor", m_barColor, this);
     const float r = static_cast<float>(fillColor.redF());
     const float g = static_cast<float>(fillColor.greenF());
     const float b = static_cast<float>(fillColor.blueF());
@@ -1339,7 +1345,9 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     const QRect rect = pixelRect(widgetW, widgetH);
 
     // Background outline (from Thetis console.cs:23589)
-    p.setPen(QPen(m_edgeBgColor, 1));
+    const QColor edgeBg = ItemColourLook::effective("Bar.edgeBackgroundColor", m_edgeBgColor, this);
+    const QColor edgeAvg = ItemColourLook::effective("Bar.edgeAvgColor", m_edgeAvgColor, this);
+    p.setPen(QPen(edgeBg, 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(rect);
 
@@ -1353,9 +1361,9 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     // Shadow color: midpoint blend of indicator and background
     // From Thetis console.cs:23605-23608
     const QColor shadowColor = QColor(
-        (m_edgeAvgColor.red()   + m_edgeBgColor.red())   / 2,
-        (m_edgeAvgColor.green() + m_edgeBgColor.green()) / 2,
-        (m_edgeAvgColor.blue()  + m_edgeBgColor.blue())  / 2
+        (edgeAvg.red()   + edgeBg.red())   / 2,
+        (edgeAvg.green() + edgeBg.green()) / 2,
+        (edgeAvg.blue()  + edgeBg.blue())  / 2
     );
 
     // Three vertical lines: shadow-center-shadow
@@ -1364,7 +1372,7 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     p.drawLine(pixelX - 1, rect.top() + 1, pixelX - 1, rect.bottom() - 1);
     p.drawLine(pixelX + 1, rect.top() + 1, pixelX + 1, rect.bottom() - 1);
 
-    p.setPen(QPen(m_edgeAvgColor, 1));
+    p.setPen(QPen(edgeAvg, 1));
     p.drawLine(pixelX, rect.top() + 1, pixelX, rect.bottom() - 1);
 }
 
@@ -1597,7 +1605,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             titleFont.setPixelSize(WorkspacePreview::readableTextPixelSize(titleHeight));
             titleFont.setBold(true);
             p.setFont(titleFont);
-            p.setPen(m_titleColour);
+            p.setPen(ItemColourLook::effective("Scale.titleColour", m_titleColour, this));
             const QRect titleRect(rect.left(),
                                   rect.top(),
                                   rect.width(),
@@ -1642,10 +1650,10 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
         const float fLineBaseY = ry + (rh * 0.85f);
 
         // Baseline horizontal line, split at end of low segment.
-        p.setPen(QPen(m_lowColour, 2));
+        p.setPen(QPen(ItemColourLook::effective("Scale.lowColour", m_lowColour, this), 2));
         p.drawLine(QPointF(rx, fLineBaseY),
                    QPointF(rx + lowSpan, fLineBaseY));
-        p.setPen(QPen(m_highColour, 2));
+        p.setPen(QPen(ItemColourLook::effective("Scale.highColour", m_highColour, this), 2));
         p.drawLine(QPointF(rx + lowSpan, fLineBaseY),
                    QPointF(rx + rw * 0.99f, fLineBaseY));
 
@@ -1691,13 +1699,13 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // (Thetis line 32373).
             const float shortX = rx + (static_cast<float>(i) * lowSpacing)
                                     - (lowSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, m_lowColour);
+            drawTick(shortX, /*isMajor*/ false, ItemColourLook::effective("Scale.lowColour", m_lowColour, this));
 
             const float longX = rx + (static_cast<float>(i) * lowSpacing);
-            drawTick(longX, /*isMajor*/ true, m_lowColour);
+            drawTick(longX, /*isMajor*/ true, ItemColourLook::effective("Scale.lowColour", m_lowColour, this));
 
             const int val = m_lowStartNumber + i * m_lowIncrement;
-            drawLabel(longX, QString::number(val), m_labelColor,
+            drawLabel(longX, QString::number(val), ItemColourLook::effective("Scale.labelColor", m_labelColor, this),
                       /*rightAligned*/ false);
         }
 
@@ -1706,16 +1714,16 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const float shortX = rx + lowSpan
                                + (static_cast<float>(i) * highSpacing)
                                - (highSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, m_highColour);
+            drawTick(shortX, /*isMajor*/ false, ItemColourLook::effective("Scale.highColour", m_highColour, this));
 
             const float longX = rx + lowSpan
                               + (static_cast<float>(i) * highSpacing);
-            drawTick(longX, /*isMajor*/ true, m_highColour);
+            drawTick(longX, /*isMajor*/ true, ItemColourLook::effective("Scale.highColour", m_highColour, this));
 
             const int val = (m_highEndNumber - (m_highLongTicks * m_highIncrement))
                           + i * m_highIncrement;
             const bool isLast = (i == m_highLongTicks);
-            drawLabel(longX, QString::number(val), m_labelColor,
+            drawLabel(longX, QString::number(val), ItemColourLook::effective("Scale.labelColor", m_labelColor, this),
                       /*rightAligned*/ isLast);
         }
 
@@ -1741,12 +1749,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const double frac = static_cast<double>(i) / (m_majorTicks - 1);
             const int x = rect.left() + static_cast<int>(frac * rect.width());
 
-            p.setPen(m_tickColor);
+            p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
             p.drawLine(x, rect.top(), x, rect.top() + rect.height() / 3);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(m_labelColor);
+            p.setPen(ItemColourLook::effective("Scale.labelColor", m_labelColor, this));
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             int labelX = x - labelW / 2;
@@ -1771,7 +1779,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int mx = rect.left() + static_cast<int>(minorFrac * rect.width());
-                    p.setPen(m_tickColor);
+                    p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
                     p.drawLine(mx, rect.top(), mx, rect.top() + rect.height() / 6);
                 }
             }
@@ -1783,12 +1791,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // Top = maxVal, bottom = minVal for vertical orientation
             const int y = rect.top() + static_cast<int>((1.0 - frac) * rect.height());
 
-            p.setPen(m_tickColor);
+            p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
             p.drawLine(rect.right(), y, rect.right() - rect.width() / 3, y);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(m_labelColor);
+            p.setPen(ItemColourLook::effective("Scale.labelColor", m_labelColor, this));
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             const int labelX = rect.right() - rect.width() / 3 - labelW - 2;
@@ -1800,7 +1808,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int my = rect.top() + static_cast<int>((1.0 - minorFrac) * rect.height());
-                    p.setPen(m_tickColor);
+                    p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
                     p.drawLine(rect.right(), my, rect.right() - rect.width() / 6, my);
                 }
             }
@@ -2044,7 +2052,7 @@ void TextItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     p.setFont(font);
-    p.setPen(m_textColor);
+    p.setPen(ItemColourLook::effective("Text.textColor", m_textColor, this));
     // From Thetis MeterManager.cs:37383-37384 [v2.10.3.15] (renderText):
     // centred about the item's middle, else from its top left.
     const Qt::Alignment align = m_centred ? Qt::Alignment(Qt::AlignCenter)
@@ -2547,7 +2555,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     const QVector<QPointF> history = historyOutline(g);
     if (history.size() >= 3) {
         p.setPen(Qt::NoPen);
-        p.setBrush(m_historyColor);
+        p.setBrush(ItemColourLook::effective("Needle.historyColor", m_historyColor, this));
         p.drawPolygon(history.constData(), static_cast<int>(history.size()));
         p.setBrush(Qt::NoBrush);
     }
@@ -2555,7 +2563,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     // Peak hold needle on a calibrated face, under the live needle.
     // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
     if (g.calibrated && peakHold()) {
-        QPen peakPen(m_peakHoldColour);
+        QPen peakPen(ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
         peakPen.setWidthF(static_cast<double>(m_strokeWidth));
         p.setPen(peakPen);
         p.drawLine(pivot, tipFor(g, peakValue()));
@@ -2570,7 +2578,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     // Needle
-    QPen needlePen(m_needleColor);
+    QPen needlePen(ItemColourLook::effective("Needle.needleColor", m_needleColor, this));
     needlePen.setWidthF(static_cast<double>(m_strokeWidth));
     p.setPen(needlePen);
     p.drawLine(pivot, tip);
@@ -2579,7 +2587,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     if (!g.calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
         const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
         p.setPen(Qt::NoPen);
-        p.setBrush(m_peakHoldColour);
+        p.setBrush(ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
         p.drawPolygon(marker.constData(), static_cast<int>(marker.size()));
         p.setBrush(Qt::NoBrush);
     }
@@ -2714,16 +2722,17 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     // --- History arc (a fan from the pivot) ---
     // From Thetis MeterManager.cs:40832-40851 [v2.10.3.15]
     const QVector<QPointF> history = historyOutline(g);
+    const QColor historyColour = ItemColourLook::effective("Needle.historyColor", m_historyColor, this);
     for (int i = 1; i + 1 < history.size(); ++i) {
-        emitVertex(history[0], m_historyColor);
-        emitVertex(history[i], m_historyColor);
-        emitVertex(history[i + 1], m_historyColor);
+        emitVertex(history[0], historyColour);
+        emitVertex(history[i], historyColour);
+        emitVertex(history[i + 1], historyColour);
     }
 
     // --- Peak hold needle on a calibrated face, under the live needle ---
     // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
     if (calibrated && peakHold()) {
-        emitLine(QPointF(pivotX, pivotY), tipFor(g, peakValue()), needleHW, m_peakHoldColour);
+        emitLine(QPointF(pivotX, pivotY), tipFor(g, peakValue()), needleHW, ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
     }
 
     // --- Shadow quad (black, offset +1px) ---
@@ -2749,10 +2758,11 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     // --- Needle quad (color from m_needleColor, uniform width) ---
     // From AetherSDR SMeterWidget.cpp line 433: QPen(#ffffff, 2).
     // Phase 3G-6 block 2: honour per-needle color from the factory.
-    const float nr = static_cast<float>(m_needleColor.redF());
-    const float ng = static_cast<float>(m_needleColor.greenF());
-    const float nb = static_cast<float>(m_needleColor.blueF());
-    const float na = static_cast<float>(m_needleColor.alphaF());
+    const QColor needleColour = ItemColourLook::effective("Needle.needleColor", m_needleColor, this);
+    const float nr = static_cast<float>(needleColour.redF());
+    const float ng = static_cast<float>(needleColour.greenF());
+    const float nb = static_cast<float>(needleColour.blueF());
+    const float na = static_cast<float>(needleColour.alphaF());
     const float np1x = pivotX + perpX * needleHW, np1y = pivotY + perpY * needleHW;
     const float np2x = pivotX - perpX * needleHW, np2y = pivotY - perpY * needleHW;
     const float np3x = tipX + perpX * needleHW,   np3y = tipY + perpY * needleHW;
@@ -2773,8 +2783,9 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     // NereusSDR draws it in the peak hold colour (saved needles: #ffaa00).
     if (!calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
         const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
+        const QColor peakColour = ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this);
         for (const QPointF& pt : marker) {
-            emitVertex(pt, m_peakHoldColour);
+            emitVertex(pt, peakColour);
         }
     }
 }

@@ -1,4 +1,5 @@
 #include "FadeCoverItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
 #include "../../meters/FadeCoverItem.h"
 
@@ -24,12 +25,8 @@ void FadeCoverItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
     m_chkFadeOnRx->setChecked(fade->fadeOnRx());
     m_chkFadeOnTx->setChecked(fade->fadeOnTx());
-    m_btnColour1->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(fade->colour1().name(QColor::HexArgb)));
-    m_btnColour2->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(fade->colour2().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("FadeCover.colour1"), fade->colour1());
+    ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("FadeCover.colour2"), fade->colour2());
     m_spinAlpha->setValue(static_cast<double>(fade->alpha()));
     m_chkUseBackground->setChecked(fade->useContainerBackground());
     endProgrammaticUpdate();
@@ -69,9 +66,7 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             fade->setColour1(chosen);
-            m_btnColour1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("FadeCover.colour1"), chosen);
             notifyChanged();
         }
     });
@@ -88,9 +83,7 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             fade->setColour2(chosen);
-            m_btnColour2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("FadeCover.colour2"), chosen);
             notifyChanged();
         }
     });

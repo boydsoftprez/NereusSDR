@@ -26,6 +26,7 @@
 #include <QImage>
 #include <QPainter>
 #include <memory>
+#include <utility>
 
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentFade.h"
@@ -33,6 +34,7 @@
 #include "gui/containers/meter_property_editors/LedItemEditor.h"
 #include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
 #include "gui/meters/ClockItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/meters/LEDItem.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/meters/LedResultRegistry.h"
@@ -476,8 +478,10 @@ private slots:
         QVERIFY(!LedResultRegistry::instance().get(id).has_value());
     }
 
-    // The workspace look leaves an item editor's colour swatches alone: a
-    // grey or white colour reads as itself, not as the look's dark fill.
+    // The workspace look leaves an item editor's colour swatches alone: each
+    // swatch shows the colour the item draws (a default follows the look,
+    // ItemColourLook::effective(); a picked colour reads as itself), not the
+    // look's dark fill, and the live theming pass does not restyle it.
     void colourSwatchesKeepTheirColourUnderTheLook()
     {
         WorkspacePreview::setEnabledForTest(true);
@@ -489,11 +493,13 @@ private slots:
             }
             return sheets;
         };
-        const auto check = [&swatchSheets](QWidget& editor, const QString& name, const QStringList& colours) {
+        using Field = std::pair<const char*, QColor>;
+        const auto check = [&swatchSheets](QWidget& editor, const QString& name, const QList<Field>& fields) {
             const QHash<QPushButton*, QString> before = swatchSheets(editor);
             QStringList all;
             for (const QString& sheet : before) { all.append(sheet); }
-            for (const QString& colour : colours) {
+            for (const Field& f : fields) {
+                const QString colour = ItemColourLook::effective(f.first, f.second).name(QColor::HexArgb);
                 QVERIFY2(all.join(QLatin1Char(' ')).contains(colour), qPrintable(name + QStringLiteral(": no swatch ") + colour));
             }
             WorkspacePreview::themeSubtree(&editor);
@@ -507,18 +513,19 @@ private slots:
         led.setFalseColour(QColor(192, 192, 192));
         LedItemEditor ledEditor;
         ledEditor.setItem(&led);
-        check(ledEditor, QStringLiteral("LED"), {QStringLiteral("#ffffffff"), QStringLiteral("#ffc0c0c0")});
+        check(ledEditor, QStringLiteral("LED"), {{"Led.trueColour", QColor(Qt::white)}, {"Led.falseColour", QColor(192, 192, 192)}});
         TextOverlayItem overlay;
         overlay.setTextColour1(Qt::white);
         overlay.setTextColour2(QColor(128, 128, 128));
         TextOverlayItemEditor overlayEditor;
         overlayEditor.setItem(&overlay);
-        check(overlayEditor, QStringLiteral("Text overlay"), {QStringLiteral("#ffffffff"), QStringLiteral("#ff808080")});
+        check(overlayEditor, QStringLiteral("Text overlay"),
+              {{"TextOverlay.textColour1", QColor(Qt::white)}, {"TextOverlay.textColour2", QColor(128, 128, 128)}});
         ClockItem clock(nullptr, false);
         clock.applyNewItemDefaults();
         ClockItemEditor clockEditor;
         clockEditor.setItem(&clock);
-        check(clockEditor, QStringLiteral("Clock"), {QStringLiteral("#ff808080")});
+        check(clockEditor, QStringLiteral("Clock"), {{"Clock.dateColour", clock.dateColour()}, {"Clock.typeTitleColour", clock.typeTitleColour()}});
     }
 
     void editorsShowTheIdAndWriteTheGates()

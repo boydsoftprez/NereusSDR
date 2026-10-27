@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -60,6 +63,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "SpacerItem.h"
+#include "ItemColourLook.h"
 #include "gui/containers/ContentFade.h"
 
 // From Thetis MeterManager.cs:16116 — clsSpacerItem / renderSpacer (line 35010)
@@ -169,7 +173,7 @@ bool SpacerItem::advanceMeter(qint64 monotonicMs)
 // at full alpha here.
 QColor SpacerItem::rxTxColour() const
 {
-    QColor c = effectiveTransmitting() ? m_colour2 : m_colour1;
+    QColor c = effectiveTransmitting() ? ItemColourLook::effective("Spacer.colour2", m_colour2, this) : ItemColourLook::effective("Spacer.colour1", m_colour1, this);
     if (c.alpha() == 0) {
         return c;
     }
@@ -201,11 +205,11 @@ void SpacerItem::paint(QPainter& p, int widgetW, int widgetH)
         return;
     }
     if (m_colour1 == m_colour2) {
-        p.fillRect(rect, m_colour1);
+        p.fillRect(rect, ItemColourLook::effective("Spacer.colour1", m_colour1, this));
     } else {
         QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
-        grad.setColorAt(0.0, m_colour1);
-        grad.setColorAt(1.0, m_colour2);
+        grad.setColorAt(0.0, ItemColourLook::effective("Spacer.colour1", m_colour1, this));
+        grad.setColorAt(1.0, ItemColourLook::effective("Spacer.colour2", m_colour2, this));
         p.fillRect(rect, grad);
     }
 }

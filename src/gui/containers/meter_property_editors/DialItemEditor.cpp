@@ -1,11 +1,15 @@
 // no-port-check: NereusSDR-original Qt property adapter; the dial setting ranges are cited facts.
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Pad pressed color, size, text size, Tunes (Source slice or
 //                 Any slice), degrees per step, align, and the acceleration
 //                 rows (accelerate, thresholds kept 90 apart, interval, most
 //                 changes). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 #include "DialItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/DialItem.h"
 
 #include <QCheckBox>
@@ -21,11 +25,9 @@ namespace NereusSDR {
 // Helper macro-style lambda factory used locally to reduce repetition for
 // color buttons in this file only.
 namespace {
-void applyBtnColor(QPushButton* btn, const QColor& c)
+void applyBtnColor(QPushButton* btn, const QString& field, const QColor& c)
 {
-    btn->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(c.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(btn, field, c);
 }
 
 constexpr const char* kComboStyle =
@@ -54,17 +56,17 @@ void DialItemEditor::setItem(MeterItem* item)
     if (!d) { return; }
 
     beginProgrammaticUpdate();
-    applyBtnColor(m_btnTextColour,    d->textColour());
-    applyBtnColor(m_btnCircleColour,  d->circleColour());
-    applyBtnColor(m_btnPadColour,     d->padColour());
-    applyBtnColor(m_btnPadPressedColour, d->padPressedColour());
-    applyBtnColor(m_btnRingColour,    d->ringColour());
-    applyBtnColor(m_btnBtnOn,         d->buttonOnColour());
-    applyBtnColor(m_btnBtnOff,        d->buttonOffColour());
-    applyBtnColor(m_btnBtnHighlight,  d->buttonHighlightColour());
-    applyBtnColor(m_btnSlowColour,    d->slowColour());
-    applyBtnColor(m_btnHoldColour,    d->holdColour());
-    applyBtnColor(m_btnFastColour,    d->fastColour());
+    applyBtnColor(m_btnTextColour, QStringLiteral("Dial.textColour"), d->textColour());
+    applyBtnColor(m_btnCircleColour, QStringLiteral("Dial.circleColour"), d->circleColour());
+    applyBtnColor(m_btnPadColour, QStringLiteral("Dial.padColour"), d->padColour());
+    applyBtnColor(m_btnPadPressedColour, QStringLiteral("Dial.padPressedColour"), d->padPressedColour());
+    applyBtnColor(m_btnRingColour, QStringLiteral("Dial.ringColour"), d->ringColour());
+    applyBtnColor(m_btnBtnOn, QStringLiteral("Dial.buttonOnColour"), d->buttonOnColour());
+    applyBtnColor(m_btnBtnOff, QStringLiteral("Dial.buttonOffColour"), d->buttonOffColour());
+    applyBtnColor(m_btnBtnHighlight, QStringLiteral("Dial.buttonHighlightColour"), d->buttonHighlightColour());
+    applyBtnColor(m_btnSlowColour, QStringLiteral("Dial.slowColour"), d->slowColour());
+    applyBtnColor(m_btnHoldColour, QStringLiteral("Dial.holdColour"), d->holdColour());
+    applyBtnColor(m_btnFastColour, QStringLiteral("Dial.fastColour"), d->fastColour());
     m_spinVerticalRatio->setValue(static_cast<double>(d->verticalRatio()));
     m_spinFontScale->setValue(static_cast<double>(d->fontScale()));
     m_comboSliceSelect->setCurrentIndex(
@@ -85,49 +87,49 @@ void DialItemEditor::buildTypeSpecific()
 
     // Helper: create a 40x18 color button and wire it.
     auto makeColorBtn = [this](const QString& label, QPushButton*& out,
-                               auto getter, auto setter) {
+                               const QString& field, auto getter, auto setter) {
         out = new QPushButton(this);
         out->setFixedSize(40, 18);
         QPushButton* btn = out; // capture by value — points to the same object
-        connect(btn, &QPushButton::clicked, this, [this, btn, getter, setter]() {
+        connect(btn, &QPushButton::clicked, this, [this, btn, field, getter, setter]() {
             DialItem* d = qobject_cast<DialItem*>(m_item);
             if (!d) { return; }
             const QColor chosen = QColorDialog::getColor(
                 (d->*getter)(), this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
                 (d->*setter)(chosen);
-                applyBtnColor(btn, chosen);
+                applyBtnColor(btn, field, chosen);
                 notifyChanged();
             }
         });
         addRow(label, out);
     };
 
-    makeColorBtn(QStringLiteral("Text color"),       m_btnTextColour,
+    makeColorBtn(QStringLiteral("Text color"),       m_btnTextColour, QStringLiteral("Dial.textColour"),
                  &DialItem::textColour,   &DialItem::setTextColour);
-    makeColorBtn(QStringLiteral("Circle color"),     m_btnCircleColour,
+    makeColorBtn(QStringLiteral("Circle color"),     m_btnCircleColour, QStringLiteral("Dial.circleColour"),
                  &DialItem::circleColour, &DialItem::setCircleColour);
-    makeColorBtn(QStringLiteral("Pad color"),        m_btnPadColour,
+    makeColorBtn(QStringLiteral("Pad color"),        m_btnPadColour, QStringLiteral("Dial.padColour"),
                  &DialItem::padColour,    &DialItem::setPadColour);
-    makeColorBtn(QStringLiteral("Pad pressed color"), m_btnPadPressedColour,
+    makeColorBtn(QStringLiteral("Pad pressed color"), m_btnPadPressedColour, QStringLiteral("Dial.padPressedColour"),
                  &DialItem::padPressedColour, &DialItem::setPadPressedColour);
-    makeColorBtn(QStringLiteral("Ring color"),       m_btnRingColour,
+    makeColorBtn(QStringLiteral("Ring color"),       m_btnRingColour, QStringLiteral("Dial.ringColour"),
                  &DialItem::ringColour,   &DialItem::setRingColour);
 
     addHeader(QStringLiteral("Button colors"));
-    makeColorBtn(QStringLiteral("Button on"),        m_btnBtnOn,
+    makeColorBtn(QStringLiteral("Button on"),        m_btnBtnOn, QStringLiteral("Dial.buttonOnColour"),
                  &DialItem::buttonOnColour,        &DialItem::setButtonOnColour);
-    makeColorBtn(QStringLiteral("Button off"),       m_btnBtnOff,
+    makeColorBtn(QStringLiteral("Button off"),       m_btnBtnOff, QStringLiteral("Dial.buttonOffColour"),
                  &DialItem::buttonOffColour,       &DialItem::setButtonOffColour);
-    makeColorBtn(QStringLiteral("Button highlight"), m_btnBtnHighlight,
+    makeColorBtn(QStringLiteral("Button highlight"), m_btnBtnHighlight, QStringLiteral("Dial.buttonHighlightColour"),
                  &DialItem::buttonHighlightColour, &DialItem::setButtonHighlightColour);
 
     addHeader(QStringLiteral("Speed indicator colors"));
-    makeColorBtn(QStringLiteral("Slow color"),  m_btnSlowColour,
+    makeColorBtn(QStringLiteral("Slow color"),  m_btnSlowColour, QStringLiteral("Dial.slowColour"),
                  &DialItem::slowColour, &DialItem::setSlowColour);
-    makeColorBtn(QStringLiteral("Hold color"),  m_btnHoldColour,
+    makeColorBtn(QStringLiteral("Hold color"),  m_btnHoldColour, QStringLiteral("Dial.holdColour"),
                  &DialItem::holdColour, &DialItem::setHoldColour);
-    makeColorBtn(QStringLiteral("Fast color"),  m_btnFastColour,
+    makeColorBtn(QStringLiteral("Fast color"),  m_btnFastColour, QStringLiteral("Dial.fastColour"),
                  &DialItem::fastColour, &DialItem::setFastColour);
 
     // Ranges from Thetis MeterManager.cs:27749-27760 [v2.10.3.15] (the

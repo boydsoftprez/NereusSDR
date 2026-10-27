@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - "Follow the Multimeter setting": changing Capacity gives
 //                 the graph its own length, which the Multimeter history
 //                 duration then leaves alone; turning the choice back on
@@ -6,6 +9,7 @@
 //                 AI-assisted via Anthropic Claude Code.
 
 #include "HistoryGraphItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/HistoryGraphItem.h"
 #include "../../meters/MeterPoller.h"
 #include "../../setup/MultimeterPage.h"
@@ -31,18 +35,16 @@ void HistoryGraphItemEditor::setItem(MeterItem* item)
     HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
 
     m_spinCapacity->setValue(x->capacity());
     m_chkFollowMultimeter->setChecked(!x->hasOwnLength());
-    applyColor(m_btnLineColor0, x->lineColor0());
-    applyColor(m_btnLineColor1, x->lineColor1());
+    applyColor(m_btnLineColor0, QStringLiteral("History.lineColor0"), x->lineColor0());
+    applyColor(m_btnLineColor1, QStringLiteral("History.lineColor1"), x->lineColor1());
     m_chkShowGrid->setChecked(x->showGrid());
     m_chkAutoScale0->setChecked(x->autoScale0());
     m_chkAutoScale1->setChecked(x->autoScale1());
@@ -53,9 +55,9 @@ void HistoryGraphItemEditor::setItem(MeterItem* item)
     m_comboBinding1->setCurrentIndex(idx >= 0 ? idx : 0);
 
     m_spinVerticalRatio->setValue(x->verticalRatio());
-    applyColor(m_btnBackColour, x->backColour());
-    applyColor(m_btnLinesColour, x->linesColour());
-    applyColor(m_btnTimeColour, x->timeColour());
+    applyColor(m_btnBackColour, QStringLiteral("History.backColour"), x->backColour());
+    applyColor(m_btnLinesColour, QStringLiteral("History.linesColour"), x->linesColour());
+    applyColor(m_btnTimeColour, QStringLiteral("History.timeColour"), x->timeColour());
     m_spinMin0->setValue(x->manualMin(0));
     m_spinMax0->setValue(x->manualMax(0));
     m_spinMin1->setValue(x->manualMin(1));
@@ -122,9 +124,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->lineColor0(), this);
         if (chosen.isValid()) {
             x->setLineColor0(chosen);
-            m_btnLineColor0->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnLineColor0, QStringLiteral("History.lineColor0"), chosen);
             notifyChanged();
         }
     });
@@ -138,9 +138,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->lineColor1(), this);
         if (chosen.isValid()) {
             x->setLineColor1(chosen);
-            m_btnLineColor1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnLineColor1, QStringLiteral("History.lineColor1"), chosen);
             notifyChanged();
         }
     });
@@ -255,13 +253,14 @@ void HistoryGraphItemEditor::buildTypeSpecific()
     struct ColourRow {
         QPushButton** button;
         const char* label;
+        const char* field;
         QColor (HistoryGraphItem::*get)() const;
         void (HistoryGraphItem::*set)(const QColor&);
     };
     const ColourRow colourRows[] = {
-        {&m_btnBackColour, "Background color", &HistoryGraphItem::backColour, &HistoryGraphItem::setBackColour},
-        {&m_btnLinesColour, "Grid line color", &HistoryGraphItem::linesColour, &HistoryGraphItem::setLinesColour},
-        {&m_btnTimeColour, "Label color", &HistoryGraphItem::timeColour, &HistoryGraphItem::setTimeColour},
+        {&m_btnBackColour, "Background color", "History.backColour", &HistoryGraphItem::backColour, &HistoryGraphItem::setBackColour},
+        {&m_btnLinesColour, "Grid line color", "History.linesColour", &HistoryGraphItem::linesColour, &HistoryGraphItem::setLinesColour},
+        {&m_btnTimeColour, "Label color", "History.timeColour", &HistoryGraphItem::timeColour, &HistoryGraphItem::setTimeColour},
     };
     for (const ColourRow& row : colourRows) {
         auto* button = new QPushButton(this);
@@ -269,15 +268,14 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         *row.button = button;
         const auto get = row.get;
         const auto set = row.set;
-        connect(button, &QPushButton::clicked, this, [this, button, get, set]() {
+        const QString field = QString::fromLatin1(row.field);
+        connect(button, &QPushButton::clicked, this, [this, button, field, get, set]() {
             HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
             if (!x) { return; }
             const QColor chosen = QColorDialog::getColor((x->*get)(), this);
             if (chosen.isValid()) {
                 (x->*set)(chosen);
-                button->setStyleSheet(
-                    QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                        .arg(chosen.name(QColor::HexArgb)));
+                ItemColourLook::paintSwatch(button, field, chosen);
                 notifyChanged();
             }
         });

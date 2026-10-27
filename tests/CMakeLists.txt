@@ -797,6 +797,11 @@ nereus_add_test(tst_text_overlay_tokens)
 nereus_add_test(tst_meter_item_serialize_placeholders)
 # New container items take Thetis defaults; saved items keep their look.
 nereus_add_test(tst_meter_new_item_defaults)
+# The workspace look for container and item colours: every registry item
+# type's default colours are in the table, mapped or kept; the look on, off
+# and a user's colour; byte-for-byte records; the editors' swatches
+# (offscreen).
+nereus_add_test(tst_meter_item_colour_look)
 # Per-item update interval: throttle, saved entries, new-item default, editor.
 nereus_add_test(tst_meter_item_update_interval)
 # Container item parity Task 28: the building-block Reading list offers the

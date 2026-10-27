@@ -1,4 +1,5 @@
 #include "TextOverlayItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/TextOverlayItem.h"
 
 #include <QLineEdit>
@@ -190,10 +191,8 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     TextOverlayItem* x = qobject_cast<TextOverlayItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
@@ -201,8 +200,8 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_comboLineMode->setCurrentIndex(m_comboLineMode->findData(static_cast<int>(x->lineMode())));
 
     m_editText1->setText(x->text1());
-    applyColor(m_btnColour1, x->textColour1());
-    applyColor(m_btnBackColour1, x->textBackColour1());
+    applyColor(m_btnColour1, QStringLiteral("TextOverlay.textColour1"), x->textColour1());
+    applyColor(m_btnBackColour1, QStringLiteral("TextOverlay.textBackColour1"), x->textBackColour1());
     m_chkShowBack1->setChecked(x->showTextBackColour1());
     m_fontCombo1->setCurrentFont(QFont(x->fontFamily1()));
     m_spinFontSize1->setValue(static_cast<double>(x->fontSize1()));
@@ -214,8 +213,8 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_spinYOffset1->setValue(static_cast<double>(x->textYOffset1()));
 
     m_editText2->setText(x->text2());
-    applyColor(m_btnColour2, x->textColour2());
-    applyColor(m_btnBackColour2, x->textBackColour2());
+    applyColor(m_btnColour2, QStringLiteral("TextOverlay.textColour2"), x->textColour2());
+    applyColor(m_btnBackColour2, QStringLiteral("TextOverlay.textBackColour2"), x->textBackColour2());
     m_chkShowBack2->setChecked(x->showTextBackColour2());
     m_fontCombo2->setCurrentFont(QFont(x->fontFamily2()));
     m_spinFontSize2->setValue(static_cast<double>(x->fontSize2()));
@@ -232,8 +231,8 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
     m_editTxFourChar->setText(x->txFourChar());
 
     m_chkShowPanel->setChecked(x->showBackPanel());
-    applyColor(m_btnPanelBack1, x->panelBackColour1());
-    applyColor(m_btnPanelBack2, x->panelBackColour2());
+    applyColor(m_btnPanelBack1, QStringLiteral("TextOverlay.panelBackColour1"), x->panelBackColour1());
+    applyColor(m_btnPanelBack2, QStringLiteral("TextOverlay.panelBackColour2"), x->panelBackColour2());
     m_spinScrollX->setValue(static_cast<double>(x->scrollX()));
     m_spinPadding->setValue(static_cast<double>(x->padding()));
 
@@ -281,9 +280,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->textColour1(), this);
         if (chosen.isValid()) {
             x->setTextColour1(chosen);
-            m_btnColour1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("TextOverlay.textColour1"), chosen);
             notifyChanged();
         }
     });
@@ -297,9 +294,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
             x->setTextBackColour1(chosen);
-            m_btnBackColour1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnBackColour1, QStringLiteral("TextOverlay.textBackColour1"), chosen);
             notifyChanged();
         }
     });
@@ -369,9 +364,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->textColour2(), this);
         if (chosen.isValid()) {
             x->setTextColour2(chosen);
-            m_btnColour2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("TextOverlay.textColour2"), chosen);
             notifyChanged();
         }
     });
@@ -385,9 +378,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
             x->setTextBackColour2(chosen);
-            m_btnBackColour2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnBackColour2, QStringLiteral("TextOverlay.textBackColour2"), chosen);
             notifyChanged();
         }
     });
@@ -513,9 +504,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
             x->setPanelBackColour1(chosen);
-            m_btnPanelBack1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack1, QStringLiteral("TextOverlay.panelBackColour1"), chosen);
             notifyChanged();
         }
     });
@@ -529,9 +518,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
             x->setPanelBackColour2(chosen);
-            m_btnPanelBack2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack2, QStringLiteral("TextOverlay.panelBackColour2"), chosen);
             notifyChanged();
         }
     });

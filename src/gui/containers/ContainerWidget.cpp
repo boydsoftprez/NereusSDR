@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The default content background takes the workspace
+//                 panel through the item colour table (ItemColourLook.h).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - A drag moves a floating window and never resizes it: the
 //                 size at the press is put back on every pointer move and
 //                 at the end of the drag when it is found different, with
@@ -201,6 +204,7 @@ mw0lge@grange-lane.co.uk
 #include "core/BoardCapabilities.h"
 #include "core/LogCategories.h"
 #include "gui/meters/MeterWidget.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/FilterButtonItem.h"
@@ -1197,10 +1201,9 @@ void ContainerWidget::publishUserBackground()
 
 QColor ContainerWidget::contentBackground(const QColor& configured)
 {
-    if (WorkspacePreview::enabled() && configured.rgba() == kLegacyContentBackground) {
-        return QColor(Workspace::role("panel", "#0f0f1a"));
-    }
-    return configured;
+    // The default background takes the workspace panel through the item
+    // colour table (ItemColourLook.h); a colour the user set stays.
+    return ItemColourLook::effective(ItemColourLook::kContainerBackground, configured);
 }
 
 QColor ContainerWidget::userBackground(const QColor& configured)

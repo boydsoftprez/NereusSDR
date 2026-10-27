@@ -268,6 +268,8 @@
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/WebImageItem.h"
 #include "gui/meters/presets/SignalTextPresetItem.h"
+#include "gui/meters/LEDItem.h"
+#include "gui/meters/NereusBandButtonItem.h"
 #include <QLinearGradient>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -9080,6 +9082,79 @@ void sceneParityLongTitle(SceneContext& ctx)
     annotateSlices(ctx);
 }
 
+// ---- 14: the workspace look keeps a user's colour ------------------------------
+
+// The colour "the user picked" in this scene: a blue no workspace role uses,
+// so it shows as picked beside the new item's workspace colours.
+QColor parityUserColour()
+{
+    return QColor(0x3a, 0x8f, 0xd8);
+}
+
+// A new item (Thetis's defaults) with the user's colour set by `pick`.
+template <typename Item, typename Pick>
+QString parityUserColourRecord(Pick pick)
+{
+    Item item;
+    item.applyNewItemDefaults();
+    pick(item);
+    return item.serialize();
+}
+
+void sceneParityUserColours(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-user-colours");
+    const QColor user = parityUserColour();
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("VFO and clock colors"), DockEdge::Left,
+         {{QStringLiteral("VFO"), QStringLiteral("VFO display (new)")},
+          {QStringLiteral("VFO"), QStringLiteral("VFO display (picked frequency color)"),
+           parityUserColourRecord<VfoDisplayItem>([&user](VfoDisplayItem& i) { i.setFrequencyColour(user); })},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (new)")},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (picked time color)"),
+           parityUserColourRecord<ClockItem>([&user](ClockItem& i) { i.setTimeColour(user); })}}},
+        {QStringLiteral("Bar, LED, text and button colors"), DockEdge::Left,
+         {{QStringLiteral("BAR"), QStringLiteral("Bar (new)")},
+          {QStringLiteral("BAR"), QStringLiteral("Bar (picked colors)"),
+           parityUserColourRecord<BarItem>([&user](BarItem& i) {
+               i.setBarColor(user);
+               i.setFontColour(user);
+               i.setMarkerColour(user);
+           })},
+          {QStringLiteral("LED"), QStringLiteral("LED (new)")},
+          {QStringLiteral("LED"), QStringLiteral("LED (picked colors)"),
+           parityUserColourRecord<LEDItem>([&user](LEDItem& i) {
+               i.setTrueColour(user);
+               i.setFalseColour(user);
+           })},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)"),
+           parityOverlayRecord(true, QString::fromLatin1(kParityOverlayNewText))},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (picked text color)"),
+           parityUserColourRecord<TextOverlayItem>([&user](TextOverlayItem& i) {
+               i.setText1(QString::fromLatin1(kParityOverlayNewText));
+               i.setTextColour1(user);
+           })},
+          {QStringLiteral("NEREUSBAND"), QStringLiteral("Band buttons (new)")},
+          {QStringLiteral("NEREUSBAND"), QStringLiteral("Band buttons (picked text color)"),
+           parityUserColourRecord<NereusBandButtonItem>([&user](NereusBandButtonItem& i) {
+               i.setButtonTextColor(user);
+           })}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    fixParityClocks(ctx, built.containers.value(0));
+    ctx.notes.append(QStringLiteral("each \"picked\" item holds %1 where its new twin holds the default; "
+                                    "the workspace look draws the default in the workspace colour and "
+                                    "the picked colour as it is")
+                         .arg(user.name()));
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--vfo-clock"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--bar-led-text-buttons"), built.containers.value(1));
+    annotateSlices(ctx);
+}
+
 // The container-parity-* scenes (workspace preview switch on).
 void appendContainerParityScenes(QVector<Scene>& scenes)
 {
@@ -9098,6 +9173,7 @@ void appendContainerParityScenes(QVector<Scene>& scenes)
     add(QStringLiteral("container-parity-artwork-options"), sceneParityArtworkOptions);
     add(QStringLiteral("container-parity-signal-text"), sceneParitySignalText);
     add(QStringLiteral("container-parity-sections"), sceneParitySections);
+    add(QStringLiteral("container-parity-user-colours"), sceneParityUserColours);
     add(QStringLiteral("container-parity-long-title"), sceneParityLongTitle);
 }
 

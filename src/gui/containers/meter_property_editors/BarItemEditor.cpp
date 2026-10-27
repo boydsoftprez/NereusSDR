@@ -1,9 +1,13 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Rows for the BAR options: style (adds Line, Segments,
 //                 Solid), value and peak text, markers, peak hold, history,
 //                 ignore history, power limit and calibration. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "BarItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
 
 #include <QCheckBox>
@@ -49,26 +53,14 @@ void BarItemEditor::setItem(MeterItem* item)
         m_comboBarStyle->findData(static_cast<int>(bar->barStyle())));
 
     // Filled-mode colors
-    m_btnBarColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->barColor().name(QColor::HexArgb)));
-    m_btnBarRedColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->barRedColor().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnBarColor, QStringLiteral("Bar.barColor"), bar->barColor());
+    ItemColourLook::paintSwatch(m_btnBarRedColor, QStringLiteral("Bar.barRedColor"), bar->barRedColor());
 
     // Edge-mode colors
-    m_btnEdgeBg->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->edgeBackgroundColor().name(QColor::HexArgb)));
-    m_btnEdgeLow->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->edgeLowColor().name(QColor::HexArgb)));
-    m_btnEdgeHigh->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->edgeHighColor().name(QColor::HexArgb)));
-    m_btnEdgeAvg->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(bar->edgeAvgColor().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnEdgeBg, QStringLiteral("Bar.edgeBackgroundColor"), bar->edgeBackgroundColor());
+    ItemColourLook::paintSwatch(m_btnEdgeLow, QStringLiteral("Bar.edgeLowColor"), bar->edgeLowColor());
+    ItemColourLook::paintSwatch(m_btnEdgeHigh, QStringLiteral("Bar.edgeHighColor"), bar->edgeHighColor());
+    ItemColourLook::paintSwatch(m_btnEdgeAvg, QStringLiteral("Bar.edgeAvgColor"), bar->edgeAvgColor());
 
     // Options
     m_chkShowValue->setChecked(bar->showValue());
@@ -90,31 +82,29 @@ void BarItemEditor::setItem(MeterItem* item)
     endProgrammaticUpdate();
 }
 
-void BarItemEditor::paintSwatch(QPushButton* button, const QColor& colour)
+void BarItemEditor::paintSwatch(QPushButton* button, const QString& field, const QColor& colour)
 {
-    button->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(colour.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(button, field, colour);
 }
 
-QPushButton* BarItemEditor::makeColourRow(const QString& label,
+QPushButton* BarItemEditor::makeColourRow(const QString& label, const QString& field,
                                           std::function<QColor(const BarItem&)> get,
                                           std::function<void(BarItem&, const QColor&)> set)
 {
     auto* button = new QPushButton(this);
     button->setFixedSize(40, 18);
-    connect(button, &QPushButton::clicked, this, [this, button, label, get, set]() {
+    connect(button, &QPushButton::clicked, this, [this, button, label, field, get, set]() {
         BarItem* bar = qobject_cast<BarItem*>(m_item);
         if (!bar) { return; }
         const QColor chosen = QColorDialog::getColor(get(*bar), this, label,
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             set(*bar, chosen);
-            paintSwatch(button, chosen);
+            paintSwatch(button, field, chosen);
             notifyChanged();
         }
     });
-    m_swatchRefreshers.append([button, get](const BarItem& bar) { paintSwatch(button, get(bar)); });
+    m_swatchRefreshers.append([button, field, get](const BarItem& bar) { paintSwatch(button, field, get(bar)); });
     addRow(label, button);
     return button;
 }
@@ -130,7 +120,7 @@ void BarItemEditor::buildOptionRows()
         bar->setShowValue(on);
         notifyChanged();
     });
-    m_btnFontColour = makeColourRow(QStringLiteral("Value color"),
+    m_btnFontColour = makeColourRow(QStringLiteral("Value color"), QStringLiteral("Bar.fontColour"),
         [](const BarItem& b) { return b.fontColour(); },
         [](BarItem& b, const QColor& c) { b.setFontColour(c); });
     m_chkShowPeakValue = makeCheckRow(QStringLiteral("Show peak value"));
@@ -140,7 +130,7 @@ void BarItemEditor::buildOptionRows()
         bar->setShowPeakValue(on);
         notifyChanged();
     });
-    m_btnPeakValueColour = makeColourRow(QStringLiteral("Peak value color"),
+    m_btnPeakValueColour = makeColourRow(QStringLiteral("Peak value color"), QStringLiteral("Bar.peakFontColour"),
         [](const BarItem& b) { return b.peakValueColour(); },
         [](BarItem& b, const QColor& c) { b.setPeakValueColour(c); });
 
@@ -155,7 +145,7 @@ void BarItemEditor::buildOptionRows()
         bar->setShowMarker(on);
         notifyChanged();
     });
-    m_btnMarkerColour = makeColourRow(QStringLiteral("Marker color"),
+    m_btnMarkerColour = makeColourRow(QStringLiteral("Marker color"), QStringLiteral("Bar.markerColour"),
         [](const BarItem& b) { return b.markerColour(); },
         [](BarItem& b, const QColor& c) { b.setMarkerColour(c); });
     m_chkPeakHold = makeCheckRow(QStringLiteral("Peak hold"));
@@ -165,7 +155,7 @@ void BarItemEditor::buildOptionRows()
         bar->setPeakHold(on);
         notifyChanged();
     });
-    m_btnPeakHoldColour = makeColourRow(QStringLiteral("Peak hold color"),
+    m_btnPeakHoldColour = makeColourRow(QStringLiteral("Peak hold color"), QStringLiteral("Bar.peakHoldMarkerColour"),
         [](const BarItem& b) { return b.peakHoldMarkerColour(); },
         [](BarItem& b, const QColor& c) { b.setPeakHoldMarkerColour(c); });
 
@@ -178,7 +168,7 @@ void BarItemEditor::buildOptionRows()
         bar->setShowHistory(on);
         notifyChanged();
     });
-    m_btnHistoryColour = makeColourRow(QStringLiteral("History color"),
+    m_btnHistoryColour = makeColourRow(QStringLiteral("History color"), QStringLiteral("Bar.historyColour"),
         [](const BarItem& b) { return b.historyColour(); },
         [](BarItem& b, const QColor& c) { b.setHistoryColour(c); });
     m_spinHistoryMs = makeIntRow(QStringLiteral("History (ms)"),
@@ -349,9 +339,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setBarColor(chosen);
-            m_btnBarColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnBarColor, QStringLiteral("Bar.barColor"), chosen);
             notifyChanged();
         }
     });
@@ -368,9 +356,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setBarRedColor(chosen);
-            m_btnBarRedColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnBarRedColor, QStringLiteral("Bar.barRedColor"), chosen);
             notifyChanged();
         }
     });
@@ -389,9 +375,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setEdgeBackgroundColor(chosen);
-            m_btnEdgeBg->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnEdgeBg, QStringLiteral("Bar.edgeBackgroundColor"), chosen);
             notifyChanged();
         }
     });
@@ -407,9 +391,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setEdgeLowColor(chosen);
-            m_btnEdgeLow->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnEdgeLow, QStringLiteral("Bar.edgeLowColor"), chosen);
             notifyChanged();
         }
     });
@@ -425,9 +407,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setEdgeHighColor(chosen);
-            m_btnEdgeHigh->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnEdgeHigh, QStringLiteral("Bar.edgeHighColor"), chosen);
             notifyChanged();
         }
     });
@@ -443,9 +423,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             bar->setEdgeAvgColor(chosen);
-            m_btnEdgeAvg->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnEdgeAvg, QStringLiteral("Bar.edgeAvgColor"), chosen);
             notifyChanged();
         }
     });

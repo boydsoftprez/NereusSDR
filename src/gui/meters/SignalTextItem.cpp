@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Screenshot fix: topRightLayout(); the peak text at the
 //                 right of the top row ends left of the type glyph.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -146,6 +149,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "SignalTextItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 #include "gui/containers/ContainerContentRegistry.h"
 
@@ -626,7 +630,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     // Step 1: fill background
-    p.fillRect(rect, m_backgroundColour);
+    p.fillRect(rect, ItemColourLook::effective("SignalText.backgroundColour", m_backgroundColour, this));
 
     // Step 2: compute scaled font size
     // Scale font relative to widget height — larger widget = larger text
@@ -642,7 +646,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Step 2b: the reading type glyph, top right (Thetis ShowType)
     if (m_showType && m_typeStyle == TypeStyle::ReadingGlyph) {
-        paintReadingTypeGlyph(p, QRectF(rect), bindingId(), m_typeColour, m_fontFamily,
+        paintReadingTypeGlyph(p, QRectF(rect), bindingId(), ItemColourLook::effective("SignalText.typeColour", m_typeColour, this), m_fontFamily,
                               std::max(6.0f, clampedSize * kGlyphTextRatio));
     }
 
@@ -651,7 +655,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         QFont mainFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(clampedSize)), p.device());
         mainFont.setBold(true);
         p.setFont(mainFont);
-        p.setPen(m_colour);
+        p.setPen(ItemColourLook::effective("SignalText.colour", m_colour, this));
 
         const QString text = valueText();
         const double top=peakShown?(m_showSubMarker?rowH:rect.height()/3.0):0;
@@ -671,7 +675,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         const double subTop = rect.top() + rect.height() - rowH * (1 + int(unitsLabel));
         const QRectF left(rect.left() + rect.width() * 0.02, subTop, rect.width() * 0.47, rowH);
         const QRectF right(rect.left() + rect.width() * 0.51, subTop, rect.width() * 0.47, rowH);
-        p.setPen(m_subMarkerColour);
+        p.setPen(ItemColourLook::effective("SignalText.subMarkerColour", m_subMarkerColour, this));
         const QString dbm = subDbmText();
         const QString uv = subUvText();
         p.setFont(fitObjectText(subFont, subSize, dbm, left, true, Qt::TextSingleLine, p.device()));
@@ -692,7 +696,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         const float smallSize = std::max(6.0f, clampedSize * 0.4f);
         QFont smallFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(smallSize)), p.device());
         p.setFont(smallFont);
-        p.setPen(m_typeColour);
+        p.setPen(ItemColourLook::effective("SignalText.typeColour", m_typeColour, this));
 
         // Position in lower portion of rect
         const QRectF labelRect = m_showSubMarker
@@ -709,7 +713,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         QFont peakFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(peakSize)), p.device());
         peakFont.setBold(true);
         p.setFont(peakFont);
-        p.setPen(m_peakColour);
+        p.setPen(ItemColourLook::effective("SignalText.peakValueColour", m_peakColour, this));
 
         const QString peakText = peakValueText();
         // The peak text at the right ends left of the type glyph.
@@ -758,13 +762,13 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 
             case BarStyle::SolidFilled: {
                 const QRect fillRect(barRect.left(), barRect.top(), fillW, barRect.height());
-                p.fillRect(fillRect, m_colour);
+                p.fillRect(fillRect, ItemColourLook::effective("SignalText.colour", m_colour, this));
                 break;
             }
 
             case BarStyle::Line: {
                 const int lineX = barRect.left() + fillW;
-                p.setPen(QPen(m_markerColour, 2));
+                p.setPen(QPen(ItemColourLook::effective("SignalText.markerColour", m_markerColour, this), 2));
                 p.drawLine(lineX, barRect.top(), lineX, barRect.bottom());
                 break;
             }

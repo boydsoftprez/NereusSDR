@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -73,6 +76,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ClockItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 #include <QPainter>
 #include <QDateTime>
@@ -205,28 +209,28 @@ QVector<ClockItem::TextRun> ClockItem::thetisRuns(int widgetW, int widgetH) cons
     };
 
     if (m_showType) {
-        plot(QStringLiteral("local"), x + (w * kThetisLocalTitleX), y + (h * kThetisTitleY), fontSize, m_typeTitleColour);
-        plot(QStringLiteral("utc"), x + (w * kThetisUtcTitleX), y + (h * kThetisTitleY), fontSize, m_typeTitleColour);
+        plot(QStringLiteral("local"), x + (w * kThetisLocalTitleX), y + (h * kThetisTitleY), fontSize, ItemColourLook::effective("Clock.typeTitleColour", m_typeTitleColour, this));
+        plot(QStringLiteral("utc"), x + (w * kThetisUtcTitleX), y + (h * kThetisTitleY), fontSize, ItemColourLook::effective("Clock.typeTitleColour", m_typeTitleColour, this));
     }
 
     //time
     double rctX = x + (w * kThetisTimeX);
     const double rctY = y + (h * kThetisTimeY);
-    plot(sLoc, rctX + fPadLoc, rctY, fontSize * kThetisTimeFontScale, m_timeColour);
+    plot(sLoc, rctX + fPadLoc, rctY, fontSize * kThetisTimeFontScale, ItemColourLook::effective("Clock.timeColour", m_timeColour, this));
     if (!m_show24Hour) {
-        plot(sLocAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, m_timeColour);
+        plot(sLocAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, ItemColourLook::effective("Clock.timeColour", m_timeColour, this));
     }
 
     rctX = x + (w * kThetisTimeX) + (w * kThetisUtcOffsetX);
-    plot(sUtc, rctX + fPadUtc, rctY, fontSize * kThetisTimeFontScale, m_timeColour);
+    plot(sUtc, rctX + fPadUtc, rctY, fontSize * kThetisTimeFontScale, ItemColourLook::effective("Clock.timeColour", m_timeColour, this));
     if (!m_show24Hour) {
-        plot(sUtcAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, m_timeColour);
+        plot(sUtcAmPm, rctX + (w * kThetisAmPmX), rctY + (h * kThetisAmPmY), fontSize * kThetisAmPmFontScale, ItemColourLook::effective("Clock.timeColour", m_timeColour, this));
     }
 
     //date
     const double dateY = y + (h * kThetisDateY);
-    plot(sLocDate, x + (w * kThetisDateX), dateY, fontSize * kThetisDateFontScale, m_dateColour);
-    plot(sUtcDate, x + (w * kThetisDateX) + (w * kThetisUtcOffsetX), dateY, fontSize * kThetisDateFontScale, m_dateColour);
+    plot(sLocDate, x + (w * kThetisDateX), dateY, fontSize * kThetisDateFontScale, ItemColourLook::effective("Clock.dateColour", m_dateColour, this));
+    plot(sUtcDate, x + (w * kThetisDateX) + (w * kThetisUtcOffsetX), dateY, fontSize * kThetisDateFontScale, ItemColourLook::effective("Clock.dateColour", m_dateColour, this));
     return runs;
 }
 
@@ -236,7 +240,7 @@ void ClockItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
 
     if (m_backEnabled) {
-        for (const QRectF& half : backRects(widgetW, widgetH)) { p.fillRect(half, m_backColour); }
+        for (const QRectF& half : backRects(widgetW, widgetH)) { p.fillRect(half, ItemColourLook::effective("Clock.backColour", m_backColour, this)); }
     }
 
     if (m_layout == Layout::Thetis) {
@@ -281,9 +285,9 @@ void ClockItem::paint(QPainter& p, int widgetW, int widgetH)
             p.setFont(fitObjectText(font,requested,text,box,false,Qt::TextSingleLine,p.device())); p.setPen(ink);
             p.drawText(box,Qt::AlignCenter,text); top+=height;
         };
-        if(m_showType) { role(typeLabel,typeSize,m_typeTitleColour,false); }
-        role(dt.toString(timeFmt),timeSize,m_timeColour,true);
-        role(dt.toString(dateFmt),dateSize,m_dateColour,false);
+        if(m_showType) { role(typeLabel,typeSize,ItemColourLook::effective("Clock.typeTitleColour", m_typeTitleColour, this),false); }
+        role(dt.toString(timeFmt),timeSize,ItemColourLook::effective("Clock.timeColour", m_timeColour, this),true);
+        role(dt.toString(dateFmt),dateSize,ItemColourLook::effective("Clock.dateColour", m_dateColour, this),false);
     };
 
     drawClock(localRect, now, QStringLiteral("Local"));

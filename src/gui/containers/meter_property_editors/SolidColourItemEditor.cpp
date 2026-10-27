@@ -1,4 +1,5 @@
 #include "SolidColourItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
 
 #include <QPushButton>
@@ -19,9 +20,7 @@ void SolidColourItemEditor::setItem(MeterItem* item)
     if (!solid) { return; }
 
     beginProgrammaticUpdate();
-    m_btnColour->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(solid->colour().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("Solid.colour"), solid->colour());
     endProgrammaticUpdate();
 }
 
@@ -39,9 +38,7 @@ void SolidColourItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             solid->setColour(chosen);
-            m_btnColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("Solid.colour"), chosen);
             notifyChanged();
         }
     });

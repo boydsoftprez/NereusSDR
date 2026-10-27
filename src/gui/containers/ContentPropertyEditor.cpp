@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Availability of a meter entry is judged on the entry (a
 //                 stored BarPreset ADC maximum bar shows unavailable with its
 //                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -88,6 +91,7 @@
 #include "gui/meters/WaveformMeterItem.h"
 #include "gui/meters/MagicEyeItem.h"
 #include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/applets/SectionParts.h"
@@ -116,6 +120,54 @@
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/mmio/MmioEndpoint.h"
 namespace NereusSDR {
+namespace {
+// The colour table's field for a colour key on a face (ItemColourLook.h):
+// "<kind>.<key>", "<kind>.<channel>.<key>", "BarPreset.<key>",
+// "Waveform.<key>", and the VFO display and clock fields a face holds.
+QString lookFieldFor(const MeterItem* item, const QString& key, int channel)
+{
+    if (qobject_cast<const BarPresetItem*>(item) != nullptr) {
+        return QStringLiteral("BarPreset.") + key;
+    }
+    if (qobject_cast<const WaveformMeterItem*>(item) != nullptr) {
+        return QStringLiteral("Waveform.") + key;
+    }
+    const auto* face = qobject_cast<const CompositePresetItem*>(item);
+    if (face == nullptr) {
+        return QString();
+    }
+    static const QHash<QString, QString> held{
+        {QStringLiteral("vfoTitleColor"), QStringLiteral("VfoDisplay.titleColour")},
+        {QStringLiteral("vfoFrequencyColor"), QStringLiteral("VfoDisplay.frequencyColour")},
+        {QStringLiteral("vfoSmallDigitsColor"), QStringLiteral("VfoDisplay.frequencySmallColour")},
+        {QStringLiteral("vfoModeColor"), QStringLiteral("VfoDisplay.modeColour")},
+        {QStringLiteral("vfoFilterColor"), QStringLiteral("VfoDisplay.filterColour")},
+        {QStringLiteral("vfoBandColor"), QStringLiteral("VfoDisplay.bandColour")},
+        {QStringLiteral("vfoBandTextColor"), QStringLiteral("VfoDisplay.bandTextColour")},
+        {QStringLiteral("vfoSplitBackColor"), QStringLiteral("VfoDisplay.splitBackColour")},
+        {QStringLiteral("vfoSplitColor"), QStringLiteral("VfoDisplay.splitColour")},
+        {QStringLiteral("vfoDigitHighlightColor"), QStringLiteral("VfoDisplay.digitHighlightColour")},
+        {QStringLiteral("vfoRxColor"), QStringLiteral("VfoDisplay.rxColour")},
+        {QStringLiteral("vfoTxColor"), QStringLiteral("VfoDisplay.txColour")},
+        {QStringLiteral("vfoLockColor"), QStringLiteral("VfoDisplay.lockColour")},
+        {QStringLiteral("vfoSyncColor"), QStringLiteral("VfoDisplay.syncColour")},
+        {QStringLiteral("vfoBackgroundColor"), QStringLiteral("VfoDisplay.backgroundColour")},
+        {QStringLiteral("clockTimeColor"), QStringLiteral("Clock.timeColour")},
+        {QStringLiteral("clockDateColor"), QStringLiteral("Clock.dateColour")},
+        {QStringLiteral("clockTitleColor"), QStringLiteral("Clock.typeTitleColour")},
+    };
+    if (held.contains(key)) {
+        return held.value(key);
+    }
+    const QJsonObject config = face->configuration();
+    if (channel < 0) {
+        return config.value(QStringLiteral("kind")).toString() + QLatin1Char('.') + key;
+    }
+    const QString name = config.value(QStringLiteral("channels")).toArray().at(channel).toObject()
+                             .value(QStringLiteral("name")).toString();
+    return config.value(QStringLiteral("kind")).toString() + QLatin1Char('.') + name + QLatin1Char('.') + key;
+}
+} // namespace
 ContentPropertyEditor::ContentPropertyEditor(ContainerContentRegistry& registry,QWidget* parent):QWidget(parent),m_registry(registry) {}
 void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
 {
@@ -522,8 +574,26 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         if(key.endsWith("Color") || key=="color") {
             edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor","segLowColor","segHighColor"}.contains(key)?tr("Blank uses the face color")
                 :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            // The swatch shows the colour drawn (the workspace look's colour
+            // while the key holds its default, with the note); the text is
+            // the colour saved.
+            auto* swatch=new QPushButton(row);swatch->setAutoDefault(false);swatch->setFixedSize(40,18);
+            swatch->setObjectName((channel<0?key:QString("channel%1_%2").arg(channel).arg(key))+QStringLiteral("Swatch"));layout->addWidget(swatch);
+            const QString field=lookFieldFor(m_item.get(),key,channel);
+            const auto paintSwatch=[swatch,edit,field]{
+                const QColor stored(edit->text());
+                if(!stored.isValid() || field.isEmpty()) {
+                    swatch->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: 1px solid #205070; }"));
+                    swatch->setToolTip(edit->placeholderText());
+                    return;
+                }
+                ItemColourLook::paintSwatch(swatch,field,stored);
+            };
+            paintSwatch();
+            connect(edit,&QLineEdit::editingFinished,this,paintSwatch);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
-            connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
+            const auto pick=[this,key,channel,edit,paintSwatch]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));paintSwatch();}};
+            connect(choose,&QPushButton::clicked,this,pick);connect(swatch,&QPushButton::clicked,this,pick);widget=row;
         }
         if(key=="bezelImage") {
             // A bezel is a file the user picks (or a bundled resource); blank draws none.

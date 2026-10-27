@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A new bar whose flavor name joins words (SignalMaxBin,
 //                 SignalAvg, CfcGain, ...) takes the caption Thetis draws
 //                 over it, its reading's name ("Signal Max FFT Bin"),
@@ -97,6 +100,7 @@ mw0lge@grange-lane.co.uk
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "BarPresetItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
 #include "gui/meters/MeterPoller.h"
@@ -392,28 +396,30 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(13*g.scale)))); p.setFont(font);
     // Workspace preview: the default backdrop takes the container's
     // background; a backdrop the user set is drawn as it is.
-    const QColor backdrop=m_background==QColor(32,32,32) ? WorkspacePreview::dataBackground(m_background,"panel",parent()) : m_background;
+    const QColor backdrop=ItemColourLook::effective("BarPreset.backdropColor",m_background,this);
     if(layer==Layer::Background) {
-        p.fillRect(g.face,backdrop); p.setPen(m_title);
+        p.fillRect(g.face,backdrop); p.setPen(ItemColourLook::effective("BarPreset.titleColor",m_title,this));
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
         // From Thetis MeterManager.cs:28312 [v2.10.3.15] — scaleItem.ShowType.
         if(m_showTitle) { drawObjectTextElided(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
-        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),m_historyColor); }
+        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),ItemColourLook::effective("BarPreset.historyColor",m_historyColor,this)); }
         const auto marker=[&](double value,QColor color,int thickness) { p.setPen(QPen(color,thickness)); p.drawLine(QPointF(pos(value),g.top),QPointF(pos(value),g.bottom)); };
         // From Thetis MeterManager.cs:28288-28289 [v2.10.3.15] — the sub bar's
         // MarkerColour and ShowMarker.
         //igs.SubMarkerColour = bi.SubMarkerColour; [original inline comment from MeterManager.cs:28290]
-        if(m_showSub && m_average.hasReading()) { marker(m_average.value(),m_subColor,3); }
+        if(m_showSub && m_average.hasReading()) { marker(m_average.value(),ItemColourLook::effective("BarPreset.subColor",m_subColor,this),3); }
         if(m_primary.hasReading() && m_style!="Line") {
             // From Thetis MeterManager.cs:37458-37591 [v2.10.3.15]
             const double end=pos(m_primary.value());
             const double transition=pos(m_redThreshold);
             // From Thetis MeterManager.cs:28275-28276 [v2.10.3.15] — bi.Colour, bi.ColourHigh.
-            const QColor low=m_segLowColor.isValid() ? m_segLowColor : m_flavor=="Custom" ? m_marker : m_lowFill;
-            const QColor highFill=m_segHighColor.isValid() ? m_segHighColor : QColor(Qt::red);
+            // The unset low colour draws the flavour's fill, the unset high colour red:
+            // both follow the workspace look as the low and high colours' defaults.
+            const QColor low=m_segLowColor.isValid() ? ItemColourLook::effective("BarPreset.segLowColor",m_segLowColor,this) : m_flavor=="Custom" ? ItemColourLook::effective("BarPreset.barColor",m_marker,this) : ItemColourLook::effective("BarPreset.segLowColor",m_lowFill,this);
+            const QColor highFill=ItemColourLook::effective("BarPreset.segHighColor",m_segHighColor.isValid() ? m_segHighColor : QColor(Qt::red),this);
             const auto fill=[&](double start,double stop) {
                 if(start<transition) { p.fillRect(QRectF(start,g.top,qMax(0.0,qMin(stop,transition)-start),g.baseline-g.top),low); }
                 if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),highFill); }
@@ -438,13 +444,14 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             // From Thetis MeterManager.cs:28310-28315 [v2.10.3.15] — scale LowColour/HighColour
             // and FontColourLow/FontColourHigh.
             const double high=m_redThreshold;
-            scale.setPen(QPen(m_scaleLow,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
-            scale.setPen(QPen(m_scaleHigh,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
+            const QColor scaleLow=ItemColourLook::effective("BarPreset.lowColor",m_scaleLow,this), scaleHigh=ItemColourLook::effective("BarPreset.highColor",m_scaleHigh,this);
+            scale.setPen(QPen(scaleLow,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
+            scale.setPen(QPen(scaleHigh,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? m_scaleHigh : m_scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
             for(double value:major) {
-                scale.setPen(QPen(value>high ? m_scaleHigh : m_scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
                 const double x=pos(value);
                 const int index=major.indexOf(value);
                 const double before=index==0?g.left:pos(major[index-1]);
@@ -462,14 +469,14 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
         // From Thetis MeterManager.cs:28272-28274 [v2.10.3.15] — ShowMarker, PeakHold, PeakHoldMarkerColour.
-        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),m_peakHoldColor.isValid() ? m_peakHoldColor : QColor(Qt::red),3); }
-        if(m_showMarker && m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
+        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),ItemColourLook::effective("BarPreset.peakHoldColor",m_peakHoldColor.isValid() ? m_peakHoldColor : QColor(Qt::red),this),3); }
+        if(m_showMarker && m_primary.hasReading()) { marker(m_primary.value(),ItemColourLook::effective("BarPreset.barColor",m_marker,this),3); }
         p.setFont(font);
         const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():m_units.startsWith(QLatin1Char(':'))?m_units:QStringLiteral(" ")+m_units); };
-        p.setPen(m_marker);
+        p.setPen(ItemColourLook::effective("BarPreset.barColor",m_marker,this));
         if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
         // From Thetis MeterManager.cs:28278 [v2.10.3.15] — PeakValueColour.
-        p.setPen(m_peakValueColor.isValid() ? m_peakValueColor : QColor(Qt::red));
+        p.setPen(ItemColourLook::effective("BarPreset.peakValueColor",m_peakValueColor.isValid() ? m_peakValueColor : QColor(Qt::red),this));
         if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
     }
     p.restore();

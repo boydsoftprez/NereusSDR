@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Web image settings after the Thetis setup page: preset
 //                 lists (HamQSL, BSDWorld with Dark Mode, NASA, NOAA),
 //                 refresh 1-7200 s, width scale, bypass cache, the
@@ -12,6 +15,7 @@
 //                 AI-assisted via Anthropic Claude Code.
 
 #include "WebImageItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/WebImageItem.h"
 #include "core/AppSettings.h"
 
@@ -52,11 +56,9 @@ constexpr const char* kComboStyle =
     "  selection-background-color: #00b4d8;"
     "}";
 
-void applyBtnColor(QPushButton* btn, const QColor& c)
+void applyBtnColor(QPushButton* btn, const QString& field, const QColor& c)
 {
-    btn->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(c.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(btn, field, c);
 }
 } // namespace
 
@@ -82,7 +84,7 @@ void WebImageItemEditor::setItem(MeterItem* item)
     m_spinWidthScale->setValue(w->widthScale());
     m_chkBypassCache->setChecked(w->bypassCache());
     m_editFourChar->setText(w->fourChar());
-    applyBtnColor(m_btnFallback, w->fallbackColor());
+    applyBtnColor(m_btnFallback, QStringLiteral("WebImage.fallbackColor"), w->fallbackColor());
     m_comboPan->setCurrentIndex(std::max(0, m_comboPan->findData(w->targetPan())));
     m_spinBackgroundSecs->setValue(w->backgroundIntervalSecs());
     m_editNextFourChar->setText(w->backgroundFourChar());
@@ -282,7 +284,7 @@ void WebImageItemEditor::buildTypeSpecific()
             w->fallbackColor(), this, QString(), QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             w->setFallbackColor(chosen);
-            applyBtnColor(m_btnFallback, chosen);
+            applyBtnColor(m_btnFallback, QStringLiteral("WebImage.fallbackColor"), chosen);
             notifyChanged();
         }
     });

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -87,6 +90,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "RotatorItem.h"
+#include "ItemColourLook.h"
 
 // From Thetis clsRotatorItem (MeterManager.cs:15042+)
 // renderRotator() (MeterManager.cs:35170-35569)
@@ -491,7 +495,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
     const QRectF disc(cx - h / 2.0f, cy - h / 2.0f, h, h);
 
     // Step 1: fill background circle
-    p.setBrush(m_backgroundColour);
+    p.setBrush(ItemColourLook::effective("Rotator.backgroundColour", m_backgroundColour, this));
     p.setPen(Qt::NoPen);
     p.drawEllipse(disc);
 
@@ -523,7 +527,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
 
             if (deg % 45 != 0) {
                 // From Thetis MeterManager.cs:35226-35229
-                p.setBrush(m_smallBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
             }
@@ -536,7 +540,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             const float px  = cx + radius * std::cos(rad);
             const float py  = cy + radius * std::sin(rad);
 
-            p.setBrush(m_bigBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -563,7 +567,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             // Thetis draws every cardinal, "N" included, in OuterTextColour
             // (MeterManager.cs:36809 [v2.10.3.15]). NereusSDR draws "N" bold in the
             // large-dot colour (m_bigBlobColour); that is our own choice, not Thetis.
-            p.setPen(deg == 0 ? m_bigBlobColour : m_outerTextColour);
+            p.setPen(deg == 0 ? ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this) : ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             const int fw = std::max(12, static_cast<int>(h * 0.12f));
@@ -589,7 +593,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             const float py  = cy + radius * std::sin(rad);
 
             if (deg % 30 == 0) {
-                p.setBrush(m_bigBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -599,7 +603,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
                 QFont font;
                 font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
                 p.setFont(font);
-                p.setPen(m_outerTextColour);
+                p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
                 p.setBrush(Qt::NoBrush);
 
                 const int fw = std::max(14, static_cast<int>(h * 0.14f));
@@ -616,7 +620,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
                 p.drawText(textBox,
                            Qt::AlignCenter, QString::number(deg));
             } else {
-                p.setBrush(m_smallBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
             }
@@ -666,7 +670,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
         const float py  = cy + radius * std::sin(rad);
 
         if (deg % 15 == 0) {
-            p.setBrush(m_bigBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -676,7 +680,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
             QFont font;
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             // From Thetis MeterManager.cs:35526: plotText((90 - deg).ToString(), ...)
@@ -694,7 +698,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
             p.drawText(textBox,
                        Qt::AlignCenter, QString::number(90 - deg));
         } else {
-            p.setBrush(m_smallBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
         }
@@ -759,7 +763,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
                            startAngle, spanAngle);
             beamPath.closeSubpath();
 
-            QColor bwColor = m_beamWidthColour;
+            QColor bwColor = ItemColourLook::effective("Rotator.beamWidthColour", m_beamWidthColour, this);
             bwColor.setAlphaF(static_cast<double>(m_beamWidthAlpha));
             p.setBrush(bwColor);
             p.setPen(Qt::NoPen);
@@ -772,7 +776,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         const float tipX     = cx + radius_tip_arrow   * std::cos(arrowRad);
         const float tipY     = cy + radius_tip_arrow   * std::sin(arrowRad);
 
-        QPen arrowPen(m_arrowColour, std::max(1.0f, h * 0.01f));
+        QPen arrowPen(ItemColourLook::effective("Rotator.arrowColour", m_arrowColour, this), std::max(1.0f, h * 0.01f));
         p.setPen(arrowPen);
         p.setBrush(Qt::NoBrush);
         p.drawLine(QPointF(cx, cy), QPointF(tipX, tipY));
@@ -800,7 +804,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             const int labelSize  = std::max(7, static_cast<int>(fontSize * 0.65f));
@@ -885,7 +889,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         const float tipX     = cx_ele + radius_tip_ele   * std::cos(arrowRad);
         const float tipY     = cy_ele + radius_tip_ele   * std::sin(arrowRad);
 
-        QPen arrowPen(m_arrowColour, std::max(1.0f, h * 0.01f));
+        QPen arrowPen(ItemColourLook::effective("Rotator.arrowColour", m_arrowColour, this), std::max(1.0f, h * 0.01f));
         p.setPen(arrowPen);
         p.setBrush(Qt::NoBrush);
         p.drawLine(QPointF(cx_ele, cy_ele), QPointF(tipX, tipY));
@@ -912,7 +916,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
             QFont captionFont;
             captionFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
@@ -1009,7 +1013,7 @@ void RotatorItem::paint(QPainter& p, int widgetW, int widgetH)
 void RotatorItem::paintFullBackground(QPainter& p, int widgetW, int widgetH)
 {
     if (!m_fullBackground) { return; }
-    p.fillRect(pixelRect(widgetW, widgetH), m_backgroundColour);
+    p.fillRect(pixelRect(widgetW, widgetH), ItemColourLook::effective("Rotator.backgroundColour", m_backgroundColour, this));
 }
 
 // ---------------------------------------------------------------------------
@@ -1356,7 +1360,7 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
     if (!rotorControllable()) { return; }
     const Faces f = faces(rect);
     const float h = f.h;
-    const QColor control = m_controlColour;
+    const QColor control = ItemColourLook::effective("Rotator.controlColour", m_controlColour, this);
     QPen controlPen(control, std::max(1.0f, h * 0.01f));
     controlPen.setCapStyle(Qt::RoundCap);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -1380,7 +1384,7 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
     if (m_pressed && m_dragFace != DragFace::None && m_dragDegrees >= 0.0f && !m_overStop) {
         const QPointF centre = m_dragEle ? f.ele : f.az;
         p.setPen(Qt::NoPen);
-        p.setBrush(m_bigBlobColour);
+        p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
         p.drawEllipse(centre, h * 0.015f, h * 0.015f);
         p.setPen(controlPen);
         p.setBrush(Qt::NoBrush);

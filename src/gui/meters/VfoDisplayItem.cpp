@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Every slice's title fits slice A's room, so the titles
 //                 match as Thetis's do; the band text keeps a gap clear of
 //                 the filter text. J.J. Boyd (KG4VCF), AI-assisted via
@@ -83,6 +86,7 @@ mw0lge@grange-lane.co.uk
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "gui/styles/WorkspacePreview.h"
+#include "ItemColourLook.h"
 #include "VfoDisplayItem.h"
 #include "ModeButtonItem.h"
 #include "models/SliceModel.h"
@@ -750,7 +754,7 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
 
     // Background
-    p.fillRect(rect, m_backColour);
+    p.fillRect(rect, ItemColourLook::effective("VfoDisplay.backgroundColour", m_backColour, this));
     if (m_layout == Layout::Compact) {
         p.setPen(QPen(QColor(0x1e, 0x2e, 0x3e), 1));
         p.drawRect(rect);
@@ -761,14 +765,14 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     // live.
     if (!m_unavailableText.isEmpty()) {
         // RX/TX indicator bar at left
-        const QColor stateColour = m_transmitting ? m_txColour : m_rxColour;
+        const QColor stateColour = m_transmitting ? ItemColourLook::effective("VfoDisplay.txColour", m_txColour, this) : ItemColourLook::effective("VfoDisplay.rxColour", m_rxColour, this);
         p.fillRect(QRect(rect.left(), rect.top(), 3, rect.height()), stateColour);
         const QRect textRect = rect.adjusted(6, 2, -6, -2);
         QFont font = WorkspacePreview::readableFont(p.font(), p.device());
         font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(10, textRect.height() / 4)));
         font.setBold(false);
         p.setFont(font);
-        p.setPen(m_modeColour);
+        p.setPen(ItemColourLook::effective("VfoDisplay.modeColour", m_modeColour, this));
         p.drawText(textRect, Qt::AlignCenter | Qt::TextWordWrap, m_unavailableText);
         return;
     }
@@ -787,12 +791,12 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
         p.save();
         p.setOpacity(alpha / 255.0);
         if (!s.open) {
-            p.fillRect(QRect(col.left(), col.top(), 3, col.height()), m_rxColour);
+            p.fillRect(QRect(col.left(), col.top(), 3, col.height()), ItemColourLook::effective("VfoDisplay.rxColour", m_rxColour, this));
             const QRect textRect = col.adjusted(6, 2, -6, -2);
             QFont font = WorkspacePreview::readableFont(p.font(), p.device());
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(10, textRect.height() / 4)));
             p.setFont(font);
-            p.setPen(m_modeColour);
+            p.setPen(ItemColourLook::effective("VfoDisplay.modeColour", m_modeColour, this));
             p.drawText(textRect, Qt::AlignCenter | Qt::TextWordWrap,
                        tr("%1 is not open").arg(sliceTitle(s.index)));
         } else if (m_layout == Layout::Thetis && screenFor(s.index) != Screen::Vfo) {
@@ -810,7 +814,7 @@ void VfoDisplayItem::paintCompactColumn(QPainter& p, const QRect& rect, const Vf
 {
     // RX/TX indicator bar at left (the TX marker: lit on the slice
     // transmit comes off while transmitting).
-    const QColor stateColour = (m_transmitting && s.transmitting) ? m_txColour : m_rxColour;
+    const QColor stateColour = (m_transmitting && s.transmitting) ? ItemColourLook::effective("VfoDisplay.txColour", m_txColour, this) : ItemColourLook::effective("VfoDisplay.rxColour", m_rxColour, this);
     p.fillRect(QRect(rect.left(), rect.top(), 3, rect.height()), stateColour);
 
     // Frequency text (top 60%)
@@ -821,12 +825,12 @@ void VfoDisplayItem::paintCompactColumn(QPainter& p, const QRect& rect, const Vf
     freqFont.setBold(true);
     fitTextWidth(freqFont,{frequencyText},freqRect.width());
     p.setFont(freqFont);
-    p.setPen(m_freqColour);
+    p.setPen(ItemColourLook::effective("VfoDisplay.frequencyColour", m_freqColour, this));
     p.drawText(freqRect, Qt::AlignVCenter | Qt::AlignLeft, frequencyText);
 
     // Split indicator
     if (m_split) {
-        p.setPen(m_splitColour);
+        p.setPen(ItemColourLook::effective("VfoDisplay.splitColour", m_splitColour, this));
         QFont splitFont = freqFont;
         splitFont.setPixelSize(WorkspacePreview::readableTextPixelSize(freqFont.pixelSize() / 2));
         p.setFont(splitFont);
@@ -843,11 +847,11 @@ void VfoDisplayItem::paintCompactColumn(QPainter& p, const QRect& rect, const Vf
     p.setFont(labelFont);
 
     const int thirdW = labelRect.width() / 3;
-    p.setPen(m_modeColour);
+    p.setPen(ItemColourLook::effective("VfoDisplay.modeColour", m_modeColour, this));
     p.drawText(QRect(labelRect.left(), labelRect.top(), thirdW, labelRect.height()), Qt::AlignCenter, s.mode);
-    p.setPen(m_filterColour);
+    p.setPen(ItemColourLook::effective("VfoDisplay.filterColour", m_filterColour, this));
     p.drawText(QRect(labelRect.left() + thirdW, labelRect.top(), thirdW, labelRect.height()), Qt::AlignCenter, s.filter);
-    p.setPen(m_bandColour);
+    p.setPen(ItemColourLook::effective("VfoDisplay.bandColour", m_bandColour, this));
     p.drawText(QRect(labelRect.left() + 2*thirdW, labelRect.top(), thirdW, labelRect.height()), Qt::AlignCenter, s.band);
 }
 
@@ -859,7 +863,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
 
     // TX marker (NereusSDR): lit on the slice transmit comes off while
     // transmitting.
-    const QColor stateColour = (m_transmitting && s.transmitting) ? m_txColour : m_rxColour;
+    const QColor stateColour = (m_transmitting && s.transmitting) ? ItemColourLook::effective("VfoDisplay.txColour", m_txColour, this) : ItemColourLook::effective("VfoDisplay.rxColour", m_rxColour, this);
     p.fillRect(QRect(col.left(), col.top(), 3, col.height()), stateColour);
 
     // From Thetis MeterManager.cs:40220-40224 [v2.10.3.15]: the box under
@@ -868,7 +872,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     const bool hoverHere = canAct && hover.sliceIndex == s.index
         && (hover.region == Region::Digit || hover.region == Region::Band || hover.region == Region::Filter);
     if (hoverHere) {
-        p.fillRect(hover.box, m_digitHighlight);
+        p.fillRect(hover.box, ItemColourLook::effective("VfoDisplay.digitHighlightColour", m_digitHighlight, this));
     }
 
     QFont base = WorkspacePreview::readableFont(p.font(), p.device());
@@ -881,7 +885,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     // the room slice A has before its split box: the titles match.
     const QString title = sliceTitle(s.index);
     const qreal titleRoom = (0.100 - 0.010) * f.unit;
-    plotText(p, title, f.x(0.01), f.y(0.03), fitted(base, title, titleRoom), m_titleColour);
+    plotText(p, title, f.x(0.01), f.y(0.03), fitted(base, title, titleRoom), ItemColourLook::effective("VfoDisplay.titleColour", m_titleColour, this));
 
     // frequency
     // From Thetis MeterManager.cs:40264-40270 [v2.10.3.15]: MHz.kHz right
@@ -902,15 +906,15 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
         qMax(1, static_cast<int>(f.h * kBaseTextOfHeight * kSmallDigitFontScale))));
     fitTextWidth(smallFont, {QStringLiteral("000")}, static_cast<int>((0.480 - 0.425) * f.unit));
     const qreal freqTop = f.y(0.02);
-    plotText(p, sVfo, f.x(0.415), freqTop, freqFont, m_freqColour, true);
+    plotText(p, sVfo, f.x(0.415), freqTop, freqFont, ItemColourLook::effective("VfoDisplay.frequencyColour", m_freqColour, this), true);
     // NereusSDR: the small digits share the large digits' baseline (Thetis
     // places them at 0.11 h for its own font ratio).
     const qreal baseline = freqTop + QFontMetricsF(freqFont).ascent();
-    plotText(p, small, f.x(0.48), baseline - QFontMetricsF(smallFont).ascent(), smallFont, m_freqSmallColour, true);
+    plotText(p, small, f.x(0.48), baseline - QFontMetricsF(smallFont).ascent(), smallFont, ItemColourLook::effective("VfoDisplay.frequencySmallColour", m_freqSmallColour, this), true);
 
     // mode VFOA
     // From Thetis MeterManager.cs:40302-40305 [v2.10.3.15]
-    plotText(p, s.mode, f.x(0.01), f.y(0.52), fitted(base, s.mode, (0.100 - 0.010) * f.unit), m_modeColour);
+    plotText(p, s.mode, f.x(0.01), f.y(0.52), fitted(base, s.mode, (0.100 - 0.010) * f.unit), ItemColourLook::effective("VfoDisplay.modeColour", m_modeColour, this));
 
     //band VFOA
     // From Thetis MeterManager.cs:40314-40319 [v2.10.3.15]
@@ -920,7 +924,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
         // there, so text fitted to both rooms touched; the band keeps
         // kFilterBandGap clear.
         plotText(p, band, f.x(0.48), f.y(0.54), fitted(base, band, (0.480 - 0.333 - kFilterBandGap) * f.unit),
-                 m_bandColour, true);
+                 ItemColourLook::effective("VfoDisplay.bandColour", m_bandColour, this), true);
     }
 
     //split only on VFOA
@@ -929,8 +933,8 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     // Thetis's split-off state and its tooltip says why.
     if (s.index == 0) {
         const QRectF rectSplit = f.box(0.1, 0.03, 0.2, 0.43);
-        p.fillRect(rectSplit, m_splitBackColour);
-        const QColor splitColor = m_split ? m_splitColour : QColor(Qt::black);
+        p.fillRect(rectSplit, ItemColourLook::effective("VfoDisplay.splitBackColour", m_splitBackColour, this));
+        const QColor splitColor = m_split ? ItemColourLook::effective("VfoDisplay.splitColour", m_splitColour, this) : QColor(Qt::black);
         plotText(p, QStringLiteral("SPLIT"), rectSplit.x() + 0.015 * f.unit, rectSplit.y(),
                  fitted(base, QStringLiteral("SPLIT"), (0.1 - 0.015) * f.unit), splitColor);
     }
@@ -944,10 +948,10 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     const bool txOn = m_transmitting && canTx;
 
     // tx/rx box colours
-    const QColor cRx = m_rxColour;
+    const QColor cRx = ItemColourLook::effective("VfoDisplay.rxColour", m_rxColour, this);
     const QColor cDimRx = scaled(cRx, kDimFactor);
     const QColor cDimerRx = scaled(cRx, kDimmerFactor);
-    const QColor cTx = m_txColour;
+    const QColor cTx = ItemColourLook::effective("VfoDisplay.txColour", m_txColour, this);
     const QColor cDimTx = scaled(cTx, kDimFactor);
     const QColor cDimerTx = scaled(cTx, kDimmerFactor);
 
@@ -967,7 +971,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     //filter VFOA
     // From Thetis MeterManager.cs:40393-40396 [v2.10.3.15]
     plotText(p, s.filter, f.x(0.25) + 0.005 * f.unit, f.y(0.54),
-             fitted(base, s.filter, (0.333 - 0.255) * f.unit), m_filterColour);
+             fitted(base, s.filter, (0.333 - 0.255) * f.unit), ItemColourLook::effective("VfoDisplay.filterColour", m_filterColour, this));
 
     if (m_showBandText) {
         // band text, needs the full height, as we adjusted it above
@@ -981,7 +985,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
         bandTextFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, static_cast<int>(stripH * 0.8))));
         fitTextWidth(bandTextFont, {text}, static_cast<int>(0.48 * f.unit));
         p.setFont(bandTextFont);
-        p.setPen(m_bandTextColour);
+        p.setPen(ItemColourLook::effective("VfoDisplay.bandTextColour", m_bandTextColour, this));
         const qreal width = 0.48 * f.unit;
         p.drawText(QRectF(f.x(0.25) - width / 2.0, stripTop, width, stripH), Qt::AlignCenter, text);
     }
@@ -992,10 +996,10 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     // NereusSDR has no VFO sync, so the sync icon is always off.
     p.setOpacity(1.0);
     const qreal iconSize = 0.026 * f.unit;
-    QColor lock = m_lockColour;
+    QColor lock = ItemColourLook::effective("VfoDisplay.lockColour", m_lockColour, this);
     lock.setAlpha(s.locked ? alpha : qMin(kIconOffAlpha, alpha));
     drawLockIcon(p, QRectF(f.x(0.199), f.y(0.58), iconSize, iconSize), lock);
-    QColor sync = m_syncColour;
+    QColor sync = ItemColourLook::effective("VfoDisplay.syncColour", m_syncColour, this);
     sync.setAlpha(qMin(kIconOffAlpha, alpha));
     drawSyncIcon(p, QRectF(f.x(0.224), f.y(0.58), iconSize, iconSize), sync);
 }
@@ -1086,9 +1090,9 @@ void VfoDisplayItem::paintScreen(QPainter& p, const QRect& col, const VfoSliceSt
     const auto cellRect = [&](int i) {
         return QRectF(col.left() + (i % columns) * gap, col.top() + (i / columns) * rowH, gap, rowH);
     };
-    if (current >= 0 && current < buttons) { p.fillRect(cellRect(current), m_digitHighlight); }
+    if (current >= 0 && current < buttons) { p.fillRect(cellRect(current), ItemColourLook::effective("VfoDisplay.digitHighlightColour", m_digitHighlight, this)); }
     if (hover.region == Region::ScreenCell && hover.sliceIndex == s.index) {
-        p.fillRect(hover.box, m_digitHighlight);
+        p.fillRect(hover.box, ItemColourLook::effective("VfoDisplay.digitHighlightColour", m_digitHighlight, this));
     }
 
     p.setPen(QPen(white, 1));

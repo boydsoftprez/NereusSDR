@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -148,6 +151,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "TextOverlayItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 // From Thetis clsTextOverlay (MeterManager.cs:18746+)
@@ -283,8 +287,8 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
                             rect.width(), rect.height() / 2);
         const QRect bottomHalf(rect.left(), rect.top() + rect.height() / 2,
                                rect.width(), rect.height() - rect.height() / 2);
-        p.fillRect(topHalf, m_panelBack1);
-        p.fillRect(bottomHalf, m_panelBack2);
+        p.fillRect(topHalf, ItemColourLook::effective("TextOverlay.panelBackColour1", m_panelBack1, this));
+        p.fillRect(bottomHalf, ItemColourLook::effective("TextOverlay.panelBackColour2", m_panelBack2, this));
     }
 
     // Step 2: resolve substituted text for both lines
@@ -318,10 +322,10 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
             const QRect textBound = fm1.boundingRect(lineRect1,
                                                       Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
                                                       resolved1);
-            p.fillRect(textBound, m_textBackColour1);
+            p.fillRect(textBound, ItemColourLook::effective("TextOverlay.textBackColour1", m_textBackColour1, this));
         }
 
-        p.setPen(m_textColour1);
+        p.setPen(ItemColourLook::effective("TextOverlay.textColour1", m_textColour1, this));
 
         if (m_scrollX != 0.0f && lineRect1.isValid()) {
             // Scrolling: clip to lineRect1, draw at scrolled x position
@@ -363,10 +367,10 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
             const QRect textBound = fm2.boundingRect(lineRect2,
                                                       Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
                                                       resolved2);
-            p.fillRect(textBound, m_textBackColour2);
+            p.fillRect(textBound, ItemColourLook::effective("TextOverlay.textBackColour2", m_textBackColour2, this));
         }
 
-        p.setPen(m_textColour2);
+        p.setPen(ItemColourLook::effective("TextOverlay.textColour2", m_textColour2, this));
 
         if (m_scrollX != 0.0f && lineRect2.isValid()) {
             const QFontMetrics fm2(font2,p.device());
@@ -430,7 +434,7 @@ bool TextOverlayItem::checkPanelFlip()
 // alpha.
 QColor TextOverlayItem::panelColour() const
 {
-    const QColor c = effectiveTransmitting() ? m_panelBack2 : m_panelBack1;
+    const QColor c = effectiveTransmitting() ? ItemColourLook::effective("TextOverlay.panelBackColour2", m_panelBack2, this) : ItemColourLook::effective("TextOverlay.panelBackColour1", m_panelBack1, this);
     const bool flipFade = !coverFadeActive() && m_panelBack1 != m_panelBack2;
     return withAlpha(c, flipFade ? m_panelFadeValue : ContentFade::kUndimmedLevel);
 }
@@ -489,8 +493,8 @@ TextOverlayItem::SwapLine TextOverlayItem::swapLine(int widgetW, int widgetH) co
 
     // Render the text
     line.fillBack = (m_showTextBack1 && !tx) || (m_showTextBack2 && tx);
-    line.backColour = withAlpha(tx ? m_textBackColour2 : m_textBackColour1, ContentFade::kUndimmedLevel);
-    line.colour = withAlpha(tx ? m_textColour2 : m_textColour1, ContentFade::kUndimmedLevel);
+    line.backColour = withAlpha(tx ? ItemColourLook::effective("TextOverlay.textBackColour2", m_textBackColour2, this) : ItemColourLook::effective("TextOverlay.textBackColour1", m_textBackColour1, this), ContentFade::kUndimmedLevel);
+    line.colour = withAlpha(tx ? ItemColourLook::effective("TextOverlay.textColour2", m_textColour2, this) : ItemColourLook::effective("TextOverlay.textColour1", m_textColour1, this), ContentFade::kUndimmedLevel);
     return line;
 }
 

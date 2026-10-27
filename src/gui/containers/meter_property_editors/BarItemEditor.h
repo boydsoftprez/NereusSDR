@@ -1,5 +1,8 @@
 #pragma once
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Rows for the BAR options: style (adds Line, Segments,
 //                 Solid), value and peak text, markers, peak hold, history,
 //                 ignore history, power limit and calibration. J.J. Boyd
@@ -32,10 +35,10 @@ private:
     void buildTypeSpecific() override;
     void buildOptionRows();
     // A colour swatch row that reads and writes one BarItem colour.
-    QPushButton* makeColourRow(const QString& label,
+    QPushButton* makeColourRow(const QString& label, const QString& field,
                                std::function<QColor(const BarItem&)> get,
                                std::function<void(BarItem&, const QColor&)> set);
-    static void paintSwatch(QPushButton* button, const QColor& colour);
+    static void paintSwatch(QPushButton* button, const QString& field, const QColor& colour);
 
     // Enum selectors
     QComboBox*      m_comboOrientation{nullptr};

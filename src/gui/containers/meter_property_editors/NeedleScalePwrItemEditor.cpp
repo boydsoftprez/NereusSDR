@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Power limit row takes 0.1 W to 5000 W, as Thetis setup.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -61,6 +64,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NeedleScalePwrItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "../../meters/MeterItem.h"
 #include "../../meters/NeedleScalePwrItem.h"
@@ -131,13 +135,11 @@ void NeedleScalePwrItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
 
     // Colors
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
-    applyColor(m_btnLowColour,  nspi->lowColour());
-    applyColor(m_btnHighColour, nspi->highColour());
+    applyColor(m_btnLowColour, QStringLiteral("PowerScale.lowColour"), nspi->lowColour());
+    applyColor(m_btnHighColour, QStringLiteral("PowerScale.highColour"), nspi->highColour());
 
     // Font
     m_fontCombo->setCurrentFont(QFont(nspi->fontFamily()));
@@ -221,9 +223,7 @@ void NeedleScalePwrItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             nspi->setLowColour(chosen);
-            m_btnLowColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnLowColour, QStringLiteral("PowerScale.lowColour"), chosen);
             notifyChanged();
         }
     });
@@ -239,9 +239,7 @@ void NeedleScalePwrItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             nspi->setHighColour(chosen);
-            m_btnHighColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnHighColour, QStringLiteral("PowerScale.highColour"), chosen);
             notifyChanged();
         }
     });

@@ -1,9 +1,13 @@
 // no-port-check: NereusSDR-original Qt property adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R2: Units offers Follow global and each unit; a
 //                 unit chosen here stays when the global setting changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "SignalTextItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/SignalTextItem.h"
 
 #include <QCheckBox>
@@ -42,10 +46,8 @@ void SignalTextItemEditor::setItem(MeterItem* item)
     SignalTextItem* x = qobject_cast<SignalTextItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
@@ -59,9 +61,9 @@ void SignalTextItemEditor::setItem(MeterItem* item)
     m_chkShowType->setChecked(x->showType());
     m_chkPeakHold->setChecked(x->peakHold());
 
-    applyColor(m_btnColour, x->colour());
-    applyColor(m_btnPeakColour, x->peakValueColour());
-    applyColor(m_btnMarkerColour, x->markerColour());
+    applyColor(m_btnColour, QStringLiteral("SignalText.colour"), x->colour());
+    applyColor(m_btnPeakColour, QStringLiteral("SignalText.peakValueColour"), x->peakValueColour());
+    applyColor(m_btnMarkerColour, QStringLiteral("SignalText.markerColour"), x->markerColour());
 
     m_fontCombo->setCurrentFont(QFont(x->fontFamily()));
     m_spinFontSize->setValue(static_cast<double>(x->fontSize()));
@@ -71,10 +73,10 @@ void SignalTextItemEditor::setItem(MeterItem* item)
 
     const int typeIdx = m_comboTypeStyle->findData(static_cast<int>(x->typeStyle()));
     m_comboTypeStyle->setCurrentIndex(typeIdx >= 0 ? typeIdx : 0);
-    applyColor(m_btnTypeColour, x->typeColour());
+    applyColor(m_btnTypeColour, QStringLiteral("SignalText.typeColour"), x->typeColour());
     m_chkShowSubMarker->setChecked(x->showSubMarker());
-    applyColor(m_btnSubMarkerColour, x->subMarkerColour());
-    applyColor(m_btnBackgroundColour, x->backgroundColour());
+    applyColor(m_btnSubMarkerColour, QStringLiteral("SignalText.subMarkerColour"), x->subMarkerColour());
+    applyColor(m_btnBackgroundColour, QStringLiteral("SignalText.backgroundColour"), x->backgroundColour());
     m_chkPeakNeedsHold->setChecked(x->peakValueNeedsPeakHold());
     m_spinHistoryMs->setValue(x->historyDurationMs());
     m_spinIgnoreHistoryMs->setValue(x->ignoreHistoryMs());
@@ -155,9 +157,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->colour(), this);
         if (chosen.isValid()) {
             x->setColour(chosen);
-            m_btnColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("SignalText.colour"), chosen);
             notifyChanged();
         }
     });
@@ -171,9 +171,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->peakValueColour(), this);
         if (chosen.isValid()) {
             x->setPeakValueColour(chosen);
-            m_btnPeakColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPeakColour, QStringLiteral("SignalText.peakValueColour"), chosen);
             notifyChanged();
         }
     });
@@ -187,9 +185,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(x->markerColour(), this);
         if (chosen.isValid()) {
             x->setMarkerColour(chosen);
-            m_btnMarkerColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnMarkerColour, QStringLiteral("SignalText.markerColour"), chosen);
             notifyChanged();
         }
     });
@@ -232,22 +228,20 @@ void SignalTextItemEditor::buildTypeSpecific()
     });
 
     // A color button row that sets one color on the item.
-    const auto colourRow = [this](QPushButton*& button, const QString& label,
+    const auto colourRow = [this](QPushButton*& button, const QString& label, const QString& field,
                                   QColor (SignalTextItem::*get)() const,
                                   void (SignalTextItem::*set)(const QColor&)) {
         button = new QPushButton(this);
         button->setFixedSize(40, 18);
         QPushButton* b = button;
-        connect(b, &QPushButton::clicked, this, [this, b, label, get, set]() {
+        connect(b, &QPushButton::clicked, this, [this, b, label, field, get, set]() {
             SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
             if (!x) { return; }
             const QColor chosen = QColorDialog::getColor((x->*get)(), this, label,
                                                          QColorDialog::ShowAlphaChannel);
             if (!chosen.isValid()) { return; }
             (x->*set)(chosen);
-            b->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(b, field, chosen);
             notifyChanged();
         });
         addRow(label, button);
@@ -271,7 +265,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         x->setTypeStyle(static_cast<SignalTextItem::TypeStyle>(m_comboTypeStyle->currentData().toInt()));
         notifyChanged();
     });
-    colourRow(m_btnTypeColour, QStringLiteral("Type color"),
+    colourRow(m_btnTypeColour, QStringLiteral("Type color"), QStringLiteral("SignalText.typeColour"),
               &SignalTextItem::typeColour, &SignalTextItem::setTypeColour);
 
     // The uV and dBm sub line.
@@ -285,9 +279,9 @@ void SignalTextItemEditor::buildTypeSpecific()
         x->setShowSubMarker(on);
         notifyChanged();
     });
-    colourRow(m_btnSubMarkerColour, QStringLiteral("μV and dBm color"),
+    colourRow(m_btnSubMarkerColour, QStringLiteral("μV and dBm color"), QStringLiteral("SignalText.subMarkerColour"),
               &SignalTextItem::subMarkerColour, &SignalTextItem::setSubMarkerColour);
-    colourRow(m_btnBackgroundColour, QStringLiteral("Background color"),
+    colourRow(m_btnBackgroundColour, QStringLiteral("Background color"), QStringLiteral("SignalText.backgroundColour"),
               &SignalTextItem::backgroundColour, &SignalTextItem::setBackgroundColour);
 
     m_chkPeakNeedsHold = makeCheckRow(QStringLiteral("Peak value only with peak hold"));

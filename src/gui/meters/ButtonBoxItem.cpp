@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Screenshot fix: a placeholder button (placeholderReason)
 //                 is dimmed, never highlights and never acts; a click
 //                 says why. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -95,6 +98,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "ButtonBoxItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 #include <QPainter>
@@ -364,16 +368,16 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
     // Determine fill color: clicked > hovered > on/off
     QColor fill;
     if (index == m_clickedIndex && !placeholder) {
-        fill = btn.clickColour;
+        fill = ItemColourLook::effective("ButtonBox.clickColour", btn.clickColour, this);
     } else if (index == m_hoveredIndex && !placeholder) {
-        fill = btn.hoverColour;
+        fill = ItemColourLook::effective("ButtonBox.hoverColour", btn.hoverColour, this);
     } else {
-        fill = btn.on ? btn.onColour : btn.fillColour;
+        fill = btn.on ? ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this) : ItemColourLook::effective("ButtonBox.fillColour", btn.fillColour, this);
     }
 
     // Button body; a placeholder's is dimmed as an unavailable button's
     // text is.
-    QColor border = btn.borderColour;
+    QColor border = ItemColourLook::effective("ButtonBox.borderColour", btn.borderColour, this);
     if (placeholder) {
         fill.setAlpha(kPlaceholderAlpha);
         border.setAlpha(kPlaceholderAlpha);
@@ -391,7 +395,7 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
     // Text
     if (!btn.text.isEmpty()) {
         QColor textCol = btn.on && btn.indicatorType == IndicatorType::TextIconColour
-                             ? btn.onColour : btn.textColour;
+                             ? ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this) : ItemColourLook::effective("ButtonBox.textColour", btn.textColour, this);
         if (!btn.enabled || placeholder) {
             textCol.setAlpha(kPlaceholderAlpha);
         }
@@ -412,11 +416,11 @@ void ButtonBoxItem::paintIndicator(QPainter& p, int index, const QRectF& rect)
 
     const float iw = btn.indicatorWidth * rect.width();
     p.setPen(Qt::NoPen);
-    p.setBrush(btn.onColour);
+    p.setBrush(ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this));
 
     switch (btn.indicatorType) {
     case IndicatorType::Ring:
-        p.setPen(QPen(btn.onColour, iw));
+        p.setPen(QPen(ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this), iw));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(rect.adjusted(iw/2, iw/2, -iw/2, -iw/2),
                           m_cornerRadius, m_cornerRadius);

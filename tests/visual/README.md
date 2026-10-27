@@ -525,6 +525,10 @@ alone (`--popup`).
   faces fed -73 dBm, the editor and its Units list.
 - `container-parity-sections`: a TX and an RX section item as built and
   with a part hidden and the order reversed, and the reordered one's editor.
+- `container-parity-user-colours`: new VFO display, clock, bar, LED, text
+  overlay and band button items beside twins holding a colour the user
+  picked: the workspace look draws the defaults in workspace colours and
+  leaves the picked colour as it is.
 - `container-parity-long-title`: "Signal max bin bar" and a short title
   ("Signal": a one-entry container's header shows its entry's name) in
   a 260 px left strip; the notes give the header and title widths.

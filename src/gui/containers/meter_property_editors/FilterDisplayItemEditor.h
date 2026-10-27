@@ -26,6 +26,7 @@ private:
     // Thetis filter display settings and colours (rows added 2026-10-26).
     void buildThetisSettings();
     void addColourRow(const QString& label, const QString& objectName,
+                      const QString& field,
                       QColor (FilterDisplayItem::*getter)() const,
                       void (FilterDisplayItem::*setter)(const QColor&));
 

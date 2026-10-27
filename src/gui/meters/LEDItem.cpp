@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A condition name matches a published reading whatever its
 //                 case (the VFO display's sliceA_freq). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -93,6 +96,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "LEDItem.h"
+#include "ItemColourLook.h"
 #include "ClockItem.h"
 #include "LedResultRegistry.h"
 #include "MeterWidget.h"
@@ -676,16 +680,16 @@ bool LEDItem::advanceMeter(qint64 monotonicMs)
 QColor LEDItem::trueEndColour() const
 {
     if (hasCondition()) {
-        return m_trueColour;
+        return ItemColourLook::effective("Led.trueColour", m_trueColour, this);
     }
     const double v = value();
     if (v >= m_redThreshold) {
-        return m_redColour;
+        return ItemColourLook::effective("Led.redColour", m_redColour, this);
     }
     if (v >= m_amberThreshold) {
-        return m_amberColour;
+        return ItemColourLook::effective("Led.amberColour", m_amberColour, this);
     }
-    return m_trueColour;
+    return ItemColourLook::effective("Led.trueColour", m_trueColour, this);
 }
 
 // From Thetis MeterManager.cs:34112-34121 [v2.10.3.15]
@@ -694,7 +698,7 @@ QColor LEDItem::trueEndColour() const
 // getDXBrushForColour(c, 255).
 QColor LEDItem::placedLightColour() const
 {
-    const QColor a = m_falseColour;
+    const QColor a = ItemColourLook::effective("Led.falseColour", m_falseColour, this);
     const QColor b = trueEndColour();
     const double lambda = static_cast<double>(m_colourFade);
     auto component = [lambda](int from, int to) {
@@ -711,7 +715,7 @@ QColor LEDItem::placedLightColour() const
 // MeterWidget's veil dims the item, so the colour shows at full alpha.
 QColor LEDItem::placedPanelColour() const
 {
-    QColor c = effectiveTransmitting() ? m_panelBack2 : m_panelBack1;
+    QColor c = effectiveTransmitting() ? ItemColourLook::effective("Led.panelBackColour2", m_panelBack2, this) : ItemColourLook::effective("Led.panelBackColour1", m_panelBack1, this);
     if (c.alpha() == 0) {
         return c;
     }
@@ -754,19 +758,19 @@ QRectF LEDItem::placedLightRect(int widgetW, int widgetH) const
 QColor LEDItem::currentColor() const
 {
     if (hasCondition()) {
-        return m_ledOn ? m_trueColour : m_falseColour;
+        return m_ledOn ? ItemColourLook::effective("Led.trueColour", m_trueColour, this) : ItemColourLook::effective("Led.falseColour", m_falseColour, this);
     }
     const double v = value();
     if (v >= m_redThreshold) {
-        return m_redColour;
+        return ItemColourLook::effective("Led.redColour", m_redColour, this);
     }
     if (v >= m_amberThreshold) {
-        return m_amberColour;
+        return ItemColourLook::effective("Led.amberColour", m_amberColour, this);
     }
     if (m_ledOn) {
-        return m_trueColour;
+        return ItemColourLook::effective("Led.trueColour", m_trueColour, this);
     }
-    return m_falseColour;
+    return ItemColourLook::effective("Led.falseColour", m_falseColour, this);
 }
 
 // ---------------------------------------------------------------------------
@@ -821,7 +825,7 @@ void LEDItem::paintFill(QPainter& p, int widgetW, int widgetH)
 
     // Step 1: optional back panel fill
     if (m_showBackPanel) {
-        p.fillRect(fullRect, m_panelBack1);
+        p.fillRect(fullRect, ItemColourLook::effective("Led.panelBackColour1", m_panelBack1, this));
     }
 
     // Step 2: compute led rect with padding inset

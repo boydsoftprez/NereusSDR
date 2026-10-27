@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - The 500 ms fade ramp (MeterItem's fade, Thetis fade())
 //                 in place of the instant on/off; the cover inflated by
 //                 max(2 px, 1%) as renderFadeCover does; the "use container
@@ -61,6 +64,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "FadeCoverItem.h"
+#include "ItemColourLook.h"
 #include "gui/containers/ContentFade.h"
 
 // From Thetis MeterManager.cs:7665 — clsFadeCover / renderFadeCover (line 36292)
@@ -136,12 +140,12 @@ void FadeCoverItem::paint(QPainter& p, int widgetW, int widgetH)
     const int alphaInt = static_cast<int>(m_alpha * 255.0f) * std::min(nFade, dimRange) / dimRange;
 
     if (m_colour1 == m_colour2) {
-        QColor fill = m_colour1;
+        QColor fill = ItemColourLook::effective("FadeCover.colour1", m_colour1, this);
         fill.setAlpha(alphaInt);
         p.fillRect(rect, fill);
     } else {
-        QColor c1 = m_colour1;
-        QColor c2 = m_colour2;
+        QColor c1 = ItemColourLook::effective("FadeCover.colour1", m_colour1, this);
+        QColor c2 = ItemColourLook::effective("FadeCover.colour2", m_colour2, this);
         c1.setAlpha(alphaInt);
         c2.setAlpha(alphaInt);
         QLinearGradient grad(rect.topLeft(), rect.bottomLeft());

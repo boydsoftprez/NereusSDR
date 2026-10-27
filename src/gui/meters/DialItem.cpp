@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis dial tuning: Degrees, Pressed, undoTuneStep,
 //                 Update, MouseUp and MouseWheel ported from clsDialDisplay
 //                 (the marker drag and wheel tune the slice the dial
@@ -137,6 +140,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "DialItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 #include "models/SliceModel.h"
 
@@ -917,13 +921,13 @@ void DialItem::paintStatic(QPainter& p, const CaptionLayout& layout)
 
     //large circle
     // Step 1: fill main circle
-    p.setBrush(m_circleColour);
+    p.setBrush(ItemColourLook::effective("Dial.circleColour", m_circleColour, this));
     p.setPen(Qt::NoPen);
     p.drawEllipse(dialRect);
 
     //dotted ring
     // Step 2: dashed ring inset by 4px
-    QPen ringPen(m_ringColour, 2, Qt::DashLine);
+    QPen ringPen(ItemColourLook::effective("Dial.ringColour", m_ringColour, this), 2, Qt::DashLine);
     p.setPen(ringPen);
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(dialRect.adjusted(4, 4, -4, -4));
@@ -931,7 +935,7 @@ void DialItem::paintStatic(QPainter& p, const CaptionLayout& layout)
     // Step 3: cross lines dividing circle into four quadrants
     // Thin lines through center in ring colour
     const QPoint center = dialRect.center();
-    QPen linePen(m_ringColour, 1);
+    QPen linePen(ItemColourLook::effective("Dial.ringColour", m_ringColour, this), 1);
     p.setPen(linePen);
     p.drawLine(center.x(), dialRect.top(), center.x(), dialRect.bottom());
     p.drawLine(dialRect.left(), center.y(), dialRect.right(), center.y());
@@ -943,7 +947,7 @@ void DialItem::paintStatic(QPainter& p, const CaptionLayout& layout)
     const double size = captionPixels(dialRect, 0);
     labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
     p.setFont(labelFont);
-    p.setPen(m_textColour);
+    p.setPen(ItemColourLook::effective("Dial.textColour", m_textColour, this));
     p.setBrush(Qt::NoBrush);
 
     if (layout.below) {
@@ -1015,7 +1019,7 @@ void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
     QFont labelFont;
     labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1, qRound(size))));
     p.setFont(labelFont);
-    p.setPen(m_textColour);
+    p.setPen(ItemColourLook::effective("Dial.textColour", m_textColour, this));
     p.setBrush(Qt::NoBrush);
     const int previous = sliceStepEnabled() ? previousSlice() : -1;
     const int next = sliceStepEnabled() ? nextSlice() : -1;
@@ -1026,25 +1030,25 @@ void DialItem::paintDynamic(QPainter& p, const QRect& dialRect)
 
     // Step 1: highlight active quadrant at alpha 0.3 (≈76/255)
     if (m_activeQuadrant >= 0 && m_activeQuadrant <= 3) {
-        fillQuadrant(quadRects[m_activeQuadrant], m_btnOnColour, 76);
+        fillQuadrant(quadRects[m_activeQuadrant], ItemColourLook::effective("Dial.buttonOnColour", m_btnOnColour, this), 76);
     }
 
     // Step 2: accel tint (bottom-left) at alpha 0.2 (≈51/255)
     if (m_accelEnabled) {
-        fillQuadrant(quadRects[2], m_btnOnColour, 51);
+        fillQuadrant(quadRects[2], ItemColourLook::effective("Dial.buttonOnColour", m_btnOnColour, this), 51);
     }
 
     // Step 3: lock tint (bottom-right) at alpha 0.2 (≈51/255)
     if (m_lockEnabled) {
-        fillQuadrant(quadRects[3], m_btnOnColour, 51);
+        fillQuadrant(quadRects[3], ItemColourLook::effective("Dial.buttonOnColour", m_btnOnColour, this), 51);
     }
 
     // Step 4: speed indicator dot at center
     QColor speedColor;
     switch (m_speedState) {
-        case SpeedState::Slow: speedColor = m_slowColour; break;
-        case SpeedState::Hold: speedColor = m_holdColour; break;
-        case SpeedState::Fast: speedColor = m_fastColour; break;
+        case SpeedState::Slow: speedColor = ItemColourLook::effective("Dial.slowColour", m_slowColour, this); break;
+        case SpeedState::Hold: speedColor = ItemColourLook::effective("Dial.holdColour", m_holdColour, this); break;
+        case SpeedState::Fast: speedColor = ItemColourLook::effective("Dial.fastColour", m_fastColour, this); break;
     }
 
     const int dotR = dialRect.width() / 10;
@@ -1070,7 +1074,7 @@ void DialItem::paintMarker(QPainter& p, const QRect& dialRect)
     const QPointF centre = QRectF(dialRect).center();
     const QPointF marker(centre.x() + std::cos(radians) * ringRadius,
                          centre.y() - std::sin(radians) * ringRadius);
-    p.setBrush(m_pressed ? m_padPressedColour : m_padColour);
+    p.setBrush(m_pressed ? ItemColourLook::effective("Dial.padPressedColour", m_padPressedColour, this) : ItemColourLook::effective("Dial.padColour", m_padColour, this));
     p.setPen(Qt::NoPen);
     p.drawEllipse(marker, markerRadius, markerRadius);
 }
@@ -1105,9 +1109,9 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     // else highlighted under the mouse, else off. The slice buttons are
     // never "on": they select, they are not a state.
     const auto zoneColour = [&](int zone, bool on) {
-        if (on) { return m_btnOnColour; }
+        if (on) { return ItemColourLook::effective("Dial.buttonOnColour", m_btnOnColour, this); }
         const bool highlighted = !m_pressed && m_hoverQuadrant == zone && buttonEnabled(zone);
-        return highlighted ? m_btnHighlight : m_btnOffColour;
+        return highlighted ? ItemColourLook::effective("Dial.buttonHighlightColour", m_btnHighlight, this) : ItemColourLook::effective("Dial.buttonOffColour", m_btnOffColour, this);
     };
     p.setPen(Qt::NoPen);
     p.fillRect(zones[0], zoneColour(0, false));
@@ -1116,7 +1120,7 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     p.fillRect(zones[3], zoneColour(3, m_lockEnabled));
 
     //large circle
-    p.setBrush(m_circleColour);
+    p.setBrush(ItemColourLook::effective("Dial.circleColour", m_circleColour, this));
     p.drawEllipse(centre, w / 2.0, w / 2.0);
 
     const double ringRadius = (w * kRingDiameterRatio) / 2.0;
@@ -1127,9 +1131,9 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
         if (m_pressed && std::abs(m_smoothedSpeed) >= kSpeedRingMin) {
             QColor speed;
             switch (m_tuneStepDirection) {
-                case -1: speed = m_slowColour; break;
-                case 1:  speed = m_fastColour; break;
-                default: speed = m_holdColour; break;
+                case -1: speed = ItemColourLook::effective("Dial.slowColour", m_slowColour, this); break;
+                case 1:  speed = ItemColourLook::effective("Dial.fastColour", m_fastColour, this); break;
+                default: speed = ItemColourLook::effective("Dial.holdColour", m_holdColour, this); break;
             }
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(speed, std::max(1.0, w * kSpeedRingWidthRatio)));
@@ -1139,7 +1143,7 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     //dotted ring
     // From Thetis MeterManager.cs:35380-35381 [v2.10.3.15]
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(m_ringColour, std::max(1.0, w * kDottedRingWidthRatio), Qt::DotLine));
+    p.setPen(QPen(ItemColourLook::effective("Dial.ringColour", m_ringColour, this), std::max(1.0, w * kDottedRingWidthRatio), Qt::DotLine));
     p.drawEllipse(centre, ringRadius, ringRadius);
 
     //button text
@@ -1154,10 +1158,10 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     p.setFont(font);
     const int previous = sliceStepEnabled() ? previousSlice() : -1;
     const int next = sliceStepEnabled() ? nextSlice() : -1;
-    QColor dimText = m_textColour;
-    dimText.setAlphaF(m_textColour.alphaF() * 0.5f);
+    QColor dimText = ItemColourLook::effective("Dial.textColour", m_textColour, this);
+    dimText.setAlphaF(ItemColourLook::effective("Dial.textColour", m_textColour, this).alphaF() * 0.5f);
     const auto label = [&](int zone, const QString& text, int alignment, bool enabled) {
-        p.setPen(enabled ? m_textColour : dimText);
+        p.setPen(enabled ? ItemColourLook::effective("Dial.textColour", m_textColour, this) : dimText);
         drawObjectText(p, zones[zone], text, size, alignment);
     };
     label(0, previous >= 0 ? QStringLiteral(" < ") + sliceLetter(previous) + QStringLiteral(" ") : QStringLiteral(" < "),
@@ -1167,9 +1171,9 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     if (layout.below) {
         // NereusSDR: under the dial (captionLayout), a space apart.
         p.setFont(layout.font);
-        p.setPen(m_textColour);
+        p.setPen(ItemColourLook::effective("Dial.textColour", m_textColour, this));
         p.drawText(layout.accel, Qt::AlignCenter, QStringLiteral("ACCEL"));
-        p.setPen(tunedSlice() >= 0 ? m_textColour : dimText);
+        p.setPen(tunedSlice() >= 0 ? ItemColourLook::effective("Dial.textColour", m_textColour, this) : dimText);
         p.drawText(layout.lock, Qt::AlignCenter, QStringLiteral("LOCK"));
     } else {
         label(2, QStringLiteral(" ACCEL "), Qt::AlignLeft | Qt::AlignBottom, true);

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave round 2 (I7): a saved display in the old look is
 //                 hit where that look draws: legacyLayout maps the frame's
 //                 span across the full rect, edges and notches are lines,
@@ -88,6 +91,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "FilterDisplayItem.h"
+#include "ItemColourLook.h"
 
 // From Thetis clsFilterItem (MeterManager.cs:16852+)
 
@@ -336,9 +340,9 @@ void FilterDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     // Background
-    p.fillRect(rect, m_meterBackColour);
+    p.fillRect(rect, ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this));
     if (!m_frameAvailable) {
-        p.setPen(m_textColour);
+        p.setPen(ItemColourLook::effective("FilterDisplay.textColour", m_textColour, this));
         p.drawText(rect, Qt::AlignCenter, QStringLiteral("Spectrum unavailable"));
         return;
     }
@@ -402,12 +406,12 @@ void FilterDisplayItem::paintSpectrum(QPainter& p, const QRect& rect)
         poly.append(QPointF(static_cast<float>(rect.right()), static_cast<float>(rect.bottom())));
 
         p.setPen(Qt::NoPen);
-        p.setBrush(m_dataFillColour);
+        p.setBrush(ItemColourLook::effective("FilterDisplay.dataFillColour", m_dataFillColour, this));
         p.drawPolygon(poly);
     }
 
     // Draw spectrum line
-    p.setPen(QPen(m_dataLineColour, 1.0f));
+    p.setPen(QPen(ItemColourLook::effective("FilterDisplay.dataLineColour", m_dataLineColour, this), 1.0f));
     p.setBrush(Qt::NoBrush);
     p.drawPolyline(points);
 }
@@ -537,7 +541,7 @@ void FilterDisplayItem::paintFilterEdges(QPainter& p, const QRect& rect)
 
     // RX filter edges — 2px solid yellow
     // From Thetis _edges_colour_rx (MeterManager.cs:16951)
-    p.setPen(QPen(m_edgesColourRX, 2));
+    p.setPen(QPen(ItemColourLook::effective("FilterDisplay.edgesColourRX", m_edgesColourRX, this), 2));
     if (m_rxLow >= 0) {
         p.drawLine(pixelToX(m_rxLow),  rect.top(), pixelToX(m_rxLow),  rect.bottom());
     }
@@ -548,7 +552,7 @@ void FilterDisplayItem::paintFilterEdges(QPainter& p, const QRect& rect)
     // TX filter edges — 1px dashed red (only when txLow >= 0)
     // From Thetis _edges_colour_tx (MeterManager.cs:16952)
     if (m_txLow >= 0 || m_txHigh >= 0) {
-        QPen txPen(m_edgesColourTX, 1, Qt::DashLine);
+        QPen txPen(ItemColourLook::effective("FilterDisplay.edgesColourTX", m_edgesColourTX, this), 1, Qt::DashLine);
         p.setPen(txPen);
         if (m_txLow >= 0) {
             p.drawLine(pixelToX(m_txLow), rect.top(), pixelToX(m_txLow), rect.bottom());
@@ -658,7 +662,7 @@ void FilterDisplayItem::paintNotches(QPainter& p, const QRect& rect)
         static_cast<float>(std::max(1, int(m_spectrumData.size())));
 
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.setPen(QPen(m_notchColour, 1));
+    p.setPen(QPen(ItemColourLook::effective("FilterDisplay.notchColour", m_notchColour, this), 1));
 
     for (int pos : m_notchPositions) {
         const int x = rect.left() + static_cast<int>(static_cast<float>(pos) * scale);
@@ -1509,28 +1513,28 @@ void FilterDisplayItem::paintThetisSpectrum(QPainter& p, const ThetisLayout& l)
     p.save();
     p.setClipRect(clipRect, Qt::IntersectClip);
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.fillRect(clipRect, m_meterBackColour);
+    p.fillRect(clipRect, ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this));
 
     const QVector<float> grey = greyscale(l);
-    const QColor greyLine = greyOf(m_dataLineColour);
-    const QColor greyFill = greyOf(m_dataFillColour);
+    const QColor greyLine = greyOf(ItemColourLook::effective("FilterDisplay.dataLineColour", m_dataLineColour, this));
+    const QColor greyFill = greyOf(ItemColourLook::effective("FilterDisplay.dataFillColour", m_dataFillColour, this));
     const float dbmToPixel = l.spectrumHeight / specRange;
     float py = (gridMax - m_spectrumData[0]) * dbmToPixel;
     QPointF oldPos(l.extentL, l.topPos + py);
-    QPen linePen(m_dataLineColour, std::max(1.0f, xStep), Qt::SolidLine, Qt::RoundCap);
-    QPen fillPen(m_dataFillColour, std::max(1.0f, xStep), Qt::SolidLine, Qt::FlatCap);
+    QPen linePen(ItemColourLook::effective("FilterDisplay.dataLineColour", m_dataLineColour, this), std::max(1.0f, xStep), Qt::SolidLine, Qt::RoundCap);
+    QPen fillPen(ItemColourLook::effective("FilterDisplay.dataFillColour", m_dataFillColour, this), std::max(1.0f, xStep), Qt::SolidLine, Qt::FlatCap);
     for (int px = 1; px < totData; ++px) {
         py = (gridMax - m_spectrumData[size_t(px)]) * dbmToPixel;
         const QPointF newPos(l.extentL + (px * xStep), l.topPos + py);
         const float attenuation = grey[px];
         if (m_fillSpectrum) {
-            fillPen.setColor(m_greyWhenNotActive ? blend(m_dataFillColour, greyFill, attenuation)
-                                                 : m_dataFillColour);
+            fillPen.setColor(m_greyWhenNotActive ? blend(ItemColourLook::effective("FilterDisplay.dataFillColour", m_dataFillColour, this), greyFill, attenuation)
+                                                 : ItemColourLook::effective("FilterDisplay.dataFillColour", m_dataFillColour, this));
             p.setPen(fillPen);
             p.drawLine(QPointF(newPos.x(), l.botPos), newPos);
         }
-        linePen.setColor(m_greyWhenNotActive ? blend(m_dataLineColour, greyLine, attenuation)
-                                             : m_dataLineColour);
+        linePen.setColor(m_greyWhenNotActive ? blend(ItemColourLook::effective("FilterDisplay.dataLineColour", m_dataLineColour, this), greyLine, attenuation)
+                                             : ItemColourLook::effective("FilterDisplay.dataLineColour", m_dataLineColour, this));
         p.setPen(linePen);
         p.drawLine(oldPos, newPos);
         oldPos = newPos;
@@ -1551,7 +1555,7 @@ void FilterDisplayItem::paintThetisWaterfall(QPainter& p, const ThetisLayout& l)
     const QRectF dest(clipRect.left(), topY, clipRect.width(), bitmapHeight);
     p.save();
     p.setClipRect(clipRect, Qt::IntersectClip);
-    p.fillRect(clipRect, m_meterBackColour);
+    p.fillRect(clipRect, ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this));
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.drawImage(dest, m_waterfallImage);
     p.restore();
@@ -1615,21 +1619,21 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
     p.fillRect(QRectF(l.x, l.y, l.w, l.h), kThetisItemBackground);
     if (m_state.sliceIndex < 0) {
         // No slice delivered yet (or it closed): nothing to draw against.
-        p.fillRect(l.itemRect, m_meterBackColour);
-        p.setPen(m_textColour);
+        p.fillRect(l.itemRect, ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this));
+        p.setPen(ItemColourLook::effective("FilterDisplay.textColour", m_textColour, this));
         p.drawText(l.itemRect, Qt::AlignCenter, QStringLiteral("Spectrum unavailable"));
         p.restore();
         return;
     }
     const bool tx = txActive();
-    const QColor extentTextColour = m_textColour;
-    const QColor extentColour = m_extentsColour;
-    const QColor snaplineColour = m_snapLineColour;
+    const QColor extentTextColour = ItemColourLook::effective("FilterDisplay.textColour", m_textColour, this);
+    const QColor extentColour = ItemColourLook::effective("FilterDisplay.extentsColour", m_extentsColour, this);
+    const QColor snaplineColour = ItemColourLook::effective("FilterDisplay.snapLineColour", m_snapLineColour, this);
     const QColor textOverlayColour = kThetisItemBackground; // same as the background
-    const QColor filterLineColour = tx ? m_edgesColourTX : m_edgesColourRX;
+    const QColor filterLineColour = tx ? ItemColourLook::effective("FilterDisplay.edgesColourTX", m_edgesColourTX, this) : ItemColourLook::effective("FilterDisplay.edgesColourRX", m_edgesColourRX, this);
     const QColor filterLineFaded = withAlpha(filterLineColour, 128);
-    const QColor filterLineHighlight = m_edgeHighlightColour;
-    const QColor textOverlayHighlight = m_numberHighlightColour;
+    const QColor filterLineHighlight = ItemColourLook::effective("FilterDisplay.edgeHighlightColour", m_edgeHighlightColour, this);
+    const QColor textOverlayHighlight = ItemColourLook::effective("FilterDisplay.numberHighlightColour", m_numberHighlightColour, this);
     const Hover hv = hoverAt(l, m_mousePoint);
 
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -1641,7 +1645,7 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
     //spectrum + waterfall display
     if (m_displayMode != DisplayMode::None) {
         if (!m_frameAvailable) {
-            p.setPen(m_textColour);
+            p.setPen(ItemColourLook::effective("FilterDisplay.textColour", m_textColour, this));
             p.drawText(QRectF(l.extentL, l.topLineY, l.extentH - l.extentL, l.botLineY - l.topLineY),
                        Qt::AlignCenter, QStringLiteral("Spectrum unavailable"));
         } else {
@@ -1733,10 +1737,10 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
 
     // notches
     if (!tx) {
-        const QColor notchFill = withAlpha(m_notchColour, 96);
-        const QColor notchFillHighlight = withAlpha(m_notchHighlightColour, 192);
+        const QColor notchFill = withAlpha(ItemColourLook::effective("FilterDisplay.notchColour", m_notchColour, this), 96);
+        const QColor notchFillHighlight = withAlpha(ItemColourLook::effective("FilterDisplay.notchHighlightColour", m_notchHighlightColour, this), 192);
         const QColor notchLineHighlight = filterLineHighlight;
-        const QColor notchFillDisabled = withAlpha(m_notchColour, 48);
+        const QColor notchFillDisabled = withAlpha(ItemColourLook::effective("FilterDisplay.notchColour", m_notchColour, this), 48);
         const double extent = l.extentHz;
         for (const NotchMark& notch : m_state.notches) {
             const double shiftHz = notch.centreHz - m_state.vfoHz;
@@ -1761,21 +1765,21 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
              false, true, false, {});
 
     //mnf and +mnf buttons
-    const QColor mnfHighlight = hv.mnf ? m_buttonHighlightColour : textOverlayColour;
-    const QColor mnfPlusHighlight = hv.mnfPlus ? m_buttonHighlightColour : textOverlayColour;
-    const QColor snapHighlight = hv.snap ? m_buttonHighlightColour : textOverlayColour;
-    const QColor zoomHighlight = hv.fit ? m_buttonHighlightColour : textOverlayColour;
+    const QColor mnfHighlight = hv.mnf ? ItemColourLook::effective("FilterDisplay.buttonHighlightColour", m_buttonHighlightColour, this) : textOverlayColour;
+    const QColor mnfPlusHighlight = hv.mnfPlus ? ItemColourLook::effective("FilterDisplay.buttonHighlightColour", m_buttonHighlightColour, this) : textOverlayColour;
+    const QColor snapHighlight = hv.snap ? ItemColourLook::effective("FilterDisplay.buttonHighlightColour", m_buttonHighlightColour, this) : textOverlayColour;
+    const QColor zoomHighlight = hv.fit ? ItemColourLook::effective("FilterDisplay.buttonHighlightColour", m_buttonHighlightColour, this) : textOverlayColour;
     plotText(p, l, QLatin1String(kMnfLabel), float(l.mnfRect.x()), l.textY,
              m_state.tnfActive ? QColor(Qt::white) : extentTextColour, 255, false, false, true,
-             m_state.tnfActive ? m_settingOnColour : mnfHighlight);
+             m_state.tnfActive ? ItemColourLook::effective("FilterDisplay.settingOnColour", m_settingOnColour, this) : mnfHighlight);
     plotText(p, l, QLatin1String(kMnfPlusLabel), float(l.mnfPlusRect.x()), l.textY,
              extentTextColour, 255, false, false, true, mnfPlusHighlight);
     plotText(p, l, QLatin1String(kSnapLabel), float(l.snapRect.x()), l.textY,
              extentTextColour, m_autoZoom ? 92 : 255, false, false, true,
-             m_snapLines ? m_settingOnColour : snapHighlight);
+             m_snapLines ? ItemColourLook::effective("FilterDisplay.settingOnColour", m_settingOnColour, this) : snapHighlight);
     plotText(p, l, QLatin1String(kFitLabel), float(l.fitRect.x()), l.textY,
              extentTextColour, 255, false, false, true,
-             m_autoZoom ? m_settingOnColour : zoomHighlight);
+             m_autoZoom ? ItemColourLook::effective("FilterDisplay.settingOnColour", m_settingOnColour, this) : zoomHighlight);
 
     //filter edge values
     const QFontMetricsF fm(l.font);

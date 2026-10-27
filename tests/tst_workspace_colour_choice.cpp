@@ -36,6 +36,7 @@
 #include "gui/TimeSeriesGraphWidget.h"
 #include "gui/TitleBar.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/styles/WorkspacePalette.h"
@@ -471,15 +472,21 @@ private slots:
         QCOMPARE(img.pixelColor(1, 1).rgb(), expectedData(on, QColor(0x0f, 0x0f, 0x1a), "app-bg").rgb());
     }
 
-    // Meter ink is unchanged in both states: a bar row's factory white bar
-    // and the scale's factory tick colour.
+    // Meter ink: a bar row's white bar (no listed default) is unchanged in
+    // both states; the scale's factory tick colour follows the workspace
+    // look with the switch on (ItemColourLook, 2026-10-26) and is classic
+    // with it off.
     void meterInkUnchanged_data() { addSwitchRows(); }
     void meterInkUnchanged()
     {
         QFETCH(bool, on);
         WorkspacePreview::setEnabledForTest(on);
         QCOMPARE(barBaseline(QColor(Qt::white)).rgb(), QColor(Qt::white).rgb());
-        QCOMPARE(scaleTick(QColor()).rgb(), QColor(0xc8, 0xd8, 0xe8).rgb());
+        QCOMPARE(scaleTick(QColor()).rgb(),
+                 ItemColourLook::effective("Scale.tickColor", QColor(0xc8, 0xd8, 0xe8)).rgb());
+        if (on) {
+            QVERIFY(scaleTick(QColor()).rgb() != QColor(0xc8, 0xd8, 0xe8).rgb());
+        }
     }
 
     void userColoursWin_data() { addSwitchRows(); }
@@ -495,7 +502,9 @@ private slots:
 
     // The Thetis bar strips (BarPresetItem): the default (32,32,32)
     // backdrop takes the panel role with the switch on; the factory ink
-    // (white scale, red over-range, yellow marker) is unchanged.
+    // (white scale, red over-range, yellow marker) follows the workspace
+    // look with the switch on (ItemColourLook, 2026-10-26) and is classic
+    // with it off.
     void barStrip_data() { addSwitchRows(); }
     void barStrip()
     {
@@ -503,7 +512,9 @@ private slots:
         WorkspacePreview::setEnabledForTest(on);
         const QImage img = presetStrip();
         QCOMPARE(img.pixelColor(1, 1).rgb(), expectedData(on, QColor(32, 32, 32), "panel").rgb());
-        for (const QColor& ink : {QColor(Qt::white), QColor(Qt::red), QColor(Qt::yellow)}) {
+        for (const QColor& ink : {ItemColourLook::effective("BarPreset.lowColor", QColor(Qt::white)),
+                                  ItemColourLook::effective("BarPreset.highColor", QColor(Qt::red)),
+                                  ItemColourLook::effective("BarPreset.barColor", QColor(Qt::yellow))}) {
             QVERIFY2(countPixels(img, img.rect(), ink) > 0, qPrintable(ink.name()));
         }
     }

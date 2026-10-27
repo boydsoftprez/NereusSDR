@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Shadow, peak hold, peak hold color and ignore history
 //                 rows; history and power limit ranges from Thetis setup.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -62,6 +65,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NeedleItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "../../meters/MeterItem.h"
 
@@ -164,9 +168,7 @@ void NeedleItemEditor::setItem(MeterItem* item)
 
     // Needle color button
     const QColor nc = needle->needleColor();
-    m_btnNeedleColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(nc.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnNeedleColor, QStringLiteral("Needle.needleColor"), nc);
 
     m_spinAttack->setValue(static_cast<double>(needle->attackRatio()));
     m_spinDecay->setValue(static_cast<double>(needle->decayRatio()));
@@ -183,18 +185,14 @@ void NeedleItemEditor::setItem(MeterItem* item)
     m_chkShadow->setChecked(needle->shadow());
     m_chkPeakHold->setChecked(needle->peakHold());
     const QColor pc = needle->peakHoldColour();
-    m_btnPeakHoldColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(pc.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnPeakHoldColor, QStringLiteral("Needle.peakHoldColour"), pc);
 
     m_chkHistory->setChecked(needle->historyEnabled());
     m_spinHistoryDuration->setValue(needle->historyDuration());
     m_spinIgnoreHistory->setValue(needle->ignoreHistoryMs());
 
     const QColor hc = needle->historyColor();
-    m_btnHistoryColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(hc.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnHistoryColor, QStringLiteral("Needle.historyColor"), hc);
 
     m_chkNormaliseTo100W->setChecked(needle->normaliseTo100W());
     m_spinMaxPower->setValue(static_cast<double>(needle->maxPower()));
@@ -311,9 +309,7 @@ void NeedleItemEditor::buildTypeSpecific()
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             needle->setNeedleColor(chosen);
-            m_btnNeedleColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnNeedleColor, QStringLiteral("Needle.needleColor"), chosen);
             notifyChanged();
         }
     });
@@ -395,9 +391,7 @@ void NeedleItemEditor::buildTypeSpecific()
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             needle->setPeakHoldColour(chosen);
-            m_btnPeakHoldColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPeakHoldColor, QStringLiteral("Needle.peakHoldColour"), chosen);
             notifyChanged();
         }
     });
@@ -537,9 +531,7 @@ void NeedleItemEditor::buildTypeSpecific()
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             needle->setHistoryColor(chosen);
-            m_btnHistoryColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnHistoryColor, QStringLiteral("Needle.historyColor"), chosen);
             notifyChanged();
         }
     });

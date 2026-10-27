@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Display mode by slice letter (Source slice, All slices,
 //                 Slice A and on) in place of VFO A / VFO B / Both; layout,
 //                 band text and the remaining VFO display colours, with a
@@ -6,6 +9,7 @@
 //                 AI-assisted via Anthropic Claude Code.
 
 #include "VfoDisplayItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/VfoDisplayItem.h"
 
 #include <QCheckBox>
@@ -16,11 +20,9 @@
 namespace NereusSDR {
 
 namespace {
-void applyBtnColor(QPushButton* btn, const QColor& c)
+void applyBtnColor(QPushButton* btn, const QString& field, const QColor& c)
 {
-    btn->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(c.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(btn, field, c);
 }
 
 constexpr const char* kComboStyle =
@@ -54,7 +56,7 @@ void VfoDisplayItemEditor::setItem(MeterItem* item)
     m_chkBandText->setChecked(v->showBandText());
     m_btnBandTextColour->setEnabled(v->showBandText());
     for (const ColourRow& row : std::as_const(m_colourRows)) {
-        applyBtnColor(row.button, row.get(*v));
+        applyBtnColor(row.button, row.field, row.get(*v));
     }
     endProgrammaticUpdate();
 }
@@ -113,22 +115,22 @@ void VfoDisplayItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("Colors"));
 
     auto makeColorBtn = [this](const QString& label, QPushButton*& out,
-                               auto setter, auto getter) {
+                               auto setter, auto getter, const QString& field) {
         out = new QPushButton(this);
         out->setFixedSize(40, 18);
         QPushButton* btn = out;
-        connect(btn, &QPushButton::clicked, this, [this, btn, setter]() {
+        connect(btn, &QPushButton::clicked, this, [this, btn, setter, field]() {
             VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
             if (!v) { return; }
             const QColor chosen = QColorDialog::getColor(
                 Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
                 (v->*setter)(chosen);
-                applyBtnColor(btn, chosen);
+                applyBtnColor(btn, field, chosen);
                 notifyChanged();
             }
         });
-        m_colourRows.append({btn, [getter](const VfoDisplayItem& v) { return (v.*getter)(); }});
+        m_colourRows.append({btn, field, [getter](const VfoDisplayItem& v) { return (v.*getter)(); }});
         addRow(label, out);
     };
 
@@ -139,9 +141,9 @@ void VfoDisplayItemEditor::buildTypeSpecific()
     QPushButton* lock = nullptr;
     QPushButton* sync = nullptr;
     QPushButton* back = nullptr;
-    makeColorBtn(QStringLiteral("Title"),        title,              &VfoDisplayItem::setTitleColour,          &VfoDisplayItem::titleColour);
-    makeColorBtn(QStringLiteral("Frequency"),    m_btnFreqColour,    &VfoDisplayItem::setFrequencyColour,      &VfoDisplayItem::frequencyColour);
-    makeColorBtn(QStringLiteral("Small digits"), m_btnFreqSmallColour, &VfoDisplayItem::setFrequencySmallColour, &VfoDisplayItem::frequencySmallColour);
+    makeColorBtn(QStringLiteral("Title"),        title,              &VfoDisplayItem::setTitleColour,          &VfoDisplayItem::titleColour, QStringLiteral("VfoDisplay.titleColour"));
+    makeColorBtn(QStringLiteral("Frequency"),    m_btnFreqColour,    &VfoDisplayItem::setFrequencyColour,      &VfoDisplayItem::frequencyColour, QStringLiteral("VfoDisplay.frequencyColour"));
+    makeColorBtn(QStringLiteral("Small digits"), m_btnFreqSmallColour, &VfoDisplayItem::setFrequencySmallColour, &VfoDisplayItem::frequencySmallColour, QStringLiteral("VfoDisplay.frequencySmallColour"));
 
     // The small digits take the frequency colour.
     m_btnCopyToSmall = new QPushButton(QStringLiteral("Copy to small digits"), this);
@@ -150,23 +152,23 @@ void VfoDisplayItemEditor::buildTypeSpecific()
         VfoDisplayItem* v = qobject_cast<VfoDisplayItem*>(m_item);
         if (!v) { return; }
         v->setFrequencySmallColour(v->frequencyColour());
-        applyBtnColor(m_btnFreqSmallColour, v->frequencySmallColour());
+        applyBtnColor(m_btnFreqSmallColour, QStringLiteral("VfoDisplay.frequencySmallColour"), v->frequencySmallColour());
         notifyChanged();
     });
     addRow(QString(), m_btnCopyToSmall);
 
-    makeColorBtn(QStringLiteral("Mode"),            m_btnModeColour,     &VfoDisplayItem::setModeColour,           &VfoDisplayItem::modeColour);
-    makeColorBtn(QStringLiteral("Filter"),          m_btnFilterColour,   &VfoDisplayItem::setFilterColour,         &VfoDisplayItem::filterColour);
-    makeColorBtn(QStringLiteral("Band"),            m_btnBandColour,     &VfoDisplayItem::setBandColour,           &VfoDisplayItem::bandColour);
-    makeColorBtn(QStringLiteral("Band text"),       m_btnBandTextColour, &VfoDisplayItem::setBandTextColour,       &VfoDisplayItem::bandTextColour);
-    makeColorBtn(QStringLiteral("Split back"),      splitBack,           &VfoDisplayItem::setSplitBackColour,      &VfoDisplayItem::splitBackColour);
-    makeColorBtn(QStringLiteral("Split"),           split,               &VfoDisplayItem::setSplitColour,          &VfoDisplayItem::splitColour);
-    makeColorBtn(QStringLiteral("Digit highlight"), highlight,           &VfoDisplayItem::setDigitHighlightColour, &VfoDisplayItem::digitHighlightColour);
-    makeColorBtn(QStringLiteral("RX label"),        m_btnRxColour,       &VfoDisplayItem::setRxColour,             &VfoDisplayItem::rxColour);
-    makeColorBtn(QStringLiteral("TX label"),        m_btnTxColour,       &VfoDisplayItem::setTxColour,             &VfoDisplayItem::txColour);
-    makeColorBtn(QStringLiteral("Lock"),            lock,                &VfoDisplayItem::setLockColour,           &VfoDisplayItem::lockColour);
-    makeColorBtn(QStringLiteral("Sync"),            sync,                &VfoDisplayItem::setSyncColour,           &VfoDisplayItem::syncColour);
-    makeColorBtn(QStringLiteral("Background"),      back,                &VfoDisplayItem::setBackgroundColour,     &VfoDisplayItem::backgroundColour);
+    makeColorBtn(QStringLiteral("Mode"),            m_btnModeColour,     &VfoDisplayItem::setModeColour,           &VfoDisplayItem::modeColour, QStringLiteral("VfoDisplay.modeColour"));
+    makeColorBtn(QStringLiteral("Filter"),          m_btnFilterColour,   &VfoDisplayItem::setFilterColour,         &VfoDisplayItem::filterColour, QStringLiteral("VfoDisplay.filterColour"));
+    makeColorBtn(QStringLiteral("Band"),            m_btnBandColour,     &VfoDisplayItem::setBandColour,           &VfoDisplayItem::bandColour, QStringLiteral("VfoDisplay.bandColour"));
+    makeColorBtn(QStringLiteral("Band text"),       m_btnBandTextColour, &VfoDisplayItem::setBandTextColour,       &VfoDisplayItem::bandTextColour, QStringLiteral("VfoDisplay.bandTextColour"));
+    makeColorBtn(QStringLiteral("Split back"),      splitBack,           &VfoDisplayItem::setSplitBackColour,      &VfoDisplayItem::splitBackColour, QStringLiteral("VfoDisplay.splitBackColour"));
+    makeColorBtn(QStringLiteral("Split"),           split,               &VfoDisplayItem::setSplitColour,          &VfoDisplayItem::splitColour, QStringLiteral("VfoDisplay.splitColour"));
+    makeColorBtn(QStringLiteral("Digit highlight"), highlight,           &VfoDisplayItem::setDigitHighlightColour, &VfoDisplayItem::digitHighlightColour, QStringLiteral("VfoDisplay.digitHighlightColour"));
+    makeColorBtn(QStringLiteral("RX label"),        m_btnRxColour,       &VfoDisplayItem::setRxColour,             &VfoDisplayItem::rxColour, QStringLiteral("VfoDisplay.rxColour"));
+    makeColorBtn(QStringLiteral("TX label"),        m_btnTxColour,       &VfoDisplayItem::setTxColour,             &VfoDisplayItem::txColour, QStringLiteral("VfoDisplay.txColour"));
+    makeColorBtn(QStringLiteral("Lock"),            lock,                &VfoDisplayItem::setLockColour,           &VfoDisplayItem::lockColour, QStringLiteral("VfoDisplay.lockColour"));
+    makeColorBtn(QStringLiteral("Sync"),            sync,                &VfoDisplayItem::setSyncColour,           &VfoDisplayItem::syncColour, QStringLiteral("VfoDisplay.syncColour"));
+    makeColorBtn(QStringLiteral("Background"),      back,                &VfoDisplayItem::setBackgroundColour,     &VfoDisplayItem::backgroundColour, QStringLiteral("VfoDisplay.backgroundColour"));
 }
 
 } // namespace NereusSDR

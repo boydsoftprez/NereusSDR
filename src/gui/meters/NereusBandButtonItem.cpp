@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus-styled duplicate of BandButtonItem. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-10-22 - Corner radius and border match the PureSignal button.
@@ -70,6 +73,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NereusBandButtonItem.h"
+#include "ItemColourLook.h"
 
 #include "ResponsiveText.h"
 #include "gui/StyleConstants.h"
@@ -195,9 +199,9 @@ void NereusBandButtonItem::paintButton(QPainter& painter, int index, const QRect
     const bool pressed = index == pressedButton();
     const bool selected = face.on;
 
-    QColor top = selected ? m_selectedTop : m_backgroundTop;
-    QColor bottom = selected ? m_selectedBottom : m_backgroundBottom;
-    QColor ink = m_textColor;
+    QColor top = selected ? ItemColourLook::effective("NereusBand.selectedTopColor", m_selectedTop, this) : ItemColourLook::effective("NereusBand.backgroundTopColor", m_backgroundTop, this);
+    QColor bottom = selected ? ItemColourLook::effective("NereusBand.selectedBottomColor", m_selectedBottom, this) : ItemColourLook::effective("NereusBand.backgroundBottomColor", m_backgroundBottom, this);
+    QColor ink = ItemColourLook::effective("NereusBand.buttonTextColor", m_textColor, this);
     if (!face.enabled) {
         top = bottom = QColor(Style::kDisabledBg);
         ink = QColor(Style::kDisabledText);

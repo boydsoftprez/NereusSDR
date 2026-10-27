@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: darkFaceArtAvailable, for the editor.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (M2): trace 2's veil shows why it has
@@ -209,6 +212,10 @@ private:
     bool primaryNeedle(int channel) const;
     // A blank optional color key falls back to the face's own ink.
     QColor optionalColor(const char* key,const QColor& fallback) const;
+    // A colour key of the face (`config` is m_config) or of a channel, as
+    // drawn: the workspace look's colour while the key holds its default
+    // (ItemColourLook.h), otherwise the stored colour.
+    QColor lookColor(const QJsonObject& config,const char* key) const;
     bool faceShadow() const { return m_config.value(QStringLiteral("shadow")).toBool(true); }
     bool hasLegalMarker(int) const;
     void configureDynamics();

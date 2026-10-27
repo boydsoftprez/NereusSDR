@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis rotator settings: beam width 0-180 in 0.05 steps
 //                 and padding 0.001-1 (the Thetis Setup ranges), the beam
 //                 width rows disabled when the beam is off, a full background
@@ -75,6 +78,7 @@
 // project-level LICENSE applies (it is the designer half of the Setup class in setup.cs).
 
 #include "RotatorItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/RotatorItem.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/mmio/MmioEndpoint.h"
@@ -92,11 +96,9 @@
 namespace NereusSDR {
 
 namespace {
-void applyBtnColor(QPushButton* btn, const QColor& c)
+void applyBtnColor(QPushButton* btn, const QString& field, const QColor& c)
 {
-    btn->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(c.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(btn, field, c);
 }
 
 constexpr const char* kComboStyle =
@@ -140,14 +142,14 @@ void RotatorItemEditor::setItem(MeterItem* item)
     m_spinPadding->setValue(static_cast<double>(r->padding()));
     m_chkFullBackground->setChecked(r->fullBackground());
     m_editBgPath->setText(r->backgroundImagePath());
-    applyBtnColor(m_btnBigBlob,    r->bigBlobColour());
-    applyBtnColor(m_btnSmallBlob,  r->smallBlobColour());
-    applyBtnColor(m_btnOuterText,  r->outerTextColour());
-    applyBtnColor(m_btnArrow,      r->arrowColour());
-    applyBtnColor(m_btnBeamWidth,  r->beamWidthColour());
-    applyBtnColor(m_btnBackground, r->backgroundColour());
+    applyBtnColor(m_btnBigBlob, QStringLiteral("Rotator.bigBlobColour"), r->bigBlobColour());
+    applyBtnColor(m_btnSmallBlob, QStringLiteral("Rotator.smallBlobColour"), r->smallBlobColour());
+    applyBtnColor(m_btnOuterText, QStringLiteral("Rotator.outerTextColour"), r->outerTextColour());
+    applyBtnColor(m_btnArrow, QStringLiteral("Rotator.arrowColour"), r->arrowColour());
+    applyBtnColor(m_btnBeamWidth, QStringLiteral("Rotator.beamWidthColour"), r->beamWidthColour());
+    applyBtnColor(m_btnBackground, QStringLiteral("Rotator.backgroundColour"), r->backgroundColour());
     m_chkAllowControl->setChecked(r->allowControl());
-    applyBtnColor(m_btnControlColour, r->controlColour());
+    applyBtnColor(m_btnControlColour, QStringLiteral("Rotator.controlColour"), r->controlColour());
     m_comboCommandPath->setCurrentIndex(
         m_comboCommandPath->findData(static_cast<int>(r->commandPath())));
     const MmioEndpoint* ep = r->commandEndpointGuid().isNull()
@@ -341,30 +343,30 @@ void RotatorItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("Colors"));
 
     auto makeColorBtn = [this](const QString& label, QPushButton*& out,
-                               auto setter) {
+                               auto setter, const QString& field) {
         out = new QPushButton(this);
         out->setFixedSize(40, 18);
         QPushButton* btn = out;
-        connect(btn, &QPushButton::clicked, this, [this, btn, setter]() {
+        connect(btn, &QPushButton::clicked, this, [this, btn, setter, field]() {
             RotatorItem* r = qobject_cast<RotatorItem*>(m_item);
             if (!r) { return; }
             const QColor chosen = QColorDialog::getColor(
                 Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
                 (r->*setter)(chosen);
-                applyBtnColor(btn, chosen);
+                applyBtnColor(btn, field, chosen);
                 notifyChanged();
             }
         });
         addRow(label, out);
     };
 
-    makeColorBtn(QStringLiteral("Large dot"),    m_btnBigBlob,   &RotatorItem::setBigBlobColour);
-    makeColorBtn(QStringLiteral("Small dot"),    m_btnSmallBlob, &RotatorItem::setSmallBlobColour);
-    makeColorBtn(QStringLiteral("Outer text"),   m_btnOuterText, &RotatorItem::setOuterTextColour);
-    makeColorBtn(QStringLiteral("Arrow"),        m_btnArrow,     &RotatorItem::setArrowColour);
-    makeColorBtn(QStringLiteral("Beam width"),   m_btnBeamWidth, &RotatorItem::setBeamWidthColour);
-    makeColorBtn(QStringLiteral("Background"),   m_btnBackground,&RotatorItem::setBackgroundColour);
+    makeColorBtn(QStringLiteral("Large dot"),    m_btnBigBlob,   &RotatorItem::setBigBlobColour, QStringLiteral("Rotator.bigBlobColour"));
+    makeColorBtn(QStringLiteral("Small dot"),    m_btnSmallBlob, &RotatorItem::setSmallBlobColour, QStringLiteral("Rotator.smallBlobColour"));
+    makeColorBtn(QStringLiteral("Outer text"),   m_btnOuterText, &RotatorItem::setOuterTextColour, QStringLiteral("Rotator.outerTextColour"));
+    makeColorBtn(QStringLiteral("Arrow"),        m_btnArrow,     &RotatorItem::setArrowColour, QStringLiteral("Rotator.arrowColour"));
+    makeColorBtn(QStringLiteral("Beam width"),   m_btnBeamWidth, &RotatorItem::setBeamWidthColour, QStringLiteral("Rotator.beamWidthColour"));
+    makeColorBtn(QStringLiteral("Background"),   m_btnBackground,&RotatorItem::setBackgroundColour, QStringLiteral("Rotator.backgroundColour"));
     m_btnBeamWidth->setObjectName(QStringLiteral("rotatorBeamWidthColour"));
 
     addHeader(QStringLiteral("Control"));
@@ -383,7 +385,7 @@ void RotatorItemEditor::buildTypeSpecific()
     });
 
     makeColorBtn(QStringLiteral("Control color"), m_btnControlColour,
-                 &RotatorItem::setControlColour);
+                 &RotatorItem::setControlColour, QStringLiteral("Rotator.controlColour"));
     m_btnControlColour->setObjectName(QStringLiteral("rotatorControlColour"));
 
     m_comboCommandPath = new QComboBox(this);

@@ -10,6 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -159,6 +162,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "WebImageItem.h"
+#include "ItemColourLook.h"
 
 // From Thetis clsWebImage (MeterManager.cs:15485+)
 
@@ -758,7 +762,7 @@ void WebImageItem::onFetchFinished(QNetworkReply* reply)
 void WebImageItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect itemRect = pixelRect(widgetW, widgetH);
-    p.fillRect(itemRect, m_fallbackColor);
+    p.fillRect(itemRect, ItemColourLook::effective("WebImage.fallbackColor", m_fallbackColor, this));
     if (m_image.isNull()) {
         // From Thetis MeterManager.cs:36668 [v2.10.3.15]
         p.save();

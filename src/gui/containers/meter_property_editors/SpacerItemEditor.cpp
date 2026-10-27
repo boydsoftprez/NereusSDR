@@ -1,4 +1,5 @@
 #include "SpacerItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
 #include "../../meters/SpacerItem.h"
 
@@ -22,12 +23,8 @@ void SpacerItemEditor::setItem(MeterItem* item)
     if (!spacer) { return; }
 
     beginProgrammaticUpdate();
-    m_btnColour1->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(spacer->colour1().name(QColor::HexArgb)));
-    m_btnColour2->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(spacer->colour2().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("Spacer.colour1"), spacer->colour1());
+    ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("Spacer.colour2"), spacer->colour2());
     m_spinPadding->setValue(static_cast<double>(spacer->padding()));
     m_chkRxTxColours->setChecked(spacer->rxTxColourMode());
     m_chkPaddingSetsHeight->setChecked(spacer->paddingSetsHeight());
@@ -49,9 +46,7 @@ void SpacerItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             spacer->setColour1(chosen);
-            m_btnColour1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("Spacer.colour1"), chosen);
             notifyChanged();
         }
     });
@@ -68,9 +63,7 @@ void SpacerItemEditor::buildTypeSpecific()
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
             spacer->setColour2(chosen);
-            m_btnColour2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("Spacer.colour2"), chosen);
             notifyChanged();
         }
     });

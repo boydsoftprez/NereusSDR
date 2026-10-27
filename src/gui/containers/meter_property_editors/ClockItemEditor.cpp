@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Layout and background rows; the title colour row is
 //                 enabled only while the title is shown, as Thetis setup's
 //                 updateTitleControlsClock does. J.J. Boyd (KG4VCF),
@@ -58,6 +61,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 
 #include "ClockItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/ClockItem.h"
 
 #include <QCheckBox>
@@ -68,11 +72,9 @@
 namespace NereusSDR {
 
 namespace {
-void applyBtnColor(QPushButton* btn, const QColor& c)
+void applyBtnColor(QPushButton* btn, const QString& field, const QColor& c)
 {
-    btn->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(c.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(btn, field, c);
 }
 } // namespace
 
@@ -93,10 +95,10 @@ void ClockItemEditor::setItem(MeterItem* item)
     m_chkShowType->setChecked(c->showType());
     m_comboLayout->setCurrentIndex(m_comboLayout->findData(static_cast<int>(c->layout())));
     m_chkBackEnabled->setChecked(c->backEnabled());
-    applyBtnColor(m_btnTimeColour,  c->timeColour());
-    applyBtnColor(m_btnDateColour,  c->dateColour());
-    applyBtnColor(m_btnTitleColour, c->typeTitleColour());
-    applyBtnColor(m_btnBackColour,  c->backColour());
+    applyBtnColor(m_btnTimeColour, QStringLiteral("Clock.timeColour"), c->timeColour());
+    applyBtnColor(m_btnDateColour, QStringLiteral("Clock.dateColour"), c->dateColour());
+    applyBtnColor(m_btnTitleColour, QStringLiteral("Clock.typeTitleColour"), c->typeTitleColour());
+    applyBtnColor(m_btnBackColour, QStringLiteral("Clock.backColour"), c->backColour());
     // From Thetis setup.cs:26468-26471 [v2.10.3.15] (updateTitleControlsClock)
     m_btnTitleColour->setEnabled(c->showType());
     m_btnBackColour->setEnabled(c->backEnabled());
@@ -162,7 +164,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::white, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setTimeColour(chosen); applyBtnColor(m_btnTimeColour, chosen); notifyChanged(); }
+        if (chosen.isValid()) { c->setTimeColour(chosen); applyBtnColor(m_btnTimeColour, QStringLiteral("Clock.timeColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Time color"), m_btnTimeColour);
 
@@ -173,7 +175,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setDateColour(chosen); applyBtnColor(m_btnDateColour, chosen); notifyChanged(); }
+        if (chosen.isValid()) { c->setDateColour(chosen); applyBtnColor(m_btnDateColour, QStringLiteral("Clock.dateColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Date color"), m_btnDateColour);
 
@@ -185,7 +187,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::darkGray, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setTypeTitleColour(chosen); applyBtnColor(m_btnTitleColour, chosen); notifyChanged(); }
+        if (chosen.isValid()) { c->setTypeTitleColour(chosen); applyBtnColor(m_btnTitleColour, QStringLiteral("Clock.typeTitleColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Title color"), m_btnTitleColour);
 
@@ -197,7 +199,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             c->backColour(), this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setBackColour(chosen); applyBtnColor(m_btnBackColour, chosen); notifyChanged(); }
+        if (chosen.isValid()) { c->setBackColour(chosen); applyBtnColor(m_btnBackColour, QStringLiteral("Clock.backColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Background color"), m_btnBackColour);
 }

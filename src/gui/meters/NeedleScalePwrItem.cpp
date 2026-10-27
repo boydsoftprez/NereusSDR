@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - NEEDLESCALEPWR building block: the power limit takes
 //                 0.1 W to 5000 W (below 0.1 recovers to 100 W) and new
 //                 items take the clsNeedleScalePwrItem defaults
@@ -68,6 +71,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "NeedleScalePwrItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 // From Thetis clsNeedleScalePwrItem (MeterManager.cs:14888+)
@@ -195,7 +199,7 @@ void NeedleScalePwrItem::paint(QPainter& p, int widgetW, int widgetH)
         }
 
         // From Thetis renderNeedleScale (MeterManager.cs:31710) — use low colour for labels
-        p.setPen(m_lowColour);
+        p.setPen(ItemColourLook::effective("PowerScale.lowColour", m_lowColour, this));
 
         const double scale=objectTextScale(rect,{260,120});
         QRectF label(px-30*scale,py-10*scale,60*scale,20*scale);
