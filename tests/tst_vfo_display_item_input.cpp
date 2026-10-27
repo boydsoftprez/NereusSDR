@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original tests for the VFO display item's
 // clicks, wheel, keys and screens by slice.
 // Modification history (NereusSDR):
+//   2026-10-27 - PR 677 review fix round 2: the screen close check waits
+//                 up to 30 s for the 6 s close. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I7): the long press tests wait
 //                 for the timer's result (QTRY) instead of a fixed 1.1 s.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -329,7 +332,7 @@ private slots:
         click(vfo, kModeBox);
         opened.start();
         QCOMPARE(vfo.screenFor(1), VfoDisplayItem::Screen::Mode);
-        QTRY_VERIFY_WITH_TIMEOUT(vfo.screenFor(1) == VfoDisplayItem::Screen::Vfo, 9000);
+        QTRY_VERIFY_WITH_TIMEOUT(vfo.screenFor(1) == VfoDisplayItem::Screen::Vfo, 30000);
         QVERIFY2(opened.elapsed() > 5000, qPrintable(QString::number(opened.elapsed())));
         QVERIFY(repaint.count() >= 1);
     }

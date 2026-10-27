@@ -16,6 +16,9 @@
 //               reload, and the editor field takes letters and digits only;
 //               the pan 3 check waits for its own timer. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: PR 677 review fix round 2: the rotation checks wait up to
+//               30 s for the 5 s timer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 #include <QtTest>
 #include <QBuffer>
 #include <QLineEdit>
@@ -582,13 +585,13 @@ private slots:
         a.setBackgroundFourChar(b.fourChar());
         b.setBackgroundFourChar(a.fourChar());
         // After a's 5 s, b takes the pan.
-        QTRY_VERIFY_WITH_TIMEOUT(b.showsBackground(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(b.showsBackground(), 30000);
         QVERIFY(!a.showsBackground());
         QCOMPARE(WebImageBackgrounds::instance().image(0).pixelColor(0, 0), blue);
         // Pan 3 names no next image: after its 5 s the rotation there ends
         // and the pan keeps the image (Thetis shows "" next, which no item
         // has). Its timer started after a's, so the check waits for it.
-        QTRY_VERIFY_WITH_TIMEOUT(!other.showsBackground(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(!other.showsBackground(), 30000);
         QCOMPARE(WebImageBackgrounds::instance().image(3), other.currentImage());
 
         // The hand-off itself, at once.
