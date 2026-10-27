@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — connectAttOnTxPsActive: the PS-A -> StepAttenuatorController
+//                 setPsActive wire, shared by RadioModel and the tests.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -190,6 +193,17 @@ public:
     // PSEnabled transitions (Auto Cal, Single Cal, restore, and teardown),
     // unlike isAutoCalEnabled(), which is only the user's auto-cal preference.
     bool isPsEnabled() const noexcept { return m_psEnabled; }
+
+    // Wire the PS-A state into a StepAttenuatorController's key-down
+    // "force 31 dB when PS is off" gate (setPsActive), then push the current
+    // state.  Thetis tests the PS-A button there, chkFWCATUBypass.Checked
+    // (console.cs:29612-29616 [v2.10.3.15]), so this follows
+    // autoCalEnabledChanged, not psEnabledChanged.  RadioModel and the
+    // tests both call this, so the tests exercise the production wiring.
+    // Qt::UniqueConnection with a pointer-to-member slot: safe to call again
+    // on reconnect.  Either pointer null: no-op.
+    static void connectAttOnTxPsActive(PureSignal* ps,
+                                       StepAttenuatorController* stepAtt);
 
     // ForcePS body — PSForm.cs:924-954 [v2.10.3.13].  Re-issues
     // SetPSControl based on _autoON (single 1,0,0,0 vs auto 0,0,1,0)
@@ -439,15 +453,18 @@ signals:
     void autoCalEnabledChanged(bool);
     // Codex Fix C: psEnabledChanged is the radio/DDC fan-out signal that
     // ports Thetis PSForm.cs:235-269 PSEnabled property setter
-    // [v2.10.3.13].  Emitted by the cmd-state machine on every PSEnabled
+    // [v2.10.3.15].  Emitted by the cmd-state machine on every PSEnabled
     // transition (TurnOnAutoCalibrate / TurnOnSingleCalibrate /
     // IntiateRestoredCorrection / StayON / TurnOFF).  Subscribers
     // (ReceiverManager::setPureSignalEnabled, RadioConnection::
-    // setPuresignalRun, StepAttenuatorController::setPsActive) connect to
-    // THIS signal — not autoCalEnabledChanged — so Single Cal / Restore /
-    // Stay-on / Turn-off paths fire the radio/DDC routing alongside the
-    // setPSRunCal calcc-side update.  autoCalEnabledChanged stays bound to
-    // the PS-A button visual state.
+    // setPuresignalRun) connect to THIS signal — not
+    // autoCalEnabledChanged — so Single Cal / Restore / Stay-on / Turn-off
+    // paths fire the radio/DDC routing alongside the setPSRunCal
+    // calcc-side update.  autoCalEnabledChanged is the PS-A button state
+    // (chkFWCATUBypass): the PS-A button visuals and
+    // StepAttenuatorController::setPsActive follow it, because Thetis's
+    // ATT-on-TX force-31 dB gates test chkFWCATUBypass.Checked
+    // (console.cs:29612-29616, 46819-46826 [v2.10.3.15]), not PSEnabled.
     void psEnabledChanged(bool);
     // Codex Fix D: distinct predicates per Thetis PSForm.cs:1100-1108
     // [v2.10.3.13].  correctingChanged fires only on FeedbackLevel > 90
