@@ -585,10 +585,10 @@ CwxSender::CwxSender(Clock clock, Sleeper sleeper, QObject* parent)
     m_thread = std::thread([this] { run(); });
 }
 
-// NereusSDR-original, unused mailbox RED scaffold. Only installation and
-// atomic binding provide real fixture setup. Publication and consumption
-// intentionally do not mutate pending flags, and checkpoint stubs deny
-// recovery. NO production caller/run-loop integration is supplied here.
+// NereusSDR-original mailbox installation, atomic binding and publication.
+// Consumption intentionally does not mutate pending flags; checkpoint stubs
+// still deny recovery. No production caller/run-loop integration is
+// supplied here.
 void CwxSender::setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state)
 {
     const std::lock_guard<std::mutex> lock(m_mutex);
@@ -640,8 +640,11 @@ void CwxSender::requestRemoteCancel(quint32 epoch) noexcept
 
 void CwxSender::publishRemoteRequest(quint32 epoch, quint32 request) noexcept
 {
-    const quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
-    if (epoch == 0 || static_cast<quint32>(candidate >> kRemoteEpochShift) != epoch) {
+    if (epoch == 0 || (request != kRemotePauseRequest && request != kRemoteCancelRequest)) {
+        return;
+    }
+    quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    if (static_cast<quint32>(candidate >> kRemoteEpochShift) != epoch) {
         return;
     }
 #ifdef NEREUS_BUILD_TESTS
@@ -651,10 +654,22 @@ void CwxSender::publishRemoteRequest(quint32 epoch, quint32 request) noexcept
             epoch, candidate);
     }
 #endif
-    Q_UNUSED(request);
-    // Deliberately absent: full-word captured-identity CAS publication,
-    // Cancel priority, m_wake store and m_cv notify. Positive tests fail
-    // on the REAL mailbox, not a spy counter or denied bind.
+    const quint64 pendingMask = quint64{kRemotePauseRequest} | quint64{kRemoteCancelRequest};
+    while (static_cast<quint32>(candidate >> kRemoteEpochShift) == epoch) {
+        // Cancellation wins over a prior or later pause for this binding.
+        // Shared safety may already be invalidated when its cancel arrives.
+        const quint64 pending = request == kRemoteCancelRequest
+                || (candidate & quint64{kRemoteCancelRequest}) != 0
+            ? quint64{kRemoteCancelRequest} : quint64{kRemotePauseRequest};
+        const quint64 published = (candidate & ~pendingMask) | pending;
+        if (m_remoteRequests.compare_exchange_weak(candidate, published, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            m_wake.store(true, std::memory_order_release);
+            m_cv.notify_all();
+            return;
+        }
+        // A failed CAS updates candidate, never the request's captured epoch.
+    }
 }
 
 quint32 CwxSender::takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept

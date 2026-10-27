@@ -1,15 +1,15 @@
-# Focused mailbox RED diagnostic; root-reviewed publication/runtime required.
-name: CW hold sender mailbox RED verification
+# Focused matching-consumption RED diagnostic; root-reviewed publication/runtime required.
+name: CW hold sender matching-consumption RED verification
 on:
   push:
     branches: [codex/remote-cw-hold-union]
 permissions:
   contents: read
 concurrency:
-  group: cw-hold-mailbox-red-${{ github.ref }}
+  group: cw-hold-consumption-red-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  sender-mailbox-red:
+  sender-consumption-red:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -30,18 +30,18 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-mailbox-red-artifacts
+          mkdir -p cw-consumption-red-artifacts
           test "$GITHUB_EVENT_NAME" = push
           test "$GITHUB_REF" = refs/heads/codex/remote-cw-hold-union
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git --no-optional-locks status --porcelain --untracked-files=no)"
-          git merge-base --is-ancestor 24283c1a9b3ab16f8bd641efb4941c128cd84788 HEAD
-          git show -s --format='%H%n%T%n%P' HEAD > cw-mailbox-red-artifacts/source-identity.txt
-          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-mailbox-red-artifacts/run-binding.txt
-          git diff --name-only 24283c1a9b3ab16f8bd641efb4941c128cd84788 HEAD -z | xargs -0 -r sha256sum > cw-mailbox-red-artifacts/reviewed-path-hashes.txt
-          uname -a > cw-mailbox-red-artifacts/runner.txt
-          df -k . > cw-mailbox-red-artifacts/disk-start.txt
-          uptime > cw-mailbox-red-artifacts/load-start.txt
+          git merge-base --is-ancestor 7b302d265ae0dfa42d8b8a5b90b4da5ff9d1efad HEAD
+          git show -s --format='%H%n%T%n%P' HEAD > cw-consumption-red-artifacts/source-identity.txt
+          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-consumption-red-artifacts/run-binding.txt
+          git diff --name-only 7b302d265ae0dfa42d8b8a5b90b4da5ff9d1efad HEAD -z | xargs -0 -r sha256sum > cw-consumption-red-artifacts/reviewed-path-hashes.txt
+          uname -a > cw-consumption-red-artifacts/runner.txt
+          df -k . > cw-consumption-red-artifacts/disk-start.txt
+          uptime > cw-consumption-red-artifacts/load-start.txt
       - name: Restore dependency downloads
         uses: actions/cache/restore@v4
         with:
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
-          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-mailbox-red-artifacts/dependencies.log
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-consumption-red-artifacts/dependencies.log
           git config --global --add include.path "$mirrors"
       - name: Install system dependencies
         run: |
@@ -83,11 +83,12 @@ jobs:
           modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
-      - name: Restore compiler cache without saving verification results
+      - name: Restore isolated CW compiler cache
+        id: ccache-restore
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-v2-Linux-cw-mailbox-red-${{ github.sha }}
+          key: ccache-v2-Linux-cw-hold-unit-7b302
           restore-keys: |
             ccache-v2-Linux-realtime-
       - name: Configure compiler cache
@@ -101,10 +102,10 @@ jobs:
       - name: Configure normal Core and GUI for the focused sender target
         run: |
           set -euo pipefail
-          cmake --version > cw-mailbox-red-artifacts/tool-versions.txt
-          g++ --version >> cw-mailbox-red-artifacts/tool-versions.txt
-          qmake -query QT_VERSION >> cw-mailbox-red-artifacts/tool-versions.txt
-          cp cmake/NereusDependencyArchives.cmake cw-mailbox-red-artifacts/
+          cmake --version > cw-consumption-red-artifacts/tool-versions.txt
+          g++ --version >> cw-consumption-red-artifacts/tool-versions.txt
+          qmake -query QT_VERSION >> cw-consumption-red-artifacts/tool-versions.txt
+          cp cmake/NereusDependencyArchives.cmake cw-consumption-red-artifacts/
           set +e
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
@@ -114,49 +115,51 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_TEST_SHARDS=0 -DNEREUS_TEST_SHARD=0 -DNEREUS_TESTS_OFFSCREEN=ON \
-            2>&1 | tee cw-mailbox-red-artifacts/configure.log
+            2>&1 | tee cw-consumption-red-artifacts/configure.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-mailbox-red-artifacts/configure.status
+          printf '%s\n' "$result" > cw-consumption-red-artifacts/configure.status
           test "$result" -eq 0
-          cp build/CMakeCache.txt cw-mailbox-red-artifacts/
-          ninja -C build -t query tests/tst_cwx_sender > cw-mailbox-red-artifacts/target-query.txt
-          ninja -C build -t commands tests/tst_cwx_sender > cw-mailbox-red-artifacts/target-commands.txt
+          cp build/CMakeCache.txt cw-consumption-red-artifacts/
+          ninja -C build -t query tests/tst_cwx_sender > cw-consumption-red-artifacts/target-query.txt
+          ninja -C build -t commands tests/tst_cwx_sender > cw-consumption-red-artifacts/target-commands.txt
       - name: Build exact existing Core and GUI sender target
+        id: build
         run: |
           set -euo pipefail
           set +e
-          nice -n 20 cmake --build build --target tst_cwx_sender --parallel 2 2>&1 | tee cw-mailbox-red-artifacts/build.log
+          nice -n 20 cmake --build build --target tst_cwx_sender --parallel 2 2>&1 | tee cw-consumption-red-artifacts/build.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-mailbox-red-artifacts/build.status
+          printf '%s\n' "$result" > cw-consumption-red-artifacts/build.status
           test "$result" -eq 0
-      - name: Run exact sender mailbox baseline
+      - name: Run exact sender publisher-positive consumer-inert baseline
         run: |
           set -euo pipefail
           set +e
-          ctest --test-dir build -R '^tst_cwx_sender$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-mailbox-red-artifacts/ctest-junit.xml" 2>&1 | tee cw-mailbox-red-artifacts/ctest.log
+          ctest --test-dir build -R '^tst_cwx_sender$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-consumption-red-artifacts/ctest-junit.xml" 2>&1 | tee cw-consumption-red-artifacts/ctest.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-mailbox-red-artifacts/ctest.status
+          printf '%s\n' "$result" > cw-consumption-red-artifacts/ctest.status
           # Preserve actual Qt records BEFORE guard; missing log is rejected.
-          cp build/Testing/Temporary/LastTest.log cw-mailbox-red-artifacts/LastTest.log || true
-      - name: Validate source-bound mailbox publication RED evidence
+          cp build/Testing/Temporary/LastTest.log cw-consumption-red-artifacts/LastTest.log || true
+      - name: Validate publication-positive and matching-consumption RED evidence
+        id: expected-evidence-guard
         if: always()
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-mailbox-red-artifacts
-          cat > cw-mailbox-red-artifacts/red_guard.py <<'PY_GUARD'
+          mkdir -p cw-consumption-red-artifacts
+          cat > cw-consumption-red-artifacts/red_guard.py <<'PY_GUARD'
           import json
-          expected = {'schemaVersion': 1, 'status': 'SOURCE-PREDICTED ONLY; NOT EXECUTED', 'class': 'TestCwxSender', 'ctestName': 'tst_cwx_sender', 'workflowName': 'CW hold sender mailbox RED verification', 'reviewedSourceAncestor': '24283c1a9b3ab16f8bd641efb4941c128cd84788', 'expectedRef': 'refs/heads/codex/remote-cw-hold-union', 'workflowPath': '.github/workflows/cw-hold-red.yml', 'approvedSourcePatchSHA256': 'f1c9fe72ec750ff055e5e343ecdf58f1353726c6357f94061802001e5cc6f5eb', 'originalTestSourceSHA256': '59b20de44806952626eb16e1eae5dfdd1a6f06e9c0f2b70b0727d806a2799056', 'proposedTestSourceSHA256': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962', 'reviewedSourceHashes': {'src/core/safety/RemoteCwSafetyState.h': 'b04cd686caab3f308bb44976c681c20c1ddf0a00ab70b2c689b5589c5c509c22', 'src/core/safety/RemoteCwSafetyState.cpp': 'af03e8d247b85c503385d0029a9abde7fa7b328a1543ae45e4c6fbfb85fd758a', 'docs/architecture/2026-10-27-remote-cw-hold-plan.md': '8221cce294141d0455dd0eb9b7d7d2548ca5c056ceca5965daec407d1b065670', 'CMakeLists.txt': '0277e9f5224e372d2bf9a159fd49cfc07785372acd2d1d38c0df2c930de27ff1', 'tests/CMakeLists.txt': '1c8a84a0f618d6ccdbc191a071fb892d20ec6366996680fe0e3efc0404b01223', 'cmake/NereusDependencyArchives.cmake': '3cf622e8a482ff8942c94af6db53e1f4e713d9fa6d69ed9e233fd1397f1c76b3', 'cmake/FetchDependencyArchives.cmake': '28a62b0f7271c3a508b9df93e1a82a1de2bb1f9773bbec113182030ae9fec084', 'src/core/CwxSender.h': 'e2ddb944eaf181af9f93cbef0e610970fcf40ac24b2168e4435e84d7f720ed90', 'src/core/CwxSender.cpp': '94414a37f8f9836bf4bb7dfabc5b32d4d030d1e4436a68994e5a0e79ab8820e6', 'tests/tst_cwx_sender.cpp': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962'}, 'allowedChangedPathsFromAncestor': ['.github/workflows/cw-hold-red.yml', 'src/core/CwxSender.cpp', 'src/core/CwxSender.h', 'tests/tst_cwx_sender.cpp'], 'expectedCounts': {'total': 52, 'passed': 42, 'failed': 10, 'skipped': 0, 'blacklisted': 0, 'independentPublicationFailures': 6, 'dependentPrerequisiteFailures': 4, 'originalPassing': 40, 'newLocalPassing': 2}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-after-invalidate)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause-then-cancel)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-then-pause)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteBindAndPublicationDoNotWaitForSenderMutex', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 550, 'assertion': 'QCOMPARE(quint32(word & 3u), 1u); // REAL publication RED'}}, {'case': 'remoteStaleRequestsAfterBindTwelvePreserveTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 562, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u); // publication prerequisite'}}, {'case': 'remoteCapturedElevenCannotPublishOverTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 598, 'assertion': 'QCOMPARE(quint32(beforeRelease & 3u), 2u); // publication prerequisite'}}, {'case': 'remoteTakeRetainsBindingAndAllowsLaterCancel', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 611, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite'}}, {'case': 'remoteStaleTakeCannotClearTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 630, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite'}}, {'case': 'remoteUnboundRequestsDoNotAdoptLocalWork', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'remoteBareBindingAndOldCancelLeaveLocalQueueAlone', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'elementTimeIs1200OverWpm', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'eAt20KeysSixtyMsThenTheCharacterGap', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'parisAt20TakesFiftyElementsOnSchedule', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'speedMarkRaisesTheNextSegmentByFive', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'prosignBetweenBarsSendsItsCharacter', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'memoryEndingInQuoteRepeatsAfterTheDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptSwitchRepeatsWithoutTheMarker', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptOffMemoryWithoutTheMarkerSendsOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'stopMidElementReleasesAtOnceAndClears', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'queuedCharactersCountsWhatHasNotStarted', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyHeldDropsThreeSecondsAfterTheLastPress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseDropsAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterFallsThatLongAfterThePress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterATimeAlreadyPassedReleasesAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterNeverOutlastsTheWatchdog', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2PttLeadsTheKeyAndHangsAfterTheLastElement', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2MemoryAt60LeadsPttByThePttDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(text)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(memory)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nonHl2NeverSetsThePtt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'inOffCwxKeysOnlyWhileMoxIsHeld', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'gateWordsRefuseEverySendAndTheKey', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nothingToSendIsRefusedWithWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'swappingTheLineReleasesTheOldOneAndAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'testAt30KeysEachEdgeWithinTwoMs', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesOutsideCw', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesWithTheKeyerGatesWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelGateTurningFalseMidMessageAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelLeavingCwAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelTeardownReleasesTheLineAndLetsGo', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelConnectionSwapReleasesTheOldLine', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelCutMidMessageThenClearKeysNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithMox_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInQsk_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxStopsCwx', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}], 'scope': 'six independent mailbox-publication RED candidates only; four dependent prerequisite failures are NOT consumption/race RED; no worker-loop/content-identity/bridge/physical/Task3A-complete acceptance'}
+          expected = {'schemaVersion': 1, 'status': 'SOURCE-PREDICTED TRANSITION ONLY; NOT EXECUTED', 'class': 'TestCwxSender', 'ctestName': 'tst_cwx_sender', 'workflowName': 'CW hold sender matching-consumption RED verification', 'reviewedSourceAncestor': '7b302d265ae0dfa42d8b8a5b90b4da5ff9d1efad', 'expectedRef': 'refs/heads/codex/remote-cw-hold-union', 'workflowPath': '.github/workflows/cw-hold-red.yml', 'approvedSourcePatchSHA256': 'f1c9fe72ec750ff055e5e343ecdf58f1353726c6357f94061802001e5cc6f5eb', 'originalTestSourceSHA256': '59b20de44806952626eb16e1eae5dfdd1a6f06e9c0f2b70b0727d806a2799056', 'proposedTestSourceSHA256': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962', 'reviewedSourceHashes': {'src/core/safety/RemoteCwSafetyState.h': 'b04cd686caab3f308bb44976c681c20c1ddf0a00ab70b2c689b5589c5c509c22', 'src/core/safety/RemoteCwSafetyState.cpp': 'af03e8d247b85c503385d0029a9abde7fa7b328a1543ae45e4c6fbfb85fd758a', 'docs/architecture/2026-10-27-remote-cw-hold-plan.md': '8221cce294141d0455dd0eb9b7d7d2548ca5c056ceca5965daec407d1b065670', 'CMakeLists.txt': '0277e9f5224e372d2bf9a159fd49cfc07785372acd2d1d38c0df2c930de27ff1', 'tests/CMakeLists.txt': '1c8a84a0f618d6ccdbc191a071fb892d20ec6366996680fe0e3efc0404b01223', 'cmake/NereusDependencyArchives.cmake': '3cf622e8a482ff8942c94af6db53e1f4e713d9fa6d69ed9e233fd1397f1c76b3', 'cmake/FetchDependencyArchives.cmake': '28a62b0f7271c3a508b9df93e1a82a1de2bb1f9773bbec113182030ae9fec084', 'src/core/CwxSender.h': 'e2ddb944eaf181af9f93cbef0e610970fcf40ac24b2168e4435e84d7f720ed90', 'src/core/CwxSender.cpp': 'd3b5a4b03c42b9c752975013bdf7e76003dad0f556870747b0be1db1384e4a8e', 'tests/tst_cwx_sender.cpp': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962'}, 'allowedChangedPathsFromAncestor': ['.github/workflows/cw-hold-red.yml', 'src/core/CwxSender.cpp'], 'expectedCounts': {'total': 52, 'passed': 51, 'failed': 1, 'skipped': 0, 'blacklisted': 0, 'publicationPositiveControls': 6, 'matchingConsumptionFailures': 1, 'postPublicationStaleControls': 3, 'originalPassing': 40, 'newLocalPassing': 2}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-after-invalidate)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause-then-cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-then-pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteBindAndPublicationDoNotWaitForSenderMutex', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteStaleRequestsAfterBindTwelvePreserveTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteCapturedElevenCannotPublishOverTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteTakeRetainsBindingAndAllowsLaterCancel', 'result': 'FAIL!', 'classification': 'matching-consumption-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 612, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::take(sender, 11), 1u); // consumption RED wave'}}, {'case': 'remoteStaleTakeCannotClearTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteUnboundRequestsDoNotAdoptLocalWork', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'remoteBareBindingAndOldCancelLeaveLocalQueueAlone', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'elementTimeIs1200OverWpm', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'eAt20KeysSixtyMsThenTheCharacterGap', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'parisAt20TakesFiftyElementsOnSchedule', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'speedMarkRaisesTheNextSegmentByFive', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'prosignBetweenBarsSendsItsCharacter', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'memoryEndingInQuoteRepeatsAfterTheDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptSwitchRepeatsWithoutTheMarker', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptOffMemoryWithoutTheMarkerSendsOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'stopMidElementReleasesAtOnceAndClears', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'queuedCharactersCountsWhatHasNotStarted', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyHeldDropsThreeSecondsAfterTheLastPress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseDropsAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterFallsThatLongAfterThePress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterATimeAlreadyPassedReleasesAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterNeverOutlastsTheWatchdog', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2PttLeadsTheKeyAndHangsAfterTheLastElement', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2MemoryAt60LeadsPttByThePttDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(text)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(memory)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nonHl2NeverSetsThePtt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'inOffCwxKeysOnlyWhileMoxIsHeld', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'gateWordsRefuseEverySendAndTheKey', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nothingToSendIsRefusedWithWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'swappingTheLineReleasesTheOldOneAndAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'testAt30KeysEachEdgeWithinTwoMs', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesOutsideCw', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesWithTheKeyerGatesWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelGateTurningFalseMidMessageAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelLeavingCwAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelTeardownReleasesTheLineAndLetsGo', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelConnectionSwapReleasesTheOldLine', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelCutMidMessageThenClearKeysNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithMox_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInQsk_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxStopsCwx', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}], 'scope': 'publication-positive controls plus ONE matching mailbox-take helper RED at actual frozen line612; stale-take no-op passing is NOT implemented consumption/race proof; no actual worker/content-admission/bridge/physical/Task3A completion', 'sourceTransition': 'Publisher-only body implementation; takeRemoteRequestsLocked still inert; no actual worker/admission or checkpoint implementation.'}
           import collections, hashlib, os, pathlib, re, subprocess, sys, xml.etree.ElementTree as ET
-          out = pathlib.Path("cw-mailbox-red-artifacts")
+          out = pathlib.Path("cw-consumption-red-artifacts")
           out.mkdir(parents=True, exist_ok=True)
           (out / "expected-behavioral-red.json").write_text(json.dumps(expected, indent=2) + "\n")
-          verdict = {"acceptedMailboxPublicationRed": False, "consumptionOrRaceRed": False,
+          verdict = {"acceptedMatchingConsumptionRed": False, "acceptedWorkerOrRaceRed": False,
                      "task3aComplete": False, "scope": expected["scope"]}
           observed = []
           def require(condition, message):
@@ -242,13 +245,14 @@ jobs:
                   observed.append(actual)
               require(len(re.findall(r"Loc:\s*\[", text)) == expected["expectedCounts"]["failed"], "unassociated assertion location")
               totals = re.findall(r"Totals:\s+(\d+) passed, (\d+) failed, (\d+) skipped, (\d+) blacklisted", text)
-              require(totals == [("42", "10", "0", "0")], "wrong/incomplete totals")
+              require(totals == [("51", "1", "0", "0")], "wrong/incomplete totals")
               require(len(re.findall(r"^Test Failed\.", text, re.M)) == 1, "missing/wrong CTest failed completion")
-              verdict.update(acceptedMailboxPublicationRed=True, sourceSHA=env["GITHUB_SHA"], sourceTree=git("rev-parse", "HEAD^{tree}"),
+              verdict.update(acceptedMatchingConsumptionRed=True, sourceSHA=env["GITHUB_SHA"], sourceTree=git("rev-parse", "HEAD^{tree}"),
                              runId=env["GITHUB_RUN_ID"], runAttempt=env["GITHUB_RUN_ATTEMPT"], reviewedSourceHashes=actual_hashes,
                              workflowSHA256=digest(expected["workflowPath"]), guardSHA256=digest(__file__),
-                             independentPublicationFailures=[r["case"] for r in observed if r["classification"] == "independent-publication-red"],
-                             dependentPrerequisiteFailures=[r["case"] for r in observed if r["classification"] == "dependent-publication-prerequisite-failure"],
+                             publicationPositiveControls=[r["case"] for r in observed if r["classification"] == "publication-positive-control"],
+                             matchingConsumptionFailures=[r["case"] for r in observed if r["classification"] == "matching-consumption-red"],
+                             postPublicationStaleControls=[r["case"] for r in observed if r["classification"] == "post-publication-stale-control"],
                              originalPassing=40, localNegativePassing=2, counts=expected["expectedCounts"],
                              rawEvidenceSHA256={name: digest(out / name) for name in ("LastTest.log", "ctest.log", "ctest-junit.xml")})
           except Exception as error:
@@ -256,24 +260,30 @@ jobs:
           (out / "qt-records.json").write_text(json.dumps(observed, indent=2) + "\n")
           (out / "red-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
           print(json.dumps(verdict, indent=2))
-          sys.exit(0 if verdict["acceptedMailboxPublicationRed"] else 1)
+          sys.exit(0 if verdict["acceptedMatchingConsumptionRed"] else 1)
           PY_GUARD
-          python3 cw-mailbox-red-artifacts/red_guard.py
+          python3 cw-consumption-red-artifacts/red_guard.py
+      - name: Save isolated CW compiler cache after expected evidence passes
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.expected-evidence-guard.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
       - name: Capture final diagnostics
         if: always()
         run: |
-          mkdir -p cw-mailbox-red-artifacts
-          df -k . > cw-mailbox-red-artifacts/disk-end.txt
-          uptime > cw-mailbox-red-artifacts/load-end.txt
-          ccache -s > cw-mailbox-red-artifacts/ccache-final.txt 2>&1 || true
-          cp build/CMakeCache.txt cw-mailbox-red-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTest.log cw-mailbox-red-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTestsFailed.log cw-mailbox-red-artifacts/ 2>/dev/null || true
-      - name: Upload focused mailbox RED evidence
+          mkdir -p cw-consumption-red-artifacts
+          df -k . > cw-consumption-red-artifacts/disk-end.txt
+          uptime > cw-consumption-red-artifacts/load-end.txt
+          ccache -s > cw-consumption-red-artifacts/ccache-final.txt 2>&1 || true
+          cp build/CMakeCache.txt cw-consumption-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTest.log cw-consumption-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTestsFailed.log cw-consumption-red-artifacts/ 2>/dev/null || true
+      - name: Upload focused matching-consumption RED evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cw-mailbox-red-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cw-mailbox-red-artifacts/
+          name: cw-consumption-red-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cw-consumption-red-artifacts/
           retention-days: 7
           if-no-files-found: error
