@@ -103,7 +103,13 @@
 //               dropped mid-hold keeps the hold and cuts at last packet +
 //               10 s, in AM and USB; the short outage's hold is timed from
 //               the restore edge with room for a 250 ms main-thread stall.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               Round 2: signing in again with a VOX key, and a dropped
+//               link with a VOX key, are Stop All TX; the first link is
+//               open when the replacement's stop comes; a replacement line
+//               that delivers at 5 s releases the hold and cancels the cut,
+//               and one that never delivers moves nothing; the cut's lower
+//               edge allows a 250 ms late read. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -223,6 +229,36 @@ std::shared_ptr<std::atomic<bool>> attachMicrophone(Test::RemoteAudioSessionHarn
     bus->open(fmt);
     h.remote.audioEngine()->setTxInputBusForTest(std::move(bus));
     return giving;
+}
+
+// Fix wave B, round 2: the window takes transmit, arms the Core's VOX
+// over its microphone line, and the Core's VOX detector keys it. Returns
+// false (with a QVERIFY failure) when any step did not happen.
+bool armVoxAndKey(Test::RemoteAudioSessionHarness& h, DaemonMediaController& daemonMedia)
+{
+    TransmitHolder::KeyRequest take;
+    take.deviceId = h.windowKey->fingerprint();
+    if (h.server.transmitHolder()->askKey(take).verdict != KeyingVerdict::Admit) {
+        qWarning("the window could not take transmit");
+        return false;
+    }
+    h.remote.transmitModel().setVoxEnabled(true);
+    if (!QTest::qWaitFor([&]() {
+            return h.station.transmitModel().voxEnabled()
+                && h.station.remoteVoxDevice() == h.windowKey->fingerprint()
+                && daemonMedia.micReceiver() != nullptr
+                && daemonMedia.micReceiver()->stats().accepted >= 20;
+        }, 5000)) {
+        qWarning("VOX was not armed over the window's microphone line");
+        return false;
+    }
+    h.station.moxController()->onVoxActive(true);
+    if (!QTest::qWaitFor([&]() { return h.station.moxController()->isMox(); }, 5000)) {
+        qWarning("VOX did not key");
+        return false;
+    }
+    return h.station.keyedBy().deviceId == h.windowKey->fingerprint()
+        && h.station.keyedBy().trigger == QByteArrayLiteral("vox");
 }
 
 int commandsOf(const Test::LoopbackTransport* core, const QString& verb)
@@ -801,14 +837,38 @@ private slots:
     // and with it transmit at once as a closed link, well inside the
     // 3000 ms cut; the first link saw no close before the Core's own; the
     // new session finds transmit stopped.
+    // Fix wave B, round 2: a VOX key (the Core's VOX keyed by the window's
+    // microphone line) is stopped the same way, through Stop All TX, never
+    // through VOX's own release.
+    void signingInAgainWhileHeldStopsAtOnce_data()
+    {
+        QTest::addColumn<bool>("vox");
+        QTest::newRow("a screen key") << false;
+        QTest::newRow("a VOX key") << true;
+    }
     void signingInAgainWhileHeldStopsAtOnce()
     {
+        QFETCH(bool, vox);
         TxChannel tx{WdspEngine::kTxChannelId};   // outlives the harness
         Test::RemoteAudioSessionHarness h;
         h.station.injectTxChannelForTest(&tx);
         h.pairWindow = true;
         h.makeTransmitReady();
-        h.openFakeMicrophoneLine();
+        QPointer<LibDataChannelMediaTransport> coreTransport;
+        std::unique_ptr<RemoteMediaController> remoteMedia;
+        std::unique_ptr<DaemonMediaController> daemonMedia;
+        if (vox) {
+            attachMicrophone(h);
+            remoteMedia = std::make_unique<RemoteMediaController>(&h.client, &h.remote, nullptr);
+            daemonMedia = std::make_unique<DaemonMediaController>(
+                &h.server, &h.station, nullptr, [&coreTransport](QObject* parent) {
+                    auto* transport = new LibDataChannelMediaTransport(parent);
+                    coreTransport = transport;
+                    return static_cast<IMediaTransport*>(transport);
+                });
+        } else {
+            h.openFakeMicrophoneLine();
+        }
         h.connectSession();
         QTRY_VERIFY(h.client.capabilities().txPermitted);
         RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
@@ -817,12 +877,22 @@ private slots:
         QSignalSpy ended(watchdog, &RemoteTxWatchdog::holdEnded);
         QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
 
-        h.remote.setMoxFromButton(true);
-        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        if (vox) {
+            QTRY_VERIFY_WITH_TIMEOUT(daemonMedia->micReceiver() != nullptr, 5000);
+            QVERIFY(armVoxAndKey(h, *daemonMedia));
+        } else {
+            h.remote.setMoxFromButton(true);
+            QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        }
         QTest::qWait(500);
         const QPointer<Test::RewritingTransport> firstLink = h.stationLink;
         QVERIFY(!firstLink.isNull());
         firstLink->setSevered(true);
+        if (vox) {
+            // The media connection's keepalives go quiet with the session's.
+            QVERIFY(!coreTransport.isNull());
+            coreTransport->setReceiveSeveredForTest(true);
+        }
         QTRY_COMPARE_WITH_TIMEOUT(held.count(), 1, 3000);
         QVERIFY(tx.isRfHeld());
         QVERIFY(h.station.moxController()->isMox());
@@ -875,6 +945,8 @@ private slots:
                  qPrintable(QString::number(trip.silentMs)));
         QVERIFY2(stoppedAfterMs < RemoteTxWatchdog::kLinkCutMs / 2,
                  qPrintable(QString::number(stoppedAfterMs)));
+        // The Core stopped the key before it closed the first link.
+        QVERIFY(firstLinkOpenAtStop);
         // The first link was never closed by its window: open, or closed
         // only by the Core for the replacement.
         QVERIFY2(firstLinkCloseAtStop.isEmpty()
@@ -899,6 +971,10 @@ private slots:
         QVERIFY(!h.station.moxController()->isMox());
         QCOMPARE(tripped.count(), 1);
         QCOMPARE(stopped.count(), 1);
+        if (vox) {
+            QVERIFY(!h.station.transmitModel().voxEnabled());
+            QVERIFY(h.server.voxArmedBy().isEmpty());
+        }
         again.disconnectFromStation(QStringLiteral("test complete"));
         h.client.disconnectFromStation(QStringLiteral("test complete"));
         h.station.injectTxChannelForTest(nullptr);
@@ -926,6 +1002,39 @@ private slots:
         QVERIFY(tripOf(tripped).linkClosed);
         QVERIFY(!h.station.moxController()->isMox());
         QVERIFY(!h.server.txWatchdog()->isWatchingAny());
+    }
+
+    // Fix wave B, round 2: the session of a device whose VOX key is on the
+    // air closes. The key is Stop All TX at once (transmitStopped, the lost
+    // link's words), then its VOX goes off; VOX's own release (the normal
+    // unkey, with the send ring's drain) never ends it.
+    void aDroppedLinkWithAVoxKeyIsStopAllTx()
+    {
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachMicrophone(h);
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(daemonMedia.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
+        QVERIFY(armVoxAndKey(h, daemonMedia));
+        QTest::qWait(300);
+        QCOMPARE(stopped.count(), 0);
+
+        h.stationLink->closeLink(QStringLiteral("the app went away"));
+        QCOMPARE(tripped.count(), 1);
+        QVERIFY(tripOf(tripped).linkClosed);
+        QCOMPARE(stopped.count(), 1);
+        QVERIFY(!h.station.transmitModel().voxEnabled());
+        QVERIFY(h.server.voxArmedBy().isEmpty());
+        QTRY_VERIFY(!h.station.moxController()->isMox());
+        QTest::qWait(300);
+        QVERIFY(!h.station.moxController()->isMox());
+        QCOMPARE(stopped.count(), 1);
     }
 
     // ---- The media connection's "tx" data channel (a direct pair) --------
@@ -1435,12 +1544,17 @@ private slots:
         QTest::addColumn<int>("mode");
         QTest::addColumn<bool>("holds");
         QTest::addColumn<bool>("dropMedia");
-        QTest::newRow("AM holds, then cuts") << static_cast<int>(DSPMode::AM) << true << false;
+        QTest::addColumn<bool>("newLineDelivers");
+        QTest::newRow("AM holds, then cuts")
+            << static_cast<int>(DSPMode::AM) << true << false << false;
         QTest::newRow("USB stays keyed, then cuts")
-            << static_cast<int>(DSPMode::USB) << false << false;
-        QTest::newRow("AM, media dropped while held")
-            << static_cast<int>(DSPMode::AM) << true << true;
-        QTest::newRow("USB, media dropped") << static_cast<int>(DSPMode::USB) << false << true;
+            << static_cast<int>(DSPMode::USB) << false << false << false;
+        QTest::newRow("AM, media dropped while held, the new line never delivers")
+            << static_cast<int>(DSPMode::AM) << true << true << false;
+        QTest::newRow("USB, media dropped, the new line never delivers")
+            << static_cast<int>(DSPMode::USB) << false << true << false;
+        QTest::newRow("AM, media dropped while held, the new line delivers at 5 s")
+            << static_cast<int>(DSPMode::AM) << true << true << true;
     }
 
     // The keyed window's microphone stops on a live link (the keepalives
@@ -1448,20 +1562,25 @@ private slots:
     // the Core received and USB does not; with no audio for 10 s, both stop
     // transmitting with the microphone's reason. Fix wave B (review
     // Important 2): the window's media dropped between the hold and the cut
-    // (the Core's microphone line torn down, and replaced when the window
-    // starts media again) is no audio: the hold stays on, and the cut
-    // still lands 10 s after the last packet of the first line.
+    // (the Core's microphone line torn down, and a new one opened when the
+    // window's media recovers) is no audio: the hold stays on, and the cut
+    // still lands 10 s after the last packet of the first line. Round 2:
+    // the new line opening is checked; when the window's microphone gives
+    // audio again at 5 s, the new line's first packet releases the hold and
+    // the cut never comes.
     void starvationOnALiveLinkHoldsAmThenCutsEveryMode()
     {
         QFETCH(int, mode);
         QFETCH(bool, holds);
         QFETCH(bool, dropMedia);
+        QFETCH(bool, newLineDelivers);
         Test::RemoteAudioSessionHarness h;
         h.pairWindow = true;
         h.makeTransmitReady();
         h.station.sliceById(h.sliceA)->setDspMode(static_cast<DSPMode>(mode));
         const auto giving = attachMicrophone(h);
-        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        auto remoteMedia =
+            std::make_unique<RemoteMediaController>(&h.client, &h.remote, nullptr);
         DaemonMediaController daemonMedia(&h.server, &h.station);
         h.connectSession();
         QTRY_VERIFY_WITH_TIMEOUT(daemonMedia.micReceiver() != nullptr, 5000);
@@ -1506,14 +1625,32 @@ private slots:
         qint64 droppedMs = -1;
         bool heldAfterDrop = false;
         bool heldWhenLineGone = !holds;
+        qint64 newLineMs = -1;
+        bool restarted = false;
+        qint64 givingAgainMs = -1;
+        qint64 releasedMs = -1;
+        QObject::connect(&h.station, &RadioModel::remoteRfHoldChanged, &scope, [&](bool on) {
+            if (!on && releasedMs < 0 && givingAgainMs >= 0) {
+                releasedMs = quiet.elapsed();
+            }
+        });
+        constexpr qint64 kAudioAgainMs = 5000;
+        const qint64 deadline =
+            RemoteMicConfig::kNoAudioCutMs + (newLineDelivers ? 1500 : 5000);
         giving->store(false);
         quiet.start();
-        while (h.station.moxController()->isMox()
-               && quiet.elapsed() < RemoteMicConfig::kNoAudioCutMs + 5000) {
+        while (h.station.moxController()->isMox() && quiet.elapsed() < deadline) {
             RemoteMicReceiver* const current = daemonMedia.micReceiver();
             if (current != line.data()) {
                 line = current;
                 accepted = current != nullptr ? current->stats().accepted : 0;
+            }
+            if (newLineMs < 0 && current != nullptr && firstLine.isNull()) {
+                newLineMs = quiet.elapsed();
+            }
+            if (newLineDelivers && givingAgainMs < 0 && quiet.elapsed() >= kAudioAgainMs) {
+                givingAgainMs = quiet.elapsed();
+                giving->store(true);
             }
             if (!line.isNull()) {
                 const quint64 now = line->stats().accepted;
@@ -1526,7 +1663,17 @@ private slots:
             if (dropMedia && droppedMs < 0 && quiet.elapsed() >= 1500
                 && (!holds || heldMs >= 0)) {
                 droppedMs = quiet.elapsed();
-                remoteMedia.dropMediaPeerForTest();
+                remoteMedia->dropMediaPeerForTest();
+            }
+            // The window starts its media again half a second later (what
+            // its media recovery does; the harness has no connection
+            // controller to run it): a new media connection, and the Core
+            // opens a new microphone line on it.
+            if (droppedMs >= 0 && !restarted && quiet.elapsed() >= droppedMs + 500) {
+                restarted = true;
+                remoteMedia = std::make_unique<RemoteMediaController>(&h.client, &h.remote,
+                                                                      nullptr);
+                remoteMedia->planNowForTest();
             }
             if (droppedMs >= 0 && firstLine.isNull() && !heldAfterDrop) {
                 heldAfterDrop = true;
@@ -1535,15 +1682,38 @@ private slots:
             QTest::qWait(2);
         }
         qInfo("microphone silent: last packet at %lld ms, held at %lld ms, media dropped at "
-              "%lld ms, stopped at %lld ms",
+              "%lld ms, new line at %lld ms, audio again at %lld ms, released at %lld ms, "
+              "stopped at %lld ms",
               static_cast<long long>(lastPacketMs), static_cast<long long>(heldMs),
-              static_cast<long long>(droppedMs), static_cast<long long>(stoppedMs));
+              static_cast<long long>(droppedMs), static_cast<long long>(newLineMs),
+              static_cast<long long>(givingAgainMs), static_cast<long long>(releasedMs),
+              static_cast<long long>(stoppedMs));
         QVERIFY(!starved.isEmpty());
-        QVERIFY(!h.station.moxController()->isMox());
         if (dropMedia) {
             QVERIFY2(droppedMs >= 0, "the media was never dropped");
             QVERIFY2(firstLine.isNull(), "the Core's first microphone line was never torn down");
             QVERIFY2(heldWhenLineGone, "the hold changed when the microphone line went");
+            QVERIFY2(newLineMs >= 0, "no new microphone line opened");
+        }
+        if (newLineDelivers) {
+            // The new line's audio released the hold; the cut never came.
+            QVERIFY2(releasedMs >= givingAgainMs && releasedMs <= givingAgainMs + 2000,
+                     qPrintable(QString::number(releasedMs)));
+            QVERIFY(h.station.moxController()->isMox());
+            QCOMPARE(stoppedMs, qint64(-1));
+            QCOMPARE(stopped.count(), 0);
+            QCOMPARE(holdEdges, 2);   // on, then off as audio returned
+            QVERIFY(!h.station.isRemoteRfHeld());
+            QCOMPARE(h.client.transmitState()->stopSerial(), quint32(0));
+            QTRY_COMPARE(h.client.transmitState()->rfHoldSerial(), quint64(1));
+            h.remote.setMoxFromButton(false);
+            QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+            QCOMPARE(stopped.count(), 0);
+            h.client.disconnectFromStation(QStringLiteral("test complete"));
+            return;
+        }
+        QVERIFY(!h.station.moxController()->isMox());
+        if (dropMedia) {
             QVERIFY(droppedMs < stoppedMs);
         }
         if (holds) {
@@ -1558,8 +1728,9 @@ private slots:
         }
         QCOMPARE(linkHolds.count(), 0);
         // The count is read every few ms, so the last packet is seen up to
-        // that much after the Core received it.
-        QVERIFY2(stoppedMs - lastPacketMs >= RemoteMicConfig::kNoAudioCutMs - 50
+        // that much after the Core received it, more under load (round 2:
+        // one read 23 ms late at load 18): 250 ms of room.
+        QVERIFY2(stoppedMs - lastPacketMs >= RemoteMicConfig::kNoAudioCutMs - 250
                      && stoppedMs - lastPacketMs <= RemoteMicConfig::kNoAudioCutMs + 500,
                  qPrintable(QString::number(stoppedMs - lastPacketMs)));
         QCOMPARE(stopped.count(), 1);

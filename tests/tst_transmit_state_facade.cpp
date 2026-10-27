@@ -116,8 +116,11 @@
 //               replacement that never delivers moves nothing; a hold the
 //               Core declines is not counted; TUNE, two-tone and a new key
 //               each end a hold in their own words; the hold start logs the
-//               measured silence. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               measured silence. Round 2: a plain unkey is no mid-key line
+//               end; a change of transmit mode while starved judges the
+//               hold again, both ways; MOX reaching receive makes the
+//               policy forget a hold it did not publish. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -403,6 +406,33 @@ private:
         }
     }
     static inline QStringList s_lines;
+    static inline QtMessageHandler s_previous{nullptr};
+};
+
+// Fix wave B, round 2: counts the log lines that contain `needle`.
+class LineCount {
+public:
+    explicit LineCount(QString needle)
+    {
+        s_needle = std::move(needle);
+        s_count = 0;
+        s_previous = qInstallMessageHandler(&LineCount::handle);
+    }
+    ~LineCount() { qInstallMessageHandler(s_previous); }
+    int count() const { return s_count; }
+
+private:
+    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+    {
+        if (msg.contains(s_needle)) {
+            ++s_count;
+        }
+        if (s_previous) {
+            s_previous(type, context, msg);
+        }
+    }
+    static inline QString s_needle;
+    static inline int s_count{0};
     static inline QtMessageHandler s_previous{nullptr};
 };
 
@@ -1798,6 +1828,150 @@ private slots:
         QCOMPARE(log.lines().size(), 2);
         QVERIFY2(log.lines().at(1).endsWith(QStringLiteral(": a new key")),
                  qPrintable(log.lines().at(1)));
+    }
+
+    // Fix wave B, round 2: a plain unkey ends the line's watch as MOX goes
+    // off, while keyedBy still names the device (the microphone source
+    // follows the MOX walk before the key's owner clears keyedBy). That is the key's own
+    // end: no "ended while keyed" line, no pending cut, no hold, even in a
+    // Hold mode with the line quiet past 250 ms.
+    void aPlainUnkeyIsNoMidKeyLineEnd()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog holds;
+        LineCount ended(QStringLiteral("ended while keyed"));
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        const QByteArray id = p.a.key.fingerprint();
+        // The phone's microphone line, so the key is on it.
+        p.core.model->openRemoteMicLine(id);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        QTRY_VERIFY(p.core.model->remoteMicInUse());
+        QSignalSpy holdEdges(p.core.model.get(), &RadioModel::remoteRfHoldChanged);
+        bool called = false;
+        bool keyedAtCall = false;
+        bool transmittingAtCall = false;
+        bool pendingAfterCall = true;
+        QObject scope;
+        // Where the media controller ends the watch: the line goes out of
+        // use as MOX leaves transmit (RadioModel's source follows the MOX
+        // walk, ahead of the key's owner clearing keyedBy).
+        QObject::connect(p.core.model.get(), &RadioModel::remoteMicInUseChanged, &scope,
+                         [&](bool inUse) {
+            if (inUse || called) {
+                return;
+            }
+            called = true;
+            keyedAtCall = p.core.model->keyedBy().deviceId == id;
+            transmittingAtCall = p.core.model->isTransmitting();
+            // What the media controller does as the watch ends here.
+            p.core.server->remoteMicLineEnded(id, 300, false);
+            pendingAfterCall = p.core.server->endedMicLinePendingForTest();
+        });
+        p.core.now += 300;
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted")).toBool(false));
+        QTRY_VERIFY(!p.state().keyed());
+        pumpEvents();
+        QVERIFY(called);
+        QVERIFY2(keyedAtCall, "keyedBy no longer named the device as MOX went off");
+        QVERIFY2(transmittingAtCall, "the Core no longer read transmitting as MOX went off");
+        QVERIFY(!pendingAfterCall);
+        QCOMPARE(ended.count(), 0);
+        QCOMPARE(holdEdges.count(), 0);
+        QVERIFY(holds.lines().isEmpty());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        p.core.model->closeRemoteMicLine(id);
+    }
+
+    // Fix wave B, round 2: a line starved in a mode that keeps keyed (USB),
+    // live or ended, is held the moment the transmit mode becomes a Hold
+    // mode (AM), not left a bare carrier until the cut; a hold on in AM
+    // stays on when the mode becomes USB, until audio or the cut.
+    void aModeChangeWhileStarvedJudgesTheHoldAgain_data()
+    {
+        QTest::addColumn<bool>("toHold");
+        QTest::addColumn<bool>("lineEnded");
+        QTest::newRow("USB to AM, the line live") << true << false;
+        QTest::newRow("USB to AM, the line ended") << true << true;
+        QTest::newRow("AM to USB, the line live") << false << false;
+        QTest::newRow("AM to USB, the line ended") << false << true;
+    }
+    void aModeChangeWhileStarvedJudgesTheHoldAgain()
+    {
+        QFETCH(bool, toHold);
+        QFETCH(bool, lineEnded);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        SliceModel* const slice = p.core.model->sliceById(0);
+        slice->setDspMode(toHold ? DSPMode::USB : DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        qint64 sequence = 0;
+        const qint64 lastPacket = p.core.now;
+        stepTo(p, lastPacket + 300, sequence);
+        p.core.server->remoteMicStarved(id, true, 300);
+        if (lineEnded) {
+            stepTo(p, lastPacket + 600, sequence);
+            p.core.server->remoteMicLineEnded(id, 600, true);
+            QVERIFY(p.core.server->endedMicLinePendingForTest());
+        }
+        QCOMPARE(p.core.model->isRemoteRfHeld(), !toHold);
+        stepTo(p, lastPacket + 1000, sequence);
+        slice->setDspMode(toHold ? DSPMode::AM : DSPMode::USB);
+        QCOMPARE(slice->dspMode(), toHold ? DSPMode::AM : DSPMode::USB);
+        pumpEvents();
+        QVERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("mic"));
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        const qint64 heldAt = toHold ? 1000 : 300;
+        QCOMPARE(log.lines(),
+                 (QStringList{holdStartLine(
+                     id, QStringLiteral("no microphone audio for %1 ms").arg(heldAt))}));
+        if (lineEnded) {
+            // The cut still lands at the last packet + 10 s.
+            stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs - 1, sequence);
+            QVERIFY(p.core.model->moxController()->isMox());
+            QVERIFY(p.core.model->isRemoteRfHeld());
+            stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs, sequence);
+            QTRY_VERIFY(!p.core.model->moxController()->isMox());
+            QCOMPARE(p.state().stopReason(), QStringLiteral("micStarved"));
+            QCOMPARE(p.state().stopSerial(), quint32(1));
+        } else {
+            p.core.server->remoteMicStarved(id, false, 0);
+            QVERIFY(!p.core.model->isRemoteRfHeld());
+            QVERIFY(p.core.model->moxController()->isMox());
+        }
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+    }
+
+    // Fix wave B, round 2: the policy counting a hold whose Mic bit was set
+    // but never published forgets it when MOX reaches receive and clears
+    // the bit.
+    void theReceiveClearForgetsAHoldItDidNotPublish()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        p.core.server->holdMicWithoutPublishingForTest();
+        QVERIFY(p.core.server->micHoldCountedForTest());
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted")).toBool(false));
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        QTRY_VERIFY(!p.core.model->isRemoteRfHeld());
+        pumpEvents();
+        QVERIFY(!p.core.server->micHoldCountedForTest());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
     }
 
     // ---- Fix wave I4: txState names the holder (ruling 8.1) -------------

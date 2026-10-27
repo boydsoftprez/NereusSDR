@@ -57,8 +57,9 @@
 //               ends (setWatching(false), stop()) never reads as audio
 //               returning: it emits watchEnded with the silence so far, not
 //               starved(false); starved(true) carries the measured silence;
-//               audioArrived marks a watch's first packet. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               audioArrived marks a watch's first packet. Round 2: the
+//               default scheduler's timers are precise. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/RemoteMicReceiver.h"
@@ -974,8 +975,21 @@ RemoteMicReceiver::RemoteMicReceiver(RemoteMicFeed* feed, QObject* parent, Clock
         m_clock = steadyMs;
     }
     if (!m_scheduler) {
+        // Fix wave B, round 2: precise, as the server's own deadline is: a
+        // coarse timer may fire 5% late, half a second on the 10 s cut. A
+        // child timer, so the receiver's end stops it; it leaves its parent
+        // before the check runs, so a check that ends the receiver never
+        // deletes the timer whose signal it runs in.
         m_scheduler = [this](int ms, std::function<void()> fire) {
-            QTimer::singleShot(ms, this, std::move(fire));
+            auto* timer = new QTimer(this);
+            timer->setSingleShot(true);
+            timer->setTimerType(Qt::PreciseTimer);
+            connect(timer, &QTimer::timeout, this, [timer, fire = std::move(fire)]() {
+                timer->setParent(nullptr);
+                timer->deleteLater();
+                fire();
+            });
+            timer->start(ms);
         };
     }
 }

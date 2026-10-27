@@ -46,8 +46,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Remote transmit hold then cut, fix wave B: forgetHold, so
 //               isHolding stays "the Mic bit is set by the policy" when the
-//               hook declines or MOX reaches receive. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               hook declines or MOX reaches receive. Round 2:
+//               countHoldForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -109,6 +110,8 @@ public:
     /// key on the air), or MOX reached receive and cleared it: the policy
     /// no longer counts a hold. No holdRf call.
     void forgetHold() { m_holding = false; }
+    /// Test only (fix wave B, round 2): counts a hold with no holdRf call.
+    void countHoldForTest() { m_holding = true; }
 
 private:
     void setHolding(bool held);

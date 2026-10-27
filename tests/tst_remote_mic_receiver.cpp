@@ -52,8 +52,10 @@
 //   2026-10-27: Remote transmit hold then cut, fix wave B: the end of a
 //               watch or of the line is watchEnded with its silence, never
 //               starved(false); starved(true) carries the silence;
-//               audioArrived once per watch. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               audioArrived once per watch. Round 2: the default
+//               scheduler's checks, the 10 s cut's among them, run on
+//               precise timers. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/MediaPeer.h"
@@ -62,6 +64,7 @@
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include <QSignalSpy>
+#include <QTimer>
 #include <QThread>
 #include <QUuid>
 #include <QtTest>
@@ -270,6 +273,7 @@ private slots:
     void stoppingTheLineCancelsThePendingNoAudio();
     void aLineEndingMidKeyIsNeverAudioReturning();
     void audioArrivedMarksAWatchsFirstPacket();
+    void theDefaultSchedulersChecksArePrecise();
     void anOlderReceiptCannotMoveTheLastAudioBack();
     // R-IOS-13 (2026-09-27): the small adaptive buffer.
     void steadyPacketsHoldTheSmallestTargetWithoutUnderrun();
@@ -1198,6 +1202,44 @@ void TestRemoteMicReceiver::audioArrivedMarksAWatchsFirstPacket()
     time.advanceTo(22);
     receiver.submit(l16Packet(0.1f, 5, 768));
     QCOMPARE(arrived.count(), 2);
+}
+
+// Fix wave B, round 2: with no scheduler given, the starvation check and
+// the 10 s no-audio check run on precise single-shot timers (a coarse one
+// may fire 5% late: half a second on the cut).
+void TestRemoteMicReceiver::theDefaultSchedulersChecksArePrecise()
+{
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr);
+    QSignalSpy starved(&receiver, &RemoteMicReceiver::starved);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    const auto activeTimers = [&receiver]() {
+        QList<QTimer*> out;
+        for (QTimer* timer : receiver.findChildren<QTimer*>()) {
+            if (timer->isActive()) {
+                out.append(timer);
+            }
+        }
+        return out;
+    };
+    receiver.setWatching(true);
+    QList<QTimer*> timers = activeTimers();
+    QVERIFY(!timers.isEmpty());
+    for (const QTimer* timer : timers) {
+        QCOMPARE(timer->timerType(), Qt::PreciseTimer);
+        QVERIFY(timer->isSingleShot());
+    }
+    // Starved: the no-audio check is scheduled for the rest of the 10 s.
+    QTRY_COMPARE_WITH_TIMEOUT(starved.count(), 1, 2000);
+    timers = activeTimers();
+    bool sawCut = false;
+    for (const QTimer* timer : timers) {
+        QCOMPARE(timer->timerType(), Qt::PreciseTimer);
+        sawCut = sawCut || timer->interval() > RemoteMicConfig::kNoAudioCutMs / 2;
+    }
+    QVERIFY2(sawCut, "no timer for the no-audio check");
+    receiver.setWatching(false);
 }
 
 // TX mic thread fix round 2: the last audio only moves forward. A packet

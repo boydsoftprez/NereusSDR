@@ -185,7 +185,9 @@
 //               remoteMicLineEnded and remoteMicAudioArrived (a microphone
 //               line that ends mid-key keeps its hold and is cut 10 s after
 //               its last packet on the server's own timer), remoteMicStarved
-//               takes the measured silence, micHoldCountedForTest. J.J.
+//               takes the measured silence, micHoldCountedForTest. Round 2:
+//               onTransmitModeChanged and the starved line it judges,
+//               m_watchdogVoxOffWhy, holdMicWithoutPublishingForTest. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut: remoteMicNoAudio (the 10 s
 //               no-audio cut), and the keyer's link and microphone holds as
@@ -1657,6 +1659,10 @@ public:
     /// Test only: whether the starvation policy counts a microphone hold
     /// (fix wave B: true only while it set the Mic bit).
     bool micHoldCountedForTest() const { return m_starvation.isHolding(); }
+    /// Test only (round 2): the policy counts a microphone hold and the
+    /// model's Mic bit is set, with no hold published, so a test can see
+    /// MOX reaching receive make the policy forget it.
+    void holdMicWithoutPublishingForTest();
     /// Test only: whether a microphone line that ended mid-key is waiting
     /// for audio or its cut.
     bool endedMicLinePendingForTest() const { return !m_endedMicLine.deviceId.isEmpty(); }
@@ -2357,6 +2363,9 @@ private:
     void dropEndedMicLine();
     // Fix wave B: a stop was already recorded for the key `keyEpoch`.
     bool keyStopped(quint32 keyEpoch) const;
+    // Fix wave B, round 2: a slice's mode changed; a starved line for the
+    // key on the air is judged again in the transmit mode now.
+    void onTransmitModeChanged();
     // Every bit is clear (MOX reached receive, or the last one let go): a
     // hold still published ends as "the key ended", one event-loop turn
     // later, so a cut's own end (its stop runs first) is told first.
@@ -3058,6 +3067,18 @@ private:
     QTimer* m_endedMicLineTimer = nullptr;
     // Fix wave B: the silence the next microphone hold's start line logs.
     qint64 m_micStarvedQuietMs = -1;
+    // Fix wave B, round 2: the keyed device's live line that starved, for
+    // its key, and its last packet on the Core's clock; empty deviceId:
+    // none (audio returned, or the key changed).
+    struct StarvedMicLine {
+        QByteArray deviceId;
+        quint32 keyEpoch = 0;
+        qint64 lastPacketMs = 0;
+    };
+    StarvedMicLine m_starvedMicLine;
+    // Fix wave B, round 2: why the watchdog's stop turns VOX off, while a
+    // closed connection's stop runs; nullptr: the link went quiet.
+    const char* m_watchdogVoxOffWhy = nullptr;
     // Remote transmit cut off the main thread (2026-10-15): what the
     // guard's cut reaches (the model's cut line and this object, cleared
     // under its mutex before this object goes), the guard, the key it is
