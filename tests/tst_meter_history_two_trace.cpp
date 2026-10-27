@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original tests for the two-trace signal history.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I5): a saved face keeps one entry
+//                 in "channels" with trace 2 under trace2Channel, so
+//                 v2026.10.1 loads it; this branch's earlier two-channel
+//                 records and v2026.10.1's one-channel records still load.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave M2: trace 2's veil names its reason. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Signal history trace 2 on its own slice (D2), the saved
@@ -149,6 +154,68 @@ private slots:
         QVERIFY(edited.trace2Shown());
         QVERIFY(edited.deserialize(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact))));
         QVERIFY2(!edited.trace2Shown(), "A saved one-trace face loads with trace 2 off");
+    }
+    // Fix wave I5: v2026.10.1 rejects a Signal history record whose
+    // "channels" count differs from its own one channel, so the saved
+    // record keeps one channel there and trace 2 under trace2Channel.
+    void savedFaceLoadsOnTheReleasedBuild()
+    {
+        const QString green = QStringLiteral("#ff00ff00");
+        CompositePresetItem face(CompositePresetItem::Face::History);
+        QJsonArray channels = face.configuration()["channels"].toArray();
+        QJsonObject second = channels[1].toObject(); second["color"] = green; channels[1] = second;
+        QVERIFY(face.applyConfiguration({{"channels", channels}, {"trace2Context", sliceContext(kSliceB)}}));
+        QVERIFY(face.trace2Shown());
+
+        // The record and the entry's properties: one channel, trace 2 apart.
+        const QString record = face.serialize();
+        const QJsonObject saved = QJsonDocument::fromJson(record.toUtf8()).object();
+        QCOMPARE(saved["channels"].toArray().size(), 1);
+        QVERIFY(saved["trace2Channel"].isObject());
+        QCOMPARE(saved["trace2Channel"].toObject()["color"].toString(), green);
+        QCOMPARE(saved["trace2Context"].toObject(), sliceContext(kSliceB));
+        ContainerContentRegistry registry;
+        const ContentEntry entry = registry.captureMeterItem(face, registry.makeEntry("meter.historyGraph"));
+        const QJsonObject properties = entry.config["properties"].toObject();
+        QCOMPARE(properties["channels"].toArray().size(), 1);
+        QCOMPARE(properties["trace2Channel"].toObject()["color"].toString(), green);
+
+        // It loads here again with trace 2 as it was, and saves the same.
+        CompositePresetItem reloaded(CompositePresetItem::Face::History);
+        QVERIFY(reloaded.deserialize(record));
+        QVERIFY(reloaded.trace2Shown());
+        QCOMPARE(reloaded.trace2Context(), sliceContext(kSliceB));
+        QCOMPARE(reloaded.configuration()["channels"].toArray().size(), 2);
+        QCOMPARE(reloaded.configuration()["channels"].toArray()[1].toObject()["color"].toString(), green);
+        QVERIFY(!reloaded.configuration().contains("trace2Channel"));
+        QCOMPARE(reloaded.serialize(), record);
+        std::unique_ptr<MeterItem> created(registry.createMeterItem(entry, nullptr, ContentRenderMode::Live));
+        auto* fromEntry = qobject_cast<CompositePresetItem*>(created.get());
+        QVERIFY(fromEntry);
+        QVERIFY(fromEntry->trace2Shown());
+        QCOMPARE(fromEntry->serialize(), record);
+
+        // A record from this branch's earlier heads: trace 2 inside
+        // "channels". It loads, and saves in the new shape.
+        const QJsonObject earlier = face.configuration();
+        QCOMPARE(earlier["channels"].toArray().size(), 2);
+        CompositePresetItem fromEarlier(CompositePresetItem::Face::History);
+        QVERIFY(fromEarlier.deserialize(QString::fromUtf8(QJsonDocument(earlier).toJson(QJsonDocument::Compact))));
+        QVERIFY(fromEarlier.trace2Shown());
+        QCOMPARE(fromEarlier.configuration()["channels"].toArray()[1].toObject()["color"].toString(), green);
+        QCOMPARE(fromEarlier.serialize(), record);
+
+        // A v2026.10.1 record (one channel, no trace 2) loads with trace 2
+        // off; one that v2026.10.1 re-saved keeps the trace2Channel it did
+        // not know, and loads with trace 2 again.
+        CompositePresetItem fromReleased(CompositePresetItem::Face::History);
+        QVERIFY(fromReleased.deserialize(QString::fromUtf8(QJsonDocument(oneTraceConfiguration()).toJson(QJsonDocument::Compact))));
+        QVERIFY(!fromReleased.trace2Shown());
+        QVERIFY(fromReleased.deserialize(record));
+        QVERIFY(fromReleased.trace2Shown());
+        // A trace2Channel that is not an object is refused.
+        QJsonObject broken = saved; broken["trace2Channel"] = 3;
+        QVERIFY(!fromReleased.applyConfiguration(broken));
     }
     void eachTraceRecordsItsOwnSlice()
     {

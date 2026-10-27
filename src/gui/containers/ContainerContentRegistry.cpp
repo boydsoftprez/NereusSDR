@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I5): a composite's properties
+//                 are its savedConfiguration (a Signal history face keeps
+//                 trace 2 under trace2Channel). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A BarPreset entry is judged on the bar its flavor names:
 //                 a stored ADC maximum bar (BarPreset, flavor AdcMax) is
 //                 unavailable with its reason and is never built live. One
@@ -488,7 +492,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     if (item && !ownCadence && item->updateIntervalMs() > 0) { entry.context.insert(QStringLiteral("updateIntervalMs"), item->updateIntervalMs()); }
     if (const auto* waveform=qobject_cast<const WaveformMeterItem*>(item.get())) { entry.config.insert("properties",waveform->configuration()); }
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
-    if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
+    if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->savedConfiguration()); }
     if (item) { entry.config.insert(QStringLiteral("legacyRecord"), item->serialize()); entry.canvasRect = QRectF(item->x(),item->y(),item->itemWidth(),item->itemHeight()); entry.paintOrder = item->zOrder(); }
     return entry;
 }
@@ -706,7 +710,7 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     if (entry.typeId.isEmpty()) { entry = makeEntry(serialized.section(QLatin1Char('|'),0,0)); entry.config.insert(QStringLiteral("legacyRecord"), serialized); }
     if (entry.id.isEmpty()) { entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces); }
     if(face) { entry.config.insert(QStringLiteral("properties"),face->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
-    if(composite) { entry.config.insert(QStringLiteral("properties"),composite->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
+    if(composite) { entry.config.insert(QStringLiteral("properties"),composite->savedConfiguration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
     auto baseline = allocate(entry.typeId);
     if (auto* web = qobject_cast<WebImageItem*>(baseline.get())) { web->setFetchEnabled(false); }
     if (!face && !composite && !waveform && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {

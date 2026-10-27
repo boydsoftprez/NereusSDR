@@ -1,5 +1,11 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I5): a Signal history face saves
+//                 trace 2 under trace2Channel and keeps "channels" at one
+//                 entry (savedConfiguration), so v2026.10.1 still loads it;
+//                 a record from this branch's earlier heads (trace 2 inside
+//                 "channels") still loads. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -901,9 +907,31 @@ QJsonObject CompositePresetItem::configuration() const {
     c["x"]=x(); c["y"]=y(); c["w"]=itemWidth(); c["h"]=itemHeight(); c["bindingId"]=bindingId();
     QJsonArray channels; for(int i=0;i<m_channels.size();++i) { QJsonObject channel=m_channels[i].config; if(i==0) { channel["bindingId"]=bindingId(); } channels.append(channel); } c["channels"]=channels; return c;
 }
-QString CompositePresetItem::serialize() const { return QString::fromUtf8(QJsonDocument(configuration()).toJson(QJsonDocument::Compact)); }
+QJsonObject CompositePresetItem::savedConfiguration() const {
+    QJsonObject c=configuration();
+    // v2026.10.1 takes a Signal history record only with its one channel
+    // (it rejects any other count), so trace 2 is saved beside it.
+    if(m_face==Face::History) {
+        QJsonArray channels=c.value(QStringLiteral("channels")).toArray();
+        if(channels.size()==2) { c.insert(QStringLiteral("trace2Channel"),channels.takeAt(1)); c.insert(QStringLiteral("channels"),channels); }
+    }
+    return c;
+}
+QString CompositePresetItem::serialize() const { return QString::fromUtf8(QJsonDocument(savedConfiguration()).toJson(QJsonDocument::Compact)); }
 bool CompositePresetItem::deserialize(const QString& data) { const QJsonDocument json=QJsonDocument::fromJson(data.toUtf8()); return json.isObject() && json.object()["kind"]==m_kind && json.object()["schema"]==1 && applyConfiguration(json.object()); }
-bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
+bool CompositePresetItem::applyConfiguration(const QJsonObject& requested) {
+    // A saved Signal history face carries trace 2 as trace2Channel beside
+    // its one channel (savedConfiguration); it applies as the second
+    // channel. The key itself is never kept.
+    QJsonObject edit=requested;
+    if(edit.contains(QStringLiteral("trace2Channel"))) {
+        const QJsonArray channels=edit.value(QStringLiteral("channels")).toArray();
+        if(m_face==Face::History && m_channels.size()==2 && channels.size()==1) {
+            if(!edit.value(QStringLiteral("trace2Channel")).isObject()) { return false; }
+            QJsonArray both=channels; both.append(edit.value(QStringLiteral("trace2Channel"))); edit.insert(QStringLiteral("channels"),both);
+        }
+        edit.remove(QStringLiteral("trace2Channel"));
+    }
     QJsonObject next=m_config; const QJsonObject current=configuration(); for(auto i=current.begin();i!=current.end();++i) { next[i.key()]=i.value(); } for(auto i=edit.begin();i!=edit.end();++i) { next[i.key()]=i.value(); }
     if(edit.contains("channels") && !edit.contains("bindingId") && !edit["channels"].toArray().isEmpty()) { next["bindingId"]=edit["channels"].toArray().first().toObject()["bindingId"]; }
     const QStringList editable=editableFields();

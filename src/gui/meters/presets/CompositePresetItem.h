@@ -1,5 +1,11 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I5): a Signal history face saves
+//                 trace 2 under trace2Channel and keeps "channels" at one
+//                 entry (savedConfiguration), so v2026.10.1 still loads it;
+//                 a record from this branch's earlier heads (trace 2 inside
+//                 "channels") still loads. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -102,6 +108,12 @@ public:
     explicit CompositePresetItem(Face face, QObject* parent=nullptr);
     QString typeId() const;
     QJsonObject configuration() const;
+    // The record saved (serialize() and the entry's properties): the
+    // configuration, except that a Signal history face keeps trace 2 under
+    // trace2Channel and "channels" at the one trace v2026.10.1 takes, so
+    // the face still loads there. applyConfiguration() takes this shape,
+    // the two-channel shape and a one-channel record without trace 2.
+    QJsonObject savedConfiguration() const;
     QStringList editableFields() const;
     QStringList editableChannelFields(int channel) const;
     bool applyConfiguration(const QJsonObject&);
