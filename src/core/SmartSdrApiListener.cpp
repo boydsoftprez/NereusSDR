@@ -26,6 +26,8 @@
 // Modified 2026-10-09 by J.J. Boyd (KG4VCF): per-frame RX lines and
 // unchanged S-frames log at debug, not info, so the Core's journal keeps
 // hours instead of minutes; AI-assisted via Anthropic Claude Code.
+// 2026-10-26: CW transmit, interlockedAmpChanged when hasInterlockedAmp
+// changes (D16). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -220,6 +222,7 @@ void SmartSdrApiListener::stop()
     m_lastTuneInitiator.clear();
     m_lastListenError.clear();
     emit statusChanged();
+    noteInterlockedAmp();
 }
 
 bool SmartSdrApiListener::isListening() const
@@ -865,6 +868,17 @@ void SmartSdrApiListener::onClientDisconnected()
                         << "buffered:" << m_clients.value(sock).readBuffer.size();
     m_clients.remove(sock);
     sock->deleteLater();
+    noteInterlockedAmp();
+}
+
+void SmartSdrApiListener::noteInterlockedAmp()
+{
+    const bool interlocked = hasInterlockedAmp();
+    if (interlocked == m_lastInterlockedAmp) {
+        return;
+    }
+    m_lastInterlockedAmp = interlocked;
+    emit interlockedAmpChanged(interlocked);
 }
 
 void SmartSdrApiListener::onPeriodicTick()
@@ -1047,6 +1061,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
             qCInfo(lcSmartSdr) << "interlock create -> id=" << it->interlockId
                                << "name=" << it->interlockName
                                << "for client" << sock->peerAddress().toString();
+            noteInterlockedAmp();
         }
         // Wiki returns the id as ASCII decimal in the R-frame body.
         body = QString::number(it->interlockId);
@@ -1130,6 +1145,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                     QTimer::singleShot(0, this,
                         &SmartSdrApiListener::advanceToTransmittingIfReady);
                 }
+                noteInterlockedAmp();
             }
         }
         // No body needed.

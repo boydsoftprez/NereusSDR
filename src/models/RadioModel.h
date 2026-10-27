@@ -749,6 +749,13 @@
 //                CWPitch (R-CW-02); the stale Longpath entry below is
 //                marked (R-CW-52). J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-26 - CW transmit, the CW keyer controller: cwKeyerController,
+//                bandPlanCheckForTxSlice (the MOX pre-check's band-plan
+//                half), bandPlanRegionChanged, extendedTransmitChanged and
+//                preventTxOnDifferentBandChanged, the wire state pushed to
+//                the connection, and the TX time-out on QSK key-out
+//                (R-CW-05 to R-CW-07, R-CW-10). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -874,6 +881,7 @@
 #include "core/CalibrationController.h"
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
+#include "core/codec/CwWireState.h"   // CW transmit: the pushed wire state
 #include "core/HardwareProfile.h"
 #include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
 #include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
@@ -953,6 +961,7 @@ class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class CatService;
 class MoxController;
+class CwKeyerController;   // CW transmit (R-CW-05)
 struct KeyerIdentity;
 class TxChannel;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
@@ -2864,6 +2873,21 @@ public:
     /// With none (a Core with no slice) every key is refused.
     bool hasTransmitSlice() const;
 
+    /// CW transmit (R-CW-05 to R-CW-07): the keyer gate and the CW wire
+    /// state this model pushes to the connection. Never null.
+    CwKeyerController* cwKeyerController() const { return m_cwKeyerController.get(); }
+    /// CW transmit: the band-plan half of the MOX pre-check for the
+    /// transmit slice's carrier (region, extended, US 60 m, prevent TX on
+    /// a different band and the band edges), shared by the MOX pre-check
+    /// and the CW keyer gate. `ignoreFilter` is Thetis's bIgnoreFilter.
+    safety::BandPlanGuard::MoxCheckResult bandPlanCheckForTxSlice(bool ignoreFilter) const;
+    /// CW transmit: the keyer's connection wiring (key status in, the wire
+    /// state out) for a test that injects a connection.
+    void wireCwKeyerConnectionForTest() { wireCwKeyerConnection(); }
+    /// CW transmit (R-CW-10): whether the radio's QSK key-out is running
+    /// the TX time-out now.
+    bool cwQskKeyOutTimingForTest() const { return m_cwQskKeyOutTiming; }
+
     /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
     /// This API remains positional for internal list navigation only.
     ///
@@ -3867,7 +3891,8 @@ public:
     /// Fix wave (M3): the Core is changing its radio (nereusd's DaemonApp).
     /// Keying is refused until the change ends, so nothing keyed is torn
     /// down by it.
-    void setStationRadioChangeUnderway(bool underway) { m_stationRadioChangeUnderway = underway; }
+    /// CW transmit: the CW keyer gate re-evaluates on a change.
+    void setStationRadioChangeUnderway(bool underway);
     /// Fix wave (M2): the Core's waiting reason (see the property).
     QString stationRadioWaiting() const { return m_stationRadioWaiting; }
     void setStationRadioWaiting(const QString& reason);
@@ -6490,6 +6515,12 @@ signals:
     /// this model's own settings: a local window's edit, or a device's
     /// edit the Core took. A remote window hears stationSettingChanged.
     void transmitGateSettingChanged(const QString& key);
+    // CW transmit (R-CW-06): BandPlanRegion, ExtendedTransmit and
+    // PreventTxOnDifferentBandToRx were written (reportTransmitGateSettingChanged,
+    // from every writer: Setup and a device's change on the Core).
+    void bandPlanRegionChanged();
+    void extendedTransmitChanged();
+    void preventTxOnDifferentBandChanged();
     /// Scoped review (addendum G-42): who holds transmit on this Core
     /// changed (otherDeviceHoldsRefusal may read differently).
     void transmitHolderChanged();
@@ -9683,6 +9714,24 @@ private:
     QMetaObject::Connection m_accessoryBandConnection;
     void rebindAccessorySlice();
     void publishAccessoryBand();
+
+    // ── CW transmit (R-CW-05 to R-CW-07, R-CW-10) ──────────────────────────
+    // The keyer's connection wiring: key status in, the wire state pushed
+    // once now (wireConnectionSignals, and the test seam above).
+    void wireCwKeyerConnection();
+    // Sends `state` to the connection when it differs from the last one
+    // sent to it (queued onto the connection's thread).
+    void pushCwWireState(const CwWireState& state);
+    // The radio's key status (RadioConnection::radioKeyStatus).
+    void onCwRadioKeyStatus(bool dot, bool dash, bool keyOut);
+    // R-CW-10: in QSK the TX time-out counts while the radio reports
+    // key-out, as it counts MOX (MOX never goes on in QSK).
+    void updateCwQskTimeOut();
+    std::optional<CwWireState> m_lastPushedCwWire;
+    bool m_cwQskKeyOutTiming{false};
+    // Declared last so it goes first: nothing it is connected to signals
+    // it while this model's other members are destroyed.
+    std::unique_ptr<CwKeyerController> m_cwKeyerController;
 };
 
 } // namespace NereusSDR

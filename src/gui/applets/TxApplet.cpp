@@ -276,6 +276,8 @@
 //   2026-10-21  J.J. Boyd (KG4VCF): the drive source gate sets a grayed
 //               power slider's accessible description to its reason, as
 //               the transmit gates do. AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the MOX tooltip in CWL and CWU is the normal
+//               one (R-CW-05). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1439,14 +1441,13 @@ QString TxApplet::tooltipForMode(DSPMode mode)
     case DSPMode::AM:
     case DSPMode::SAM:
     case DSPMode::DSB:
+    // CW transmit (R-CW-05): BandPlanGuard lets CWL and CWU key.
+    case DSPMode::CWL:
+    case DSPMode::CWU:
         return QStringLiteral("Manual transmit (MOX)");
 
     // R-R3-17 / R-R3-21: the same user words BandPlanGuard refuses with.
-    // CW transmit is Phase 3M-2; FM transmit waits on pre-emphasis (Phase
-    // 3M-3b). DRM names DRM.
-    case DSPMode::CWL:
-    case DSPMode::CWU:
-        return QStringLiteral("CW transmit is not available on this Core");
+    // FM transmit waits on pre-emphasis (Phase 3M-3b). DRM names DRM.
 
     case DSPMode::FM:
         return QStringLiteral("FM transmit is not available on this Core");

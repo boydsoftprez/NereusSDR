@@ -28,6 +28,9 @@
 //   2026-10-01 - Round 4: tune=0 only on a change; a new client's or a
 //                 sub's idle tune=0 push is not emitted. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, interlockedAmpChanged: hasInterlockedAmp
+//                 changed (D16, the CW keyer gate). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -226,6 +229,9 @@ signals:
     // RadioModel wires these to the appropriate MOX / UI rollback paths.
     void interlockGranted(const QString& source);
     void interlockBlocked(const QString& reason);
+    // CW transmit (2026-10-26, D16): hasInterlockedAmp() changed (an amp's
+    // interlock was created, enabled, disabled or went with its client).
+    void interlockedAmpChanged(bool interlocked);
 
     // 2026-05-20 pcap-driven (flex-tgxl-direct-CONTROL.pcapng @T+172.201):
     // When TGXL (or any amp) wants to coordinate with another amp in the
@@ -393,6 +399,10 @@ private:
     QTimer     m_interlockRepeat;
     QByteArray m_interlockRepeatFrame;
     void armInterlockRepeat(const QByteArray& frame);
+    // CW transmit: emits interlockedAmpChanged when hasInterlockedAmp()
+    // differs from the last value it reported.
+    void noteInterlockedAmp();
+    bool m_lastInterlockedAmp{false};
     void cancelInterlockRepeat();
     void onInterlockRepeat();
 

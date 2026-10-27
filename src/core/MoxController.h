@@ -268,6 +268,8 @@
 //               lastAdmitTook() and tunerTakeFinished(). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-26: CW transmit, interlockRefusal is public for the CW keyer
+//               gate. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -572,6 +574,14 @@ public:
     // interlock), asked without reporting anything. Empty when none would.
     // Pure existing TX safety probe for accepted tune/two-tone repeats.
     TxRefusal refusalBeforeTheGate() const;
+    // Fix wave 2, Important 2: the interlock's refusal, asked quietly.
+    // admitKey asks TX inhibit, the PA trip, receive only and this before
+    // the gate, whatever the key sets up first; the band plan and the
+    // microphone are judged after TUNE's mode swap, in setMox, and a take
+    // whose key then never starts is released by its holder.
+    // CW transmit (2026-10-26): public, so the CW keyer gate asks the same
+    // interlock (R-CW-05).
+    TxRefusal interlockRefusal() const;
 
     // A station key that starts more than MOX (TUNE, two-tone) asks the gate
     // before it changes anything, so a refused start never releases or rides
@@ -1553,12 +1563,6 @@ private:
     // `quiet` (a held source's repeat, M3) records it and says nothing.
     void reportRefusal(const QString& reason, const TxRefusal& refusal, bool quiet);
     static TxRefusal refusalForCheck(const safety::BandPlanGuard::MoxCheckResult& result);
-    // Fix wave 2, Important 2: the interlock's refusal, asked quietly.
-    // admitKey asks TX inhibit, the PA trip, receive only and this before
-    // the gate, whatever the key sets up first; the band plan and the
-    // microphone are judged after TUNE's mode swap, in setMox, and a take
-    // whose key then never starts is released by its holder.
-    TxRefusal interlockRefusal() const;
     // isVoiceMode: true for the 8 voice-family DSP modes.
     //
     // Voice family (per Thetis CMSetTXAVoxRun, cmaster.cs:1043-1050

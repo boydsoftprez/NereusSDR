@@ -14,6 +14,9 @@
 // its floor drops to 55 and the noise-reduction table's labels, units and
 // items are checked here instead. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-26: CW transmit, CW keys now, so "CW transmit is not available on
+// this Core" is no longer shown by BandPlanGuard or TxApplet. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -1116,13 +1119,13 @@ private slots:
              {"coming in Phase", "RX/TX band mismatch", "TX-allowed range",
               "Mode not supported for TX",
               "Transmit is on a different band from receive"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core",
               "Transmit would be on %1 while another slice you have open is on %2, and Setup "
               "is set to prevent transmitting on a different band."}},
             {"src/gui/applets/TxApplet.cpp", true,
              {"coming in Phase"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core"}},
             {"src/gui/MainWindow.cpp", false,
              {"Phase 3F closeout:", "AntennaSwitchToast surface",

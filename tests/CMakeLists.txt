@@ -1044,6 +1044,13 @@ target_compile_definitions(tst_p1_cw_key_overlay PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p2_cw_wire fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# CW transmit (R-CW-05 to R-CW-07, R-CW-10, R-CW-20, R-CW-22, D16): the
+# keyer gate's truth table, and the CW keyer controller's inputs,
+# availability, fallbacks, composition, push and the QSK time-out against a
+# RadioModel with a fake connection.
+nereus_add_test(tst_cw_keyer_gate)
+nereus_add_test(tst_cw_keyer_controller)
+
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 
@@ -3453,8 +3460,8 @@ nereus_add_test(tst_nf_aware_grid)
 nereus_add_test(tst_band_plan_guard)
 
 # ── Phase 3M-1b Task K.1: BandPlanGuard SSB-mode allow-list for TX ─────────
-# isModeAllowedForTx: 4 allowed (LSB/USB/DIGL/DIGU) + 8 rejected
-# (CWL/CWU/AM/SAM/DSB/FM/DRM/SPEC). checkMoxAllowed: reason strings for each
+# isModeAllowedForTx: allowed (LSB/USB/DIGL/DIGU/AM/SAM/DSB/CWL/CWU) and
+# rejected (FM/DRM/SPEC). checkMoxAllowed: reason strings for each
 # rejection class + ok path (LSB/USB on valid freq) + freq/band reject on
 # an otherwise-allowed mode. ~20 test cases.
 nereus_add_test(tst_band_plan_guard_mode_allow_list)
@@ -3464,8 +3471,8 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #   MoxController::setMoxCheck(fn) + moxRejected(QString) signal.
 #
 # MoxController cases (8):
-#   1. CWL → moxRejected("CW transmit is not available on this Core"); state stays Rx.
-#   2. CWU → moxRejected with CW reason.
+#   1. CWL → accepted (CW transmit, R-CW-05); the carrier alone is checked.
+#   2. CWU → accepted.
 #   3. AM  → accepted (AM/SAM/DSB TX enabled); FM still rejected.
 #   4. FM  → moxRejected with audio-modes reason.
 #   5. LSB (allowed) → MOX engages; moxRejected NOT emitted.
@@ -3477,7 +3484,7 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #
 # TxApplet::tooltipForMode static helper (12):
 #   USB/LSB/DIGL/DIGU → normal "Manual transmit (MOX)" tooltip.
-#   CWL/CWU → "CW transmit is not available on this Core".
+#   CWL/CWU → normal "Manual transmit (MOX)" tooltip.
 #   AM/SAM/DSB → allowed; FM → "FM transmit is not available on this Core";
 #   DRM → "DRM transmit is not available on this Core".
 #   SPEC → "Mode not supported for TX".

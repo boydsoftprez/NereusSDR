@@ -1387,6 +1387,13 @@
 //                arrive (reportStationSettingChanged); the stale Longpath
 //                entry below is marked (R-CW-52). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, the CW keyer controller: owned here, its
+//                wire state pushed to the connection on a change and once
+//                on connect, the radio's key status fed to it, every stop
+//                latching it; bandPlanCheckForTxSlice moved out of the MOX
+//                pre-check unchanged; the three band-plan setting signals;
+//                the TX time-out on QSK key-out (R-CW-05 to R-CW-07,
+//                R-CW-10). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1713,6 +1720,7 @@ mw0lge@grange-lane.co.uk
 #include "core/PaTelemetryScaling.h"
 #include "core/AlexSettingsKeys.h"
 #include "models/PureSignalSettings.h"
+#include "models/CwKeyerController.h"
 #include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
@@ -5207,10 +5215,24 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // Radio speaker (R-SPK-15): the CW or Tune flag and the amplifier
     // status line follow the transmit mode, Tune and the key.
     wireRadioSpeakerState();
+
+    // CW transmit (R-CW-05 to R-CW-07): the keyer gate and the CW wire
+    // state. Made last, so every connection above that feeds MoxController
+    // (the amplifier state, the SWR) runs before the gate reads it. Its
+    // wire state goes to the connection on a change; a break-in mode
+    // change starts or stops the QSK key-out time-out (R-CW-10).
+    m_cwKeyerController = std::make_unique<CwKeyerController>(*this);
+    connect(m_cwKeyerController.get(), &CwKeyerController::wireStateChanged,
+            this, &RadioModel::pushCwWireState);
+    connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
+            this, &RadioModel::updateCwQskTimeOut);
 }
 
 RadioModel::~RadioModel()
 {
+    // CW transmit: the keyer controller goes first, so nothing the teardown
+    // below signals re-evaluates it or pushes to a connection going away.
+    m_cwKeyerController.reset();
     // The transmit cut line may outlive this model (RemoteTxCutGuard holds
     // it); nothing it cuts after this may reach this model's objects.
     m_transmitCutLine->setTargets(nullptr, nullptr);
@@ -22270,6 +22292,10 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 Qt::QueuedConnection);
     }
 
+    // CW transmit (R-CW-07, R-CW-10): the keyer's key status in and its
+    // wire state out, pushed once now.
+    wireCwKeyerConnection();
+
     // Task 13: the radio's TX inhibit input (PollTXInhibit).
     connectTxInhibitInput();
 
@@ -23902,127 +23928,10 @@ void RadioModel::installBandPlanMoxCheck()
             return refused;
         }
 
-        bool regionOk = false;
-        const int regionInt = AppSettings::instance()
-            .value(QStringLiteral("BandPlanRegion"),
-                   QString::number(static_cast<int>(safety::Region::UnitedStates)))
-            .toString().toInt(&regionOk);
-        // Validate before the uint8_t enum conversion: malformed settings must
-        // not become Australia (0), or wrap into another permitted region.
-        if (!regionOk || regionInt < static_cast<int>(safety::Region::Australia)
-            || regionInt > static_cast<int>(safety::Region::Germany)) {
-            return {false, QStringLiteral("The transmit region setting is invalid.")};
-        }
-        const auto region = static_cast<safety::Region>(regionInt);
-
-        const SliceModel* slice = txBoundSlice();
-        if (!slice) {
-            // Checked above (hasTransmitSlice); kept as the guard for the
-            // dereference below.
-            safety::BandPlanGuard::MoxCheckResult refused{
-                false, TxRefusals::noTransmitSlice().text};
-            refused.refusalCode = TxRefusals::kNoTransmitSlice;
-            return refused;
-        }
-
-        // Thetis console.cs:29440-29450 [v2.10.3.15] adds XIT to the TX
-        // carrier before CheckValidTXFreq at :29486. Use the same carrier
-        // already sent to the TX chain, including XIT, for the safety gate.
-        const auto freqHz = static_cast<std::int64_t>(txFrequencyForSlice(slice));
-        const DSPMode mode = slice->dspMode();
-        const Band txBand = bandFromFrequency(static_cast<double>(freqHz));
-
-        // From Thetis console.cs:29486 [v2.10.3.15]: chkTUN.Checked
-        // ignores filter edges for the carrier-only tune check. Voice/digital
-        // keying checks the same signed passband used by the TX chain.
-        const auto [filterLow, filterHigh] = TxChannel::filterEdgesForMode(
-            m_transmitModel.filterLow(), m_transmitModel.filterHigh(), mode);
-        // From Thetis console.cs:6780-6781 [v2.10.3.15] (CheckValidTXFreq):
-        //   if (extended || tx_xvtr_index > -1)
-        //       return true;
-        // `extended` is the Core's ExtendedTransmit (JJ's ruling
-        // 2026-09-28), read at every key. NereusSDR has no transverter
-        // transmit path yet (UnbuiltFeature::Transverters), so
-        // tx_xvtr_index > -1 has no counterpart to pass.
-        const bool extended = extendedTransmitSetting();
-        // The filter edges below are skipped for TUNE (bIgnoreFilter):
-        //MW0LGE_21d filter outside band, ignore option  [original inline comment from console.cs:6784]
-        // From Thetis console.cs:29451-29465 [v2.10.3.15]
-        //MW0LGE [2.9.0.7]
-        //   if (_preventTXonDifferentBandToRXband && ((!RX2Enabled && VFOBTX && RX1Band != TXBand) || (RX2Enabled && VFOBTX && RX2Band != TXBand)))
-        //   // note RX2 enabled with a TXvfoB will always TX  [original inline comment from console.cs:29458]
-        // Thetis refuses only when it transmits on VFO B (split, VFOBTX)
-        // and VFO B's band differs from the RX band it listens on. JJ's
-        // ruling (2026-09-29) matches that: NereusSDR has no split, and the
-        // counterpart of VFO B is a transmitting slice that is not its
-        // device's active (listening) slice. Only then is the active
-        // slice's band the RX band; a key on the active slice itself never
-        // refuses, however other slices are parked. Slices other devices
-        // hold do not count. A slice's device is its mark's subject
-        // (SliceOwnership::Mark::subject): a slice held for an absent
-        // device is that device's, not the station device's.
-        const bool preventDifferentBand = preventTxOnDifferentBandSetting();
-        Band rxBand = txBand;
-        if (preventDifferentBand) {
-            // An ownerless slice (a desktop with no devices, or slices the
-            // Core made before any device adopted them) is operated by the
-            // station window, so it counts as the station device's.
-            const auto deviceOf = [this](int sliceId) {
-                const QByteArray subject = m_sliceOwnership->mark(sliceId).subject();
-                return subject.isEmpty() ? SliceOwnership::stationDevice() : subject;
-            };
-            const int txId = slice->sliceIndex();
-            const QByteArray device = deviceOf(txId);
-            // The device's active slice. The station device's is the most
-            // recent choice among its own and the ownerless slices; another
-            // device's is its own choice; slices held for an absent device
-            // are chosen by the station, which runs them. The first
-            // candidate that is the device's own is it, else its first
-            // slice in creation order (activeFor's own fallback).
-            // Recency: SliceOwnership keeps only one most recent choice
-            // across all owners (stationActiveSlice, first here while
-            // nobody else holds transmit); it keeps no per-owner recency.
-            // So when that slot names another device's slice, or the
-            // station holds transmit (stationActiveSlice is then
-            // activeFor(station)), station-owned and ownerless choices
-            // cannot be ranked by recency and the fixed order below
-            // applies: the station's own choice before the ownerless one.
-            QList<int> candidates;
-            if (device == SliceOwnership::stationDevice()) {
-                candidates = {m_sliceOwnership->stationActiveSlice(),
-                              m_sliceOwnership->activeFor(device),
-                              m_sliceOwnership->activeFor(QByteArray())};
-            } else {
-                candidates = {m_sliceOwnership->activeFor(device),
-                              m_sliceOwnership->activeFor(SliceOwnership::stationDevice())};
-            }
-            int activeId = -1;
-            for (const int id : std::as_const(candidates)) {
-                if (id >= 0 && m_sliceOwnership->isLive(id) && deviceOf(id) == device) {
-                    activeId = id;
-                    break;
-                }
-            }
-            if (activeId < 0) {
-                for (const int id : m_sliceOwnership->liveSlices()) {
-                    if (deviceOf(id) == device) {
-                        activeId = id;
-                        break;
-                    }
-                }
-            }
-            if (activeId >= 0 && activeId != txId) {
-                if (const SliceModel* active = sliceById(activeId)) {
-                    rxBand = bandFromFrequency(active->frequency());
-                }
-            }
-        }
+        // CW transmit (R-CW-05): the band-plan half is shared with the CW
+        // keyer gate (bandPlanCheckForTxSlice), unchanged.
         const safety::BandPlanGuard::MoxCheckResult bandPlanResult =
-            m_bandPlan.checkMoxAllowed(region, freqHz, mode,
-                                       rxBand, txBand,
-                                       preventDifferentBand,
-                                       extended, filterLow, filterHigh,
-                                       /*ignoreFilter=*/m_isTuning);
+            bandPlanCheckForTxSlice(/*ignoreFilter=*/m_isTuning);
         if (!bandPlanResult.ok) {
             return bandPlanResult;
         }
@@ -24047,6 +23956,137 @@ void RadioModel::installBandPlanMoxCheck()
         }
         return bandPlanResult;
     });
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (2026-10-26): the band-plan half of the MOX pre-check, moved
+// out of installBandPlanMoxCheck unchanged so the CW keyer gate (R-CW-05)
+// asks the same question for the transmit slice's carrier. `ignoreFilter`
+// is Thetis's bIgnoreFilter (TUNE); CW checks the carrier alone whatever it
+// is (BandPlanGuard::isValidTxPassband).
+// ---------------------------------------------------------------------------
+safety::BandPlanGuard::MoxCheckResult RadioModel::bandPlanCheckForTxSlice(bool ignoreFilter) const
+{
+    bool regionOk = false;
+    const int regionInt = AppSettings::instance()
+        .value(QStringLiteral("BandPlanRegion"),
+               QString::number(static_cast<int>(safety::Region::UnitedStates)))
+        .toString().toInt(&regionOk);
+    // Validate before the uint8_t enum conversion: malformed settings must
+    // not become Australia (0), or wrap into another permitted region.
+    if (!regionOk || regionInt < static_cast<int>(safety::Region::Australia)
+        || regionInt > static_cast<int>(safety::Region::Germany)) {
+        return {false, QStringLiteral("The transmit region setting is invalid.")};
+    }
+    const auto region = static_cast<safety::Region>(regionInt);
+
+    const SliceModel* slice = txBoundSlice();
+    if (!slice) {
+        // The MOX pre-check and the CW gate check hasTransmitSlice first;
+        // kept as the guard for the dereference below.
+        safety::BandPlanGuard::MoxCheckResult refused{
+            false, TxRefusals::noTransmitSlice().text};
+        refused.refusalCode = TxRefusals::kNoTransmitSlice;
+        return refused;
+    }
+
+    // Thetis console.cs:29440-29450 [v2.10.3.15] adds XIT to the TX
+    // carrier before CheckValidTXFreq at :29486. Use the same carrier
+    // already sent to the TX chain, including XIT, for the safety gate.
+    const auto freqHz = static_cast<std::int64_t>(txFrequencyForSlice(slice));
+    const DSPMode mode = slice->dspMode();
+    const Band txBand = bandFromFrequency(static_cast<double>(freqHz));
+
+    // From Thetis console.cs:29486 [v2.10.3.15]: chkTUN.Checked
+    // ignores filter edges for the carrier-only tune check. Voice/digital
+    // keying checks the same signed passband used by the TX chain.
+    const auto [filterLow, filterHigh] = TxChannel::filterEdgesForMode(
+        m_transmitModel.filterLow(), m_transmitModel.filterHigh(), mode);
+    // From Thetis console.cs:6780-6781 [v2.10.3.15] (CheckValidTXFreq):
+    //   if (extended || tx_xvtr_index > -1)
+    //       return true;
+    // `extended` is the Core's ExtendedTransmit (JJ's ruling
+    // 2026-09-28), read at every key. NereusSDR has no transverter
+    // transmit path yet (UnbuiltFeature::Transverters), so
+    // tx_xvtr_index > -1 has no counterpart to pass.
+    const bool extended = extendedTransmitSetting();
+    // The filter edges below are skipped for TUNE (bIgnoreFilter):
+    //MW0LGE_21d filter outside band, ignore option  [original inline comment from console.cs:6784]
+    // From Thetis console.cs:29451-29465 [v2.10.3.15]
+    //MW0LGE [2.9.0.7]
+    //   if (_preventTXonDifferentBandToRXband && ((!RX2Enabled && VFOBTX && RX1Band != TXBand) || (RX2Enabled && VFOBTX && RX2Band != TXBand)))
+    //   // note RX2 enabled with a TXvfoB will always TX  [original inline comment from console.cs:29458]
+    // Thetis refuses only when it transmits on VFO B (split, VFOBTX)
+    // and VFO B's band differs from the RX band it listens on. JJ's
+    // ruling (2026-09-29) matches that: NereusSDR has no split, and the
+    // counterpart of VFO B is a transmitting slice that is not its
+    // device's active (listening) slice. Only then is the active
+    // slice's band the RX band; a key on the active slice itself never
+    // refuses, however other slices are parked. Slices other devices
+    // hold do not count. A slice's device is its mark's subject
+    // (SliceOwnership::Mark::subject): a slice held for an absent
+    // device is that device's, not the station device's.
+    const bool preventDifferentBand = preventTxOnDifferentBandSetting();
+    Band rxBand = txBand;
+    if (preventDifferentBand) {
+        // An ownerless slice (a desktop with no devices, or slices the
+        // Core made before any device adopted them) is operated by the
+        // station window, so it counts as the station device's.
+        const auto deviceOf = [this](int sliceId) {
+            const QByteArray subject = m_sliceOwnership->mark(sliceId).subject();
+            return subject.isEmpty() ? SliceOwnership::stationDevice() : subject;
+        };
+        const int txId = slice->sliceIndex();
+        const QByteArray device = deviceOf(txId);
+        // The device's active slice. The station device's is the most
+        // recent choice among its own and the ownerless slices; another
+        // device's is its own choice; slices held for an absent device
+        // are chosen by the station, which runs them. The first
+        // candidate that is the device's own is it, else its first
+        // slice in creation order (activeFor's own fallback).
+        // Recency: SliceOwnership keeps only one most recent choice
+        // across all owners (stationActiveSlice, first here while
+        // nobody else holds transmit); it keeps no per-owner recency.
+        // So when that slot names another device's slice, or the
+        // station holds transmit (stationActiveSlice is then
+        // activeFor(station)), station-owned and ownerless choices
+        // cannot be ranked by recency and the fixed order below
+        // applies: the station's own choice before the ownerless one.
+        QList<int> candidates;
+        if (device == SliceOwnership::stationDevice()) {
+            candidates = {m_sliceOwnership->stationActiveSlice(),
+                          m_sliceOwnership->activeFor(device),
+                          m_sliceOwnership->activeFor(QByteArray())};
+        } else {
+            candidates = {m_sliceOwnership->activeFor(device),
+                          m_sliceOwnership->activeFor(SliceOwnership::stationDevice())};
+        }
+        int activeId = -1;
+        for (const int id : std::as_const(candidates)) {
+            if (id >= 0 && m_sliceOwnership->isLive(id) && deviceOf(id) == device) {
+                activeId = id;
+                break;
+            }
+        }
+        if (activeId < 0) {
+            for (const int id : m_sliceOwnership->liveSlices()) {
+                if (deviceOf(id) == device) {
+                    activeId = id;
+                    break;
+                }
+            }
+        }
+        if (activeId >= 0 && activeId != txId) {
+            if (const SliceModel* active = sliceById(activeId)) {
+                rxBand = bandFromFrequency(active->frequency());
+            }
+        }
+    }
+    return m_bandPlan.checkMoxAllowed(region, freqHz, mode,
+                                      rxBand, txBand,
+                                      preventDifferentBand,
+                                      extended, filterLow, filterHigh,
+                                      ignoreFilter);
 }
 
 // R-R3-36: pcCaptureRequired() narrowed to the keying at hand. It is kept
@@ -28608,6 +28648,13 @@ void RadioModel::teardownConnection()
     if (!m_connection) {
         return;
     }
+    // CW transmit: no key status comes from a connection going away, and
+    // the next one gets the wire state pushed again (wireCwKeyerConnection).
+    m_lastPushedCwWire.reset();
+    if (m_cwKeyerController) {
+        m_cwKeyerController->onRadioKeyStatus(false, false, false);
+        updateCwQskTimeOut();
+    }
     // Radio codec (2026-09-30): no more audio into the connection's ring
     // from the DSP thread; returns once no call into it runs.
     disconnectRadioSpeakerOutput();
@@ -30066,6 +30113,13 @@ void RadioModel::stopTransmitNow(const QString& reason)
     // an interlock grant) must not key again once this returns.
     m_transmitStopHold = true;
 
+    // CW transmit (R-CW-10): the radio's keyer goes off until its key is
+    // released (at once when it is up). The connection's transmit cut is
+    // the off-main-thread form of this (R-CW-08).
+    if (m_cwKeyerController) {
+        m_cwKeyerController->latchStop();
+    }
+
     // No further TX I/Q block reaches the connection after this returns,
     // and a queued channel-on no longer opens the gate.
     if (m_txChannel) {
@@ -30144,7 +30198,11 @@ void RadioModel::stopAllTx(const QString& message)
     // mox_delay. Thetis runs its unkey synchronously, so a StopAllTx can
     // never land inside it; here it can, and must still stop the radio.
     const bool releasing = transmitReleaseInProgress();
-    if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing) {
+    // CW transmit (R-CW-10): in QSK the radio is on the air while it
+    // reports key-out, with MOX off.
+    const bool cwKeyOut = m_cwQskKeyOutTiming;
+    if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
+        && !cwKeyOut) {
         return;
     }
 
@@ -30245,7 +30303,9 @@ void RadioModel::onTxTimeOut(const QString& which, int limitSeconds)
     // NereusSDR: a release still on the air (see stopAllTx) is keyed too;
     // Thetis's synchronous unkey has no such stretch.
     const bool releasing = transmitReleaseInProgress();
-    if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !releasing) {
+    // CW transmit (R-CW-10): the QSK key-out the timer counted.
+    const bool cwKeyOut = m_cwQskKeyOutTiming;
+    if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !releasing && !cwKeyOut) {
         return;
     }
 
@@ -32222,6 +32282,84 @@ void RadioModel::reportTransmitGateSettingChanged(const QString& key)
         || key == QLatin1String(kPreventTxOnDifferentBandKey)) {
         emit transmitGateSettingChanged(key);
     }
+    // CW transmit (R-CW-06): AppSettings has no signals, so every writer of
+    // these three keys calls this, and the CW keyer gate follows.
+    if (key == QLatin1String("BandPlanRegion")) {
+        emit bandPlanRegionChanged();
+    } else if (key == QLatin1String(kExtendedTransmitKey)) {
+        emit extendedTransmitChanged();
+    } else if (key == QLatin1String(kPreventTxOnDifferentBandKey)) {
+        emit preventTxOnDifferentBandChanged();
+    }
+}
+
+void RadioModel::setStationRadioChangeUnderway(bool underway)
+{
+    m_stationRadioChangeUnderway = underway;
+    // CW transmit (R-CW-05): no radio change may be under way while the
+    // radio's keyer runs.
+    if (m_cwKeyerController) {
+        m_cwKeyerController->reevaluate();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-07): the keyer's connection wiring. NereusSDR-original.
+// The radio's key status comes in queued from the connection's thread; the
+// wire state goes out once now (the connect push) and then on every change
+// (pushCwWireState, from the controller's wireStateChanged).
+// ---------------------------------------------------------------------------
+void RadioModel::wireCwKeyerConnection()
+{
+    if (!m_connection || !m_cwKeyerController) {
+        return;
+    }
+    connect(m_connection, &RadioConnection::radioKeyStatus,
+            this, &RadioModel::onCwRadioKeyStatus,
+            static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
+    m_lastPushedCwWire.reset();
+    pushCwWireState(m_cwKeyerController->wireState());
+}
+
+void RadioModel::pushCwWireState(const CwWireState& state)
+{
+    if (!m_connection) {
+        return;
+    }
+    if (m_lastPushedCwWire && *m_lastPushedCwWire == state) {
+        return;
+    }
+    m_lastPushedCwWire = state;
+    RadioConnection* const conn = m_connection;
+    QMetaObject::invokeMethod(conn, [conn, state]() { conn->setCwWireState(state); });
+}
+
+void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
+{
+    if (!m_cwKeyerController) {
+        return;
+    }
+    m_cwKeyerController->onRadioKeyStatus(dot, dash, keyOut);
+    updateCwQskTimeOut();
+}
+
+// R-CW-10: the TX time-out counts while MOX is on and, in QSK, while the
+// radio reports key-out. NereusSDR's own (Thetis has no QSK time-out). MOX
+// never goes on in QSK; while it is on, moxChanged drives the timer and
+// key-out is not counted a second time.
+void RadioModel::updateCwQskTimeOut()
+{
+    if (!m_txTimeOut || !m_cwKeyerController) {
+        return;
+    }
+    const bool timing = m_cwKeyerController->radioKeyOut()
+        && m_cwKeyerController->effectiveBreakInMode() == CwBreakInMode::Qsk
+        && !mox();
+    if (timing == m_cwQskKeyOutTiming) {
+        return;
+    }
+    m_cwQskKeyOutTiming = timing;
+    m_txTimeOut->onMox(0, !timing, timing);
 }
 
 bool RadioModel::rxOnlySetting()

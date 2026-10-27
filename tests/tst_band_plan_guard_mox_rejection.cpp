@@ -6,8 +6,8 @@
 // Phase 3M-1b Task K.2: MoxController::setMox(true) rejection path.
 //
 // Covers:
-//   1. MoxCheckFn callback: CW mode → moxRejected("CW transmit is not available on this Core");
-//      MOX state stays Rx.
+//   1. MoxCheckFn callback: CW mode is accepted (CW transmit, R-CW-05);
+//      MOX engages.
 //   2. AM mode → accepted (AM/SAM/DSB TX via WDSP ammod);
 //      MOX state stays Rx.
 //   3. LSB mode (allowed) → MOX engages normally; moxRejected NOT emitted.
@@ -15,15 +15,15 @@
 //   5. setMox(false) is never rejected — release path bypasses BandPlanGuard.
 //   6. SPEC mode → moxRejected("This mode cannot transmit."); MOX stays Rx.
 //   7. Rejection: no state advance, no phase signals (txAboutToBegin not emitted).
-//   8. After rejection, setMox(true) with CW can be re-attempted; still rejects.
+//   8. After rejection, setMox(true) with FM can be re-attempted; still rejects.
 //
 // Additionally tests TxApplet::tooltipForMode static helper:
 //   9.  USB → normal tooltip.
 //  10.  LSB → normal tooltip.
 //  11.  DIGL → normal tooltip.
 //  12.  DIGU → normal tooltip.
-//  13.  CWL → CW deferred tooltip.
-//  14.  CWU → CW deferred tooltip.
+//  13.  CWL → normal tooltip.
+//  14.  CWU → normal tooltip.
 //  15.  AM  → audio modes deferred tooltip.
 //  16.  FM  → audio modes deferred tooltip.
 //  17.  SAM → audio modes deferred tooltip.
@@ -54,6 +54,11 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code: only a transmitting slice that is not its device's
 //                 active slice is compared, with the active slice.
+//   2026-10-26 : CW transmit by J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code. CWL and CWU key (R-CW-05): the CW rows are accepted,
+//                 the carrier alone is checked against the band edges, CW
+//                 keys on US 60 m, and the refusing check in the generic
+//                 cases is FM's.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -124,30 +129,26 @@ private slots:
             QString::number(static_cast<int>(Region::UnitedStates)));
     }
 
-    // ── 1. CW mode + setMox(true) → moxRejected("CW transmit is not available on this Core") ─
+    // ── 1. CW mode + setMox(true) → accepted (CW transmit, R-CW-05) ─────────
 
-    void cwl_setMox_emitsMoxRejected()
+    void cwl_setMox_isAccepted()
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
         ctrl.setMoxCheck(makeCheckFn(DSPMode::CWL));
 
         QSignalSpy rejectedSpy(&ctrl, &MoxController::moxRejected);
-        QSignalSpy stateChangedSpy(&ctrl, &MoxController::moxStateChanged);
+        QSignalSpy moxChangedSpy(&ctrl, &MoxController::moxStateChanged);
 
         ctrl.setMox(true);
         QCoreApplication::processEvents();
 
-        QCOMPARE(rejectedSpy.count(), 1);
-        QCOMPARE(rejectedSpy.at(0).at(0).toString(),
-                 QStringLiteral("CW transmit is not available on this Core"));
-        // MOX state must NOT have advanced.
-        QVERIFY(!ctrl.isMox());
-        QCOMPARE(ctrl.state(), MoxState::Rx);
-        QCOMPARE(stateChangedSpy.count(), 0);
+        QCOMPARE(rejectedSpy.count(), 0);
+        QCOMPARE(moxChangedSpy.count(), 1);
+        QVERIFY(ctrl.isMox());
     }
 
-    void cwu_setMox_emitsMoxRejected()
+    void cwu_setMox_isAccepted()
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
@@ -158,10 +159,41 @@ private slots:
         ctrl.setMox(true);
         QCoreApplication::processEvents();
 
-        QCOMPARE(rejectedSpy.count(), 1);
-        QCOMPARE(rejectedSpy.at(0).at(0).toString(),
-                 QStringLiteral("CW transmit is not available on this Core"));
-        QVERIFY(!ctrl.isMox());
+        QCOMPARE(rejectedSpy.count(), 0);
+        QVERIFY(ctrl.isMox());
+    }
+
+    // CW checks the carrier alone (Thetis console.cs:6778-6813 [v2.10.3.15]):
+    // a carrier on the band edge whose filter crosses it is allowed, 1 Hz
+    // outside is refused in the band plan's own words, and CW keys on US
+    // 60 m (console.cs:29466-29485).
+    void cwChecksTheCarrierAlone()
+    {
+        BandPlanGuard guard;
+        // US 20 m is 14.000 to 14.350 MHz, edges included.
+        auto r = guard.checkMoxAllowed(kRegion, 14'350'000, DSPMode::CWU, kBand20m, kBand20m,
+                                       false, false, 100, 1000);
+        QVERIFY2(r.ok, qPrintable(r.reason));
+        r = guard.checkMoxAllowed(kRegion, 14'000'000, DSPMode::CWL, kBand20m, kBand20m,
+                                  false, false, -1000, -100);
+        QVERIFY2(r.ok, qPrintable(r.reason));
+
+        r = guard.checkMoxAllowed(kRegion, 14'350'001, DSPMode::CWU, kBand20m, kBand20m,
+                                  false, false, 100, 1000);
+        QVERIFY(!r.ok);
+        const auto carrierWords = guard.checkMoxAllowed(kRegion, 14'350'001, DSPMode::USB,
+                                                        kBand20m, kBand20m, false, false,
+                                                        100, 2900, /*ignoreFilter=*/true);
+        QVERIFY(!carrierWords.ok);
+        QCOMPARE(r.reason, carrierWords.reason);
+        QCOMPARE(r.reason, QStringLiteral("14.350001 MHz is outside the transmit bands for "
+                                          "your region (United States)."));
+
+        for (const DSPMode mode : {DSPMode::CWL, DSPMode::CWU}) {
+            r = guard.checkMoxAllowed(kRegion, 5'332'000, mode, Band::Band60m, Band::Band60m,
+                                      false, false, 100, 1000);
+            QVERIFY2(r.ok, qPrintable(r.reason));
+        }
     }
 
     // ── 2. AM mode → accepted (AM/SAM/DSB TX via WDSP ammod) ─────────────────
@@ -263,8 +295,8 @@ private slots:
         QCoreApplication::processEvents();
         QVERIFY(ctrl.isMox());
 
-        // Now install a CW check fn (which would reject setMox(true) if re-engaged).
-        ctrl.setMoxCheck(makeCheckFn(DSPMode::CWL));
+        // Now install an FM check fn (which would reject setMox(true) if re-engaged).
+        ctrl.setMoxCheck(makeCheckFn(DSPMode::FM));
 
         QSignalSpy rejectedSpy(&ctrl, &MoxController::moxRejected);
 
@@ -301,7 +333,7 @@ private slots:
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
-        ctrl.setMoxCheck(makeCheckFn(DSPMode::CWL));
+        ctrl.setMoxCheck(makeCheckFn(DSPMode::FM));
 
         QSignalSpy txAboutToBeginSpy(&ctrl, &MoxController::txAboutToBegin);
         QSignalSpy hardwareFlippedSpy(&ctrl, &MoxController::hardwareFlipped);
@@ -321,7 +353,7 @@ private slots:
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
-        ctrl.setMoxCheck(makeCheckFn(DSPMode::CWL));
+        ctrl.setMoxCheck(makeCheckFn(DSPMode::FM));
 
         QSignalSpy rejectedSpy(&ctrl, &MoxController::moxRejected);
 
@@ -449,6 +481,12 @@ private slots:
         QTest::newRow("am-lower-crossing") << int(DSPMode::AM) << 14001000.0 << false;
         QTest::newRow("rade-upper-crossing") << int(DSPMode::RADE_U) << 14349000.0 << false;
         QTest::newRow("rade-lower-crossing") << int(DSPMode::RADE_L) << 14001000.0 << false;
+        // CW transmit (R-CW-05): the carrier alone; the filter may cross.
+        QTest::newRow("cwu-carrier-on-upper-edge") << int(DSPMode::CWU) << 14350000.0 << true;
+        QTest::newRow("cwu-carrier-1hz-outside") << int(DSPMode::CWU) << 14350001.0 << false;
+        QTest::newRow("cwl-carrier-on-lower-edge") << int(DSPMode::CWL) << 14000000.0 << true;
+        QTest::newRow("cwl-carrier-1hz-outside") << int(DSPMode::CWL) << 13999999.0 << false;
+        QTest::newRow("cwu-us-60m") << int(DSPMode::CWU) << 5332000.0 << true;
     }
 
     void radioModelChecksTransmitFilterEdges()
@@ -832,16 +870,16 @@ private slots:
         QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
-    void tooltipForMode_cwl_returnsCwPhase()
+    void tooltipForMode_cwl_returnsNormal()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::CWL);
-        QCOMPARE(tip, QStringLiteral("CW transmit is not available on this Core"));
+        QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
-    void tooltipForMode_cwu_returnsCwPhase()
+    void tooltipForMode_cwu_returnsNormal()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::CWU);
-        QCOMPARE(tip, QStringLiteral("CW transmit is not available on this Core"));
+        QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
     void tooltipForMode_am_returnsManualMox()

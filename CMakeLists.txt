@@ -1232,6 +1232,7 @@ set(CORE_SOURCES
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
+    src/core/safety/CwKeyerGate.cpp
     src/core/safety/SwrProtectionController.cpp
     src/core/safety/TxInhibitMonitor.cpp
     src/core/safety/TxRefusal.cpp
@@ -1736,6 +1737,7 @@ endif()
 
 set(MODEL_SOURCES
     src/models/RadioModel.cpp
+    src/models/CwKeyerController.cpp
     src/models/RxDspWorker.cpp
     src/models/ReceiverDspLoadSampler.cpp
     src/models/Band.cpp
