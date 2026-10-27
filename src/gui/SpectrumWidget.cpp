@@ -15335,15 +15335,25 @@ void SpectrumWidget::initWaterfallPipeline()
     m_wfPipeline->create();
 }
 
-// Alpha blending for overlay compositing. Every texture this pipeline
-// draws (m_overlayStatic, m_overlayDynamic, m_bgLayer, the 3DSS fallback
-// surface) is a QImage::Format_RGBA8888_Premultiplied image and
-// overlay.frag emits the texel as is, so the source is premultiplied and
-// its color takes a factor of One. SrcAlpha multiplied it by alpha twice
-// (color x alpha^2), so anything translucent drew darker than the CPU
-// path: the hidden Roundtable tags at kRoundtableDimmedAlpha came out at
-// about half the CPU border's brightness. AetherSDR shares the original
-// SrcAlpha and fixed it the same way (its issue #3294, fix commit af68d3df):
+// From AetherSDR src/gui/SpectrumWidget.cpp:12399-12408 [@1e0718ad]
+// (the upstream comment, verbatim; it sits in AetherSDR's
+// initOverlayPipeline above the blend):
+// Enable alpha blending for overlay compositing.
+// The overlay textures (m_overlayStatic / m_overlayBg) are painted into
+// QImage::Format_RGBA8888_Premultiplied and the overlay.frag shader emits
+// the texel as-is, so the source is PREMULTIPLIED. Premultiplied
+// compositing wants srcColor = One (the RGB already carries × alpha);
+// using SrcAlpha here double-multiplies the texel by alpha (color × α²),
+// which crushed the passband fill (α=35/255 → 1.9% instead of 13.7%) below
+// the visible floor while the brighter edge lines (α=130/255) survived.
+// See issue #3294. NOTE: keep SrcAlpha on the FFT fill/line pipelines —
+// those source from non-premultiplied baked vertex colors.
+//
+// NereusSDR: every texture this pipeline draws here (m_overlayStatic,
+// m_overlayDynamic, m_bgLayer, the 3DSS fallback surface) is premultiplied
+// the same way. With SrcAlpha the hidden Roundtable tags at
+// kRoundtableDimmedAlpha came out at about half the CPU border's
+// brightness. AetherSDR's fix commit is af68d3df.
 // From AetherSDR src/gui/SpectrumWidget.cpp:12409-12415 [@1e0718ad]
 QRhiGraphicsPipeline::TargetBlend SpectrumWidget::overlayTargetBlend()
 {
