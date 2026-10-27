@@ -27,6 +27,9 @@
 //                tune, twoTone) ports Penny.cs UpdateExtCtrl's adjust step,
 //                adjustForTXAction and adjustForRX (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code)
+//   2026-10-26 - Fix wave: the raw-bits lookup cites Penny.cs:156-186, and
+//                the reduced group lookup keeps its inline comments
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code)
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Penny.cs header ===
@@ -146,11 +149,15 @@ quint8 OcMatrix::maskFor(Band band, bool tx) const
     return maskFor(band, tx, /*tune=*/false, /*twoTone=*/false);
 }
 
-// From Thetis HPSDR/Penny.cs:182-186 [v2.10.3.15] UpdateExtCtrl
-// From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:182-186 [@567a7ec]
+// From Thetis HPSDR/Penny.cs:156-186 [v2.10.3.15] UpdateExtCtrl
+// From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:156-186 [@567a7ec]
+// The raw bits are the band's TX or RX pins (Penny.cs:170-178,
+// bits = TXABitMasks[idx] / RXABitMasks[idx]), built here from the
+// per-pin matrix; SplitPins and VFOBTX are not ported (one band in).
 quint8 OcMatrix::maskFor(Band band, bool tx, bool tune, bool twoTone) const
 {
     const int b = int(band);
+    // [original inline comment from Penny.cs:162] //26
     if (b < 0 || b >= kBandCount) { return 0; }
     QReadLocker locker(&m_lock);
     quint8 bits = 0;
@@ -183,6 +190,9 @@ quint8 OcMatrix::maskFor(Band band, bool tx, bool tune, bool twoTone) const
 // VFOBTX) chooses which group's PA flag to read; with one flag value for
 // every group it is reduced away, and no NereusSDR band falls outside the
 // three groups ("some issue finding band, skip" cannot happen).
+// Reduced lines' comments:
+//   [original inline comment from Penny.cs:271] // need to find the group that is VFOA/VFOB
+//   [original inline comment from Penny.cs:285] // some issue finding band, skip
 quint8 OcMatrix::adjustForRx(quint8 bits)
 {
     // [original Thetis declaration: bool[,] RXPinPA, reduced to its default]
@@ -209,7 +219,10 @@ quint8 OcMatrix::adjustForRx(quint8 bits)
 // One action per pin (NereusSDR collapses Thetis's [group, pin] array; see
 // m_pinActions), and TXPinPA reduced to its false default as in adjustForRx
 // (Penny.cs:60 [v2.10.3.15]; Thetis-Enhanced (EU2AV) Penny.cs:60
-// [@567a7ec]), so the action alone decides each bit.
+// [@567a7ec]), so the action alone decides each bit. The group lookup is
+// reduced as in adjustForRx; its comments:
+//   [original inline comment from Penny.cs:306] // need to find the group that is VFOA/VFOB
+//   [original inline comment from Penny.cs:320] // some issue finding band, skip
 quint8 OcMatrix::adjustForTxAction(quint8 bits, bool tx, bool tune, bool twoTone) const
 {
     // [original Thetis declaration: bool[,] TXPinPA, reduced to its default]
