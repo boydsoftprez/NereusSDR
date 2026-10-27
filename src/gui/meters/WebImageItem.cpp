@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I4): the next 4-char ID keeps only
+//                 A-Z, a-z and 0-9, so a '|' typed there cannot split the
+//                 record. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -208,6 +212,26 @@ constexpr int kUrlField = 9;
 // (plotText("No Image", ..., System.Drawing.Color.DarkGray, ...)).
 const QColor kNoImageColour(0xa9, 0xa9, 0xa9);
 
+// The 4-character ID alphabet (Thetis common.cs convertToFourChar: A-Z,
+// a-z, 0-9), at most four characters; anything else is dropped, as
+// TextOverlayItem's cleanFourChar does. A '|' kept here would split the
+// record and lose its tail on the next load.
+QString cleanFourChar(const QString& id)
+{
+    QString out;
+    for (const QChar c : id) {
+        const char16_t u = c.unicode();
+        const bool ok = (u >= u'A' && u <= u'Z') || (u >= u'a' && u <= u'z') || (u >= u'0' && u <= u'9');
+        if (ok) {
+            out.append(c);
+            if (out.size() == kFourCharLength) {
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -355,9 +379,9 @@ void WebImageItem::setBackgroundIntervalSecs(int seconds)
 // From Thetis MeterManager.cs:15744-15762 [v2.10.3.15]
 void WebImageItem::setBackgroundFourChar(const QString& fourChar)
 {
-    const QString trimmed = fourChar.trimmed().left(kFourCharLength);
-    if (m_backgroundFourChar == trimmed) { return; }
-    m_backgroundFourChar = trimmed;
+    const QString cleaned = cleanFourChar(fourChar);
+    if (m_backgroundFourChar == cleaned) { return; }
+    m_backgroundFourChar = cleaned;
     backgroundDetailsUpdated();
 }
 

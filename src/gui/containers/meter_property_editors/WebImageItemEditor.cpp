@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I4): the next 4-char ID field
+//                 accepts only letters and digits (webImageNextFourChar).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colour swatches show the colour drawn and say when it
 //                 follows the workspace look (ItemColourLook::paintSwatch).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -29,6 +32,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSpinBox>
 
 #include <algorithm>
@@ -326,7 +331,12 @@ void WebImageItemEditor::buildTypeSpecific()
     nextLayout->setContentsMargins(0, 0, 0, 0);
     nextLayout->setSpacing(4);
     m_editNextFourChar = new QLineEdit(nextRow);
+    m_editNextFourChar->setObjectName(QStringLiteral("webImageNextFourChar"));
     m_editNextFourChar->setMaxLength(4);
+    // The 4-char ID alphabet (WebImageItem::setBackgroundFourChar keeps
+    // only these too).
+    m_editNextFourChar->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[A-Za-z0-9]{0,4}")), m_editNextFourChar));
     m_editNextFourChar->setFixedWidth(52);
     m_editNextFourChar->setStyleSheet(QString::fromLatin1(kLineStyle));
     m_editNextFourChar->setToolTip(

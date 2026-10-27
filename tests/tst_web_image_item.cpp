@@ -11,8 +11,15 @@
 //               Anthropic Claude Code.
 //   2026-10-26: background rotation and the pan override. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 677 review fix wave (I4, I8): a '|' typed as the next
+//               4-char ID is dropped, so the record keeps its tail across a
+//               reload, and the editor field takes letters and digits only;
+//               the pan 3 check waits for its own timer. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QBuffer>
+#include <QLineEdit>
+#include <QValidator>
 #include <QImage>
 #include <QLoggingCategory>
 #include <QRegularExpression>
@@ -27,6 +34,7 @@
 #include "core/mmio/FourChar.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/WebImageItemEditor.h"
 #include "gui/meters/WebImageItem.h"
 
 using namespace NereusSDR;
@@ -426,6 +434,46 @@ private slots:
         QCOMPARE(older.url(), QStringLiteral("https://example.invalid/a.png"));
     }
 
+    // Fix wave I4: the next 4-char ID keeps only the ID alphabet. A '|'
+    // there split the record, so a reload lost the scale, bypass, guid,
+    // pan and interval.
+    void nextFourCharKeepsTheRecordWhole()
+    {
+        WebImageItem item;
+        item.setFetchEnabled(false);
+        item.setGuid(kGuid);
+        item.setWidthScale(0.5);
+        item.setTargetPan(2);
+        item.setBackgroundIntervalSecs(12);
+        item.setBackgroundFourChar(QStringLiteral("a|b c"));
+        QCOMPARE(item.backgroundFourChar(), QStringLiteral("abc"));
+        item.setBackgroundFourChar(QStringLiteral("  wxyz9 "));
+        QCOMPARE(item.backgroundFourChar(), QStringLiteral("wxyz"));
+        item.setBackgroundFourChar(QStringLiteral("a|b"));
+
+        WebImageItem copy;
+        copy.setFetchEnabled(false);
+        QVERIFY(copy.deserialize(item.serialize()));
+        QCOMPARE(copy.guid(), kGuid);
+        QCOMPARE(copy.widthScale(), 0.5);
+        QCOMPARE(copy.targetPan(), 2);
+        QCOMPARE(copy.backgroundIntervalSecs(), 12);
+        QCOMPARE(copy.backgroundFourChar(), QStringLiteral("ab"));
+        QCOMPARE(copy.serialize(), item.serialize());
+
+        // The editor's field takes the same alphabet.
+        WebImageItemEditor editor;
+        editor.setItem(&item);
+        auto* field = editor.findChild<QLineEdit*>(QStringLiteral("webImageNextFourChar"));
+        QVERIFY(field != nullptr);
+        QVERIFY(field->validator() != nullptr);
+        QString text = QStringLiteral("a|b");
+        int pos = 0;
+        QCOMPARE(field->validator()->validate(text, pos), QValidator::Invalid);
+        text = QStringLiteral("Ab3");
+        QCOMPARE(field->validator()->validate(text, pos), QValidator::Acceptable);
+    }
+
     void overrideReceivesDecodedImage()
     {
         QTemporaryDir dir;
@@ -539,8 +587,8 @@ private slots:
         QCOMPARE(WebImageBackgrounds::instance().image(0).pixelColor(0, 0), blue);
         // Pan 3 names no next image: after its 5 s the rotation there ends
         // and the pan keeps the image (Thetis shows "" next, which no item
-        // has).
-        QVERIFY(!other.showsBackground());
+        // has). Its timer started after a's, so the check waits for it.
+        QTRY_VERIFY_WITH_TIMEOUT(!other.showsBackground(), 7000);
         QCOMPARE(WebImageBackgrounds::instance().image(3), other.currentImage());
 
         // The hand-off itself, at once.
