@@ -83,6 +83,11 @@
 //               Anthropic Claude Code.
 //   2026-10-22: The NSDC v2 Held disposition's name. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-27: The player's three waits for the station (a message, a
+//               connect's snapshot.complete, a close) count turns of the
+//               event loop, as QTRY_VERIFY does, not the wall clock, so a
+//               process stall on a loaded runner counts once. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -136,10 +141,40 @@ namespace NereusSDR::Test {
 namespace {
 
 constexpr int kMaxShownChars = 400;
-// How long the player waits, in real time, for a station message the event
-// queue has not produced yet (work on another thread of the fake radio). A
-// passing fixture never waits this long; it bounds a failing one.
+// How long the player waits for a station message the event queue has not
+// produced yet (work on another thread of the fake radio). A passing
+// fixture never waits this long; it bounds a failing one.
 constexpr int kStationReplyWaitMs = 5000;
+// The wait is counted in turns of the event loop, as QTRY_VERIFY counts
+// its steps, not on the wall clock: each turn lasts at least kReplyTurnMs
+// of real time and counts kReplyTurnMs, so a station that never replies
+// still fails, after at least kStationReplyWaitMs. A turn the process
+// spends unscheduled counts once, however long the stall. On a starved
+// Linux runner the process stalled for over 5 s while the station set up a
+// client's session (it logged "Session established"), and a wait on the
+// wall clock ran out before the next turn could deliver snapshot.complete.
+constexpr int kReplyTurnMs = 10;
+
+// Turns the event loop until `done` holds; false once kStationReplyWaitMs
+// of turns have passed without it. `done` is read after every turn, the
+// last included. With `deleteLater`, each turn also runs deleteLater().
+template <typename Done>
+bool waitForStation(const Done& done, bool deleteLater)
+{
+    for (int waitedMs = 0; !done(); waitedMs += kReplyTurnMs) {
+        if (waitedMs >= kStationReplyWaitMs) {
+            return false;
+        }
+        const QDeadlineTimer turn(kReplyTurnMs);
+        do {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, kReplyTurnMs);
+            if (deleteLater) {
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            }
+        } while (!done() && !turn.hasExpired());
+    }
+    return true;
+}
 
 QString shown(const QJsonValue& value)
 {
@@ -1753,14 +1788,8 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
     // 50 ms flush sends in real time).
     const auto waitForMessage = [&clock, &settle](const PlayedClient& client) {
         settle();
-        if (client.transport->received().size() <= client.consumed) {
-            const QDeadlineTimer deadline(kStationReplyWaitMs);
-            while (client.transport->received().size() <= client.consumed
-                   && !deadline.hasExpired()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-            }
-        }
+        waitForStation([&client] { return client.transport->received().size() > client.consumed; },
+                       true);
         clock.scan();
     };
 
@@ -1959,12 +1988,13 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
                 client->features)));
             client->transport->sendText(
                 SessionMessages::encode(SessionMessages::authRequest(QString(), block)));
-            const QDeadlineTimer deadline(kStationReplyWaitMs);
-            while (!client->transport->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"))
-                   && client->transport->isOpen() && !deadline.hasExpired()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-            }
+            waitForStation(
+                [client] {
+                    return client->transport->receivedKinds().contains(
+                               QByteArrayLiteral("snapshot.complete"))
+                        || !client->transport->isOpen();
+                },
+                true);
             clock.scan();
             const int complete =
                 client->transport->receivedKinds().indexOf(QByteArrayLiteral("snapshot.complete"));
@@ -2001,12 +2031,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
                 return QStringLiteral("%1: that client has not connected").arg(describe(index));
             }
             settle();
-            if (client->transport->isOpen()) {
-                const QDeadlineTimer deadline(kStationReplyWaitMs);
-                while (client->transport->isOpen() && !deadline.hasExpired()) {
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                }
-            }
+            waitForStation([client] { return !client->transport->isOpen(); }, false);
             if (client->transport->isOpen()) {
                 return QStringLiteral("%1: the station did not close the link").arg(describe(index));
             }
