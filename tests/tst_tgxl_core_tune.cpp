@@ -82,6 +82,9 @@
 //               VOX armed, a press carrying the loan, a press after a take
 //               and the holder away during the tune. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-27: PR 670 fix wave 4: every second press waits for the last
+//               sweep's tuning=0 (in place of a fixed wait). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -388,7 +391,10 @@ void deviceHoldsAfterItsTune(Core& core, FakeTuner& tuner, LoopbackTransport* ap
     QTRY_VERIFY_WITH_TIMEOUT(!core.model->isTune(), 5000);
     QVERIFY(!core.model->isTgxlAutotuneInProgress());
     QTRY_VERIFY(!tuner.lan.tuneSeen());   // and its echo of tune=0 is sent
-    QTest::qWait(100);
+    // PR 670 fix wave 4: the sweep's end (tuning=0, on the tuner's own
+    // :9010 link) is read before anything presses again; read after a
+    // press, it would end the press's cycle as that cycle's sweep end.
+    QTRY_VERIFY(!core.model->tunerModel()->isTuning());
 }
 
 // Device A's plain TUN (no autotune), on and off, short; it then holds
@@ -449,6 +455,9 @@ void armVoxAsHolder(Core& core, LoopbackTransport* app, const Device& device, qu
 // transmit: it takes and keys.
 void tunerPressTakes(Core& core, FakeTuner& tuner)
 {
+    // PR 670 fix wave 4: the last sweep's tuning=0 is read first (see
+    // deviceHoldsAfterItsTune).
+    QTRY_VERIFY(!core.model->tunerModel()->isTuning());
     tuner.push(QStringLiteral("S0|state tuning=1"));
     tuner.lan.send(QStringLiteral("transmit tune on"));
     QTRY_VERIFY(core.model->moxController()->isMox());
@@ -1475,6 +1484,8 @@ private slots:
         QVERIFY(core.server->hasTunerLoanForTest());
         QVERIFY(holder->isHeldBy(station));
         // The second press finds the station holding from the first take.
+        // The first sweep's tuning=0 is read before it (PR 670 fix wave 4).
+        QTRY_VERIFY(!core.model->tunerModel()->isTuning());
         tuner.push(QStringLiteral("S0|state tuning=1"));
         tuner.lan.send(QStringLiteral("transmit tune on"));
         QTRY_VERIFY(mox->isMox());
