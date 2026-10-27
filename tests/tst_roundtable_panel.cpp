@@ -57,6 +57,11 @@
 //               "Open in its own window", and its click still opens the
 //               own window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: aRoomsRefreshLeavesThePickedRowAlone turns accessibility on
+//               through the platform when QAccessible::setActive does not
+//               (Qt 6.8, Linux CI) and checks it is on, so both halves run
+//               there too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -87,6 +92,11 @@
 #include <QUrl>
 #include <QListWidget>
 #include <QVBoxLayout>
+// The private header brings in macOS's MacTypes.h and its `Style` typedef,
+// so the look's Style constants below are named NereusSDR::Style.
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformaccessibility.h>
+#include <qpa/qplatformintegration.h>
 #include <qpa/qwindowsysteminterface.h>
 
 #include "core/AppSettings.h"
@@ -412,6 +422,22 @@ void settle()
     }
 }
 
+// Turns the platform's accessibility on or off. Qt 6.11's
+// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
+// activation observers and leaves QAccessible::isActive() false, so no
+// item view sends an event at all. There the platform's own switch is
+// set, as Qt's tst_qaccessibility does (tst_cat_remote_setup likewise).
+void setAccessibilityActive(bool active)
+{
+    QAccessible::setActive(active);
+    if (QAccessible::isActive() == active) {
+        return;
+    }
+    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
+        platform->setActive(active);
+    }
+}
+
 // The real MainWindow runs the panel in a managed workspace: a
 // container hosts the applet and every Pop Out goes through the
 // arrange controller.
@@ -580,7 +606,7 @@ private slots:
                 QCOMPARE(row->property("callsign").toString(), QStringLiteral("W4ABC"));
                 auto* age = row->findChild<QLabel*>(QStringLiteral("roundtableReadingAge"));
                 QVERIFY(age->styleSheet().contains(
-                    WorkspacePreview::statusColourName(Style::kAmberText, "warn")));
+                    WorkspacePreview::statusColourName(NereusSDR::Style::kAmberText, "warn")));
                 QCOMPARE(age->text(), QStringLiteral("20 s"));
             }
         }
@@ -668,10 +694,10 @@ private slots:
                 QVERIFY2(strays.isEmpty(), qPrintable(strays.join(QLatin1Char(' '))));
                 // The look's accent, not the classic one.
                 QVERIFY(all.contains(QStringLiteral("#4a7ba8")));
-                QVERIFY(!all.contains(QLatin1String(Style::kAccent)));
+                QVERIFY(!all.contains(QLatin1String(NereusSDR::Style::kAccent)));
             } else {
                 // The classic look: the classic accent, no workspace one.
-                QVERIFY(all.contains(QLatin1String(Style::kAccent)));
+                QVERIFY(all.contains(QLatin1String(NereusSDR::Style::kAccent)));
                 QVERIFY(!all.contains(QStringLiteral("#4a7ba8")));
             }
         }
@@ -2202,7 +2228,10 @@ private slots:
                     ++s_heard.stale;
                 }
             });
-        QAccessible::setActive(true);
+        setAccessibilityActive(true);
+        // Off, no item view sends an event and both halves below would
+        // pass or fail on nothing.
+        QVERIFY(QAccessible::isActive());
         QTest::failOnWarning(QRegularExpression(QStringLiteral("Cannot create accessible child interface")));
         QTest::failOnWarning(QRegularExpression(QStringLiteral("Invalid child in QAccessibleEvent")));
         const auto refresh = [&p](int members) {
@@ -2242,7 +2271,7 @@ private slots:
                         {QStringLiteral("members"), 3}}};
         p.model.applyRooms(QJsonObject{{QStringLiteral("rooms"), grown}});
         settle();
-        QAccessible::setActive(false);
+        setAccessibilityActive(false);
         QAccessible::installUpdateHandler(previous);
 
         QCOMPARE(rooms->count(), 4);
