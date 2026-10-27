@@ -1,3 +1,10 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - "Follow the Multimeter setting": changing Capacity gives
+//                 the graph its own length, which the Multimeter history
+//                 duration then leaves alone; turning the choice back on
+//                 returns the graph to that setting. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+
 #pragma once
 #include "BaseItemEditor.h"
 
@@ -5,6 +12,7 @@ class QCheckBox;
 class QPushButton;
 class QSpinBox;
 class QComboBox;
+class QDoubleSpinBox;
 
 namespace NereusSDR {
 
@@ -20,6 +28,7 @@ private:
     void buildTypeSpecific() override;
 
     QSpinBox*    m_spinCapacity{nullptr};
+    QCheckBox*   m_chkFollowMultimeter{nullptr};
     QPushButton* m_btnLineColor0{nullptr};
     QPushButton* m_btnLineColor1{nullptr};
     QCheckBox*   m_chkShowGrid{nullptr};
@@ -28,6 +37,16 @@ private:
     QCheckBox*   m_chkShowScale0{nullptr};
     QCheckBox*   m_chkShowScale1{nullptr};
     QComboBox*   m_comboBinding1{nullptr};
+    QDoubleSpinBox* m_spinVerticalRatio{nullptr};
+    QPushButton* m_btnBackColour{nullptr};
+    QPushButton* m_btnLinesColour{nullptr};
+    QPushButton* m_btnTimeColour{nullptr};
+    QDoubleSpinBox* m_spinMin0{nullptr};
+    QDoubleSpinBox* m_spinMax0{nullptr};
+    QDoubleSpinBox* m_spinMin1{nullptr};
+    QDoubleSpinBox* m_spinMax1{nullptr};
+
+    void syncManualRangeEnabled();
 };
 
 } // namespace NereusSDR

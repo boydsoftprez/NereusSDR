@@ -7,6 +7,33 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5): Duplicate container gives each
+//                 copied LED and web image its own guid. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - clearItemHistory() also clears each added S-meter dial's
+//                 history and peak hold (SMeterWidget::clearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setTransmitting reaches widget-factory rows through
+//                 ContainerContentHost::setTransmitting, which keeps a row
+//                 on another session's radio in the receive state; each
+//                 host is given the session id (the preview poller's) and
+//                 the transmit state when it is made. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setTransmitting reaches widget content fade overlays;
+//                 clearItemHistory() for a band change (Thetis bandChange
+//                 / ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - Hide when slice not open hides a container while its slice
+//                 is not open (onSliceOpenChanged), for every slice where
+//                 Thetis asks it only of RX2; Minimizes follows the main
+//                 window for every floating container
+//                 (onMainWindowStateChanged). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - setTransmitting hands the transmit state to every
+//                 container meter's fade covers, VFO displays and button
+//                 grids (MeterWidget::setItemTxState), and each meter that
+//                 is announced later takes the current state at once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16 - Bench fix (JJ's Rotor window created at (0,1337) on a
 //                 1512 x 982 screen): a floating window is given a place
 //                 where its header can be reached every time it is shown,
@@ -270,6 +297,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/applets/AppletPanelWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterWidget.h"
+#include "gui/SMeterWidget.h"
+#include "ContentFade.h"
 
 #include <QSplitter>
 #include <QScopedValueRollback>
@@ -379,6 +408,14 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     , m_splitter(splitter)
 {
     m_screens = ScreenSource::system();
+    // Every meter announced for polling (created, restored, rebuilt or
+    // moved) starts in the current transmit state, so an item loaded or
+    // added while transmitting does not wait for the next change.
+    connect(this, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
+        if (meter) {
+            meter->setItemTxState(m_transmitting);
+        }
+    });
     m_geometryCommit.setSingleShot(true);
     m_geometryCommit.setInterval(200);
     connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
@@ -650,6 +687,17 @@ bool ContainerManager::hideRevealHeaders(WorkspaceDocument& document)
 }
 bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
 {
+    // From Thetis MeterManager.cs:2799-2801 [v2.10.3.15]
+    //hide if this is for an rx that is not in use, otherwise show it
+    //atm this is only a consideration for rx2
+    // Here every slice is: the container's own slice, or any slice for
+    // Active slice.
+    const bool hide = document.config.value("hidesWhenRxNotUsed").toBool(false)
+        && !containerSliceOpen(document);
+    return !hide && visibleBesidesSlice(document);
+}
+bool ContainerManager::visibleBesidesSlice(const ContainerDocument &document) const
+{
     // Workspace preview: a container whose entries are all hidden (the
     // entry header's hide button, Containers > Applets) leaves the screen
     // with them and comes back when any of them is shown. An empty
@@ -672,6 +720,26 @@ bool ContainerManager::hiddenByOwnFlags(const ContainerDocument &document) const
 void ContainerManager::setTransmitting(bool transmitting)
 {
     m_transmitting = transmitting;
+    // Items that change on transmit (fade cover, VFO display, button grids)
+    // hear it from here; the radio has no other subscription for them.
+    for (ContainerWidget* c : std::as_const(m_containers)) {
+        if (!c || !c->content()) {
+            continue;
+        }
+        QList<MeterWidget*> meters;
+        if (auto* direct = qobject_cast<MeterWidget*>(c->content())) {
+            meters.append(direct);
+        }
+        meters += c->content()->findChildren<MeterWidget*>();
+        for (MeterWidget* meter : std::as_const(meters)) {
+            meter->setItemTxState(transmitting);
+        }
+        // Widget content with Fade on RX / TX (ContentFade::attach): the
+        // host knows each row's session.
+        if (auto* host = qobject_cast<ContainerContentHost*>(c->content())) {
+            host->setTransmitting(transmitting);
+        }
+    }
     if (!m_store) {
         return;
     }
@@ -679,6 +747,97 @@ void ContainerManager::setTransmitting(bool transmitting)
         if (auto *c = container(document.id)) {
             (c->isFloating() ? c->window() : c)->setVisible(effectiveVisible(document));
         }
+    }
+}
+// From Thetis MeterManager.cs:4405-4462 [v2.10.3.15]: bandChange zeroes
+// every meter (m.ZeroOut, and so ClearHistory) whichever receiver changed
+// band.
+void ContainerManager::clearItemHistory()
+{
+    for (ContainerWidget* c : std::as_const(m_containers)) {
+        if (!c || !c->content()) {
+            continue;
+        }
+        QList<MeterWidget*> meters;
+        if (auto* direct = qobject_cast<MeterWidget*>(c->content())) {
+            meters.append(direct);
+        }
+        meters += c->content()->findChildren<MeterWidget*>();
+        for (MeterWidget* meter : std::as_const(meters)) {
+            meter->clearItemHistory();
+        }
+        // NereusSDR: an added S-meter dial's history and peak hold, as
+        // Thetis's ANANMM needles clear theirs. The Main Panel's dial
+        // (SettingsStore::Global) keeps its own behaviour.
+        for (SMeterWidget* dial : c->content()->findChildren<SMeterWidget*>()) {
+            if (dial->settingsStore() == SMeterWidget::SettingsStore::Instance) {
+                dial->clearHistory();
+            }
+        }
+    }
+}
+bool ContainerManager::containerSliceOpen(const ContainerDocument &document) const
+{
+    if (!m_sliceOpenKnown) {
+        return true;
+    }
+    if (document.config.value("rxSourceMode").toString() == QStringLiteral("followSelectedRx")) {
+        return !m_openSlices.isEmpty();
+    }
+    const int slice = document.config.contains("sliceId") ? document.config.value("sliceId").toInt()
+                                                          : document.config.value("rxSource").toInt(1) - 1;
+    return m_openSlices.contains(slice);
+}
+void ContainerManager::onSliceOpenChanged(int sliceIndex, bool open)
+{
+    if (open) {
+        m_openSlices.insert(sliceIndex);
+    } else {
+        m_openSlices.remove(sliceIndex);
+    }
+    m_sliceOpenKnown = true;
+    if (!m_store) {
+        return;
+    }
+    for (const auto &document : m_store->snapshot().containers) {
+        if (!document.config.value("hidesWhenRxNotUsed").toBool(false)) {
+            continue;
+        }
+        auto *c = container(document.id);
+        if (!c) {
+            continue;
+        }
+        bool visible = effectiveVisible(document);
+        // A window that minimizes stays hidden while the main window is
+        // minimized; restoring the main window shows it.
+        if (c->isFloating() && m_mainWindowMinimized
+            && document.config.value("containerMinimises").toBool(false)) {
+            visible = false;
+        }
+        (c->isFloating() ? c->window() : c)->setVisible(visible);
+    }
+}
+void ContainerManager::onMainWindowStateChanged(Qt::WindowStates state)
+{
+    m_mainWindowMinimized = state.testFlag(Qt::WindowMinimized);
+    if (!m_store) {
+        return;
+    }
+    for (const auto &document : m_store->snapshot().containers) {
+        if (document.dockMode != DockMode::Floating) {
+            continue;
+        }
+        FloatingContainer *form = m_floatingForms.value(document.id);
+        if (!form) {
+            continue;
+        }
+        // The form decides from its own flags; they are the document's.
+        form->setContainerFloating(true);
+        form->setContainerMinimises(document.config.value("containerMinimises").toBool(false));
+        form->setContainerHidesWhenRxNotUsed(document.config.value("hidesWhenRxNotUsed").toBool(false));
+        form->setHiddenByMacro(document.config.value("hiddenByMacro").toBool(false));
+        form->setFormEnabled(visibleBesidesSlice(document));
+        form->onMainWindowStateChanged(state, containerSliceOpen(document));
     }
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
@@ -1032,6 +1191,11 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
         if (!host) {
             host = new ContainerContentHost(*m_registry, c);
+            // Fade on RX / TX: a widget row made now starts in the current
+            // transmit state; a row on another session's radio does not
+            // follow this window's.
+            host->setSessionIdSource([this] { return m_previewPoller ? m_previewPoller->sessionId() : QString(); });
+            host->setTransmitting(m_transmitting);
             connect(host, &ContainerContentHost::meterSurfaceReady, this, [this, c](MeterWidget* meter, const QJsonObject& context) {
                 // Structured items route through Main's per-entry wiring; never
                 // also install the legacy container-source forwarding signals.
@@ -2106,7 +2270,11 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
                 m_storageError=QStringLiteral("A singleton applet already has a placement; move it instead of duplicating it"); emit workspaceError(m_storageError); return nullptr;
             } }
             auto copy=source; copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.dockMode=DockMode::Floating;
-            for (auto& entry : copy.contents) { entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset(); }
+            for (auto& entry : copy.contents) {
+                // A copied LED or web image gets its own 4-char ID.
+                if (m_registry) { entry=m_registry->withNewItemIdentity(entry); }
+                entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset();
+            }
             showDuplicate(copy, source);
             document.containers.append(copy);
             if(commitWorkspace(document,document.revision).status!=CommitStatus::Saved) { return nullptr; }

@@ -1,4 +1,10 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is
+//                 recorded as the user's (markColourPicked). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "FadeCoverItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
 #include "../../meters/FadeCoverItem.h"
 
@@ -24,13 +30,10 @@ void FadeCoverItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
     m_chkFadeOnRx->setChecked(fade->fadeOnRx());
     m_chkFadeOnTx->setChecked(fade->fadeOnTx());
-    m_btnColour1->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(fade->colour1().name(QColor::HexArgb)));
-    m_btnColour2->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(fade->colour2().name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("FadeCover.colour1"), fade->colour1());
+    ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("FadeCover.colour2"), fade->colour2());
     m_spinAlpha->setValue(static_cast<double>(fade->alpha()));
+    m_chkUseBackground->setChecked(fade->useContainerBackground());
     endProgrammaticUpdate();
 }
 
@@ -67,10 +70,9 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 1"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("FadeCover.colour1"));
             fade->setColour1(chosen);
-            m_btnColour1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("FadeCover.colour1"), chosen);
             notifyChanged();
         }
     });
@@ -86,10 +88,9 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 2"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("FadeCover.colour2"));
             fade->setColour2(chosen);
-            m_btnColour2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("FadeCover.colour2"), chosen);
             notifyChanged();
         }
     });
@@ -103,6 +104,18 @@ void FadeCoverItemEditor::buildTypeSpecific()
         FadeCoverItem* fade = qobject_cast<FadeCoverItem*>(m_item);
         if (!fade) { return; }
         fade->setAlpha(static_cast<float>(v));
+        notifyChanged();
+    });
+
+    // NereusSDR option: paint the container background, as Thetis's fade
+    // cover does, instead of the colour 1 / colour 2 gradient.
+    m_chkUseBackground = makeCheckRow(QStringLiteral("Use container background"));
+    m_chkUseBackground->setObjectName(QStringLiteral("useContainerBackground"));
+    connect(m_chkUseBackground, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        FadeCoverItem* fade = qobject_cast<FadeCoverItem*>(m_item);
+        if (!fade) { return; }
+        fade->setUseContainerBackground(on);
         notifyChanged();
     });
 }

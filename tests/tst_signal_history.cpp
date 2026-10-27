@@ -2,23 +2,201 @@
 // tests/tst_signal_history.cpp — Task 3.3 Signal History Tests
 // =================================================================
 //
+// no-port-check: NereusSDR-original tests; the Thetis Setup range
+// (setup.designer.cs) is cited only as the fact a test checks.
+//
 // Test suite for HistoryGraphItem duration setting.
 // Verifies that setDurationMs() correctly configures the data buffer
 // and that MultimeterPage broadcasts to all HistoryGraphItem instances.
 //
+// Modification history (NereusSDR):
+//   2026-10-26 - A history graph whose length was set in its editor keeps
+//                 it when the Multimeter history duration is applied, and
+//                 across a save and reload; graphs that never set one, and
+//                 old records, follow the Multimeter setting. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The own-length flag is read at [25] after this branch's v3
+//                 fields; an 18-field record keeps it at [17]. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QTest>
 #include <QSignalSpy>
+#include <QCheckBox>
+#include <QSpinBox>
 #include "gui/meters/HistoryGraphItem.h"
+#include "gui/containers/meter_property_editors/HistoryGraphItemEditor.h"
+#include "gui/setup/MultimeterPage.h"
 #include "core/AppSettings.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+const QString kDurationKey = QStringLiteral("MultimeterSignalHistoryDurationMs");
+
+// The editor's Capacity spin box (range 10..3000); the base editor's own
+// integer rows (Z-order, Display group) have other ranges.
+QSpinBox* capacitySpin(HistoryGraphItemEditor& ed)
+{
+    const auto spins = ed.findChildren<QSpinBox*>();
+    for (QSpinBox* s : spins) {
+        if (s->minimum() == 10 && s->maximum() == 3000) {
+            return s;
+        }
+    }
+    return nullptr;
+}
+
+// The operator sets a graph's length in its editor, as the dialog does.
+void setLengthInEditor(HistoryGraphItem& item, int capacity)
+{
+    HistoryGraphItemEditor ed;
+    ed.setItem(&item);
+    QSpinBox* spin = capacitySpin(ed);
+    QVERIFY(spin != nullptr);
+    spin->setValue(capacity);
+}
+
+}  // namespace
 
 class TestSignalHistory : public QObject {
     Q_OBJECT
 
 private slots:
+    void cleanup()
+    {
+        AppSettings::instance().setValue(kDurationKey, 60000);
+    }
+
+    void own_length_survives_multimeter_apply()
+    {
+        HistoryGraphItem item;
+        setLengthInEditor(item, 150);
+        QCOMPARE(item.capacity(), 150);
+
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        MultimeterPage::applyPersistedSettingsTo(&item);
+        QCOMPARE(item.capacity(), 150);
+    }
+
+    void own_length_survives_save_reload_and_apply()
+    {
+        HistoryGraphItem item;
+        setLengthInEditor(item, 150);
+        const QString saved = item.serialize();
+
+        HistoryGraphItem reloaded;
+        QVERIFY(reloaded.deserialize(saved));
+        QCOMPARE(reloaded.capacity(), 150);
+
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        MultimeterPage::applyPersistedSettingsTo(&reloaded);
+        QCOMPARE(reloaded.capacity(), 150);
+        // A second save keeps the graph's own length.
+        HistoryGraphItem again;
+        QVERIFY(again.deserialize(reloaded.serialize()));
+        MultimeterPage::applyPersistedSettingsTo(&again);
+        QCOMPARE(again.capacity(), 150);
+    }
+
+    void saved_record_appends_own_length_field()
+    {
+        HistoryGraphItem plain;
+        const QStringList plainParts = plain.serialize().split(QLatin1Char('|'));
+        QCOMPARE(plainParts.size(), 26);
+        QCOMPARE(plainParts[25], QStringLiteral("0"));
+
+        HistoryGraphItem own;
+        setLengthInEditor(own, 150);
+        const QStringList ownParts = own.serialize().split(QLatin1Char('|'));
+        QCOMPARE(ownParts.size(), 26);
+        QCOMPARE(ownParts[7], QStringLiteral("150"));
+        QCOMPARE(ownParts[25], QStringLiteral("1"));
+    }
+
+    void eighteen_field_record_keeps_own_length()
+    {
+        // A record with the own-length flag at [17] and none of the v3
+        // fields keeps its length and the older look.
+        HistoryGraphItem own;
+        QVERIFY(own.deserialize(QStringLiteral(
+            "HISTORY|0|0|1|0.8|5|5|150|#ff00b4d8|#ffffb800|1|1|1|1|0|-1|60000|1")));
+        QVERIFY(own.hasOwnLength());
+        QCOMPARE(own.capacity(), 150);
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        MultimeterPage::applyPersistedSettingsTo(&own);
+        QCOMPARE(own.capacity(), 150);
+
+        HistoryGraphItem follows;
+        QVERIFY(follows.deserialize(QStringLiteral(
+            "HISTORY|0|0|1|0.8|5|5|601|#ff00b4d8|#ffffb800|1|1|1|1|0|-1|60000|0")));
+        QVERIFY(!follows.hasOwnLength());
+        MultimeterPage::applyPersistedSettingsTo(&follows);
+        QCOMPARE(follows.capacity(), 301);
+    }
+
+    void graph_without_own_length_follows_global_change()
+    {
+        HistoryGraphItem item;
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        MultimeterPage::applyPersistedSettingsTo(&item);
+        QCOMPARE(item.durationMs(), 30000);
+        QCOMPARE(item.capacity(), 301);
+
+        AppSettings::instance().setValue(kDurationKey, 45000);
+        MultimeterPage::applyPersistedSettingsTo(&item);
+        QCOMPARE(item.durationMs(), 45000);
+        QCOMPARE(item.capacity(), 451);
+    }
+
+    void old_record_follows_global()
+    {
+        // A record saved before the own-length field (17 fields).
+        HistoryGraphItem v2;
+        QVERIFY(v2.deserialize(QStringLiteral(
+            "HISTORY|0|0|1|0.8|5|5|601|#ff00b4d8|#ffffb800|1|1|1|1|0|-1|60000")));
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        MultimeterPage::applyPersistedSettingsTo(&v2);
+        QCOMPARE(v2.durationMs(), 30000);
+        QCOMPARE(v2.capacity(), 301);
+
+        // The oldest record (16 fields, no duration).
+        HistoryGraphItem v1;
+        QVERIFY(v1.deserialize(QStringLiteral(
+            "HISTORY|10|20|100|50|5|2|300|#00b4d8ff|#ffb800ff|1|1|1|1|0|7")));
+        MultimeterPage::applyPersistedSettingsTo(&v1);
+        QCOMPARE(v1.durationMs(), 30000);
+        QCOMPARE(v1.capacity(), 301);
+    }
+
+    void follow_choice_returns_graph_to_global()
+    {
+        HistoryGraphItem item;
+        AppSettings::instance().setValue(kDurationKey, 30000);
+        HistoryGraphItemEditor ed;
+        ed.setItem(&item);
+        auto* follow = ed.findChild<QCheckBox*>(QStringLiteral("followMultimeterLength"));
+        QVERIFY(follow != nullptr);
+        QVERIFY(follow->isChecked());
+
+        QSpinBox* spin = capacitySpin(ed);
+        QVERIFY(spin != nullptr);
+        spin->setValue(150);
+        QVERIFY(!follow->isChecked());
+        QCOMPARE(item.capacity(), 150);
+
+        follow->setChecked(true);
+        QCOMPARE(item.durationMs(), 30000);
+        QCOMPARE(item.capacity(), 301);
+        QCOMPARE(spin->value(), 301);
+        QCOMPARE(item.serialize().split(QLatin1Char('|'))[25], QStringLiteral("0"));
+
+        AppSettings::instance().setValue(kDurationKey, 45000);
+        MultimeterPage::applyPersistedSettingsTo(&item);
+        QCOMPARE(item.capacity(), 451);
+    }
+
     void duration_round_trips()
     {
         // Task 3.3: setDurationMs() should store and return the value
@@ -32,7 +210,9 @@ private slots:
 
     void duration_clamped_to_valid_range()
     {
-        // Task 3.3: duration should be clamped to [1000, 600000] ms
+        // Duration is clamped to Thetis's Keep For range, 1 s to 1800 s
+        // (setup.designer.cs:62510-62519 [v2.10.3.15]). The cap was 600 s
+        // (10 min) until the HISTORY item matched Thetis; 1800 s is kept.
         HistoryGraphItem item;
 
         item.setDurationMs(0);
@@ -45,10 +225,13 @@ private slots:
         QVERIFY(item.durationMs() >= 1000);
 
         item.setDurationMs(700000);
-        QVERIFY(item.durationMs() <= 600000);
+        QCOMPARE(item.durationMs(), 700000);
 
-        item.setDurationMs(1000000);
-        QVERIFY(item.durationMs() <= 600000);
+        item.setDurationMs(1800000);
+        QCOMPARE(item.durationMs(), 1800000);
+
+        item.setDurationMs(2000000);
+        QCOMPARE(item.durationMs(), 1800000);
     }
 
     void capacity_computed_from_duration()
@@ -148,6 +331,81 @@ private slots:
         QCOMPARE(item.bindingId(), 5);
         // durationMs defaults to 60000 for v1 formats
         QVERIFY(item.durationMs() > 0);
+    }
+
+    void saved_capacity_reloads_unchanged()
+    {
+        // A saved capacity (field 7) loads as written. Loading used to
+        // apply the saved duration last, which recomputed the capacity
+        // from it (60000 ms -> 601) and dropped the saved value.
+        HistoryGraphItem fresh;
+        const QString created = fresh.serialize();
+        QCOMPARE(created.split(QLatin1Char('|')).value(7), QStringLiteral("300"));
+        QCOMPARE(created.split(QLatin1Char('|')).value(16), QStringLiteral("60000"));
+
+        HistoryGraphItem reloaded;
+        QVERIFY(reloaded.deserialize(created));
+        QCOMPARE(reloaded.capacity(), 300);
+        QCOMPARE(reloaded.durationMs(), 60000);
+        QCOMPARE(reloaded.serialize(), created);
+
+        // A capacity set on a graph without its own length (setCapacity
+        // alone, field [25] = 0) also reloads as saved; deserialize applies
+        // the saved capacity after the duration whatever the own-length
+        // flag. The Multimeter apply may still change it later.
+        HistoryGraphItem edited;
+        edited.setCapacity(1000);
+        HistoryGraphItem editedReloaded;
+        QVERIFY(editedReloaded.deserialize(edited.serialize()));
+        QCOMPARE(editedReloaded.capacity(), 1000);
+        QVERIFY(!editedReloaded.hasOwnLength());
+        QCOMPARE(editedReloaded.durationMs(), 60000);
+        QCOMPARE(editedReloaded.serialize(), edited.serialize());
+
+        // A record saved after a reload on the old code (601) keeps 601.
+        QStringList resaved = created.split(QLatin1Char('|'));
+        resaved[7] = QStringLiteral("601");
+        HistoryGraphItem old;
+        QVERIFY(old.deserialize(resaved.join(QLatin1Char('|'))));
+        QCOMPARE(old.capacity(), 601);
+
+        // A v1 record (no duration field) keeps its capacity as well.
+        HistoryGraphItem v1;
+        QVERIFY(v1.deserialize(QStringLiteral(
+            "HISTORY|10|20|100|50|5|2|300|#00b4d8ff|#ffb800ff|1|1|1|1|0|7")));
+        QCOMPARE(v1.capacity(), 300);
+        QCOMPARE(v1.durationMs(), 60000);
+    }
+
+    void loaded_capacity_clamped_to_largest_produced()
+    {
+        // The largest capacity NereusSDR produces is the 1800000 ms Keep For
+        // maximum / 100 + 1.
+        QCOMPARE(HistoryGraphItem::kMaxCapacity, 18001);
+        HistoryGraphItem longest;
+        longest.setDurationMs(kMaxHistoryKeepForMs);
+        QCOMPARE(longest.capacity(), HistoryGraphItem::kMaxCapacity);
+
+        const QStringList base = HistoryGraphItem().serialize().split(QLatin1Char('|'));
+
+        // A pasted record asking for INT_MAX loads at the bound instead of
+        // allocating two buffers of that size.
+        QStringList huge = base;
+        huge[7] = QStringLiteral("2147483647");
+        HistoryGraphItem hugeItem;
+        QVERIFY(hugeItem.deserialize(huge.join(QLatin1Char('|'))));
+        QCOMPARE(hugeItem.capacity(), HistoryGraphItem::kMaxCapacity);
+        QCOMPARE(hugeItem.serialize().split(QLatin1Char('|')).value(7),
+                 QStringLiteral("18001"));
+
+        // A record at the bound loads unchanged.
+        QStringList atBound = base;
+        atBound[7] = QStringLiteral("18001");
+        const QString atBoundRecord = atBound.join(QLatin1Char('|'));
+        HistoryGraphItem atBoundItem;
+        QVERIFY(atBoundItem.deserialize(atBoundRecord));
+        QCOMPARE(atBoundItem.capacity(), 18001);
+        QCOMPARE(atBoundItem.serialize(), atBoundRecord);
     }
 
     void appsettings_persistence()

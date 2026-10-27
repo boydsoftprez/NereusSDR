@@ -1,10 +1,15 @@
 #pragma once
 // no-port-check: NereusSDR-original draft content property adapter.
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): m_picking records a colour
+//                 dialog pick. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "ContainerContentRegistry.h"
 #include "gui/NereusGuiExport.h"
 #include <functional>
 #include <memory>
 class QLabel;
+class QFormLayout;
 namespace NereusSDR {
 class MeterItem;
 class NEREUS_GUI_EXPORT ContentPropertyEditor : public QWidget {
@@ -20,11 +25,17 @@ public:
     void setContainerDefaults(const QJsonObject& defaults);
 signals:
     void entryEdited(const ContentEntry& entry);
+    // A web image's Show next: the 4-char ID of the web image to open.
+    void showWebImageRequested(const QString& fourChar);
 private:
     QWidget* control(const QString& key, const QJsonValue& value, int channel=-1);
     // Workspace preview: a control for a declared ContentProperty.
     QWidget* declaredControl(const ContentProperty& property, QWidget* parent);
     void captureRenderer();
+    // Fade on RX / Fade on TX rows for a bar preset, composite or waveform
+    // face: they set the item's fade (saved in the entry context); a
+    // composite's legacy fadeRx / fadeTx configuration is turned off.
+    void addFadeRows(QFormLayout* fields);
     void publish();
     QJsonValue effectiveProperty(const QString& key, int channel) const;
     bool property(const QString& key, const QJsonValue& value, int channel=-1);
@@ -38,5 +49,7 @@ private:
     ContentEntry m_original, m_hydrated;
     QLabel* m_error=nullptr;
     bool m_loading=false, m_geometryLocked=false;
+    // True while a colour dialog pick is applied (property() records it).
+    bool m_picking=false;
 };
 }

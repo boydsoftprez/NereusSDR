@@ -9,6 +9,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
+//               lock act on the slice they name, through vfoRequestSlice()
+//               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
+//               display's clicks, wheel and keys act on the slice they
+//               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -192,6 +200,9 @@
 //                m_remoteRigctl, refreshRigctlRemoteTransmit,
 //                applyRemoteRigctldSettings. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
+//                 line reason for the container button and the applets.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -289,6 +300,8 @@ enum class ToastSeverity : int;
 
 class RadioModel;
 class MeterItem;
+class VfoDisplayItem;
+class DialItem;
 class ContainerButtonDispatcher;
 class ConnectionPanel;
 class SupportDialog;
@@ -1148,6 +1161,14 @@ private slots:
     void refreshContainerFrequency(SliceModel* slice);
     void watchContainerItems(QWidget* content);
     void onContainerItemAdded(MeterItem* item);
+    // Task 36: a live VFO display's requests act on the slice each names.
+    void wireVfoDisplayRequests(VfoDisplayItem* vfo);
+    // Task 37: a live dial's tuning, step, slice select and lock requests.
+    void wireDialRequests(DialItem* dial);
+    // The slice a VFO display's (or dial's) request may act on, or null
+    // after saying why (an unsupported source, another radio's entry, a
+    // slice that is not open or that this window only listens to).
+    SliceModel* vfoRequestSlice(const MeterItem* item, int sliceId);
     void reconcileMiniDisplays();
     void presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                           const QVector<float>& waterfallDbm, double centreHz,
@@ -1596,6 +1617,11 @@ private:
     // while another device holds transmit, why VOX may not be armed here
     // (that device has the transmitter); empty when it may.
     QString desktopVoxHolderReason() const;
+    // Why VOX may not be armed from this window's microphone line: no line
+    // to the Core, the Core's microphone source unsettled or the radio's
+    // microphone, or another device holding transmit; empty when it may.
+    // The TX applet, Setup and the container's VOX button all use it.
+    QString voxLineReason() const;
     // The TX applet's VOX button and every Setup's Enable VOX follow it.
     void applyDesktopVoxHolderGate();
     void requestDesktopTransmit(bool tune, bool on);

@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): flushOutbound
+//                 and the separate sender socket. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -81,6 +84,7 @@ public:
 public slots:
     void start() override;
     void stop() override;
+    void flushOutbound() override;
 
 private slots:
     void onReadyRead();
@@ -88,6 +92,9 @@ private slots:
 private:
     MmioEndpoint* m_endpoint;
     QUdpSocket*   m_socket{nullptr};
+    // Separate unbound sender, as Thetis's udpSenderClient
+    // (MeterManager.cs:42446-42450).
+    QUdpSocket*   m_sendSocket{nullptr};
 };
 
 } // namespace NereusSDR

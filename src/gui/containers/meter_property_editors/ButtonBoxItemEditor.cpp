@@ -31,6 +31,10 @@ void ButtonBoxItemEditor::setItem(MeterItem* item)
     if (!b) { return; }
 
     beginProgrammaticUpdate();
+    // The grid type's column range. A saved count outside it shows clamped
+    // and stays as saved until the count is edited.
+    const auto [minColumns, maxColumns] = b->columnRange();
+    m_spinColumns->setRange(minColumns, maxColumns);
     m_spinColumns->setValue(b->columns());
     m_spinBorderWidth->setValue(static_cast<double>(b->borderWidth()));
     m_spinMargin->setValue(static_cast<double>(b->margin()));
@@ -41,11 +45,35 @@ void ButtonBoxItemEditor::setItem(MeterItem* item)
     endProgrammaticUpdate();
 }
 
+void ButtonBoxItemEditor::refreshColumnRange()
+{
+    ButtonBoxItem* b = qobject_cast<ButtonBoxItem*>(m_item);
+    if (!b || !m_spinColumns) { return; }
+    const auto [minColumns, maxColumns] = b->columnRange();
+    if (m_spinColumns->minimum() == minColumns && m_spinColumns->maximum() == maxColumns) { return; }
+    beginProgrammaticUpdate();
+    m_spinColumns->setRange(minColumns, maxColumns);
+    endProgrammaticUpdate();
+    if (b->columns() > maxColumns) {
+        b->setColumns(maxColumns);
+        beginProgrammaticUpdate();
+        m_spinColumns->setValue(maxColumns);
+        endProgrammaticUpdate();
+        notifyChanged();
+    }
+}
+
 void ButtonBoxItemEditor::buildButtonBoxSection()
 {
     addHeader(QStringLiteral("Button box"));
 
-    m_spinColumns = makeIntRow(QStringLiteral("Columns"), 1, 32);
+    m_spinColumns = makeIntRow(QStringLiteral("Columns"), ButtonBoxItem::kDefaultMinColumns,
+                               ButtonBoxItem::kDefaultMaxColumns);
+    m_spinColumns->setObjectName(QStringLiteral("buttonBoxColumns"));
+    // A grid whose range follows its shown buttons (antenna, tune step,
+    // other buttons) gets a new range when a button is shown or hidden; a
+    // count above the new maximum comes down to it.
+    connect(this, &BaseItemEditor::propertyChanged, this, [this]() { refreshColumnRange(); });
     connect(m_spinColumns, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (isProgrammaticUpdate()) { return; }

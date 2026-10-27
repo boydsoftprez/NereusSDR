@@ -1,5 +1,10 @@
+// no-port-check: NereusSDR-original tests; Thetis cites name the values checked.
 // NereusSDR-original infrastructure — no Thetis source ported here.
 // No upstream attribution required (NereusSDR FilterDisplayItem high-res test).
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - Palette load, Thetis new-item defaults and editor ranges.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Design note (Task 4.4):
 //   FilterDisplayItem::setHighResolution(bool) / highResolution() control whether
@@ -14,7 +19,11 @@
 #include <QtTest/QtTest>
 #include <QPainter>
 #include <cmath>
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include "core/RxChannel.h"
+#include "gui/containers/meter_property_editors/FilterDisplayItemEditor.h"
 #include "gui/meters/FilterDisplayItem.h"
 
 using namespace NereusSDR;
@@ -181,6 +190,128 @@ private slots:
         QCOMPARE(colour(Palette::LinAuto, -90.0f), QColor(252, 252, 252));
         QVector<QColor> lut(101, QColor(12, 34, 56));
         QCOMPARE(colour(Palette::Custom, -90.0f, lut), QColor(12, 34, 56));
+    }
+
+    // The saved palette loads as itself whatever the frame interval, and a
+    // palette outside WaterfallPalette loads as Enhanced. A bad frame
+    // interval still loads as 4.
+    void saved_palette_loads_independent_of_frame_interval()
+    {
+        using Palette = FilterDisplayItem::WaterfallPalette;
+        const QStringList base = FilterDisplayItem().serialize().split(QLatin1Char('|'));
+        QVERIFY(base.size() > 19);
+        const auto load = [&base](const QString& palette, const QString& interval,
+                                  FilterDisplayItem& item) {
+            QStringList parts = base;
+            parts[18] = palette;
+            parts[19] = interval;
+            return item.deserialize(parts.join(QLatin1Char('|')));
+        };
+
+        FilterDisplayItem blackWhite;
+        QVERIFY(load(QStringLiteral("2"), QStringLiteral("-1"), blackWhite));
+        QCOMPARE(blackWhite.waterfallPalette(), Palette::BlackWhite);
+        QCOMPARE(blackWhite.serialize().split(QLatin1Char('|')).at(19), QStringLiteral("4"));
+
+        for (const QString& bad : {QStringLiteral("-1"), QStringLiteral("7")}) {
+            FilterDisplayItem item;
+            item.setWaterfallPalette(Palette::LinRad);
+            QVERIFY(load(bad, QStringLiteral("6"), item));
+            QCOMPARE(item.waterfallPalette(), Palette::Enhanced);
+            QCOMPARE(item.serialize().split(QLatin1Char('|')).at(19), QStringLiteral("6"));
+        }
+    }
+
+    // A new item takes the Thetis values (MeterManager.cs:27651-27705
+    // [v2.10.3.15]); a constructed item keeps the older look.
+    void new_item_takes_thetis_defaults()
+    {
+        FilterDisplayItem older;
+        QCOMPARE(older.verticalRatio(), 0.02f);
+        QCOMPARE(older.notchColour(), QColor(0xff, 0xa5, 0x00));
+
+        FilterDisplayItem item;
+        item.applyNewItemDefaults();
+        QCOMPARE(item.verticalRatio(), 0.2f);
+        QVERIFY(item.showFilterLimits());
+        QVERIFY(!item.fixedRxZoom());
+        QVERIFY(!item.fixedTxZoom());
+        QCOMPARE(item.rxZoom(), 1.0f);
+        QCOMPARE(item.txZoom(), 1.0f);
+        QCOMPARE(item.sidebandsScale(), 0.0f);
+        QCOMPARE(item.cwScale(), 0.0f);
+        QCOMPARE(item.othersScale(), 0.0f);
+        QCOMPARE(item.displayMode(), FilterDisplayItem::DisplayMode::Panafall);
+        QCOMPARE(item.fontScale(), 1.0f);
+        QCOMPARE(item.waterfallFrameInterval(), 4);
+        QVERIFY(item.greyWhenNotActive());
+        QVERIFY(!item.sidebandMode());
+        QVERIFY(!item.snapLines());
+        QVERIFY(!item.autoZoom());
+        QVERIFY(!item.showCharacteristic());
+        QCOMPARE(item.characteristicLow(), -250.0f);
+        QCOMPARE(item.dataLineColour(), QColor(0x32, 0xcd, 0x32));    // LimeGreen
+        QCOMPARE(item.waterfallLowColour(), QColor(Qt::black));
+        QCOMPARE(item.textColour(), QColor(Qt::white));
+        QCOMPARE(item.numberHighlightColour(), QColor(0x8b, 0x00, 0x00)); // DarkRed
+        QCOMPARE(item.edgesColourRX(), QColor(0xff, 0xff, 0x00));     // Yellow
+        QCOMPARE(item.edgesColourTX(), QColor(0xff, 0x00, 0x00));     // Red
+        QCOMPARE(item.edgeHighlightColour(), QColor(Qt::white));
+        QCOMPARE(item.meterBackColour(), QColor(Qt::black));
+        QCOMPARE(item.notchColour(), QColor(0xff, 0x45, 0x00));       // OrangeRed
+        QCOMPARE(item.notchHighlightColour(), QColor(0x32, 0xcd, 0x32));
+        QCOMPARE(item.extentsColour(), QColor(0x80, 0x80, 0x80));     // Gray
+        QCOMPARE(item.snapLineColour(), QColor(0x80, 0x80, 0x80));
+        QCOMPARE(item.settingOnColour(), QColor(0x64, 0x95, 0xed));   // CornflowerBlue
+        QCOMPARE(item.buttonHighlightColour(), QColor(0x80, 0x80, 0x80));
+        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kMnfLabel), QStringLiteral(" MNF "));
+        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kMnfPlusLabel), QStringLiteral(" +MNF "));
+        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kSnapLabel), QStringLiteral(" SNAP "));
+        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kFitLabel), QStringLiteral(" FIT "));
+    }
+
+    // The editor offers the Thetis ranges and writes through to the item.
+    void editor_enforces_thetis_ranges()
+    {
+        FilterDisplayItem item;
+        item.applyNewItemDefaults();
+        FilterDisplayItemEditor editor;
+        editor.setItem(&item);
+
+        const auto doubleRange = [&editor](const char* name, double lo, double hi) {
+            auto* spin = editor.findChild<QDoubleSpinBox*>(QLatin1String(name));
+            QVERIFY2(spin, name);
+            QVERIFY2(qAbs(spin->minimum() - lo) < 1e-6, name);
+            QVERIFY2(qAbs(spin->maximum() - hi) < 1e-6, name);
+        };
+        doubleRange("filterVerticalRatio", 0.15, 1.0);
+        doubleRange("filterRxZoom", 1.0, 10.0);
+        doubleRange("filterTxZoom", 1.0, 20.0);
+        doubleRange("filterSidebandsScale", 0.0, 10.0);
+        doubleRange("filterCwScale", 0.0, 10.0);
+        doubleRange("filterOthersScale", 0.0, 10.0);
+        doubleRange("filterFontScale", 0.01, 4.0);
+        doubleRange("filterCharacteristicLow", -300.0, -50.0);
+        auto* frames = editor.findChild<QSpinBox*>(QStringLiteral("filterFrameInterval"));
+        QVERIFY(frames);
+        QCOMPARE(frames->minimum(), 1);
+        QCOMPARE(frames->maximum(), 1000);
+        QCOMPARE(frames->value(), 4);
+
+        // Values past the range land at its edge on the item.
+        auto* txZoom = editor.findChild<QDoubleSpinBox*>(QStringLiteral("filterTxZoom"));
+        txZoom->setValue(25.0);
+        QCOMPARE(item.txZoom(), 20.0f);
+        auto* low = editor.findChild<QDoubleSpinBox*>(QStringLiteral("filterCharacteristicLow"));
+        low->setValue(-400.0);
+        QCOMPARE(item.characteristicLow(), -300.0f);
+        frames->setValue(0);
+        QCOMPARE(item.waterfallFrameInterval(), 1);
+        auto* snap = editor.findChild<QCheckBox*>(QStringLiteral("filterSnapLines"));
+        QVERIFY(snap);
+        QVERIFY(!snap->isChecked());
+        snap->setChecked(true);
+        QVERIFY(item.snapLines());
     }
 };
 

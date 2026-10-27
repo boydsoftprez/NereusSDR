@@ -468,7 +468,11 @@ public:
     }
     BandButtonItem* bandButtons()
     {
-        if (!m_bandButtons) { m_bandButtons = std::make_unique<BandButtonItem>(); }
+        if (!m_bandButtons) {
+            m_bandButtons = std::make_unique<BandButtonItem>();
+            // XVTR is in the VHF band group.
+            m_bandButtons->setGroup(m_bandButtons->shownSlice(), BandGroup::Vhf);
+        }
         return m_bandButtons.get();
     }
     // The pan's filter policy dialog for chain 0, on the window's model.
@@ -605,7 +609,7 @@ QMap<F, QList<Surface>> surfaces()
     map[F::Equalizer] = {menu(QStringLiteral("&Equalizer..."))};
     map[F::Transverters] = {
         boxButton(QStringLiteral("antenna XVTR"), antennas, 5),
-        boxButton(QStringLiteral("band XVTR"), bands, uiIndexFromBand(Band::XVTR)),
+        boxButton(QStringLiteral("band XVTR"), bands, bandGroupPosition(BandGroup::Vhf, Band::XVTR)),
         menu(QStringLiteral("Trans&verters…")), menu(QStringLiteral("&VHF")),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("XVTR tab"), tab(QStringLiteral("XVTR"))),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("OC VHF tab"), tab(QStringLiteral("VHF")))};
@@ -650,14 +654,16 @@ QMap<F, QList<Surface>> surfaces()
     // front a feature of their own.
     map[F::MacroButtons] = {
         Surface{QStringLiteral("container macro buttons"), Host::Container, [](Hosts& h) {
-                    // Macro buttons follow the 34 core buttons; none is saved
-                    // visible by default, so "not hidden until built" is the
-                    // surface here.
+                    // The macro buttons (Thetis numbers 352-382); none is
+                    // saved visible by default, so "not hidden until built"
+                    // is the surface here.
                     OtherButtonItem* item = h.otherButtons();
-                    for (int i = 34; i < item->buttonCount(); ++i) {
-                        if (item->button(i).hiddenUntilBuilt) { return false; }
+                    for (int i = 0; i < OtherButtonItem::kMacroCount; ++i) {
+                        const int index = item->indexOf(static_cast<OtherButtonItem::ButtonId>(
+                            int(OtherButtonItem::ButtonId::Macro0) + i));
+                        if (index < 0 || item->button(index).hiddenUntilBuilt) { return false; }
                     }
-                    return item->buttonCount() > 34;
+                    return true;
                 }}};
     map[F::DisplayAveraging] = {functionButton(QStringLiteral("AVG"), B::Avg)};
     map[F::TwoReceiverLayout] = {
@@ -808,18 +814,6 @@ QMap<F, QList<Surface>> surfaces()
                                 }
                                 return false;
                             }}};
-    map[F::ContainerClickBox] = {
-        Surface{QStringLiteral("container Click Box render"), Host::Container,
-                [](Hosts& h) {
-                    for (const MeterItem* item : h.containerMeter()->items()) {
-                        if (qobject_cast<const ClickBoxItem*>(item)) {
-                            return h.containerMeter()->shouldRender(item);
-                        }
-                    }
-                    return false;
-                }},
-        Surface{QStringLiteral("container Click Box Add"), Host::Container,
-                [](Hosts& h) { return actionShown(h.containerDialog(), QStringLiteral("Click Box")); }}};
     map[F::AudioBitDepth] = {onPage(QStringLiteral("Microphone"), QStringLiteral("bit depth"),
                                    text(QStringLiteral("Bit depth:")))};
     map[F::AudioAutoMatch] = {onPage(QStringLiteral("Microphone"), QStringLiteral("auto match"),
@@ -911,20 +905,29 @@ private slots:
         QCOMPARE(map.size(), list.size());
     }
 
-    void builtFilterDisplayIsVisibleInLocalAndRemoteContainers()
+    // The click box is built too (container item parity Task 47): checked
+    // in the same windows, which are slow to build.
+    void builtFilterDisplayAndClickBoxAreVisibleInLocalAndRemoteContainers()
     {
         QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerFilterDisplay));
+        QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerClickBox));
         GuiSessionCoordinator sessions;
         for (bool remote : {false, true}) {
             Hosts hosts(sessions, remote);
             bool renders = false;
+            bool clickBoxRenders = false;
             for (const MeterItem* item : hosts.containerMeter()->items()) {
                 if (qobject_cast<const FilterDisplayItem*>(item)) {
                     renders = hosts.containerMeter()->shouldRender(item);
                 }
+                if (qobject_cast<const ClickBoxItem*>(item)) {
+                    clickBoxRenders = hosts.containerMeter()->shouldRender(item);
+                }
             }
             QVERIFY(renders);
+            QVERIFY(clickBoxRenders);
             QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Filter Display")));
+            QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Click Box")));
         }
     }
 

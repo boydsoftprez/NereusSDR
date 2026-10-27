@@ -10,12 +10,20 @@
 //
 // The tests drive RadioModel directly (no live radio, no WDSP) and
 // observe SliceModel state and AppSettings writes.
+//
+// Container item parity Task 35 (2026-10-26, J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code): a band grid click through the
+// band groups reaches its own slice through ContainerButtonDispatcher.
+// Fix round 1: the SWL bands tune with their Thetis seeds.
 
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
 #include "core/WdspTypes.h"
+#include "gui/containers/ContainerButtonDispatcher.h"
+#include "gui/meters/BandButtonItem.h"
+#include "gui/meters/BandGroups.h"
 #include "models/Band.h"
 #include "models/BandDefaults.h"
 #include "models/RadioModel.h"
@@ -36,7 +44,9 @@ private:
                  QStringLiteral("17m"),  QStringLiteral("15m"),
                  QStringLiteral("12m"),  QStringLiteral("10m"),
                  QStringLiteral("6m"),   QStringLiteral("WWV"),
-                 QStringLiteral("GEN"),  QStringLiteral("XVTR") }) {
+                 QStringLiteral("GEN"),  QStringLiteral("XVTR"),
+                 QStringLiteral("2m"),   QStringLiteral("31m"),
+                 QStringLiteral("22m") }) {
             const QString bp = QStringLiteral("Slice0/Band") + band + QStringLiteral("/");
             for (const QString& field : {
                      QStringLiteral("Frequency"),  QStringLiteral("DspMode"),
@@ -253,6 +263,127 @@ private slots:
                  14100000.0);
         QCOMPARE(s.value(QStringLiteral("Slice0/Band20m/DspMode")).toInt(),
                  static_cast<int>(DSPMode::CWU));
+    }
+
+    // Task 35: a band grid click, through the Thetis band groups, changes
+    // the band of the grid's own slice with onBandButtonClicked(slice,
+    // band). Each slice keeps its own group. Nothing keys.
+    void a_band_grid_click_reaches_its_slice_through_the_groups() {
+        RadioModel radio;
+        radio.addSlice();
+        radio.addSlice();
+        SliceModel* a = radio.sliceById(0);
+        SliceModel* b = radio.sliceById(1);
+        QVERIFY(a && b);
+        a->setFrequency(7100000.0);   // 40m
+        a->setDspMode(DSPMode::LSB);
+        b->setFrequency(3700000.0);   // 80m
+        b->setDspMode(DSPMode::LSB);
+        constexpr int kSliceA = 1;    // ContainerWidget::rxSource() for slice A
+        constexpr int kSliceB = 2;
+
+        ContainerButtonDispatcher dispatcher(&radio, ContainerButtonDispatcher::Hooks{});
+        BandButtonItem grid;
+        // The string form: BandButtonItem is not exported from the GUI DLL.
+        QSignalSpy clicks(&grid, SIGNAL(bandClicked(int)));
+        QVERIFY(clicks.isValid());
+        // What MainWindow does with a container's band grid.
+        const auto click = [&](int index, int rxSource) {
+            dispatcher.applyBand(&grid, rxSource);
+            const int before = clicks.count();
+            grid.buttonClicked(index, Qt::LeftButton);
+            if (clicks.count() > before) {
+                QVERIFY(dispatcher.clickBand(clicks.last().at(0).toInt(), rxSource).isEmpty());
+            }
+            dispatcher.applyBand(&grid, rxSource);
+        };
+
+        click(5, kSliceA);   // HF: 20m
+        QCOMPARE(a->frequency(), 14155000.0);
+        QCOMPARE(b->frequency(), 3700000.0);
+        QVERIFY(grid.button(5).on);
+
+        click(12, kSliceA);  // the VHF jump: no band change
+        QCOMPARE(grid.shownGroup(), BandGroup::Vhf);
+        QCOMPARE(a->frequency(), 14155000.0);
+        click(0, kSliceA);   // VHF: 2m
+        QCOMPARE(bandFromFrequency(a->frequency()), Band::Band2m);
+        QCOMPARE(grid.shownGroup(), BandGroup::Vhf);
+        QVERIFY(grid.button(0).on);
+
+        click(14, kSliceA);  // HF
+        click(13, kSliceA);  // WWV
+        QCOMPARE(bandFromFrequency(a->frequency()), Band::WWV);
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+
+        // Slice A on GEN, Slice B on HF: each keeps its own group.
+        click(14, kSliceA);  // SWL
+        QCOMPARE(grid.group(0), BandGroup::Gen);
+        dispatcher.applyBand(&grid, kSliceB);
+        QCOMPARE(grid.shownGroup(), BandGroup::Hf);
+        QVERIFY(grid.button(1).on);  // 80m
+        click(3, kSliceB);   // 40m, on slice B only
+        QCOMPARE(bandFromFrequency(b->frequency()), Band::Band40m);
+        QCOMPARE(bandFromFrequency(a->frequency()), Band::WWV);
+        dispatcher.applyBand(&grid, kSliceA);
+        QCOMPARE(grid.shownGroup(), BandGroup::Gen);
+        QCOMPARE(grid.group(1), BandGroup::Hf);
+
+        // The GEN group's 31m tunes Slice A into 31m.
+        click(bandGroupPosition(BandGroup::Gen, Band::Band31m), kSliceA);
+        QCOMPARE(a->frequency(), 9100000.0);
+        QCOMPARE(a->dspMode(), DSPMode::SAM);
+        QVERIFY(grid.button(bandGroupPosition(BandGroup::Gen, Band::Band31m)).on);
+
+        QVERIFY(!radio.mox());
+    }
+
+    // Fix round 1: an SWL band tunes its slice with the Thetis seed
+    // (AddBandStackSWL), saves as itself, and leaves the other slice alone.
+    // Only XVTR gives the transverter reason.
+    void swl_band_click_tunes_its_own_slice() {
+        RadioModel radio;
+        radio.addSlice();
+        radio.addSlice();
+        SliceModel* a = radio.sliceById(0);
+        SliceModel* b = radio.sliceById(1);
+        QVERIFY(a && b);
+        a->setFrequency(14100000.0);   // 20m
+        a->setDspMode(DSPMode::USB);
+        b->setFrequency(3700000.0);    // 80m
+        b->setDspMode(DSPMode::LSB);
+
+        QSignalSpy ignored(&radio, &RadioModel::bandClickIgnored);
+        radio.onBandButtonClicked(a, Band::Band31m);
+        QCOMPARE(ignored.count(), 0);
+        QCOMPARE(a->frequency(), 9100000.0);
+        QCOMPARE(a->dspMode(), DSPMode::SAM);
+        QCOMPARE(BandDefaults::bandGridBandFromFrequency(a->frequency()), Band::Band31m);
+        QCOMPARE(b->frequency(), 3700000.0);
+        QCOMPARE(b->dspMode(), DSPMode::LSB);
+
+        // Tuned within 31m, then GEN: 31m keeps its own state and GEN's
+        // slot is not written with the 31m frequency.
+        a->setFrequency(9500000.0);
+        radio.onBandButtonClicked(a, Band::GEN);
+        QCOMPARE(a->frequency(), 13845000.0);
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("Slice0/Band31m/Frequency")).toDouble(), 9500000.0);
+        radio.onBandButtonClicked(a, Band::Band31m);
+        QCOMPARE(a->frequency(), 9500000.0);
+        QCOMPARE(s.value(QStringLiteral("Slice0/BandGEN/Frequency")).toDouble(), 13845000.0);
+        // Clicking 31m on 31m is the same band.
+        radio.onBandButtonClicked(a, Band::Band31m);
+        QCOMPARE(a->frequency(), 9500000.0);
+        QCOMPARE(ignored.count(), 0);
+
+        // XVTR still refuses with its own reason.
+        radio.onBandButtonClicked(a, Band::XVTR);
+        QCOMPARE(ignored.count(), 1);
+        QVERIFY(ignored.last().at(1).toString().contains(QStringLiteral("transverter")));
+        QCOMPARE(a->frequency(), 9500000.0);
+        QCOMPARE(b->frequency(), 3700000.0);
+        QVERIFY(!radio.mox());
     }
 };
 

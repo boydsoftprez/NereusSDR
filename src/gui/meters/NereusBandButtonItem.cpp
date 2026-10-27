@@ -12,12 +12,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus-styled duplicate of BandButtonItem. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-10-22 - Corner radius and border match the PureSignal button.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-24 - Default colors from NereusButtonFace.h, shared with the
 //                 RX Filter copy. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - The Thetis band groups from BandButtonItem; the record
+//                 ends with its layout marker so the visibility bits keep
+//                 their meaning. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 // =================================================================
 
@@ -62,6 +73,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NereusBandButtonItem.h"
+#include "ItemColourLook.h"
 
 #include "ResponsiveText.h"
 #include "gui/StyleConstants.h"
@@ -187,9 +199,9 @@ void NereusBandButtonItem::paintButton(QPainter& painter, int index, const QRect
     const bool pressed = index == pressedButton();
     const bool selected = face.on;
 
-    QColor top = selected ? m_selectedTop : m_backgroundTop;
-    QColor bottom = selected ? m_selectedBottom : m_backgroundBottom;
-    QColor ink = m_textColor;
+    QColor top = selected ? ItemColourLook::effective("NereusBand.selectedTopColor", m_selectedTop, this) : ItemColourLook::effective("NereusBand.backgroundTopColor", m_backgroundTop, this);
+    QColor bottom = selected ? ItemColourLook::effective("NereusBand.selectedBottomColor", m_selectedBottom, this) : ItemColourLook::effective("NereusBand.backgroundBottomColor", m_backgroundBottom, this);
+    QColor ink = ItemColourLook::effective("NereusBand.buttonTextColor", m_textColor, this);
     if (!face.enabled) {
         top = bottom = QColor(Style::kDisabledBg);
         ink = QColor(Style::kDisabledText);
@@ -252,7 +264,9 @@ QString NereusBandButtonItem::serialize() const
         + QLatin1Char('|') + m_backgroundTop.name(QColor::HexArgb)
         + QLatin1Char('|') + m_backgroundBottom.name(QColor::HexArgb)
         + QLatin1Char('|') + m_selectedTop.name(QColor::HexArgb)
-        + QLatin1Char('|') + m_selectedBottom.name(QColor::HexArgb);
+        + QLatin1Char('|') + m_selectedBottom.name(QColor::HexArgb)
+        + serializeGridStyle()
+        + layoutMarkerField();
 }
 
 bool NereusBandButtonItem::deserialize(const QString& data)
@@ -269,7 +283,8 @@ bool NereusBandButtonItem::deserialize(const QString& data)
     m_zOrder = parts[6].toInt();
     if (parts.size() > 7) { setColumns(parts[7].toInt()); }
     if (parts.size() > 8) { setActiveBand(parts[8].toInt()); }
-    if (parts.size() > 9) { setVisibleBits(parts[9].toUInt()); }
+    // The layout marker follows the grid styling (fields 15-20).
+    deserializeVisibility(parts, 9, 21);
     if (parts.size() > 10) {
         const QColor text(parts[10]);
         if (text.isValid()) { m_textColor = text; }
@@ -290,6 +305,7 @@ bool NereusBandButtonItem::deserialize(const QString& data)
         const QColor bottom(parts[14]);
         if (bottom.isValid()) { m_selectedBottom = bottom; }
     }
+    deserializeGridStyle(parts, 15);
     applyChrome();
     return true;
 }

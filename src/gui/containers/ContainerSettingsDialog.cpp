@@ -8,6 +8,66 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - PR 677 review fix round 2: a same-type paste keeps, on
+//                 every type, the fields Thetis's ShowSubMarker and
+//                 SubMarkerColour drive and the target's pick for them
+//                 (setup.cs:27009-27015 [v2.10.3.15]); a face pastes in
+//                 one step, so one that refuses the paste stays as it was.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - PR 677 review fix wave (I1, I2, settings M7, GUI M9):
+//                 paste ports Thetis's keep-current block
+//                 (btnMeterPasteSettings_Click, setup.cs:27001-27083
+//                 [v2.10.3.15]) for every type and keeps the target's
+//                 reading, layer and trace 2 source; the clipboard carries
+//                 picked colours, fade and update interval; the legacy
+//                 paste path drops a branch it could not take. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Max ADC Magnitude follows the content registry: its
+//                 Available list entry and its Presets menu entry are shown
+//                 disabled with the registry's reason, and adding it builds
+//                 no bar. The object list judges availability on the entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - meter.adcMax is placed as a bar that veils itself, so the
+//                 Max ADC Magnitude entries take that bar's reason ("ADC
+//                 magnitude is not available") and still build no row that
+//                 would read the ADC peak. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I3): Show next in the live editor
+//                 selects the named web image in any draft container
+//                 (selectDraftWebImage). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I4, M4): a same-type paste keeps a
+//                 web image's own guid as an LED's, so its 4-char ID stays;
+//                 the legacy paste keeps the item's place as the draft
+//                 paste does (M4); Duplicate object gives a copied LED or
+//                 web image its own guid (I5). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - The workspace Available list shows its types under six
+//                 headings (Ready-made meters, Building blocks, Buttons,
+//                 Panels, Panel sections, Longpath instruments); a heading
+//                 row cannot be selected and Add on it adds nothing.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Paste settings onto an LED keeps the target's own guid,
+//                 so its 4-character ID (named by text overlay gates) does
+//                 not change. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Copy settings and Paste settings work in the workspace
+//                 draft: shown there, disabled with a plain reason when they
+//                 cannot apply; a paste keeps the object's place. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Paste settings between compatible bar meters, ported from
+//                 Thetis setup.cs canPasteSettings and the paste body: the
+//                 target keeps its reading, title, scale and units, and its
+//                 average marker when the source has none. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A web image's Show next selects the web image with that
+//                 4-char ID, in whichever container holds it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The Slice combo offers Active slice (saved as rxSourceMode
+//                 followSelectedRx, as the workspace header's source menu
+//                 does); Minimizes and Hide when slice not open are
+//                 available and act on every slice; No controls checkbox.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
 //                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
@@ -207,6 +267,9 @@ mw0lge@grange-lane.co.uk
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
 #include "../meters/ItemGroup.h"
+#include "../meters/presets/BarPresetItem.h"
+#include "../meters/presets/CompositePresetItem.h"
+#include "../meters/WaveformMeterItem.h"
 
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
 //                                               ScaleItem, TextItem, NeedleItem)
@@ -262,6 +325,7 @@ mw0lge@grange-lane.co.uk
 #include <QFileDialog>
 #include <QSaveFile>
 #include <QJsonDocument>
+#include "core/LogCategories.h"
 #include <QJsonArray>
 #include <QFile>
 #include <QTextStream>
@@ -283,6 +347,24 @@ namespace NereusSDR {
 // Style helpers (scoped to this translation unit)
 // ---------------------------------------------------------------------------
 namespace {
+
+// A bar-row preset whose bar type the content registry marks unavailable
+// (Max ADC Magnitude, meter.adcMax) is shown disabled with this reason, and
+// adding it builds nothing. Empty when the preset is available.
+QString presetUnavailableReason(const QString& presetName, const ContainerContentRegistry* registry)
+{
+    if (presetName != QLatin1String("AdcMaxMag")) { return {}; }
+    const QString type = QStringLiteral("meter.adcMax");
+    const ContainerContentRegistry fallback;
+    const ContainerContentRegistry& judge = registry ? *registry : fallback;
+    if (!judge.isAvailable(type)) { return judge.unavailableReason(type); }
+    // The registry places meter.adcMax as a bar that veils itself while
+    // NereusSDR has no ADC maximum reading. This preset's row would read the
+    // ADC peak instead, so it stays disabled with the bar's own reason.
+    BarPresetItem bar;
+    bar.configureVariant(QStringLiteral("AdcMax"));
+    return bar.bindingUnavailableReason(bar.bindingId());
+}
 
 constexpr const char* kBtnStyle =
     "QPushButton {"
@@ -503,7 +585,7 @@ void ContainerSettingsDialog::buildLayout()
     // --- Button bar (bottom) ---
     buildButtonBar();
     if (m_editSession) {
-        m_btnPreset->hide();m_btnCopySettings->hide();m_btnPasteSettings->hide();
+        m_btnPreset->hide();updateCopyPasteButtonState();
         m_highlightCheck->setEnabled(false);m_highlightCheck->setToolTip(tr("Highlight is a live arrangement aid; drafts use the preview."));
         m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit meter data sources in application settings."));
         for (auto* edit : findChildren<QLineEdit*>()) { connect(edit,&QLineEdit::textChanged,this,[this]{ updatePreview(); }); }
@@ -601,7 +683,10 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
                 if(c.contents[row].typeId.startsWith("applet:")) {m_transactionStatus->setText(tr("Singleton applets offer Move; they cannot be duplicated."));return;}
                 auto imported=ContainerDocumentCodec::importEntries(ContainerDocumentCodec::exportEntries({c.contents[row]}));
                 if(!imported.ok) {m_transactionStatus->setText(imported.error);return;}
-                auto e=imported.document.containers.first().contents.first();e.returnLocation.reset();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
+                auto e=imported.document.containers.first().contents.first();
+                // A copied LED or web image gets its own 4-char ID.
+                if(m_manager && m_manager->contentRegistry()) {e=m_manager->contentRegistry()->withNewItemIdentity(e);}
+                e.returnLocation.reset();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
             }
             m_editSession->setDraft(d);loadCurrentDraft();m_itemList->setCurrentRow(row+1);
         });
@@ -683,10 +768,30 @@ void ContainerSettingsDialog::populateAvailableList()
 {
     if (m_editSession && m_manager) {
         m_availableList->clear();
-        for(const auto& descriptor:m_manager->contentRegistry()->descriptors()) {
-            auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
-            row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
-            if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
+        // Six headings in order, each followed by its entries in
+        // descriptors() order. A heading row is bold, cannot be selected
+        // and carries no typeId, styled as the legacy list's headers.
+        const QVector<ContentDescriptor> all = m_manager->contentRegistry()->descriptors();
+        for (const ContentGroup group : {ContentGroup::ReadyMadeMeters, ContentGroup::BuildingBlocks,
+                                         ContentGroup::Buttons, ContentGroup::Panels,
+                                         ContentGroup::PanelSections, ContentGroup::LongpathInstruments}) {
+            bool headed = false;
+            for (const auto& descriptor : all) {
+                if (descriptor.group != group) { continue; }
+                if (!headed) {
+                    auto* heading = new QListWidgetItem(ContainerContentRegistry::groupTitle(group), m_availableList);
+                    QFont font = heading->font();
+                    font.setBold(true);
+                    heading->setFont(font);
+                    heading->setForeground(WorkspacePreview::roleColour(QColor(0x8a, 0xa8, 0xc0), "title-text"));
+                    heading->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
+                    heading->setFlags(Qt::NoItemFlags);
+                    headed = true;
+                }
+                auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
+                row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
+                if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
+            }
         }
         return;
     }
@@ -777,11 +882,21 @@ void ContainerSettingsDialog::populateAvailableList()
         h->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
         h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
     };
-    auto addEntry = [this](const Entry& e) {
+    const ContainerContentRegistry* registry = m_manager ? m_manager->contentRegistry() : nullptr;
+    auto addEntry = [this, registry](const Entry& e) {
         auto* item = new QListWidgetItem(
             QStringLiteral("  ") + QString::fromLatin1(e.label),
             m_availableList);
         item->setData(Qt::UserRole, QString::fromLatin1(e.tag));
+        // Disabled, never hidden: an unavailable preset keeps its place
+        // with the registry's reason.
+        const QString tag = QString::fromLatin1(e.tag);
+        const QString reason = tag.startsWith(QLatin1String("PRESET_"))
+            ? presetUnavailableReason(tag.mid(7), registry) : QString();
+        if (!reason.isEmpty()) {
+            item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+            item->setToolTip(reason);
+        }
     };
 
     // High-level Thetis-style meter compositions first — these are
@@ -806,7 +921,10 @@ void ContainerSettingsDialog::populateAvailableList()
 void ContainerSettingsDialog::onAddFromAvailable()
 {
     if(m_editSession && m_availableList->currentItem()) {
-        addNewItem(m_availableList->currentItem()->data(Qt::UserRole).toString()); return;
+        // A heading row carries no typeId and adds nothing.
+        const QString typeId = m_availableList->currentItem()->data(Qt::UserRole).toString();
+        if (!typeId.isEmpty()) { addNewItem(typeId); }
+        return;
     }
 
     if (!m_availableList) { return; }
@@ -835,6 +953,9 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // to ~10 rows before the stack clamps at y=0.9. Mirrors Thetis's
     // Setup → Appearance → Meters/Gadgets right-arrow "Add to
     // Container" flow.
+    // An unavailable preset (Max ADC Magnitude) builds nothing.
+    if (!presetUnavailableReason(presetName, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
+
     ItemGroup* group = nullptr;
 
     // Accepts both the short loadPresetByName names (Adc, Agc, Pbsnr,
@@ -1055,12 +1176,17 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     for (int rx = 1; rx <= 4; ++rx) {
         m_rxSourceCombo->addItem(ContainerWidget::sliceNameForRxSource(rx), rx);
     }
+    // Active slice follows the selected slice; it is saved in the
+    // workspace document (rxSourceMode), so only a draft offers it.
+    if (m_editSession) {
+        m_rxSourceCombo->addItem(tr("Active slice"), ContainerWidget::kActiveSliceSource);
+    }
     m_rxSourceCombo->setStyleSheet(
         "QComboBox { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px 4px; }"
         "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
-    m_rxSourceCombo->setFixedWidth(76);
+    m_rxSourceCombo->setFixedWidth(96);
 
     // Show on RX / TX
     QLabel* showRxLabel = new QLabel(QStringLiteral("Show RX:"), bar);
@@ -1125,12 +1251,14 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                                          m_container && m_container->containerMinimises());
     m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
                                          m_container && m_container->autoHeight());
-    m_hidesWhenRxNotUsedCheck = makeCheck(QStringLiteral("Hide when RX unused"),
+    m_hidesWhenRxNotUsedCheck = makeCheck(tr("Hide when slice not open"),
                                          m_container && m_container->containerHidesWhenRxNotUsed());
-    m_minimisesCheck->setEnabled(false);
-    m_minimisesCheck->setToolTip(tr("Minimizing with the main window is unavailable. Saved values are retained."));
-    m_hidesWhenRxNotUsedCheck->setEnabled(false);
-    m_hidesWhenRxNotUsedCheck->setToolTip(tr("Hiding unused receivers is unavailable. Saved values are retained."));
+    m_noControlsCheck        = makeCheck(tr("No controls"),
+                                         m_container && m_container->noControls());
+    m_minimisesCheck->setToolTip(tr("A floating container hides while the main window is minimized."));
+    m_hidesWhenRxNotUsedCheck->setToolTip(tr("Hide this container while its slice is not open."));
+    m_noControlsCheck->setObjectName("containerNoControls");
+    m_noControlsCheck->setToolTip(tr("No move or resize handles; hold Shift to use them."));
     m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
                                          m_container && m_container->isHighlighted());
 
@@ -1172,6 +1300,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     row2->addWidget(m_minimisesCheck);
     row2->addWidget(m_autoHeightCheck);
     row2->addWidget(m_hidesWhenRxNotUsedCheck);
+    row2->addWidget(m_noControlsCheck);
     row2->addWidget(m_highlightCheck);
     row2->addStretch();
 
@@ -1328,6 +1457,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
     if(m_editSession) {
         if(!m_propertyStack) {return;}
         if(m_currentTypeEditor) { m_propertyStack->removeWidget(m_currentTypeEditor); delete m_currentTypeEditor; m_currentTypeEditor=nullptr; m_contentEditor=nullptr; }
+        updateCopyPasteButtonState();
         const int row=m_itemList->currentRow();
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
             const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
@@ -1337,6 +1467,9 @@ void ContainerSettingsDialog::onItemSelectionChanged()
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);
             m_btnRemove->setText(entry.typeId.startsWith("applet:")?tr("Return / hide view"):tr("Remove object"));
+            // Queued: selecting a row replaces this editor.
+            connect(m_contentEditor,&ContentPropertyEditor::showWebImageRequested,this,
+                    [this](const QString& fourChar){ selectDraftWebImage(fourChar); },Qt::QueuedConnection);
             connect(m_contentEditor,&ContentPropertyEditor::entryEdited,this,[this](const ContentEntry& edited){
                 auto draft=m_editSession->draft();
                 for(auto& c:draft.containers) { for(auto& e:c.contents) {if(e.id==edited.id) {e=edited;}} }
@@ -1413,6 +1546,57 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         connect(base, &BaseItemEditor::propertyChanged,
                 this, &ContainerSettingsDialog::updatePreview);
     }
+    // From Thetis setup.cs:33240-33260 [v2.10.3.15]
+    // (btnWebImage_goto_next_Click): select the web image the 4-char ID
+    // names, switching container when another holds it. Queued: selecting
+    // a row replaces this editor.
+    if (auto* web = qobject_cast<WebImageItemEditor*>(editor)) {
+        connect(web, &WebImageItemEditor::showNextRequested, this, [this](const QString& fourChar) {
+            for (int row = 0; row < m_workingItems.size(); ++row) {
+                const auto* item = qobject_cast<const WebImageItem*>(m_workingItems[row]);
+                if (item && item->fourChar() == fourChar) {
+                    m_itemList->setCurrentRow(row);
+                    return;
+                }
+            }
+            selectDraftWebImage(fourChar);
+        }, Qt::QueuedConnection);
+    }
+}
+
+// From Thetis setup.cs:33240-33260 [v2.10.3.15] (btnWebImage_goto_next_Click):
+// the web image the 4-char ID names, in the current container first, then
+// in any other, switching the dialog to that container.
+bool ContainerSettingsDialog::selectDraftWebImage(const QString& fourChar)
+{
+    if (!m_editSession || fourChar.isEmpty()) { return false; }
+    const ContainerContentRegistry registry;
+    const auto rowOf = [&registry, &fourChar](const ContainerDocument& c) {
+        for (int row = 0; row < c.contents.size(); ++row) {
+            if (c.contents[row].typeId != QLatin1String("WEBIMAGE")) { continue; }
+            std::unique_ptr<MeterItem> probe(registry.createMeterItem(
+                c.contents[row], nullptr, ContentRenderMode::Preview));
+            const auto* item = qobject_cast<const WebImageItem*>(probe.get());
+            if (item && item->fourChar() == fourChar) { return row; }
+        }
+        return -1;
+    };
+    const auto containers = m_editSession->draft().containers;
+    for (const auto& c : containers) {
+        if (c.id != m_selectedId) { continue; }
+        const int row = rowOf(c);
+        if (row >= 0) { m_itemList->setCurrentRow(row); return true; }
+    }
+    for (const auto& c : containers) {
+        if (c.id == m_selectedId) { continue; }
+        const int row = rowOf(c);
+        if (row >= 0) {
+            selectDraftContainer(c.id);
+            m_itemList->setCurrentRow(row);
+            return true;
+        }
+    }
+    return false;
 }
 
 void ContainerSettingsDialog::onAddItem()
@@ -1783,7 +1967,7 @@ void ContainerSettingsDialog::refreshItemList()
                 QString title=entry.name.isEmpty()?m_manager->contentRegistry()->makeEntry(entry.typeId).name:entry.name;
                 if(title.startsWith('{')) { title=m_manager->contentRegistry()->makeEntry(entry.typeId).name; }
                 QString reason=entry.extensions.value("unavailableReason").toString();
-                if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry.typeId)) {reason=m_manager->contentRegistry()->unavailableReason(entry.typeId);}
+                if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry)) {reason=m_manager->contentRegistry()->unavailableReason(entry);}
                 auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" — unavailable")),m_itemList);
                 row->setData(Qt::UserRole,entry.id); row->setToolTip(reason);
             }
@@ -2003,6 +2187,7 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
     if (m_hidesWhenRxNotUsedCheck) {
         m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
     }
+    if (m_noControlsCheck) { m_noControlsCheck->setChecked(m_container->noControls()); }
     if (m_highlightCheck) { m_highlightCheck->setChecked(m_container->isHighlighted()); }
 
     // Take a fresh snapshot of the new container so Cancel reverts
@@ -2014,39 +2199,433 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
 // Phase 3G-6 block 7 commit 2: copy/paste item settings clipboard
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// The bar meters that share one settings record: every BarPresetItem
+// flavor (Thetis MeterType values outside the self-contained list in
+// canPasteSettings, setup.cs:27098-27106 [v2.10.3.15]). The custom bar
+// is CUSTOM_METER_BAR, which Thetis lists as self-contained.
+bool isSharedSettingsBar(const QString& typeId)
+{
+    if (typeId == QLatin1String("meter.mic") || typeId == QLatin1String("meter.alc")) { return true; }
+    for (const QString& variant : BarPresetItem::variants()) {
+        QString name = variant;
+        name[0] = name[0].toLower();
+        if (typeId == QLatin1String("meter.") + name) { return true; }
+    }
+    return false;
+}
+
+} // namespace
+
+QString ContainerSettingsDialog::pasteTypeId(const MeterItem& item)
+{
+    if (const auto* bar = qobject_cast<const BarPresetItem*>(&item)) { return bar->typeId(); }
+    if (const auto* composite = qobject_cast<const CompositePresetItem*>(&item)) { return composite->typeId(); }
+    const QString serialized = item.serialize();
+    const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
+    return (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+}
+
+// From Thetis setup.cs:27085-27127 [v2.10.3.15] (canPasteSettings).
+// Thetis lets every type outside its self-contained list paste onto every
+// other such type (bars, button boxes, web image, data out), because they
+// share one clsIGSettings. In NereusSDR only the bar flavors share a
+// record, so the other types, and the types Thetis does not have, paste
+// only onto their own type. Thetis's second list tests the target, not the
+// source, for ROTATOR and HISTORY (setup.cs:27113), so a rotator or history
+// source pastes onto a bar there; NereusSDR refuses it in both directions.
+bool ContainerSettingsDialog::canPasteSettings(const QString& fromTypeId, const QString& toTypeId)
+{
+    if (fromTypeId.isEmpty() || toTypeId.isEmpty()) { return false; }
+
+    // only allow paste into matching items. Some items allow pasting into non matching types as they share settings
+    if (fromTypeId == toTypeId) { return true; }
+    return isSharedSettingsBar(fromTypeId) && isSharedSettingsBar(toTypeId);
+}
+
+namespace {
+
+// A bar's paste (BarPresetItem's JSON record): the keep-current block of
+// Thetis btnMeterPasteSettings_Click, then what NereusSDR keeps. keptSub
+// reports that the target kept its own sub marker.
+bool pasteBarSettings(const QString& copiedSerialized, bool sameType, BarPresetItem& bar, bool& keptSub)
+{
+    const QJsonDocument document = QJsonDocument::fromJson(copiedSerialized.toUtf8());
+    if (!document.isObject()) { return false; }
+    QJsonObject settings = document.object();
+    const QJsonObject currentSettings = bar.configuration();
+    const auto keepCurrent = [&](const QString& key) {
+        if (currentSettings.contains(key)) { settings.insert(key, currentSettings.value(key)); }
+        else { settings.remove(key); }
+    };
+
+    // From Thetis setup.cs:27003-27015 [v2.10.3.15]
+    // ignore some things [2.10.1.0] MW0LGE - fixes issue where bar with change units is paste into new bar, and source bars have no sub indicator
+
+    // prevent overwrite of the following
+    keepCurrent(QStringLiteral("units"));
+
+    // A source with no average marker has no second reading.
+    keptSub = settings.value(QStringLiteral("secondaryBindingId")).toInt(-1) < 0;
+    if (keptSub) {
+        // no sub indicators on the source, replace with current so we end up with no change on the paste
+        // [Thetis also assigns ShowSubMarker from ShowMarker first, setup.cs:27012; the next line overwrites it]
+        keepCurrent(QStringLiteral("showSub"));
+        keepCurrent(QStringLiteral("subColor"));
+    }
+
+    // NereusSDR: the item's readings and place stay the target's (Thetis
+    // pastes into the target's item group, whose readings and place are
+    // not settings).
+    for (const QString& key : {QStringLiteral("bindingId"), QStringLiteral("secondaryBindingId"),
+                               QStringLiteral("aboveS9Frequency"), QStringLiteral("x"), QStringLiteral("y"),
+                               QStringLiteral("w"), QStringLiteral("h")}) {
+        keepCurrent(key);
+    }
+    if (!sameType) {
+        // NereusSDR: what Thetis builds per MeterType and leaves out of
+        // clsIGSettings (the reading, title and scale; MeterManager.cs:29275-29373
+        // [v2.10.3.15]) stays the target's.
+        for (const QString& key : {QStringLiteral("kind"), QStringLiteral("flavor"), QStringLiteral("label"),
+                                   QStringLiteral("minValue"), QStringLiteral("maxValue"),
+                                   QStringLiteral("redThreshold"), QStringLiteral("rowHeight")}) {
+            keepCurrent(key);
+        }
+        // Thetis copies MaxPower only from a PWR or REVERSE_PWR source
+        // (MeterManager.cs:29329 [v2.10.3.15]); otherwise the target keeps its own.
+        if (!settings.contains(QStringLiteral("powerLimitW"))) { keepCurrent(QStringLiteral("powerLimitW")); }
+    }
+
+    return bar.deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
+}
+
+// A same-type paste of a face: the source's record with the target's own
+// reading (its channel readings and its trace 2 source too) and its
+// sub-marker fields (pasteSameTypeSettings below), applied in one step, so
+// a record the face refuses leaves the target as it was.
+bool pasteSameTypeFace(const QString& copiedSerialized, CompositePresetItem& face, QStringList& keptPicks)
+{
+    const QJsonDocument document = QJsonDocument::fromJson(copiedSerialized.toUtf8());
+    if (!document.isObject()) { return false; }
+    QJsonObject settings = document.object();
+    const QJsonObject ownFace = face.configuration();
+
+    // NereusSDR: the reading stays the target's.
+    settings.insert(QStringLiteral("bindingId"), ownFace.value(QStringLiteral("bindingId")));
+    const QJsonArray ownChannels = ownFace.value(QStringLiteral("channels")).toArray();
+    QJsonArray channels = settings.value(QStringLiteral("channels")).toArray();
+    const auto ownChannelBinding = [&](int i, QJsonObject channel) {
+        channel.insert(QStringLiteral("bindingId"), ownChannels[i].toObject().value(QStringLiteral("bindingId")));
+        return channel;
+    };
+    // A saved Signal history face carries trace 2 beside its one channel
+    // (CompositePresetItem::savedConfiguration).
+    const bool savedTrace2 = settings.value(QStringLiteral("trace2Channel")).isObject()
+        && channels.size() + 1 == ownChannels.size();
+    if (channels.size() == ownChannels.size() || savedTrace2) {
+        for (int i = 0; i < channels.size(); ++i) { channels[i] = ownChannelBinding(i, channels[i].toObject()); }
+        settings.insert(QStringLiteral("channels"), channels);
+        if (savedTrace2) {
+            settings.insert(QStringLiteral("trace2Channel"),
+                            ownChannelBinding(channels.size(), settings.value(QStringLiteral("trace2Channel")).toObject()));
+        }
+    }
+    if (face.typeId() == QLatin1String("meter.historyGraph")) {
+        settings.insert(QStringLiteral("trace2Context"), ownFace.contains(QStringLiteral("trace2Context"))
+                                                             ? ownFace.value(QStringLiteral("trace2Context"))
+                                                             : QJsonValue(QJsonValue::Null));
+    }
+
+    // From Thetis setup.cs:27009-27015 [v2.10.3.15]
+    // no sub indicators on the source, replace with current so we end up with no change on the paste
+    // The Signal text face's sub lines, the VFO face's mode colour and the
+    // clock face's date colour (the fields pasteSameTypeSettings lists).
+    const QString kind = ownFace.value(QStringLiteral("kind")).toString();
+    const struct { const char* key; QString pick; } kept[] = {
+        {"showSubMarker", QString()},
+        {"subMarkerColor", kind + QStringLiteral(".subMarkerColor")},
+        {"vfoModeColor", QStringLiteral("VfoDisplay.modeColour")},
+        {"clockDateColor", QStringLiteral("Clock.dateColour")},
+    };
+    for (const auto& k : kept) {
+        const QString key = QLatin1String(k.key);
+        if (!ownFace.contains(key)) { continue; }
+        settings.insert(key, ownFace.value(key));
+        if (!k.pick.isEmpty()) { keptPicks.append(k.pick); }
+    }
+
+    if (!face.deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)))) {
+        qCWarning(lcContainer) << "Paste settings: the face refused the pasted settings";
+        keptPicks.clear();
+        return false;
+    }
+    return true;
+}
+
+// A same-type paste of any other item: the whole record, then the
+// target's own values Thetis protects and its reading. keptPicks names the
+// colour fields the target kept, so their picks stay the target's.
+//
+// From Thetis setup.cs:27009-27015 [v2.10.3.15]: the target keeps its
+// ShowSubMarker and SubMarkerColour whenever the source has no sub
+// indicators. Only a needle group with a sub needle (MeterManager.cs:29099
+// [v2.10.3.15]) and a bar with a sub bar (MeterManager.cs:29339) set
+// SubIndicators, so for every type below the target always keeps the
+// fields those two settings drive (ApplySettingsForMeterGroup):
+//   ROTATOR       SubMarkerColour -> SmallBlobColour   (MeterManager.cs:27315)
+//   LED           ShowSubMarker   -> ShowBackPanel     (MeterManager.cs:27440)
+//   TEXT_OVERLAY  SubMarkerColour -> TextBackColour1   (MeterManager.cs:27530)
+//                 ShowSubMarker   -> ShowBackPanel     (MeterManager.cs:27537)
+//   VFO_DISPLAY   SubMarkerColour -> ModeColour        (MeterManager.cs:28054)
+//   CLOCK         SubMarkerColour -> DateColour        (MeterManager.cs:28140)
+//   SIGNAL_TEXT   SubMarkerColour -> HistoryColour     (MeterManager.cs:28178)
+//                 ShowSubMarker   -> ShowSubMarker     (MeterManager.cs:28190)
+// The faces that hold those items keep the same fields. A needle face's
+// other needles take SubMarkerColour (MeterManager.cs:27987), but a face of
+// the same type always has its sub needles, so Thetis pastes those.
+bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target, QStringList& keptPicks)
+{
+    keptPicks.clear();
+    auto* face = qobject_cast<CompositePresetItem*>(&target);
+    if (face) { return pasteSameTypeFace(copiedSerialized, *face, keptPicks); }
+
+    // An LED and a web image keep their own guid, so their 4-character
+    // ID stays (Thetis pastes settings into the target's item group,
+    // keeping its ID).
+    auto* led = qobject_cast<LEDItem*>(&target);
+    auto* web = qobject_cast<WebImageItem*>(&target);
+    const QUuid ownGuid = led ? led->guid() : (web ? web->guid() : QUuid());
+    const int ownBinding = target.bindingId();
+
+    auto* other = qobject_cast<OtherButtonItem*>(&target);
+    QVector<short> ownMap;
+    QVector<qint32> ownGroups;
+    QVector<OtherButtonItem::MacroSettings> ownMacros;
+    if (other) {
+        ownMap = other->buttonMap();
+        ownGroups = other->visibleGroups();
+        for (int n = 0; n < OtherButtonItem::kMacroCount; ++n) { ownMacros.append(other->macroSettings(n)); }
+    }
+    auto* tuneStep = qobject_cast<TuneStepButtonItem*>(&target);
+    auto* antenna = qobject_cast<AntennaButtonItem*>(&target);
+    const uint32_t ownVisibleBits = tuneStep ? tuneStep->visibleBits() : (antenna ? antenna->visibleBits() : 0u);
+    const int ownActiveStep = tuneStep ? tuneStep->activeStep() : -1;
+
+    // The fields ShowSubMarker and SubMarkerColour drive (see above).
+    auto* rotator = qobject_cast<RotatorItem*>(&target);
+    auto* overlay = qobject_cast<TextOverlayItem*>(&target);
+    auto* vfo = qobject_cast<VfoDisplayItem*>(&target);
+    auto* clock = qobject_cast<ClockItem*>(&target);
+    auto* signalText = qobject_cast<SignalTextItem*>(&target);
+    const QColor ownSmallBlob = rotator ? rotator->smallBlobColour() : QColor();
+    const bool ownLedPanel = led ? led->showBackPanel() : false;
+    const QColor ownTextBack1 = overlay ? overlay->textBackColour1() : QColor();
+    const bool ownOverlayPanel = overlay ? overlay->showBackPanel() : false;
+    const QColor ownMode = vfo ? vfo->modeColour() : QColor();
+    const QColor ownDate = clock ? clock->dateColour() : QColor();
+    const QColor ownSubColour = signalText ? signalText->subMarkerColour() : QColor();
+    const bool ownShowSub = signalText ? signalText->showSubMarker() : false;
+
+    if (!target.deserialize(copiedSerialized)) { return false; }
+    if (led) { led->setGuid(ownGuid); }
+    if (web) { web->setGuid(ownGuid); }
+
+    // no sub indicators on the source, replace with current so we end up with no change on the paste
+    // [original inline comment from setup.cs:27011]
+    // (none of these types has sub indicators, so the target always keeps them)
+    if (rotator) {
+        rotator->setSmallBlobColour(ownSmallBlob);
+        keptPicks.append(QStringLiteral("Rotator.smallBlobColour"));
+    } else if (led) {
+        led->setShowBackPanel(ownLedPanel);
+    } else if (overlay) {
+        overlay->setTextBackColour1(ownTextBack1);
+        overlay->setShowBackPanel(ownOverlayPanel);
+        keptPicks.append(QStringLiteral("TextOverlay.textBackColour1"));
+    } else if (vfo) {
+        vfo->setModeColour(ownMode);
+        keptPicks.append(QStringLiteral("VfoDisplay.modeColour"));
+    } else if (clock) {
+        clock->setDateColour(ownDate);
+        keptPicks.append(QStringLiteral("Clock.dateColour"));
+    } else if (signalText) {
+        signalText->setSubMarkerColour(ownSubColour);
+        signalText->setShowSubMarker(ownShowSub);
+        keptPicks.append(QStringLiteral("SignalText.subMarkerColour"));
+    }
+
+    // From Thetis setup.cs:27017-27080 [v2.10.3.15]
+    // VOICE_RECORD_PLAY_BUTTONS (setup.cs:27017-27041): NereusSDR's
+    // record and play grid has no slots, files or button map, so it has
+    // nothing to keep. NereusSDR has no WAVE_RECORD item (setup.cs:27042-27046).
+    if (other) {
+        // prevent overwrite of the following, copy from current settings
+        other->setButtonMap(ownMap);
+        other->setVisibleGroups(ownGroups);
+        for (int n = 0; n < OtherButtonItem::kMacroCount; ++n) { other->macroSettings(n) = ownMacros[n]; }
+    } else if (tuneStep) {
+        // prevent overwrite of the following, copy from current settings
+        tuneStep->setVisibleBits(ownVisibleBits);
+        // NereusSDR: the lit step is the radio's, not a setting.
+        tuneStep->setActiveStep(ownActiveStep);
+    } else if (antenna) {
+        // prevent overwrite of the following, copy from current settings
+        antenna->setVisibleBits(ownVisibleBits);
+    }
+
+    // NereusSDR: the reading stays the target's.
+    target.setBindingId(ownBinding);
+    return true;
+}
+
+} // namespace
+
+// From Thetis setup.cs:26988 [v2.10.3.15] (btnMeterPasteSettings_Click; its
+// paste body, setup.cs:27001-27083, is cited where it is ported in
+// pasteBarSettings and pasteSameTypeSettings above).
+bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId,
+                                                MeterItem& target, const QStringList& copiedUserColours)
+{
+    const QString toTypeId = pasteTypeId(target);
+    if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
+    // NereusSDR: the item's layer stays the target's, as its place does.
+    const int ownZOrder = target.zOrder();
+    const QStringList ownPicks = target.userColourFields();
+    QStringList keptPicks;
+    bool pasted = false;
+    if (auto* bar = qobject_cast<BarPresetItem*>(&target)) {
+        bool keptSub = false;
+        pasted = pasteBarSettings(copiedSerialized, fromTypeId == toTypeId, *bar, keptSub);
+        if (keptSub) { keptPicks.append(QStringLiteral("BarPreset.subColor")); }
+    } else if (fromTypeId == toTypeId) {
+        pasted = pasteSameTypeSettings(copiedSerialized, target, keptPicks);
+    }
+    if (!pasted) { return false; }
+    target.setZOrder(ownZOrder);
+    // The colours picked on the source arrive with them; a field the
+    // target kept (its sub marker fields) keeps the target's own pick.
+    target.setUserColourFields(copiedUserColours);
+    for (const QString& field : keptPicks) { target.setColourUserSet(field, ownPicks.contains(field)); }
+    return true;
+}
+
+bool ContainerSettingsDialog::selectedDraftEntry(ContentEntry& entry) const
+{
+    if (!m_editSession || !m_itemList) { return false; }
+    const int row = m_itemList->currentRow();
+    for (const auto& c : m_editSession->draft().containers) {
+        if (c.id != m_selectedId || row < 0 || row >= c.contents.size()) { continue; }
+        entry = c.contents[row];
+        return true;
+    }
+    return false;
+}
+
+std::unique_ptr<MeterItem> ContainerSettingsDialog::draftMeterItem(const ContentEntry& entry) const
+{
+    if (!m_manager || !m_manager->contentRegistry()) { return {}; }
+    return std::unique_ptr<MeterItem>(
+        m_manager->contentRegistry()->createMeterItem(entry, nullptr, ContentRenderMode::Preview));
+}
+
 void ContainerSettingsDialog::onCopyItemSettings()
 {
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        m_clipboardSerialized = item->serialize();
+        m_clipboardTypeTag = pasteTypeId(*item);
+        copyClipboardExtras(*item);
+        updateCopyPasteButtonState();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
     if (!item) { return; }
 
     m_clipboardSerialized = item->serialize();
-    const int pipeIdx = m_clipboardSerialized.indexOf(QLatin1Char('|'));
-    m_clipboardTypeTag = (pipeIdx >= 0)
-        ? m_clipboardSerialized.left(pipeIdx)
-        : m_clipboardSerialized;
+    m_clipboardTypeTag = pasteTypeId(*item);
+    copyClipboardExtras(*item);
     updateCopyPasteButtonState();
+}
+
+void ContainerSettingsDialog::copyClipboardExtras(const MeterItem& item)
+{
+    m_clipboardUserColours = item.userColourFields();
+    m_clipboardHasFade = item.hasExplicitFade();
+    m_clipboardFadeRx = item.fadeOnRx();
+    m_clipboardFadeTx = item.fadeOnTx();
+    m_clipboardUpdateIntervalMs = item.updateIntervalMs();
+}
+
+void ContainerSettingsDialog::pasteClipboardExtras(MeterItem& item) const
+{
+    // Thetis's settings record carries the fade and the update interval
+    // (clsIGSettings); NereusSDR keeps them beside the record, so they
+    // paste here. A source without a fade of its own leaves the target's.
+    if (m_clipboardHasFade) {
+        item.setFadeOnRx(m_clipboardFadeRx);
+        item.setFadeOnTx(m_clipboardFadeTx);
+    }
+    // The faces, bars and waveform keep their interval in the record.
+    const bool recordHoldsInterval = qobject_cast<const BarPresetItem*>(&item) != nullptr
+        || qobject_cast<const CompositePresetItem*>(&item) != nullptr
+        || qobject_cast<const WaveformMeterItem*>(&item) != nullptr;
+    if (!recordHoldsInterval) { item.setUpdateIntervalMs(m_clipboardUpdateIntervalMs); }
 }
 
 void ContainerSettingsDialog::onPasteItemSettings()
 {
     if (m_clipboardSerialized.isEmpty()) { return; }
+    if (m_editSession) {
+        ContentEntry entry;
+        if (!selectedDraftEntry(entry)) { return; }
+        const std::unique_ptr<MeterItem> item = draftMeterItem(entry);
+        if (!item) { return; }
+        // The object keeps its place: settings paste, the place does not.
+        const float x = item->x();
+        const float y = item->y();
+        const float w = item->itemWidth();
+        const float h = item->itemHeight();
+        if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item, m_clipboardUserColours)) { return; }
+        item->setRect(x, y, w, h);
+        pasteClipboardExtras(*item);
+        const ContentEntry pasted = m_manager->contentRegistry()->captureMeterItem(*item, entry);
+        auto draft = m_editSession->draft();
+        for (auto& c : draft.containers) {
+            if (c.id != m_selectedId) { continue; }
+            for (auto& e : c.contents) {
+                if (e.id == entry.id) { e = pasted; }
+            }
+        }
+        m_editSession->setDraft(draft);
+        updatePreview();
+        updateDraftStatus();
+        // Rebuild the editor so its fields read the pasted settings.
+        onItemSelectionChanged();
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
     MeterItem* item = m_workingItems[row];
     if (!item) { return; }
 
-    // Type-tag check: only allow paste between items of the same
-    // class so we don't try to deserialize NEEDLE bytes into a TEXT
-    // item. Matches Thetis paste-settings behavior.
-    const QString cur = item->serialize();
-    const int pipeIdx = cur.indexOf(QLatin1Char('|'));
-    const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
-    if (curTag != m_clipboardTypeTag) { return; }
-
-    item->deserialize(m_clipboardSerialized);
-    if (m_editSession) { updatePreview(); } else { applyToContainer(); }
+    // Type check: paste only between items whose settings are
+    // compatible (canPasteSettings) so we don't try to deserialize
+    // NEEDLE bytes into a TEXT item. Matches Thetis paste-settings
+    // behavior. The object keeps its place, as in the draft path above.
+    const float x = item->x();
+    const float y = item->y();
+    const float w = item->itemWidth();
+    const float h = item->itemHeight();
+    if (!pasteItemSettings(m_clipboardSerialized, m_clipboardTypeTag, *item, m_clipboardUserColours)) { return; }
+    item->setRect(x, y, w, h);
+    pasteClipboardExtras(*item);
+    applyToContainer();
 
     // Force the editor stack to rebuild so the property fields
     // reload from the freshly-pasted item state.
@@ -2055,6 +2634,31 @@ void ContainerSettingsDialog::onPasteItemSettings()
 
 void ContainerSettingsDialog::updateCopyPasteButtonState()
 {
+    if (m_editSession) {
+        // Disabled, never hidden: each button says why it cannot act.
+        ContentEntry entry;
+        const bool haveSelection = selectedDraftEntry(entry);
+        const std::unique_ptr<MeterItem> item = haveSelection ? draftMeterItem(entry) : nullptr;
+        QString copyReason;
+        if (!haveSelection) { copyReason = tr("Select an object to copy its settings."); }
+        else if (!item) { copyReason = tr("This object has no settings to copy."); }
+        QString pasteReason = copyReason;
+        if (pasteReason.isEmpty()) {
+            if (m_clipboardTypeTag.isEmpty()) { pasteReason = tr("Copy an object's settings first."); }
+            else if (!canPasteSettings(m_clipboardTypeTag, pasteTypeId(*item))) {
+                pasteReason = tr("The copied settings do not fit this object.");
+            }
+        }
+        if (m_btnCopySettings) {
+            m_btnCopySettings->setEnabled(copyReason.isEmpty());
+            m_btnCopySettings->setToolTip(copyReason);
+        }
+        if (m_btnPasteSettings) {
+            m_btnPasteSettings->setEnabled(pasteReason.isEmpty());
+            m_btnPasteSettings->setToolTip(pasteReason);
+        }
+        return;
+    }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     const bool haveSelection = (row >= 0 && row < m_workingItems.size());
     if (m_btnCopySettings) {
@@ -2062,11 +2666,8 @@ void ContainerSettingsDialog::updateCopyPasteButtonState()
     }
     if (m_btnPasteSettings) {
         bool typeMatches = false;
-        if (haveSelection && !m_clipboardTypeTag.isEmpty()) {
-            const QString cur = m_workingItems[row]->serialize();
-            const int pipeIdx = cur.indexOf(QLatin1Char('|'));
-            const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
-            typeMatches = (curTag == m_clipboardTypeTag);
+        if (haveSelection && !m_clipboardTypeTag.isEmpty() && m_workingItems[row]) {
+            typeMatches = canPasteSettings(m_clipboardTypeTag, pasteTypeId(*m_workingItems[row]));
         }
         m_btnPasteSettings->setEnabled(typeMatches);
     }
@@ -2156,7 +2757,9 @@ void ContainerSettingsDialog::loadCurrentDraft()
         m_bgColorBtn->setProperty("draftColor",c.config.value("backgroundColor").toString("#0f0f1a"));
         m_bgColorBtn->setStyleSheet(QStringLiteral("background:%1; min-width:32px;").arg(m_bgColorBtn->property("draftColor").toString()));
         m_titleEdit->setText(c.name); m_borderCheck->setChecked(c.config.value("border").toBool(true));
-        m_rxSourceCombo->setCurrentIndex(m_rxSourceCombo->findData(c.config.contains("sliceId") ? c.config.value("sliceId").toInt()+1 : c.config.value("rxSource").toInt(1)));
+        const bool follows=c.config.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx");
+        m_rxSourceCombo->setCurrentIndex(m_rxSourceCombo->findData(follows ? ContainerWidget::kActiveSliceSource
+            : c.config.contains("sliceId") ? c.config.value("sliceId").toInt()+1 : c.config.value("rxSource").toInt(1)));
         m_showOnRxCheck->setChecked(c.config.value("showOnRx").toBool(true));
         m_showOnTxCheck->setChecked(c.config.value("showOnTx").toBool(true));
         if(m_lockCheck) { m_lockCheck->setChecked(c.locked); }
@@ -2166,6 +2769,7 @@ void ContainerSettingsDialog::loadCurrentDraft()
         if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
+        if(m_noControlsCheck) { m_noControlsCheck->setChecked(c.config.value("noControls").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
         if(m_headerCombo) {
             // Workspace preview: there is no Reveal item; it reads as Hidden.
@@ -2211,10 +2815,18 @@ void ContainerSettingsDialog::saveCurrentDraft()
             const QString background=m_bgColorBtn->property("draftColor").toString();
             if(!background.isEmpty() && background!=d.config.value("backgroundColor").toString("#0f0f1a")) {d.config["backgroundColor"]=background;}
             d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);
+            const bool follows=d.config.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx");
             const int source=d.config.contains("sliceId") ? d.config.value("sliceId").toInt()+1 : d.config.value("rxSource").toInt(1);
-            if (m_rxSourceCombo->currentData().toInt()!=source) {
-                // The workspace header's source menu writes through the same call.
-                ContainerSourceAdapter::writeContainerSource(d.config,m_rxSourceCombo->currentData().toInt());
+            const int chosen=m_rxSourceCombo->currentData().toInt();
+            // The same config writes as the workspace header's source menu
+            // (ContainerManager::commitContainerSource). A saved slice the
+            // combo does not list (no current item) is left as it is.
+            const bool listed=m_rxSourceCombo->currentIndex()>=0;
+            if (listed && chosen==ContainerWidget::kActiveSliceSource) {
+                if (!follows) { d.config["rxSourceMode"]=QStringLiteral("followSelectedRx"); }
+            } else if (listed && (follows || chosen!=source)) {
+                d.config.remove("rxSourceMode");
+                ContainerSourceAdapter::writeContainerSource(d.config,chosen);
             }
             setBool("highlight",m_highlightCheck->isChecked());
             setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);
@@ -2223,9 +2835,10 @@ void ContainerSettingsDialog::saveCurrentDraft()
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
                 else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Shown;}
             }
-            if (m_minimisesCheck && m_minimisesCheck->isEnabled()) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
+            if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
-            if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            if (m_noControlsCheck) { setBool("noControls",m_noControlsCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
             if(m_layoutCombo) {
                 const auto desired=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());
@@ -2265,15 +2878,18 @@ void ContainerSettingsDialog::applyToContainer()
     if (m_hideTitleCheck) {
         m_container->setTitleBarVisible(!m_hideTitleCheck->isChecked());
     }
-    if (m_minimisesCheck && m_minimisesCheck->isEnabled()) {
+    if (m_minimisesCheck) {
         m_container->setContainerMinimises(m_minimisesCheck->isChecked());
     }
     if (m_autoHeightCheck) {
         m_container->setAutoHeight(m_autoHeightCheck->isChecked());
     }
-    if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) {
+    if (m_hidesWhenRxNotUsedCheck) {
         m_container->setContainerHidesWhenRxNotUsed(
             m_hidesWhenRxNotUsedCheck->isChecked());
+    }
+    if (m_noControlsCheck) {
+        m_container->setNoControls(m_noControlsCheck->isChecked());
     }
 
     // Write items back to the real MeterWidget
@@ -2349,7 +2965,13 @@ void ContainerSettingsDialog::onLoadPreset()
     QMenu* rxMenu = menu.addMenu(QStringLiteral("RX Meters"));
     rxMenu->setStyleSheet(QLatin1String(kMenuStyle));
     rxMenu->addAction(QStringLiteral("ADC"),         this, [this]{ loadPresetByName(QStringLiteral("Adc")); });
-    rxMenu->addAction(QStringLiteral("ADC MaxMag"),  this, [this]{ loadPresetByName(QStringLiteral("AdcMaxMag")); });
+    QAction* adcMaxMag = rxMenu->addAction(QStringLiteral("ADC MaxMag"),  this, [this]{ loadPresetByName(QStringLiteral("AdcMaxMag")); });
+    // Disabled, never hidden: the registry's reason is the tooltip.
+    if (const QString reason = presetUnavailableReason(QStringLiteral("AdcMaxMag"), m_manager ? m_manager->contentRegistry() : nullptr); !reason.isEmpty()) {
+        adcMaxMag->setEnabled(false);
+        adcMaxMag->setToolTip(reason);
+        rxMenu->setToolTipsVisible(true);
+    }
     rxMenu->addAction(QStringLiteral("AGC"),         this, [this]{ loadPresetByName(QStringLiteral("Agc")); });
     rxMenu->addAction(QStringLiteral("AGC Gain"),    this, [this]{ loadPresetByName(QStringLiteral("AgcGain")); });
     rxMenu->addAction(QStringLiteral("PBSNR"),       this, [this]{ loadPresetByName(QStringLiteral("Pbsnr")); });
@@ -2376,6 +2998,8 @@ void ContainerSettingsDialog::onLoadPreset()
 
 void ContainerSettingsDialog::loadPresetByName(const QString& name)
 {
+    // An unavailable preset (Max ADC Magnitude) builds nothing.
+    if (!presetUnavailableReason(name, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
     // Phase E — bar-row presets append to the current stack instead
     // of replacing. This matches Thetis's Appearance → Meters/Gadgets
     // flow where each meter type the user picks adds a new row below

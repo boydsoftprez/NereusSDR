@@ -11,6 +11,75 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Text overlay slice tokens: refreshContainerMeter gives
+//                 each text overlay the VfoSliceState of every open slice
+//                 (the VFO display's feed, sliceStateFor), none for an
+//                 entry on another session's radio; any slice's tuning
+//                 refreshes overlays. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Dial tuning: onContainerItemAdded connects each live
+//                 dial (wireDialRequests); tuning, step changes, slice
+//                 select and lock act on the slice each request names after
+//                 vfoRequestSlice, and refreshContainerMeter feeds the dial
+//                 its slices. Nothing keys. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - VFO display clicks, wheel, keys and screens by slice:
+//                 onContainerItemAdded connects each live VFO display's
+//                 requests (wireVfoDisplayRequests); each acts on the slice
+//                 it names through the setters the other controls use
+//                 (setFrequency, onBandButtonClicked, setDspMode, the filter
+//                 presets, setStepHz, setLocked) after vfoRequestSlice
+//                 refuses an unsupported source, another radio's entry or a
+//                 slice the window may not change. TX is
+//                 requestTxHandoffToSlice only; it never keys. feedVfo gives
+//                 the filter preset names. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - VFO display by slice letter: refreshContainerMeter feeds
+//                 every VFO display a VfoSliceState for each open slice
+//                 (frequency, mode, filter, band, band-plan text, step,
+//                 lock, transmit slice, active slice) and its Source slice;
+//                 a fixed-slice or All slices display follows tuning on any
+//                 slice; a transmit slice change refreshes containers.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - TX stage dim: the TX EQ, Leveler, CFC and compander
+//                 switches dim every container's EQ, Leveler, Leveler Gain,
+//                 CFC, CFC Gain and Compressor bars while the stage is off
+//                 (applyTxStageState; Thetis OnEQChanged, OnLevelerChanged,
+//                 OnCFCChanged, OnCompandChanged), and a bar added later
+//                 takes the state on onContainerItemAdded. Reads the
+//                 transmit model only. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - LED No TX: onContainerItemAdded connects each live LED's
+//                 txStopRequested, queued as Thetis's BeginInvoke is
+//                 (MeterManager.cs:21206-21211 [v2.10.3.15]); a stop for
+//                 this window's session goes to stopTransmitForLed
+//                 (StopAllTx locally, the window's release at the Core
+//                 remotely, with the warning shown in NereusSDR's words,
+//                 kLedNoTxStopUserText). It never keys.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Signal history trace 2 reads its own slice: each live
+//                 history face registers it as a reading consumer
+//                 (HistoryGraphPresetItem::attachTrace2); refreshContainerMeter
+//                 veils it when it names another session's radio; previews
+//                 replay its cached reading. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / TX: refreshContainerMeter marks the items of
+//                 an entry on another session's radio (setForeignSession);
+//                 a slice band change clears container item history
+//                 (ContainerManager::clearItemHistory). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A live web image item's picture goes to the spectrum
+//                 background of the pan it names, and a pan made later
+//                 gets the picture it should show. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - refreshContainerMeter gives each data out item the slice
+//                 letter its entry's Source resolves to and the session id
+//                 (radio). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - VHF S9 rule per slice: refreshContainerMeter sets
+//                 isAboveS9Frequency (at or above 30 MHz) on every item from
+//                 the slice its entry resolves to. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -901,6 +970,61 @@
 //                reset (JJ's ruling, option i), and then option c, a gap
 //                within four windows of the last one let through. J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Claude Code.
+//   2026-10-26 - A live filter display item is armed and its requests
+//                applied (FilterDisplayRequests): RX edges to the slice,
+//                TX edges to TransmitModel (the TX passband; never keys),
+//                notches and the TNF to NotchModel, with no notch or TNF
+//                added while transmitting. Each frame tells the item its
+//                slice's filter, mode and notches. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 60: the containers refresh on
+//                each slice's NR, NB, RIT, XIT, lock, AGC mode, auto AGC
+//                and voice squelch changes (the receive buttons). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 61: the container transmit
+//                setting buttons follow the TX applet's gates
+//                (transmitSettingsRefusal, voxRefusal) and light from the
+//                transmit model's COMP, VOX, DEXP, TX EQ, CFC, CFC EQ,
+//                leveler and phase rotator. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 62: the container display and
+//                window buttons' hooks: Spots on every pan, MAF+/- through
+//                the title bar's volume slider, and Setup, Diversity and
+//                Linearity opened as their menu entries open them, under
+//                the same rules. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 35: a band grid click carries
+//                the band's number, so the GEN group's SWL bands reach the
+//                slice too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-26 - A VFO display face on a fixed slice or All slices redraws
+//                when any slice it shows tunes, as a VFO display does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 48: a mode grid click sets
+//                DSPMode (LSB + index), all twelve Thetis modes. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 49: a tune step grid click sets
+//                the entry's slice to kTuneStepList[index], all 26 steps,
+//                and the lit step is the slice's list index. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 50: the antenna grid lights
+//                from its entry's slice (receive) and the transmit slice
+//                (transmit) with Thetis's on-state rules, and lights again
+//                when the transmit slice moves. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Container item parity Task 51: a filter grid click sets
+//                the RX filter of its entry's slice only, on every slice;
+//                Thetis's MatchTXFilterToRXFilter has no NereusSDR
+//                equivalent yet (noted at the click). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
+//                 learns whether its slice is the transmit slice; the VFO
+//                 display's TX box asks requestTransmitSlice and shows
+//                 transmitSliceChoiceReason when refused; a VFO display or
+//                 dial on another radio's entry is cleared with that
+//                 reason; one VOX line reason (voxLineReason) for the
+//                 container button and the applets. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1169,6 +1293,7 @@ warren@wpratt.com
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
+#include "core/MicProfileManager.h"
 #include "core/ControlRanges.h"
 #include "core/DisplayFftSizing.h"
 #include "core/BuildIdentity.h"
@@ -1223,7 +1348,9 @@ warren@wpratt.com
 #include "containers/ContainerWorkspaceStore.h"
 #include "containers/ContainerSourceAdapter.h"
 #include "meters/presets/CompositePresetItem.h"
+#include "meters/presets/HistoryGraphPresetItem.h"
 #include "meters/presets/BarPresetItem.h"
+#include "meters/AboveS9Frequency.h"
 #include <QJsonArray>
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
@@ -1233,14 +1360,19 @@ warren@wpratt.com
 #include "core/spectrum/SpectrumReducer.h"
 #include "meters/MeterItem.h"
 #include "meters/ItemGroup.h"
+#include "meters/LEDItem.h"
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
+#include "meters/DialItem.h"
+#include "meters/TextOverlayItem.h"
 #include "meters/ModeButtonItem.h"      // R-R3-21 container controls
 #include "meters/FilterButtonItem.h"
 #include "meters/AntennaButtonItem.h"
 #include "meters/TuneStepButtonItem.h"
 #include "meters/BandButtonItem.h"
 #include "meters/RotatorItem.h"
+#include "meters/DataOutItem.h"
+#include "meters/WebImageItem.h"
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -8686,6 +8818,34 @@ void MainWindow::buildUI()
         }
     });
 
+    // Container item parity Task 42: a live web image item supplies a pan's
+    // spectrum background (WebImageBackgrounds, pan N is "pan-N"). A pan
+    // made after the picture was set gets it when it appears; previews
+    // never write to WebImageBackgrounds.
+    connect(&WebImageBackgrounds::instance(), &WebImageBackgrounds::panImageChanged, this,
+            [this](int pan, const QImage& image) {
+        if (!m_panStack) { return; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(QStringLiteral("pan-%1").arg(pan))) {
+            sw->setBackgroundImageOverride(image);
+        }
+    });
+    const auto applyWebImageBackgrounds = [this]() {
+        if (!m_panStack) { return; }
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (!applet || !applet->spectrumWidget()) { continue; }
+            const QString panId = applet->panId();
+            bool ok = false;
+            const int pan = panId.startsWith(QStringLiteral("pan-")) ? panId.mid(4).toInt(&ok) : -1;
+            if (ok) {
+                applet->spectrumWidget()->setBackgroundImageOverride(
+                    WebImageBackgrounds::instance().image(pan));
+            }
+        }
+    };
+    connect(m_panStack, &PanadapterStack::countChanged, this,
+            [applyWebImageBackgrounds](int) { applyWebImageBackgrounds(); });
+    applyWebImageBackgrounds();
+
     // A stream's physical ADC can move without its stream index or its folded
     // chain index moving with it, so nothing that watches slice properties
     // notices. The extended pan's wings are keyed on that physical ADC and
@@ -8974,6 +9134,17 @@ void MainWindow::buildUI()
     }
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
+    // Container Settings' Hide when slice not open hears each slice open
+    // and close (slice ids, as sliceAdded and sliceRemoved carry them), and
+    // Minimizes hears the window's state (eventFilter, WindowStateChange).
+    connect(m_radioModel, &RadioModel::sliceAdded, m_containerManager,
+            [this](int sliceId) { m_containerManager->onSliceOpenChanged(sliceId, true); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, m_containerManager,
+            [this](int sliceId) { m_containerManager->onSliceOpenChanged(sliceId, false); });
+    for (SliceModel* existing : m_radioModel->slices()) {
+        m_containerManager->onSliceOpenChanged(existing->sliceIndex(), true);
+    }
+    installEventFilter(this);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
         showToast(tr("Container layout is read-only: %1").arg(error), ToastSeverity::Warning, 6000);
     });
@@ -9209,6 +9380,24 @@ void MainWindow::buildUI()
             return holder.isEmpty() || !pureSignalArmingPermitted() ? pureSignalArmingReason()
                                                                     : holder;
         };
+        // Container item parity Task 61: the transmit setting buttons follow
+        // their applet controls' gates, applyRemoteRoleGating's settingsAt
+        // and settingsReasonAt: the version's own reason first, then the
+        // Core's holder reason; empty when the Core takes them.
+        hooks.transmitSettingsRefusal = [this, otherHolder](int version) {
+            return transmitSettingsPermitted(version) ? otherHolder()
+                                                      : transmitSettingsReason(version);
+        };
+        // Task 61: VOX follows the TX applet's VOX button: remote transmit
+        // (setTransmitPermitted), then applyRemoteRoleGating's VOX line
+        // (this computer's microphone line, the Core's microphone source,
+        // the transmit holder), then a hosting window's station VOX holder
+        // (applyDesktopVoxHolderGate).
+        hooks.voxRefusal = [this] {
+            if (!transmitControlsPermitted()) { return remoteTransmitReason(); }
+            const QString reason = voxLineReason();
+            return reason.isEmpty() ? desktopVoxHolderReason() : reason;
+        };
         hooks.remoteTransmitReason =
             tr("Remote transmit controls are not available from this Core.");
         // Desktop remote transmit: the Core's own reason when it gave one.
@@ -9220,6 +9409,43 @@ void MainWindow::buildUI()
         hooks.setDisplayDuplex = [this](bool on) { setDisplayDuplexSetting(on); };
         hooks.displayDuplexReason = [this] {
             return MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+        };
+        // Container item parity Task 62: Spots, the Spot Hub's switch;
+        // saved, and every pan follows (the Spot Hub reloads only the
+        // active one).
+        hooks.spotsShown = [] { return ContainerButtonDispatcher::spotsShownSetting(); };
+        hooks.setSpotsShown = [this](bool on) {
+            QList<SpectrumWidget*> pans;
+            if (m_panStack) {
+                for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                    if (applet) { pans.append(applet->spectrumWidget()); }
+                }
+            }
+            ContainerButtonDispatcher::showSpotsOnPans(on, pans);
+        };
+        // Task 62: MAF+ / MAF- move the title bar's PC volume slider, live
+        // in every window (this computer's speakers).
+        hooks.stepMasterVolume = [this](double delta) {
+            if (m_titleBar && m_titleBar->masterOutput()) {
+                m_titleBar->masterOutput()->stepVolume(delta);
+            }
+        };
+        // Task 62: File > Settings..., Tools > Diversity... and Tools >
+        // PureSignal..., with the PureSignal entry's own gate (a remote
+        // window's applyRemoteRoleGating disables it, with its reason,
+        // until the Core advertises PureSignal 3).
+        hooks.openSetup = [this] {
+            auto* dialog = createSetupDialog();
+            if (dialog == nullptr) {
+                return;  // the gate refused and has already said why
+            }
+            dialog->show();
+        };
+        hooks.openDiversity = [this] { openDiversityDialog(); };
+        hooks.openLinearity = [this] { openPureSignalDialog(); };
+        hooks.linearityRefusal = [this] {
+            return m_actPureSignal && !m_actPureSignal->isEnabled() ? m_actPureSignal->toolTip()
+                                                                    : QString();
         };
         // R-R3-49: VAX 1 / VAX 2 open and close this computer's VAX
         // outputs, as Setup > Audio > VAX does (live in a remote window).
@@ -9262,6 +9488,47 @@ void MainWindow::buildUI()
         const auto refresh = [this]() { refreshContainerControls(); };
         connect(&m_radioModel->transmitModel(), &TransmitModel::monEnabledChanged,
                 this, refresh);
+        // Container item parity Task 61: the transmit setting buttons light
+        // from the transmit model.
+        {
+            const TransmitModel* tx = &m_radioModel->transmitModel();
+            connect(tx, &TransmitModel::cpdrOnChanged, this, refresh);
+            connect(tx, &TransmitModel::voxEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::dexpEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::txEqEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::cfcEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::cfcPostEqEnabledChanged, this, refresh);
+            connect(tx, &TransmitModel::txLevelerOnChanged, this, refresh);
+            connect(tx, &TransmitModel::phaseRotatorEnabledChanged, this, refresh);
+        }
+        // Container item parity Task 7: a TX stage that is off dims its
+        // bars (Thetis OnEQChanged, OnLevelerChanged, OnCFCChanged and
+        // OnCompandChanged, MeterManager.cs:5313-5366 [v2.10.3.15], over
+        // every meter). A foreign session's entry is not dimmed
+        // (MeterItem::advanceFade).
+        {
+            const TransmitModel* tx = &m_radioModel->transmitModel();
+            const auto applyStages = [this, tx]() {
+                if (m_shuttingDown || !m_containerManager) { return; }
+                for (ContainerWidget* c : m_containerManager->allContainers()) {
+                    if (!c || !c->content()) { continue; }
+                    QList<MeterWidget*> meters = c->content()->findChildren<MeterWidget*>();
+                    if (auto* direct = qobject_cast<MeterWidget*>(c->content())) { meters.prepend(direct); }
+                    for (MeterWidget* meter : std::as_const(meters)) {
+                        QVector<MeterItem*> items;
+                        for (MeterItem* root : meter->items()) {
+                            items.append(root);
+                            if (auto* face = qobject_cast<CompositePresetItem*>(root)) { items += face->internalItems(); }
+                        }
+                        applyTxStageState(items, *tx);
+                    }
+                }
+            };
+            connect(tx, &TransmitModel::txEqEnabledChanged, this, applyStages);
+            connect(tx, &TransmitModel::txLevelerOnChanged, this, applyStages);
+            connect(tx, &TransmitModel::cfcEnabledChanged, this, applyStages);
+            connect(tx, &TransmitModel::cpdrOnChanged, this, applyStages);
+        }
         connect(m_radioModel, &RadioModel::tuneRefused, this, refresh);
         connect(m_radioModel, &RadioModel::connectionStateChanged, this, refresh);
         // Desktop remote transmit: a remote window's MOX, TUNE and 2-TONE
@@ -9383,9 +9650,25 @@ void MainWindow::buildUI()
         for(auto* item:meter->items()) {
             const auto source=item->property("containerSourceContext");
             refreshContainerMeter(nullptr,meter,item,source.isValid()?source.toJsonObject():context);
+            // An inert preview's trace 2 shows its slice's cached reading.
+            if(auto* history=qobject_cast<HistoryGraphPresetItem*>(item)) {
+                history->replayTrace2(*m_meterPoller,source.isValid()?source.toJsonObject():context,containerSessionId());
+            }
         }
     });
     connect(m_containerManager, &ContainerManager::meterContextReady, m_meterPoller, &MeterPoller::setTargetContext);
+    // Signal history trace 2 reads its own slice (D2): the entry's context
+    // feeds trace 1 through the meter's target; trace 2 registers its own.
+    const auto attachHistoryTraces = [this](MeterWidget* meter, const QJsonObject& context) {
+        if (!meter || !m_meterPoller) { return; }
+        for (MeterItem* item : meter->items()) {
+            if (auto* history = qobject_cast<HistoryGraphPresetItem*>(item)) {
+                const QVariant own = item->property("containerSourceContext");
+                history->attachTrace2(m_meterPoller, own.isValid() ? own.toJsonObject() : context, containerSessionId());
+            }
+        }
+    };
+    connect(m_containerManager, &ContainerManager::meterContextReady, this, attachHistoryTraces);
     connect(m_containerManager, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
         if (!meter || !m_meterPoller) { return; }
         if (!m_containerManager->workspaceStore()) { m_meterPoller->addTarget(meter); }
@@ -9399,7 +9682,10 @@ void MainWindow::buildUI()
     for (auto* c : m_containerManager->allContainers()) {
         wireContainerControls(c);
         if (auto* host = m_containerManager->contentHost(c->id())) {
-            for (MeterWidget* meter : host->meterSurfaces()) { m_meterPoller->setTargetContext(meter, host->sourceContext(meter)); }
+            for (MeterWidget* meter : host->meterSurfaces()) {
+                m_meterPoller->setTargetContext(meter, host->sourceContext(meter));
+                attachHistoryTraces(meter, host->sourceContext(meter));
+            }
         }
     }
     if (m_containerManager->containerCount() == 0 && !m_containerManager->workspaceStore()) {
@@ -10535,6 +10821,10 @@ void MainWindow::buildUI()
                           .arg(QChar(QLatin1Char('A' + newId))),
                       ToastSeverity::Info, 2000);
         });
+        // A container antenna grid's Tx Ant buttons show the transmit
+        // slice's antenna, so they light again when it moves.
+        connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int, int) { refreshContainerControls(); });
         // A handoff waiting for the unkey gate counts its slice as on the
         // air (StationServer::sliceTransmitting).
         connect(arb, &TxSliceArbiter::pendingHandoffChanged, this,
@@ -14708,6 +14998,57 @@ void MainWindow::reconcileMiniDisplays()
 {
     if (m_shuttingDown || !m_containerManager || !m_radioModel) { return; }
     std::map<int, QList<QPointer<FilterDisplayItem>>> wanted;
+    // A live filter display asks for filter, notch and TNF changes; only
+    // here (live containers) is it armed and heard. Preview copies never
+    // pass through, so they stay inert.
+    const auto wireRequests = [this](FilterDisplayItem* item) {
+        if (item->property("filterDisplayRequestsWired").toBool()) { return; }
+        item->setProperty("filterDisplayRequestsWired", true);
+        item->setRequestsEnabled(true);
+        connect(item, &FilterDisplayItem::filterEdgesRequested, this,
+                [this](int slice, int low, int high, bool tx) {
+            if (!m_radioModel) { return; }
+            // tx: the TX passband through TransmitModel. It never keys.
+            FilterDisplayRequests::applyEdges(m_radioModel->sliceById(slice),
+                                              &m_radioModel->transmitModel(),
+                                              low, high, tx);
+        });
+        connect(item, &FilterDisplayItem::filterShiftRequested, this,
+                [this](int slice, int low, int high) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyShift(m_radioModel->sliceById(slice), low, high);
+        });
+        connect(item, &FilterDisplayItem::notchAddRequested, this,
+                [this](int slice, double hz) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyNotchAdd(m_radioModel,
+                                                 m_radioModel->sliceById(slice), hz);
+        });
+        connect(item, &FilterDisplayItem::notchChangeRequested, this,
+                [this](int id, double hz, double widthHz) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyNotchChange(m_radioModel->notchModel(), id, hz, widthHz);
+        });
+        connect(item, &FilterDisplayItem::notchActiveRequested, this,
+                [this](int id, bool active) { onNotchActiveRequested(id, active); });
+        connect(item, &FilterDisplayItem::notchRemoveRequested, this,
+                [this](int id) { onNotchRemoveRequested(id); });
+        connect(item, &FilterDisplayItem::tnfToggleRequested, this, [this]() {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyTnfToggle(m_radioModel->notchModel());
+        });
+        connect(item, &FilterDisplayItem::tnfAddRequested, this, [this](int slice) {
+            if (!m_radioModel) { return; }
+            FilterDisplayRequests::applyTnfAdd(m_radioModel, m_radioModel->sliceById(slice));
+        });
+        connect(item, &FilterDisplayItem::notchMenuRequested, this,
+                [this, item](int id, const QPoint& globalPos) {
+            auto* menu = new QMenu(this);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            item->buildNotchMenu(id, *menu);
+            menu->popup(globalPos);
+        });
+    };
     for (ContainerWidget* container : m_containerManager->allContainers()) {
         // A floating form can hide its owner without setting the child's
         // explicit hidden flag. isVisible() includes that ancestor state.
@@ -14726,6 +15067,7 @@ void MainWindow::reconcileMiniDisplays()
                 if (item && !item->property("containerUnsupportedSource").toBool() && meter->shouldRender(item)
                     && item->displayMode() != FilterDisplayItem::DisplayMode::None) {
                     wanted[slice->sliceIndex()].append(item);
+                    wireRequests(item);
                 }
             }
         }
@@ -14768,7 +15110,17 @@ void MainWindow::reconcileMiniDisplays()
         const bool highResolution = AppSettings::instance().value(
             QStringLiteral("DspOptionsHighResFilterCharacteristics"),
             QStringLiteral("False")).toString() == QLatin1String("True");
-        m_radioModel->setMiniFilterResponseSlices(highResolution ? slices : QSet<int>{});
+        // A Thetis-look item showing its characteristic needs the response
+        // too (FilterDisplayItem::paintThetisCharacteristic).
+        QSet<int> responseSlices = highResolution ? slices : QSet<int>{};
+        for (const auto& [sliceId, producer] : m_miniProducers) {
+            for (const auto& item : producer->items) {
+                if (item && item->thetisLook() && item->showCharacteristic()) {
+                    responseSlices.insert(sliceId);
+                }
+            }
+        }
+        m_radioModel->setMiniFilterResponseSlices(responseSlices);
     } else if (TxDisplayFeed* feed = m_radioModel->txDisplayFeed()) {
         const SliceModel* tx = m_radioModel->txBoundSlice();
         feed->setLocalMiniDemand(tx && wanted.count(tx->sliceIndex()) != 0);
@@ -14838,9 +15190,63 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
         producer.gradientKey = gradientKey;
         producer.gradientTx = transmit;
     }
-    const bool highResolution = AppSettings::instance().value(
+    bool highResolution = AppSettings::instance().value(
         QStringLiteral("DspOptionsHighResFilterCharacteristics"),
         QStringLiteral("False")).toString() == QLatin1String("True");
+    // A Thetis-look item showing its characteristic plots the same response.
+    for (const auto& item : found->second->items) {
+        if (item && item->thetisLook() && item->showCharacteristic()) {
+            highResolution = true;
+        }
+    }
+    // What the filter display shows and acts on: the slice's filter, mode
+    // and notches, and TransmitModel's TX filter (Thetis's owning meter
+    // values, Initialise, MeterManager.cs:18366-18448 [v2.10.3.15]).
+    FilterDisplayItem::SliceFilterState state;
+    state.sliceIndex = sliceId;
+    state.mode = slice->dspMode();
+    state.vfoHz = rxCentre;
+    state.rxLowHz = slice->filterLow();
+    state.rxHighHz = slice->filterHigh();
+    state.txLowHz = tx.filterLow();
+    state.txHighHz = tx.filterHigh();
+    // MOX reaches the display only on the transmit slice (Thetis OnMox,
+    // m.MOX = rx == m.RX && newMox, MeterManager.cs:5264 [v2.10.3.15]);
+    // a display on any other slice keeps showing and editing its RX filter.
+    state.transmitSlice = m_radioModel->txBoundSlice() == slice;
+    // From Thetis display.cs:1029 [v2.10.3.15]: cw_pitch default 600
+    // (the key SliceModel's CW presets read).
+    state.cwPitchHz = AppSettings::instance().value(QStringLiteral("CWPitch"), 600).toInt();
+    state.diglOffsetHz = slice->diglOffsetHz();
+    state.diguOffsetHz = slice->diguOffsetHz();
+    // The slice mirrors its channel's minimum notch width (0 without one).
+    state.minNotchWidthHz = slice->minNotchWidthHz();
+    if (NotchModel* model = m_radioModel->notchModel()) {
+        state.tnfActive = model->globalEnabled();
+        for (const Notch& notch : model->notches()) {
+            state.notches.append({notch.id, notch.centerHz, notch.widthHz, notch.active});
+        }
+    }
+    {
+        // The filter's name as the container's filter buttons show it: the
+        // matching preset (50 Hz per edge), else the width.
+        const int widthHz = std::abs(slice->filterHigh() - slice->filterLow());
+        state.filterName = widthHz >= 1000
+            ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
+            : QString::number(widthHz);
+        if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
+            for (const FilterPreset& preset : store->presetsForMode(slice->dspMode())) {
+                if (!preset.name.isEmpty() && qAbs(slice->filterLow() - preset.low) <= 50
+                    && qAbs(slice->filterHigh() - preset.high) <= 50) {
+                    state.filterName = preset.name;
+                    break;
+                }
+            }
+        }
+    }
+    if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+        state.txProfileName = profiles->activeProfileName();
+    }
     if (highResolution && m_radioModel->role() != RadioModel::Role::Remote) {
         if (!producer.filterCached || producer.filterLow != slice->filterLow()
             || producer.filterHigh != slice->filterHigh()
@@ -14868,6 +15274,7 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                                          producer.customGradient);
         item->presentFrame(traceDbm, waterfallDbm, centreHz, spanHz,
                            transmit, advance);
+        item->setSliceFilterState(state);
         item->setRfMarkers(rxCentre + slice->filterLow(),
                            rxCentre + slice->filterHigh(),
                            txCentre + tx.filterLow(), txCentre + tx.filterHigh(),
@@ -14888,10 +15295,12 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
     if (!c || c->property("mainControlsWired").toBool()) { return; }
     c->setProperty("mainControlsWired",true);
     c->installEventFilter(this);
-    // Issue #118: the band buttons, now on the container's own slice.
-    connect(c, &ContainerWidget::bandClicked, this, [this, c](int idx) {
+    // Issue #118: the band buttons, now on the container's own slice. The
+    // grid sends the band's number (any band of its GEN, HF or VHF group);
+    // its jump buttons change the group inside the grid and send nothing.
+    connect(c, &ContainerWidget::bandClicked, this, [this, c](int band) {
         if (!m_containerButtons) { return; }
-        showContainerButtonReason(m_containerButtons->clickBand(idx, containerControlRxSource(c)));
+        showContainerButtonReason(m_containerButtons->clickBand(band, containerControlRxSource(c)));
     });
     connect(c, &ContainerWidget::modeClicked, this,
             [this, c](int index) { onContainerModeClicked(c, index); });
@@ -14991,8 +15400,215 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     if (auto* rotator = qobject_cast<RotatorItem*>(item); rotator && m_radioModel) {
         rotator->setRotor(m_radioModel->rotorModel(), m_radioModel);
     }
+    // Container item parity Task 7: a TX stage bar added while its stage is
+    // off starts dimming at once.
+    if (m_radioModel) {
+        QVector<MeterItem*> stageItems{item};
+        if (auto* face = qobject_cast<CompositePresetItem*>(item)) { stageItems += face->internalItems(); }
+        applyTxStageState(stageItems, m_radioModel->transmitModel());
+    }
+    // Container item parity Task 27: LED No TX stops this window's radio,
+    // and only for an entry of this window's session. Queued, as Thetis's
+    // stopMox BeginInvokes StopAllTx (MeterManager.cs:21206-21211
+    // [v2.10.3.15]), so the stop never runs inside the LED's update.
+    QList<LEDItem*> leds = item->findChildren<LEDItem*>();
+    if (auto* led = qobject_cast<LEDItem*>(item)) { leds.prepend(led); }
+    for (LEDItem* led : std::as_const(leds)) {
+        if (led->property("ledNoTxWired").toBool()) { continue; }
+        led->setProperty("ledNoTxWired", true);
+        const QPointer<LEDItem> guard(led);
+        connect(led, &LEDItem::txStopRequested, this, [this, guard](const QString&) {
+            if (m_shuttingDown || !guard || !m_radioModel) { return; }
+            // The entry's context: the item's own, else its meter's.
+            QJsonObject context;
+            for (QObject* o = guard.data(); o; o = o->parent()) {
+                const QVariant v = o->property("containerSourceContext");
+                if (v.isValid()) { context = v.toJsonObject(); break; }
+            }
+            if (!ledStopAppliesToSession(context, containerSessionId())) { return; }
+            // The signal carries Thetis's text; the user reads NereusSDR's.
+            // A local stop's warning comes on RadioModel::transmitStopped.
+            const QString message = QString::fromLatin1(kLedNoTxStopUserText);
+            if (stopTransmitForLed(*m_radioModel, message) == LedStopRoute::Remote) {
+                showToast(message, ToastSeverity::Warning, 10000);
+            }
+        }, Qt::QueuedConnection);
+    }
+    // Container item parity Task 36: a live VFO display's clicks, wheel and
+    // keys act on the slice each request names. Preview copies never get
+    // here (and their signals are blocked).
+    QList<VfoDisplayItem*> vfos = item->findChildren<VfoDisplayItem*>();
+    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { vfos.prepend(vfo); }
+    if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
+        for (MeterItem* inner : face->internalItems()) {
+            auto* vfo = qobject_cast<VfoDisplayItem*>(inner);
+            if (vfo && !vfos.contains(vfo)) { vfos.append(vfo); }
+        }
+    }
+    for (VfoDisplayItem* vfo : std::as_const(vfos)) { wireVfoDisplayRequests(vfo); }
+    // Container item parity Task 37: a live dial tunes the slice each
+    // request names (preview copies never get here).
+    QList<DialItem*> dials = item->findChildren<DialItem*>();
+    if (auto* dial = qobject_cast<DialItem*>(item)) { dials.prepend(dial); }
+    for (DialItem* dial : std::as_const(dials)) { wireDialRequests(dial); }
     refreshContainerControls(item);
     reconcileMiniDisplays();
+}
+
+SliceModel* MainWindow::vfoRequestSlice(const MeterItem* vfo, int sliceId)
+{
+    if (m_shuttingDown || !vfo || !m_radioModel || !m_containerButtons) { return nullptr; }
+    // As ContainerWidget relays a control's click: an entry whose source
+    // its canvas cannot read says so and does nothing.
+    if (vfo->property("containerUnsupportedSource").toBool()) {
+        QString reason = vfo->property("unsupportedSourceReason").toString();
+        if (reason.isEmpty()) { reason = tr("This control has an unsupported source"); }
+        showContainerButtonReason(reason);
+        return nullptr;
+    }
+    // An entry of another radio or Core never drives this window's radio
+    // (the entry's context: the item's own, else its meter's).
+    for (const QObject* o = vfo; o; o = o->parent()) {
+        const QVariant v = o->property("containerSourceContext");
+        if (!v.isValid()) { continue; }
+        if (v.metaType() != QMetaType::fromType<QJsonObject>()) {
+            showContainerButtonReason(tr("This control has an invalid source context"));
+            return nullptr;
+        }
+        const QString scopeReason = containerFunctionScopeReason(v.toJsonObject(), containerSessionId());
+        if (!scopeReason.isEmpty()) {
+            showContainerButtonReason(scopeReason);
+            return nullptr;
+        }
+        break;
+    }
+    // The slice the request names, as the container's buttons find theirs
+    // (a slice this window only listens to is refused, with its reason).
+    const int rxSource = sliceId + 1;
+    SliceModel* slice = m_containerButtons->sliceFor(rxSource);
+    if (!slice) { showContainerButtonReason(m_containerButtons->sliceUnavailableReason(rxSource)); }
+    return slice;
+}
+
+void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
+{
+    if (!vfo || vfo->property("vfoRequestsWired").toBool()) { return; }
+    vfo->setProperty("vfoRequestsWired", true);
+    const QPointer<VfoDisplayItem> guard(vfo);
+    // From Thetis MeterManager.cs:14572-14583 [v2.10.3.15] (MouseWheel,
+    // adjustVfo) and :14638-14655 (a digit's left / right click).
+    connect(vfo, &VfoDisplayItem::frequencyChangeRequested, this,
+            [this, guard](int sliceId, qint64 deltaHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        // if (abortForLockedVFO()) return; (SliceModel::setFrequency
+        // refuses a locked slice too.)
+        if (!slice || deltaHz == 0 || slice->locked()) { return; }
+        slice->setFrequency(slice->frequency() + static_cast<double>(deltaHz));
+    });
+    // From Thetis MeterManager.cs:14527-14559 [v2.10.3.15] (KeyDown, setVfo).
+    connect(vfo, &VfoDisplayItem::frequencySetRequested, this,
+            [this, guard](int sliceId, qint64 hz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || hz <= 0 || slice->locked()) { return; }
+        slice->setFrequency(static_cast<double>(hz));
+    });
+    // From Thetis MeterManager.cs:15030-15210 [v2.10.3.15] (setBand:
+    // BandPreChangeHandlers, the band button's path).
+    connect(vfo, &VfoDisplayItem::bandRequested, this,
+            [this, guard](int sliceId, Band band) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || slice->locked()) { return; }
+        m_radioModel->onBandButtonClicked(slice, band);
+    });
+    // From Thetis MeterManager.cs:14991-15028 [v2.10.3.15] (setMode).
+    connect(vfo, &VfoDisplayItem::modeRequested, this,
+            [this, guard](int sliceId, DSPMode mode) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || slice->locked()) { return; }
+        slice->setDspMode(mode);
+    });
+    // From Thetis MeterManager.cs:14948-14990 [v2.10.3.15] (setFilter:
+    // Filter.F1 + index), applied as onContainerFilterClicked applies a
+    // filter button's preset.
+    connect(vfo, &VfoDisplayItem::filterRequested, this,
+            [this, guard](int sliceId, int index) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        FilterPresetStore* store = m_radioModel ? m_radioModel->filterPresetStore() : nullptr;
+        if (!slice || !store) { return; }
+        const QList<FilterPreset> presets = store->presetsForMode(slice->dspMode());
+        if (index < 0 || index >= presets.size()) { return; }
+        slice->setFilter(presets[index].low, presets[index].high);
+    });
+    // From Thetis MeterManager.cs:14809-14877 [v2.10.3.15] (setTuneStep).
+    connect(vfo, &VfoDisplayItem::tuneStepRequested, this,
+            [this, guard](int sliceId, int stepHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || tuneStepIndexForHz(stepHz) < 0) { return; }
+        slice->setStepHz(stepHz);
+    });
+    // From Thetis MeterManager.cs:14905-14932 [v2.10.3.15] (setTX:
+    // _console.VFOATX = true). Transmit moves to the slice through the
+    // handoff alone; no MOX or TUNE setter is ever called here. It asks as
+    // the TX applet's letters and every flag's TX button do
+    // (requestTransmitSlice): a remote window asks its Core, and a hosting
+    // window moves transmit only while this computer holds it; a refusal
+    // says why.
+    connect(vfo, &VfoDisplayItem::txRequested, this,
+            [this, guard](int sliceId) {
+        if (!vfoRequestSlice(guard, sliceId)) { return; }
+        const QString refusal = transmitSliceChoiceReason();
+        if (!refusal.isEmpty()) {
+            showContainerButtonReason(refusal);
+            return;
+        }
+        requestTransmitSlice(sliceId);
+    });
+    // From Thetis MeterManager.cs:14879-14896 [v2.10.3.15] (setLock).
+    connect(vfo, &VfoDisplayItem::lockToggleRequested, this,
+            [this, guard](int sliceId) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice) { return; }
+        slice->setLocked(!slice->locked());
+    });
+}
+
+void MainWindow::wireDialRequests(DialItem* dial)
+{
+    if (!dial || dial->property("dialRequestsWired").toBool()) { return; }
+    dial->setProperty("dialRequestsWired", true);
+    const QPointer<DialItem> guard(dial);
+    // From Thetis MeterManager.cs:16949-16975 [v2.10.3.15] (Degrees setter:
+    // one tune step, aligned to the step when Align is on). Lock blocks it
+    // (if (Lock) return;, :16912).
+    connect(dial, &DialItem::tuneRequested, this, [this, guard](int sliceId, qint64 deltaHz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || !guard || deltaHz == 0 || slice->locked()) { return; }
+        const qint64 current = qint64(std::llround(slice->frequency()));
+        slice->setFrequency(static_cast<double>(
+            DialItem::tunedFrequencyHz(current, deltaHz, guard->alignWithTuneStep())));
+    });
+    // From Thetis console.cs:6124-6134 [v2.10.3.15] (ChangeTuneStepUp /
+    // Down) and MeterManager.cs:17099-17111 [v2.10.3.15]
+    // (undoTuneStep).
+    connect(dial, &DialItem::stepChangeRequested, this, [this, guard](int sliceId, int hz) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice || tuneStepIndexForHz(hz) < 0) { return; }
+        slice->setStepHz(hz);
+    });
+    // The top buttons (Thetis's VFOA / VFOB, MeterManager.cs:17138-17139
+    // [v2.10.3.15])
+    // select the slice before or after the one the dial tunes.
+    connect(dial, &DialItem::sliceSelectRequested, this, [this, guard](int sliceId) {
+        if (!vfoRequestSlice(guard, sliceId)) { return; }
+        selectSliceForWindow(sliceId);
+    });
+    // From Thetis MeterManager.cs:17141-17154 [v2.10.3.15] (MouseUp: the
+    // VFO's lock toggles).
+    connect(dial, &DialItem::lockToggleRequested, this, [this, guard](int sliceId) {
+        SliceModel* slice = vfoRequestSlice(guard, sliceId);
+        if (!slice) { return; }
+        slice->setLocked(!slice->locked());
+    });
 }
 
 QString MainWindow::containerSessionId() const
@@ -15042,6 +15658,11 @@ void MainWindow::watchSlicesForContainers()
                            clearMiniSlice(slice->sliceIndex());
                            reconcileMiniDisplays();
                        })
+            // Thetis zeroes every meter, history included, on any
+            // receiver's band change (bandChange, MeterManager.cs:4405-4462
+            // [v2.10.3.15]).
+            << connect(slice, &SliceModel::bandChanged, this,
+                       [this]() { if (m_containerManager) { m_containerManager->clearItemHistory(); } })
             << connect(slice, &SliceModel::dspModeChanged, this, refresh)
             << connect(slice, &SliceModel::filterChanged, this, refresh)
             << connect(slice, &SliceModel::stepHzChanged, this, refresh)
@@ -15050,7 +15671,19 @@ void MainWindow::watchSlicesForContainers()
             << connect(slice, &SliceModel::anfEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::snbEnabledChanged, this, refresh)
             << connect(slice, &SliceModel::mutedChanged, this, refresh)
-            << connect(slice, &SliceModel::binauralEnabledChanged, this, refresh);
+            << connect(slice, &SliceModel::binauralEnabledChanged, this, refresh)
+            // Container item parity Task 60: the receive buttons' lit
+            // state and the NR / NB captions.
+            << connect(slice, &SliceModel::activeNrChanged, this, refresh)
+            << connect(slice, &SliceModel::nbModeChanged, this, refresh)
+            << connect(slice, &SliceModel::ritEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::xitEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::lockedChanged, this, refresh)
+            // VFO display TX box and marker follow the transmit slice.
+            << connect(slice, &SliceModel::txSliceChanged, this, refresh)
+            << connect(slice, &SliceModel::agcModeChanged, this, refresh)
+            << connect(slice, &SliceModel::autoAgcEnabledChanged, this, refresh)
+            << connect(slice, &SliceModel::ssqlEnabledChanged, this, refresh);
     }
     refreshContainerControls();
 }
@@ -15097,15 +15730,36 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         if (auto* face = qobject_cast<CompositePresetItem*>(root)) { items += face->internalItems(); }
     }
     if (items.isEmpty()) { return; }
+    // Data out names the slice the entry's Source resolves to (none when it
+    // resolves to no slice) and this session's radio in what it sends.
+    for (MeterItem* item : items) {
+        if (auto* out = qobject_cast<DataOutItem*>(item)) {
+            out->setSliceLetter(source ? QChar(u'A' + source->sliceIndex()) : QChar());
+            out->setRadioId(containerSessionId());
+        }
+    }
+    // Fade on RX / TX: an entry whose source names another session's radio
+    // is unavailable here (ContainerSourceAdapter::slice), so its fade
+    // stays in the receive state and does not follow this window's MOX.
+    const QString entrySession = context.value(QStringLiteral("sessionId")).toString();
+    const bool foreignSession = !entrySession.isEmpty() && entrySession != containerSessionId();
+    for (MeterItem* item : items) { item->setForeignSession(foreignSession); }
+    // Signal history trace 2 names its own source, which may be another
+    // session's radio while the entry's is this one (or the other way).
+    for (MeterItem* item : items) {
+        if (auto* history = qobject_cast<HistoryGraphPresetItem*>(item)) { history->updateTrace2Session(context, containerSessionId()); }
+    }
     // Snapshot actual child presentation rather than dirtying equal model pushes.
     const auto signature = [](MeterItem* item) {
-        QString value = item->serialize();
+        QString value = item->serialize() + QString::number(item->aboveS9Frequency());
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             for (int i=0;i<box->buttonCount();++i) { value += QString::number(box->isButtonAvailable(i))+box->buttonUnavailableReason(i)+box->button(i).text+QString::number(box->button(i).on); }
         }
         if (auto* band = qobject_cast<BandButtonItem*>(item)) { value += QString::number(band->activeBand()); }
         if (auto* mode = qobject_cast<ModeButtonItem*>(item)) { value += QString::number(mode->activeMode()); }
-        if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += QString::number(vfo->frequency())+vfo->unavailableText(); }
+        if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += vfo->presentationKey(); }
+        if (auto* dial = qobject_cast<DialItem*>(item)) { value += dial->presentationKey(); }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { value += overlay->presentationKey(); }
         if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
             for (int i=0;i<other->buttonCount();++i) { value += QString::number(other->buttonState(static_cast<OtherButtonItem::ButtonId>(i))); }
         }
@@ -15153,18 +15807,115 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         return false;
     };
 
+    // The filter width a VFO display shows for a slice.
+    const auto filterTextFor = [](const SliceModel* s) {
+        const int widthHz = std::abs(s->filterHigh() - s->filterLow());
+        return widthHz >= 1000
+            ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
+            : QString::number(widthHz);
+    };
+    // VFO display: one state per open slice, so a display on its Source
+    // slice, a fixed slice or All slices draws from the same feed. The band
+    // text is the band-plan segment holding the frequency (Thetis
+    // DB.BandText, console.cs:31657-31668 [v2.10.3.15]).
+    const auto sliceStateFor = [&](const SliceModel* s) {
+        const QVector<BandSegment>& segments = m_radioModel->bandPlanManager().segments();
+        const SliceModel* active = m_radioModel->activeSlice();
+        VfoSliceState state;
+        state.index = s->sliceIndex();
+        state.frequencyHz = qint64(std::llround(s->frequency()));
+        state.mode = SliceModel::modeName(s->dspMode());
+        state.filter = filterTextFor(s);
+        state.band = bandLabel(bandFromFrequency(s->frequency()));
+        const double mhz = s->frequency() / 1.0e6;
+        for (const BandSegment& segment : segments) {
+            if (mhz >= segment.lowMhz && mhz <= segment.highMhz) { state.bandText = segment.label; break; }
+        }
+        state.stepHz = s->stepHz();
+        // The FILTER screen's names, and the preset the filter is on
+        // (RxApplet::updateFilterButtons tolerance: 50 Hz per edge).
+        if (FilterPresetStore* store = m_radioModel->filterPresetStore()) {
+            const QList<FilterPreset> presets = store->presetsForMode(s->dspMode());
+            for (int i = 0; i < presets.size(); ++i) {
+                state.filterNames.append(presets[i].name);
+                if (state.filterIndex < 0 && qAbs(s->filterLow() - presets[i].low) <= 50
+                    && qAbs(s->filterHigh() - presets[i].high) <= 50) {
+                    state.filterIndex = i;
+                }
+            }
+        }
+        state.locked = s->locked();
+        state.transmitting = s->txSliceMarked();
+        state.active = s == active;
+        state.open = true;
+        return state;
+    };
+    const auto feedVfo = [&](VfoDisplayItem* vfo) {
+        vfo->clearSliceStates();
+        vfo->setSourceSliceIndex(slice ? slice->sliceIndex() : -1);
+        for (SliceModel* s : m_radioModel->slices()) {
+            if (!s) { continue; }
+            const VfoSliceState state = sliceStateFor(s);
+            vfo->setSliceState(state.index, state);
+        }
+    };
+    // Text overlay slice tokens (%sliceA_freq%, %tx_slice%): the same
+    // states, whatever the entry's Source. An entry on another session's
+    // radio gets none: this window holds only its own radio's slices.
+    const auto feedOverlay = [&](TextOverlayItem* overlay) {
+        QVector<VfoSliceState> states;
+        if (!foreignSession && !unsupported) {
+            for (SliceModel* s : m_radioModel->slices()) {
+                if (s) { states.append(sliceStateFor(s)); }
+            }
+        }
+        overlay->setOverlaySlices(states);
+    };
+
+    // Dial: the open slices, the one the entry's Source gives and the
+    // active one, so it tunes its Source slice or Any slice.
+    const auto feedDial = [&](DialItem* dial) {
+        dial->clearSliceStates();
+        dial->setSourceFollowsSelection(ContainerSourceAdapter::followsSelectedRx(context));
+        // An entry on another session's radio shows none of this window's
+        // slices, as one with a source its canvas cannot read.
+        if (unsupported || foreignSession) {
+            dial->setSourceSliceIndex(-1);
+            dial->setActiveSliceIndex(-1);
+            return;
+        }
+        dial->setSourceSliceIndex(slice ? slice->sliceIndex() : -1);
+        const SliceModel* active = m_radioModel->activeSlice();
+        dial->setActiveSliceIndex(active ? active->sliceIndex() : -1);
+        for (SliceModel* s : m_radioModel->slices()) {
+            if (!s) { continue; }
+            DialSliceState state;
+            state.index = s->sliceIndex();
+            state.stepHz = s->stepHz();
+            state.locked = s->locked();
+            dial->setSliceState(state);
+        }
+    };
+
     if (!slice) {
         // Fix wave M2 (R-R3-49, R-R3-21): a slice that is not open (never
         // opened, or closed while this container was set to it) shows
         // none of its last state. The buttons light nothing and say why
         // when clicked; the VFO display says the slice is not open.
+        // An entry on another session's radio says so (the reason its
+        // clicks give, containerFunctionScopeReason).
+        const QString foreignReason = foreignSession
+            ? containerFunctionScopeReason(context, containerSessionId()) : QString();
         const QString notOpen = unsupported ? only->property("unsupportedSourceReason").toString() :
+            foreignSession ? foreignReason :
             ContainerSourceAdapter::followsSelectedRx(context) ? tr("No selected RX is available in this window") :
             tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(
                 context.contains("sliceId") ? context.value("sliceId").toInt(-1)+1 :
                 context.value("rxSource").toInt(c ? c->rxSource() : 0)));
         const auto applyNoSlice = [&](MeterItem* item) {
             if (auto* face = qobject_cast<CompositePresetItem*>(item)) { face->setUnavailableText(notOpen); }
+            if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
+            if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); return; }
             if (applyAlways(item)) { return; }
             if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
                 m_containerButtons->applySliceAvailability(box, rxSource);
@@ -15180,7 +15931,17 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
                 ant->setActiveRxAntenna(-1);
                 ant->setActiveTxAntenna(-1);
             } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
-                vfo->setUnavailableText(notOpen);
+                // A display on a fixed slice or on All slices does not
+                // follow the Source; it shows its own slices, unless the
+                // entry belongs to another session's radio.
+                if (unsupported || foreignSession
+                    || vfo->displayMode() == VfoDisplayItem::DisplayMode::SourceSlice) {
+                    vfo->clearSliceStates();
+                    vfo->setUnavailableText(notOpen);
+                } else {
+                    vfo->setUnavailableText(QString());
+                    feedVfo(vfo);
+                }
             }
         };
         {
@@ -15212,39 +15973,44 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         }
     }
 
-    int stepIndex = -1;
-    for (int i = 0; TuneStepButtonItem::stepHz(i) != 0; ++i) {
-        if (TuneStepButtonItem::stepHz(i) == slice->stepHz()) { stepIndex = i; break; }
-    }
+    // From Thetis MeterManager.cs:8090 [v2.10.3.15]:
+    //   SetOn(1, _console.TuneStepIndex, true);
+    // Button i is kTuneStepList[i]; a step off the list lights nothing.
+    const int stepIndex = tuneStepIndexForHz(slice->stepHz());
 
-    const auto antIndex = [](const QString& ant) {
-        if (ant == QLatin1String("ANT1")) { return 0; }
-        if (ant == QLatin1String("ANT2")) { return 1; }
-        if (ant == QLatin1String("ANT3")) { return 2; }
-        return -1;
-    };
+    // The antenna grid's receive buttons follow the entry's slice; its
+    // transmit buttons show the transmit slice's antenna, the slice a TX
+    // click writes (onContainerAntennaSelected). Thetis lights them from
+    // VFO A's band and the TX band (MeterManager.cs:9701-9705 [v2.10.3.15]).
+    SliceModel* const txSlice = m_radioModel->txBoundSlice();
+    const QString txAntenna = (txSlice ? txSlice : slice)->txAntenna();
+    const std::array<QString, 3> rxOnlyInputs =
+        skuUiProfileFor(m_radioModel->hardwareProfile().model).rxOnlyLabels;
 
-    const int widthHz = std::abs(slice->filterHigh() - slice->filterLow());
-    const QString filterText = widthHz >= 1000
-        ? QStringLiteral("%1k").arg(widthHz / 1000.0, 0, 'f', widthHz % 1000 == 0 ? 0 : 1)
-        : QString::number(widthHz);
+    const QString filterText = filterTextFor(slice);
     const Band band = bandFromFrequency(slice->frequency());
 
+    // VHF S9 rule, per entry: each item takes the scale of the slice its
+    // entry resolves to (a fixed slice, or the selected one when it follows).
+    const bool aboveS9 = isAboveS9Frequency(slice->frequency());
     const auto applyTo = [&](MeterItem* item) {
-        if (auto* bar = qobject_cast<BarPresetItem*>(item)) { bar->setAboveS9Frequency(slice->frequency() > 30000000.0); }
+        item->setAboveS9Frequency(aboveS9);
         if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
             face->setUnavailableText({}); face->setFrequency(qint64(std::llround(slice->frequency())));
             face->setModeLabel(modeName); face->setBandLabel(bandLabel(band));
-            face->setAboveS9Frequency(slice->frequency() > 30000000.0);
         }
         if (frequencyOnly) {
             if (auto* bandItem = qobject_cast<BandButtonItem*>(item)) { m_containerButtons->applyBand(bandItem, rxSource); }
             if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
                 vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
                 vfo->setBandLabel(bandLabel(band));
+                feedVfo(vfo);
             }
+            if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); }
             return;
         }
+        if (auto* dial = qobject_cast<DialItem*>(item)) { feedDial(dial); return; }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { feedOverlay(overlay); return; }
         if (applyAlways(item)) { return; }
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             m_containerButtons->applySliceAvailability(box, rxSource);
@@ -15267,14 +16033,14 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         } else if (auto* step = qobject_cast<TuneStepButtonItem*>(item)) {
             step->setActiveStep(stepIndex);
         } else if (auto* ant = qobject_cast<AntennaButtonItem*>(item)) {
-            ant->setActiveRxAntenna(antIndex(slice->rxAntenna()));
-            ant->setActiveTxAntenna(antIndex(slice->txAntenna()));
+            ant->setAntennas(slice->rxAntenna(), txAntenna, rxOnlyInputs);
         } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
             vfo->setUnavailableText(QString());
             vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
             vfo->setModeLabel(modeName);
             vfo->setFilterLabel(filterText);
             vfo->setBandLabel(bandLabel(band));
+            feedVfo(vfo);
         }
     };
     {
@@ -15293,7 +16059,15 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                 const QVariant entryContext = root->property("containerSourceContext");
                 const QJsonObject context = entryContext.isValid() ? entryContext.toJsonObject() :
                     (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
-                if (containerSourceSlice(context) == slice) {
+                // A VFO display on a fixed slice or on All slices shows
+                // slices other than its Source, so any slice's tuning
+                // reaches it. A VFO display face shows its own VFO display.
+                const auto* face = qobject_cast<const CompositePresetItem*>(root);
+                const auto* vfo = face ? face->vfoDisplay() : qobject_cast<const VfoDisplayItem*>(root);
+                const bool showsOtherSlices = (vfo && vfo->displayMode() != VfoDisplayItem::DisplayMode::SourceSlice)
+                    // A text overlay's slice tokens name any slice.
+                    || qobject_cast<const TextOverlayItem*>(root) != nullptr;
+                if (containerSourceSlice(context) == slice || showsOtherSlices) {
                     refreshContainerMeter(c, meter, root, context, true);
                 }
             }
@@ -15335,9 +16109,11 @@ void MainWindow::onContainerModeClicked(ContainerWidget* c, int index)
     // From Thetis MeterManager.cs:10277 [v2.10.3.15] (clsModeButtonBox.setMode):
     //   if (abortForLockedVFO()) return;
     if (slice->locked()) { return; }
-    const QString label = ModeButtonItem::modeLabel(index);
-    if (label.isEmpty()) { return; }
-    slice->setDspMode(SliceModel::modeFromName(label));
+    if (index < 0 || index >= ModeButtonItem::kModeCount) { return; }
+    // From Thetis MeterManager.cs:10258 [v2.10.3.15]: the button's index is
+    // its DSPMode. A slice a remote window only listens to refuses the
+    // change and announces its own reason (sliceRequestHeldForListener).
+    slice->setDspMode(ModeButtonItem::modeForIndex(index));
 }
 
 void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)
@@ -15349,8 +16125,19 @@ void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)
     //   Filter f = (Filter)((int)Filter.F1 + index); console.RX1Filter = f;
     // F1..F10 are the mode's presets, as the RX applet and the VFO flag
     // apply them. Var1 / Var2 (index 10, 11) have no NereusSDR filter yet.
+    // Thetis limits RX2's grid to 9 buttons and remaps its index
+    // (MeterManager.cs:7718-7727, :7947-7948 [v2.10.3.15]); every NereusSDR
+    // slice has all 12, so the index is used as is on any slice.
     const QList<FilterPreset> presets = store->presetsForMode(slice->dspMode());
     if (index < 0 || index >= presets.size()) { return; }
+    // Gap: Thetis's setFilter also calls console.MatchTXFilterToRXFilter()
+    // after setting the RX filter (MeterManager.cs:7956-7975 [v2.10.3.15]),
+    // which copies the RX filter to TX only while Shift is held
+    // (console.cs:34901-34921 [v2.10.3.15]):
+    //   //set tx to use rx filter if shift key down
+    // NereusSDR has no port of console.SetTXFilter (console.cs:17839-17870
+    // [v2.10.3.15]), so this click sets the slice's RX filter only and
+    // leaves TransmitModel's filter as it is.
     slice->setFilter(presets[index].low, presets[index].high);
 }
 
@@ -15441,7 +16228,8 @@ void MainWindow::onContainerAntennaSelected(ContainerWidget* c, int index)
         // R-R3-49, R-R3-21 (parity Task 11): the transmit slice's txAntenna,
         // as the VFO flag's TX antenna button writes it: a slice setting,
         // written in a remote window too (the Core's slice follows), not
-        // tied to the transmit permission.
+        // tied to the transmit permission. It only names the antenna;
+        // nothing here keys the radio.
         SliceModel* tx = m_radioModel->txBoundSlice();
         (tx ? tx : slice)->setTxAntenna(QStringLiteral("ANT%1").arg(index - 5));
     }
@@ -15449,12 +16237,17 @@ void MainWindow::onContainerAntennaSelected(ContainerWidget* c, int index)
 
 void MainWindow::onContainerTuneStepSelected(ContainerWidget* c, int index)
 {
+    // The entry's slice: containerSlice follows the clicked item's Source
+    // (ContainerWidget::wireInteractiveItem sets the dispatch context).
     SliceModel* slice = containerSlice(c);
-    const int hz = TuneStepButtonItem::stepHz(index);
-    if (!slice || hz <= 0) { return; }
-    // From Thetis MeterManager.cs:8242 [v2.10.3.15] (clsTunestepButtons.MouseUp):
-    //   _console.TuneStepIndex = index;
-    slice->setStepHz(hz);
+    if (!slice || index < 0 || index >= TuneStepButtonItem::kStepCount) { return; }
+    // From Thetis MeterManager.cs:8239-8242 [v2.10.3.15] (clsTunestepButtons.MouseUp):
+    //   _console.BeginInvoke(new MethodInvoker(() =>
+    //   {
+    //       _console.TuneStepIndex = index;
+    //   }));
+    // Button i is kTuneStepList[i] (MeterManager.cs:8040).
+    slice->setStepHz(TuneStepButtonItem::stepHz(index));
 }
 
 void MainWindow::onContainerFrequencyStep(ContainerWidget* c, int64_t deltaHz)
@@ -16603,6 +17396,12 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Container Settings' Minimizes: floating containers follow this
+    // window's minimize and restore.
+    if (watched == this && event->type() == QEvent::WindowStateChange && m_containerManager
+        && !m_shuttingDown) {
+        m_containerManager->onMainWindowStateChanged(windowState());
+    }
     if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
         // An explicit baseline minimum suppresses QLayout's automatic minimum
         // propagation. Retain the baseline, but follow the actual row/font
@@ -17269,6 +18068,33 @@ QString MainWindow::remoteTransmitReason() const
     return tr("Remote transmit controls are not available from this Core.");
 }
 
+QString MainWindow::voxLineReason() const
+{
+    // Fix wave 2 (M8): VOX listens to this computer's microphone line to
+    // the Core; without one it is shown disabled with the reason (the
+    // Core's refusal of arming it stays the backstop).
+    QString reason;
+    if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
+        reason = TxRefusals::micNotConnected().text;
+    }
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled()) {
+            reason = source->micSourceReason();
+        } else if (source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            reason = remoteRadioVoxReason();
+        }
+    }
+    // iPhone app plan Task 77 (rulings 7.7, 8.4): VOX follows the
+    // transmit holder.
+    if (reason.isEmpty() && m_stationClient && m_stationClient->knowsTransmitHolder()
+        && !m_stationClient->holdsTransmitHere()) {
+        const QString holder = m_stationClient->otherHolderReason();
+        reason = holder.isEmpty() ? TxRefusals::notHolder().text : holder;
+    }
+    return reason;
+}
+
 QString MainWindow::transmitSliceChoiceReason() const
 {
     // Slice control plan Task 11 fix: the TX applet's letters and every
@@ -17896,15 +18722,10 @@ void MainWindow::applyRemoteRoleGating()
     // Fix wave 2 (M8): VOX listens to this computer's microphone line to
     // the Core; without one it is shown disabled with the reason (the
     // Core's refusal of arming it stays the backstop).
-    bool voxLine = m_remoteMedia == nullptr || m_remoteMedia->micLineOpen();
-    QString voxReason = voxLine ? QString() : TxRefusals::micNotConnected().text;
-    if (m_stationClient && m_stationClient->remoteTransmit()) {
-        const auto* source = m_stationClient->remoteTransmit();
-        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
-            voxLine = false;
-            voxReason = !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason();
-        }
-    }
+    // The line, the Core's microphone source and the transmit holder, in
+    // one place with the container's VOX button (voxLineReason).
+    const QString voxReason = voxLineReason();
+    const bool voxLine = voxReason.isEmpty();
     // iPhone app plan Task 77 (rulings 7.7, 8.4): while another device
     // holds transmit, the transmitter's settings are its own, and VOX
     // follows the holder: every transmit control here is shown disabled
@@ -17927,10 +18748,6 @@ void MainWindow::applyRemoteRoleGating()
             if (chainPermitted) { chainPermitted = false; chainReason = holderReason; }
             if (profilePermitted) { profilePermitted = false; profileReason = holderReason; }
             if (processingPermitted) { processingPermitted = false; processingReason = holderReason; }
-        }
-        if (voxLine && !m_stationClient->holdsTransmitHere()) {
-            voxLine = false;
-            voxReason = holderReason.isEmpty() ? TxRefusals::notHolder().text : holderReason;
         }
     }
     TxEqDialog::setSettingsPermitted(processingPermitted, processingReason);

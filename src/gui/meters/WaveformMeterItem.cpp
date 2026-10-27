@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-11  J.J. Boyd / KG4VCF; original waveform observation. AI tooling: OpenAI Codex.
 // 2026-10-14  J.J. Boyd / KG4VCF; widen normalized geometry before pixel scaling. AI tooling: OpenAI Codex.
 // no-port-check: Original native painter; FreeDV fixed amplitude/time plot facts
 // studied at freedv-gui a8d8424 main.cpp:1377-1382, defines.h:54-56.
 #include "WaveformMeterItem.h"
+#include "ItemColourLook.h"
 #include "WaveformMeterStyle.h"
 #include <QJsonDocument>
 #include <QPainter>
@@ -186,7 +190,7 @@ void WaveformMeterItem::paintForLayer(QPainter& painter, int width, int height, 
             painter.save();
             painter.setClipRect(plot);
             painter.setRenderHint(QPainter::Antialiasing, false);
-            QPen tracePen(QColor(m_config["traceColor"].toString()), 1);
+            QPen tracePen(ItemColourLook::effective("Waveform.traceColor", QColor(m_config["traceColor"].toString()), this), 1);
             tracePen.setCosmetic(true);
             painter.setPen(tracePen);
             const qreal dpr = std::max<qreal>(1, painter.device()->devicePixelRatioF());

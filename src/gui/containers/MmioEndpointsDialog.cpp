@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — The 4-character ID with a Copy button, Direction,
+//                 Terminator and the UDP send target; new data
+//                 sources start on 127.0.0.1:9000 as in Thetis. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -71,6 +75,8 @@ mw0lge@grange-lane.co.uk
 #include <QTreeWidgetItem>
 #include <QSplitter>
 #include <QFrame>
+#include <QClipboard>
+#include <QGuiApplication>
 
 namespace NereusSDR {
 
@@ -166,6 +172,19 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     m_editName = new QLineEdit(centerWrap);
     form->addRow(QStringLiteral("Name"), m_editName);
 
+    // The 4-character ID other items and outside programs use to name
+    // this data source.
+    auto* idRow = new QHBoxLayout();
+    m_editId = new QLineEdit(centerWrap);
+    m_editId->setObjectName(QStringLiteral("mmioFourCharId"));
+    m_editId->setReadOnly(true);
+    m_btnCopyId = new QPushButton(QStringLiteral("Copy"), centerWrap);
+    m_btnCopyId->setObjectName(QStringLiteral("mmioCopyId"));
+    m_btnCopyId->setToolTip(QStringLiteral("Copy the ID to the clipboard"));
+    idRow->addWidget(m_editId, 1);
+    idRow->addWidget(m_btnCopyId);
+    form->addRow(QStringLiteral("ID"), idRow);
+
     m_comboTransport = new QComboBox(centerWrap);
     m_comboTransport->addItem(QStringLiteral("UDP listener"),
         static_cast<int>(MmioEndpoint::Transport::UdpListener));
@@ -202,6 +221,47 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     m_spinBaud->setRange(300, 921600);
     m_spinBaud->setValue(9600);
     form->addRow(QStringLiteral("Baud rate"), m_spinBaud);
+
+    m_comboDirection = new QComboBox(centerWrap);
+    m_comboDirection->setObjectName(QStringLiteral("mmioDirection"));
+    m_comboDirection->addItem(QStringLiteral("In (receive)"),
+        static_cast<int>(MmioEndpoint::Direction::In));
+    m_comboDirection->addItem(QStringLiteral("Out (send)"),
+        static_cast<int>(MmioEndpoint::Direction::Out));
+    m_comboDirection->addItem(QStringLiteral("Both"),
+        static_cast<int>(MmioEndpoint::Direction::Both));
+    form->addRow(QStringLiteral("Direction"), m_comboDirection);
+
+    m_comboTerminator = new QComboBox(centerWrap);
+    m_comboTerminator->setObjectName(QStringLiteral("mmioTerminator"));
+    m_comboTerminator->addItem(QStringLiteral("None"),
+        static_cast<int>(MmioEndpoint::Terminator::None));
+    m_comboTerminator->addItem(QStringLiteral("CR"),
+        static_cast<int>(MmioEndpoint::Terminator::Cr));
+    m_comboTerminator->addItem(QStringLiteral("LF"),
+        static_cast<int>(MmioEndpoint::Terminator::Lf));
+    m_comboTerminator->addItem(QStringLiteral("CR LF"),
+        static_cast<int>(MmioEndpoint::Terminator::CrLf));
+    m_comboTerminator->addItem(QStringLiteral("Custom"),
+        static_cast<int>(MmioEndpoint::Terminator::Custom));
+    m_comboTerminator->setToolTip(QStringLiteral("Sent after each outgoing message"));
+    form->addRow(QStringLiteral("Terminator"), m_comboTerminator);
+
+    m_editCustomTerminator = new QLineEdit(centerWrap);
+    m_editCustomTerminator->setObjectName(QStringLiteral("mmioCustomTerminator"));
+    m_editCustomTerminator->setPlaceholderText(QStringLiteral("for example ;\\r\\n"));
+    form->addRow(QStringLiteral("Custom terminator"), m_editCustomTerminator);
+
+    m_editUdpTargetHost = new QLineEdit(centerWrap);
+    m_editUdpTargetHost->setObjectName(QStringLiteral("mmioUdpTargetHost"));
+    m_editUdpTargetHost->setPlaceholderText(QStringLiteral("127.0.0.1 (UDP only)"));
+    form->addRow(QStringLiteral("Send to address"), m_editUdpTargetHost);
+
+    m_spinUdpTargetPort = new QSpinBox(centerWrap);
+    m_spinUdpTargetPort->setObjectName(QStringLiteral("mmioUdpTargetPort"));
+    m_spinUdpTargetPort->setRange(0, 65535);
+    m_spinUdpTargetPort->setValue(10000);
+    form->addRow(QStringLiteral("Send to port"), m_spinUdpTargetPort);
 
     centerLayout->addLayout(form);
 
@@ -256,6 +316,13 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     connect(m_btnRemove, &QPushButton::clicked, this, &MmioEndpointsDialog::onRemoveEndpoint);
     connect(m_btnApply,  &QPushButton::clicked, this, &MmioEndpointsDialog::onApplyEdits);
     connect(m_btnClose,  &QPushButton::clicked, this, &QDialog::accept);
+    connect(m_btnCopyId, &QPushButton::clicked, this, &MmioEndpointsDialog::onCopyId);
+    connect(m_comboTransport, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MmioEndpointsDialog::updateFieldStates);
+    connect(m_comboDirection, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MmioEndpointsDialog::updateFieldStates);
+    connect(m_comboTerminator, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MmioEndpointsDialog::updateFieldStates);
 
     rebuildEndpointList();
 }
@@ -305,9 +372,18 @@ void MmioEndpointsDialog::loadEditorFromEndpoint(MmioEndpoint* ep)
     m_spinPort->setEnabled(enable);
     m_editDevice->setEnabled(enable);
     m_spinBaud->setEnabled(enable);
+    m_editId->setEnabled(enable);
+    m_btnCopyId->setEnabled(enable);
+    m_comboDirection->setEnabled(enable);
+    m_comboTerminator->setEnabled(enable);
     m_btnApply->setEnabled(enable);
     if (!ep) {
         m_editName->clear();
+        m_editId->clear();
+        m_editCustomTerminator->clear();
+        m_editUdpTargetHost->clear();
+        m_spinUdpTargetPort->setValue(10000);
+        updateFieldStates();
         m_editHost->clear();
         m_spinPort->setValue(0);
         m_editDevice->clear();
@@ -324,8 +400,39 @@ void MmioEndpointsDialog::loadEditorFromEndpoint(MmioEndpoint* ep)
     m_spinPort->setValue(ep->port());
     m_editDevice->setText(ep->serialDevice());
     m_spinBaud->setValue(ep->serialBaud());
-    m_lblStatus->setText(QStringLiteral("ID %1")
-                          .arg(ep->guid().toString(QUuid::WithoutBraces).left(8)));
+    m_editId->setText(ep->fourChar());
+    m_comboDirection->setCurrentIndex(
+        m_comboDirection->findData(static_cast<int>(ep->direction())));
+    m_comboTerminator->setCurrentIndex(
+        m_comboTerminator->findData(static_cast<int>(ep->terminator())));
+    m_editCustomTerminator->setText(ep->customTerminator());
+    m_editUdpTargetHost->setText(ep->udpTargetHost());
+    m_spinUdpTargetPort->setValue(ep->udpTargetPort());
+    updateFieldStates();
+    m_lblStatus->setText(QStringLiteral("ID %1").arg(ep->fourChar()));
+}
+
+void MmioEndpointsDialog::updateFieldStates()
+{
+    // Fields that do not apply stay visible and disabled.
+    const bool haveEndpoint = currentEndpoint() != nullptr;
+    const bool sends = m_comboDirection->currentData().toInt()
+                       != static_cast<int>(MmioEndpoint::Direction::In);
+    const bool udp = m_comboTransport->currentData().toInt()
+                     == static_cast<int>(MmioEndpoint::Transport::UdpListener);
+    const bool custom = m_comboTerminator->currentData().toInt()
+                        == static_cast<int>(MmioEndpoint::Terminator::Custom);
+    m_comboTerminator->setEnabled(haveEndpoint && sends);
+    m_editCustomTerminator->setEnabled(haveEndpoint && sends && custom);
+    m_editUdpTargetHost->setEnabled(haveEndpoint && sends && udp);
+    m_spinUdpTargetPort->setEnabled(haveEndpoint && sends && udp);
+}
+
+void MmioEndpointsDialog::onCopyId()
+{
+    if (QClipboard* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(m_editId->text());
+    }
 }
 
 void MmioEndpointsDialog::refreshVariablesTree(MmioEndpoint* ep)
@@ -356,8 +463,13 @@ void MmioEndpointsDialog::onAddEndpoint()
     ep->setName(QStringLiteral("New data source"));
     ep->setTransport(MmioEndpoint::Transport::UdpListener);
     ep->setFormat(MmioEndpoint::Format::Json);
-    ep->setHost(QStringLiteral("0.0.0.0"));
-    ep->setPort(12345);
+    // From Thetis MeterManager.cs:41409-41419 [v2.10.3.15] — a new
+    // endpoint is a UDP listener on 127.0.0.1:9000, direction IN, no
+    // terminator.
+    ep->setHost(QStringLiteral("127.0.0.1"));
+    ep->setPort(9000);
+    ep->setDirection(MmioEndpoint::Direction::In);
+    ep->setTerminator(MmioEndpoint::Terminator::None);
     ExternalVariableEngine::instance().addEndpoint(ep);
     rebuildEndpointList();
     // Select the new one.
@@ -391,6 +503,13 @@ void MmioEndpointsDialog::onApplyEdits()
     ep->setPort(static_cast<quint16>(m_spinPort->value()));
     ep->setSerialDevice(m_editDevice->text());
     ep->setSerialBaud(m_spinBaud->value());
+    ep->setDirection(static_cast<MmioEndpoint::Direction>(
+        m_comboDirection->currentData().toInt()));
+    ep->setTerminator(static_cast<MmioEndpoint::Terminator>(
+        m_comboTerminator->currentData().toInt()));
+    ep->setCustomTerminator(m_editCustomTerminator->text());
+    ep->setUdpTargetHost(m_editUdpTargetHost->text());
+    ep->setUdpTargetPort(static_cast<quint16>(m_spinUdpTargetPort->value()));
     ExternalVariableEngine::instance().updateEndpoint(ep);
     rebuildEndpointList();
     m_lblStatus->setText(QStringLiteral("Applied. The data source restarted with the new settings."));

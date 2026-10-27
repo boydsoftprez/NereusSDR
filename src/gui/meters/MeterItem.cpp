@@ -5,9 +5,78 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/common.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave: MeterItem records the colours
+//                 the user picked (I6); BarItem::calibratedX places the
+//                 red transition (meters M1); a needle's saved ratios and
+//                 power limit load safely (meters M5, settings M1);
+//                 ScaleItem resolves its inks once per paint (meters M6).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I10): a needle applies its saved
+//                 attack ratio rising and decay ratio falling, and draws
+//                 with its saved stroke width; one saved without them
+//                 keeps 0.3 both ways and the 2 px pen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - advanceFade: a stage-disabled item (setStageDisabled,
+//                 Thetis clsMeterItem.Disabled) steps toward 48 whatever its
+//                 fade options; never for a foreign session's entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - mmioVariableCount: HISTORY reads 2 (axis 0, then axis 1),
+//                 as Thetis clsHistoryItem's per-axis MMIO does. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - mmioVariableCount: ROTATOR reads 2 (AZ, then ELE), as
+//                 Thetis MeterVariables does. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Several data source (MMIO) variables per item
+//                 (setMmioBinding(index, ...)) and mmioVariableCount(), the
+//                 port of Thetis MeterVariables. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
+//                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
+//                 via ContentFade::nextValue), setForeignSession; a virtual
+//                 clearHistory() (Thetis clsMeterItem.ClearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - BAR building block: Segments and Solid styles ported from
+//                 renderHBar, a peak hold marker separate from the live
+//                 marker, marker stroke width, ignore history after
+//                 clearHistory(), power limit normalisation for calibrated
+//                 power bars, and the clsBarItem new-item defaults. Saved
+//                 bars keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - NEEDLE building block: shadow and peak hold switches, a
+//                 peak hold colour (peak needle on a calibrated face), the
+//                 history arc ported from renderNeedle, ignore history after
+//                 clearHistory(), the power limit (normalise to 100 W) and
+//                 the clsNeedleItem new-item defaults. paint() and
+//                 emitVertices() share one needle geometry, so the CPU
+//                 needle follows a calibrated face too. Saved needles keep
+//                 their look. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
+//                 aboveS9Frequency(), a formatValue overload taking the
+//                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
+//                 / kS9DbmAboveS9Frequency from common.cs); BarItem, TextItem
+//                 and NeedleItem S-unit text and calibration use it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Per-item update interval (acceptsUpdate); new items take
+//                 kDefaultUpdateIntervalMs. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - TEXT, SCALE and IMAGE building blocks: TextItem font
+//                 family, italic, centring and the %value%, %valueWithType%
+//                 (ReadingUnits) and %group% tokens (renderText); ImageItem
+//                 dark mode and -dark/-small/-large variants (renderImage);
+//                 clsText, clsScaleItem and clsImage new-item defaults.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
+//                 hook (no-op in the base), SolidColourItem override. Saved
+//                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -40,6 +109,9 @@
 //                 container around its meter or the user's colour for that
 //                 container. Ink unchanged. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26 - ImageItem: an empty image path clears the image without a
+//                 file read. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -139,16 +211,69 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - Keep overflowing regular scale endpoint glyphs within the
 //                 meter canvas in both looks, preserving ticks and fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (image path, text label and suffix, needle source label) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+
+// --- From common.cs ---
+//=================================================================
+// common.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2012  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
 
 #include "core/ControlRanges.h"
 #include "MeterItem.h"
+#include "ItemColourLook.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
+#include "AboveS9Frequency.h"
+#include "gui/containers/ContentFade.h"
 
 #include <QPainter>
 #include <QMouseEvent>
 #include <QFont>
 #include <QFontMetrics>
+#include <QDir>
+#include <QFileInfo>
 #include <QStringList>
 #include <cmath>
 #include <algorithm>
@@ -249,11 +374,19 @@ QString MeterItem::noReadingText(MeterUnit unit)
 // ---------------------------------------------------------------------------
 QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 {
+    return formatValue(dBm, unit, decimal, false);
+}
+
+// aboveS9: the item's slice is at or above the S9 frequency, where S9 is
+// -93 dBm instead of -73 dBm.
+// From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal, bool aboveS9)
+{
     switch (unit) {
         case MeterUnit::S: {
             // IARU S-meter: S9 = -73 dBm, 6 dB/S-unit
             // From Thetis console.cs getMeterData dBm→S conversion [v2.10.3.13]
-            const float diff = dBm - (-73.0f);
+            const float diff = dBm - s9Dbm(aboveS9);
             const int sUnits = qBound(0, qRound(9.0f + diff / 6.0f), 19);
             if (sUnits <= 9) {
                 return QStringLiteral("S%1").arg(sUnits);
@@ -284,6 +417,172 @@ QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 // MeterItem base — serialize / deserialize
 // Format: x|y|w|h|bindingId|zOrder
 // ---------------------------------------------------------------------------
+
+void MeterItem::applyNewItemDefaults()
+{
+    // kDefaultUpdateIntervalMs: Thetis's nudMeterItemUpdateRate default.
+    setUpdateIntervalMs(kDefaultUpdateIntervalMs);
+}
+
+void MeterItem::setColourUserSet(const QString& field, bool picked)
+{
+    if (picked) {
+        m_userColours.insert(field);
+    } else {
+        m_userColours.remove(field);
+    }
+}
+
+QStringList MeterItem::userColourFields() const
+{
+    QStringList fields(m_userColours.cbegin(), m_userColours.cend());
+    fields.sort();
+    return fields;
+}
+
+void MeterItem::setUserColourFields(const QStringList& fields)
+{
+    m_userColours = QSet<QString>(fields.cbegin(), fields.cend());
+    m_userColours.remove(QString());
+}
+
+void MeterItem::setUpdateIntervalMs(int ms)
+{
+    m_updateIntervalMs = ms > 0 ? ms : 0;
+    m_lastAcceptedUpdateMs = -1;
+}
+
+bool MeterItem::acceptsUpdate(qint64 monotonicMs)
+{
+    if (m_updateIntervalMs <= 0) { return true; }
+    // A clock that moved backwards (a new time base) starts a new interval.
+    if (m_lastAcceptedUpdateMs >= 0 && monotonicMs >= m_lastAcceptedUpdateMs
+        && monotonicMs - m_lastAcceptedUpdateMs < m_updateIntervalMs) {
+        return false;
+    }
+    m_lastAcceptedUpdateMs = monotonicMs;
+    return true;
+}
+
+void MeterItem::setMmioBinding(int index, const QUuid& guid, const QString& variableName)
+{
+    if (index < 0 || index >= kMaxMmioVariables) { return; }
+    if (index == 0) { setMmioBinding(guid, variableName); return; }
+    if (m_extraMmio.size() < index) { m_extraMmio.resize(index); }
+    m_extraMmio[index - 1] = {guid, variableName};
+    // Trailing unset variables are dropped, so an item that never had a
+    // second variable compares and saves as it did before.
+    while (!m_extraMmio.isEmpty() && m_extraMmio.constLast().guid.isNull()
+           && m_extraMmio.constLast().variable.isEmpty()) {
+        m_extraMmio.removeLast();
+    }
+}
+
+QUuid MeterItem::mmioGuid(int index) const
+{
+    if (index == 0) { return m_mmioGuid; }
+    if (index < 1 || index > m_extraMmio.size()) { return {}; }
+    return m_extraMmio.at(index - 1).guid;
+}
+
+QString MeterItem::mmioVariable(int index) const
+{
+    if (index == 0) { return m_mmioVariable; }
+    if (index < 1 || index > m_extraMmio.size()) { return {}; }
+    return m_extraMmio.at(index - 1).variable;
+}
+
+bool MeterItem::hasMmioBinding(int index) const
+{
+    const QString variable = mmioVariable(index);
+    return !mmioGuid(index).isNull() && !variable.isEmpty()
+        && variable != QLatin1String("--DEFAULT--");
+}
+
+QString MeterItem::mmioSourceKey(int index) const
+{
+    return mmioGuid(index).toString(QUuid::WithoutBraces) + QChar(0) + mmioVariable(index);
+}
+
+bool MeterItem::hasAnyMmioBinding() const
+{
+    for (int index = 0; index < kMaxMmioVariables; ++index) {
+        if (hasMmioBinding(index)) { return true; }
+    }
+    return false;
+}
+
+// From Thetis MeterManager.cs:22684-22738 [v2.10.3.15] — MeterVariables,
+// keyed by the container item type that builds each Thetis MeterType.
+// Types Thetis does not list (and the building blocks) read one variable.
+int MeterItem::mmioVariableCount(const QString& typeId)
+{
+    // number of variables
+    static const QHash<QString, int> kVariables{
+        {QStringLiteral("meter.adc"), 2},          // MeterType.ADC
+        {QStringLiteral("meter.agc"), 2},          // MeterType.AGC
+        {QStringLiteral("meter.mic"), 2},          // MeterType.MIC
+        {QStringLiteral("meter.alc"), 2},          // MeterType.ALC
+        {QStringLiteral("meter.eq"), 2},           // MeterType.EQ
+        {QStringLiteral("meter.leveler"), 2},      // MeterType.LEVELER
+        {QStringLiteral("meter.comp"), 2},         // MeterType.COMP
+        //case MeterType.CPDR: break;
+        {QStringLiteral("meter.cfc"), 2},          // MeterType.CFC
+        {QStringLiteral("meter.ananMulti"), 7},    // MeterType.ANANMM
+        {QStringLiteral("meter.crossNeedle"), 2},  // MeterType.CROSS
+        {QStringLiteral("meter.vfoDisplay"), 0},   // MeterType.VFO_DISPLAY
+        {QStringLiteral("meter.clock"), 0},        // MeterType.CLOCK
+        {QStringLiteral("meter.spacer"), 0},       // MeterType.SPACER
+        {QStringLiteral("ROTATOR"), 2},            // MeterType.ROTATOR (AZ, ELE)
+        {QStringLiteral("meter.historyGraph"), 2}, // MeterType.HISTORY
+        {QStringLiteral("HISTORY"), 2},            // clsHistoryItem axis 0 and axis 1 (MeterManager.cs:26952-26955 [v2.10.3.15])
+        {QStringLiteral("meter.customBar"), 2},    // MeterType.CUSTOM_METER_BAR
+    };
+    return kVariables.value(typeId, 1);
+}
+
+// From Thetis MeterManager.cs:33159-33160 [v2.10.3.15]: the update
+// interval, at most 500 ms. NereusSDR steps each item on its own interval
+// (Thetis uses the container's quickest).
+int MeterItem::fadeIntervalMs() const
+{
+    constexpr int kMaxFadeIntervalMs = 500;
+    const int interval = m_updateIntervalMs > 0 ? m_updateIntervalMs : kDefaultUpdateIntervalMs;
+    return std::min(interval, kMaxFadeIntervalMs);
+}
+
+bool MeterItem::advanceFade(qint64 monotonicMs)
+{
+    // A clock that moved backwards (a new time base), or the first call,
+    // only takes the time.
+    if (m_lastFadeStepMs < 0 || monotonicMs < m_lastFadeStepMs) {
+        m_lastFadeStepMs = monotonicMs;
+        return false;
+    }
+    const int interval = fadeIntervalMs();
+    // A foreign session's entry does not follow this window's transmit.
+    const bool tx = m_transmitting && !m_foreignSession;
+    // From Thetis MeterManager.cs:33156-33157,33166 [v2.10.3.15]: a
+    // Disabled item dims whatever its fade flags, which ContentFade::nextValue
+    // takes as both flags true. Not for a foreign session's entry.
+    // [2.10.1.0] MW0LGE
+    const bool disabled = m_stageDisabled && !m_foreignSession;
+    const bool rx = disabled || fadeOnRx();
+    const bool txFade = disabled || fadeOnTx();
+    bool changed = false;
+    while (monotonicMs - m_lastFadeStepMs >= interval) {
+        const int next = ContentFade::nextValue(m_fadeValue, rx, txFade, tx, interval);
+        if (next == m_fadeValue) {
+            // At rest: the next change counts from now.
+            m_lastFadeStepMs = monotonicMs;
+            break;
+        }
+        m_fadeValue = next;
+        m_lastFadeStepMs += interval;
+        changed = true;
+    }
+    return changed;
+}
 
 void MeterItem::resetForTxTransition(bool inTx)
 {
@@ -452,9 +751,24 @@ static bool parseBaseFields(MeterItem& item, const QStringList& parts)
 // Format: SOLID|x|y|w|h|bindingId|zOrder|#aarrggbb
 // ---------------------------------------------------------------------------
 
+namespace {
+// New-item defaults (clsSolidColour constructor).
+struct SolidThetisDefaults {
+    QRgb colour;
+};
+// From Thetis MeterManager.cs:7663 [v2.10.3.15] (_colour = System.Drawing.Color.Black)
+constexpr SolidThetisDefaults kSolidThetisDefaults{qRgb(0, 0, 0)};
+} // namespace
+
+void SolidColourItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    m_colour = QColor::fromRgb(kSolidThetisDefaults.colour);
+}
+
 void SolidColourItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    p.fillRect(pixelRect(widgetW, widgetH), m_colour);
+    p.fillRect(pixelRect(widgetW, widgetH), ItemColourLook::effective("Solid.colour", m_colour, this));
 }
 
 QString SolidColourItem::serialize() const
@@ -479,29 +793,88 @@ bool SolidColourItem::deserialize(const QString& data)
 
 // ---------------------------------------------------------------------------
 // ImageItem
-// Format: IMAGE|x|y|w|h|bindingId|zOrder|path
+// Format: IMAGE|x|y|w|h|bindingId|zOrder|path[|darkMode(0/1)]
 // ---------------------------------------------------------------------------
 
 void ImageItem::setImagePath(const QString& path)
 {
     m_imagePath = path;
-    m_image.load(path);
+    // An empty path (a new item) has no image; QImage::load would warn.
+    // An empty path is no image; it never reaches a file API.
+    // From Thetis MeterManager.cs:40639 [v2.10.3.15]
+    if (path.isEmpty()) {
+        m_image = QImage();
+    } else {
+        m_image.load(path);
+    }
+    m_loadedPath = path;
+}
+
+namespace {
+// meter.png + "-dark" -> meter-dark.png, in the chosen file's folder.
+QString imageVariantName(const QString& path, const QString& suffix)
+{
+    const QFileInfo info(path);
+    const QString ext = info.suffix();
+    QString name = info.completeBaseName() + suffix;
+    if (!ext.isEmpty()) {
+        name += QLatin1Char('.') + ext;
+    }
+    return info.dir().filePath(name);
+}
+} // namespace
+
+// From Thetis MeterManager.cs:40641-40650 [v2.10.3.15] (renderImage)
+QString ImageItem::variantPath(const QString& basePath, bool darkMode, double diagonalPx)
+{
+    if (basePath.isEmpty()) {
+        return basePath;
+    }
+    QString image = basePath;
+    if (darkMode) {
+        const QString key = imageVariantName(image, QStringLiteral("-dark"));
+        if (QFileInfo::exists(key)) {
+            image = key;
+        }
+    }
+
+    QString sizeKey;
+    if (diagonalPx <= kImageSmallDiagonalPx) {
+        sizeKey = imageVariantName(image, QStringLiteral("-small"));
+    } else if (diagonalPx >= kImageLargeDiagonalPx) {
+        sizeKey = imageVariantName(image, QStringLiteral("-large"));
+    }
+
+    if (!sizeKey.isEmpty() && QFileInfo::exists(sizeKey)) {
+        image = sizeKey; // with size
+    }
+    return image;
 }
 
 void ImageItem::paint(QPainter& p, int widgetW, int widgetH)
 {
+    const QRect rect = pixelRect(widgetW, widgetH);
+    if (!m_imagePath.isEmpty()) {
+        const double diagonal = std::sqrt(static_cast<double>(rect.width()) * rect.width()
+                                          + static_cast<double>(rect.height()) * rect.height());
+        const QString wanted = variantPath(m_imagePath, m_darkMode, diagonal);
+        if (wanted != m_loadedPath) {
+            m_image.load(wanted);
+            m_loadedPath = wanted;
+        }
+    }
     if (m_image.isNull()) {
         return;
     }
-    const QRect rect = pixelRect(widgetW, widgetH);
     p.drawImage(rect, m_image);
 }
 
 QString ImageItem::serialize() const
 {
-    return QStringLiteral("IMAGE|%1|%2")
-        .arg(baseFields(*this))
-        .arg(m_imagePath);
+    // Joined, not chained .arg(): a path holding "%1" must stay as written.
+    return QStringList{QStringLiteral("IMAGE"), baseFields(*this), m_imagePath,
+                       QString::number(m_darkMode ? 1 : 0)}
+        .join(QLatin1Char('|'));
 }
 
 bool ImageItem::deserialize(const QString& data)
@@ -514,7 +887,15 @@ bool ImageItem::deserialize(const QString& data)
         return false;
     }
     setImagePath(parts[7]);
+    // Appended field; records without it are not dark.
+    m_darkMode = parts.size() >= 9 && parts[8] == QLatin1String("1");
     return true;
+}
+
+void ImageItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    m_darkMode = kImageThetisDefaults.darkMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +918,20 @@ bool ImageItem::deserialize(const QString& data)
 // From Thetis clsBarItem (MeterManager.cs:20192 field, 21547-21549 addSMeterBar
 // 3-point S-meter calibration, 21638-21640 AddADCMaxMag 3-point ADC curve).
 // ---------------------------------------------------------------------------
+namespace {
+QString barStyleName(BarItem::BarStyle style)
+{
+    switch (style) {
+        case BarItem::BarStyle::Edge:     return QStringLiteral("Edge");
+        case BarItem::BarStyle::Line:     return QStringLiteral("Line");
+        case BarItem::BarStyle::Segments: return QStringLiteral("Segments");
+        case BarItem::BarStyle::Solid:    return QStringLiteral("Solid");
+        case BarItem::BarStyle::Filled:   break;
+    }
+    return QStringLiteral("Filled");
+}
+} // namespace
+
 void BarItem::addScaleCalibration(double value, float normalizedX)
 {
     m_scaleCalibration.insert(value, normalizedX);
@@ -546,6 +941,26 @@ float BarItem::valueToNormalizedX(double value) const
 {
     // Empty calibration: fall back to linear minVal..maxVal mapping. This
     // preserves pre-A4 behavior for every Filled/Edge preset.
+    if (m_scaleCalibration.isEmpty()) {
+        return calibratedX(value);
+    }
+
+    // A signal-strength reading on a slice at or above the S9 frequency is
+    // raised 20 dB, so the calibrated S9 point (-73) reads -93 dBm.
+    // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
+    value = aboveS9Adjusted(m_bindingId, value, m_aboveS9Frequency);
+    // A calibrated forward or reverse power bar reads against its power
+    // limit. From Thetis MeterManager.cs:41053-41056 [v2.10.3.15] (getPerc;
+    // MaxPower only for PWR / REVERSE_PWR, MeterManager.cs:28292)
+    if ((m_bindingId == MeterBinding::TxPower || m_bindingId == MeterBinding::TxReversePower)
+        && m_powerLimit > 0.0) {
+        value *= 100.0 / m_powerLimit;
+    }
+    return calibratedX(value);
+}
+
+float BarItem::calibratedX(double value) const
+{
     if (m_scaleCalibration.isEmpty()) {
         const double range = m_maxVal - m_minVal;
         if (range <= 0.0) { return 0.0f; }
@@ -577,6 +992,67 @@ float BarItem::valueToNormalizedX(double value) const
     return static_cast<float>(x0 + (x1 - x0) * t);
 }
 
+BarItem::SegmentGeometry BarItem::segmentGeometry(float w, float h)
+{
+    // From Thetis MeterManager.cs:37458-37470 [v2.10.3.15]
+    float fBarHeight = h * 0.85f; // same as base line % in render scale
+
+    int segmentBlockSize = static_cast<int>(w * 0.02f);
+    if (segmentBlockSize < 7) { segmentBlockSize = 7; } // minimum 7 pixels
+    const int segmentGapSize = static_cast<int>(static_cast<float>(segmentBlockSize) * 0.2f);
+    if (segmentBlockSize < 2) { segmentBlockSize = 2; } // minimum 2 pixels
+
+    const int segmentStep = segmentBlockSize + segmentGapSize; // step, to include block + gap
+    return SegmentGeometry{segmentBlockSize, segmentGapSize, segmentStep, fBarHeight};
+}
+
+void BarItem::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+void BarItem::setPowerLimit(double watts)
+{
+    // From Thetis MeterManager.cs:7136-7137 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(watts >= kMinBarPowerLimitW)) {
+        m_powerLimit = kDefaultBarPowerLimitW;
+        return;
+    }
+    m_powerLimit = std::min(watts, kMaxBarPowerLimitW);
+}
+
+void BarItem::clearHistory()
+{
+    // From Thetis MeterManager.cs:21450-21457 [v2.10.3.15] (ClearHistory)
+    m_history.clear();
+    // With no history Thetis's peak (MaxHistory) is the live value.
+    m_peakValue = m_smoothedValue;
+    const int interval = updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+    m_ignoringNext = m_ignoreHistoryMs / interval;  // ignore next N readings to make up 2 second of ignore
+}
+
+void BarItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const BarItemThetisDefaults& d = kBarItemThetisDefaults;
+    m_historyDurationMs    = d.historyDurationMs;
+    m_ignoreHistoryMs      = d.ignoreHistoryMs;
+    m_showHistory          = d.showHistory;
+    m_showValue            = d.showValue;
+    m_showPeakValue        = d.showPeakValue;
+    m_barStyle             = d.style;
+    m_barColor             = QColor::fromRgb(d.colour);
+    m_barRedColor          = QColor::fromRgb(d.colourHigh);
+    m_markerColour         = QColor::fromRgb(d.markerColour);
+    m_peakHoldMarkerColour = QColor::fromRgb(d.peakHoldMarkerColour);
+    m_peakFontColour       = QColor::fromRgb(d.peakValueColour);
+    m_strokeWidth          = d.strokeWidth;
+    m_peakHold             = d.peakHold;
+    m_showMarker           = d.showMarker;
+}
+
 void BarItem::setValue(double v)
 {
     MeterItem::setValue(v);
@@ -596,6 +1072,12 @@ void BarItem::setValue(double v)
     } else {
         m_smoothedValue = static_cast<double>(m_decayRatio) * v
                         + (1.0 - static_cast<double>(m_decayRatio)) * m_smoothedValue;
+    }
+    // After clearHistory() the next readings move the bar but not the
+    // history or the peak. From Thetis MeterManager.cs:21367-21378 [v2.10.3.15]
+    if (m_ignoringNext > 0) {
+        --m_ignoringNext;
+        return;
     }
     // Phase A1/A3 — peak-hold tracking. When PeakHoldDecayRatio == 0 the
     // peak sticks at the highest value ever seen (A1 behavior). When > 0,
@@ -630,14 +1112,16 @@ QString BarItem::valueText() const
     }
     // Task 3.2: unit-mode fan-out; signal-level bars route through
     // formatValue so the MultimeterPage unit combo drives the readout.
-    return formatValue(static_cast<float>(m_smoothedValue), m_unitMode, m_showDecimal);
+    return formatValue(static_cast<float>(m_smoothedValue), m_unitMode, m_showDecimal,
+                       m_aboveS9Frequency);
 }
 
 QString BarItem::peakValueText() const
 {
     return std::isfinite(m_peakValue)
         // Task 3.2: peak value also routed through formatValue
-        ? formatValue(static_cast<float>(m_peakValue), m_unitMode, m_showDecimal)
+        ? formatValue(static_cast<float>(m_peakValue), m_unitMode, m_showDecimal,
+                      m_aboveS9Frequency)
         : QStringLiteral("--");
 }
 
@@ -652,7 +1136,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
     const QRect rect = pixelRect(widgetW, widgetH);
     const QColor& fillColor = (m_smoothedValue >= m_redThreshold)
-                                  ? m_barRedColor : m_barColor;
+                                  ? ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this) : ItemColourLook::effective("Bar.barColor", m_barColor, this);
 
     // Bar body. Uses valueToNormalizedX() so both the linear min..max
     // fallback (empty calibration) and the Phase A4 piecewise-linear
@@ -680,7 +1164,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // m_historyColour. Older samples fade via the alpha in the colour
     // itself; a stronger trail effect will come with VBO work later.
     if (m_showHistory && !m_history.isEmpty()) {
-        p.setPen(QPen(m_historyColour, 1));
+        p.setPen(QPen(ItemColourLook::effective("Bar.historyColour", m_historyColour, this), 1));
         for (double v : m_history) {
             const float hx = valueToNormalizedX(v);
             const int px = rect.left() + static_cast<int>(hx * rect.width());
@@ -692,7 +1176,9 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // of the bar rect instead of a filled quad. Matches Thetis
     // BarStyle.Line where the "bar" is really a baseline + markers +
     // labels composition.
-    if (m_barStyle == BarStyle::Line) {
+    if (m_barStyle == BarStyle::Segments || m_barStyle == BarStyle::Solid) {
+        paintSegmentsOrSolid(p, rect, fracLive);
+    } else if (m_barStyle == BarStyle::Line) {
         p.setPen(QPen(fillColor, 2));
         const int baselineY = rect.bottom() - 2;
         p.drawLine(rect.left(), baselineY,
@@ -708,18 +1194,20 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Phase A3 — live value marker + peak-hold marker (Thetis
     // MeterManager.cs:21543-21544). Thin vertical lines at the live
-    // smoothed X and the separate peak X.
+    // smoothed X and the separate peak X. Each has its own switch
+    // (ShowMarker, PeakHold; MeterManager.cs:37600-37606 [v2.10.3.15]) and
+    // both use StrokeWidth. The live marker is drawn first, as NereusSDR
+    // always has, so a saved bar paints as before.
     if (m_showMarker) {
-        p.setPen(QPen(m_markerColour, 2));
+        p.setPen(QPen(ItemColourLook::effective("Bar.markerColour", m_markerColour, this), static_cast<double>(m_strokeWidth)));
         const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
         p.drawLine(liveX, rect.top(), liveX, rect.bottom());
-
-        if (std::isfinite(m_peakValue)) {
-            p.setPen(QPen(m_peakHoldMarkerColour, 2));
-            const float fracPeak = valueToNormalizedX(m_peakValue);
-            const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
-            p.drawLine(peakX, rect.top(), peakX, rect.bottom());
-        }
+    }
+    if (peakHold() && std::isfinite(m_peakValue)) {
+        p.setPen(QPen(ItemColourLook::effective("Bar.peakHoldMarkerColour", m_peakHoldMarkerColour, this), static_cast<double>(m_strokeWidth)));
+        const float fracPeak = valueToNormalizedX(m_peakValue);
+        const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
+        p.drawLine(peakX, rect.top(), peakX, rect.bottom());
     }
 
     // Phase A1 / E — ShowValue / ShowPeakValue text labels. ShowValue
@@ -741,7 +1229,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
         if (m_showValue
             && (std::isfinite(m_smoothedValue) || isNoReading(m_value))) {
-            p.setPen(m_fontColour);
+            p.setPen(ItemColourLook::effective("Bar.fontColour", m_fontColour, this));
             const QString s = valueText();
             p.drawText(rect.left() + 2,
                        rect.top() + fm.ascent(),
@@ -749,11 +1237,90 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
         }
         if (m_showPeakValue) {
             const QString s = peakValueText();
-            p.setPen(peakFontColour());
+            p.setPen(ItemColourLook::effective("Bar.peakFontColour", peakFontColour(), this));
             const int w = fm.horizontalAdvance(s);
             p.drawText(rect.right() - w - 2,
                        rect.top() + fm.ascent(),
                        s);
+        }
+    }
+}
+
+// Segments and SolidFilled bodies.
+// From Thetis MeterManager.cs:37458-37598 [v2.10.3.15] (renderHBar). The
+// low colour is barColor(), the high colour barRedColor(); the high
+// transition is redThreshold() on the bar's scale (Thetis HighPoint).
+void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLive)
+{
+    const QColor barColour = ItemColourLook::effective("Bar.barColor", m_barColor, this);
+    const QColor barRedColour = ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this);
+    const float x = static_cast<float>(rect.left());
+    const float y = static_cast<float>(rect.top());
+    const float w = static_cast<float>(rect.width());
+    const float h = static_cast<float>(rect.height());
+    const float xPos = x + fracLive * w;
+
+    const SegmentGeometry g = segmentGeometry(w, h);
+    const float segmentBlockSize = static_cast<float>(g.blockSize);
+    const float segmentStep = static_cast<float>(g.step);
+    const float fBarHeight = g.barHeight;
+
+    float fHighXPosTransition = std::numeric_limits<float>::max();
+    const double scaleTop = m_scaleCalibration.isEmpty()
+        ? m_maxVal : std::prev(m_scaleCalibration.constEnd()).key();
+    if (m_redThreshold < scaleTop) {
+        // From Thetis MeterManager.cs:37482 [v2.10.3.15]
+        // The fixed HighPoint position: the calibration alone, without the
+        // reading's S9 or power limit adjustments.
+        fHighXPosTransition = x + (w * calibratedX(m_redThreshold));
+    }
+
+    const auto fill = [&p, y, fBarHeight](float left, float width, const QColor& c) {
+        if (width > 0.0f) {
+            p.fillRect(QRectF(left, y, width, fBarHeight), c);
+        }
+    };
+
+    if (m_barStyle == BarStyle::Solid) {
+        // From Thetis MeterManager.cs:37532-37547 [v2.10.3.15]
+        const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
+        fill(x, fEnd - x, barColour);
+        if (fEnd < xPos) // the area in the high range
+        {
+            // complete the bar
+            fill(fEnd, xPos - fEnd, barRedColour);
+        }
+        return;
+    }
+
+    // Segments. From Thetis MeterManager.cs:37553-37597 [v2.10.3.15]
+    float i;
+    const float fEnd = xPos < fHighXPosTransition ? xPos : fHighXPosTransition;
+
+    for (i = x; i < fEnd - segmentStep; i += segmentStep) {
+        fill(i, segmentBlockSize, barColour);
+    }
+
+    // complete the end sliver up to the high transition
+    if (i < fEnd) {
+        fill(i, fEnd - i, barColour);
+    }
+
+    if (xPos > fHighXPosTransition) // the area in the high range
+    {
+        // sliver to complete block at high transition
+        if (i < fEnd) {
+            fill(fEnd, i + segmentBlockSize - fEnd, barRedColour);
+        }
+
+        float j;
+        for (j = i + segmentStep; j < xPos - segmentStep; j += segmentStep) {
+            fill(j, segmentBlockSize, barRedColour);
+        }
+
+        // complete the end sliver
+        if (j < xPos) {
+            fill(j, xPos - j, barRedColour);
         }
     }
 }
@@ -773,7 +1340,7 @@ void BarItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     const float ndcT = 1.0f - m_y * 2.0f;
     const float ndcB = 1.0f - (m_y + m_h) * 2.0f;
 
-    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? m_barRedColor : m_barColor;
+    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? ItemColourLook::effective("Bar.barRedColor", m_barRedColor, this) : ItemColourLook::effective("Bar.barColor", m_barColor, this);
     const float r = static_cast<float>(fillColor.redF());
     const float g = static_cast<float>(fillColor.greenF());
     const float b = static_cast<float>(fillColor.blueF());
@@ -816,7 +1383,9 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     const QRect rect = pixelRect(widgetW, widgetH);
 
     // Background outline (from Thetis console.cs:23589)
-    p.setPen(QPen(m_edgeBgColor, 1));
+    const QColor edgeBg = ItemColourLook::effective("Bar.edgeBackgroundColor", m_edgeBgColor, this);
+    const QColor edgeAvg = ItemColourLook::effective("Bar.edgeAvgColor", m_edgeAvgColor, this);
+    p.setPen(QPen(edgeBg, 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(rect);
 
@@ -830,9 +1399,9 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     // Shadow color: midpoint blend of indicator and background
     // From Thetis console.cs:23605-23608
     const QColor shadowColor = QColor(
-        (m_edgeAvgColor.red()   + m_edgeBgColor.red())   / 2,
-        (m_edgeAvgColor.green() + m_edgeBgColor.green()) / 2,
-        (m_edgeAvgColor.blue()  + m_edgeBgColor.blue())  / 2
+        (edgeAvg.red()   + edgeBg.red())   / 2,
+        (edgeAvg.green() + edgeBg.green()) / 2,
+        (edgeAvg.blue()  + edgeBg.blue())  / 2
     );
 
     // Three vertical lines: shadow-center-shadow
@@ -841,7 +1410,7 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
     p.drawLine(pixelX - 1, rect.top() + 1, pixelX - 1, rect.bottom() - 1);
     p.drawLine(pixelX + 1, rect.top() + 1, pixelX + 1, rect.bottom() - 1);
 
-    p.setPen(QPen(m_edgeAvgColor, 1));
+    p.setPen(QPen(edgeAvg, 1));
     p.drawLine(pixelX, rect.top() + 1, pixelX, rect.bottom() - 1);
 }
 
@@ -861,9 +1430,7 @@ QString BarItem::serialize() const
         .arg(m_redThreshold)
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio))
-        .arg(m_barStyle == BarStyle::Edge ? QStringLiteral("Edge")
-            : (m_barStyle == BarStyle::Line ? QStringLiteral("Line")
-                                            : QStringLiteral("Filled")))
+        .arg(barStyleName(m_barStyle))
         .arg(m_edgeBgColor.name(QColor::HexArgb))
         .arg(m_edgeLowColor.name(QColor::HexArgb))
         .arg(m_edgeHighColor.name(QColor::HexArgb))
@@ -903,6 +1470,12 @@ QString BarItem::serialize() const
     if (m_peakFontColour.isValid()) {
         base += m_peakFontColour.name(QColor::HexArgb);
     }
+    // Tail fields 32-35: peakHold | ignoreHistoryMs | powerLimit | strokeWidth.
+    // Readers before these stop at field 31.
+    base += QLatin1Char('|') + (peakHold() ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + QString::number(m_ignoreHistoryMs);
+    base += QLatin1Char('|') + QString::number(m_powerLimit);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_strokeWidth));
     return base;
 }
 
@@ -936,6 +1509,10 @@ bool BarItem::deserialize(const QString& data)
             m_barStyle = BarStyle::Edge;
         } else if (parts[15] == QLatin1String("Line")) {
             m_barStyle = BarStyle::Line;
+        } else if (parts[15] == QLatin1String("Segments")) {
+            m_barStyle = BarStyle::Segments;
+        } else if (parts[15] == QLatin1String("Solid")) {
+            m_barStyle = BarStyle::Solid;
         } else {
             m_barStyle = BarStyle::Filled;
         }
@@ -1014,6 +1591,30 @@ bool BarItem::deserialize(const QString& data)
         }
     }
 
+    // Fields 32-35. A record without them keeps the legacy look: the
+    // peak hold marker follows showMarker, nothing is ignored, the power
+    // limit is 100 W (no scaling) and markers are 2 px.
+    m_peakHold.reset();
+    if (parts.size() >= 33
+        && (parts[32] == QLatin1String("1") || parts[32] == QLatin1String("0"))) {
+        m_peakHold = (parts[32] == QLatin1String("1"));
+    }
+    if (parts.size() >= 34) {
+        bool okI = true;
+        const int ms = parts[33].toInt(&okI);
+        if (okI) { setIgnoreHistoryMs(ms); }
+    }
+    if (parts.size() >= 35) {
+        bool okP = true;
+        const double watts = parts[34].toDouble(&okP);
+        if (okP) { setPowerLimit(watts); }
+    }
+    if (parts.size() >= 36) {
+        bool okS = true;
+        const float sw = parts[35].toFloat(&okS);
+        if (okS) { setStrokeWidth(sw); }
+    }
+
     return true;
 }
 
@@ -1027,6 +1628,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect rect = pixelRect(widgetW, widgetH);
     const double range = m_maxVal - m_minVal;
+    // The inks, resolved once per paint rather than per tick.
+    const QColor titleInk = ItemColourLook::effective("Scale.titleColour", m_titleColour, this);
+    const QColor lowInk = ItemColourLook::effective("Scale.lowColour", m_lowColour, this);
+    const QColor highInk = ItemColourLook::effective("Scale.highColour", m_highColour, this);
+    const QColor labelInk = ItemColourLook::effective("Scale.labelColor", m_labelColor, this);
+    const QColor tickInk = ItemColourLook::effective("Scale.tickColor", m_tickColor, this);
 
     // Phase B2 — ShowType centered title.
     // From Thetis MeterManager.cs:31879-31886. Thetis draws the title
@@ -1042,7 +1649,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             titleFont.setPixelSize(WorkspacePreview::readableTextPixelSize(titleHeight));
             titleFont.setBold(true);
             p.setFont(titleFont);
-            p.setPen(m_titleColour);
+            p.setPen(titleInk);
             const QRect titleRect(rect.left(),
                                   rect.top(),
                                   rect.width(),
@@ -1087,10 +1694,10 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
         const float fLineBaseY = ry + (rh * 0.85f);
 
         // Baseline horizontal line, split at end of low segment.
-        p.setPen(QPen(m_lowColour, 2));
+        p.setPen(QPen(lowInk, 2));
         p.drawLine(QPointF(rx, fLineBaseY),
                    QPointF(rx + lowSpan, fLineBaseY));
-        p.setPen(QPen(m_highColour, 2));
+        p.setPen(QPen(highInk, 2));
         p.drawLine(QPointF(rx + lowSpan, fLineBaseY),
                    QPointF(rx + rw * 0.99f, fLineBaseY));
 
@@ -1136,13 +1743,13 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // (Thetis line 32373).
             const float shortX = rx + (static_cast<float>(i) * lowSpacing)
                                     - (lowSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, m_lowColour);
+            drawTick(shortX, /*isMajor*/ false, lowInk);
 
             const float longX = rx + (static_cast<float>(i) * lowSpacing);
-            drawTick(longX, /*isMajor*/ true, m_lowColour);
+            drawTick(longX, /*isMajor*/ true, lowInk);
 
             const int val = m_lowStartNumber + i * m_lowIncrement;
-            drawLabel(longX, QString::number(val), m_labelColor,
+            drawLabel(longX, QString::number(val), labelInk,
                       /*rightAligned*/ false);
         }
 
@@ -1151,16 +1758,16 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const float shortX = rx + lowSpan
                                + (static_cast<float>(i) * highSpacing)
                                - (highSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, m_highColour);
+            drawTick(shortX, /*isMajor*/ false, highInk);
 
             const float longX = rx + lowSpan
                               + (static_cast<float>(i) * highSpacing);
-            drawTick(longX, /*isMajor*/ true, m_highColour);
+            drawTick(longX, /*isMajor*/ true, highInk);
 
             const int val = (m_highEndNumber - (m_highLongTicks * m_highIncrement))
                           + i * m_highIncrement;
             const bool isLast = (i == m_highLongTicks);
-            drawLabel(longX, QString::number(val), m_labelColor,
+            drawLabel(longX, QString::number(val), labelInk,
                       /*rightAligned*/ isLast);
         }
 
@@ -1186,12 +1793,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const double frac = static_cast<double>(i) / (m_majorTicks - 1);
             const int x = rect.left() + static_cast<int>(frac * rect.width());
 
-            p.setPen(m_tickColor);
+            p.setPen(tickInk);
             p.drawLine(x, rect.top(), x, rect.top() + rect.height() / 3);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(m_labelColor);
+            p.setPen(labelInk);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             int labelX = x - labelW / 2;
@@ -1216,7 +1823,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int mx = rect.left() + static_cast<int>(minorFrac * rect.width());
-                    p.setPen(m_tickColor);
+                    p.setPen(tickInk);
                     p.drawLine(mx, rect.top(), mx, rect.top() + rect.height() / 6);
                 }
             }
@@ -1228,12 +1835,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // Top = maxVal, bottom = minVal for vertical orientation
             const int y = rect.top() + static_cast<int>((1.0 - frac) * rect.height());
 
-            p.setPen(m_tickColor);
+            p.setPen(tickInk);
             p.drawLine(rect.right(), y, rect.right() - rect.width() / 3, y);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(m_labelColor);
+            p.setPen(labelInk);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             const int labelX = rect.right() - rect.width() / 3 - labelW - 2;
@@ -1245,7 +1852,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int my = rect.top() + static_cast<int>((1.0 - minorFrac) * rect.height());
-                    p.setPen(m_tickColor);
+                    p.setPen(tickInk);
                     p.drawLine(rect.right(), my, rect.right() - rect.width() / 6, my);
                 }
             }
@@ -1342,13 +1949,84 @@ bool ScaleItem::deserialize(const QString& data)
     return true;
 }
 
+void ScaleItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const ScaleItemThetisDefaults& d = kScaleThetisDefaults;
+    m_lowColour   = QColor::fromRgb(d.lowColour);
+    m_highColour  = QColor::fromRgb(d.highColour);
+    m_titleColour = QColor::fromRgb(d.titleColour);
+    m_fontSize    = d.fontSize;
+}
+
 // ---------------------------------------------------------------------------
 // TextItem
 // Format: TEXT|x|y|w|h|bindingId|zOrder|label|textColor|fontSize|bold(0/1)|suffix|decimals
+//         [|fontFamily|italic(0/1)|centred(0/1)]
 // ---------------------------------------------------------------------------
+
+// Thetis ReadingUnits for the readings a NereusSDR binding carries.
+// From Thetis MeterManager.cs:2322-2373 [v2.10.3.15] (ReadingUnits)
+QString TextItem::readingUnits(int bindingId)
+{
+    switch (bindingId) {
+        case MeterBinding::SignalPeak:     return QStringLiteral("dBm");   // SIGNAL_STRENGTH
+        case MeterBinding::SignalAvg:      return QStringLiteral("dBm");   // AVG_SIGNAL_STRENGTH
+        case MeterBinding::AdcPeak:        return QStringLiteral("dBFS");  // ADC_PK
+        case MeterBinding::AdcAvg:         return QStringLiteral("dBFS");  // ADC_AV
+        case MeterBinding::AgcGain:        return QStringLiteral("dB");    // AGC_GAIN
+        case MeterBinding::AgcPeak:        return QStringLiteral("dB");    // AGC_PK
+        case MeterBinding::AgcAvg:         return QStringLiteral("dB");    // AGC_AV
+        case MeterBinding::SignalMaxBin:   return QStringLiteral("dBm");   // SIGNAL_MAX_BIN
+        case MeterBinding::PbSnr:          return QStringLiteral("dB");    // ESTIMATED_PBSNR
+        case MeterBinding::TxPower:        return QStringLiteral("W");     // PWR
+        case MeterBinding::TxReversePower: return QStringLiteral("W");     // REVERSE_PWR
+        case MeterBinding::TxSwr:          return QStringLiteral(":1");    // SWR
+        case MeterBinding::TxMic:          return QStringLiteral("dB");    // MIC
+        case MeterBinding::TxComp:         return QStringLiteral("dB");    // COMP
+        case MeterBinding::TxAlc:          return QStringLiteral("dB");    // ALC
+        case MeterBinding::TxEq:           return QStringLiteral("dB");    // EQ
+        case MeterBinding::TxLeveler:      return QStringLiteral("dB");    // LEVELER
+        case MeterBinding::TxLevelerGain:  return QStringLiteral("dB");    // LVL_G
+        case MeterBinding::TxAlcGain:      return QStringLiteral("dB");    // ALC_G
+        case MeterBinding::TxAlcGroup:     return QStringLiteral("dB");    // ALC_GROUP
+        case MeterBinding::TxCfc:          return QStringLiteral("dB");    // CFC_AV
+        case MeterBinding::TxCfcGain:      return QStringLiteral("dB");    // CFC_G
+        case MeterBinding::TxMicPeak:      return QStringLiteral("dB");    // MIC_PK
+        case MeterBinding::TxAlcPeak:      return QStringLiteral("dB");    // ALC_PK
+        case MeterBinding::TxCompPeak:     return QStringLiteral("dB");    // COMP_PK
+        case MeterBinding::TxEqPeak:       return QStringLiteral("dB");    // EQ_PK
+        case MeterBinding::TxLevelerPeak:  return QStringLiteral("dB");    // LEVELER_PK
+        case MeterBinding::TxCfcPeak:      return QStringLiteral("dB");    // CFC_PK
+        case MeterBinding::HwVolts:        return QStringLiteral("V");     // VOLTS
+        case MeterBinding::HwAmps:         return QStringLiteral("A");     // AMPS
+        case MeterBinding::RotatorAz:      return QStringLiteral("\u00B0"); // AZ
+        case MeterBinding::RotatorEle:     return QStringLiteral("\u00B0"); // ELE
+    }
+    // NereusSDR: Thetis returns the Reading enum's name for a reading with
+    // no unit; a binding with no Thetis reading (temperature) shows none.
+    return QString();
+}
 
 QString TextItem::displayText() const
 {
+    // Thetis clsText tokens: %value% and %valueWithType% replace the text
+    // with the reading (updateReadingText, Text), %group% with the display
+    // group's name (renderText).
+    // From Thetis MeterManager.cs:22273-22290, 22305-22318 [v2.10.3.15]
+    if (m_label == valueToken() || m_label == valueWithTypeToken()) {
+        const QString units = m_label == valueWithTypeToken() ? readingUnits(m_bindingId) : QString();
+        // NereusSDR (R-R3-13): no reading shows "--".
+        if (isNoReading(m_value)) {
+            return QStringLiteral("--") + units;
+        }
+        return QString::number(m_value, 'f', 1) + units;
+    }
+    // From Thetis MeterManager.cs:37370-37381 [v2.10.3.15] (renderText)
+    if (m_label.toLower() == groupToken()) {
+        return m_displayGroupText;
+    }
+
     QString text;
     if (isNoReading(m_value)) {
         // NereusSDR (R-R3-13): no reading shows "--" with the unit the
@@ -1372,7 +2050,8 @@ QString TextItem::displayText() const
         if (m_suffix == QStringLiteral(" dBm") &&
             (m_unitMode == MeterUnit::S || m_unitMode == MeterUnit::uV))
         {
-            text = formatValue(static_cast<float>(m_value), m_unitMode, m_showDecimal);
+            text = formatValue(static_cast<float>(m_value), m_unitMode, m_showDecimal,
+                               m_aboveS9Frequency);
         } else {
             // Honor m_showDecimal for dBm mode — matches Thetis
             // chkDisplayMeterShowDecimal [v2.10.3.13]
@@ -1397,7 +2076,11 @@ void TextItem::paint(QPainter& p, int widgetW, int widgetH)
     int dynFontSize = qMax(minimumFontSize, static_cast<int>(pixH * 0.7f));
 
     QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    if (!m_fontFamily.isEmpty()) {
+        font.setFamily(m_fontFamily);
+    }
     font.setBold(m_bold);
+    font.setItalic(m_italic);
 
     const QString text = displayText();
 
@@ -1413,20 +2096,30 @@ void TextItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     p.setFont(font);
-    p.setPen(m_textColor);
-    p.drawText(rect, Qt::AlignCenter, text);
+    p.setPen(ItemColourLook::effective("Text.textColor", m_textColor, this));
+    // From Thetis MeterManager.cs:37383-37384 [v2.10.3.15] (renderText):
+    // centred about the item's middle, else from its top left.
+    const Qt::Alignment align = m_centred ? Qt::Alignment(Qt::AlignCenter)
+                                          : (Qt::AlignLeft | Qt::AlignTop);
+    p.drawText(rect, align, text);
 }
 
 QString TextItem::serialize() const
 {
-    return QStringLiteral("TEXT|%1|%2|%3|%4|%5|%6|%7")
-        .arg(baseFields(*this))
-        .arg(m_label)
-        .arg(m_textColor.name(QColor::HexArgb))
-        .arg(m_fontSize)
-        .arg(m_bold ? 1 : 0)
-        .arg(m_suffix)
-        .arg(m_decimals);
+    // Built in steps: QString::arg would substitute %1-style markers that a
+    // label or suffix contains.
+    QString out = QStringLiteral("TEXT|") + baseFields(*this);
+    out += QLatin1Char('|') + m_label;
+    out += QLatin1Char('|') + m_textColor.name(QColor::HexArgb);
+    out += QLatin1Char('|') + QString::number(m_fontSize);
+    out += QLatin1Char('|') + QString::number(m_bold ? 1 : 0);
+    out += QLatin1Char('|') + m_suffix;
+    out += QLatin1Char('|') + QString::number(m_decimals);
+    // Appended tail: fontFamily | italic | centred
+    out += QLatin1Char('|') + m_fontFamily;
+    out += QLatin1Char('|') + QString::number(m_italic ? 1 : 0);
+    out += QLatin1Char('|') + QString::number(m_centred ? 1 : 0);
+    return out;
 }
 
 bool TextItem::deserialize(const QString& data)
@@ -1449,7 +2142,25 @@ bool TextItem::deserialize(const QString& data)
     m_suffix    = parts[11];
     m_decimals  = parts[12].toInt(&ok); if (!ok) { return false; }
 
+    // Appended tail; records without it keep the application font, upright
+    // and centred, as they were drawn before.
+    m_fontFamily = parts.size() >= 14 ? parts[13] : QString();
+    m_italic     = parts.size() >= 15 && parts[14] == QLatin1String("1");
+    m_centred    = parts.size() < 16 || parts[15] != QLatin1String("0");
+
     return true;
+}
+
+void TextItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const TextItemThetisDefaults& d = kTextThetisDefaults;
+    m_fontFamily = QString::fromLatin1(d.fontFamily);
+    m_bold       = d.bold;
+    m_italic     = d.italic;
+    m_textColor  = QColor::fromRgb(d.colour);
+    m_centred    = d.centred;
+    m_fontSize   = d.fontSize;
 }
 
 // ---------------------------------------------------------------------------
@@ -1460,6 +2171,201 @@ bool TextItem::deserialize(const QString& data)
 NeedleItem::NeedleItem(QObject* parent)
     : MeterItem(parent)
 {
+}
+
+void NeedleItem::setHistoryDuration(int ms)
+{
+    m_historyDuration = std::clamp(ms, kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+}
+
+void NeedleItem::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+// The reading interval the history is counted in: the item's update
+// interval, or Thetis's 100 ms default for an item that takes every poll.
+int NeedleItem::historyIntervalMs() const
+{
+    return updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+}
+
+void NeedleItem::clearHistory()
+{
+    // From Thetis MeterManager.cs:22131-22139 [v2.10.3.15] (ClearHistory)
+    m_history.clear();
+    m_ignoringNext = m_ignoreHistoryMs / historyIntervalMs();  // ignore next N readings to make up 2 second of ignore
+}
+
+// From Thetis MeterManager.cs:22109-22130 [v2.10.3.15] (MinHistory, MaxHistory)
+float NeedleItem::minHistory() const
+{
+    if (m_history.isEmpty()) { return m_smoothedDbm; }
+    return *std::min_element(m_history.cbegin(), m_history.cend());
+}
+
+float NeedleItem::maxHistory() const
+{
+    if (m_history.isEmpty()) { return m_smoothedDbm; }
+    return *std::max_element(m_history.cbegin(), m_history.cend());
+}
+
+float NeedleItem::peakValue() const
+{
+    // Thetis draws the peak hold needle at MaxHistory
+    // (MeterManager.cs:40800-40801 [v2.10.3.15]); a saved needle without
+    // the setting keeps the AetherSDR decaying peak.
+    return m_peakHold.has_value() ? maxHistory() : m_peakDbm;
+}
+
+void NeedleItem::setMaxPower(float p)
+{
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(static_cast<double>(p) >= kMinBarPowerLimitW)) {
+        m_maxPower = static_cast<float>(kDefaultBarPowerLimitW);
+        return;
+    }
+    m_maxPower = static_cast<float>(std::min(static_cast<double>(p), kMaxBarPowerLimitW));
+}
+
+// From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+float NeedleItem::scaleValue(float value) const
+{
+    if (m_bindingId == MeterBinding::SignalPeak || m_bindingId == MeterBinding::SignalAvg) {
+        return static_cast<float>(aboveS9Adjusted(m_bindingId, value, m_aboveS9Frequency));
+    }
+    if (m_normaliseTo100W && m_maxPower > 0.0f) {
+        return value * (100.0f / m_maxPower);
+    }
+    return value;
+}
+
+// A calibrated power face reads value * 100 / limit, so the needle travels
+// over limit / 100 times the calibration keys before it pins.
+float NeedleItem::rawCalibrationMin() const
+{
+    if (m_scaleCalibration.isEmpty()) { return kS0Dbm; }
+    return rawFromScale(m_scaleCalibration.firstKey());
+}
+
+float NeedleItem::rawCalibrationMax() const
+{
+    if (m_scaleCalibration.isEmpty()) { return kMaxDbm; }
+    return rawFromScale(m_scaleCalibration.lastKey());
+}
+
+// The inverse of the power limit step in scaleValue(). The S9 rule moves a
+// signal reading, not the needle's range, so a signal face is unchanged.
+float NeedleItem::rawFromScale(float key) const
+{
+    const bool signal = m_bindingId == MeterBinding::SignalPeak
+                     || m_bindingId == MeterBinding::SignalAvg;
+    if (!signal && m_normaliseTo100W && m_maxPower > 0.0f) {
+        return key * (m_maxPower / 100.0f);
+    }
+    return key;
+}
+
+void NeedleItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const NeedleItemThetisDefaults& d = kNeedleThetisDefaults;
+    m_shadow          = d.shadow;
+    m_peakHold        = d.peakHold;
+    m_peakHoldColour  = QColor::fromRgb(d.peakHoldColour);
+    m_historyEnabled  = d.showHistory;
+    m_historyDuration = d.historyDurationMs;
+    m_ignoreHistoryMs = d.ignoreHistoryMs;
+    m_needleColor     = QColor::fromRgb(d.colour);
+    m_strokeWidth     = d.strokeWidth;
+    m_attackRatio     = d.attackRatio;
+    m_decayRatio      = d.decayRatio;
+    m_historyColor    = QColor::fromRgba(d.historyColour);
+}
+
+NeedleItem::NeedleGeometry NeedleItem::needleGeometry(int widgetW, int widgetH) const
+{
+    const QRect rect = meterRect(widgetW, widgetH);
+    NeedleGeometry g;
+    g.calibrated = !m_scaleCalibration.isEmpty();
+    g.left = static_cast<float>(rect.left());
+    g.top  = static_cast<float>(rect.top());
+    g.pw   = static_cast<float>(rect.width());
+    g.ph   = static_cast<float>(rect.height());
+    if (g.calibrated) {
+        // Pivot = m_needleOffset * rect (normalized to pixels).
+        g.pivotX = g.left + g.pw * static_cast<float>(m_needleOffset.x());
+        g.pivotY = g.top  + g.ph * static_cast<float>(m_needleOffset.y());
+    } else {
+        // From AetherSDR: cx = width*0.5, radius = width*0.85
+        // cy = height + radius - height*0.65
+        g.arcCx = g.left + g.pw * 0.5f;
+        g.arcRadius = g.pw * kRadiusRatio;
+        g.arcCy = g.top + g.ph + g.arcRadius - g.ph * kCenterYRatio;
+        // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
+        g.pivotX = g.arcCx;
+        g.pivotY = g.top + g.ph + 6.0f;
+    }
+    return g;
+}
+
+QPointF NeedleItem::tipFor(const NeedleGeometry& g, float value) const
+{
+    if (g.calibrated) {
+        // Tip: calibrated normalized position for the value, then apply
+        // per-axis radius ratio and length factor as an offset from the
+        // pivot. A signal-strength face moves 20 dB at or above the S9
+        // frequency; a power face reads against its power limit.
+        // From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+        const QPointF tipNorm = calibratedPosition(scaleValue(value));
+        const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
+                        * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
+        const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
+                        * static_cast<float>(m_radiusRatio.y()) * m_lengthFactor;
+        return QPointF(g.pivotX + g.pw * dxN, g.pivotY + g.ph * dyN);
+    }
+    const float frac = arcFraction(value);
+    const float angleRad = qDegreesToRadians(kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg));
+    // From AetherSDR: needle tip at radius + 14
+    const float tipDist = g.arcRadius + 14.0f;
+    return QPointF(g.arcCx + tipDist * std::cos(angleRad),
+                   g.arcCy - tipDist * std::sin(angleRad));
+}
+
+// The filled history arc: from the pivot out to the MinHistory tip, along
+// the tips to the MaxHistory tip, and back. Thetis sweeps an elliptical arc
+// at needle length; NereusSDR follows the needle's own tips, so the arc
+// matches a calibrated face's path.
+// From Thetis MeterManager.cs:40785-40851 [v2.10.3.15] (renderNeedle)
+QVector<QPointF> NeedleItem::historyOutline(const NeedleGeometry& g) const
+{
+    QVector<QPointF> pts;
+    if (!m_historyEnabled || m_history.isEmpty() || m_historyColor.alpha() == 0) {
+        return pts;
+    }
+    constexpr int kSteps = 24;
+    const float lo = minHistory();
+    const float hi = maxHistory();
+    pts.reserve(kSteps + 2);
+    pts.append(QPointF(g.pivotX, g.pivotY));
+    for (int i = 0; i <= kSteps; ++i) {
+        const float v = lo + (hi - lo) * static_cast<float>(i) / static_cast<float>(kSteps);
+        pts.append(tipFor(g, v));
+    }
+    return pts;
+}
+
+QPointF NeedleItem::needleTipAt(float value, int widgetW, int widgetH) const
+{
+    return tipFor(needleGeometry(widgetW, widgetH), value);
+}
+
+QPointF NeedleItem::needlePivot(int widgetW, int widgetH) const
+{
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    return QPointF(g.pivotX, g.pivotY);
 }
 
 // From AetherSDR sizeHint 280x140: lock to 2:1 aspect ratio.
@@ -1489,18 +2395,26 @@ void NeedleItem::setValue(double v)
     // minimum (S0, or the first calibration point for a calibrated face)
     // and the peak marker clears; the readouts show "--".
     if (isNoReading(v)) {
-        m_smoothedDbm = m_scaleCalibration.isEmpty()
-            ? kS0Dbm : m_scaleCalibration.firstKey();
+        m_smoothedDbm = rawCalibrationMin();
         m_peakDbm = m_smoothedDbm;
         m_peakHoldCounter = 0;
         m_peakResetCounter = 0;
+        m_history.clear();
         return;
     }
 
     const float val = static_cast<float>(v);
 
-    // Exponential smoothing (from AetherSDR SMOOTH_ALPHA = 0.3)
-    m_smoothedDbm += kSmoothAlpha * (val - m_smoothedDbm);
+    // Exponential smoothing with the needle's saved attack and decay
+    // ratios; a needle saved without them keeps 0.3 both ways (AetherSDR
+    // SMOOTH_ALPHA, kSmoothAlpha).
+    // From Thetis MeterManager.cs:22012-22015 [v2.10.3.15] (clsNeedleItem.Update):
+    //   if (reading > Value)
+    //      Value = (reading * AttackRatio) + (Value * (1f - AttackRatio));
+    //   else
+    //       Value = (reading * DecayRatio) + (Value * (1f - DecayRatio));
+    const float ratio = val > m_smoothedDbm ? m_attackRatio : m_decayRatio;
+    m_smoothedDbm = (val * ratio) + (m_smoothedDbm * (1.0f - ratio));
 
     // Clamp to the appropriate value range. Calibrated needles
     // (ANANMM Volts/Amps/Power/SWR/Compression/ALC) use the
@@ -1511,13 +2425,8 @@ void NeedleItem::setValue(double v)
     // returns the first calibration point — the symptom was every
     // calibrated needle drawing as a near-horizontal line at the
     // offset row.
-    if (m_scaleCalibration.isEmpty()) {
-        m_smoothedDbm = std::clamp(m_smoothedDbm, kS0Dbm, kMaxDbm);
-    } else {
-        const float minKey = m_scaleCalibration.firstKey();
-        const float maxKey = m_scaleCalibration.lastKey();
-        m_smoothedDbm = std::clamp(m_smoothedDbm, minKey, maxKey);
-    }
+    // A power face reads against its power limit, so its range scales too.
+    m_smoothedDbm = std::clamp(m_smoothedDbm, rawCalibrationMin(), rawCalibrationMax());
 
     // Peak tracking (from AetherSDR Medium preset: 500ms hold, 10 dB/sec decay)
     if (m_smoothedDbm > m_peakDbm) {
@@ -1538,6 +2447,20 @@ void NeedleItem::setValue(double v)
         m_peakDbm = m_smoothedDbm;
         m_peakResetCounter = 0;
     }
+
+    // From Thetis MeterManager.cs:22018-22029 [v2.10.3.15]
+    if (m_ignoringNext <= 0) {
+        // signal history
+        m_history.append(m_smoothedDbm); // adds to end of the list
+        // A duration under the interval keeps one reading.
+        // From Thetis MeterManager.cs:22106 [v2.10.3.15]
+        const int keep = std::max(1, m_historyDuration / historyIntervalMs());
+        const int numberToRemove = static_cast<int>(m_history.size()) - keep;
+        // the list is sized based on delay
+        if (numberToRemove > 0) { m_history.remove(0, numberToRemove); } // remove the oldest, the head of the list
+    } else {
+        --m_ignoringNext;
+    }
 }
 
 // From AetherSDR SMeterWidget.cpp dbmToFraction()
@@ -1549,6 +2472,15 @@ float NeedleItem::dbmToFraction(float dbm) const
         return 0.6f * (clamped - kS0Dbm) / (kS9Dbm - kS0Dbm);
     }
     return 0.6f + 0.4f * (clamped - kS9Dbm) / (kMaxDbm - kS9Dbm);
+}
+
+// The built-in arc is an S-unit scale with S9 at kS9Dbm; at or above the S9
+// frequency a reading moves 20 dB up it so -93 dBm sits on S9, as the S-unit
+// text does (sUnitsText). The tick labels stay where they are.
+// From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc)
+float NeedleItem::arcFraction(float dbm) const
+{
+    return dbmToFraction(dbm + kS9Dbm - s9Dbm(m_aboveS9Frequency));
 }
 
 // Interpolate needle position from scale calibration map.
@@ -1596,6 +2528,10 @@ QPointF NeedleItem::calibratedPosition(float value) const
 // From AetherSDR SMeterWidget.cpp sUnitsText()
 QString NeedleItem::sUnitsText(float dbm) const
 {
+    // The scale below keeps S9 at kS9Dbm; at or above the S9 frequency the
+    // reading moves 20 dB up it so -93 dBm reads S9.
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+    dbm += kS9Dbm - s9Dbm(m_aboveS9Frequency);
     if (dbm <= kS0Dbm) {
         return QStringLiteral("S0");
     }
@@ -1628,7 +2564,8 @@ QString NeedleItem::valueReadout() const
     }
     // S / uV: noReadingText() with no reading, formatValue() otherwise.
     return isNoReading(m_value) ? noReadingText(m_unitMode)
-                                : formatValue(m_smoothedDbm, m_unitMode, m_showDecimal);
+                                : formatValue(m_smoothedDbm, m_unitMode, m_showDecimal,
+                                              m_aboveS9Frequency);
 }
 
 void NeedleItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer layer)
@@ -1652,32 +2589,52 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     paintBackground(p, widgetW, widgetH);
     paintOverlayStatic(p, widgetW, widgetH);
 
-    // CPU needle: draw as a simple line (no vertex geometry available)
-    const QRect rect = meterRect(widgetW, widgetH);
-    const float pw = static_cast<float>(rect.width());
-    const float ph = static_cast<float>(rect.height());
-    const float cx = rect.left() + pw * 0.5f;
-    const float radius = pw * kRadiusRatio;
-    const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
-    const float pivotY = rect.top() + ph + 6.0f;
+    // CPU needle: the same history arc, peak marker, shadow and needle as
+    // emitVertices(), drawn with QPainter.
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    const QPointF pivot(g.pivotX, g.pivotY);
+    const QPointF tip = tipFor(g, m_smoothedDbm);
 
-    const float frac = dbmToFraction(m_smoothedDbm);
-    const float angleRad = qDegreesToRadians(kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg));
-    const float tipDist = radius + 14.0f;
-    const float tipX = cx + tipDist * std::cos(angleRad);
-    const float tipY = cy - tipDist * std::sin(angleRad);
+    // History arc. From Thetis MeterManager.cs:40832-40851 [v2.10.3.15]
+    const QVector<QPointF> history = historyOutline(g);
+    if (history.size() >= 3) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(ItemColourLook::effective("Needle.historyColor", m_historyColor, this));
+        p.drawPolygon(history.constData(), static_cast<int>(history.size()));
+        p.setBrush(Qt::NoBrush);
+    }
 
-    // Shadow
-    QPen shadowPen(QColor(0, 0, 0, 80));
-    shadowPen.setWidthF(3.0f);
-    p.setPen(shadowPen);
-    p.drawLine(QPointF(cx + 1.0f, pivotY + 1.0f), QPointF(tipX + 1.0f, tipY + 1.0f));
+    // Peak hold needle on a calibrated face, under the live needle.
+    // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
+    if (g.calibrated && peakHold()) {
+        QPen peakPen(ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
+        peakPen.setWidthF(static_cast<double>(m_strokeWidth));
+        p.setPen(peakPen);
+        p.drawLine(pivot, tipFor(g, peakValue()));
+    }
+
+    // Shadow. From Thetis MeterManager.cs:40912-40913 [v2.10.3.15] (if (ni.Shadow))
+    if (m_shadow) {
+        QPen shadowPen(QColor(0, 0, 0, 80));
+        shadowPen.setWidthF(3.0f);
+        p.setPen(shadowPen);
+        p.drawLine(pivot + QPointF(1.0, 1.0), tip + QPointF(1.0, 1.0));
+    }
 
     // Needle
-    QPen needlePen(Qt::white);
-    needlePen.setWidthF(2.0f);
+    QPen needlePen(ItemColourLook::effective("Needle.needleColor", m_needleColor, this));
+    needlePen.setWidthF(static_cast<double>(m_strokeWidth));
     p.setPen(needlePen);
-    p.drawLine(QPointF(cx, pivotY), QPointF(tipX, tipY));
+    p.drawLine(pivot, tip);
+
+    // Peak marker triangle on the S-meter arc.
+    if (!g.calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
+        const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
+        p.setPen(Qt::NoPen);
+        p.setBrush(ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
+        p.drawPolygon(marker.constData(), static_cast<int>(marker.size()));
+        p.setBrush(Qt::NoBrush);
+    }
 
     paintOverlayDynamic(p, widgetW, widgetH);
     p.restore();
@@ -1756,49 +2713,13 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
 // it isn't meaningful on a TX power/SWR gauge.
 void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 {
-    const QRect rect = meterRect(widgetW, widgetH);
-    const float pw = static_cast<float>(rect.width());
-    const float ph = static_cast<float>(rect.height());
-
-    const bool calibrated = !m_scaleCalibration.isEmpty();
-
-    float pivotX = 0.0f, pivotY = 0.0f, tipX = 0.0f, tipY = 0.0f;
-    // Arc-mode intermediates reused by the peak marker block below.
-    float arcCx = 0.0f, arcCy = 0.0f, arcRadius = 0.0f;
-
-    if (calibrated) {
-        // Pivot = m_needleOffset * rect (normalized to pixels).
-        pivotX = rect.left() + pw * static_cast<float>(m_needleOffset.x());
-        pivotY = rect.top()  + ph * static_cast<float>(m_needleOffset.y());
-
-        // Tip: calibrated normalized position for the current value,
-        // then apply per-axis radius ratio and length factor as an
-        // offset from the pivot.
-        const QPointF tipNorm = calibratedPosition(static_cast<float>(m_smoothedDbm));
-        const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
-                        * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
-        const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
-                        * static_cast<float>(m_radiusRatio.y()) * m_lengthFactor;
-        tipX = pivotX + pw * dxN;
-        tipY = pivotY + ph * dyN;
-    } else {
-        arcCx = rect.left() + pw * 0.5f;
-        arcRadius = pw * kRadiusRatio;
-        arcCy = rect.top() + ph + arcRadius - ph * kCenterYRatio;
-
-        // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
-        pivotX = arcCx;
-        pivotY = rect.top() + ph + 6.0f;
-
-        const float frac = dbmToFraction(m_smoothedDbm);
-        const float angleDeg = kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg);
-        const float angleRad = qDegreesToRadians(angleDeg);
-
-        // From AetherSDR: needle tip at radius + 14
-        const float tipDist = arcRadius + 14.0f;
-        tipX = arcCx + tipDist * std::cos(angleRad);
-        tipY = arcCy - tipDist * std::sin(angleRad);
-    }
+    const NeedleGeometry g = needleGeometry(widgetW, widgetH);
+    const bool calibrated = g.calibrated;
+    const float pivotX = g.pivotX;
+    const float pivotY = g.pivotY;
+    const QPointF tip = tipFor(g, m_smoothedDbm);
+    const float tipX = static_cast<float>(tip.x());
+    const float tipY = static_cast<float>(tip.y());
 
     // Perpendicular direction for needle width
     const float dx = tipX - pivotX;
@@ -1811,39 +2732,81 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 
     // From AetherSDR: shadow pen width 3 (halfWidth 1.5), needle pen width 2 (halfWidth 1.0)
     // Uniform width along entire length — NOT tapered (matches QPainter drawLine)
+    // The needle's pen is its saved stroke width (Thetis fStrokeWidth =
+    // ni.StrokeWidth * fScale, MeterManager.cs:40883 [v2.10.3.15]); a
+    // needle saved without one keeps AetherSDR's 2 px.
     const float shadowHW = 1.5f;
-    const float needleHW = 1.0f;
+    const float needleHW = m_strokeWidth / 2.0f;
 
     // Pixel to NDC conversion lambdas
     const float invW = 2.0f / static_cast<float>(widgetW);
     const float invH = 2.0f / static_cast<float>(widgetH);
     auto ndcX = [invW](float px) { return px * invW - 1.0f; };
     auto ndcY = [invH](float py) { return 1.0f - py * invH; };
+    auto emitVertex = [&](const QPointF& pt, const QColor& c) {
+        verts << ndcX(static_cast<float>(pt.x())) << ndcY(static_cast<float>(pt.y()))
+              << static_cast<float>(c.redF()) << static_cast<float>(c.greenF())
+              << static_cast<float>(c.blueF()) << static_cast<float>(c.alphaF());
+    };
+    // A line from a to b, halfWidth either side, as two triangles.
+    auto emitLine = [&](const QPointF& a, const QPointF& b, float halfWidth, const QColor& c) {
+        const float lx = static_cast<float>(b.x() - a.x());
+        const float ly = static_cast<float>(b.y() - a.y());
+        const float l = std::sqrt(lx * lx + ly * ly);
+        if (l < 1.0f) { return; }
+        const QPointF n(-ly / l * halfWidth, lx / l * halfWidth);
+        emitVertex(a + n, c);
+        emitVertex(a - n, c);
+        emitVertex(b + n, c);
+        emitVertex(b + n, c);
+        emitVertex(a - n, c);
+        emitVertex(b - n, c);
+    };
+
+    // --- History arc (a fan from the pivot) ---
+    // From Thetis MeterManager.cs:40832-40851 [v2.10.3.15]
+    const QVector<QPointF> history = historyOutline(g);
+    const QColor historyColour = ItemColourLook::effective("Needle.historyColor", m_historyColor, this);
+    for (int i = 1; i + 1 < history.size(); ++i) {
+        emitVertex(history[0], historyColour);
+        emitVertex(history[i], historyColour);
+        emitVertex(history[i + 1], historyColour);
+    }
+
+    // --- Peak hold needle on a calibrated face, under the live needle ---
+    // From Thetis MeterManager.cs:40885-40910 [v2.10.3.15]
+    if (calibrated && peakHold()) {
+        emitLine(QPointF(pivotX, pivotY), tipFor(g, peakValue()), needleHW, ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this));
+    }
 
     // --- Shadow quad (black, offset +1px) ---
     // From AetherSDR SMeterWidget.cpp line 429: QPen(QColor(0,0,0,80), 3), offset (+1,+1)
-    const float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 80.0f / 255.0f;
-    const float sOff = 1.0f;
-    const float sp1x = pivotX + perpX * shadowHW + sOff, sp1y = pivotY + perpY * shadowHW + sOff;
-    const float sp2x = pivotX - perpX * shadowHW + sOff, sp2y = pivotY - perpY * shadowHW + sOff;
-    const float sp3x = tipX + perpX * shadowHW + sOff,   sp3y = tipY + perpY * shadowHW + sOff;
-    const float sp4x = tipX - perpX * shadowHW + sOff,   sp4y = tipY - perpY * shadowHW + sOff;
-    // Triangle 1
-    verts << ndcX(sp1x) << ndcY(sp1y) << sr << sg << sb << sa;
-    verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
-    verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
-    // Triangle 2
-    verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
-    verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
-    verts << ndcX(sp4x) << ndcY(sp4y) << sr << sg << sb << sa;
+    // From Thetis MeterManager.cs:40912-40913 [v2.10.3.15] (if (ni.Shadow))
+    if (m_shadow) {
+        const float sr = 0.0f, sg = 0.0f, sb = 0.0f, sa = 80.0f / 255.0f;
+        const float sOff = 1.0f;
+        const float sp1x = pivotX + perpX * shadowHW + sOff, sp1y = pivotY + perpY * shadowHW + sOff;
+        const float sp2x = pivotX - perpX * shadowHW + sOff, sp2y = pivotY - perpY * shadowHW + sOff;
+        const float sp3x = tipX + perpX * shadowHW + sOff,   sp3y = tipY + perpY * shadowHW + sOff;
+        const float sp4x = tipX - perpX * shadowHW + sOff,   sp4y = tipY - perpY * shadowHW + sOff;
+        // Triangle 1
+        verts << ndcX(sp1x) << ndcY(sp1y) << sr << sg << sb << sa;
+        verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
+        verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
+        // Triangle 2
+        verts << ndcX(sp3x) << ndcY(sp3y) << sr << sg << sb << sa;
+        verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
+        verts << ndcX(sp4x) << ndcY(sp4y) << sr << sg << sb << sa;
+    }
 
     // --- Needle quad (color from m_needleColor, uniform width) ---
     // From AetherSDR SMeterWidget.cpp line 433: QPen(#ffffff, 2).
     // Phase 3G-6 block 2: honour per-needle color from the factory.
-    const float nr = static_cast<float>(m_needleColor.redF());
-    const float ng = static_cast<float>(m_needleColor.greenF());
-    const float nb = static_cast<float>(m_needleColor.blueF());
-    const float na = static_cast<float>(m_needleColor.alphaF());
+    const QColor needleColour = ItemColourLook::effective("Needle.needleColor", m_needleColor, this);
+    const float nr = static_cast<float>(needleColour.redF());
+    const float ng = static_cast<float>(needleColour.greenF());
+    const float nb = static_cast<float>(needleColour.blueF());
+    const float na = static_cast<float>(needleColour.alphaF());
     const float np1x = pivotX + perpX * needleHW, np1y = pivotY + perpY * needleHW;
     const float np2x = pivotX - perpX * needleHW, np2y = pivotY - perpY * needleHW;
     const float np3x = tipX + perpX * needleHW,   np3y = tipY + perpY * needleHW;
@@ -1857,38 +2820,47 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     verts << ndcX(np2x) << ndcY(np2y) << nr << ng << nb << na;
     verts << ndcX(np4x) << ndcY(np4y) << nr << ng << nb << na;
 
-    // --- Peak marker triangle (amber, points INWARD toward center) ---
+    // --- Peak marker triangle (points INWARD toward center) ---
     // From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind.
-    // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) has no
-    // peak marker — skip emitting the triangle entirely.
-    if (!calibrated && m_peakDbm > m_smoothedDbm + 1.0f) {
-        const float peakFrac = dbmToFraction(m_peakDbm);
-        const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
-        const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
-
-        const float mr = 1.0f, mg = 0.667f, mb = 0.0f, ma = 1.0f;  // #ffaa00
-        const float cosA = std::cos(peakAngleRad);
-        const float sinA = std::sin(peakAngleRad);
-
-        // Tip at radius-2 (inside the arc), base 6px behind toward center
-        const float markerTipR = arcRadius - 2.0f;
-        const float markerBaseR = arcRadius - 8.0f;
-        const float markerHalf = 3.0f;
-
-        // Tip (inward, on arc inner edge)
-        const float mtx = arcCx + markerTipR * cosA;
-        const float mty = arcCy - markerTipR * sinA;
-        // Base center (further inward)
-        const float mbcx = arcCx + markerBaseR * cosA;
-        const float mbcy = arcCy - markerBaseR * sinA;
-        // Perpendicular at base — from AetherSDR: perpCos = -sinA, perpSin = cosA
-        const float mpx = -sinA * markerHalf;
-        const float mpy =  cosA * markerHalf;
-
-        verts << ndcX(mtx) << ndcY(mty) << mr << mg << mb << ma;
-        verts << ndcX(mbcx + mpx) << ndcY(mbcy + mpy) << mr << mg << mb << ma;
-        verts << ndcX(mbcx - mpx) << ndcY(mbcy - mpy) << mr << mg << mb << ma;
+    // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) draws the
+    // Thetis peak hold needle above instead of the triangle.
+    // NereusSDR draws it in the peak hold colour (saved needles: #ffaa00).
+    if (!calibrated && peakHold() && peakValue() > m_smoothedDbm + 1.0f) {
+        const QVector<QPointF> marker = arcPeakMarker(g, peakValue());
+        const QColor peakColour = ItemColourLook::effective("Needle.peakHoldColour", m_peakHoldColour, this);
+        for (const QPointF& pt : marker) {
+            emitVertex(pt, peakColour);
+        }
     }
+}
+
+// The S-meter arc's peak marker: an inward-pointing triangle at the value.
+// From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind.
+QVector<QPointF> NeedleItem::arcPeakMarker(const NeedleGeometry& g, float value) const
+{
+    const float peakFrac = arcFraction(value);
+    const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
+    const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
+
+    const float cosA = std::cos(peakAngleRad);
+    const float sinA = std::sin(peakAngleRad);
+
+    // Tip at radius-2 (inside the arc), base 6px behind toward center
+    const float markerTipR = g.arcRadius - 2.0f;
+    const float markerBaseR = g.arcRadius - 8.0f;
+    const float markerHalf = 3.0f;
+
+    // Tip (inward, on arc inner edge)
+    const float mtx = g.arcCx + markerTipR * cosA;
+    const float mty = g.arcCy - markerTipR * sinA;
+    // Base center (further inward)
+    const float mbcx = g.arcCx + markerBaseR * cosA;
+    const float mbcy = g.arcCy - markerBaseR * sinA;
+    // Perpendicular at base — from AetherSDR: perpCos = -sinA, perpSin = cosA
+    const float mpx = -sinA * markerHalf;
+    const float mpy =  cosA * markerHalf;
+
+    return {QPointF(mtx, mty), QPointF(mbcx + mpx, mbcy + mpy), QPointF(mbcx - mpx, mbcy - mpy)};
 }
 
 // From AetherSDR SMeterWidget.cpp paintEvent() — tick drawing section
@@ -2036,17 +3008,21 @@ void NeedleItem::paintOverlayDynamic(QPainter& p, int widgetW, int widgetH)
 //     [|calCount|v:x:y|v:x:y|...]                      -- added block 2
 //     [|needleColor|offsetX|offsetY|radX|radY|lenFactor|direction|normalise100|maxPower|attack|decay]
 //                                                      -- added block 2
+//     [|shadow|peakHold|peakHoldColour|showHistory|historyMs|historyColour|ignoreHistoryMs|strokeWidth]
+//                                                      -- container item parity
+//       (peakHold empty: unset, the saved needle's own marker)
 // Each trailing group is optional for backward compatibility: older
 // serialized state deserializes cleanly with defaults for any missing
 // tail fields.
 QString NeedleItem::serialize() const
 {
-    QString s = QStringLiteral("NEEDLE|%1|%2|%3|%4|%5")
-        .arg(baseFields(*this))
-        .arg(m_sourceLabel)
-        .arg(m_onlyWhenRx ? 1 : 0)
-        .arg(m_onlyWhenTx ? 1 : 0)
-        .arg(m_displayGroup);
+    // Joined, not chained .arg(): a source label holding "%1" must stay as
+    // written.
+    QString s = QStringList{QStringLiteral("NEEDLE"), baseFields(*this), m_sourceLabel,
+                            QString::number(m_onlyWhenRx ? 1 : 0),
+                            QString::number(m_onlyWhenTx ? 1 : 0),
+                            QString::number(m_displayGroup)}
+                    .join(QLatin1Char('|'));
 
     // Calibration map — value:x:y triplets with a leading count.
     s += QStringLiteral("|%1").arg(m_scaleCalibration.size());
@@ -2071,6 +3047,17 @@ QString NeedleItem::serialize() const
         .arg(static_cast<double>(m_maxPower))
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio));
+
+    // Shadow, peak hold and history.
+    s += QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8")
+        .arg(m_shadow ? 1 : 0)
+        .arg(m_peakHold.has_value() ? QString::number(*m_peakHold ? 1 : 0) : QString())
+        .arg(m_peakHoldColour.name(QColor::HexArgb))
+        .arg(m_historyEnabled ? 1 : 0)
+        .arg(m_historyDuration)
+        .arg(m_historyColor.name(QColor::HexArgb))
+        .arg(m_ignoreHistoryMs)
+        .arg(static_cast<double>(m_strokeWidth));
 
     return s;
 }
@@ -2125,9 +3112,48 @@ bool NeedleItem::deserialize(const QString& data)
         m_lengthFactor    = parts[idx + 5].toFloat();
         m_direction       = static_cast<NeedleDirection>(parts[idx + 6].toInt());
         m_normaliseTo100W = (parts[idx + 7].toInt() != 0);
-        m_maxPower        = parts[idx + 8].toFloat();
-        m_attackRatio     = parts[idx + 9].toFloat();
-        m_decayRatio      = parts[idx + 10].toFloat();
+        // A saved rating keeps its value (an earlier build saved up to
+        // 10 kW); only the below-0.1 recovery applies on load.
+        const float savedPower = parts[idx + 8].toFloat();
+        if (std::isfinite(savedPower) && static_cast<double>(savedPower) >= kMinBarPowerLimitW) {
+            m_maxPower = savedPower;
+        } else {
+            setMaxPower(savedPower);
+        }
+        // A blank or unreadable ratio takes the default; others stay in 0..1.
+        const auto savedRatio = [](const QString& field) {
+            bool ok = false;
+            const float ratio = field.toFloat(&ok);
+            if (!ok || !std::isfinite(ratio)) { return kSmoothAlpha; }
+            return std::clamp(ratio, 0.0f, 1.0f);
+        };
+        m_attackRatio     = savedRatio(parts[idx + 9]);
+        m_decayRatio      = savedRatio(parts[idx + 10]);
+        idx += 11;
+    }
+
+    // Shadow, peak hold and history. A record without them keeps the
+    // saved look: shadow on, the needle's own peak marker, no history.
+    m_peakHold.reset();
+    if (parts.size() >= idx + 8) {
+        m_shadow = (parts[idx] != QLatin1String("0"));
+        if (parts[idx + 1] == QLatin1String("1") || parts[idx + 1] == QLatin1String("0")) {
+            m_peakHold = (parts[idx + 1] == QLatin1String("1"));
+        }
+        const QColor peakColour(parts[idx + 2]);
+        if (peakColour.isValid()) { m_peakHoldColour = peakColour; }
+        m_historyEnabled = (parts[idx + 3] == QLatin1String("1"));
+        bool okH = false;
+        const int historyMs = parts[idx + 4].toInt(&okH);
+        if (okH) { setHistoryDuration(historyMs); }
+        const QColor historyColour(parts[idx + 5]);
+        if (historyColour.isValid()) { m_historyColor = historyColour; }
+        bool okI = false;
+        const int ignoreMs = parts[idx + 6].toInt(&okI);
+        if (okI) { setIgnoreHistoryMs(ignoreMs); }
+        bool okS = false;
+        const float stroke = parts[idx + 7].toFloat(&okS);
+        if (okS && stroke > 0.0f) { m_strokeWidth = stroke; }
     }
 
     return true;

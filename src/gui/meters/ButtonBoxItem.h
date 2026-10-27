@@ -9,6 +9,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Screenshot fix: placeholderReason, a button that only
+//                 keeps its place in a fixed layout is drawn dimmed and
+//                 never acts; a click says why. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / TX: the fade accessors and setTransmitting
+//                 override MeterItem's, so a faded grid gets the animated
+//                 veil; clicks stay guarded. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-22 - Button faces can be painted by a subclass. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-10-03 — Consume transient interaction dirtiness by J.J. Boyd (KG4VCF),
@@ -20,6 +28,21 @@
 //                 built (the saved visibility untouched), and an unavailable
 //                 button whose click says why. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-25 - Saves and restores the grid styling (border, margin,
+//                 corner radius, height ratio, fade on RX/TX) after the
+//                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-25 - Grids of more than 32 buttons: each button's grid
+//                 position is cached, and a subclass may read the
+//                 visibility mask its own way. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The fade click guard and a shown button's rectangle are
+//                 open to a subclass (other buttons' reorder drag).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Each grid type has its column range (columnRange, the
+//                 editor clamps to it), and new grids get Thetis's 3
+//                 columns. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -67,8 +90,11 @@ mw0lge@grange-lane.co.uk
 
 #include <QColor>
 #include <QFont>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
+
+#include <utility>
 
 class QMouseEvent;
 
@@ -96,6 +122,22 @@ public:
     // Grid configuration
     void setColumns(int cols) { m_columns = cols; }
     int columns() const { return m_columns; }
+
+    // The column counts this grid type offers, {minimum, maximum}. Each grid
+    // type gives its Thetis range; the editor clamps to it. A saved grid
+    // keeps its count until it is edited.
+    virtual std::pair<int, int> columnRange() const;
+
+    // New grids get Thetis's column count (kNewGridColumns).
+    void applyNewItemDefaults() override;
+
+    // From Thetis MeterManager.cs:25390, :25462, :25563, :25628, :25664,
+    // :25700 [v2.10.3.15]: every new band, mode, filter, antenna, tune step
+    // and other buttons grid is made with bb.Columns = 3.
+    static constexpr int kNewGridColumns = 3;
+    // NereusSDR: the editor's range for a grid type that gives none.
+    static constexpr int kDefaultMinColumns = 1;
+    static constexpr int kDefaultMaxColumns = 32;
 
     void setBorderWidth(float w) { m_borderWidth = w; }
     float borderWidth() const { return m_borderWidth; }
@@ -133,14 +175,21 @@ public:
         // R-R3-21: why an unavailable button (enabled false) does nothing,
         // in plain words; shown when it is clicked.
         QString unavailableReason;
+        // A button that only keeps its place in a fixed layout (no label,
+        // nothing to do): always unavailable, drawn dimmed, and a click
+        // says this. Kept apart from `enabled`, so making the whole grid
+        // available never wakes it.
+        QString placeholderReason;
     };
 
     void setButtonCount(int count);
     ButtonState& button(int index);
     const ButtonState& button(int index) const;
 
-    // Visibility bitmask (from Thetis clsButtonBox _visible_bits)
-    void setVisibleBits(uint32_t bits);
+    // Visibility bitmask (from Thetis clsButtonBox _visible_bits) of
+    // buttons 0-31. A grid of more buttons (OtherButtonItem) keeps the
+    // visibility of the rest itself and reads the mask its own way.
+    virtual void setVisibleBits(uint32_t bits);
     uint32_t visibleBits() const { return m_visibleBits; }
 
     // R-R3-49: hide a button whose feature is not built, at layout time.
@@ -148,21 +197,29 @@ public:
     void setButtonHiddenUntilBuilt(int index, bool hidden);
     // Drawn and clickable: saved visible and not hidden until built.
     bool isButtonShown(int index) const;
+    // How many buttons are drawn. Cached with each button's grid position,
+    // so a large grid does not recount for every button it lays out.
+    int shownButtonCount() const;
 
     // R-R3-21: an unavailable button is dimmed, a click on it changes
-    // nothing and emits unavailableButtonClicked with the reason.
+    // nothing and emits unavailableButtonClicked with the reason. A
+    // placeholder (ButtonState::placeholderReason) is never available, and
+    // its reason is the placeholder's.
     void setButtonAvailable(int index, bool available, const QString& reason = QString());
     void setAllButtonsAvailable(bool available, const QString& reason = QString());
     bool isButtonAvailable(int index) const;
     QString buttonUnavailableReason(int index) const;
 
     // FadeOnRx/FadeOnTx (from Thetis clsButtonBox)
-    void setFadeOnRx(bool v) { m_fadeOnRx = v; }
-    bool fadeOnRx() const { return m_fadeOnRx; }
-    void setFadeOnTx(bool v) { m_fadeOnTx = v; }
-    bool fadeOnTx() const { return m_fadeOnTx; }
+    // The record holds the flags (MeterItem's fade reads them through these
+    // overrides), so the entry context never saves them.
+    void setFadeOnRx(bool v) override { m_fadeOnRx = v; }
+    bool fadeOnRx() const override { return m_fadeOnRx; }
+    void setFadeOnTx(bool v) override { m_fadeOnTx = v; }
+    bool fadeOnTx() const override { return m_fadeOnTx; }
+    bool hasExplicitFade() const override { return false; }
 
-    void setTransmitting(bool tx) { m_transmitting = tx; }
+    void setTransmitting(bool tx) override { MeterItem::setTransmitting(tx); m_transmitting = tx; }
 
     // Rendering
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
@@ -197,12 +254,41 @@ protected:
     // Thetis face. A subclass may draw its own face without changing hits or clicks.
     virtual void paintButton(QPainter& p, int index, const QRectF& rect);
 
+    // True while Fade on RX / TX covers the grid: a press does nothing
+    // (MeterManager.cs:9324-9325 [v2.10.3.15]).
+    bool inputFaded() const;
+    // Where button `index` is drawn on a widget of this size (its grid
+    // position among the shown buttons).
+    QRectF shownButtonRect(int index, int widgetW, int widgetH) const;
+
+    // Grid styling every button grid saves after its own fields:
+    // "|borderWidth|margin|cornerRadius|heightRatio|fadeOnRx|fadeOnTx".
+    QString serializeGridStyle() const;
+    // Reads the styling from parts[first] on. A record saved before these
+    // fields existed ends sooner; a missing or unreadable field keeps its
+    // current value.
+    void deserializeGridStyle(const QStringList& parts, int first);
+
+    // Stores the mask visibleBits() reports without touching any button
+    // (a subclass that keeps its visibility elsewhere).
+    void setVisibleBitsValue(uint32_t bits) { m_visibleBits = bits; }
+    // A subclass that changes m_buttons[i].visible or hiddenUntilBuilt
+    // directly calls this so the grid positions are worked out again.
+    void invalidateShownLayout() { m_shownDirty = true; }
+
+    // How many buttons the saved visibility shows (Thetis's checked count
+    // in the grid's options).
+    int checkedButtonCount() const;
+
     int m_buttonCount{0};
     QVector<ButtonState> m_buttons;
 
 private:
     // From Thetis clsButtonBox layout calculation
     QRectF buttonRect(int index, const QRectF& area) const;
+    // The grid position of each shown button (-1 when not shown) and the
+    // shown count, recomputed only after visibility changes.
+    void ensureShownLayout() const;
     void paintIndicator(QPainter& p, int index, const QRectF& rect);
 
     int m_columns{4};
@@ -221,6 +307,10 @@ private:
     int m_unavailablePressedIndex{-1};
     QTimer m_clickTimer;
     bool m_interactionDirty{false};
+
+    mutable QVector<int> m_shownOrdinal;
+    mutable int m_shownCount{0};
+    mutable bool m_shownDirty{true};
 };
 
 } // namespace NereusSDR

@@ -1,5 +1,45 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A new bar whose flavor name joins words (SignalMaxBin,
+//                 SignalAvg, CfcGain, ...) takes the caption Thetis draws
+//                 over it, its reading's name ("Signal Max FFT Bin"),
+//                 instead of the upper-cased flavor ("SIGNALMAXBIN"). A
+//                 saved layout keeps its stored label. A caption too long
+//                 for its slot at the 11 px minimum ends in an ellipsis.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - txStage(), txStageOff() and applyTxStageState(): the EQ,
+//                 Leveler, Leveler Gain, CFC, CFC Gain and Compressor bars
+//                 dim while their TX stage is off, as Thetis's OnEQChanged,
+//                 OnLevelerChanged, OnCFCChanged and OnCompandChanged do.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Standalone PWR, Reverse PWR and SWR bars (meter.pwr,
+//                 meter.reversePwr, meter.swr): the TX power, reverse power
+//                 and SWR readings, multi-point calibration, NormaliseTo100W
+//                 with a powerLimitW key (0 follows the radio's rating) and
+//                 the Thetis power scale labels. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis bar colour set: lowColor/highColor (scale),
+//                 showMarker, peakHoldColor, segLowColor/segHighColor,
+//                 peakValueColor, subColor/showSub and showTitle keys.
+//                 An absent key keeps today's paint, including the average
+//                 marker at (169,169,169) and the white/red scale. New items
+//                 take kBarPresetThetisDefaults per variant and a new custom
+//                 bar 0/10/7.5, "?" and "Title". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A second data source (MMIO) variable drives the average
+//                 marker (setSecondaryValue(1, ...)); the radio's average
+//                 reading then leaves it alone. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The meter.adcMax reason reads "ADC magnitude is not
+//                 available", which makes no promise. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - meter.adcMax has no reading provider yet: its bar draws the
+//                 unavailable veil with "ADC magnitude is not reported yet"
+//                 instead of staying blank. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview data colours (JJ's decision B): the
 //                 default backdrop reads WorkspacePreview::dataBackground(),
 //                 the role of the container around the meter or the user's
@@ -55,25 +95,93 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - typeIdForFlavor: the one flavor-to-type conversion, shared
+//                 by typeId(), the content registry and the legacy importer.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "BarPresetItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "models/TransmitModel.h"
 #include <QPainter>
 #include <QJsonDocument>
 #include <algorithm>
+#include <utility>
 namespace NereusSDR {
+namespace {
+// ADC maximum magnitude has no core provider yet. Thetis reads ADC_MAX_MAG
+// from the Protocol 2 high-priority packet, bytes 35-38 (From Thetis
+// console.cs:47057,47221; ChannelMaster netInterface.c:159-166;
+// network.c:721-722 [v2.10.3.15]), which NereusSDR does not parse. Until it
+// does, the bar names the reason rather than drawing nothing.
+QString adcMaxUnavailableText() { return QStringLiteral("ADC magnitude is not available"); }
+bool adcMaxWithoutProvider(const BarPresetItem& item)
+{
+    return item.typeId()==QStringLiteral("meter.adcMax") && item.bindingId()<0 && !item.hasMmioBinding();
+}
+// The caption Thetis draws over a bar is its scale's reading name: each
+// AddXxxBar sets cs.ReadingSource = cb.ReadingSource and cs.ShowType = true,
+// and the H_SCALE paint draws scale.ReadingName (From Thetis
+// MeterManager.cs:33413-33420 [v2.10.3.15]), which is
+// MeterManager.ReadingName(reading) (:7012). Only the flavors whose
+// upper-cased name would join words take it; the others keep theirs.
+struct BarCaption { const char* flavor; const char* caption; };
+constexpr BarCaption kThetisBarCaptions[] = {
+    // From Thetis MeterManager.cs:22828,22857,22884-22886 and :2277 [v2.10.3.15]
+    {"SignalAvg", "Signal Average"},
+    // From Thetis MeterManager.cs:22832,22857,22884-22886 and :2311 [v2.10.3.15]
+    {"SignalMaxBin", "Signal Max FFT Bin"},
+    // From Thetis MeterManager.cs:24954 and :2279 [v2.10.3.15]
+    {"CfcGain", "CFC Compression"},
+    // From Thetis MeterManager.cs:24599 and :2294 [v2.10.3.15]
+    {"LevelerGain", "Leveler Gain"},
+    // From Thetis MeterManager.cs:24746 and :2272 [v2.10.3.15]
+    {"AlcGain", "ALC Compression"},
+    // From Thetis MeterManager.cs:24807 and :2273 [v2.10.3.15]
+    {"AlcGroup", "ALC Group"},
+    // From Thetis MeterManager.cs:23233 and :2269 [v2.10.3.15]
+    {"AgcGain", "AGC Gain"},
+    // From Thetis MeterManager.cs:22951 and :2313 [v2.10.3.15]
+    {"AdcMax", "ADC Max Magnitude"},
+    // From Thetis MeterManager.cs:23162 and :2274 [v2.10.3.15]
+    {"PbSnr", "Estimated PBSNR"},
+};
+QString variantCaption(const QString& flavor)
+{
+    for (const BarCaption& c : kThetisBarCaptions) {
+        if (flavor == QLatin1String(c.flavor)) { return QString::fromLatin1(c.caption); }
+    }
+    return flavor.toUpper();
+}
+// From Thetis MeterManager.cs:33385-33392 [v2.10.3.15] (tidyPower)
+QString tidyPower(double power)
+{
+    const double remainder=power-std::floor(power);
+    const int decimals=(remainder>=0.1 && power<=8.0) ? 1 : 0;
+    return QString::number(power,'f',decimals);
+}
+}
 BarPresetItem::BarPresetItem(QObject* parent) : MeterItem(parent) { configureAsCustom(-1,-30,12,QStringLiteral("Custom")); }
 void BarPresetItem::configureDynamics() {
+    if(isPowerFlavor()) { updatePowerScale(); }
     m_scaleCache=QImage(); m_staticDirty=true;
     // From Thetis MeterManager.cs:24340-24346,24662-24668 [v2.10.3.15]
     m_primary.configure(m_attack,m_release,m_interval,m_historyMs,m_ignoreMs);
     m_average.configure(m_attack,m_release,m_interval,(m_flavor=="Cfc" || m_flavor=="Agc" || m_flavor=="Adc")?m_interval:m_historyMs,m_ignoreMs);
     m_primary.reset(m_minimum); m_average.reset(m_minimum);
+    if(adcMaxWithoutProvider(*this)) { setBindingUnavailable(bindingId(),adcMaxUnavailableText()); }
+    else if(bindingUnavailableReason(-1)==adcMaxUnavailableText()) { MeterItem::setBindingUnavailable(-1,QString()); }
+}
+void BarPresetItem::resetColourSet() {
+    m_scaleLow=Qt::white; m_scaleHigh=Qt::red; m_subColor=QColor(169,169,169);
+    m_peakHoldColor=QColor(); m_peakValueColor=QColor(); m_segLowColor=QColor(); m_segHighColor=QColor();
+    m_showMarker=true; m_showSub=true; m_showTitle=true;
 }
 void BarPresetItem::configureAsMic() {
+    resetColourSet(); m_calibration.clear(); m_powerLimitW=0;
     // From Thetis MeterManager.cs:24327-24413 [v2.10.3.15]
     m_attack=.8; m_release=.1; m_middle=0; m_middlePosition=.665; m_redThreshold=0; m_historyMs=2000; m_marker=Qt::yellow; m_units="dB"; m_showHistory=true; m_peakHold=false; m_style="Line"; m_major={-20,-10,0,4,8,12}; m_minor={-25,-15,-5,2,6,10};
     m_flavor="Mic"; m_label="MIC"; setBindingId(MeterBinding::TxMicPeak); m_secondary=MeterBinding::TxMic;
@@ -85,13 +193,14 @@ void BarPresetItem::configureAsAlc() {
     m_minimum=-30; m_maximum=12; m_historyColor=QColor(255,250,205,128); configureDynamics();
 }
 void BarPresetItem::configureAsCustom(int binding, double minimum, double maximum, const QString& label) {
+    resetColourSet(); m_calibration.clear(); m_powerLimitW=0;
     m_flavor="Custom"; m_label=label; setBindingId(binding); m_secondary=-1;
     m_minimum=minimum; m_maximum=maximum; configureDynamics();
 }
-QStringList BarPresetItem::variants() { return {"Comp","Eq","Leveler","Cfc","CfcGain","LevelerGain","AlcGain","AlcGroup","Agc","AgcGain","Signal","SignalAvg","SignalMaxBin","Adc","AdcMax","PbSnr"}; }
+QStringList BarPresetItem::variants() { return {"Comp","Eq","Leveler","Cfc","CfcGain","LevelerGain","AlcGain","AlcGroup","Agc","AgcGain","Signal","SignalAvg","SignalMaxBin","Adc","AdcMax","PbSnr","Pwr","ReversePwr","Swr"}; }
 bool BarPresetItem::configureVariant(const QString& flavor) {
     if(!variants().contains(flavor)) { return false; }
-    configureAsMic(); m_flavor=flavor; m_label=flavor.toUpper(); m_secondary=-1;
+    configureAsMic(); m_flavor=flavor; m_label=variantCaption(flavor); m_secondary=-1;
     // From Thetis MeterManager.cs:24414-25090 [v2.10.3.15] — independent stage channels.
     if(flavor=="Comp") { setBindingId(MeterBinding::TxCompPeak); m_secondary=MeterBinding::TxComp; m_historyColor=QColor(255,218,185,128); }
     if(flavor=="Eq") { setBindingId(MeterBinding::TxEqPeak); m_secondary=MeterBinding::TxEq; m_historyColor=QColor(100,149,237,128); }
@@ -121,19 +230,126 @@ bool BarPresetItem::configureVariant(const QString& flavor) {
         m_units=flavor=="Adc" ? "dBFS" : ""; m_attack=.2; m_release=.05; m_historyMs=4000; m_marker=QColor(255,165,0); m_historyColor=QColor(100,149,237,128);
         m_major=flavor=="Adc" ? QList<double>{-120,-100,-80,-60,-40,-20,0} : QList<double>{0,5000,10000,15000,20000,25000,32768}; m_minor={};
     }
+    // From Thetis MeterManager.cs:25185-25311 [v2.10.3.15] (AddPWRBar): PWR
+    // (:25177) and Reverse PWR (:25181). Attack .8, decay .1, history 2000
+    // shown, Yellow marker, Red/128 history and Line come from the mic row.
+    if(flavor=="Pwr" || flavor=="ReversePwr") {
+        setBindingId(flavor=="Pwr" ? MeterBinding::TxPower : MeterBinding::TxReversePower);
+        // From Thetis MeterManager.cs:2299-2300,2360-2361 [v2.10.3.15] — reading name and unit.
+        m_label=flavor=="Pwr" ? QStringLiteral("Power") : QStringLiteral("Reverse Power"); m_units=QStringLiteral("W");
+        for(const auto& [value,position]:kPwrBarCalibration) { m_calibration.append(QPointF(value,position)); }
+    }
+    // From Thetis MeterManager.cs:25313-25375 [v2.10.3.15] (AddSWRBar)
+    if(flavor=="Swr") {
+        setBindingId(MeterBinding::TxSwr);
+        // From Thetis MeterManager.cs:2304,2365 [v2.10.3.15] — reading name and unit.
+        m_label=QStringLiteral("SWR"); m_units=QStringLiteral(":1");
+        // From Thetis MeterManager.cs:25332 [v2.10.3.15]
+        m_historyColor=QColor::fromRgba(BarPresetColours::kOrangeHistory);
+        for(const auto& [value,position]:kSwrBarCalibration) { m_calibration.append(QPointF(value,position)); }
+        m_minimum=kSwrBarCalibration.front().first; m_maximum=kSwrBarCalibration.back().first;
+        m_redThreshold=kSwrBarCalibration[kSwrBarHighPointIndex].first;
+        m_major=QList<double>(kSwrBarMajorTicks.begin(),kSwrBarMajorTicks.end()); m_minor=QList<double>(kSwrBarMinorTicks.begin(),kSwrBarMinorTicks.end());
+    }
     if(flavor=="PbSnr") { m_lowFill=QColor(0,139,139); setBindingId(MeterBinding::PbSnr); m_minimum=0; m_middle=50; m_middlePosition=.8333; m_maximum=60; m_redThreshold=50; m_attack=.2; m_release=.05; m_historyMs=4000; m_showHistory=false; m_peakHold=true; m_style="Segments"; m_major={0,10,20,30,40,50,60}; m_minor={}; m_historyColor=QColor(238,130,238,128); }
     m_calMinimum=m_minimum; m_calMaximum=m_maximum; configureDynamics(); return true;
 }
-QString BarPresetItem::typeId() const { if(m_flavor=="Custom") { return "meter.customBar"; } QString name=m_flavor; name[0]=name[0].toLower(); return "meter."+name; }
-QSet<int> BarPresetItem::readingBindings() const { QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); } return result; }
+void BarPresetItem::applyNewItemDefaults() {
+    MeterItem::applyNewItemDefaults();
+    for(const BarPresetThetisDefaults& d:kBarPresetThetisDefaults) {
+        if(m_flavor!=QLatin1String(d.flavor)) { continue; }
+        m_marker=QColor::fromRgba(d.markerColour); m_historyColor=QColor::fromRgba(d.historyColour);
+        m_segLowColor=QColor::fromRgba(d.segLowColour); m_segHighColor=QColor::fromRgba(d.segHighColour);
+        m_peakHoldColor=QColor::fromRgba(d.peakHoldColour); m_peakValueColor=QColor::fromRgba(d.peakValueColour);
+        m_subColor=QColor::fromRgba(d.subColour); m_scaleLow=QColor::fromRgba(d.scaleLowColour); m_scaleHigh=QColor::fromRgba(d.scaleHighColour);
+        m_background=QColor::fromRgba(d.backgroundColour);
+        m_showHistory=d.showHistory; m_peakHold=d.peakHold; m_showMarker=d.showMarker; m_showSub=d.showSub; m_showTitle=d.showTitle;
+        m_style=QString::fromLatin1(d.style);
+    }
+    if(m_flavor==QLatin1String("Custom")) {
+        const CustomBarThetisDefaults& c=kCustomBarThetisDefaults;
+        m_minimum=c.minimum; m_maximum=c.maximum; m_redThreshold=c.high; m_calMinimum=c.minimum; m_calMaximum=c.maximum;
+        m_units=QString::fromLatin1(c.units); m_label=QString::fromLatin1(c.title);
+    }
+    configureDynamics();
+}
+// From Thetis MeterManager.cs:5313-5366 [v2.10.3.15]: OnEQChanged disables
+// MeterType.EQ; OnLevelerChanged LEVELER and LEVELER_GAIN; OnCFCChanged CFC
+// and CFC_GAIN; OnCompandChanged COMP.
+TxStage BarPresetItem::txStage() const {
+    if(m_flavor==QLatin1String("Eq")) { return TxStage::Eq; }
+    if(m_flavor==QLatin1String("Leveler") || m_flavor==QLatin1String("LevelerGain")) { return TxStage::Leveler; }
+    if(m_flavor==QLatin1String("Cfc") || m_flavor==QLatin1String("CfcGain")) { return TxStage::Cfc; }
+    if(m_flavor==QLatin1String("Comp")) { return TxStage::Compander; }
+    return TxStage::None;
+}
+// From Thetis MeterManager.cs:5313-5366 [v2.10.3.15]: each handler calls
+// DisableMeterType(type, !newState).
+bool txStageOff(TxStage stage, const TransmitModel& tx) {
+    switch(stage) {
+    case TxStage::Eq: return !tx.txEqEnabled();
+    case TxStage::Leveler: return !tx.txLevelerOn();
+    case TxStage::Cfc: return !tx.cfcEnabled();
+    case TxStage::Compander: return !tx.cpdrOn();
+    case TxStage::None: break;
+    }
+    return false;
+}
+void applyTxStageState(const QVector<MeterItem*>& items, const TransmitModel& tx) {
+    for(MeterItem* item:items) {
+        if(auto* bar=qobject_cast<BarPresetItem*>(item)) { bar->setStageDisabled(txStageOff(bar->txStage(),tx)); }
+    }
+}
+bool BarPresetItem::isPowerFlavor() const { return m_flavor==QLatin1String("Pwr") || m_flavor==QLatin1String("ReversePwr"); }
+double BarPresetItem::effectivePowerLimit() const {
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15] — below 0.1 W the
+    // limit recovers to the radio's rating.
+    return m_powerLimitW>=kMinBarPowerLimitW ? m_powerLimitW : m_radioRatingW;
+}
+void BarPresetItem::updatePowerScale() {
+    // Values in watts: the normalised table scaled by the limit, so the
+    // high point stays at 100 % and the top at 120 %.
+    const double scale=effectivePowerLimit()/100.0;
+    m_minimum=kPwrBarCalibration.front().first*scale; m_maximum=kPwrBarCalibration.back().first*scale;
+    m_redThreshold=kPwrBarCalibration[kPwrBarHighPointIndex].first*scale;
+    m_calMinimum=m_minimum; m_calMaximum=m_maximum;
+    m_major.clear(); for(double value:kPwrBarMajorTicks) { m_major.append(value*scale); }
+    m_minor.clear(); for(double value:kPwrBarMinorTicks) { m_minor.append(value*scale); }
+    m_scaleCache=QImage(); m_staticDirty=true;
+}
+void BarPresetItem::setPowerScale(int limitWatts, double topWatts) {
+    MeterItem::setPowerScale(limitWatts,topWatts);
+    if(limitWatts<=0 || m_radioRatingW==limitWatts) { return; }
+    m_radioRatingW=limitWatts;
+    if(isPowerFlavor() && m_powerLimitW<kMinBarPowerLimitW) { updatePowerScale(); }
+}
+QString BarPresetItem::typeIdForFlavor(const QString& flavor) {
+    if(flavor=="Custom") { return "meter.customBar"; }
+    if(flavor!="Mic" && flavor!="Alc" && !variants().contains(flavor)) { return {}; }
+    QString name=flavor; name[0]=name[0].toLower(); return "meter."+name;
+}
+QString BarPresetItem::typeId() const { return typeIdForFlavor(m_flavor); }
+QSet<int> BarPresetItem::readingBindings() const {
+    QSet<int> result; if(bindingId()>=0) { result.insert(bindingId()); } if(m_secondary>=0) { result.insert(m_secondary); }
+    // The provider-less ADC maximum bar keeps its reason channel, so the
+    // meter veils it and its hover names the reason.
+    if(adcMaxWithoutProvider(*this)) { result.insert(bindingId()); }
+    return result;
+}
 void BarPresetItem::pushBindingValue(int binding, double value) {
     const bool available=bindingUnavailableReason(binding).isEmpty() && std::isfinite(value) && (hasMmioBinding() || (m_flavor=="Custom" ? (!isNoReadingBinding(binding) || !isNoMeterReading(value)) : !isNoMeterReading(value)));
     if(binding==bindingId()) { m_value=value; m_primary.push(value,available); }
-    if(binding==m_secondary) { m_average.push(value,available); }
+    if(binding==m_secondary && !hasMmioBinding(1)) { m_average.push(value,available); }
 }
-void BarPresetItem::setBindingUnavailable(int binding, const QString& reason) {
+void BarPresetItem::setSecondaryValue(int index, double value) {
+    // Variable 2 is the average marker's reading.
+    if(index==1) { m_average.push(value,std::isfinite(value)); }
+}
+void BarPresetItem::setBindingUnavailable(int binding, const QString& givenReason) {
+    // A meter clearing availability cannot clear a reading no provider sends.
+    const QString reason=(givenReason.isEmpty() && binding==bindingId() && adcMaxWithoutProvider(*this)) ? adcMaxUnavailableText() : givenReason;
     MeterItem::setBindingUnavailable(binding,reason);
-    if(!reason.isEmpty()) { if(binding==bindingId()) { m_primary.push(0,false); } if(binding==m_secondary) { m_average.push(0,false); } }
+    if(!reason.isEmpty()) { if(binding==bindingId()) { m_primary.push(0,false); } if(binding==m_secondary && !hasMmioBinding(1)) { m_average.push(0,false); } }
 }
 bool BarPresetItem::advanceMeter(qint64 time) { const bool primary=m_primary.advance(time); const bool average=m_average.advance(time); return primary || average; }
 void BarPresetItem::resetForTxTransition(bool inTx) { Q_UNUSED(inTx); m_primary.reset(m_minimum); m_average.reset(m_minimum); }
@@ -144,7 +360,7 @@ void BarPresetItem::resetRxSource()
         m_primary.reset(m_minimum);
         m_value = kNoMeterReadingDbm;
     }
-    if (m_secondary >= MeterBinding::SignalPeak && m_secondary <= MeterBinding::PbSnr) {
+    if (m_secondary >= MeterBinding::SignalPeak && m_secondary <= MeterBinding::PbSnr && !hasMmioBinding(1)) {
         m_average.reset(m_minimum);
     }
 }
@@ -154,6 +370,19 @@ double BarPresetItem::calibratedPosition(double value) const {
         // From Thetis MeterManager.cs:41048-41055 [v2.10.3.15] — round before calibration.
         value=std::round(value*100)/100;
         if(m_aboveS9 && (bindingId()==MeterBinding::SignalPeak || bindingId()==MeterBinding::SignalAvg)) { value+=20; }
+        // From Thetis MeterManager.cs:41053-41056 [v2.10.3.15] — NormaliseTo100W.
+        else if(isPowerFlavor()) { value*=100.0/effectivePowerLimit(); }
+        if(!m_calibration.isEmpty()) {
+            // From Thetis MeterManager.cs:41075-41104 [v2.10.3.15] — interpolate
+            // between the bracketing calibration points; outside the table the
+            // end point holds.
+            if(value<=m_calibration.front().x()) { return m_calibration.front().y(); }
+            if(value>=m_calibration.back().x()) { return m_calibration.back().y(); }
+            for(int i=1;i<m_calibration.size();++i) {
+                const QPointF low=m_calibration[i-1], high=m_calibration[i];
+                if(value<=high.x()) { return low.y()+(high.y()-low.y())*((value-low.x())/(high.x()-low.x())); }
+            }
+        }
         return std::clamp(value<=m_middle ? (value-m_calMinimum)/(m_middle-m_calMinimum)*m_middlePosition : m_middlePosition+(value-m_middle)/(m_calMaximum-m_middle)*(.99-m_middlePosition),0.0,.99);
     }
     return std::clamp((value-m_minimum)/(m_maximum-m_minimum),0.0,.99);
@@ -167,25 +396,33 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(13*g.scale)))); p.setFont(font);
     // Workspace preview: the default backdrop takes the container's
     // background; a backdrop the user set is drawn as it is.
-    const QColor backdrop=m_background==QColor(32,32,32) ? WorkspacePreview::dataBackground(m_background,"panel",parent()) : m_background;
+    const QColor backdrop=ItemColourLook::effective("BarPreset.backdropColor",m_background,this);
     if(layer==Layer::Background) {
-        p.fillRect(g.face,backdrop); p.setPen(m_title);
+        p.fillRect(g.face,backdrop); p.setPen(ItemColourLook::effective("BarPreset.titleColor",m_title,this));
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
-        drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale);
+        // From Thetis MeterManager.cs:28312 [v2.10.3.15] — scaleItem.ShowType.
+        if(m_showTitle) { drawObjectTextElided(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
-        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),m_historyColor); }
+        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),ItemColourLook::effective("BarPreset.historyColor",m_historyColor,this)); }
         const auto marker=[&](double value,QColor color,int thickness) { p.setPen(QPen(color,thickness)); p.drawLine(QPointF(pos(value),g.top),QPointF(pos(value),g.bottom)); };
-        if(m_average.hasReading()) { marker(m_average.value(),QColor(169,169,169),3); }
+        // From Thetis MeterManager.cs:28288-28289 [v2.10.3.15] — the sub bar's
+        // MarkerColour and ShowMarker.
+        //igs.SubMarkerColour = bi.SubMarkerColour; [original inline comment from MeterManager.cs:28290]
+        if(m_showSub && m_average.hasReading()) { marker(m_average.value(),ItemColourLook::effective("BarPreset.subColor",m_subColor,this),3); }
         if(m_primary.hasReading() && m_style!="Line") {
             // From Thetis MeterManager.cs:37458-37591 [v2.10.3.15]
             const double end=pos(m_primary.value());
             const double transition=pos(m_redThreshold);
-            const QColor low=m_flavor=="Custom" ? m_marker : m_lowFill;
+            // From Thetis MeterManager.cs:28275-28276 [v2.10.3.15] — bi.Colour, bi.ColourHigh.
+            // The unset low colour draws the flavour's fill, the unset high colour red:
+            // both follow the workspace look as the low and high colours' defaults.
+            const QColor low=m_segLowColor.isValid() ? ItemColourLook::effective("BarPreset.segLowColor",m_segLowColor,this) : m_flavor=="Custom" ? ItemColourLook::effective("BarPreset.barColor",m_marker,this) : ItemColourLook::effective("BarPreset.segLowColor",m_lowFill,this);
+            const QColor highFill=ItemColourLook::effective("BarPreset.segHighColor",m_segHighColor.isValid() ? m_segHighColor : QColor(Qt::red),this);
             const auto fill=[&](double start,double stop) {
                 if(start<transition) { p.fillRect(QRectF(start,g.top,qMax(0.0,qMin(stop,transition)-start),g.baseline-g.top),low); }
-                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),Qt::red); }
+                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),highFill); }
             };
             if(m_style=="Solid") { fill(g.left,end); }
             else {
@@ -204,14 +441,17 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             m_scaleCache=QImage(scaleSize,QImage::Format_ARGB32_Premultiplied); m_scaleCache.setDevicePixelRatio(dpr); m_scaleCache.fill(Qt::transparent);
             m_scaleRect=pixelRect(width,height); m_scaleFont=font; QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
             // From Thetis MeterManager.cs:33393-33871,33872-33958 [v2.10.3.15]
+            // From Thetis MeterManager.cs:28310-28315 [v2.10.3.15] — scale LowColour/HighColour
+            // and FontColourLow/FontColourHigh.
             const double high=m_redThreshold;
-            scale.setPen(QPen(Qt::white,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
-            scale.setPen(QPen(Qt::red,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
+            const QColor scaleLow=ItemColourLook::effective("BarPreset.lowColor",m_scaleLow,this), scaleHigh=ItemColourLook::effective("BarPreset.highColor",m_scaleHigh,this);
+            scale.setPen(QPen(scaleLow,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
+            scale.setPen(QPen(scaleHigh,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
             for(double value:major) {
-                scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
                 const double x=pos(value);
                 const int index=major.indexOf(value);
                 const double before=index==0?g.left:pos(major[index-1]);
@@ -220,17 +460,23 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
                 QRectF text(x-labelWidth/2,g.baseline-32*g.scale,labelWidth,18*g.scale);
                 if(text.left()<g.left) { text.moveLeft(g.left); }
                 if(text.right()>g.left+g.width) { text.moveRight(g.left+g.width); }
-                drawObjectText(scale,text,QString::number(value,'g',4),13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter);
+                // From Thetis MeterManager.cs:33528-33535 [v2.10.3.15] — power labels in
+                // mW below 1 W, the top one with "+".
+                const double milli=effectivePowerLimit()<=1.0 ? 1000.0 : 1.0;
+                const QString label=isPowerFlavor() ? tidyPower(value*milli)+(index+1==major.size() ? QStringLiteral("+") : QString()) : QString::number(value,'g',4);
+                drawObjectText(scale,text,label,13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter);
             }
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
-        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),Qt::red,3); }
-        if(m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
+        // From Thetis MeterManager.cs:28272-28274 [v2.10.3.15] — ShowMarker, PeakHold, PeakHoldMarkerColour.
+        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),ItemColourLook::effective("BarPreset.peakHoldColor",m_peakHoldColor.isValid() ? m_peakHoldColor : QColor(Qt::red),this),3); }
+        if(m_showMarker && m_primary.hasReading()) { marker(m_primary.value(),ItemColourLook::effective("BarPreset.barColor",m_marker,this),3); }
         p.setFont(font);
-        const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():QStringLiteral(" ")+m_units); };
-        p.setPen(m_marker);
+        const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():m_units.startsWith(QLatin1Char(':'))?m_units:QStringLiteral(" ")+m_units); };
+        p.setPen(ItemColourLook::effective("BarPreset.barColor",m_marker,this));
         if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
-        p.setPen(Qt::red);
+        // From Thetis MeterManager.cs:28278 [v2.10.3.15] — PeakValueColour.
+        p.setPen(ItemColourLook::effective("BarPreset.peakValueColor",m_peakValueColor.isValid() ? m_peakValueColor : QColor(Qt::red),this));
         if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
     }
     p.restore();
@@ -245,6 +491,13 @@ QJsonObject BarPresetItem::configuration() const {
     c["titleColor"]=m_title.name(QColor::HexArgb); c["historyColor"]=m_historyColor.name(QColor::HexArgb);
     c["showHistory"]=m_showHistory; c["peakHold"]=m_peakHold; c["showValue"]=m_showValue; c["showPeakValue"]=m_showPeakValue;
     c["style"]=m_style; c["units"]=m_units; c["updateIntervalMs"]=m_interval; c["historyMs"]=m_historyMs; c["ignoreHistoryMs"]=m_ignoreMs; c["rowHeight"]=m_rowHeight; c["attack"]=m_attack; c["decay"]=m_release; c["aboveS9Frequency"]=m_aboveS9;
+    // An optional colour saves blank when it keeps today's colour.
+    const auto optional=[](const QColor& color) { return color.isValid() ? color.name(QColor::HexArgb) : QString(); };
+    c["lowColor"]=m_scaleLow.name(QColor::HexArgb); c["highColor"]=m_scaleHigh.name(QColor::HexArgb); c["subColor"]=m_subColor.name(QColor::HexArgb);
+    c["peakHoldColor"]=optional(m_peakHoldColor); c["peakValueColor"]=optional(m_peakValueColor); c["segLowColor"]=optional(m_segLowColor); c["segHighColor"]=optional(m_segHighColor);
+    c["showMarker"]=m_showMarker; c["showSub"]=m_showSub; c["showTitle"]=m_showTitle;
+    // Only the power bars carry a power limit; other records stay as they were.
+    if(isPowerFlavor()) { c["powerLimitW"]=m_powerLimitW; } else { c.remove(QStringLiteral("powerLimitW")); }
     return c;
 }
 bool BarPresetItem::applyConfiguration(const QJsonObject& c) {
@@ -264,9 +517,16 @@ bool BarPresetItem::deserialize(const QString& data) {
     }
     if(c["w"].toDouble()<=0 || c["h"].toDouble()<=0) { return false; }
     for(const QString& key:{QStringLiteral("x"),QStringLiteral("y"),QStringLiteral("w"),QStringLiteral("h")}) { if(qAbs(c[key].toDouble())>std::numeric_limits<float>::max()) { return false; } }
-    for(const QString& key:{QStringLiteral("showHistory"),QStringLiteral("peakHold"),QStringLiteral("showValue"),QStringLiteral("showPeakValue")}) { if(c.contains(key) && !c[key].isBool()) { return false; } }
+    for(const QString& key:{QStringLiteral("showHistory"),QStringLiteral("peakHold"),QStringLiteral("showValue"),QStringLiteral("showPeakValue"),QStringLiteral("showMarker"),QStringLiteral("showSub"),QStringLiteral("showTitle")}) { if(c.contains(key) && !c[key].isBool()) { return false; } }
     for(const QString& key:{QStringLiteral("label"),QStringLiteral("style"),QStringLiteral("units")}) { if(c.contains(key) && !c[key].isString()) { return false; } }
-    for(const QString& key:{QStringLiteral("barColor"),QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("historyColor")}) { if(c.contains(key) && (!c[key].isString() || !QColor(c[key].toString()).isValid())) { return false; } }
+    for(const QString& key:{QStringLiteral("barColor"),QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("historyColor"),QStringLiteral("lowColor"),QStringLiteral("highColor"),QStringLiteral("subColor")}) { if(c.contains(key) && (!c[key].isString() || !QColor(c[key].toString()).isValid())) { return false; } }
+    // Blank is valid for an optional colour: it keeps today's colour.
+    for(const QString& key:{QStringLiteral("peakHoldColor"),QStringLiteral("peakValueColor"),QStringLiteral("segLowColor"),QStringLiteral("segHighColor")}) { if(c.contains(key) && (!c[key].isString() || (!c[key].toString().isEmpty() && !QColor(c[key].toString()).isValid()))) { return false; } }
+    if(c.contains("powerLimitW")) {
+        // 0 follows the radio's rating; otherwise the Setup range.
+        const double limit=c["powerLimitW"].toDouble(-1);
+        if(!c["powerLimitW"].isDouble() || !std::isfinite(limit) || (limit!=0.0 && (limit<kMinBarPowerLimitW || limit>kMaxBarPowerLimitW))) { return false; }
+    }
     if(c.contains("redThreshold") && (!c["redThreshold"].isDouble() || !std::isfinite(c["redThreshold"].toDouble()))) { return false; }
     for(const QString& key:{QStringLiteral("attack"),QStringLiteral("decay")}) { if(c.contains(key) && (!c[key].isDouble() || !std::isfinite(c[key].toDouble()) || c[key].toDouble()<0 || c[key].toDouble()>1)) { return false; } }
     const QString style=c.value("style").toString("Line"); if(style!="Line" && style!="Solid" && style!="Segments") { return false; }
@@ -279,10 +539,17 @@ bool BarPresetItem::deserialize(const QString& data) {
     m_redThreshold=c.value("redThreshold").toDouble(m_redThreshold);
     const auto color=[&](const char* key,QColor& value) { if(c.contains(key)) { QColor parsed(c.value(key).toString()); if(!parsed.isValid()) { return false; } value=parsed; } return true; };
     if(!color("barColor",m_marker)||!color("backdropColor",m_background)||!color("titleColor",m_title)||!color("historyColor",m_historyColor)) { return false; }
+    if(!color("lowColor",m_scaleLow)||!color("highColor",m_scaleHigh)||!color("subColor",m_subColor)) { return false; }
+    const std::pair<const char*,QColor*> optionals[]{{"peakHoldColor",&m_peakHoldColor},{"peakValueColor",&m_peakValueColor},{"segLowColor",&m_segLowColor},{"segHighColor",&m_segHighColor}};
+    for(const auto& [key,value]:optionals) {
+        if(c.contains(key)) { const QString text=c.value(key).toString(); *value=text.isEmpty() ? QColor() : QColor(text); }
+    }
+    m_showMarker=c.value("showMarker").toBool(m_showMarker); m_showSub=c.value("showSub").toBool(m_showSub); m_showTitle=c.value("showTitle").toBool(m_showTitle);
     m_showHistory=c.value("showHistory").toBool(m_showHistory); m_peakHold=c.value("peakHold").toBool(m_peakHold); m_showValue=c.value("showValue").toBool(m_showValue); m_showPeakValue=c.value("showPeakValue").toBool(m_showPeakValue);
     m_style=c.value("style").toString(m_style); if(m_style!="Line" && m_style!="Solid" && m_style!="Segments") { return false; }
     m_units=c.value("units").toString(m_units); m_interval=c.value("updateIntervalMs").toInt(m_interval); m_historyMs=c.value("historyMs").toInt(m_historyMs); m_ignoreMs=c.value("ignoreHistoryMs").toInt(m_ignoreMs); m_rowHeight=c.value("rowHeight").toInt(m_rowHeight);
     if(m_interval<1 || m_historyMs<m_interval || m_ignoreMs<0 || m_rowHeight<72) { return false; }
+    if(isPowerFlavor()) { m_powerLimitW=c.value("powerLimitW").toDouble(0.0); }
     m_attack=c.value("attack").toDouble(m_attack); m_release=c.value("decay").toDouble(m_release); m_aboveS9=c.value("aboveS9Frequency").toBool(false);
     configureDynamics(); return true;
 }

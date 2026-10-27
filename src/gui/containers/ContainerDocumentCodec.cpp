@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-25 - decodeEntry runs migrateEntryOnLoad on every entry it
+//                 decodes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Unknown keys inside screen are kept, as they are inside
 //                 home. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -28,6 +31,7 @@
 #include "ContainerDocumentCodec.h"
 #include "LegacyContainerImporter.h"
 #include "ContainerContentRegistry.h"
+#include "ContentEntryMigration.h"
 #include "core/LogCategories.h"
 #include <QUuid>
 #include <QJsonArray>
@@ -373,6 +377,9 @@ bool decodeEntry(const QJsonObject& object, ContentEntry& entry)
         entry.returnLocation = location;
     }
     entry.extensions = extensions(object, kContentFields);
+    // Every load path (workspace store, profiles, imports, duplicates)
+    // decodes its entries here.
+    migrateEntryOnLoad(entry);
     return true;
 }
 

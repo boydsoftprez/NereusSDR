@@ -3,6 +3,7 @@
 
 class QLineEdit;
 class QPushButton;
+class QCheckBox;
 
 namespace NereusSDR {
 
@@ -17,9 +18,11 @@ public:
 
 private:
     void buildTypeSpecific() override;
+    void refreshDarkModeAvailability();
 
     QLineEdit*   m_editPath{nullptr};
     QPushButton* m_btnBrowse{nullptr};
+    QCheckBox*   m_chkDarkMode{nullptr};
 };
 
 } // namespace NereusSDR

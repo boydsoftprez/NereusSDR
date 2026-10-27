@@ -7,6 +7,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (settings M1): a saved power
+//                 limit above 5 kW loads as saved. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - NEEDLESCALEPWR building block: the power limit takes
+//                 0.1 W to 5000 W (below 0.1 recovers to 100 W) and new
+//                 items take the clsNeedleScalePwrItem defaults
+//                 (kNeedleScalePwrThetisDefaults). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -57,9 +68,15 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (font family) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "NeedleScalePwrItem.h"
+
+#include <cmath>
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 // From Thetis clsNeedleScalePwrItem (MeterManager.cs:14888+)
@@ -70,7 +87,37 @@ mw0lge@grange-lane.co.uk
 #include <QRect>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace NereusSDR {
+
+void NeedleScalePwrItem::setMaxPower(float p)
+{
+    // From Thetis MeterManager.cs:7132-7139 [v2.10.3.15]: below 0.1 recovers
+    // (Thetis takes CurrentPowerRating; NereusSDR takes the setup default).
+    // [original inline comment from MeterManager.cs:7137] // incase of 0 recovery from db
+    if (!(static_cast<double>(p) >= kMinBarPowerLimitW)) {
+        m_maxPower = static_cast<float>(kDefaultBarPowerLimitW);
+        return;
+    }
+    m_maxPower = static_cast<float>(std::min(static_cast<double>(p), kMaxBarPowerLimitW));
+}
+
+void NeedleScalePwrItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const NeedleScalePwrItemThetisDefaults& d = kNeedleScalePwrThetisDefaults;
+    m_lowColour    = QColor::fromRgb(d.lowColour);
+    m_highColour   = QColor::fromRgb(d.highColour);
+    m_fontFamily   = QString::fromLatin1(d.fontFamily);
+    m_fontBold     = d.fontBold;
+    m_fontSize     = d.fontSize;
+    m_showMarkers  = d.showMarkers;
+    m_darkMode     = d.darkMode;
+    m_lengthFactor = d.lengthFactor;
+    m_direction    = d.direction;
+    setMaxPower(static_cast<float>(d.maxPower));
+}
 
 // ---------------------------------------------------------------------------
 // tidyPower()
@@ -157,7 +204,7 @@ void NeedleScalePwrItem::paint(QPainter& p, int widgetW, int widgetH)
         }
 
         // From Thetis renderNeedleScale (MeterManager.cs:31710) — use low colour for labels
-        p.setPen(m_lowColour);
+        p.setPen(ItemColourLook::effective("PowerScale.lowColour", m_lowColour, this));
 
         const double scale=objectTextScale(rect,{260,120});
         QRectF label(px-30*scale,py-10*scale,60*scale,20*scale);
@@ -180,7 +227,9 @@ void NeedleScalePwrItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 QString NeedleScalePwrItem::serialize() const
 {
-    QString s = QStringLiteral("NEEDLESCALEPWR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15")
+    // The font family is joined, not substituted: chained .arg() would
+    // read a "%1" in it as a placeholder.
+    QString s = QStringLiteral("NEEDLESCALEPWR|%1|%2|%3|%4|%5|%6|%7|%8")
         .arg(static_cast<double>(m_x))
         .arg(static_cast<double>(m_y))
         .arg(static_cast<double>(m_w))
@@ -189,7 +238,8 @@ QString NeedleScalePwrItem::serialize() const
         .arg(m_zOrder)
         .arg(m_lowColour.name(QColor::HexArgb))
         .arg(m_highColour.name(QColor::HexArgb))
-        .arg(m_fontFamily)
+        + QLatin1Char('|') + m_fontFamily
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6")
         .arg(static_cast<double>(m_fontSize))
         .arg(m_fontBold ? 1 : 0)
         .arg(m_marks)
@@ -286,7 +336,13 @@ bool NeedleScalePwrItem::deserialize(const QString& data)
     m_fontSize    = fontSize;
     m_fontBold    = fontBold;
     m_marks       = marks;
-    m_maxPower    = maxPower;
+    // A saved rating keeps its value (an earlier build saved up to 10 kW);
+    // only the below-0.1 recovery applies on load.
+    if (std::isfinite(maxPower) && static_cast<double>(maxPower) >= kMinBarPowerLimitW) {
+        m_maxPower = maxPower;
+    } else {
+        setMaxPower(maxPower);
+    }
     m_darkMode    = darkMode;
     m_calibration = calibration;
 

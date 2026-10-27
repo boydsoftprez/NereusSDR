@@ -6,6 +6,10 @@
 // added copies of the SIGNAL STRENGTH dial (SMeterWidget, itself ported
 // from AetherSDR and attributed in its own files). Workspace preview only.
 //
+// Independently implemented from the Thetis MeterManager.cs interface;
+// the ported constants live in SMeterDialContent.cpp, which carries the
+// headers.
+//
 // Registers one per-instance widget type with ContainerContentRegistry:
 //
 //   sMeter.dial   SMeterWidget, SettingsStore::Instance
@@ -29,6 +33,16 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The external amplifier and Setup's face reach copies.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - TX modes ALC Compression, ALC Group, Volts and Amps; a
+//                 power limit per copy (kPowerLimitKey); the VHF S9 rule
+//                 of the copy's slice. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Appearance and dynamics per copy: peak hold, needle,
+//                 transmit needle, power scale and history colours,
+//                 shadow, dark mode, update interval, attack and decay
+//                 ratios, history, and Fade on RX / TX; history and peak
+//                 hold clear on each transmit change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -49,14 +63,43 @@ inline constexpr auto kDialType = "sMeter.dial";
 // Entry config keys. Absent keys are today's defaults (the Main Panel's
 // defaults with no saved key): Power, Signal, peak hold on, Medium; an
 // absent kFaceKey is Setup's face (SMeter_FaceStyle), followed. Values are the right-click menu's names: kTxModeKey "Power",
-// "SWR", "Level", "Compression"; kRxModeKey "Signal", "Sig Avg",
+// "SWR", "Level", "Compression", "ALC Compression", "ALC Group", "Volts",
+// "Amps"; kRxModeKey "Signal", "Sig Avg",
 // "Signal Peak", "Max Bin"; kPeakHoldKey true/false; kPeakDecayKey "Fast",
 // "Medium", "Slow"; kFaceKey an SMeterWidget::faceStyleKey.
+// kPowerLimitKey, whole watts: the copy's own power scale, red from the
+// limit and full scale 20% above it (top = limit *
+// ControlRanges::kRfPowerGaugeHeadroom, as the bars). Absent or 0: the radio's scale, followed as the Main
+// Panel's dial follows it (the external amplifier's included).
 inline constexpr auto kTxModeKey    = "txMode";
 inline constexpr auto kRxModeKey    = "rxMode";
 inline constexpr auto kPeakHoldKey  = "peakHold";
 inline constexpr auto kPeakDecayKey = "peakDecay";
 inline constexpr auto kFaceKey      = "face";
+inline constexpr auto kPowerLimitKey = "powerLimitW";
+
+// Appearance and dynamics. An absent key is the dial as it was drawn
+// before these keys existed. Colours are "#rrggbb" (absent: the face's
+// own); kAttackRatioKey / kDecayRatioKey are numbers 0..1 (absent: the
+// built-in time constants); kUpdateIntervalKey, kHistoryDurationKey and
+// kIgnoreHistoryKey are whole milliseconds; kHistoryAlphaKey 0..255 is the
+// history colour's opacity; kShowHistoryKey, kShadowKey and kDarkModeKey
+// are true/false (absent: off, on, off). Fade on RX / TX are
+// ContentFade::kFadeOnRxKey / kFadeOnTxKey.
+inline constexpr auto kPeakHoldColorKey   = "peakHoldColor";
+inline constexpr auto kNeedleColorKey     = "needleColor";
+inline constexpr auto kSubNeedleColorKey  = "subNeedleColor";
+inline constexpr auto kShadowKey          = "shadow";
+inline constexpr auto kPowerScaleColorKey = "powerScaleColor";
+inline constexpr auto kDarkModeKey        = "darkMode";
+inline constexpr auto kUpdateIntervalKey  = "updateIntervalMs";
+inline constexpr auto kAttackRatioKey     = "attackRatio";
+inline constexpr auto kDecayRatioKey      = "decayRatio";
+inline constexpr auto kShowHistoryKey     = "showHistory";
+inline constexpr auto kHistoryColorKey    = "historyColor";
+inline constexpr auto kHistoryAlphaKey    = "historyAlpha";
+inline constexpr auto kHistoryDurationKey = "historyDurationMs";
+inline constexpr auto kIgnoreHistoryKey   = "ignoreHistoryMs";
 
 // Registers the type. Call only with the workspace preview on, after
 // LongpathContent::registerAll (the picker lists it after the Longpath
@@ -69,7 +112,8 @@ void registerDial(ContainerContentRegistry& registry, const LongpathContent::Sou
 int rxBindingForMode(const QString& rxMode);
 
 // Every binding a copy registers with the poller: the three RX bindings
-// and TxPower, TxSwr, TxMic, TxComp.
+// and TxPower, TxSwr, TxMic, TxComp, TxAlcGain, TxAlcGroup, HwVolts,
+// HwAmps.
 QList<int> registeredBindings();
 
 } // namespace SMeterDialContent

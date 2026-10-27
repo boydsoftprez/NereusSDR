@@ -585,6 +585,9 @@
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - A web image item's picture can be this pan's spectrum
+//                 background (setBackgroundImageOverride). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "SpectrumWidget.h"
 #include "gui/ScopedChildWidget.h"
@@ -4797,6 +4800,23 @@ void SpectrumWidget::setBackgroundFillColor(const QColor& c)
     announceDisplaySetting(QStringLiteral("DisplayBackgroundColor"));
 }
 
+// NereusSDR (container item parity Task 42): a web image item's picture.
+// Not a setting: nothing is saved or announced.
+void SpectrumWidget::setBackgroundImageOverride(const QImage& image)
+{
+    if (image.isNull() && m_bgOverride.isNull()) {
+        return;
+    }
+    if (!image.isNull() && !m_bgOverride.isNull()
+        && image.cacheKey() == m_bgOverride.cacheKey()) {
+        return;
+    }
+    m_bgOverride = image;
+    m_bgScaled = {};
+    m_bgScaledSize = {};
+    markBackgroundDirty();
+}
+
 // From AetherSDR src/gui/SpectrumWidget.cpp:11101-11113 [@1e0718ad]
 void SpectrumWidget::reloadBackgroundImage()
 {
@@ -4825,7 +4845,8 @@ void SpectrumWidget::markBackgroundDirty()
 // 2D spectrum takes the background.
 bool SpectrumWidget::drawsSpectrumBackground() const
 {
-    return m_bgEnabled && m_spectrumRenderMode != SpectrumRenderMode::Mode3D;
+    return (m_bgEnabled || !m_bgOverride.isNull())
+        && m_spectrumRenderMode != SpectrumRenderMode::Mode3D;
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:14790-14804 [@1e0718ad]
@@ -4838,12 +4859,15 @@ void SpectrumWidget::paintSpectrumBackground(QPainter& p, const QRect& specRect)
     }
     // Composition z-order: bg fill → bg image → grid → FFT trace.
     p.fillRect(specRect, m_bgFillColor);
-    if (!m_bgImage.isNull()) {
+    // Task 42: a web image's picture takes the chosen picture's place.
+    const bool overridden = !m_bgOverride.isNull();
+    const QImage& picture = overridden ? m_bgOverride : m_bgImage;
+    if (!picture.isNull()) {
         const qreal dpr = p.device() ? p.device()->devicePixelRatioF() : 1.0;
         const QSize target(qMax(1, qRound(specRect.width() * dpr)),
                            qMax(1, qRound(specRect.height() * dpr)));
         if (m_bgScaledSize != target) {
-            QImage expanded = m_bgImage.scaled(target,
+            QImage expanded = picture.scaled(target,
                 Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
             int cx = (expanded.width()  - target.width())  / 2;
             int cy = (expanded.height() - target.height()) / 2;
@@ -4852,7 +4876,9 @@ void SpectrumWidget::paintSpectrumBackground(QPainter& p, const QRect& specRect)
             m_bgScaledSize = target;
         }
         const qreal oldOpacity = p.opacity();
-        p.setOpacity(1.0 - m_bgOpacity / 100.0);
+        // With the background off only the web image is drawn, at full
+        // strength, as Thetis shows it.
+        p.setOpacity(overridden && !m_bgEnabled ? 1.0 : 1.0 - m_bgOpacity / 100.0);
         p.drawImage(specRect.topLeft(), m_bgScaled);
         p.setOpacity(oldOpacity);
     }

@@ -2,13 +2,20 @@
 // src/gui/instruments/SMeterDialContent.cpp  (NereusSDR)
 // =================================================================
 //
-// no-port-check: NereusSDR-original container-content registration for
-// added copies of the SIGNAL STRENGTH dial (SMeterWidget, ported from
-// AetherSDR and attributed in its own files). Workspace preview only.
-// See SMeterDialContent.h.
+// Container-content registration for added copies of the SIGNAL STRENGTH
+// dial (SMeterWidget, ported from AetherSDR and attributed in its own
+// files). See SMeterDialContent.h. The per-copy appearance settings and
+// ranges and the clear on each transmit change are
+// Ported from Thetis source:
+//   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Picker name "S-Meter dial", listed under Ready-made
+//                 meters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -17,13 +24,126 @@
 //   2026-10-08 - Copies follow the external amplifier as the Main Panel's
 //                 dial does; a copy with no face key follows Setup's face.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - TX modes ALC Compression, ALC Group, Volts and Amps
+//                 (TxAlcGain, TxAlcGroup, HwVolts, HwAmps); the "Power
+//                 limit" property (kPowerLimitKey); the VHF S9 rule of the
+//                 copy's slice (LongpathContent::followAboveS9Frequency).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Appearance and dynamics per copy (the Thetis meter item
+//                 settings, setup.cs:25519-25577 [v2.10.3.15]) and Fade on
+//                 RX / TX (ContentFade::properties); the history and peak
+//                 hold clear on each transmit change (Thetis OnMox /
+//                 ZeroOut). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Final review fix wave (I8): a copy's power limit puts the
+//                 scale's top 20% above it (kRfPowerGaugeHeadroom), as the
+//                 bars do. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Final review fix wave (C1): the Thetis MeterManager.cs
+//                 header for the ported constants and the clear on each
+//                 transmit change. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
+
+// --- From MeterManager.cs ---
+/*  MeterManager.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From setup.cs ---
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From setup.designer.cs ---
+// Upstream source 'Project Files/Source/Console/setup.designer.cs' has no top-of-file GPL header —
+// project-level LICENSE applies (it is the designer half of the Setup class in setup.cs).
 
 #include "models/MainPowerMeter.h"
 #include "gui/instruments/SMeterDialContent.h"
 
+#include "core/ControlRanges.h"
+
 #include "gui/SMeterWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "models/RadioModel.h"
@@ -34,6 +154,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <optional>
 
@@ -41,12 +162,25 @@ namespace NereusSDR::SMeterDialContent {
 
 namespace {
 
+// Attack and decay ratios: 0..1 in steps of 0.05, three decimals.
+// From Thetis setup.designer.cs:55633-55649 [v2.10.3.15] (nudMeterItemAttackRate
+// DecimalPlaces 3, Increment 0.05, Maximum 1, Minimum 0; nudMeterItemDecayRate
+// :55592-55608 the same)
+constexpr double kRatioStep = 0.05;
+constexpr double kRatioMax = 1.0;
+constexpr double kRatioScale = 1000.0; // three decimals
+// History colour opacity.
+// From Thetis setup.designer.cs:55089 [v2.10.3.15] (tbMeterItemHistoryAlpha.Maximum = 255)
+constexpr int kHistoryAlphaMax = 255;
+
 // The right-click menu's names, in enum order (SMeterWidget::TxMode,
 // RxMode, DecayRate); the entry config stores these.
-const std::array<QString, 4>& txModeNames()
+const std::array<QString, SMeterWidget::kTxModeCount>& txModeNames()
 {
-    static const std::array<QString, 4> names{QStringLiteral("Power"), QStringLiteral("SWR"),
-                                              QStringLiteral("Level"), QStringLiteral("Compression")};
+    static const std::array<QString, SMeterWidget::kTxModeCount> names{
+        QStringLiteral("Power"), QStringLiteral("SWR"), QStringLiteral("Level"), QStringLiteral("Compression"),
+        QStringLiteral("ALC Compression"), QStringLiteral("ALC Group"), QStringLiteral("Volts"),
+        QStringLiteral("Amps")};
     return names;
 }
 const std::array<QString, 4>& rxModeNames()
@@ -73,6 +207,10 @@ std::optional<SMeterWidget::TxMode> txModeForBinding(int binding)
     case MeterBinding::TxSwr: return SMeterWidget::TxMode::SWR;
     case MeterBinding::TxMic: return SMeterWidget::TxMode::Level;
     case MeterBinding::TxComp: return SMeterWidget::TxMode::Compression;
+    case MeterBinding::TxAlcGain: return SMeterWidget::TxMode::Alc;
+    case MeterBinding::TxAlcGroup: return SMeterWidget::TxMode::AlcGroup;
+    case MeterBinding::HwVolts: return SMeterWidget::TxMode::Volts;
+    case MeterBinding::HwAmps: return SMeterWidget::TxMode::Amps;
     default: return std::nullopt;
     }
 }
@@ -81,6 +219,99 @@ bool isRxBinding(int binding)
 {
     return binding == MeterBinding::SignalPeak || binding == MeterBinding::SignalAvg
         || binding == MeterBinding::SignalMaxBin;
+}
+
+// The copy's power limit in whole watts (kPowerLimitKey), up to the
+// meter items' limit; 0 when absent or not positive (the radio's scale).
+int powerLimitW(const QJsonObject& config)
+{
+    const int limit = config.value(QLatin1String(kPowerLimitKey)).toInt(0);
+    return std::clamp(limit, 0, static_cast<int>(kMaxBarPowerLimitW));
+}
+
+// A colour key: invalid when absent or not a colour (the face's own).
+QColor colorOf(const QJsonObject& config, const char* key)
+{
+    const QString text = config.value(QLatin1String(key)).toString();
+    return text.isEmpty() ? QColor() : QColor(text);
+}
+
+// A ratio key: empty when absent or not a number (the built-in time constants).
+std::optional<float> ratioOf(const QJsonObject& config, const char* key)
+{
+    const QJsonValue v = config.value(QLatin1String(key));
+    if (!v.isDouble()) { return std::nullopt; }
+    return static_cast<float>(std::clamp(v.toDouble(), 0.0, kRatioMax));
+}
+
+// The copy's appearance and dynamics; an absent key leaves the dial as it
+// was drawn before these keys existed.
+void applyAppearance(SMeterWidget& dial, const QJsonObject& config)
+{
+    dial.setPeakHoldColor(colorOf(config, kPeakHoldColorKey));
+    dial.setNeedleColor(colorOf(config, kNeedleColorKey));
+    dial.setSubNeedleColor(colorOf(config, kSubNeedleColorKey));
+    dial.setPowerScaleColor(colorOf(config, kPowerScaleColorKey));
+    dial.setShadow(config.value(QLatin1String(kShadowKey)).toBool(true));
+    dial.setDarkMode(config.value(QLatin1String(kDarkModeKey)).toBool(false));
+    dial.setUpdateIntervalMs(
+        config.value(QLatin1String(kUpdateIntervalKey)).toInt(SMeterWidget::kDefaultUpdateIntervalMs));
+    dial.setAttackRatio(ratioOf(config, kAttackRatioKey));
+    dial.setDecayRatio(ratioOf(config, kDecayRatioKey));
+    dial.setHistoryDurationMs(
+        config.value(QLatin1String(kHistoryDurationKey)).toInt(SMeterWidget::kDefaultHistoryDurationMs));
+    dial.setIgnoreHistoryMs(config.value(QLatin1String(kIgnoreHistoryKey)).toInt(kDefaultBarIgnoreHistoryMs));
+    QColor history = colorOf(config, kHistoryColorKey);
+    const QColor fallback = QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba);
+    if (!history.isValid()) { history = fallback; }
+    history.setAlpha(std::clamp(config.value(QLatin1String(kHistoryAlphaKey)).toInt(fallback.alpha()), 0,
+                                kHistoryAlphaMax));
+    dial.setHistoryColor(history);
+    dial.setShowHistory(config.value(QLatin1String(kShowHistoryKey)).toBool(false));
+}
+
+// The entry config with the dial's appearance and dynamics: a key for each
+// setting of the copy's own, none for one the dial draws as it did before.
+QJsonObject appearanceFrom(const SMeterWidget& dial, QJsonObject config)
+{
+    const auto putColor = [&config](const char* key, const QColor& color) {
+        if (color.isValid()) {
+            config.insert(QLatin1String(key), color.name(QColor::HexRgb));
+        } else {
+            config.remove(QLatin1String(key));
+        }
+    };
+    const auto putUnless = [&config](const char* key, const QJsonValue& value, const QJsonValue& absent) {
+        if (value == absent) {
+            config.remove(QLatin1String(key));
+        } else {
+            config.insert(QLatin1String(key), value);
+        }
+    };
+    const auto putRatio = [&config](const char* key, std::optional<float> ratio) {
+        if (ratio) {
+            config.insert(QLatin1String(key), std::round(static_cast<double>(*ratio) * kRatioScale) / kRatioScale);
+        } else {
+            config.remove(QLatin1String(key));
+        }
+    };
+    putColor(kPeakHoldColorKey, dial.peakHoldColor());
+    putColor(kNeedleColorKey, dial.needleColor());
+    putColor(kSubNeedleColorKey, dial.subNeedleColor());
+    putColor(kPowerScaleColorKey, dial.powerScaleColor());
+    putUnless(kShadowKey, dial.shadow(), true);
+    putUnless(kDarkModeKey, dial.darkMode(), false);
+    putUnless(kUpdateIntervalKey, dial.updateIntervalMs(), SMeterWidget::kDefaultUpdateIntervalMs);
+    putRatio(kAttackRatioKey, dial.attackRatio());
+    putRatio(kDecayRatioKey, dial.decayRatio());
+    putUnless(kShowHistoryKey, dial.showHistory(), false);
+    const QColor history = dial.historyColor();
+    const QColor fallback = QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba);
+    putUnless(kHistoryColorKey, history.name(QColor::HexRgb), fallback.name(QColor::HexRgb));
+    putUnless(kHistoryAlphaKey, history.alpha(), fallback.alpha());
+    putUnless(kHistoryDurationKey, dial.historyDurationMs(), SMeterWidget::kDefaultHistoryDurationMs);
+    putUnless(kIgnoreHistoryKey, dial.ignoreHistoryMs(), kDefaultBarIgnoreHistoryMs);
+    return config;
 }
 
 // Applies the copy's settings; an absent key keeps today's default (the
@@ -108,9 +339,18 @@ void applyConfig(SMeterWidget& dial, const QJsonObject& config)
     } else {
         dial.setFollowsSetupFace(true);
     }
+    // A power limit of the copy's own: red from it, full scale 20% above
+    // it, as the bars, the composites and the radio's own scale put it
+    // (Thetis NormaliseTo100W: the limit at 100, the top at 120,
+    // MeterManager.cs:25231-25236 [v2.10.3.15]; kRfPowerGaugeHeadroom).
+    if (const int limit = powerLimitW(config); limit > 0) {
+        dial.setPowerDisplayScale(limit, limit * ControlRanges::kRfPowerGaugeHeadroom);
+    }
+    applyAppearance(dial, config);
 }
 
-// The entry config with the dial's five settings as it shows them now.
+// The entry config with the dial's five menu settings as it shows them
+// now, and its appearance and dynamics.
 QJsonObject configFrom(const SMeterWidget& dial, QJsonObject config)
 {
     config.insert(QLatin1String(kTxModeKey), txModeNames().at(static_cast<std::size_t>(dial.txMode())));
@@ -123,7 +363,101 @@ QJsonObject configFrom(const SMeterWidget& dial, QJsonObject config)
     } else {
         config.insert(QLatin1String(kFaceKey), SMeterWidget::faceStyleKey(dial.faceStyle()));
     }
-    return config;
+    return appearanceFrom(dial, config);
+}
+
+// The face a config draws: its own, or Setup's.
+SMeterWidget::FaceStyle faceOf(const QJsonObject& config)
+{
+    const QString face = config.value(QLatin1String(kFaceKey)).toString();
+    if (!face.isEmpty() && SMeterWidget::faceStyleKey(SMeterWidget::faceStyleFromKey(face)) == face) {
+        return SMeterWidget::faceStyleFromKey(face);
+    }
+    return static_cast<SMeterWidget::FaceStyle>(SMeterSetupFace::current());
+}
+
+bool darkOf(const QJsonObject& config)
+{
+    return config.value(QLatin1String(kDarkModeKey)).toBool(false);
+}
+
+// The appearance and dynamics rows, in the order of Thetis's meter item
+// settings. A colour with no key shows the face's own.
+QVector<ContentProperty> appearanceProperties()
+{
+    const auto color = [](const char* key, const QString& label,
+                          std::function<QColor(const QJsonObject&)> faceColor) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Color;
+        p.defaultValue = faceColor(QJsonObject()).name(QColor::HexRgb);
+        p.effectiveDefault = [faceColor](const QJsonObject& config) {
+            return QJsonValue(faceColor(config).name(QColor::HexRgb));
+        };
+        return p;
+    };
+    const auto toggle = [](const char* key, const QString& label, bool absent) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Toggle;
+        p.defaultValue = absent;
+        return p;
+    };
+    const auto integer = [](const char* key, const QString& label, int low, int high, int absent,
+                            const QString& suffix) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Integer;
+        p.minimum = low;
+        p.maximum = high;
+        p.defaultValue = absent;
+        p.suffix = suffix;
+        return p;
+    };
+    const auto ratio = [](const char* key, const QString& label) {
+        ContentProperty p;
+        p.key = QLatin1String(key);
+        p.label = label;
+        p.kind = ContentProperty::Kind::Choice;
+        // Null removes the key: the built-in needle movement.
+        p.choices.append({QObject::tr("Standard"), QJsonValue(), true, {}});
+        const int steps = static_cast<int>(std::lround(kRatioMax / kRatioStep));
+        for (int i = 0; i <= steps; ++i) {
+            const double value = std::round(i * kRatioStep * kRatioScale) / kRatioScale;
+            p.choices.append({QString::number(value, 'f', 2), value, true, {}});
+        }
+        p.defaultValue = QJsonValue();
+        return p;
+    };
+    const QString ms = QObject::tr(" ms");
+    return {
+        color(kPeakHoldColorKey, QObject::tr("Peak hold color"),
+              [](const QJsonObject& c) { return SMeterWidget::facePeakHoldColor(faceOf(c)); }),
+        color(kNeedleColorKey, QObject::tr("Needle color"),
+              [](const QJsonObject& c) { return SMeterWidget::faceNeedleColor(faceOf(c), darkOf(c)); }),
+        color(kSubNeedleColorKey, QObject::tr("Transmit needle color"),
+              [](const QJsonObject& c) { return SMeterWidget::faceNeedleColor(faceOf(c), darkOf(c)); }),
+        toggle(kShadowKey, QObject::tr("Needle shadow"), true),
+        color(kPowerScaleColorKey, QObject::tr("Power scale color"),
+              [](const QJsonObject& c) { return SMeterWidget::facePowerScaleColor(faceOf(c), darkOf(c)); }),
+        toggle(kDarkModeKey, QObject::tr("Dark mode"), false),
+        integer(kUpdateIntervalKey, QObject::tr("Update interval"), kMinUpdateIntervalMs, kMaxUpdateIntervalMs,
+                SMeterWidget::kDefaultUpdateIntervalMs, ms),
+        ratio(kAttackRatioKey, QObject::tr("Needle attack ratio")),
+        ratio(kDecayRatioKey, QObject::tr("Needle decay ratio")),
+        toggle(kShowHistoryKey, QObject::tr("Show history"), false),
+        color(kHistoryColorKey, QObject::tr("History color"),
+              [](const QJsonObject&) { return QColor::fromRgba(SMeterWidget::kDefaultHistoryRgba); }),
+        integer(kHistoryAlphaKey, QObject::tr("History opacity"), 0, kHistoryAlphaMax,
+                qAlpha(SMeterWidget::kDefaultHistoryRgba), QString()),
+        integer(kHistoryDurationKey, QObject::tr("History duration"), kMinBarHistoryDurationMs,
+                kMaxBarHistoryDurationMs, SMeterWidget::kDefaultHistoryDurationMs, ms),
+        integer(kIgnoreHistoryKey, QObject::tr("Ignore history after a change"), kMinBarIgnoreHistoryMs,
+                kMaxBarIgnoreHistoryMs, kDefaultBarIgnoreHistoryMs, ms),
+    };
 }
 
 QVector<ContentProperty> dialProperties()
@@ -167,17 +501,31 @@ QVector<ContentProperty> dialProperties()
         face.choices.append({SMeterWidget::faceStyleLabel(style), SMeterWidget::faceStyleKey(style), true, {}});
     }
     face.defaultValue = QJsonValue();
-    return {tx, rx, peak, decay, face};
+    ContentProperty limit;
+    limit.key = QLatin1String(kPowerLimitKey);
+    limit.label = QObject::tr("Power limit (0 follows the radio)");
+    limit.kind = ContentProperty::Kind::Integer;
+    limit.minimum = 0;
+    limit.maximum = static_cast<int>(kMaxBarPowerLimitW);
+    limit.suffix = QObject::tr(" W");
+    limit.defaultValue = 0;
+    QVector<ContentProperty> out{tx, rx, peak, decay, face, limit};
+    out += appearanceProperties();
+    out += ContentFade::properties();
+    return out;
 }
 
 // The same mirrored source as the main applet dial, including remote
 // windows. A copy without a poller still follows its model's readings.
-void followExternalAmp(SMeterWidget* dial, RadioModel* radio, bool directReadings)
+// A copy with a power limit of its own keeps its scale (followScale false).
+void followExternalAmp(SMeterWidget* dial, RadioModel* radio, bool directReadings, bool followScale)
 {
     MainPowerMeter* meter = radio->mainPowerMeter();
-    const auto scale = [dial, meter] { dial->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
-    QObject::connect(meter, &MainPowerMeter::scaleChanged, dial, scale);
-    scale();
+    if (followScale) {
+        const auto scale = [dial, meter] { dial->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
+        QObject::connect(meter, &MainPowerMeter::scaleChanged, dial, scale);
+        scale();
+    }
     if (directReadings) {
         const auto reading = [dial, meter] {
             dial->setTxMeters(static_cast<float>(meter->forwardW()), static_cast<float>(meter->swr()));
@@ -193,6 +541,12 @@ struct TxValues {
     float swr = 1.0f;
     float mic = -50.0f;
     float comp = 0.0f;
+    // The appended modes, at the reading Thetis shows with none
+    // (MeterManager.cs:2077-2086, 2124-2133 [v2.10.3.15]).
+    float alcGain = 0.0f;
+    float alcGroup = -30.0f;
+    float volts = 0.0f;
+    float amps = 0.0f;
 };
 
 QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathContent::Sources& sources,
@@ -207,12 +561,15 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     // No reading until the first one arrives: "--", as a Longpath needle
     // is offline until its first reading.
     dial->setLevel(static_cast<float>(kNoMeterReadingDbm));
+    const bool ownScale = powerLimitW(entry.config) > 0;
     if (sources.radio) {
         dial->setTransmitting(sources.radio->isTransmitting());
         // The amplifier's scale now, as ampStateChanged last set the Main
-        // Panel's dial.
-        dial->setPowerDisplayScale(sources.radio->mainPowerMeter()->visualLimitW(),
-                                   sources.radio->mainPowerMeter()->scaleTopW());
+        // Panel's dial. A copy with its own power limit keeps that.
+        if (!ownScale) {
+            dial->setPowerDisplayScale(sources.radio->mainPowerMeter()->visualLimitW(),
+                                       sources.radio->mainPowerMeter()->scaleTopW());
+        }
     }
 
     QPointer<SMeterWidget> guard(dial);
@@ -233,10 +590,18 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
         case MeterBinding::TxSwr: tx->swr = none ? 1.0f : static_cast<float>(value); break;
         case MeterBinding::TxMic: tx->mic = none ? -50.0f : static_cast<float>(value); break;
         case MeterBinding::TxComp: tx->comp = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::TxAlcGain: tx->alcGain = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::TxAlcGroup: tx->alcGroup = none ? -30.0f : static_cast<float>(value); break;
+        case MeterBinding::HwVolts: tx->volts = none ? 0.0f : static_cast<float>(value); break;
+        case MeterBinding::HwAmps: tx->amps = none ? 0.0f : static_cast<float>(value); break;
         default: return;
         }
         if (binding == MeterBinding::TxPower || binding == MeterBinding::TxSwr) {
             guard->setTxMeters(tx->power, tx->swr);
+        } else if (binding == MeterBinding::TxAlcGain || binding == MeterBinding::TxAlcGroup) {
+            guard->setAlcMeters(tx->alcGain, tx->alcGroup);
+        } else if (binding == MeterBinding::HwVolts || binding == MeterBinding::HwAmps) {
+            guard->setSupplyMeters(tx->volts, tx->amps);
         } else {
             // MeterPoller feeds the Main Panel's dial the same way.
             guard->setMicMeters(tx->mic, tx->comp, tx->mic, tx->comp);
@@ -251,6 +616,12 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
             if (isRxBinding(binding) && !reason.isEmpty()) { rxUnavailable->insert(binding); }
         }
     }
+    // The VHF S9 rule follows the copy's slice, as a Longpath needle's does
+    // (an inert preview reads the slice once).
+    LongpathContent::followAboveS9Frequency(dial, sources, context, mode == ContentRenderMode::Preview,
+        [guard](bool above) {
+            if (guard) { guard->setAboveS9Frequency(above); }
+        });
     if (mode == ContentRenderMode::Preview) {
         // Inert preview: the cached readings once, nothing registered.
         if (poller) {
@@ -289,7 +660,17 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     }
     if (sources.radio) {
         QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial, &SMeterWidget::setTransmitting);
-        followExternalAmp(dial, sources.radio, !poller);
+        // Thetis zeroes every meter, history included, on each MOX change
+        // (OnMox, MeterManager.cs:5252-5275 [v2.10.3.15], calling ZeroOut,
+        // MeterManager.cs:26398-26406, which calls mi.ClearHistory()).
+        auto wasTransmitting = std::make_shared<bool>(sources.radio->isTransmitting());
+        QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial,
+            [guard, wasTransmitting](bool transmitting) {
+                if (!guard || transmitting == *wasTransmitting) { return; }
+                *wasTransmitting = transmitting;
+                guard->clearHistory();
+            });
+        followExternalAmp(dial, sources.radio, !poller, !ownScale);
     }
 
     // The right-click menu changed a setting: the copy keeps it in its
@@ -326,15 +707,17 @@ int rxBindingForMode(const QString& rxMode)
 QList<int> registeredBindings()
 {
     return {MeterBinding::SignalPeak, MeterBinding::SignalAvg, MeterBinding::SignalMaxBin,
-            MeterBinding::TxPower, MeterBinding::TxSwr, MeterBinding::TxMic, MeterBinding::TxComp};
+            MeterBinding::TxPower, MeterBinding::TxSwr, MeterBinding::TxMic, MeterBinding::TxComp,
+            MeterBinding::TxAlcGain, MeterBinding::TxAlcGroup, MeterBinding::HwVolts, MeterBinding::HwAmps};
 }
 
 void registerDial(ContainerContentRegistry& registry, const LongpathContent::Sources& sources)
 {
-    // "S-Meter" is the Main Panel's dial (applet:s_meter) in the same list;
-    // "(additional)" as the list names the additional S-meter bar.
+    // "S-Meter" is the Main Panel's dial (applet:s_meter), listed under
+    // Panels; this one is listed under Ready-made meters beside the
+    // S-Meter bar, so the heading says what "(additional)" used to.
     registry.registerWidgetFactory(QLatin1String(kDialType),
-        {QLatin1String(kDialType), QStringLiteral("S-Meter dial (additional)"), false, true, {}},
+        {QLatin1String(kDialType), QStringLiteral("S-Meter dial"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeDial(entry, parent, sources, mode);
         },

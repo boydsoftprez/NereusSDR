@@ -1991,8 +1991,12 @@ set(GUI_SOURCES
     src/gui/containers/ContainerDocument.cpp
     src/gui/containers/ContainerDocumentCodec.h
     src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContentEntryMigration.h
+    src/gui/containers/ContentEntryMigration.cpp
     src/gui/containers/ContainerContentRegistry.h
     src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContentFade.h
+    src/gui/containers/ContentFade.cpp
     src/gui/containers/ContainerArrangeController.h
     src/gui/containers/ContainerArrangeController.cpp
     src/gui/containers/ArrangeHoldFilter.h
@@ -2032,6 +2036,8 @@ set(GUI_SOURCES
     src/core/mmio/ITransportWorker.cpp
     src/core/mmio/MmioEndpoint.cpp
     src/core/mmio/ExternalVariableEngine.cpp
+    src/core/LedConditionExpression.cpp
+    src/core/mmio/FourChar.cpp
     src/core/mmio/FormatParser.cpp
     src/core/mmio/UdpEndpointWorker.cpp
     src/core/mmio/TcpListenerEndpointWorker.cpp
@@ -2098,6 +2104,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterDynamics.cpp
     src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
+    src/gui/meters/ThetisReadingNames.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/WaveformMeterItem.cpp
     src/gui/meters/MeterPoller.cpp
@@ -2120,12 +2127,17 @@ set(GUI_SOURCES
     src/gui/meters/FilterButtonItem.cpp
     src/gui/meters/AntennaButtonItem.cpp
     src/gui/meters/TuneStepButtonItem.cpp
+    src/gui/meters/OtherButtonCatalog.cpp
     src/gui/meters/OtherButtonItem.cpp
+    src/gui/meters/OverlayTokens.cpp
+    src/gui/meters/LedResultRegistry.cpp
+    src/gui/meters/BandGroups.cpp
     src/gui/meters/VoiceRecordPlayItem.cpp
     src/gui/meters/VfoDisplayItem.cpp
     src/gui/meters/ClockItem.cpp
     src/gui/meters/ClickBoxItem.cpp
     src/gui/meters/DataOutItem.cpp
+    src/gui/meters/ItemColourLook.cpp
     src/gui/AntennaPopupBuilder.cpp
     src/gui/HGauge.cpp
     src/gui/ColorSwatchButton.cpp
@@ -2210,6 +2222,7 @@ set(GUI_SOURCES
     src/gui/applets/TxChainSection.cpp
     src/gui/applets/TxKeyingSection.cpp
     src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/SectionParts.cpp
     src/gui/applets/TxSectionContent.cpp
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp

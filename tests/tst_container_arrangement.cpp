@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original atomic arrangement regressions.
 // Modification history (NereusSDR):
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 — Final review fix wave (I5): a duplicated LED or web image
+//                 gets its own 4-char ID; the original keeps its own.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSignalSpy>
@@ -14,6 +17,9 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/ContainerDocumentCodec.h"
+#include "gui/meters/LEDItem.h"
+#include "gui/meters/WebImageItem.h"
+#include <memory>
 #include <QSplitter>
 using namespace NereusSDR;
 namespace
@@ -224,6 +230,60 @@ class TstContainerArrangement : public QObject
         QVERIFY(controller.returnEntry("B").ok);
         QCOMPARE(order(store.snapshot(), "M"), QStringList({"B"}));
     }
+    // Fix wave I5: a duplicated LED or web image gets its own guid, so its
+    // 4-char ID differs from the original's; the original entry, and the
+    // ID overlay gates and background chains name, are unchanged.
+    void duplicatedLedAndWebImageGetTheirOwnId()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings.xml"));
+        Session station;
+        settings.setRemoteBackend(&station);
+        ContainerWorkspaceStore store(settings);
+        QVERIFY(store.load().ok);
+        ContainerContentRegistry registry;
+        LEDItem led;
+        led.setGuid(QUuid::createUuid());
+        const QString ledId = led.fourChar();
+        ContentEntry ledEntry = registry.captureMeterItem(led);
+        WebImageItem web;
+        web.setFetchEnabled(false);
+        web.setGuid(QUuid::createUuid());
+        const QString webId = web.fourChar();
+        ContentEntry webEntry = registry.captureMeterItem(web);
+        const auto idOf = [&registry](const ContentEntry& e) {
+            const std::unique_ptr<MeterItem> item(
+                registry.createMeterItem(e, nullptr, ContentRenderMode::Validation));
+            if (auto* l = qobject_cast<LEDItem*>(item.get())) { return l->fourChar(); }
+            if (auto* w = qobject_cast<WebImageItem*>(item.get())) { return w->fourChar(); }
+            return QString();
+        };
+        QCOMPARE(idOf(ledEntry), ledId);
+        QCOMPARE(idOf(webEntry), webId);
+        WorkspaceDocument d;
+        d.mainContainerId = "M";
+        d.containers = {container("M", {})};
+        d.containers[0].contents = {ledEntry, webEntry};
+        QCOMPARE(store.commit(d, 0).status, CommitStatus::Saved);
+        ContainerArrangeController controller(store);
+        QVERIFY(controller.duplicateEntry(ledEntry.id, "M", 2).ok);
+        QVERIFY(controller.duplicateEntry(webEntry.id, "M", 3).ok);
+        const auto contents = store.snapshot().containers[0].contents;
+        QCOMPARE(contents.size(), 4);
+        QCOMPARE(contents[0], ledEntry);
+        QCOMPARE(contents[1], webEntry);
+        QCOMPARE(idOf(contents[0]), ledId);
+        QCOMPARE(idOf(contents[1]), webId);
+        QVERIFY(!idOf(contents[2]).isEmpty());
+        QVERIFY(idOf(contents[2]) != ledId);
+        QVERIFY(!idOf(contents[3]).isEmpty());
+        QVERIFY(idOf(contents[3]) != webId);
+
+        // Other entries come back unchanged.
+        const auto bar = registry.makeEntry("BAR");
+        QCOMPARE(registry.withNewItemIdentity(bar), bar);
+    }
+
     void primitiveDuplicate()
     {
         QTemporaryDir dir;

@@ -41,6 +41,11 @@ public slots:
     virtual void start() = 0;
     // Stop and tear down all sockets / ports.
     virtual void stop() = 0;
+    // Send what the endpoint's outbound queue holds, kSendBatch messages
+    // per write, when the transport can send. A worker that cannot send
+    // yet leaves the queue as it is. The engine queues a call here after
+    // each accepted enqueue. Must be called on the worker thread.
+    virtual void flushOutbound() {}
 
 signals:
     // Emitted on every parsed payload. Keys are already formatted as

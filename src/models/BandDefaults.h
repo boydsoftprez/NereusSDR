@@ -21,6 +21,8 @@
 // Modification history (NereusSDR):
 //   2026-04-23 — New file for NereusSDR by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-10-26 - bandGridBandFromFrequency, and SWL seeds (see the .cpp).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -66,7 +68,7 @@ namespace NereusSDR {
 /// Seed entry for a single band: the default VFO frequency and DSP mode
 /// applied by RadioModel::onBandButtonClicked(Band) when the slice has
 /// never been on `band` before. `valid == false` means "no seed for this
-/// band" (currently only XVTR — seed becomes meaningful once transverter
+/// band" (only XVTR — its seed becomes meaningful once transverter
 /// config ships).
 struct BandSeed {
     Band    band;
@@ -80,6 +82,13 @@ namespace BandDefaults {
 /// Returns the seed entry for `b`. `seedFor(Band::XVTR)` returns
 /// `valid == false` — callers must handle the XVTR no-op path.
 BandSeed seedFor(Band b);
+
+/// The band a band button grid takes `hz` to be in: the ham band or WWV
+/// (bandFromFrequency), otherwise the SWL band whose range holds it (Thetis
+/// US region frequency data), otherwise GEN. The band click and the grid's
+/// lit band use it, so a slice on an SWL band clicks and saves as that
+/// band, not as GEN.
+Band bandGridBandFromFrequency(double hz);
 
 } // namespace BandDefaults
 } // namespace NereusSDR

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -17,6 +20,25 @@
 //                 target marker in amber; elevation fed and drawn; "Both"
 //                 laid out two faces wide as in Thetis. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Corrected the "N" colour note: Thetis draws every
+//                 cardinal in OuterTextColour. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator settings (container item parity): full
+//                 background and padding layout appended as fields 22 and
+//                 23 (both off for an older record, which keeps its look),
+//                 dark mode loads the "-dark" image,
+//                 data source variable 2 feeds the elevation, the rotor feed
+//                 follows the update interval (100 ms for new items), and
+//                 preview copies never send. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis rotator MMIO command path (container item
+//                 parity): Allow control gates both paths (off for new
+//                 items as Thetis, on for a record saved before it so its
+//                 rotor link control is kept), the drag line and target in the control
+//                 colour (LimeGreen new, amber for an older record), and
+//                 SendRotatorMessage ported for the per-item MMIO path,
+//                 appended as fields 24-30. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -62,18 +84,25 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (background image path) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "RotatorItem.h"
+#include "ItemColourLook.h"
 
 // From Thetis clsRotatorItem (MeterManager.cs:15042+)
 // renderRotator() (MeterManager.cs:35170-35569)
 
 #include "core/LogCategories.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 #include "gui/StyleConstants.h"
 #include "models/RotorCommandSink.h"
 #include "models/RotorModel.h"
 
+#include <QByteArray>
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
@@ -142,6 +171,28 @@ float distance(const QPointF& a, const QPointF& b)
     return static_cast<float>(QLineF(a, b).length());
 }
 
+// C# int.ToString("000") / ("00"): at least `digits` digits, the minus sign
+// before the zeros.
+QString zeroPadded(int value, int digits)
+{
+    const QString magnitude = QStringLiteral("%1").arg(
+        static_cast<qlonglong>(value < 0 ? -static_cast<qlonglong>(value) : value),
+        digits, 10, QLatin1Char('0'));
+    return value < 0 ? QLatin1Char('-') + magnitude : magnitude;
+}
+
+// Command strings are free text and may hold '|', so the record carries
+// them as Base64 (as TextOverlayItem does its text).
+QString encodeText(const QString& text)
+{
+    return QString::fromLatin1(text.toUtf8().toBase64());
+}
+
+QString decodeText(const QString& field)
+{
+    return QString::fromUtf8(QByteArray::fromBase64(field.toLatin1()));
+}
+
 } // namespace
 
 RotatorItem::RotatorItem(QObject* parent)
@@ -158,11 +209,122 @@ RotatorItem::RotatorItem(QObject* parent)
 void RotatorItem::setBackgroundImagePath(const QString& path)
 {
     m_bgImagePath = path;
+    m_bgImage = QImage{};
+    m_bgImageLoadedPath.clear();
     if (!path.isEmpty()) {
+        // The plain file now; paint swaps in a variant if one applies.
         m_bgImage.load(path);
-    } else {
-        m_bgImage = QImage{};
+        m_bgImageLoadedPath = path;
     }
+}
+
+// ---------------------------------------------------------------------------
+// ensureBackgroundImage()
+// From Thetis MeterManager.cs:27370, 27393 [v2.10.3.15]: the rotator's grid
+// and map images take the dark mode setting; renderImage (:40641-40650,
+// ported as ImageItem::variantPath) then draws the "-dark" file when there
+// is one, and the "-small" or "-large" file for the face's size. Thetis's
+// images are built-in skin files; ours is the chosen file, with any variants
+// beside it.
+// ---------------------------------------------------------------------------
+void RotatorItem::ensureBackgroundImage(const QRect& rect)
+{
+    if (m_bgImagePath.isEmpty()) { return; }
+    const double diagonal = std::sqrt(static_cast<double>(rect.width()) * rect.width()
+                                      + static_cast<double>(rect.height()) * rect.height());
+    const QString wanted = ImageItem::variantPath(m_bgImagePath, m_darkMode, diagonal);
+    if (wanted == m_bgImageLoadedPath) { return; }
+    m_bgImage = QImage{};
+    m_bgImage.load(wanted);
+    m_bgImageLoadedPath = wanted;
+}
+
+void RotatorItem::setDarkMode(bool d)
+{
+    m_darkMode = d;
+}
+
+void RotatorItem::setPadding(float p)
+{
+    // From Thetis MeterManager.cs:16539 [v2.10.3.15]
+    m_padding = p < kMinPadding ? kMinPadding : p;
+}
+
+void RotatorItem::setControlEnabled(bool on)
+{
+    m_controlEnabled = on;
+    if (!on) { cancelControl(); }
+}
+
+void RotatorItem::setAllowControl(bool on)
+{
+    m_allowControl = on;
+    if (!on) { cancelControl(); }
+}
+
+void RotatorItem::setCommandPath(CommandPath path)
+{
+    if (path == m_commandPath) { return; }
+    m_commandPath = path;
+    cancelControl();
+}
+
+void RotatorItem::setCommandEndpointGuid(const QUuid& guid)
+{
+    if (guid == m_commandGuid) { return; }
+    m_commandGuid = guid;
+    if (m_commandPath == CommandPath::Mmio) { cancelControl(); }
+}
+
+// ---------------------------------------------------------------------------
+// buildRotatorMessage()
+// From Thetis MeterManager.cs:16486-16503 [v2.10.3.15]
+// (clsRotatorItem.SendRotatorMessage), the message only: the gates and the
+// send are in sendStop()/sendTarget() and sendMmio().
+// ---------------------------------------------------------------------------
+QString RotatorItem::buildRotatorMessage(CommandKind kind, double value) const
+{
+    // NereusSDR: (int) of a value outside int is undefined in C++; a heading
+    // is 0-360, so anything not finite has nothing to send.
+    if (kind != CommandKind::Stop && !std::isfinite(value)) { return {}; }
+    const auto whole = [value] {
+        return static_cast<int>(std::clamp(value, -1.0e6, 1.0e6));
+    };
+
+    QString data;
+    if (kind == CommandKind::Stop) {
+        data = m_stopControlString;
+    } else {
+        if (kind == CommandKind::Elevation) {
+            data = QString(m_eleControlString).replace(QStringLiteral("%ELE%"), zeroPadded(whole(), 2));
+        } else {
+            data = QString(m_azControlString).replace(QStringLiteral("%AZ%"), zeroPadded(whole(), 3));
+        }
+    }
+    data.replace(QStringLiteral("\\n"), QStringLiteral("\n")); // use @ so that it is a literal verbatim string
+    data.replace(QStringLiteral("\\r"), QStringLiteral("\r"));
+    data.replace(QStringLiteral("\\0"), QString(QChar(u'\0')));
+    return data;
+}
+
+void RotatorItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    // From Thetis MeterManager.cs:23490, 23503 [v2.10.3.15]
+    setUpdateIntervalMs(kThetisUpdateIntervalMs);
+}
+
+// ---------------------------------------------------------------------------
+// setSecondaryValue()
+// From Thetis MeterManager.cs:22669, 23501 [v2.10.3.15]: variable 2 (index
+// 1) is the ELE reading. A source without a reading (NaN) leaves the dial
+// where it was.
+// ---------------------------------------------------------------------------
+void RotatorItem::setSecondaryValue(int index, double value)
+{
+    if (index != 1 || !std::isfinite(value)) { return; }
+    // MeterWidget::updateMmioValue repaints the item.
+    setElevation(static_cast<float>(value));
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +391,17 @@ QRect RotatorItem::squareRect(int widgetW, int widgetH) const
 // ---------------------------------------------------------------------------
 QRect RotatorItem::faceRect(int widgetW, int widgetH) const
 {
-    if (m_mode != RotatorMode::Both) { return squareRect(widgetW, widgetH); }
+    if (m_mode != RotatorMode::Both) {
+        if (!m_paddingLayout) { return squareRect(widgetW, widgetH); }
+        // From Thetis MeterManager.cs:27341-27345 [v2.10.3.15]: in AZ or
+        // ELE the rotator is padding wide and high (in widths), centred
+        // across and at the top: TopLeft (0.5 - padding / 2, top).
+        const QRect pr = pixelRect(widgetW, widgetH);
+        const float pad = std::max(m_padding, kMinPadding);
+        const int wanted = static_cast<int>(std::lround(static_cast<float>(pr.width()) * pad));
+        const int side = std::max(1, std::min({wanted, pr.width(), pr.height()}));
+        return QRect(pr.left() + (pr.width() - side) / 2, pr.top(), side, side);
+    }
     // From Thetis MeterManager.cs:23474-23486 [v2.10.3.15]: in BOTH the
     // rotator is one wide and half as high (ri.Size = new SizeF(1f, fSize),
     // fSize 0.5). The text positions (x + w * 0.75f) assume it.
@@ -323,11 +495,12 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
     const QRectF disc(cx - h / 2.0f, cy - h / 2.0f, h, h);
 
     // Step 1: fill background circle
-    p.setBrush(m_backgroundColour);
+    p.setBrush(ItemColourLook::effective("Rotator.backgroundColour", m_backgroundColour, this));
     p.setPen(Qt::NoPen);
     p.drawEllipse(disc);
 
     // Step 2: draw background image if loaded
+    ensureBackgroundImage(compassRect);
     if (!m_bgImage.isNull()) {
         p.save();
         QPainterPath clipPath;
@@ -354,7 +527,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
 
             if (deg % 45 != 0) {
                 // From Thetis MeterManager.cs:35226-35229
-                p.setBrush(m_smallBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
             }
@@ -367,7 +540,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             const float px  = cx + radius * std::cos(rad);
             const float py  = cy + radius * std::sin(rad);
 
-            p.setBrush(m_bigBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -391,8 +564,10 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             font.setBold(deg == 0);
             p.setFont(font);
-            // From Thetis MeterManager.cs:35275 — "N" drawn in red (bigBlobColour = red)
-            p.setPen(deg == 0 ? m_bigBlobColour : m_outerTextColour);
+            // Thetis draws every cardinal, "N" included, in OuterTextColour
+            // (MeterManager.cs:36809 [v2.10.3.15]). NereusSDR draws "N" bold in the
+            // large-dot colour (m_bigBlobColour); that is our own choice, not Thetis.
+            p.setPen(deg == 0 ? ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this) : ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             const int fw = std::max(12, static_cast<int>(h * 0.12f));
@@ -418,7 +593,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             const float py  = cy + radius * std::sin(rad);
 
             if (deg % 30 == 0) {
-                p.setBrush(m_bigBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -428,7 +603,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
                 QFont font;
                 font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
                 p.setFont(font);
-                p.setPen(m_outerTextColour);
+                p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
                 p.setBrush(Qt::NoBrush);
 
                 const int fw = std::max(14, static_cast<int>(h * 0.14f));
@@ -445,7 +620,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
                 p.drawText(textBox,
                            Qt::AlignCenter, QString::number(deg));
             } else {
-                p.setBrush(m_smallBlobColour);
+                p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
                 p.setPen(Qt::NoPen);
                 p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
             }
@@ -495,7 +670,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
         const float py  = cy + radius * std::sin(rad);
 
         if (deg % 15 == 0) {
-            p.setBrush(m_bigBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotBig, dotBig);
 
@@ -505,7 +680,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
             QFont font;
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             // From Thetis MeterManager.cs:35526: plotText((90 - deg).ToString(), ...)
@@ -523,7 +698,7 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
             p.drawText(textBox,
                        Qt::AlignCenter, QString::number(90 - deg));
         } else {
-            p.setBrush(m_smallBlobColour);
+            p.setBrush(ItemColourLook::effective("Rotator.smallBlobColour", m_smallBlobColour, this));
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(px, py), dotSmall, dotSmall);
         }
@@ -588,7 +763,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
                            startAngle, spanAngle);
             beamPath.closeSubpath();
 
-            QColor bwColor = m_beamWidthColour;
+            QColor bwColor = ItemColourLook::effective("Rotator.beamWidthColour", m_beamWidthColour, this);
             bwColor.setAlphaF(static_cast<double>(m_beamWidthAlpha));
             p.setBrush(bwColor);
             p.setPen(Qt::NoPen);
@@ -601,7 +776,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         const float tipX     = cx + radius_tip_arrow   * std::cos(arrowRad);
         const float tipY     = cy + radius_tip_arrow   * std::sin(arrowRad);
 
-        QPen arrowPen(m_arrowColour, std::max(1.0f, h * 0.01f));
+        QPen arrowPen(ItemColourLook::effective("Rotator.arrowColour", m_arrowColour, this), std::max(1.0f, h * 0.01f));
         p.setPen(arrowPen);
         p.setBrush(Qt::NoBrush);
         p.drawLine(QPointF(cx, cy), QPointF(tipX, tipY));
@@ -629,7 +804,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
 
             const int labelSize  = std::max(7, static_cast<int>(fontSize * 0.65f));
@@ -714,7 +889,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         const float tipX     = cx_ele + radius_tip_ele   * std::cos(arrowRad);
         const float tipY     = cy_ele + radius_tip_ele   * std::sin(arrowRad);
 
-        QPen arrowPen(m_arrowColour, std::max(1.0f, h * 0.01f));
+        QPen arrowPen(ItemColourLook::effective("Rotator.arrowColour", m_arrowColour, this), std::max(1.0f, h * 0.01f));
         p.setPen(arrowPen);
         p.setBrush(Qt::NoBrush);
         p.drawLine(QPointF(cx_ele, cy_ele), QPointF(tipX, tipY));
@@ -741,7 +916,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
             font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
-            p.setPen(m_outerTextColour);
+            p.setPen(ItemColourLook::effective("Rotator.outerTextColour", m_outerTextColour, this));
             p.setBrush(Qt::NoBrush);
             QFont captionFont;
             captionFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
@@ -799,6 +974,7 @@ void RotatorItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer lay
 {
     const QRect cr = faceRect(widgetW, widgetH);
     if (layer == Layer::OverlayStatic) {
+        paintFullBackground(p, widgetW, widgetH);
         if (m_mode != RotatorMode::Ele) {
             paintCompassFace(p, cr);
         }
@@ -818,6 +994,7 @@ void RotatorItem::paintForLayer(QPainter& p, int widgetW, int widgetH, Layer lay
 void RotatorItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect cr = faceRect(widgetW, widgetH);
+    paintFullBackground(p, widgetW, widgetH);
     if (m_mode != RotatorMode::Ele) {
         paintCompassFace(p, cr);
     }
@@ -826,6 +1003,17 @@ void RotatorItem::paint(QPainter& p, int widgetW, int widgetH)
     }
     paintHeading(p, cr);
     paintControl(p, cr);
+}
+
+// ---------------------------------------------------------------------------
+// paintFullBackground()
+// From Thetis MeterManager.cs:23550-23556, 27396-27406 [v2.10.3.15]: a solid
+// colour (igs.Colour) under the whole rotator.
+// ---------------------------------------------------------------------------
+void RotatorItem::paintFullBackground(QPainter& p, int widgetW, int widgetH)
+{
+    if (!m_fullBackground) { return; }
+    p.fillRect(pixelRect(widgetW, widgetH), ItemColourLook::effective("Rotator.backgroundColour", m_backgroundColour, this));
 }
 
 // ---------------------------------------------------------------------------
@@ -851,6 +1039,10 @@ void RotatorItem::setRotor(RotorLink::RotorModel* state, RotorCommandSink* comma
 
 bool RotatorItem::rotorControllable() const
 {
+    // From Thetis MeterManager.cs:16478 [v2.10.3.15]: nothing is sent unless
+    // control is allowed (if (!_alow_control) return;), on either path.
+    if (!m_controlEnabled || !m_allowControl) { return false; }
+    if (m_commandPath == CommandPath::Mmio) { return mmioReady(); }
     return m_rotor && m_commands
         && m_rotor->driver() != RotorLink::RotorModel::Driver::None
         && m_rotor->connectionPhase() == TunerModel::ConnectionPhase::Connected;
@@ -858,8 +1050,29 @@ bool RotatorItem::rotorControllable() const
 
 bool RotatorItem::elevationControllable() const
 {
-    return rotorControllable()
-        && m_rotor->axes() == RotorLink::RotorModel::Axes::AzimuthElevation;
+    if (!rotorControllable()) { return false; }
+    // Thetis sends the ELE string whenever the elevation face is shown; the
+    // rotor link needs a rotor that turns in elevation.
+    if (m_commandPath == CommandPath::Mmio) { return true; }
+    return m_rotor->axes() == RotorLink::RotorModel::Axes::AzimuthElevation;
+}
+
+bool RotatorItem::mmioReady() const
+{
+    // From Thetis MeterManager.cs:16477, 16480-16483 [v2.10.3.15]: a chosen
+    // data source that exists. NereusSDR also refuses one whose direction is
+    // In, which takes no outbound message (MmioEndpoint::enqueueOutbound).
+    if (m_commandGuid.isNull()) { return false; }
+    const MmioEndpoint* ep = ExternalVariableEngine::instance().endpoint(m_commandGuid);
+    return ep && ep->direction() != MmioEndpoint::Direction::In;
+}
+
+bool RotatorItem::sendMmio(const QString& message)
+{
+    if (message.isEmpty() || !mmioReady()) { return false; }
+    // From Thetis MeterManager.cs:16504 [v2.10.3.15] (mmio.EnqueueOutbound(data);)
+    ExternalVariableEngine::instance().enqueueOutbound(m_commandGuid, message);
+    return true;
 }
 
 void RotatorItem::onRotorChanged()
@@ -876,6 +1089,9 @@ void RotatorItem::onRotorChanged()
     m_rotorEle = static_cast<float>(m_rotor->elevationDeg());
     feedTick();
     if ((m_rotorAz >= 0.0f || m_rotorEle >= 0.0f) && !m_feed.isActive()) {
+        // From Thetis MeterManager.cs:27312 [v2.10.3.15]: the rotator reads
+        // at its update interval (every poll when none is set: 100 ms).
+        m_feed.setInterval(updateIntervalMs() > 0 ? updateIntervalMs() : kFeedIntervalMs);
         m_feed.start();
     }
     emit repaintRequested();
@@ -1069,6 +1285,12 @@ bool RotatorItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widget
 void RotatorItem::sendStop()
 {
     if (!rotorControllable()) { return; }
+    if (m_commandPath == CommandPath::Mmio) {
+        // From Thetis MeterManager.cs:16706-16716 [v2.10.3.15]
+        // (SendRotatorMessage(false, -1, true)).
+        sendMmio(buildRotatorMessage(CommandKind::Stop, -1.0));
+        return;
+    }
     // From Thetis MeterManager.cs:16486-16488 [v2.10.3.15]
     // (clsRotatorItem.SendRotatorMessage): stop sends the stop command (the
     // rotor's own here, not an MMIO template).
@@ -1084,6 +1306,20 @@ void RotatorItem::sendTarget()
     // From Thetis MeterManager.cs:16494, 16498 [v2.10.3.15]: the heading
     // goes as whole degrees ((int)dragging_rotator_degrees).
     const double degrees = std::trunc(static_cast<double>(m_dragDegrees));
+    if (m_commandPath == CommandPath::Mmio) {
+        // From Thetis MeterManager.cs:37208-37217 [v2.10.3.15]: the target
+        // is drawn and the AZ or ELE string sent.
+        const CommandKind kind = m_dragEle ? CommandKind::Elevation : CommandKind::Azimuth;
+        if (m_dragEle && !elevationControllable()) { return; }
+        if (!sendMmio(buildRotatorMessage(kind, static_cast<double>(m_dragDegrees)))) { return; }
+        if (m_dragEle) {
+            m_targetEle = static_cast<float>(degrees);
+        } else {
+            m_targetAz = static_cast<float>(degrees);
+        }
+        clearArrivedTargets();
+        return;
+    }
     QString why;
     if (m_dragEle) {
         if (!elevationControllable()) { return; }
@@ -1116,15 +1352,15 @@ void RotatorItem::sendTarget()
 // paintControl()
 // OverlayDynamic: the drag line, the target marker and the stop circle.
 // From Thetis MeterManager.cs:36921-37008, 37110-37201 [v2.10.3.15] (renderRotator()).
-// Thetis draws these in the control colour (LimeGreen); the plan has them
-// amber.
+// Thetis draws these in the control colour (LimeGreen for a new item; an
+// older record keeps the amber it was drawn in).
 // ---------------------------------------------------------------------------
 void RotatorItem::paintControl(QPainter& p, const QRect& rect)
 {
     if (!rotorControllable()) { return; }
     const Faces f = faces(rect);
     const float h = f.h;
-    const QColor control(Style::kAmberText);
+    const QColor control = ItemColourLook::effective("Rotator.controlColour", m_controlColour, this);
     QPen controlPen(control, std::max(1.0f, h * 0.01f));
     controlPen.setCapStyle(Qt::RoundCap);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -1148,7 +1384,7 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
     if (m_pressed && m_dragFace != DragFace::None && m_dragDegrees >= 0.0f && !m_overStop) {
         const QPointF centre = m_dragEle ? f.ele : f.az;
         p.setPen(Qt::NoPen);
-        p.setBrush(m_bigBlobColour);
+        p.setBrush(ItemColourLook::effective("Rotator.bigBlobColour", m_bigBlobColour, this));
         p.drawEllipse(centre, h * 0.015f, h * 0.015f);
         p.setPen(controlPen);
         p.setBrush(Qt::NoBrush);
@@ -1186,12 +1422,17 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
 // Format: ROTATOR|x|y|w|h|bindingId|zOrder|mode|showValue|showCardinals|
 //         showBeamWidth|beamWidth|beamWidthAlpha|darkMode|padding|
 //         bigBlobColour|smallBlobColour|outerTextColour|arrowColour|
-//         beamWidthColour|backgroundColour|bgImagePath
+//         beamWidthColour|backgroundColour|bgImagePath[|fullBackground|
+//         paddingLayout][|allowControl|controlColour|commandPath|
+//         commandGuid|azCommand|eleCommand|stopCommand]
+// A record saved before the two appended fields loads with both off and
+// writes them as 0, so its first 22 fields come back as they were. The
+// command strings are Base64 (they may hold '|').
 // ---------------------------------------------------------------------------
 QString RotatorItem::serialize() const
 {
-    return QStringLiteral(
-        "ROTATOR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21")
+    QString record = QStringLiteral(
+        "ROTATOR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20")
         .arg(static_cast<double>(m_x))
         .arg(static_cast<double>(m_y))
         .arg(static_cast<double>(m_w))
@@ -1212,13 +1453,27 @@ QString RotatorItem::serialize() const
         .arg(m_arrowColour.name(QColor::HexArgb))
         .arg(m_beamWidthColour.name(QColor::HexArgb))
         .arg(m_backgroundColour.name(QColor::HexArgb))
-        .arg(m_bgImagePath);
+        // Joined, not substituted through .arg(), so a "%1" in the path can
+        // never be read as a placeholder.
+        + QLatin1Char('|') + m_bgImagePath;
+    record += QStringLiteral("|%1|%2").arg(m_fullBackground ? 1 : 0).arg(m_paddingLayout ? 1 : 0);
+    record += QStringLiteral("|%1|%2|%3|%4|%5|%6|%7")
+        .arg(m_allowControl ? 1 : 0)
+        .arg(m_controlColour.name(QColor::HexArgb))
+        .arg(static_cast<int>(m_commandPath))
+        .arg(m_commandGuid.isNull() ? QString() : m_commandGuid.toString(QUuid::WithoutBraces))
+        .arg(encodeText(m_azControlString))
+        .arg(encodeText(m_eleControlString))
+        .arg(encodeText(m_stopControlString));
+    return record;
 }
 
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected parts (22 total):
 // [0]=ROTATOR [1-6]=base fields [7-21]=type-specific fields
+// Optional: [22]=fullBackground [23]=paddingLayout. Absent (a record saved
+// before them) or not 1, each is off, so the item draws as it did.
 // ---------------------------------------------------------------------------
 bool RotatorItem::deserialize(const QString& data)
 {
@@ -1277,6 +1532,25 @@ bool RotatorItem::deserialize(const QString& data)
     // bgImagePath — trailing optional field (index 21)
     const QString imgPath = (parts.size() > 21) ? parts[21] : QString{};
     setBackgroundImagePath(imgPath);
+
+    m_fullBackground = parts.size() > 22 && parts[22] == QLatin1String("1");
+    m_paddingLayout  = parts.size() > 23 && parts[23] == QLatin1String("1");
+
+    // Fields 24-30. A record saved before them keeps the rotor link control
+    // it had (Allow control on, which only the rotor link path can use for
+    // it) and the amber its control was drawn in. A saved 0 stays off.
+    m_allowControl = parts.size() > 24 ? parts[24] == QLatin1String("1") : true;
+    const QColor controlColour = parts.size() > 25 ? QColor(parts[25]) : QColor();
+    m_controlColour = controlColour.isValid() ? controlColour : QColor(Style::kAmberText);
+    m_commandPath = parts.size() > 26 && parts[26] == QLatin1String("1")
+        ? CommandPath::Mmio : CommandPath::RotorLink;
+    m_commandGuid = parts.size() > 27 ? QUuid(parts[27]) : QUuid();
+    m_azControlString = parts.size() > 28 ? decodeText(parts[28])
+                                          : QString::fromLatin1(kPstRotatorAzCommand);
+    m_eleControlString = parts.size() > 29 ? decodeText(parts[29])
+                                           : QString::fromLatin1(kPstRotatorEleCommand);
+    m_stopControlString = parts.size() > 30 ? decodeText(parts[30])
+                                            : QString::fromLatin1(kPstRotatorStopCommand);
 
     return true;
 }

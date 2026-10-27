@@ -57,6 +57,11 @@
 //                                    unavailable with the reason, and a
 //                                    click changes nothing. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-25  J.J. Boyd / KG4VCF  Container item parity Task 58: Thetis
+//                                    button numbers; a saved record ends
+//                                    with the id scheme, the 12 group
+//                                    bitfields and the button order.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -250,8 +255,8 @@ private slots:
         QVERIFY(!item.isButtonShown(Id::Power));
         QCOMPARE(kConnected.size() + kHidden.size() + 1, 34);
         // The macro buttons stay hidden.
-        for (int i = 34; i < item.buttonCount(); ++i) {
-            QVERIFY(!item.ButtonBoxItem::isButtonShown(i));
+        for (int i = 0; i < OtherButtonItem::kMacroCount; ++i) {
+            QVERIFY(!item.isButtonShown(static_cast<Id>(int(Id::Macro0) + i)));
         }
         // Hiding wrote nothing into the saved visibility; only Power's bit
         // is cleared.
@@ -270,8 +275,11 @@ private slots:
         QVERIFY(!antennas.isButtonShown(9));  // Rx/Tx
         QVERIFY(antennas.isButtonShown(3));
         BandButtonItem bands;
-        QVERIFY(!bands.isButtonShown(uiIndexFromBand(Band::XVTR)));
-        QVERIFY(bands.isButtonShown(uiIndexFromBand(Band::Band20m)));
+        QVERIFY(bands.isButtonShown(bands.buttonForBand(Band::Band20m)));
+        // XVTR is in the VHF band group.
+        bands.setGroup(bands.shownSlice(), BandGroup::Vhf);
+        QVERIFY(!bands.isButtonShown(bands.buttonForBand(Band::XVTR)));
+        QVERIFY(bands.isButtonShown(bands.buttonForBand(Band::Band2m)));
     }
 
     void aHiddenButtonComesBackWhenItsFeatureIsBuilt()
@@ -327,8 +335,9 @@ private slots:
     {
         UnbuiltFeatures::setBuiltForTest(UnbuiltFeature::MacroButtons, true);
         OtherButtonItem item;
-        for (int i = 34; i < item.buttonCount(); ++i) {  // after the 34 core buttons
-            QVERIFY2(!item.button(i).hiddenUntilBuilt,
+        for (int i = 0; i < OtherButtonItem::kMacroCount; ++i) {
+            const int index = item.indexOf(static_cast<Id>(int(Id::Macro0) + i));
+            QVERIFY2(!item.button(index).hiddenUntilBuilt,
                      qPrintable(QStringLiteral("macro %1 still hidden").arg(i)));
         }
         for (Id id : {Id::Rx2, Id::SubRx, Id::PanSwap, Id::Avg}) {
@@ -346,7 +355,12 @@ private slots:
         QVERIFY(item.deserialize(saved));
         QVERIFY(!item.isButtonShown(Id::Rx2));
         QVERIFY(item.isButtonShown(Id::Anf));
-        QCOMPARE(item.serialize(), saved);
+        // Saving appends the grid styling (default here) after the older
+        // fields: border, margin, corner radius, height ratio, fade RX/TX;
+        // then the Thetis id scheme, the 12 group bitfields and the
+        // (identity, so empty) button order.
+        QCOMPARE(item.serialize(), saved + QStringLiteral("|0.005|0|3|1|0|0"
+                                                          "|2|2046|1568|0|16383|119|0|0|0|0|0|0|0|"));
     }
 
     // ── The container's own slice ───────────────────────────────────────
@@ -721,7 +735,10 @@ private slots:
         QCOMPARE(item.columns(), 6);
         const uint32_t kept = bits & ~(1u << int(Id::Power));
         QCOMPARE(item.visibleBits(), kept);
-        QCOMPARE(item.serialize(), QStringLiteral("OTHERBTNS|0.1|0.2|0.5|0.5|0|3|6|%1").arg(kept));
+        // Group 0: MON, TUN, MOX (bits 2-4); group 3: the earlier numbers
+        // 32 and 33 (Spectrascope, Off, bits 12-13), never hidden by the mask.
+        QCOMPARE(item.serialize(), QStringLiteral("OTHERBTNS|0.1|0.2|0.5|0.5|0|3|6|%1|0.005|0|3|1|0|0"
+                                                  "|2|28|0|0|12288|0|0|0|0|0|0|0|0|").arg(kept));
     }
 
     void everyReasonIsPlain()

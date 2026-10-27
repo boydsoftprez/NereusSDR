@@ -16,6 +16,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Each section but Mode names its parts (SectionParts),
+//                 which a container copy hides and orders from its entry
+//                 config. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-24 - The RX Filter face defaults come from NereusButtonFace.h;
 //                 the mode list comes from the applet only; Thetis headers
 //                 byte for byte at v2.10.3.15. J.J. Boyd (KG4VCF),
@@ -145,6 +149,7 @@
 
 #include "gui/NereusGuiExport.h"
 #include "gui/meters/NereusButtonFace.h"
+#include "SectionParts.h"
 
 #include <QColor>
 #include <QJsonObject>
@@ -180,9 +185,15 @@ public:
     explicit RxAntennasSection(QWidget* parent = nullptr);
     QPushButton* rxButton() const { return m_rx; }
     QPushButton* txButton() const { return m_tx; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QPushButton* m_rx = nullptr;
     QPushButton* m_tx = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxModeSection : public QWidget {
@@ -201,19 +212,26 @@ public:
     TriBtn* down() const { return m_down; }
     TriBtn* up() const { return m_up; }
     QLabel* label() const { return m_label; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     TriBtn* m_down = nullptr;
     TriBtn* m_up = nullptr;
     QLabel* m_label = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxFilterSection : public QWidget {
     Q_OBJECT
 public:
     explicit RxFilterSection(QWidget* parent = nullptr);
-    // Width readout, preset grid, passband. hideTop and hideBottom in
-    // `config` hide the width and the passband. columns is 1..32, as the
-    // Nereus band buttons. The five colours are that control's face.
+    // Width readout, preset grid, passband. The parts top, presets and
+    // bottom hide (hideTop, hidePresets, hideBottom) and order from
+    // `config`. columns is 1..32, as the Nereus band buttons. The five
+    // colours are that control's face.
     void applyConfig(const QJsonObject& config);
     int columns() const { return m_columns; }
     QString presetButtonStyle() const;
@@ -221,6 +239,11 @@ public:
     QGridLayout* grid() const { return m_grid; }
     QVector<QPushButton*>& buttons() { return m_buttons; }
     FilterPassbandWidget* passband() const { return m_passband; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QLabel* m_width = nullptr;
     QGridLayout* m_grid = nullptr;
@@ -233,6 +256,7 @@ private:
     QColor m_backgroundBottom{QColor(NereusButtonFace::kRestingBottom)};
     QColor m_selectedTop{QColor(NereusButtonFace::kSelectedTop)};
     QColor m_selectedBottom{QColor(NereusButtonFace::kSelectedBottom)};
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxPanSection : public QWidget {
@@ -240,8 +264,14 @@ class NEREUS_GUI_EXPORT RxPanSection : public QWidget {
 public:
     explicit RxPanSection(QWidget* parent = nullptr);
     QSlider* slider() const { return m_slider; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QSlider* m_slider = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxSquelchSection : public QWidget {
@@ -250,9 +280,15 @@ public:
     explicit RxSquelchSection(QWidget* parent = nullptr);
     QPushButton* button() const { return m_button; }
     QSlider* slider() const { return m_slider; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QPushButton* m_button = nullptr;
     QSlider* m_slider = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxAttenuatorSection : public QWidget {
@@ -264,12 +300,18 @@ public:
     QComboBox* preampCombo() const { return m_preamp; }
     QSpinBox* stepSpin() const { return m_step; }
     QCheckBox* rx1Preamp() const { return m_rx1Preamp; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QLabel* m_label = nullptr;
     QStackedWidget* m_stack = nullptr;
     QComboBox* m_preamp = nullptr;
     QSpinBox* m_step = nullptr;
     QCheckBox* m_rx1Preamp = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxAgcSection : public QWidget {
@@ -281,12 +323,18 @@ public:
     QLabel* valueLabel() const { return m_value; }
     QPushButton* autoButton() const { return m_auto; }
     QLabel* infoLabel() const { return m_info; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QComboBox* m_combo = nullptr;
     QSlider* m_slider = nullptr;
     QLabel* m_value = nullptr;
     QPushButton* m_auto = nullptr;
     QLabel* m_info = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxRitSection : public QWidget {
@@ -298,12 +346,18 @@ public:
     TriBtn* minus() const { return m_minus; }
     TriBtn* plus() const { return m_plus; }
     QLabel* label() const { return m_label; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QPushButton* m_on = nullptr;
     QPushButton* m_zero = nullptr;
     TriBtn* m_minus = nullptr;
     TriBtn* m_plus = nullptr;
     QLabel* m_label = nullptr;
+    SectionParts m_parts{this};
 };
 
 class NEREUS_GUI_EXPORT RxXitSection : public QWidget {
@@ -315,12 +369,18 @@ public:
     TriBtn* minus() const { return m_minus; }
     TriBtn* plus() const { return m_plus; }
     QLabel* label() const { return m_label; }
+    // The section's parts, which a container copy hides and orders
+    // (SectionParts::apply).  The applet's own panel is not built from
+    // these objects.
+    SectionParts& parts() { return m_parts; }
+    const SectionParts& parts() const { return m_parts; }
 private:
     QPushButton* m_on = nullptr;
     QPushButton* m_zero = nullptr;
     TriBtn* m_minus = nullptr;
     TriBtn* m_plus = nullptr;
     QLabel* m_label = nullptr;
+    SectionParts m_parts{this};
 };
 
 } // namespace NereusSDR

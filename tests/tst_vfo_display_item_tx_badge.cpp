@@ -21,6 +21,11 @@
 //     the carried rx index (rx=1 → VFO-A, rx=2 → VFO-B).
 //   - Verifies independence: when rx=1 fires, only VFO-A's state changes.
 //
+// Modification history (NereusSDR):
+//   2026-10-26 - Per-slice TX marker: with slice states fed, only the
+//                 slice transmit comes off shows the TX colour while
+//                 transmitting. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -117,6 +122,29 @@ private slots:
         item.setTransmitting(false);
         const QColor sampled = renderBadgeColour(item);
         QCOMPARE(sampled, QColor(0x00, 0xff, 0x00));  // back to LimeGreen
+    }
+
+    // The TX marker lights only on the slice transmit comes off: a
+    // display on a slice that does not transmit stays at the RX colour.
+    void render_txMarker_onTransmitSliceOnly()
+    {
+        VfoDisplayItem item;
+        VfoSliceState a;
+        a.index = 0; a.frequencyHz = 14200000; a.mode = QStringLiteral("USB");
+        a.transmitting = true; a.active = true; a.open = true;
+        VfoSliceState b = a;
+        b.index = 1; b.transmitting = false; b.active = false;
+        item.setSliceState(0, a);
+        item.setSliceState(1, b);
+        item.setTransmitting(true);
+
+        item.setSourceSliceIndex(0);
+        QCOMPARE(renderBadgeColour(item), QColor(0xff, 0x00, 0x00));
+        item.setSourceSliceIndex(1);
+        QCOMPARE(renderBadgeColour(item), QColor(0x00, 0xff, 0x00));
+        item.setTransmitting(false);
+        item.setSourceSliceIndex(0);
+        QCOMPARE(renderBadgeColour(item), QColor(0x00, 0xff, 0x00));
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

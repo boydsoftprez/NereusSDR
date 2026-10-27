@@ -1,5 +1,77 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour the user sets is
+//                 recorded as picked (MeterItem::setColourUserSet); the
+//                 userColours key follows the other context keys. A fade
+//                 row a face refuses leaves the item and box unchanged
+//                 (GUI M3).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Availability of a meter entry is judged on the entry (a
+//                 stored BarPreset ADC maximum bar shows unavailable with its
+//                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and the magic eye's
+//                 Built-in bezel are visible and disabled, "No artwork is
+//                 available for this option". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave: a web image's Show next reaches the
+//                 dialog (showWebImageRequested); the clock's format row is
+//                 "Classic time and date format". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - VFO display face: Display mode (Source slice, All slices,
+//                 Slice A to E) and Layout (Compact, Detailed) rows, and
+//                 plain labels for its colour rows. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Clock: a "Thetis time and date format" row (thetisFormat).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Signal history: a "Trace 2 source" row (Off, Slice A-D,
+//                 Follow selected RX) writes the face's trace2Context.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Power limit row for the PWR and Reverse PWR bars.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Bar preset rows for the Thetis colour set: show title,
+//                 show marker, peak hold and peak value colours, average
+//                 marker show and colour, solid and segment low and high
+//                 colours, scale low and high colours. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Signal text rows: Show type, Type color, Show µV and dBm
+//                 and µV and dBm color. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Magic eye rows: eye size and bezel size (0.01 to 1) and a
+//                 bezel image with a file picker. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Rows for the ANAN, Cross and Power/SWR per-item options:
+//                 power limit (0 shows "Radio rating"), power scale, peak
+//                 hold, peak value and other needles colors (blank keeps
+//                 the face's ink), shadow and dark mode. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - One data source row pair per variable the item type reads
+//                 (MeterItem::mmioVariableCount, Thetis MeterVariables):
+//                 variables 2 and up are stored in mmioVariables.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX rows for bar presets, composites
+//                 and waveform faces (addFadeRows); a composite's edit turns
+//                 its legacy fadeRx / fadeTx off. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - An RX section item's Advanced bindings are disabled with
+//                 the reason, as a TX section row's are: its factory never
+//                 reads the entry's context. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - An Order control (a TX section row's parts, with Move up
+//                 and Move down), and a TX section row's Advanced bindings
+//                 stay disabled with the reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The MMIO source row also takes a data source's
+//                 4-character ID and stores that source's UUID. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - A registered widget type with no declared properties (the
+//                 TX and RX section rows) is no longer labelled an
+//                 unsupported configuration; it gets the applet's binding
+//                 note. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: the declared-property group is
 //                 built only when it has rows (named declaredProperties), and
 //                 Advanced bindings are disabled while a declared type is
@@ -19,11 +91,16 @@
 #include "ContainerSettingsDialog.h"
 #include "meter_property_editors/BaseItemEditor.h"
 #include "meter_property_editors/SignalTextItemEditor.h"
+#include "meter_property_editors/WebImageItemEditor.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
+#include "gui/meters/MagicEyeItem.h"
+#include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/styles/WorkspacePalette.h"
+#include "gui/applets/SectionParts.h"
 #include <QFormLayout>
 #include <algorithm>
 #include <QVBoxLayout>
@@ -34,9 +111,11 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QListWidget>
 #include <QJsonArray>
 #include <QColor>
 #include <QColorDialog>
+#include <QFileDialog>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
@@ -44,7 +123,57 @@
 #include <QStandardItemModel>
 #include <limits>
 #include "gui/meters/MeterPoller.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 namespace NereusSDR {
+namespace {
+// The colour table's field for a colour key on a face (ItemColourLook.h):
+// "<kind>.<key>", "<kind>.<channel>.<key>", "BarPreset.<key>",
+// "Waveform.<key>", and the VFO display and clock fields a face holds.
+QString lookFieldFor(const MeterItem* item, const QString& key, int channel)
+{
+    if (qobject_cast<const BarPresetItem*>(item) != nullptr) {
+        return QStringLiteral("BarPreset.") + key;
+    }
+    if (qobject_cast<const WaveformMeterItem*>(item) != nullptr) {
+        return QStringLiteral("Waveform.") + key;
+    }
+    const auto* face = qobject_cast<const CompositePresetItem*>(item);
+    if (face == nullptr) {
+        return QString();
+    }
+    static const QHash<QString, QString> held{
+        {QStringLiteral("vfoTitleColor"), QStringLiteral("VfoDisplay.titleColour")},
+        {QStringLiteral("vfoFrequencyColor"), QStringLiteral("VfoDisplay.frequencyColour")},
+        {QStringLiteral("vfoSmallDigitsColor"), QStringLiteral("VfoDisplay.frequencySmallColour")},
+        {QStringLiteral("vfoModeColor"), QStringLiteral("VfoDisplay.modeColour")},
+        {QStringLiteral("vfoFilterColor"), QStringLiteral("VfoDisplay.filterColour")},
+        {QStringLiteral("vfoBandColor"), QStringLiteral("VfoDisplay.bandColour")},
+        {QStringLiteral("vfoBandTextColor"), QStringLiteral("VfoDisplay.bandTextColour")},
+        {QStringLiteral("vfoSplitBackColor"), QStringLiteral("VfoDisplay.splitBackColour")},
+        {QStringLiteral("vfoSplitColor"), QStringLiteral("VfoDisplay.splitColour")},
+        {QStringLiteral("vfoDigitHighlightColor"), QStringLiteral("VfoDisplay.digitHighlightColour")},
+        {QStringLiteral("vfoRxColor"), QStringLiteral("VfoDisplay.rxColour")},
+        {QStringLiteral("vfoTxColor"), QStringLiteral("VfoDisplay.txColour")},
+        {QStringLiteral("vfoLockColor"), QStringLiteral("VfoDisplay.lockColour")},
+        {QStringLiteral("vfoSyncColor"), QStringLiteral("VfoDisplay.syncColour")},
+        {QStringLiteral("vfoBackgroundColor"), QStringLiteral("VfoDisplay.backgroundColour")},
+        {QStringLiteral("clockTimeColor"), QStringLiteral("Clock.timeColour")},
+        {QStringLiteral("clockDateColor"), QStringLiteral("Clock.dateColour")},
+        {QStringLiteral("clockTitleColor"), QStringLiteral("Clock.typeTitleColour")},
+    };
+    if (held.contains(key)) {
+        return held.value(key);
+    }
+    const QJsonObject config = face->configuration();
+    if (channel < 0) {
+        return config.value(QStringLiteral("kind")).toString() + QLatin1Char('.') + key;
+    }
+    const QString name = config.value(QStringLiteral("channels")).toArray().at(channel).toObject()
+                             .value(QStringLiteral("name")).toString();
+    return config.value(QStringLiteral("kind")).toString() + QLatin1Char('.') + name + QLatin1Char('.') + key;
+}
+} // namespace
 ContentPropertyEditor::ContentPropertyEditor(ContainerContentRegistry& registry,QWidget* parent):QWidget(parent),m_registry(registry) {}
 void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
 {
@@ -75,6 +204,18 @@ void ContentPropertyEditor::publish()
 }
 bool ContentPropertyEditor::property(const QString& key,const QJsonValue& value,int channel)
 {
+    // A colour the user sets (picked, or typed as a new value) is recorded
+    // as picked, so it stays as set even when it equals a default; a blank
+    // one is not. Retyping the same text records nothing.
+    QString pickedField;
+    bool wasPicked=false;
+    if(m_item && (key.endsWith(QLatin1String("Color")) || key==QLatin1String("color"))) {
+        const QString field=lookFieldFor(m_item.get(),key,channel);
+        if(!field.isEmpty() && (m_picking || effectiveProperty(key,channel)!=value)) {
+            pickedField=field;wasPicked=m_item->colourUserSet(field);
+            m_item->setColourUserSet(field,QColor(value.toString()).isValid());
+        }
+    }
     QJsonObject change;
     if(channel>=0) {
         auto props=qobject_cast<CompositePresetItem*>(m_item.get())->configuration();
@@ -88,7 +229,11 @@ bool ContentPropertyEditor::property(const QString& key,const QJsonValue& value,
     if (auto* waveform = qobject_cast<WaveformMeterItem*>(m_item.get())) {
         accepted = waveform->applyConfiguration(change);
     }
-    if(!accepted) { if(m_error) {m_error->setText(tr("Value rejected: check the range, history duration or color."));} return false; }
+    if(!accepted) {
+        if(!pickedField.isEmpty()) {m_item->setColourUserSet(pickedField,wasPicked);}
+        if(m_error) {m_error->setText(tr("Value rejected: check the range, history duration or color."));}
+        return false;
+    }
     if(m_error) {m_error->clear();}
     captureRenderer();
     publish(); return true;
@@ -101,12 +246,46 @@ void ContentPropertyEditor::captureRenderer()
     // another axis changed during this editor selection.
     if(captured.config==m_hydrated.config) {captured.config=m_original.config;}
     if(captured.canvasRect==m_hydrated.canvasRect) {captured.canvasRect=m_original.canvasRect;}
-    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
+    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("mmioVariables"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup"),QString::fromLatin1(ItemColourLook::kUserColoursKey)}) {
         if(captured.context[key]==m_hydrated.context[key]) {
             if(m_original.context.contains(key)) {captured.context[key]=m_original.context[key];} else {captured.context.remove(key);}
         }
     }
     m_entry=captured;
+}
+void ContentPropertyEditor::addFadeRows(QFormLayout* fields)
+{
+    if(!m_item || !fields) {return;}
+    auto* composite=qobject_cast<CompositePresetItem*>(m_item.get());
+    // A composite without the entry keys shows its legacy configuration.
+    const bool legacy=composite && !m_item->hasExplicitFade();
+    const QJsonObject config=composite?composite->configuration():QJsonObject{};
+    const bool rx=legacy?config.value("fadeRx").toBool():m_item->fadeOnRx();
+    const bool tx=legacy?config.value("fadeTx").toBool():m_item->fadeOnTx();
+    const auto row=[this,fields](const QString& name,const QString& label,bool checked,bool receive) {
+        auto* check=new QCheckBox(fields->parentWidget());check->setObjectName(name);check->setChecked(checked);
+        fields->addRow(label,check);
+        connect(check,&QCheckBox::toggled,this,[this,receive,check](bool on) {
+            if(!m_item) {return;}
+            auto* face=qobject_cast<CompositePresetItem*>(m_item.get());
+            const bool explicitFade=m_item->hasExplicitFade();
+            const QJsonObject faceConfig=face?face->configuration():QJsonObject{};
+            // Both flags are set, so the entry saves both keys.
+            const bool otherRx=face && !explicitFade?faceConfig.value("fadeRx").toBool():m_item->fadeOnRx();
+            const bool otherTx=face && !explicitFade?faceConfig.value("fadeTx").toBool():m_item->fadeOnTx();
+            // From now on the composite uses the animated veil, not its
+            // instant 25% fade. A face that refuses leaves the item and the
+            // box as they were.
+            if(face && !face->applyConfiguration(QJsonObject{{"fadeRx",false},{"fadeTx",false}})) {
+                const QSignalBlocker block(check);check->setChecked(!on);return;
+            }
+            m_item->setFadeOnRx(receive?on:otherRx);
+            m_item->setFadeOnTx(receive?otherTx:on);
+            captureRenderer();publish();
+        });
+    };
+    row(QStringLiteral("fadeOnRx"),tr("Fade on RX"),rx,true);
+    row(QStringLiteral("fadeOnTx"),tr("Fade on TX"),tx,false);
 }
 QJsonValue ContentPropertyEditor::effectiveProperty(const QString& key,int channel) const
 {
@@ -131,6 +310,45 @@ QString fieldLabel(QString key)
     if(key=="secondaryBindingId") {return QObject::tr("Average reading");}
     if(key=="decay") {return QObject::tr("Release (0–1)");}
     if(key=="attack") {return QObject::tr("Attack (0–1)");}
+    if(key=="powerLimitW") {return QObject::tr("Power limit");}
+    if(key=="powerScaleColor") {return QObject::tr("Power scale color");}
+    if(key=="peakHoldColor") {return QObject::tr("Peak hold color");}
+    if(key=="peakValueColor") {return QObject::tr("Peak value color");}
+    if(key=="subNeedleColor") {return QObject::tr("Other needles color");}
+    if(key=="darkMode") {return QObject::tr("Dark mode");}
+    if(key=="eyeScale") {return QObject::tr("Eye size");}
+    if(key=="bezelScale") {return QObject::tr("Bezel size");}
+    if(key=="bezelImage") {return QObject::tr("Bezel image");}
+    if(key=="thetisFormat") {return QObject::tr("Classic time and date format");}
+    // The VFO display face's rows, named as the VFO display item's editor
+    // names them.
+    if(key=="displayMode") {return QObject::tr("Display mode");}
+    if(key=="vfoLayout") {return QObject::tr("Layout");}
+    if(key=="vfoShowBandText") {return QObject::tr("Show band text");}
+    if(key=="vfoTitleColor") {return QObject::tr("Title color");}
+    if(key=="vfoFrequencyColor") {return QObject::tr("Frequency color");}
+    if(key=="vfoSmallDigitsColor") {return QObject::tr("Small digits color");}
+    if(key=="vfoModeColor") {return QObject::tr("Mode color");}
+    if(key=="vfoFilterColor") {return QObject::tr("Filter color");}
+    if(key=="vfoBandColor") {return QObject::tr("Band color");}
+    if(key=="vfoBandTextColor") {return QObject::tr("Band text color");}
+    if(key=="vfoSplitBackColor") {return QObject::tr("Split back color");}
+    if(key=="vfoSplitColor") {return QObject::tr("Split color");}
+    if(key=="vfoDigitHighlightColor") {return QObject::tr("Digit highlight color");}
+    if(key=="vfoRxColor") {return QObject::tr("RX label color");}
+    if(key=="vfoTxColor") {return QObject::tr("TX label color");}
+    if(key=="vfoLockColor") {return QObject::tr("Lock color");}
+    if(key=="vfoSyncColor") {return QObject::tr("Sync color");}
+    if(key=="vfoBackgroundColor") {return QObject::tr("Background color");}
+    if(key=="showType") {return QObject::tr("Show type");}
+    if(key=="typeColor") {return QObject::tr("Type color");}
+    if(key=="showSubMarker") {return QObject::tr("Show µV and dBm");}
+    if(key=="subMarkerColor") {return QObject::tr("µV and dBm color");}
+    if(key=="showMarker") {return QObject::tr("Show marker");}
+    if(key=="showSub") {return QObject::tr("Show average marker");}
+    if(key=="subColor") {return QObject::tr("Average marker color");}
+    if(key=="segLowColor") {return QObject::tr("Solid and segment low color");}
+    if(key=="segHighColor") {return QObject::tr("Solid and segment high color");}
     key.replace(QRegularExpression("([a-z])([A-Z])"),"\\1 \\2");
     if(!key.isEmpty()) {key[0]=key[0].toUpper();}
     return key;
@@ -144,11 +362,111 @@ QJsonValue declaredValue(const ContentProperty& property, const QJsonObject& con
     return property.defaultValue;
 }
 }
+namespace {
+// An Order property's items: each choice's id and shared line, in built
+// order (ContentProperty::Kind::Order).
+QVector<QPair<QString,int>> orderItems(const ContentProperty& p)
+{
+    QVector<QPair<QString,int>> items;
+    for(const auto& choice:p.choices) {
+        const QJsonObject item=choice.value.toObject();
+        items.append({item.value(QStringLiteral("id")).toString(),item.value(QStringLiteral("line")).toInt(-1)});
+    }
+    return items;
+}
+
+// Moves the item at `row` one place up (step -1) or down (step +1). An item
+// on a shared line swaps with its neighbour on the same line; otherwise its
+// whole unit (the line, or the item alone) swaps with the next unit.
+QStringList movedOrder(const QStringList& order,const QHash<QString,int>& lineOf,int row,int step)
+{
+    if(row<0 || row>=order.size()) {return order;}
+    const int line=lineOf.value(order.at(row),-1);
+    const int neighbour=row+step;
+    QStringList result=order;
+    if(line>=0 && neighbour>=0 && neighbour<order.size() && lineOf.value(order.at(neighbour),-1)==line) {
+        result.swapItemsAt(row,neighbour);
+        return result;
+    }
+    // The units, each a run of rows: one shared line, or one item.
+    QVector<QStringList> units;
+    int unitOfRow=-1;
+    for(int i=0;i<order.size();++i) {
+        const int itemLine=lineOf.value(order.at(i),-1);
+        const bool joins=itemLine>=0 && i>0 && lineOf.value(order.at(i-1),-1)==itemLine;
+        if(!joins) {units.append(QStringList{});}
+        units.last().append(order.at(i));
+        if(i==row) {unitOfRow=units.size()-1;}
+    }
+    const int other=unitOfRow+step;
+    if(other<0 || other>=units.size()) {return order;}
+    units.swapItemsAt(unitOfRow,other);
+    result.clear();
+    for(const auto& unit:units) {result.append(unit);}
+    return result;
+}
+}
 QWidget* ContentPropertyEditor::declaredControl(const ContentProperty& p, QWidget* parent)
 {
     const QJsonValue value=declaredValue(p,m_entry.config);
     QWidget* widget=nullptr;
-    if(p.kind==ContentProperty::Kind::Toggle) {
+    if(p.kind==ContentProperty::Kind::Order) {
+        const QVector<QPair<QString,int>> items=orderItems(p);
+        QStringList built;
+        QHash<QString,int> lineOf;
+        QHash<QString,QString> labelOf;
+        for(int i=0;i<items.size();++i) {
+            built.append(items.at(i).first);
+            lineOf.insert(items.at(i).first,items.at(i).second);
+            labelOf.insert(items.at(i).first,p.choices.at(i).label);
+        }
+        const QString tip=tr("Controls on one line stay together.");
+        auto* box=new QWidget(parent);
+        box->setToolTip(tip);
+        auto* layout=new QHBoxLayout(box);
+        layout->setContentsMargins(0,0,0,0);
+        auto* list=new QListWidget(box);
+        list->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("List"));
+        list->setToolTip(tip);
+        layout->addWidget(list,1);
+        auto* buttons=new QVBoxLayout;
+        auto* up=new QPushButton(tr("Move up"),box);
+        up->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("Up"));
+        up->setAutoDefault(false);
+        auto* down=new QPushButton(tr("Move down"),box);
+        down->setObjectName(QStringLiteral("property_")+p.key+QStringLiteral("Down"));
+        down->setAutoDefault(false);
+        buttons->addWidget(up);
+        buttons->addWidget(down);
+        buttons->addStretch();
+        layout->addLayout(buttons);
+        const auto fill=[list,labelOf](const QStringList& order,const QString& selected){
+            const QSignalBlocker block(list);
+            list->clear();
+            for(const QString& id:order) {
+                auto* item=new QListWidgetItem(labelOf.value(id,id),list);
+                item->setData(Qt::UserRole,id);
+                if(id==selected) {list->setCurrentItem(item);}
+            }
+        };
+        fill(SectionParts::effectiveOrder(items,value.toArray()),QString());
+        const auto move=[this,list,fill,lineOf,built,key=p.key](int step){
+            QStringList order;
+            for(int i=0;i<list->count();++i) {order.append(list->item(i)->data(Qt::UserRole).toString());}
+            const int row=list->currentRow();
+            if(row<0) {return;}
+            const QString selected=order.at(row);
+            const QStringList moved=movedOrder(order,lineOf,row,step);
+            if(moved==order) {return;}
+            fill(moved,selected);
+            // The built order is not written.
+            if(moved==built) {m_entry.config.remove(key);} else {m_entry.config[key]=QJsonArray::fromStringList(moved);}
+            publish();
+        };
+        connect(up,&QPushButton::clicked,this,[move]{move(-1);});
+        connect(down,&QPushButton::clicked,this,[move]{move(+1);});
+        widget=box;
+    } else if(p.kind==ContentProperty::Kind::Toggle) {
         auto* check=new QCheckBox(parent);check->setChecked(value.toBool());
         connect(check,&QCheckBox::toggled,this,[this,key=p.key](bool on){m_entry.config[key]=on;publish();});
         widget=check;
@@ -224,6 +542,20 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         else {combo->addItem(tr("Conditioned encoder input"),"Conditioned");combo->addItem(tr("Raw microphone"),"RawMic");}
         combo->setCurrentIndex(combo->findData(value.toVariant()));
         connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{if(!property(key,QJsonValue::fromVariant(combo->currentData()))) {const QSignalBlocker blocker(combo);combo->setCurrentIndex(combo->findData(effectiveProperty(key,-1).toVariant()));}});widget=combo;
+    } else if(key=="displayMode" || key=="vfoLayout") {
+        // VFO display face: which slices it shows (the entry's Source slice,
+        // every open slice, or one slice) and its layout.
+        auto* combo=new GuardedComboBox(this);
+        if(key=="displayMode") {
+            combo->addItem(tr("Source slice"),int(VfoDisplayItem::DisplayMode::SourceSlice));
+            combo->addItem(tr("All slices"),int(VfoDisplayItem::DisplayMode::AllSlices));
+            for(int i=0;i<VfoDisplayItem::kMaxSliceCount;++i) {combo->addItem(tr("Slice %1").arg(QChar('A'+i)),VfoDisplayItem::fixedSliceMode(i));}
+        } else {
+            combo->addItem(tr("Compact"),int(VfoDisplayItem::Layout::Compact));
+            combo->addItem(tr("Detailed"),int(VfoDisplayItem::Layout::Thetis));
+        }
+        combo->setCurrentIndex(combo->findData(value.toInt()));
+        connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{if(!property(key,combo->currentData().toInt())) {const QSignalBlocker blocker(combo);combo->setCurrentIndex(combo->findData(effectiveProperty(key,-1).toInt()));}});widget=combo;
     } else if(key.endsWith("BindingId") || key=="bindingId") {
         auto* combo=new QComboBox(this);combo->addItem(tr("Unassigned"),-1);
         // Existing GUI binding names are the source of truth, including gaps.
@@ -236,6 +568,12 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         connect(combo,&QComboBox::currentTextChanged,this,[this,key,channel](const QString& text){property(key,text,channel);});widget=combo;
     } else if(value.isBool()) {
         auto* check=new QCheckBox(this);check->setChecked(value.toBool());connect(check,&QCheckBox::toggled,this,[this,key,channel](bool v){property(key,v,channel);});widget=check;
+        // The ANAN face has no dark art: Dark mode stays visible, disabled,
+        // with the reason; a saved value is kept and shown.
+        if(key=="darkMode") {
+            const auto* face=qobject_cast<const CompositePresetItem*>(m_item.get());
+            if(face && !face->darkFaceArtAvailable()) {check->setEnabled(false);check->setToolTip(BaseItemEditor::noArtworkReason());}
+        }
     } else if(value.isDouble()) {
         const bool integral=key.endsWith("Ms") || QStringList{"rowHeight","faceHeight","fontSize","displayGroup","historyCapacity"}.contains(key);
         if(integral) {
@@ -249,15 +587,52 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* spin=new QDoubleSpinBox(this);spin->setDecimals(4);spin->setRange(-1000000,1000000);
             if(key=="attack" || key=="decay") {spin->setRange(0,1);spin->setSingleStep(.05);}
             if(key.startsWith("radius") || key=="strokeWidth" || key=="lengthFactor") {spin->setRange(.0001,1000);spin->setSingleStep(.05);}
+            // Magic eye and bezel size: 1 fills the eye box.
+            if(key=="eyeScale" || key=="bezelScale") {spin->setDecimals(2);spin->setRange(MagicEyeItem::kMinEyeScale,MagicEyeItem::kMaxEyeScale);spin->setSingleStep(.05);}
+            // 0 follows the radio's rating; the face rejects 0-0.1.
+            if(key=="powerLimitW") {spin->setDecimals(1);spin->setRange(0,kMaxBarPowerLimitW);spin->setSingleStep(10);spin->setSuffix(tr(" W"));spin->setSpecialValueText(tr("Radio rating"));}
             spin->setValue(value.toDouble());connect(spin,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,key,channel,spin](double v){if(!property(key,v,channel)) {const QSignalBlocker block(spin);spin->setValue(effectiveProperty(key,channel).toDouble());spin->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=spin;
         }
     } else if(value.isString()) {
         auto* edit=new QLineEdit(value.toString(),this);edit->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));
         connect(edit,&QLineEdit::editingFinished,this,[this,edit,key,channel]{if(!property(key,edit->text(),channel)) {edit->setText(effectiveProperty(key,channel).toString());edit->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=edit;
         if(key.endsWith("Color") || key=="color") {
-            edit->setPlaceholderText(tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            edit->setPlaceholderText(QStringList{"powerScaleColor","peakHoldColor","peakValueColor","segLowColor","segHighColor"}.contains(key)?tr("Blank uses the face color")
+                :key=="subNeedleColor"?tr("Blank keeps each needle's color"):tr("#AARRGGBB"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            // The swatch shows the colour drawn (the workspace look's colour
+            // while the key holds its default, with the note); the text is
+            // the colour saved.
+            auto* swatch=new QPushButton(row);swatch->setAutoDefault(false);swatch->setFixedSize(40,18);
+            swatch->setObjectName((channel<0?key:QString("channel%1_%2").arg(channel).arg(key))+QStringLiteral("Swatch"));layout->addWidget(swatch);
+            const QString field=lookFieldFor(m_item.get(),key,channel);
+            const auto paintSwatch=[this,swatch,edit,field]{
+                const QColor stored(edit->text());
+                if(!stored.isValid() || field.isEmpty()) {
+                    swatch->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: 1px solid #205070; }"));
+                    swatch->setToolTip(edit->placeholderText());
+                    return;
+                }
+                ItemColourLook::paintSwatch(swatch,field,stored,m_item.get());
+            };
+            paintSwatch();
+            connect(edit,&QLineEdit::editingFinished,this,paintSwatch);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
-            connect(choose,&QPushButton::clicked,this,[this,key,channel,edit]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));}});widget=row;
+            const auto pick=[this,key,channel,edit,paintSwatch]{
+                const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);
+                if(!color.isValid()) {return;}
+                // A dialog pick is the user's even when it is the colour already stored.
+                m_picking=true;const bool accepted=property(key,color.name(QColor::HexArgb),channel);m_picking=false;
+                if(accepted) {edit->setText(color.name(QColor::HexArgb));paintSwatch();}
+            };
+            connect(choose,&QPushButton::clicked,this,pick);connect(swatch,&QPushButton::clicked,this,pick);widget=row;
+        }
+        if(key=="bezelImage") {
+            // A bezel is a file the user picks (or a bundled resource); blank draws none.
+            edit->setPlaceholderText(tr("Blank draws no bezel"));auto* row=new QWidget(this);auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->addWidget(edit);
+            auto* browse=new QPushButton(tr("Browse…"),row);browse->setAutoDefault(false);layout->addWidget(browse);
+            connect(browse,&QPushButton::clicked,this,[this,key,channel,edit]{const QString path=QFileDialog::getOpenFileName(this,tr("Choose bezel image"),QString(),tr("Images (*.png *.jpg *.bmp *.svg)"));if(!path.isEmpty() && property(key,path,channel)) {edit->setText(path);}});widget=row;
+            // The built-in eye bezel art is not bundled: visible, disabled, with the reason.
+            auto* builtIn=new QCheckBox(tr("Built-in bezel"),row);builtIn->setObjectName("builtInBezel");builtIn->setEnabled(false);builtIn->setToolTip(BaseItemEditor::noArtworkReason());layout->addWidget(builtIn);
         }
     }
     if(widget) {widget->setObjectName(channel<0?key:QString("channel%1_%2").arg(channel).arg(key));}
@@ -301,13 +676,17 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         auto* note=new QLabel(tr("The viewport scrolls when it is smaller than the objects. Resizing the window keeps saved object positions and sizes."),group);note->setWordWrap(true);fields->addRow(note);
     }
     QString reason=entry.extensions.value("unavailableReason").toString();
-    if(reason.isEmpty() && !m_registry.isAvailable(entry.typeId)) { reason=m_registry.unavailableReason(entry.typeId); }
+    if(reason.isEmpty() && !m_registry.isAvailable(entry)) { reason=m_registry.unavailableReason(entry); }
     // Workspace preview: a widget type with declared properties (no MeterItem).
     const QVector<ContentProperty> schema=m_item?QVector<ContentProperty>{}:m_registry.declaredProperties(entry.typeId);
     const bool declared=!schema.isEmpty();
-    if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:") && !declared)) {
+    // A registered widget type that declares no properties (the TX and RX
+    // section rows) is known and supported: it simply has no item-specific
+    // options. Only a type the registry does not know is unsupported.
+    const bool widgetType=!m_item && m_registry.hasWidgetFactory(entry.typeId);
+    if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:") && !declared && !widgetType)) {
         auto* note=new QLabel(reason.isEmpty()?tr("Unsupported configuration. Original data is retained; this object can be removed explicitly."):reason,this); note->setWordWrap(true); root->addWidget(note);
-    } else if(declared) {
+    } else if(declared || widgetType) {
         // The group exists only when it has rows, so nothing is built and
         // thrown away.
         const bool hasRows=std::any_of(schema.cbegin(),schema.cend(),
@@ -331,6 +710,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         for (const auto& key : keys) {
             fields->addRow(fieldLabel(key), control(key, props[key]));
         }
+        addFadeRows(fields);
         auto* note = new QLabel(tr("Fixed amplitude −1 to +1. The waveform observes existing audio; "
                                   "microphone setup is available through Raw microphone."), this);
         note->setWordWrap(true);
@@ -339,10 +719,12 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         const auto props=composite->configuration();
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
         const auto add=[this](QFormLayout* target,const QString& key,const QJsonValue& value,int channel) {
-            if(key=="bindingId" || QStringList{"x","y","w","h","channels","vfo","bands","modes"}.contains(key)) {return;}
+            // fadeRx / fadeTx: the Fade on RX / TX rows (addFadeRows).
+            if(key=="bindingId" || QStringList{"x","y","w","h","channels","vfo","bands","modes","fadeRx","fadeTx"}.contains(key)) {return;}
             if(auto* widget=control(key,value,channel)) {target->addRow(fieldLabel(key),widget);}
         };
         for(const auto& key:composite->editableFields()) { add(fields,key,props[key],-1); }
+        addFadeRows(fields);
         const auto channels=props["channels"].toArray();
         for(int i=0;i<channels.size();++i) {
             const auto c=channels[i].toObject(); auto* group=new QGroupBox(tr("Channel %1: %2").arg(i+1).arg(c["name"].toString()),this); auto* fields=new QFormLayout(group); root->addWidget(group);
@@ -352,17 +734,29 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     } else if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
         const auto props=bar->configuration();
-        QStringList keys{"label","barColor","backdropColor","titleColor","historyColor","showHistory","peakHold","showValue","showPeakValue","style","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
+        QStringList keys{"label","showTitle","barColor","showMarker","backdropColor","titleColor","historyColor","showHistory","peakHold","peakHoldColor","showValue","showPeakValue","peakValueColor","showSub","subColor","style","segLowColor","segHighColor","lowColor","highColor","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
         const QString flavor=props["flavor"].toString();
         if(flavor=="Custom") { keys.append({"minValue","maxValue","redThreshold","units"}); }
+        if(props.contains("powerLimitW")) { keys.append("powerLimitW"); }
         keys.removeAll("bindingId");keys.removeAll("secondaryBindingId");
-        for(const auto& key:keys) {if(auto* widget=control(key,props[key])) {fields->addRow(fieldLabel(key),widget);}}
+        // A bar preset's lowColor and highColor are its scale colours.
+        const auto barLabel=[](const QString& key) {
+            if(key=="lowColor") {return tr("Scale low color");}
+            if(key=="highColor") {return tr("Scale high color");}
+            return fieldLabel(key);
+        };
+        for(const auto& key:keys) {if(auto* widget=control(key,props[key])) {fields->addRow(barLabel(key),widget);}}
+        addFadeRows(fields);
         auto* note=new QLabel(flavor=="Custom"?tr("Custom calibration range is editable."):tr("This face uses its calibrated source scale; minimum and maximum are fixed."),this); note->setWordWrap(true); root->addWidget(note);
         if(flavor.contains("Signal") || flavor=="PbSnr") { auto* note=new QLabel(tr("Signal units and decimal precision follow the global multimeter preferences."),this); note->setWordWrap(true); root->addWidget(note); }
     } else if(m_item) {
         if(auto* adapter=ContainerSettingsDialog::buildTypeSpecificEditor(m_item.get(),this)) {
             root->addWidget(adapter);
             if(auto* signal=qobject_cast<SignalTextItemEditor*>(adapter)) {signal->useGlobalUnits();}
+            // Show next: the dialog finds the named web image in the draft.
+            if(auto* web=qobject_cast<WebImageItemEditor*>(adapter)) {
+                connect(web,&WebImageItemEditor::showNextRequested,this,&ContentPropertyEditor::showWebImageRequested);
+            }
             qobject_cast<BaseItemEditor*>(adapter)->setGeometryEditable(m_policy==ContentLayout::LegacyCanvas);
             connect(qobject_cast<BaseItemEditor*>(adapter),&BaseItemEditor::propertyChanged,this,[this]{
                 captureRenderer(); publish();
@@ -385,9 +779,19 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         }
     }
     const bool applet=entry.typeId.startsWith("applet:");
-    if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
+    if(entry.typeId.startsWith(QStringLiteral("tx.")) && m_registry.hasWidgetFactory(entry.typeId)) {
+        // A TX section row is a copy the TX applet makes and wires; the
+        // factory never reads the entry's context.
+        advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the TX panel; they have no source of their own."));
+    } else if(entry.typeId.startsWith(QStringLiteral("rx.")) && m_registry.hasWidgetFactory(entry.typeId)) {
+        // An RX section item is a copy the RX applet makes and wires; the
+        // factory never reads the entry's context.
+        advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the RX panel; they have no source of their own."));
+    } else if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
-    } else if(applet && entry.typeId!="applet:s_meter") {
+    } else if((applet && entry.typeId!="applet:s_meter") || (widgetType && !declared)) {
+        // A TX or RX section row is a copy its applet makes and wires, so it
+        // follows the applet's radio and slice as the applet itself does.
         advanced->setEnabled(false);advanced->setToolTip(tr("This applet keeps its current radio and slice. Saved source choices are retained."));
     } else if(!m_item && !applet && !declared) {advanced->setEnabled(false);advanced->setToolTip(tr("Unsupported content retains its stored bindings."));}
     else if(declared && !reason.isEmpty()) {advanced->setEnabled(false);advanced->setToolTip(reason);}
@@ -405,15 +809,81 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         if(source->currentData().toString()==QStringLiteral("followSelectedRx")) {m_entry.context["rxSourceMode"]=QStringLiteral("followSelectedRx");}
         else if(source->currentData().toInt()>=0) {m_entry.context["sliceId"]=source->currentData().toInt();} publish();
     });
+    if(composite && composite->typeId()=="meter.historyGraph") {
+        // Signal history trace 2 picks its own slice (Off leaves it off).
+        auto* trace2=new QComboBox(advanced); trace2->setObjectName("historyTrace2Source");
+        trace2->addItem(tr("Off"),QStringLiteral("off"));
+        for(int i=0;i<4;++i) { trace2->addItem(tr("Slice %1").arg(QChar('A'+i)),i); }
+        trace2->addItem(tr("Follow selected RX"),QStringLiteral("followSelectedRx"));
+        const QJsonValue stored=composite->configuration().value("trace2Context");
+        const QJsonObject current=stored.toObject();
+        const QVariant chosen=!stored.isObject() ? QVariant(QStringLiteral("off"))
+            : current.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx") ? QVariant(QStringLiteral("followSelectedRx"))
+            : QVariant(current.contains("sliceId")?current["sliceId"].toInt():current["rxSource"].toInt()-1);
+        trace2->setCurrentIndex(qMax(0,trace2->findData(chosen))); bindings->addRow(tr("Trace 2 source"),trace2);
+        connect(trace2,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,trace2]{
+            const QVariant data=trace2->currentData();
+            if(data.toString()==QStringLiteral("off")) { property("trace2Context",QJsonValue(QJsonValue::Null)); return; }
+            auto* face=qobject_cast<CompositePresetItem*>(m_item.get());
+            QJsonObject next;
+            // A radio session the trace names is kept.
+            const QJsonObject before=face?face->trace2Context():QJsonObject();
+            if(before.contains("sessionId")) { next["sessionId"]=before["sessionId"]; }
+            if(data.toString()==QStringLiteral("followSelectedRx")) { next["rxSourceMode"]=QStringLiteral("followSelectedRx"); }
+            else { next["sliceId"]=data.toInt(); }
+            property("trace2Context",next);
+        });
+    }
     for(const QString& key:{QStringLiteral("sessionId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable")}) {
         // Declared widget types read no MMIO source.
         if((applet || declared || qobject_cast<WaveformMeterItem*>(m_item.get())) && key!="sessionId") {continue;}
         auto* edit=new QLineEdit(entry.context[key].toString(),advanced); edit->setObjectName(key);
         edit->setPlaceholderText(key=="sessionId"?tr("Container default: %1").arg(m_defaults[key].toString(tr("current session"))):tr("Unassigned"));
         bindings->addRow(key=="sessionId"?tr("Radio session"):key=="mmioGuid"?tr("MMIO source UUID"):tr("MMIO variable"),edit);
-        connect(edit,&QLineEdit::editingFinished,this,[this,edit,key]{ if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
+        if(key=="mmioGuid") {edit->setToolTip(tr("A data source's UUID or its 4-character ID"));}
+        connect(edit,&QLineEdit::editingFinished,this,[this,edit,key]{
+            // A 4-character data source ID is stored as that source's UUID.
+            if(key=="mmioGuid" && edit->text().trimmed().size()==4 && QUuid(edit->text().trimmed()).isNull()) {
+                if(MmioEndpoint* ep=ExternalVariableEngine::instance().endpointByFourChar(edit->text().trimmed())) {
+                    QSignalBlocker block(edit); edit->setText(ep->guid().toString(QUuid::WithoutBraces));
+                }
+            }
+            if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
             if(m_item && (key=="mmioGuid" || key=="mmioVariable")) {m_item->setMmioBinding(QUuid(m_entry.context["mmioGuid"].toString()),m_entry.context["mmioVariable"].toString());}
             publish(); });
+    }
+    // Variables 2 and up, one row pair per variable the type reads.
+    const bool readsDataSource=m_item && !applet && !declared && !qobject_cast<WaveformMeterItem*>(m_item.get());
+    const int variableCount=readsDataSource?MeterItem::mmioVariableCount(entry.typeId):0;
+    for(int index=1;index<variableCount && index<MeterItem::kMaxMmioVariables;++index) {
+        const QJsonObject stored=entry.context.value("mmioVariables").toArray().at(index-1).toObject();
+        for(const QString& field:{QStringLiteral("guid"),QStringLiteral("variable")}) {
+            const bool guidField=field=="guid";
+            auto* edit=new QLineEdit(stored.value(field).toString(),advanced);
+            edit->setObjectName((guidField?QStringLiteral("mmioGuid"):QStringLiteral("mmioVariable"))+QString::number(index));
+            edit->setPlaceholderText(tr("Unassigned"));
+            bindings->addRow(guidField?tr("MMIO source UUID, variable %1").arg(index+1):tr("MMIO variable %1").arg(index+1),edit);
+            if(guidField) {edit->setToolTip(tr("A data source's UUID or its 4-character ID"));}
+            connect(edit,&QLineEdit::editingFinished,this,[this,edit,index,field,guidField]{
+                // A 4-character data source ID is stored as that source's UUID.
+                if(guidField && edit->text().trimmed().size()==4 && QUuid(edit->text().trimmed()).isNull()) {
+                    if(MmioEndpoint* ep=ExternalVariableEngine::instance().endpointByFourChar(edit->text().trimmed())) {
+                        QSignalBlocker block(edit); edit->setText(ep->guid().toString(QUuid::WithoutBraces));
+                    }
+                }
+                QJsonArray variables=m_entry.context.value("mmioVariables").toArray();
+                while(variables.size()<index) {variables.append(QJsonObject{{"guid",QString()},{"variable",QString()}});}
+                QJsonObject variable=variables.at(index-1).toObject();
+                variable[field]=edit->text();
+                if(!variable.contains("guid")) {variable["guid"]=QString();}
+                if(!variable.contains("variable")) {variable["variable"]=QString();}
+                variables[index-1]=variable;
+                // Trailing unassigned variables are not stored.
+                while(!variables.isEmpty() && variables.last().toObject().value("guid").toString().isEmpty() && variables.last().toObject().value("variable").toString().isEmpty()) {variables.removeLast();}
+                if(variables.isEmpty()) {m_entry.context.remove("mmioVariables");} else {m_entry.context["mmioVariables"]=variables;}
+                if(m_item) {m_item->setMmioBinding(index,QUuid(variable.value("guid").toString()),variable.value("variable").toString());}
+                publish(); });
+        }
     }
     m_error=new QLabel(this);m_error->setWordWrap(true);m_error->setStyleSheet("color:#ffb0b0");root->addWidget(m_error);
     for(auto* group:findChildren<QGroupBox*>()) {if(auto* form=qobject_cast<QFormLayout*>(group->layout())) {form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);form->setFormAlignment(Qt::AlignLeft|Qt::AlignTop);form->setLabelAlignment(Qt::AlignLeft);}}

@@ -8,6 +8,30 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Screenshot fix: topRightLayout(); the peak text at the
+//                 right of the top row ends left of the type glyph.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave round 2 (R2): a click box choice clears the
+//                 entry's overrides with the new record, so a rebuild keeps it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R2: units set on this item (its click box or the
+//                 editor) stay when the global unit setting changes; an
+//                 item with none set follows it. Appended record field 26.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Thetis signal text options (renderSignalTextDisplay,
+//                 MeterManager.cs:40538-40628): the PK / AVG / FFT type
+//                 glyph, the uV and dBm sub lines, the background color, the
+//                 peak value from the history peak without peak hold,
+//                 history and ignore history, and kSignalTextThetisDefaults.
+//                 The record appends its fields; a saved record keeps its
+//                 look. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - VHF S9 rule per slice: S-unit text reads S9 at -93 dBm
+//                 when the slice is at or above 30 MHz (aboveS9Frequency).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -119,22 +143,49 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - User text in the record (font family) is joined, not substituted
+//                 by chained QString::arg, so a "%1" or "%20" in it survives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "SignalTextItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
+#include "gui/containers/ContainerContentRegistry.h"
 
 // From Thetis clsSignalText (MeterManager.cs:20286-20540)
 
 #include <QPainter>
 #include <QFont>
 #include <QFontMetrics>
+#include <QFontMetricsF>
+#include <QJsonObject>
 #include <QLinearGradient>
 #include <QStringList>
 #include <algorithm>
 #include <cmath>
 
 namespace NereusSDR {
+
+namespace {
+
+// From Thetis MeterManager.cs:40554-40555 [v2.10.3.15]
+constexpr double kGlyphDiagonal = 450.0;
+constexpr double kGlyphStroke = 1.5;
+// From Thetis MeterManager.cs:40567 [v2.10.3.15]
+constexpr double kCircleRadiusStrokes = 2.5;
+// From Thetis MeterManager.cs:40563 [v2.10.3.15] — FontSize * 0.32
+constexpr float kGlyphTextRatio = 0.32f;
+// From Thetis MeterManager.cs:40592-40601 [v2.10.3.15] — FontSize * 0.55
+constexpr float kSubTextRatio = 0.55f;
+// From Thetis MeterManager.cs:40603-40626 [v2.10.3.15] — FontSize * 0.35
+constexpr float kPeakSubTextRatio = 0.35f;
+// NereusSDR: the peak text at the right of the top row ends this far
+// (of the item's width) left of the type glyph; Thetis has no peak in
+// that row. The same margin the rows keep from the item's edges.
+constexpr double kGlyphGapRatio = 0.02;
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Constructor
@@ -143,6 +194,30 @@ namespace NereusSDR {
 SignalTextItem::SignalTextItem(QObject* parent)
     : MeterItem(parent)
 {
+    m_configNotifier = new ContentConfigNotifier(this);
+}
+
+void SignalTextItem::setOwnUnits(Units u)
+{
+    const bool changed = !m_unitsSetHere || m_units != u;
+    m_units = u;
+    m_unitsSetHere = true;
+    // The choice is saved with the layout. The record now holds the item's
+    // whole state (the editor's overrides were applied when it was built),
+    // so the overrides go: kept, they would win again on the rebuild and
+    // undo the click. Geometry comes from the entry's canvas rect, and the
+    // reading from its context, so neither is lost.
+    if (changed) {
+        emit m_configNotifier->configEdited(
+            QJsonObject{{QStringLiteral("legacyRecord"), serialize()},
+                        {QStringLiteral("overrides"), QJsonObject{}}});
+    }
+}
+
+void SignalTextItem::followGlobalUnits()
+{
+    m_unitsSetHere = false;
+    m_units = unitsFor(unitMode());
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +235,7 @@ void SignalTextItem::setValue(double v)
         m_smoothedDbm = -140.0f;
         m_peakDbm = -140.0f;
         m_peakHoldCounter = 0;
+        m_history.clear();
         return;
     }
 
@@ -187,6 +263,249 @@ void SignalTextItem::setValue(double v)
             }
         }
     }
+
+    appendHistory();
+}
+
+// ---------------------------------------------------------------------------
+// History
+// From Thetis clsSignalText.Update / HistoryDuration / ClearHistory
+// (MeterManager.cs:21677-21701, 21732-21771) [v2.10.3.15]
+// ---------------------------------------------------------------------------
+int SignalTextItem::historyIntervalMs() const
+{
+    return updateIntervalMs() > 0 ? updateIntervalMs() : kDefaultUpdateIntervalMs;
+}
+
+void SignalTextItem::appendHistory()
+{
+    if (m_ignoringNext <= 0) {
+        // signal history
+        m_history.append(m_smoothedDbm); // adds to end of the list
+        const int numberToRemove = static_cast<int>(m_history.size())
+            - (m_historyDurationMs / historyIntervalMs());
+        // the list is sized based on delay
+        if (numberToRemove > 0) { m_history.remove(0, numberToRemove); } // remove the oldest, the head of the list
+    } else {
+        --m_ignoringNext;
+    }
+}
+
+void SignalTextItem::setHistoryDurationMs(int ms)
+{
+    m_historyDurationMs = std::clamp(ms, kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+}
+
+void SignalTextItem::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+void SignalTextItem::clearHistory()
+{
+    m_history.clear();
+    m_ignoringNext = m_ignoreHistoryMs / historyIntervalMs();  // ignore next N readings to make up 2 second of ignore
+}
+
+float SignalTextItem::maxHistory() const
+{
+    if (m_history.isEmpty()) { return m_smoothedDbm; }
+    return *std::max_element(m_history.cbegin(), m_history.cend());
+}
+
+float SignalTextItem::peakValueDbm() const
+{
+    return m_peakValueNeedsPeakHold ? m_peakDbm : maxHistory();
+}
+
+// ---------------------------------------------------------------------------
+// applyNewItemDefaults()
+// From Thetis MeterManager.cs:23001-23062, 21644-21676 [v2.10.3.15]
+// ---------------------------------------------------------------------------
+void SignalTextItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const SignalTextItemThetisDefaults& d = kSignalTextThetisDefaults;
+    m_backgroundColour  = QColor::fromRgb(d.backgroundColour);
+    setBindingId(d.bindingId);
+    m_attackRatio       = d.attackRatio;
+    m_decayRatio        = d.decayRatio;
+    m_historyDurationMs = d.historyDurationMs;
+    m_ignoreHistoryMs   = d.ignoreHistoryMs;
+    m_subMarkerColour   = QColor::fromRgb(d.subMarkerColour);
+    m_showValue         = d.showValue;
+    m_showPeakValue     = d.showPeakValue;
+    m_colour            = QColor::fromRgb(d.fontColour);
+    m_fontSize          = d.fontSize;
+    m_peakColour        = QColor::fromRgb(d.peakValueColour);
+    m_peakHold          = d.peakHold;
+    m_showSubMarker     = d.showSubMarker;
+    m_showType          = d.showType;
+    m_typeColour        = QColor::fromRgb(d.typeColour);
+    // Thetis's type is the reading glyph, and its peak value needs no peak
+    // hold (renderSignalTextDisplay, MeterManager.cs:40550, 40603).
+    m_typeStyle              = TypeStyle::ReadingGlyph;
+    m_peakValueNeedsPeakHold = false;
+}
+
+// ---------------------------------------------------------------------------
+// Type glyph
+// From Thetis renderSignalTextDisplay (MeterManager.cs:40550-40578)
+// [v2.10.3.15]
+// ---------------------------------------------------------------------------
+QString SignalTextItem::readingTypeGlyph(int bindingId)
+{
+    switch (bindingId) {
+        case MeterBinding::SignalPeak:   return QStringLiteral("PK");
+        case MeterBinding::SignalAvg:    return QStringLiteral("AVG");
+        case MeterBinding::SignalMaxBin: return QStringLiteral("FFT");
+        default:                         return {};
+    }
+}
+
+void SignalTextItem::paintReadingTypeGlyph(QPainter& p, const QRectF& rect, int bindingId,
+                                           const QColor& colour, const QString& fontFamily,
+                                           double fontPixels)
+{
+    const QString text = readingTypeGlyph(bindingId);
+    if (text.isEmpty() || rect.isEmpty()) {
+        return;
+    }
+    const double x = rect.left();
+    const double y = rect.top();
+    const double w = rect.width();
+    const double h = rect.height();
+
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::TextAntialiasing, true);
+
+    // signal type symbol top right
+    const double fDiag = std::sqrt((w * w) + (h * h));
+    const double fScale = fDiag / kGlyphDiagonal;
+    const double fStrokeWidth = kGlyphStroke * fScale;
+    p.setPen(QPen(colour, fStrokeWidth));
+    p.setBrush(Qt::NoBrush);
+    switch (bindingId) {
+        case MeterBinding::SignalPeak:
+            // arrow
+            p.drawLine(QPointF(x + (w * 0.95), y + (h * 0.09)), QPointF(x + (w * 0.98), y + (h * 0.09)));
+            p.drawLine(QPointF(x + (w * 0.95), y + (h * 0.2)), QPointF(x + (w * 0.965), y + (h * 0.1)));
+            p.drawLine(QPointF(x + (w * 0.98), y + (h * 0.2)), QPointF(x + (w * 0.965), y + (h * 0.1)));
+            break;
+        case MeterBinding::SignalAvg: {
+            // circle
+            const double circ_rad = fStrokeWidth * kCircleRadiusStrokes;
+            p.drawEllipse(QPointF(x + (w * 0.965), y + (h * 0.16)), circ_rad, circ_rad);
+            break;
+        }
+        case MeterBinding::SignalMaxBin:
+            // line
+            p.drawLine(QPointF(x + (w * 0.95), y + (h * 0.2)), QPointF(x + (w * 0.965), y + (h * 0.1)));
+            p.drawLine(QPointF(x + (w * 0.98), y + (h * 0.2)), QPointF(x + (w * 0.965), y + (h * 0.1)));
+            break;
+        default:
+            break;
+    }
+
+    // The text right-aligned at x + w * 0.94, from y + h * 0.025
+    // (plotText ... bAlignRight true).
+    const QRectF textBox(x, y + (h * 0.025), w * 0.94, std::max(1.0, h * 0.15));
+    QFont font(fontFamily);
+    font.setPixelSize(std::max(1, static_cast<int>(std::lround(fontPixels))));
+    p.setFont(fitObjectText(font, fontPixels, text, textBox, false, Qt::TextSingleLine, p.device()));
+    p.setPen(colour);
+    p.drawText(textBox, Qt::AlignRight | Qt::AlignTop, text);
+    p.restore();
+}
+
+// What paintReadingTypeGlyph covers: its text and its symbol, from the
+// same Thetis positions (MeterManager.cs:40550-40578 [v2.10.3.15]).
+QRectF SignalTextItem::readingTypeGlyphBounds(const QRectF& rect, int bindingId, const QString& fontFamily,
+                                              double fontPixels, QPaintDevice* device)
+{
+    const QString text = readingTypeGlyph(bindingId);
+    if (text.isEmpty() || rect.isEmpty()) {
+        return {};
+    }
+    const double x = rect.left();
+    const double y = rect.top();
+    const double w = rect.width();
+    const double h = rect.height();
+    const double fStrokeWidth = kGlyphStroke * (std::sqrt((w * w) + (h * h)) / kGlyphDiagonal);
+    QRectF mark(QPointF(x + (w * 0.95), y + (h * 0.09)), QPointF(x + (w * 0.98), y + (h * 0.2)));
+    if (bindingId == MeterBinding::SignalAvg) {
+        const double circ_rad = fStrokeWidth * kCircleRadiusStrokes;
+        mark = QRectF(x + (w * 0.965) - circ_rad, y + (h * 0.16) - circ_rad, 2 * circ_rad, 2 * circ_rad);
+    }
+    const double halfStroke = fStrokeWidth / 2.0;
+    mark.adjust(-halfStroke, -halfStroke, halfStroke, halfStroke);
+    const QRectF textBox(x, y + (h * 0.025), w * 0.94, std::max(1.0, h * 0.15));
+    QFont font(fontFamily);
+    font.setPixelSize(std::max(1, static_cast<int>(std::lround(fontPixels))));
+    font = fitObjectText(font, fontPixels, text, textBox, false, Qt::TextSingleLine, device);
+    const QRectF ink = QFontMetricsF(font, device).boundingRect(textBox, Qt::AlignRight | Qt::AlignTop
+                                                                    | Qt::TextSingleLine, text);
+    return ink.united(mark);
+}
+
+double SignalTextItem::rowHeight(const QRect& rect) const
+{
+    // Rows: the peak on top, the value, then the sub line and the units
+    // label. Without the sub line the rows are thirds, as a saved record
+    // drew them.
+    const bool unitsLabel = m_showType && m_typeStyle == TypeStyle::UnitsLabel;
+    const int auxRows = int(peakValueShown()) + int(unitsLabel) + int(m_showSubMarker);
+    return m_showSubMarker
+        ? rect.height() / static_cast<double>(std::max(3, auxRows + 1))
+        : rect.height() / 3.0;
+}
+
+SignalTextItem::TopRightLayout SignalTextItem::topRightLayout(int widgetW, int widgetH, QPaintDevice* device) const
+{
+    TopRightLayout out;
+    const QRect rect = pixelRect(widgetW, widgetH);
+    if (rect.isEmpty()) {
+        return out;
+    }
+    const float clampedSize = std::max(6.0f, m_fontSize * (static_cast<float>(rect.height()) / 100.0f));
+    if (m_showType && m_typeStyle == TypeStyle::ReadingGlyph) {
+        out.glyph = readingTypeGlyphBounds(QRectF(rect), bindingId(), m_fontFamily,
+                                           std::max(6.0f, clampedSize * kGlyphTextRatio), device);
+    }
+    if (!peakValueShown()) {
+        return out;
+    }
+    QRectF box;
+    QFont font;
+    QString text;
+    if (!m_showSubMarker) {
+        const float peakSize = std::max(6.0f, clampedSize * 0.5f);
+        font = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(peakSize)), device);
+        font.setBold(true);
+        text = peakValueText();
+        box = QRectF(QRect(rect.left(), rect.top(), rect.width(), rect.height() / 3));
+        if (!out.glyph.isEmpty()) {
+            box.setRight(std::max(box.left(), out.glyph.left() - rect.width() * kGlyphGapRatio));
+        }
+        font = fitObjectText(font, peakSize, text, box, true, Qt::TextSingleLine, device);
+    } else {
+        const float subSize = std::max(6.0f, clampedSize * kPeakSubTextRatio);
+        font = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(subSize)), device);
+        text = peakSubUvText();
+        const double third = rect.width() / 3.0;
+        box = QRectF(rect.left() + 2 * third, rect.top(), third - rect.width() * 0.02, rowHeight(rect));
+        if (!out.glyph.isEmpty()) {
+            box.setRight(std::max(box.left(), std::min(box.right(), out.glyph.left() - rect.width() * kGlyphGapRatio)));
+        }
+        font = fitObjectText(font, subSize, text, box, true, Qt::TextSingleLine, device);
+    }
+    out.peakBox = box;
+    // paint() draws it right aligned: at the top, or centred in the row
+    // with the sub line.
+    const int vertical = m_showSubMarker ? int(Qt::AlignVCenter) : int(Qt::AlignTop);
+    out.peak = QFontMetricsF(font, device).boundingRect(box, Qt::AlignRight | vertical | Qt::TextSingleLine, text);
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +533,10 @@ QString SignalTextItem::formatDbm(float dbm) const
 // ---------------------------------------------------------------------------
 QString SignalTextItem::formatSUnits(float dbm) const
 {
+    // VHF S9 rule: at or above the S9 frequency S9 is -93 dBm
+    // (MeterItem::s9Dbm), so the reading moves 20 dB up the -73 dBm scale
+    // below.
+    dbm += kS9DbmBelowS9Frequency - s9Dbm(m_aboveS9Frequency);
     if (dbm <= -73.0f) {
         // S0..S9 range
         const int sUnit = std::clamp(static_cast<int>((dbm + 127.0f) / 6.0f), 0, 9);
@@ -270,7 +593,29 @@ QString SignalTextItem::valueText() const
 
 QString SignalTextItem::peakValueText() const
 {
-    return isNoReading(m_value) ? noReadingLabel() : formatValue(m_peakDbm);
+    return isNoReading(m_value) ? noReadingLabel() : formatValue(peakValueDbm());
+}
+
+// Sub lines: Thetis draws the dBm and uV of the value, and of the peak.
+// From Thetis MeterManager.cs:40592-40601, 40617-40626 [v2.10.3.15]
+QString SignalTextItem::subDbmText() const
+{
+    return isNoReading(m_value) ? QStringLiteral("-- dBm") : formatDbm(m_smoothedDbm);
+}
+
+QString SignalTextItem::subUvText() const
+{
+    return isNoReading(m_value) ? QStringLiteral("-- uV") : formatUv(m_smoothedDbm);
+}
+
+QString SignalTextItem::peakSubDbmText() const
+{
+    return isNoReading(m_value) ? QStringLiteral("-- dBm") : formatDbm(peakValueDbm());
+}
+
+QString SignalTextItem::peakSubUvText() const
+{
+    return isNoReading(m_value) ? QStringLiteral("-- uV") : formatUv(peakValueDbm());
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +630,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     // Step 1: fill background
-    p.fillRect(rect, QColor(0x0a, 0x0a, 0x18));
+    p.fillRect(rect, ItemColourLook::effective("SignalText.backgroundColour", m_backgroundColour, this));
 
     // Step 2: compute scaled font size
     // Scale font relative to widget height — larger widget = larger text
@@ -295,55 +640,107 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
+    const bool peakShown = peakValueShown();
+    const bool unitsLabel = m_showType && m_typeStyle == TypeStyle::UnitsLabel;
+    const double rowH = rowHeight(rect);
+
+    // Step 2b: the reading type glyph, top right (Thetis ShowType)
+    if (m_showType && m_typeStyle == TypeStyle::ReadingGlyph) {
+        paintReadingTypeGlyph(p, QRectF(rect), bindingId(), ItemColourLook::effective("SignalText.typeColour", m_typeColour, this), m_fontFamily,
+                              std::max(6.0f, clampedSize * kGlyphTextRatio));
+    }
+
     // Step 3: main value text (centered, large)
     if (m_showValue) {
         QFont mainFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(clampedSize)), p.device());
         mainFont.setBold(true);
         p.setFont(mainFont);
-        p.setPen(m_colour);
+        p.setPen(ItemColourLook::effective("SignalText.colour", m_colour, this));
 
         const QString text = valueText();
-        const double top=m_showPeakValue && m_peakHold?rect.height()/3.0:0;
-        const double bottom=m_showType?rect.height()*2/3.0:rect.height();
+        const double top=peakShown?(m_showSubMarker?rowH:rect.height()/3.0):0;
+        const double bottom=m_showSubMarker
+            ? rect.height()-rowH*(1+int(unitsLabel))
+            : (unitsLabel?rect.height()*2/3.0:rect.height());
         const QRectF main(rect.left(),rect.top()+top,rect.width(),bottom-top);
         p.setFont(fitObjectText(mainFont,clampedSize,text,main,true,Qt::TextSingleLine,p.device()));
         p.drawText(main,Qt::AlignCenter,text);
     }
 
+    // Step 3b: the uV and dBm sub line under the value, in the sub color
+    // From Thetis MeterManager.cs:40592-40601 [v2.10.3.15] — FontSize * 0.55
+    if (m_showSubMarker) {
+        const float subSize = std::max(6.0f, clampedSize * kSubTextRatio);
+        const QFont subFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(subSize)), p.device());
+        const double subTop = rect.top() + rect.height() - rowH * (1 + int(unitsLabel));
+        const QRectF left(rect.left() + rect.width() * 0.02, subTop, rect.width() * 0.47, rowH);
+        const QRectF right(rect.left() + rect.width() * 0.51, subTop, rect.width() * 0.47, rowH);
+        p.setPen(ItemColourLook::effective("SignalText.subMarkerColour", m_subMarkerColour, this));
+        const QString dbm = subDbmText();
+        const QString uv = subUvText();
+        p.setFont(fitObjectText(subFont, subSize, dbm, left, true, Qt::TextSingleLine, p.device()));
+        p.drawText(left, Qt::AlignLeft | Qt::AlignVCenter, dbm);
+        p.setFont(fitObjectText(subFont, subSize, uv, right, true, Qt::TextSingleLine, p.device()));
+        p.drawText(right, Qt::AlignRight | Qt::AlignVCenter, uv);
+    }
+
     // Step 4: units label below value in small font
-    if (m_showType) {
-        QString unitsLabel;
+    if (unitsLabel) {
+        QString unitsText;
         switch (m_units) {
-            case Units::Dbm:    unitsLabel = QStringLiteral("dBm");     break;
-            case Units::SUnits: unitsLabel = QStringLiteral("S-Units"); break;
-            case Units::Uv:     unitsLabel = QStringLiteral("uV");      break;
+            case Units::Dbm:    unitsText = QStringLiteral("dBm");     break;
+            case Units::SUnits: unitsText = QStringLiteral("S-Units"); break;
+            case Units::Uv:     unitsText = QStringLiteral("uV");      break;
         }
 
         const float smallSize = std::max(6.0f, clampedSize * 0.4f);
         QFont smallFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(smallSize)), p.device());
         p.setFont(smallFont);
-        p.setPen(QColor(0x80, 0x90, 0xa0));
+        p.setPen(ItemColourLook::effective("SignalText.typeColour", m_typeColour, this));
 
         // Position in lower portion of rect
-        const QRect labelRect(rect.left(), rect.top() + rect.height() * 2 / 3,
-                               rect.width(), rect.height() / 3);
-        p.setFont(fitObjectText(smallFont,smallSize,unitsLabel,labelRect,true,Qt::TextSingleLine,p.device()));
-        p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignBottom, unitsLabel);
+        const QRectF labelRect = m_showSubMarker
+            ? QRectF(rect.left(), rect.top() + rect.height() - rowH, rect.width(), rowH)
+            : QRectF(QRect(rect.left(), rect.top() + rect.height() * 2 / 3,
+                           rect.width(), rect.height() / 3));
+        p.setFont(fitObjectText(smallFont,smallSize,unitsText,labelRect,true,Qt::TextSingleLine,p.device()));
+        p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignBottom, unitsText);
     }
 
     // Step 5: peak value in top-right, smaller font
-    if (m_showPeakValue && m_peakHold) {
+    if (peakShown) {
         const float peakSize = std::max(6.0f, clampedSize * 0.5f);
         QFont peakFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(peakSize)), p.device());
         peakFont.setBold(true);
         p.setFont(peakFont);
-        p.setPen(m_peakColour);
+        p.setPen(ItemColourLook::effective("SignalText.peakValueColour", m_peakColour, this));
 
         const QString peakText = peakValueText();
-        const QRect peakRect(rect.left(), rect.top(),
-                              rect.width(), rect.height() / 3);
-        p.setFont(fitObjectText(peakFont,peakSize,peakText,peakRect,true,Qt::TextSingleLine,p.device()));
-        p.drawText(peakRect, Qt::AlignRight | Qt::AlignTop, peakText);
+        // The peak text at the right ends left of the type glyph.
+        const TopRightLayout topRight = topRightLayout(widgetW, widgetH, p.device());
+        if (!m_showSubMarker) {
+            const QRectF peakRect = topRight.peakBox;
+            p.setFont(fitObjectText(peakFont,peakSize,peakText,peakRect,true,Qt::TextSingleLine,p.device()));
+            p.drawText(peakRect, Qt::AlignRight | Qt::AlignTop, peakText);
+        } else {
+            // With the sub line, Thetis draws the peak's dBm left, the peak
+            // centred and its uV right, all in the peak value color.
+            // From Thetis MeterManager.cs:40603-40626 [v2.10.3.15] — FontSize * 0.35
+            const double third = rect.width() / 3.0;
+            const QRectF left(rect.left() + rect.width() * 0.02, rect.top(), third - rect.width() * 0.02, rowH);
+            const QRectF centre(rect.left() + third, rect.top(), third, rowH);
+            const QRectF right = topRight.peakBox;
+            p.setFont(fitObjectText(peakFont,peakSize,peakText,centre,true,Qt::TextSingleLine,p.device()));
+            p.drawText(centre, Qt::AlignHCenter | Qt::AlignVCenter, peakText);
+            const float subSize = std::max(6.0f, clampedSize * kPeakSubTextRatio);
+            const QFont subFont = WorkspacePreview::readableFont(QFont(m_fontFamily, static_cast<int>(subSize)), p.device());
+            const QString dbm = peakSubDbmText();
+            const QString uv = peakSubUvText();
+            p.setFont(fitObjectText(subFont, subSize, dbm, left, true, Qt::TextSingleLine, p.device()));
+            p.drawText(left, Qt::AlignLeft | Qt::AlignVCenter, dbm);
+            p.setFont(fitObjectText(subFont, subSize, uv, right, true, Qt::TextSingleLine, p.device()));
+            p.drawText(right, Qt::AlignRight | Qt::AlignVCenter, uv);
+        }
     }
 
     // Step 6: bar beneath text (if style != None)
@@ -365,13 +762,13 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 
             case BarStyle::SolidFilled: {
                 const QRect fillRect(barRect.left(), barRect.top(), fillW, barRect.height());
-                p.fillRect(fillRect, m_colour);
+                p.fillRect(fillRect, ItemColourLook::effective("SignalText.colour", m_colour, this));
                 break;
             }
 
             case BarStyle::Line: {
                 const int lineX = barRect.left() + fillW;
-                p.setPen(QPen(m_markerColour, 2));
+                p.setPen(QPen(ItemColourLook::effective("SignalText.markerColour", m_markerColour, this), 2));
                 p.drawLine(lineX, barRect.top(), lineX, barRect.bottom());
                 break;
             }
@@ -415,10 +812,15 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
 // Format: SIGNALTEXT|x|y|w|h|bindingId|zOrder|units|showValue|showPeakValue|
 //                    showType|peakHold|colour|peakColour|markerColour|
 //                    fontFamily|fontSize|barStyle
+//                    |typeStyle|typeColour|showSubMarker|subMarkerColour
+//                    |backgroundColour|peakValueNeedsPeakHold|historyMs
+//                    |ignoreHistoryMs|unitsSetHere
 // ---------------------------------------------------------------------------
 QString SignalTextItem::serialize() const
 {
-    return QStringLiteral("SIGNALTEXT|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15")
+    // The font family is joined, not substituted through .arg(), so a "%1"
+    // in it can never be read as a placeholder.
+    return QStringLiteral("SIGNALTEXT|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14")
         .arg(static_cast<double>(x()))
         .arg(static_cast<double>(y()))
         .arg(static_cast<double>(itemWidth()))
@@ -433,10 +835,20 @@ QString SignalTextItem::serialize() const
         .arg(m_colour.name(QColor::HexArgb))
         .arg(m_peakColour.name(QColor::HexArgb))
         .arg(m_markerColour.name(QColor::HexArgb))
-        .arg(m_fontFamily)
+        + QLatin1Char('|') + m_fontFamily
         + QStringLiteral("|%1|%2")
         .arg(static_cast<double>(m_fontSize))
-        .arg(static_cast<int>(m_barStyle));
+        .arg(static_cast<int>(m_barStyle))
+        + QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8")
+        .arg(static_cast<int>(m_typeStyle))
+        .arg(m_typeColour.name(QColor::HexArgb))
+        .arg(m_showSubMarker ? 1 : 0)
+        .arg(m_subMarkerColour.name(QColor::HexArgb))
+        .arg(m_backgroundColour.name(QColor::HexArgb))
+        .arg(m_peakValueNeedsPeakHold ? 1 : 0)
+        .arg(m_historyDurationMs)
+        .arg(m_ignoreHistoryMs)
+        + QStringLiteral("|%1").arg(m_unitsSetHere ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +857,13 @@ QString SignalTextItem::serialize() const
 // [0]=SIGNALTEXT [1-6]=base fields [7]=units [8]=showValue [9]=showPeakValue
 // [10]=showType [11]=peakHold [12]=colour [13]=peakColour [14]=markerColour
 // [15]=fontFamily [16]=fontSize [17]=barStyle
+// [18..25] (optional; a record without them keeps the look it had):
+// typeStyle, typeColour, showSubMarker, subMarkerColour, backgroundColour,
+// peakValueNeedsPeakHold, historyMs, ignoreHistoryMs
+// [26] (optional) unitsSetHere: 1 keeps the record's units when the global
+// unit setting changes. A record without it follows the global setting: it
+// cannot show that someone chose its units, since every record writes a
+// unit and the global setting overwrote it at each change.
 // ---------------------------------------------------------------------------
 bool SignalTextItem::deserialize(const QString& data)
 {
@@ -499,6 +918,38 @@ bool SignalTextItem::deserialize(const QString& data)
     m_fontFamily    = fontFamily;
     m_fontSize      = fontSize;
     m_barStyle      = static_cast<BarStyle>(barStyle);
+
+    // Appended fields. A missing or malformed field takes the value a
+    // record without it painted with.
+    const auto flag = [&parts](int i, bool fallback) {
+        if (i < parts.size() && (parts[i] == QLatin1String("0") || parts[i] == QLatin1String("1"))) {
+            return parts[i] == QLatin1String("1");
+        }
+        return fallback;
+    };
+    const auto colourAt = [&parts](int i, const QColor& fallback) {
+        if (i < parts.size()) {
+            const QColor c(parts[i]);
+            if (c.isValid()) { return c; }
+        }
+        return fallback;
+    };
+    const auto integer = [&parts](int i, int fallback) {
+        bool okInt = false;
+        const int v = i < parts.size() ? parts[i].toInt(&okInt) : 0;
+        return okInt ? v : fallback;
+    };
+    const int typeStyle = integer(18, static_cast<int>(TypeStyle::UnitsLabel));
+    m_typeStyle = typeStyle == static_cast<int>(TypeStyle::ReadingGlyph)
+        ? TypeStyle::ReadingGlyph : TypeStyle::UnitsLabel;
+    m_typeColour             = colourAt(19, QColor(0x80, 0x90, 0xa0));
+    m_showSubMarker          = flag(20, false);
+    m_subMarkerColour        = colourAt(21, QColor(0x80, 0x80, 0x80));
+    m_backgroundColour       = colourAt(22, QColor(0x0a, 0x0a, 0x18));
+    m_peakValueNeedsPeakHold = flag(23, true);
+    setHistoryDurationMs(integer(24, 2000));
+    setIgnoreHistoryMs(integer(25, 2000));
+    m_unitsSetHere = flag(26, false);
 
     return true;
 }

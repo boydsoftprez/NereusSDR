@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — Thetis 4-character endpoint ID, direction, outbound
+//                 terminator, UDP send target and outbound queue
+//                 (clsMMIO). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -55,16 +59,28 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include <QObject>
+#include <atomic>
 #include <QString>
 #include <QUuid>
 #include <QHash>
 #include <QVariant>
 #include <QReadWriteLock>
 #include <QDateTime>
+#include <QByteArray>
+#include <QMutex>
+#include <QQueue>
+#include <QStringList>
 
 namespace NereusSDR {
 
 class ITransportWorker;
+
+// From Thetis MeterManager.cs:41612 [v2.10.3.15] — the outbound
+// queue keeps at most 1000 messages.
+constexpr int kMaxOutbound = 1000;
+// From Thetis MeterManager.cs:42013 [v2.10.3.15] — each send drains at
+// most 20 queued messages.
+constexpr int kSendBatch = 20;
 
 // Phase 3G-6 block 5 — one MMIO endpoint (connection + format +
 // variable cache). Endpoints are the primary entity in the MMIO
@@ -97,12 +113,43 @@ public:
     };
     Q_ENUM(Format)
 
+    // Data direction. From Thetis MeterManager.cs:41325-41330
+    // [v2.10.3.15] — MMIODirection IN = 0, OUT = 1, BOTH = 2.
+    enum class Direction {
+        In   = 0,
+        Out  = 1,
+        Both = 2,
+    };
+    Q_ENUM(Direction)
+
+    // Outbound message terminator. From Thetis MeterManager.cs:41349-41356
+    // [v2.10.3.15] — MMIOTerminator NONE, CR, LF, CRLF, CUSTOM.
+    enum class Terminator {
+        None   = 0,
+        Cr     = 1,
+        Lf     = 2,
+        CrLf   = 3,
+        Custom = 4,
+    };
+    Q_ENUM(Terminator)
+
     explicit MmioEndpoint(QObject* parent = nullptr);
     ~MmioEndpoint() override;
 
     // Identity
     QUuid guid() const { return m_guid; }
-    void setGuid(const QUuid& g) { m_guid = g; }
+    // From Thetis MeterManager.cs:41463-41470 [v2.10.3.15] — a new guid
+    // drops the ID so fourChar() works it out again.
+    void setGuid(const QUuid& g);
+
+    // Thetis 4-character ID. Network endpoints hash host and port
+    // (MeterManager.cs:41396, :41444), serial endpoints hash device and
+    // baud plus data bits (:41461). Worked out on first use when none is
+    // stored (:41484) and kept after that, so later host or port edits
+    // do not change it. Thread-safe.
+    QString fourChar() const;
+    // Restore a persisted ID. An empty string clears it.
+    void setFourChar(const QString& id);
     QString name() const { return m_name; }
     void setName(const QString& n) { m_name = n; }
 
@@ -122,6 +169,40 @@ public:
     void setSerialDevice(const QString& d) { m_serialDevice = d; }
     int serialBaud() const { return m_serialBaud; }
     void setSerialBaud(int b) { m_serialBaud = b; }
+
+    // Direction and outbound terminator.
+    Direction direction() const { return m_direction.load(); }
+    void setDirection(Direction d) { m_direction.store(d); }
+    Terminator terminator() const { return m_terminator.load(); }
+    void setTerminator(Terminator t) { m_terminator.store(t); }
+    QString customTerminator() const;
+    void setCustomTerminator(const QString& t);
+
+    // Where a UDP endpoint sends outbound messages. From Thetis
+    // MeterManager.cs:41412-41413 [v2.10.3.15] — defaults 127.0.0.1:10000.
+    QString udpTargetHost() const;
+    void setUdpTargetHost(const QString& h);
+    quint16 udpTargetPort() const { return m_udpTargetPort.load(); }
+    void setUdpTargetPort(quint16 p) { m_udpTargetPort.store(p); }
+
+    // --- Outbound queue (Thetis EnqueueOutbound / DequeueOutbound) ---
+    // Adds a message. Does nothing when the direction is In. Keeps at
+    // most kMaxOutbound messages, dropping the oldest. Returns true when
+    // the message was queued. Thread-safe.
+    bool enqueueOutbound(const QString& message);
+    // Removes and returns up to max queued messages, oldest first.
+    // Empty when the direction is In. Thread-safe.
+    QStringList takeOutboundBatch(int max = kSendBatch);
+    int outboundQueueSize() const;
+
+    // The string sent after every outbound message.
+    QString outboundTerminatorString() const;
+    // Each message followed by the terminator, as ASCII bytes.
+    static QByteArray composeOutbound(const QStringList& batch,
+                                      const QString& terminator);
+    // takeOutboundBatch(kSendBatch) composed for one send. Empty when
+    // nothing is queued.
+    QByteArray takeOutboundPayload();
 
     // --- Variable cache ---
     // Read a variable by its (already-prefixed) key. Returns an
@@ -160,10 +241,26 @@ private:
     QString  m_name;
     Transport m_transport{Transport::UdpListener};
     Format   m_format{Format::Json};
-    QString  m_host{QStringLiteral("0.0.0.0")};
-    quint16  m_port{0};
+    // From Thetis MeterManager.cs:41410-41411 [v2.10.3.15] — a new
+    // endpoint listens on 127.0.0.1:9000.
+    QString  m_host{QStringLiteral("127.0.0.1")};
+    quint16  m_port{9000};
     QString  m_serialDevice;
     int      m_serialBaud{9600};
+
+    // From Thetis MeterManager.cs:41417-41419 [v2.10.3.15] — a new
+    // endpoint is IN with no terminator.
+    std::atomic<Direction>  m_direction{Direction::In};
+    std::atomic<Terminator> m_terminator{Terminator::None};
+    std::atomic<quint16>    m_udpTargetPort{10000};
+
+    // Guards the strings below and the outbound queue; the worker
+    // thread reads them while the GUI edits them.
+    mutable QMutex  m_outLock;
+    mutable QString m_fourChar;
+    QString         m_customTerminator;
+    QString         m_udpTargetHost{QStringLiteral("127.0.0.1")};
+    QQueue<QString> m_outbound;
 
     mutable QReadWriteLock m_lock;
     QHash<QString, QVariant> m_values;

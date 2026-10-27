@@ -25,6 +25,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -183,6 +186,12 @@ row->addWidget(m_voxDlyLabel);
 new InsetValueLabelFit(m_voxDlyLabel, m_voxDlySlider, QStringLiteral(" ms"), 42);
 
 vbox->addLayout(row);
+
+// The parts a container copy hides and orders (SectionParts).
+m_parts.add(QStringLiteral("vox"), QStringLiteral("VOX button"), 0, {m_voxBtn});
+m_parts.add(QStringLiteral("threshold"), QStringLiteral("Threshold and level"), 0,
+            {voxStackGroup, m_voxLvlLabel});
+m_parts.add(QStringLiteral("hold"), QStringLiteral("Hold"), 0, {m_voxDlySlider, m_voxDlyLabel});
 }
 
 void TxVoxSection::setPeakLevel(double normalized01)

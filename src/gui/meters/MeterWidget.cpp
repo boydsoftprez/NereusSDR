@@ -7,6 +7,52 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Fix wave round 2: a click box added to the widget again is
+//                 connected once (it stepped twice after a host rebuild).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R2: a click box sets a signal text's own units
+//                 (SignalTextItem::setOwnUnits), kept when the global unit
+//                 setting changes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Click focus; keyPressEvent sends a key to the item last
+//                 under the pointer (MeterItem::handleKeyPress), and moving
+//                 off an item or leaving the meter tells that item the
+//                 pointer left; a VFO display's screens ask for a repaint.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - removeItem clears a removed LED's result from
+//                 LedResultRegistry, so it never gates a text overlay.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - leaveEvent tells items the pointer left (hover boxes);
+//                 unavailableReasonAt asks the item for a reason at the
+//                 point first (MeterItem::reasonAt). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - An item whose variable 1 reads a data source still gets
+//                 the readings it takes beside it (readingBindingsBesideMmio:
+//                 a HISTORY item's axis 1). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Click box actions (Thetis clsMeter.MouseUp): a click box
+//                 goes to a display group, steps the group (wrapping at the
+//                 highest group in use) or steps the units of the topmost
+//                 item under it with units; %group% text shows the group.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Data source (MMIO) readings for every variable an item
+//                 reads: index 1 and up reach setSecondaryValue, cached and
+//                 replayed like index 0. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / TX: setItemTxState gives every item the
+//                 transmit state, and clears every item's history on a
+//                 change (Thetis OnMox / ZeroOut); clearItemHistory();
+//                 advanceMeters steps each item's fade and repaints while it
+//                 moves; drawFadeVeils on the CPU and GPU paths.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Per-item update interval: updateMeterValue skips an item
+//                 whose interval has not passed (MeterItem::acceptsUpdate).
+//                 Bar presets, composites and waveform faces keep their own
+//                 cadence and are not throttled here. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - setItemTxState gives fade covers, VFO displays and button
+//                 grids the transmit state, on change and when added.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -53,6 +99,8 @@
 //                 container's, the user's colour when the container has
 //                 one, and is redrawn when the container's changes. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - %group% text also reaches text overlays. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -101,6 +149,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ControlRanges.h"
 #include "MeterWidget.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/LegacyContainerImporter.h"
@@ -128,19 +177,27 @@ mw0lge@grange-lane.co.uk
 #include "AntennaButtonItem.h"
 #include "TuneStepButtonItem.h"
 #include "OtherButtonItem.h"
+#include "ButtonBoxItem.h"
 #include "VoiceRecordPlayItem.h"
 #include "VfoDisplayItem.h"
 #include "ClockItem.h"
 #include "ClickBoxItem.h"
 #include "DataOutItem.h"
+#include "WaveformMeterItem.h"
+#include "presets/BarPresetItem.h"
+#include "presets/CompositePresetItem.h"
 
 #include <QHelpEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QToolTip>
 #include <QResizeEvent>
+#include <algorithm>
+#include <limits>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QStringList>
+#include <chrono>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QFile>
@@ -148,6 +205,63 @@ mw0lge@grange-lane.co.uk
 #endif
 
 namespace NereusSDR {
+
+namespace {
+// The highest display group any item is in (0: none). Thetis wraps at its
+// container's group count (MeterManager.cs:31165-31174 [v2.10.3.15]);
+// NereusSDR containers keep no group list, so the groups in use stand in.
+int highestDisplayGroup(const QVector<MeterItem*>& items)
+{
+    int highest = 0;
+    for (const MeterItem* item : items) {
+        if (item) { highest = std::max(highest, item->displayGroup()); }
+    }
+    return highest;
+}
+
+// From Thetis MeterManager.cs:31165-31174 [v2.10.3.15]
+// (incrementDisplayGroup / decrementDisplayGroup).
+int steppedDisplayGroup(int group, int step, int highest)
+{
+    int next = group;
+    if (step > 0) {
+        next++;
+        if (next > highest) { next = 0; }
+    } else if (step < 0) {
+        next--;
+        if (next < 0) { next = highest; }
+    }
+    return next;
+}
+
+// An item's units as it shows them: a signal text's own units (a saved
+// record sets those alone), else the item's unit mode.
+MeterItem::MeterUnit shownUnit(const MeterItem* item)
+{
+    if (const auto* text = qobject_cast<const SignalTextItem*>(item)) {
+        switch (text->units()) {
+            case SignalTextItem::Units::SUnits: return MeterItem::MeterUnit::S;
+            case SignalTextItem::Units::Uv:     return MeterItem::MeterUnit::uV;
+            default:                            return MeterItem::MeterUnit::dBm;
+        }
+    }
+    return item->unitMode();
+}
+
+// %group% text: the shown group's number, or nothing in a container with
+// no groups (Thetis DisplayGroupText is empty with no group list,
+// MeterManager.cs:31215-31224 [v2.10.3.15]). NereusSDR groups have no
+// names, so the number stands in for one.
+void feedDisplayGroupText(const QVector<MeterItem*>& items, int group)
+{
+    const QString text = (group > 0 || highestDisplayGroup(items) > 0)
+        ? QString::number(group) : QString();
+    for (MeterItem* item : items) {
+        if (auto* textItem = qobject_cast<TextItem*>(item)) { textItem->setDisplayGroupText(text); }
+        if (auto* overlay = qobject_cast<TextOverlayItem*>(item)) { overlay->setDisplayGroupText(text); }
+    }
+}
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor
@@ -160,6 +274,10 @@ MeterWidget::MeterWidget(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
     setMouseTracking(true);
+    // Keys reach the item under the pointer once the meter has been
+    // clicked (Thetis needs only the pointer over the VFO display; a Qt
+    // widget needs focus to get keys).
+    setFocusPolicy(Qt::ClickFocus);
 
 #ifdef NEREUS_GPU_SPECTRUM
     // Platform-specific QRhi backend selection.
@@ -209,23 +327,85 @@ void MeterWidget::addItem(MeterItem* item)
         connect(rotator, &RotatorItem::repaintRequested, this,
                 [this, rotator]() { invalidatePresentation(rotator); });
     }
+    // A VFO display's band, mode, filter and tune step screens open on a
+    // long press and close on a timer, outside the meter poller.
+    if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
+        connect(vfo, &VfoDisplayItem::repaintRequested, this,
+                [this, vfo]() { invalidatePresentation(vfo); });
+    }
+    // Container item parity Task 47: a click box acts on the widget that
+    // holds it, never on another (a preview copy acts on its own widget).
+    // From Thetis MeterManager.cs:29814-29848 [v2.10.3.15] (MouseUp).
+    if (auto* box = qobject_cast<ClickBoxItem*>(item)) {
+        // A box taken out and added again (a host keeps an unchanged item
+        // across a rebuild) is connected once: one click, one step.
+        disconnect(box, &ClickBoxItem::actionRequested, this, nullptr);
+        connect(box, &ClickBoxItem::actionRequested, this,
+                [this, box](ClickBoxItem::Action action, int value) {
+            if (!m_items.contains(box)) { return; }
+            const int highest = highestDisplayGroup(m_items);
+            switch (action) {
+                case ClickBoxItem::Action::GoToGroup:
+                    // Thetis DisplayGroup clamps to its groups
+                    // (MeterManager.cs:31193-31200 [v2.10.3.15]).
+                    setDisplayGroup(qBound(0, value, highest));
+                    break;
+                case ClickBoxItem::Action::ChangeGroup:
+                    setDisplayGroup(steppedDisplayGroup(m_displayGroup, value, highest));
+                    break;
+                case ClickBoxItem::Action::CycleUnits: {
+                    // The topmost shown item under the box with units
+                    // (Thetis RelatedMeterItem, MeterManager.cs:31175-31186).
+                    const QRectF boxRect(box->x(), box->y(), box->itemWidth(), box->itemHeight());
+                    for (int i = m_items.size() - 1; i >= 0; --i) {
+                        MeterItem* target = m_items[i];
+                        if (target == box || !ClickBoxItem::supportsUnits(target) || !shouldRender(target)) { continue; }
+                        const QRectF rect(target->x(), target->y(), target->itemWidth(), target->itemHeight());
+                        if (!rect.intersects(boxRect)) { continue; }
+                        const MeterItem::MeterUnit next = ClickBoxItem::steppedUnit(
+                            shownUnit(target), value, target->bindingId() == MeterBinding::PbSnr);
+                        // A signal text keeps a unit set on it (fix wave R2).
+                        if (auto* text = qobject_cast<SignalTextItem*>(target)) {
+                            text->setOwnUnits(SignalTextItem::unitsFor(next));
+                        } else {
+                            target->setUnitMode(next);
+                        }
+                        invalidateReadingLayers(true);
+                        update();
+                        break;
+                    }
+                    break;
+                }
+            }
+        });
+    }
     if (m_unitMode) { item->setUnitMode(*m_unitMode); }
     if (m_powerScale > 0) { if (m_explicitPowerScale) { item->setPowerScale(m_powerScale, m_powerScaleTop); } else { item->setPowerScale(m_powerScale); } }
     item->resetForTxTransition(m_mox);
+    applyItemTxState(item, m_itemTxState);
     for (int binding : item->readingBindings()) {
-        if (!item->hasMmioBinding()) { item->setBindingSupport(binding, bindingSupport(binding)); }
-        if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
+        // With variable 1 on a data source, only the readings the item
+        // takes beside it come from the radio.
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(binding);
+        if (radio) { item->setBindingSupport(binding, bindingSupport(binding)); }
+        if (radio) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
         const auto cached = m_lastBindingValue.constFind(binding);
-        if (!item->property("containerUnsupportedSource").toBool() && !item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
+        if (!item->property("containerUnsupportedSource").toBool() && radio && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
     }
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
+    feedDisplayGroupText(m_items, m_displayGroup);
     update();
     if (item->hasMmioBinding()) {
         const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey());
         if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, cached->value, cached->reason, cached->support); }
+    }
+    for (int index = 1; index < MeterItem::kMaxMmioVariables; ++index) {
+        if (!item->hasMmioBinding(index)) { continue; }
+        const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey(index));
+        if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, index, cached->value, cached->reason, cached->support); }
     }
     emit itemAdded(item);
 }
@@ -234,6 +414,10 @@ void MeterWidget::removeItem(MeterItem* item)
 {
     if (m_items.removeOne(item)) {
         m_legacyRecords.removeIf([item](const LegacyRecord& record) { return record.item == item; });
+        // A removed LED's result no longer gates a text overlay.
+        if (auto* led = qobject_cast<LEDItem*>(item)) {
+            led->clearPublishedResult();
+        }
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
         m_bgDirty = true;
@@ -286,8 +470,21 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     m_lastBindingValue[bindingId] = value;
     // Delivery precedes repaint shortcuts: repeated primitive samples keep
     // smoothing, and composites retain input for the shared frame clock.
+    std::optional<qint64> now;
     for (MeterItem* item : m_items) {
-        if (item->property("containerUnsupportedSource").toBool() || item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
+        if (item->property("containerUnsupportedSource").toBool() || !item->readingBindings().contains(bindingId)) { continue; }
+        // Variable 1 on a data source replaces the main reading only: a
+        // reading the item takes beside it still arrives (each Thetis
+        // HISTORY axis reads on its own, MeterManager.cs:18101-18165 [v2.10.3.15]).
+        if (item->hasMmioBinding() && !item->readingBindingsBesideMmio().contains(bindingId)) { continue; }
+        // Per-item update interval. Bar presets, composites and waveform
+        // faces keep their own configured cadence.
+        const bool ownCadence = qobject_cast<BarPresetItem*>(item) || qobject_cast<CompositePresetItem*>(item)
+            || qobject_cast<WaveformMeterItem*>(item);
+        if (!ownCadence && item->updateIntervalMs() > 0) {
+            if (!now) { now = monotonicNowMs(); }
+            if (!item->acceptsUpdate(*now)) { continue; }
+        }
         const BarItem* bar = qobject_cast<BarItem*>(item);
         const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
         const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
@@ -302,6 +499,13 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     }
 }
 
+qint64 MeterWidget::monotonicNowMs() const
+{
+    if (m_monotonicClock) { return m_monotonicClock(); }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& unavailableReason,
                                   MeterItem::BindingSupport support)
 {
@@ -313,7 +517,7 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
     const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != unavailableReason;
     const bool supportChanged = item->bindingSupport(item->bindingId()) != support;
     m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason, support};
-    QSet<int> bindings = item->readingBindings(); bindings.insert(item->bindingId());
+    QSet<int> bindings = item->readingBindings(); bindings.subtract(item->readingBindingsBesideMmio()); bindings.insert(item->bindingId());
     for (int binding : bindings) { item->setBindingSupport(binding, support); item->setBindingUnavailable(binding, unavailableReason); }
     const bool inputChanged = item->value() != value;
     item->setValue(value);
@@ -323,6 +527,17 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
         || (bar && bar->showHistory()) || (needle && needle->historyEnabled())) {
         invalidateItemLayers(item);
     }
+}
+
+void MeterWidget::updateMmioValue(MeterItem* item, int index, double value, const QString& unavailableReason,
+                                  MeterItem::BindingSupport support)
+{
+    if (index == 0) { updateMmioValue(item, value, unavailableReason, support); return; }
+    if (!item || !m_items.contains(item) || !item->hasMmioBinding(index)) { return; }
+    m_lastMmioReading[item->mmioSourceKey(index)] = {value, unavailableReason, support};
+    // A reading the source does not have hides the variable's marker.
+    item->setSecondaryValue(index, unavailableReason.isEmpty() ? value : std::numeric_limits<double>::quiet_NaN());
+    invalidateItemLayers(item);
 }
 
 void MeterWidget::invalidatePresentation(const MeterItem* item)
@@ -371,6 +586,9 @@ void MeterWidget::advanceMeters(qint64 monotonicMs)
     for (MeterItem* item : m_items) {
         if (item->advanceMeter(monotonicMs)) { invalidateItemLayers(item); }
         if (item->takeStaticPresentationChange()) { invalidateReadingLayers(true); }
+        // Fade on RX / TX: repaint while the item's fade moves (its veil, or
+        // a fade cover, is drawn on the dynamic layer).
+        if (item->advanceFade(monotonicMs)) { invalidateReadingLayers(false); }
     }
 }
 
@@ -676,6 +894,21 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
     const int h = height();
     const QPointF pos = event->position();
 
+    // The item now under the pointer; the one it left hears so.
+    MeterItem* hovered = nullptr;
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        if (itemFeatureBuilt(m_items[i]) && m_items[i]->hitTest(pos, w, h)) {
+            hovered = m_items[i];
+            break;
+        }
+    }
+    if (m_hoverItem && m_hoverItem != hovered && m_items.contains(m_hoverItem.data())) {
+        if (m_hoverItem->handleMouseLeave()) {
+            invalidatePresentation(m_hoverItem);
+        }
+    }
+    m_hoverItem = hovered;
+
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
@@ -686,6 +919,30 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
         }
     }
     MeterBaseClass::mouseMoveEvent(event);
+}
+
+void MeterWidget::leaveEvent(QEvent* event)
+{
+    // Items that draw a hover box drop it when the pointer leaves.
+    for (MeterItem* item : std::as_const(m_items)) {
+        if (item->handleMouseLeave()) {
+            invalidatePresentation(item);
+        }
+    }
+    m_hoverItem.clear();
+    MeterBaseClass::leaveEvent(event);
+}
+
+void MeterWidget::keyPressEvent(QKeyEvent* event)
+{
+    // The key goes to the item last under the pointer.
+    MeterItem* item = m_hoverItem.data();
+    if (item && m_items.contains(item) && itemFeatureBuilt(item) && item->handleKeyPress(event)) {
+        event->accept();
+        invalidatePresentation(item);
+        return;
+    }
+    MeterBaseClass::keyPressEvent(event);
 }
 
 void MeterWidget::wheelEvent(QWheelEvent* event)
@@ -715,6 +972,31 @@ void MeterWidget::drawItems(QPainter& p)
         item->paint(p, w, h);
     }
     drawUnavailableVeils(p);
+    drawFadeVeils(p);
+}
+
+// Fade on RX / TX: each item's veil, the container background at alpha
+// 255 - fadeValue() over the item's cover rect (Thetis renderFadeCover,
+// MeterManager.cs:37826-37845 [v2.10.3.15]). A fade cover draws its own
+// fade and gets no veil.
+void MeterWidget::drawFadeVeils(QPainter& p) const
+{
+    const int w = width();
+    const int h = height();
+    QColor colour;
+    for (const MeterItem* item : m_items) {
+        if (!shouldRender(item) || qobject_cast<const FadeCoverItem*>(item) != nullptr) { continue; }
+        const int alpha = ContentFade::kUndimmedLevel - item->fadeValue();
+        if (alpha <= 0) { continue; }
+        if (!colour.isValid()) { colour = ContentFade::coverColour(this); }
+        QColor fill = colour;
+        fill.setAlpha(alpha);
+        // The item's own rectangle (MeterItem::pixelRect's arithmetic).
+        const QRectF rect(static_cast<int>(item->x() * w), static_cast<int>(item->y() * h),
+                          static_cast<int>(item->itemWidth() * w),
+                          static_cast<int>(item->itemHeight() * h));
+        p.fillRect(ContentFade::coverRect(rect), fill);
+    }
 }
 
 // iPhone app plan Task 39: an unavailable binding's items, dimmed by the
@@ -741,7 +1023,8 @@ void MeterWidget::drawUnavailableVeils(QPainter& p) const
 void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
 {
     for (MeterItem* item : m_items) {
-        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(bindingId);
+        if (radio && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
     }
     const auto it = m_unavailableBindings.constFind(bindingId);
     const bool unavailable = it != m_unavailableBindings.constEnd();
@@ -766,7 +1049,8 @@ void MeterWidget::setBindingSupport(int bindingId, MeterItem::BindingSupport sup
     m_bindingSupport[bindingId] = support;
     if (changed) { m_lastBindingValue.remove(bindingId); }
     for (MeterItem* item : m_items) {
-        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingSupport(bindingId, support); }
+        const bool radio = !item->hasMmioBinding() || item->readingBindingsBesideMmio().contains(bindingId);
+        if (radio && item->readingBindings().contains(bindingId)) { item->setBindingSupport(bindingId, support); }
     }
     if (changed) { invalidateReadingLayers(true); }
 }
@@ -780,6 +1064,8 @@ QString MeterWidget::unavailableReasonAt(const QPointF& pos) const
         if (!shouldRender(item) || !item->hitTest(pos, w, h)) {
             continue;
         }
+        const QString partReason = item->reasonAt(pos, w, h);
+        if (!partReason.isEmpty()) { return partReason; }
         QStringList reasons;
         QSet<int> bindings = item->readingBindings();
         if (item->hasMmioBinding()) { bindings.insert(item->bindingId()); }
@@ -863,10 +1149,49 @@ void MeterWidget::setMox(bool mox)
     emit displayVisibilityChanged();
 }
 
+// NereusSDR: hands the transmit state to an item (MeterItem::setTransmitting:
+// the fade on every item; fade covers, VFO displays and button grids also
+// change their look or clicks). Returns true when there was an item.
+bool MeterWidget::applyItemTxState(MeterItem* item, bool tx)
+{
+    if (!item) { return false; }
+    item->setTransmitting(tx);
+    return true;
+}
+
+void MeterWidget::setItemTxState(bool tx)
+{
+    const bool transition = tx != m_itemTxState;
+    m_itemTxState = tx;
+    // Thetis zeroes every meter, history included, on each MOX change
+    // (OnMox, MeterManager.cs:5252-5275 [v2.10.3.15], calling ZeroOut,
+    // MeterManager.cs:26398-26406, which calls mi.ClearHistory()).
+    if (transition) { clearItemHistory(); }
+    bool any = false;
+    for (MeterItem* item : m_items) {
+        any = applyItemTxState(item, tx) || any;
+    }
+    if (any) {
+        invalidateReadingLayers(true);
+        update();
+    }
+}
+
+// From Thetis MeterManager.cs:26398-26406 [v2.10.3.15] (ZeroOut: every
+// item's ClearHistory()).
+void MeterWidget::clearItemHistory()
+{
+    for (MeterItem* item : m_items) {
+        if (item) { item->clearHistory(); }
+    }
+    invalidateReadingLayers(false);
+}
+
 void MeterWidget::setDisplayGroup(int group)
 {
     if (m_displayGroup == group) { return; }
     m_displayGroup = group;
+    feedDisplayGroupText(m_items, m_displayGroup);
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
@@ -1208,6 +1533,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // Task 39: over everything drawn so far (the overlay is the top
             // layer), so an unavailable item's bar is dimmed too.
             drawUnavailableVeils(p);
+            drawFadeVeils(p);
             m_overlayDynamicDirty = false;
             m_overlayNeedsUpload = true;
         }

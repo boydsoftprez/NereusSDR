@@ -6,6 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - paintPointer() can leave the shadow out (a dial copy's
+//                 Shadow setting).  J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/VintageMeterFace.h"
@@ -350,7 +353,7 @@ void VintageMeterFace::paintStatic(QPainter& p, const QRectF& widgetRect, const 
 
 // ---------------------------------------------------------------------------
 void VintageMeterFace::paintPointer(QPainter& p, const Geometry& g, const VintageFaceTheme& t,
-                                    float frac)
+                                    float frac, bool shadow)
 {
     const double u    = g.unit;
     const double len  = kNeedleLenU * u;
@@ -379,11 +382,13 @@ void VintageMeterFace::paintPointer(QPainter& p, const Geometry& g, const Vintag
     p.setClipRect(g.face);
     p.setPen(Qt::NoPen);
 
-    p.save();
-    p.translate(g.pivot + QPointF(std::max(1.2, 3.0 * u), std::max(2.0, 5.0 * u)));
-    p.rotate(rot);
-    p.fillPath(lance, QColor(0, 0, 0, 51));     // LV_OPA_20
-    p.restore();
+    if (shadow) {
+        p.save();
+        p.translate(g.pivot + QPointF(std::max(1.2, 3.0 * u), std::max(2.0, 5.0 * u)));
+        p.rotate(rot);
+        p.fillPath(lance, QColor(0, 0, 0, 51));     // LV_OPA_20
+        p.restore();
+    }
 
     p.translate(g.pivot);
     p.rotate(rot);

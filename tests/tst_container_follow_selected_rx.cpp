@@ -1,7 +1,14 @@
 // no-port-check: NereusSDR-original GUI selected-RX source regression tests.
 #include <QtTest>
 #include <QComboBox>
+#include <QSplitter>
+#include <QTemporaryDir>
 #include <memory>
+#include "core/AppSettings.h"
+#include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWidget.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/FloatingContainer.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
@@ -400,6 +407,124 @@ private slots:
         // Link-wide availability remains authoritative for every adapted RX.
         adapted.setLocalRxReadingAvailable(false);
         QCOMPARE(fixedBar->value(), kNoMeterReadingDbm); QCOMPARE(fixedBar->historySampleCount(), 0);
+    }
+    // Hide when slice not open: a container on Slice C is hidden until
+    // Slice C opens, one on Active slice while no slice is open, and one
+    // without the option never. Nothing hides before slices are reported.
+    void hideWhenSliceNotOpenWaitsForItsSlice()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings"));
+        ContainerWorkspaceStore store(settings);
+        ContainerContentRegistry registry;
+        QWidget root;
+        QSplitter splitter(&root);
+        ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        WorkspaceDocument d;
+        d.mainContainerId = "main";
+        ContainerDocument main, sliceC, active, plain;
+        main.id = "main"; sliceC.id = "sliceC"; active.id = "active"; plain.id = "plain";
+        sliceC.config = {{"sliceId", 2}, {"hidesWhenRxNotUsed", true}};
+        active.config = {{"rxSourceMode", "followSelectedRx"}, {"hidesWhenRxNotUsed", true}};
+        plain.config = {{"sliceId", 2}};
+        d.containers = {main, sliceC, active, plain};
+        QCOMPARE(manager.commitWorkspace(d, 0).status, CommitStatus::Saved);
+        const auto shown = [&](const char* id) { return !manager.container(id)->isHidden(); };
+        QVERIFY(shown("sliceC")); QVERIFY(shown("active")); QVERIFY(shown("plain"));
+        manager.onSliceOpenChanged(0, true);
+        QVERIFY(!shown("sliceC")); QVERIFY(shown("active")); QVERIFY(shown("plain"));
+        manager.onSliceOpenChanged(2, true);
+        QVERIFY(shown("sliceC"));
+        manager.onSliceOpenChanged(2, false);
+        QVERIFY(!shown("sliceC"));
+        manager.onSliceOpenChanged(0, false);
+        QVERIFY(!shown("active")); QVERIFY(shown("plain"));
+        // A reconcile keeps the rule; the option off shows it again.
+        manager.onSliceOpenChanged(2, true);
+        d = store.snapshot();
+        d.containers[1].config["hidesWhenRxNotUsed"] = false;
+        d.containers[2].config["hidesWhenRxNotUsed"] = false;
+        QCOMPARE(manager.commitWorkspace(d, d.revision).status, CommitStatus::Saved);
+        QVERIFY(shown("sliceC")); QVERIFY(shown("active"));
+        // Containers > Hidden does not list a container its slice hides.
+        manager.onSliceOpenChanged(2, false);
+        d = store.snapshot();
+        d.containers[1].config["hidesWhenRxNotUsed"] = true;
+        QCOMPARE(manager.commitWorkspace(d, d.revision).status, CommitStatus::Saved);
+        QVERIFY(!shown("sliceC"));
+        for (const auto& item : manager.hiddenItems()) {
+            QVERIFY(item.containerId != QStringLiteral("sliceC"));
+        }
+    }
+    // Minimizes: a floating container on Slice B hides with the main window
+    // and comes back on restore, unless it hides while Slice B is closed.
+    void minimizesFollowsMainWindowForAnySlice()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings"));
+        ContainerWorkspaceStore store(settings);
+        ContainerContentRegistry registry;
+        QWidget root;
+        QSplitter splitter(&root);
+        ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        WorkspaceDocument d;
+        d.mainContainerId = "main";
+        ContainerDocument main, sliceB, stays;
+        main.id = "main"; sliceB.id = "sliceB"; stays.id = "stays";
+        sliceB.dockMode = stays.dockMode = DockMode::Floating;
+        sliceB.geometry = QRect(40, 40, 240, 160); stays.geometry = QRect(320, 40, 240, 160);
+        sliceB.config = {{"sliceId", 1}, {"containerMinimises", true}};
+        stays.config = {{"sliceId", 1}};
+        d.containers = {main, sliceB, stays};
+        QCOMPARE(manager.commitWorkspace(d, 0).status, CommitStatus::Saved);
+        QWidget* form = manager.container("sliceB")->window();
+        QWidget* staysForm = manager.container("stays")->window();
+        QVERIFY(qobject_cast<FloatingContainer*>(form));
+        QVERIFY(form->isVisible()); QVERIFY(staysForm->isVisible());
+        manager.onSliceOpenChanged(1, true);
+        manager.onMainWindowStateChanged(Qt::WindowMinimized);
+        QVERIFY(!form->isVisible()); QVERIFY(staysForm->isVisible());
+        manager.onMainWindowStateChanged(Qt::WindowNoState);
+        QVERIFY(form->isVisible());
+        // Hide when slice not open: restore leaves it hidden while Slice B
+        // is closed, and opening Slice B while minimized keeps it hidden.
+        d = store.snapshot();
+        d.containers[1].config["hidesWhenRxNotUsed"] = true;
+        QCOMPARE(manager.commitWorkspace(d, d.revision).status, CommitStatus::Saved);
+        manager.onMainWindowStateChanged(Qt::WindowMinimized);
+        manager.onSliceOpenChanged(1, false);
+        manager.onMainWindowStateChanged(Qt::WindowMaximized);
+        QVERIFY(!form->isVisible());
+        manager.onMainWindowStateChanged(Qt::WindowMinimized);
+        manager.onSliceOpenChanged(1, true);
+        QVERIFY(!form->isVisible());
+        manager.onMainWindowStateChanged(Qt::WindowNoState);
+        QVERIFY(form->isVisible());
+    }
+    // From Thetis frmMeterDisplay.cs:114-139: the RX2 rule, for any slice.
+    void floatingFormRestoreAsksItsOwnSlice()
+    {
+        FloatingContainer form(3);
+        form.setContainerFloating(true);
+        form.setContainerMinimises(true);
+        form.setContainerHidesWhenRxNotUsed(true);
+        form.show();
+        form.onMainWindowStateChanged(Qt::WindowMinimized, true);
+        QVERIFY(!form.isVisible());
+        form.onMainWindowStateChanged(Qt::WindowNoState, false);
+        QVERIFY(!form.isVisible());
+        form.onMainWindowStateChanged(Qt::WindowNoState, true);
+        QVERIFY(form.isVisible());
+        form.setContainerHidesWhenRxNotUsed(false);
+        form.hide();
+        form.onMainWindowStateChanged(Qt::WindowNoState, false);
+        QVERIFY(form.isVisible());
+        form.setHiddenByMacro(true);
+        form.hide();
+        form.onMainWindowStateChanged(Qt::WindowNoState, true);
+        QVERIFY(!form.isVisible());
     }
 };
 QTEST_MAIN(TestContainerFollowSelectedRx)

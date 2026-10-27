@@ -7,6 +7,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The 500 ms fade ramp (MeterItem's fade, Thetis fade())
+//                 in place of the instant on/off; the cover inflated by
+//                 max(2 px, 1%) as renderFadeCover does; the "use container
+//                 background" option (record field 11). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - setTxState keeps the state; updateActive applies it when
+//                 the Fade on RX / TX flags change or load. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -53,12 +64,17 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "FadeCoverItem.h"
+#include "ItemColourLook.h"
+#include "gui/containers/ContentFade.h"
 
 // From Thetis MeterManager.cs:7665 — clsFadeCover / renderFadeCover (line 36292)
 
 #include <QPainter>
 #include <QLinearGradient>
 #include <QStringList>
+#include <QWidget>
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -72,19 +88,17 @@ FadeCoverItem::FadeCoverItem(QObject* parent)
 }
 
 // ---------------------------------------------------------------------------
-// setTxState()
+// Transmit state
 // From Thetis MeterManager.cs:7887-7888 — FadeOnRx/FadeOnTx guard logic.
 // Thetis: items skip rendering when "if (FadeOnRx && !MOX) return;"
 //         This means FadeOnRx items are visible during TX (MOX=true),
 //         and FadeOnTx items are visible during RX (MOX=false).
-// NereusSDR: m_active = true when the overlay should be painted.
-//   - FadeOnRx: active when receiving (isTx == false)
-//   - FadeOnTx: active when transmitting (isTx == true)
+// NereusSDR: setTxState is MeterItem::setTransmitting. The cover dims in
+// over 500 ms (MeterItem::advanceFade, Thetis fade() MeterManager.cs:
+// 33153-33177 [v2.10.3.15]):
+//   - FadeOnRx: shown when receiving
+//   - FadeOnTx: shown when transmitting
 // ---------------------------------------------------------------------------
-void FadeCoverItem::setTxState(bool isTx)
-{
-    m_active = (isTx && m_fadeOnTx) || (!isTx && m_fadeOnRx);
-}
 
 // ---------------------------------------------------------------------------
 // paint()
@@ -94,20 +108,44 @@ void FadeCoverItem::setTxState(bool isTx)
 // ---------------------------------------------------------------------------
 void FadeCoverItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    if (!m_active) {
+    //clsFadeCover fc = (clsFadeCover)mi;
+
+    // From Thetis MeterManager.cs:37835 [v2.10.3.15]
+    const int nFade = ContentFade::kUndimmedLevel - fadeValue();
+    if (nFade <= 0) {
         return;
     }
 
-    const QRect rect = pixelRect(widgetW, widgetH);
-    const int alphaInt = static_cast<int>(m_alpha * 255.0f);
+    // From Thetis MeterManager.cs:37837-37843 [v2.10.3.15]
+    // increase size slightly as indictator lines stroke width of 3 will be outside bounds
+    const QRectF rect = ContentFade::coverRect(QRectF(pixelRect(widgetW, widgetH)));
+
+    if (m_useContainerBackground) {
+        // From Thetis MeterManager.cs:37844 [v2.10.3.15]: the container's
+        // background colour at alpha nFade.
+        const QWidget* host = nullptr;
+        for (QObject* o = parent(); o != nullptr && host == nullptr; o = o->parent()) {
+            host = qobject_cast<const QWidget*>(o);
+        }
+        QColor fill = ContentFade::coverColour(host);
+        fill.setAlpha(nFade);
+        p.fillRect(rect, fill);
+        //_renderTarget.DrawRectangle(rectFC, getDXBrushForColour(System.Drawing.Color.YellowGreen, nFade));
+        return;
+    }
+
+    // NereusSDR: the colour 1 / colour 2 gradient at m_alpha when fully
+    // dimmed, ramping with the fade.
+    const int dimRange = ContentFade::kUndimmedLevel - ContentFade::kDimmedLevel;
+    const int alphaInt = static_cast<int>(m_alpha * 255.0f) * std::min(nFade, dimRange) / dimRange;
 
     if (m_colour1 == m_colour2) {
-        QColor fill = m_colour1;
+        QColor fill = ItemColourLook::effective("FadeCover.colour1", m_colour1, this);
         fill.setAlpha(alphaInt);
         p.fillRect(rect, fill);
     } else {
-        QColor c1 = m_colour1;
-        QColor c2 = m_colour2;
+        QColor c1 = ItemColourLook::effective("FadeCover.colour1", m_colour1, this);
+        QColor c2 = ItemColourLook::effective("FadeCover.colour2", m_colour2, this);
         c1.setAlpha(alphaInt);
         c2.setAlpha(alphaInt);
         QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
@@ -146,12 +184,15 @@ static bool fadeCoverParseBaseFields(MeterItem& item, const QStringList& parts)
 QString FadeCoverItem::serialize() const
 {
     const int flags = (m_fadeOnRx ? 2 : 0) | (m_fadeOnTx ? 1 : 0);
-    return QStringLiteral("FADECOVER|%1|%2|%3|%4|%5")
+    // Field 11 (NereusSDR): use the container background. A record saved
+    // without it reads as off.
+    return QStringLiteral("FADECOVER|%1|%2|%3|%4|%5|%6")
         .arg(fadeCoverBaseFields(*this))
         .arg(m_colour1.name(QColor::HexArgb))
         .arg(m_colour2.name(QColor::HexArgb))
         .arg(static_cast<double>(m_alpha))
-        .arg(flags);
+        .arg(flags)
+        .arg(m_useContainerBackground ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +236,8 @@ bool FadeCoverItem::deserialize(const QString& data)
     m_alpha     = alpha;
     m_fadeOnRx  = (flags & 2) != 0;
     m_fadeOnTx  = (flags & 1) != 0;
+    // Field 11 (NereusSDR): use the container background; absent is off.
+    m_useContainerBackground = parts.size() > 11 && parts[11] == QLatin1String("1");
     return true;
 }
 

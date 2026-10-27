@@ -26,9 +26,18 @@
 //  13. A copy's Take transmit asks as the applet's own does.
 //  14. A preview of a row is inert.
 //  15. An unkey clears every power row's reading.
+//  16. The property editor does not call a row unsupported.
+//  17. A row's parts: the default look is unchanged, each hide key hides
+//      exactly its part, a hidden part stays hidden when the applet would
+//      show it, the order moves parts and lines, and the editor offers the
+//      toggles and the order.
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - A row's parts show, hide and order from the entry config.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The property editor does not call a row unsupported.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-21 - Copies made after the gates, remote 2-TONE copies, a copy's
 //                Take transmit and inert previews; the unreachable "+" menu
 //                test goes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -42,6 +51,11 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QLabel>
+#include <QGroupBox>
+#include <QBoxLayout>
+#include <QJsonArray>
+#include <QLineEdit>
+#include <QCheckBox>
 #include <QLayout>
 #include <QListWidget>
 #include <QMargins>
@@ -61,6 +75,7 @@
 #include "core/MoxController.h"
 #include "core/RadioStatus.h"
 #include "core/session/PureSignalSessionFacade.h"
+#include "gui/applets/SectionParts.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxChainSection.h"
 #include "gui/applets/TxFilterSection.h"
@@ -73,6 +88,7 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
@@ -95,6 +111,98 @@ const char* const kAppletRowWidgets[] = {
     "TxLevButton", "TxEqButton", "TxCfcButton", "TxRfPowerSlider",
     "TxVoxButton", "TxAppletPsaBtn", "TxHolderLabel", "TxTakeTransmitButton",
 };
+
+// The fixed width the geometry checks lay a row out at.
+constexpr int kRowWidth = 320;
+
+// A copy of a row the way the factories built one before a row had parts:
+// the applet's copy with no config applied.
+QWidget* copyWithoutConfig(TxApplet& applet, const QString& type, QWidget* parent)
+{
+    if (type == QLatin1String("tx.monitor")) { return applet.createMonitorSection(parent, false); }
+    if (type == QLatin1String("tx.power")) { return applet.createPowerSection(parent, false); }
+    if (type == QLatin1String("tx.filter")) { return applet.createFilterSection(parent, false); }
+    if (type == QLatin1String("tx.chain")) { return applet.createChainSection(parent, false); }
+    if (type == QLatin1String("tx.vox")) { return applet.createVoxSection(parent, false); }
+    if (type == QLatin1String("tx.processing")) { return applet.createProcessingSection(parent, false); }
+    if (type == QLatin1String("tx.keying")) { return applet.createKeyingSection(parent, false); }
+    return nullptr;
+}
+
+// A row's parts, whatever its section type.
+const SectionParts* partsOf(QWidget* row)
+{
+    if (auto* s = qobject_cast<TxMonitorSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxPowerSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxFilterSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxChainSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxVoxSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxProcessingSection*>(row)) { return &s->parts(); }
+    if (auto* s = qobject_cast<TxKeyingSection*>(row)) { return &s->parts(); }
+    return nullptr;
+}
+
+// Lays a row out at the fixed width and returns its own rect, then every
+// child's geometry and hidden state, in creation order.
+QStringList laidOut(QWidget* row)
+{
+    row->setFixedWidth(kRowWidth);
+    row->resize(kRowWidth, row->sizeHint().height());
+    row->layout()->activate();
+    QStringList result;
+    const auto describe = [](const QWidget* w) {
+        const QRect g = w->geometry();
+        return QStringLiteral("%1 %2,%3 %4x%5 %6").arg(w->metaObject()->className())
+            .arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height())
+            .arg(w->isHidden() ? QStringLiteral("hidden") : QStringLiteral("shown"));
+    };
+    result.append(describe(row));
+    for (const QWidget* child : row->findChildren<QWidget*>()) {
+        result.append(describe(child));
+    }
+    return result;
+}
+
+// The index of the item of a row's column that is or holds `widget`.
+int columnIndex(QWidget* row, QWidget* widget)
+{
+    QLayout* column = row->layout();
+    for (int i = 0; i < column->count(); ++i) {
+        QLayoutItem* item = column->itemAt(i);
+        if (item->widget() == widget) {
+            return i;
+        }
+        if (QLayout* line = item->layout()) {
+            if (line->indexOf(widget) >= 0) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+// The index of `widget` in the line of a row's column that holds it.
+int lineIndex(QWidget* row, QWidget* widget)
+{
+    const int index = columnIndex(row, widget);
+    if (index < 0 || !row->layout()->itemAt(index)->layout()) {
+        return -1;
+    }
+    return row->layout()->itemAt(index)->layout()->indexOf(widget);
+}
+
+// Every label text and tooltip the property editor shows.
+QString editorText(const QWidget& editor)
+{
+    QStringList parts;
+    for (const QLabel* label : editor.findChildren<QLabel*>()) {
+        parts.append(label->text());
+    }
+    for (const QWidget* widget : editor.findChildren<QWidget*>()) {
+        parts.append(widget->toolTip());
+    }
+    return parts.join(QLatin1Char('\n'));
+}
 
 } // namespace
 
@@ -813,7 +921,9 @@ private slots:
         registerTxSectionContent(registry, &applet);
 
         const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("tx.keying"));
-        QCOMPARE(properties.size(), 1);
+        // The slice indicators keep their key and their place; TUNE and MOX
+        // and the order follow.
+        QCOMPARE(properties.size(), 4);
         QCOMPARE(properties.at(0).key, QStringLiteral("hideSliceIndicators"));
         QCOMPARE(properties.at(0).label, QStringLiteral("Hide slice indicators"));
 
@@ -845,6 +955,414 @@ private slots:
         QVERIFY(folded->takeTransmitButton()->isHidden());
         QVERIFY(!shown->holderLabel()->isHidden());
         QVERIFY(!shown->takeTransmitButton()->isHidden());
+    }
+
+    // ── The property editor: a TX row is a known type with no options ──
+    void thePropertyEditorDoesNotCallARowUnsupported()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(registry.makeEntry(id));
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("Unsupported")), qPrintable(id));
+            QVERIFY2(editor.findChild<QLineEdit*>(QStringLiteral("contentName")), qPrintable(id));
+            QVERIFY2(editor.findChild<QCheckBox*>(QStringLiteral("contentVisible")), qPrintable(id));
+            // Only a row that declares options (TX Keying, RX Filter) has
+            // an item-specific group; every other row has none.
+            QCOMPARE(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")) != nullptr,
+                     !registry.declaredProperties(id).isEmpty());
+        }
+
+        // A type the registry does not know (a layout from a newer build)
+        // still says so: the registry's unknown-type reason, the original
+        // data retained.
+        ContentEntry unknown = registry.makeEntry(QString::fromLatin1(kRowTypes[0]));
+        unknown.typeId = QStringLiteral("tx.fromANewerBuild");
+        ContentPropertyEditor unknownEditor(registry);
+        unknownEditor.setEntry(unknown);
+        QVERIFY(!registry.isAvailable(unknown.typeId));
+        QVERIFY(editorText(unknownEditor).contains(registry.unavailableReason(unknown.typeId)));
+        QVERIFY(editorText(unknownEditor).contains(QStringLiteral("Unknown content type; original data retained")));
+
+        // An unavailable row shows its reason.
+        const QString first = QString::fromLatin1(kRowTypes[0]);
+        registry.setAvailable(first, false, QStringLiteral("Test reason: not available here"));
+        ContentPropertyEditor unavailableEditor(registry);
+        unavailableEditor.setEntry(registry.makeEntry(first));
+        QVERIFY(editorText(unavailableEditor).contains(QStringLiteral("Test reason: not available here")));
+        QVERIFY(!editorText(unavailableEditor).contains(QStringLiteral("Unsupported configuration")));
+    }
+
+    // ── 17. A row's parts ────────────────────────────────────────────────
+    // With no part keys, and with an order equal to the built one, a copy
+    // lays out exactly as a copy built without parts did; the applet's own
+    // row has its parts but never applies a config.
+    void theDefaultLookIsUnchanged()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* before = copyWithoutConfig(applet, id, &host);
+            QWidget* after = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(before && after, type);
+            const SectionParts* parts = partsOf(after);
+            QVERIFY2(parts && !parts->ids().isEmpty(), type);
+
+            ContentEntry ordered = registry.makeEntry(id);
+            ordered.config.insert(SectionParts::orderKey(), QJsonArray::fromStringList(parts->ids()));
+            QWidget* builtOrder = registry.createWidget(ordered, &host);
+            QVERIFY2(builtOrder, type);
+
+            const QStringList expected = laidOut(before);
+            QCOMPARE(laidOut(after), expected);
+            QCOMPARE(laidOut(builtOrder), expected);
+        }
+    }
+
+    void eachHideKeyHidesExactlyItsPart()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* plain = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(plain, type);
+            const QStringList partIds = partsOf(plain)->ids();
+            for (const QString& part : partIds) {
+                ContentEntry entry = registry.makeEntry(id);
+                entry.config.insert(SectionParts::hideKey(part), true);
+                QWidget* copy = registry.createWidget(entry, &host);
+                QVERIFY2(copy, qPrintable(part));
+                const SectionParts* parts = partsOf(copy);
+                for (const QString& other : partIds) {
+                    QCOMPARE(parts->isHidden(other), other == part);
+                    const QList<QWidget*> mine = parts->widgets(other);
+                    const QList<QWidget*> theirs = partsOf(plain)->widgets(other);
+                    QCOMPARE(mine.size(), theirs.size());
+                    for (int i = 0; i < mine.size(); ++i) {
+                        if (other == part) {
+                            QVERIFY2(mine.at(i)->isHidden(), qPrintable(id + QLatin1Char(' ') + part));
+                        } else {
+                            QCOMPARE(mine.at(i)->isHidden(), theirs.at(i)->isHidden());
+                        }
+                    }
+                }
+            }
+        }
+
+        // The old key still names the slice indicators.
+        QCOMPARE(SectionParts::hideKey(QStringLiteral("sliceIndicators")),
+                 QStringLiteral("hideSliceIndicators"));
+    }
+
+    void aHiddenPartStaysHiddenWhenTheAppletShowsIt()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+        QWidget host;
+
+        // PS-A on a PureSignal board.
+        ContentEntry noPsa = registry.makeEntry(QStringLiteral("tx.processing"));
+        noPsa.config.insert(QStringLiteral("hidePsa"), true);
+        auto* hiddenPsa = qobject_cast<TxProcessingSection*>(registry.createWidget(noPsa, &host));
+        auto* shownPsa = qobject_cast<TxProcessingSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("tx.processing")), &host));
+        QVERIFY(hiddenPsa && shownPsa);
+        BoardCapabilities caps{};
+        caps.board = HPSDRHW::Atlas;
+        caps.hasPureSignal = false;
+        applet.setBoardCapabilities(caps);
+        QVERIFY(hiddenPsa->psaButton()->isHidden());
+        QVERIFY(shownPsa->psaButton()->isHidden());
+        caps.hasPureSignal = true;
+        applet.setBoardCapabilities(caps);
+        QVERIFY(hiddenPsa->psaButton()->isHidden());
+        QVERIFY(!shownPsa->psaButton()->isHidden());
+        QVERIFY(!applet.findChild<TxProcessingSection*>()->psaButton()->isHidden());
+        // A copy made after the board is known follows the same gate.
+        auto* lateHidden = qobject_cast<TxProcessingSection*>(registry.createWidget(noPsa, &host));
+        QVERIFY(lateHidden && lateHidden->psaButton()->isHidden());
+
+        // The monitor notice with the headphones chosen and none open.
+        ContentEntry noNotice = registry.makeEntry(QStringLiteral("tx.monitor"));
+        noNotice.config.insert(QStringLiteral("hideNotice"), true);
+        auto* hiddenNotice = qobject_cast<TxMonitorSection*>(registry.createWidget(noNotice, &host));
+        auto* shownNotice = qobject_cast<TxMonitorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("tx.monitor")), &host));
+        QVERIFY(hiddenNotice && shownNotice);
+        for (TxMonitorSection* row : {hiddenNotice, shownNotice}) {
+            row->setHeadphonesAvailable(false);
+            row->showMonitorOutput(true);
+        }
+        QVERIFY(hiddenNotice->outputNotice()->isHidden());
+        QVERIFY(!shownNotice->outputNotice()->isHidden());
+        for (TxMonitorSection* row : {hiddenNotice, shownNotice}) {
+            row->setHeadphonesAvailable(true);
+        }
+        QVERIFY(hiddenNotice->outputNotice()->isHidden());
+        QVERIFY(shownNotice->outputNotice()->isHidden());
+
+        // The holder line and Take transmit on a remote window.
+        ContentEntry noSlices = registry.makeEntry(QStringLiteral("tx.keying"));
+        noSlices.config.insert(QStringLiteral("hideSliceIndicators"), true);
+        auto* hiddenSlices = qobject_cast<TxKeyingSection*>(registry.createWidget(noSlices, &host));
+        QVERIFY(hiddenSlices);
+        applet.setTransmitHolderText(QStringLiteral("Another device holds transmit"));
+        applet.setTakeTransmitOffered(true, false);
+        QVERIFY(hiddenSlices->holderLabel()->isHidden());
+        QVERIFY(hiddenSlices->takeTransmitButton()->isHidden());
+        QVERIFY(!applet.transmitHolderText().isEmpty());
+        QVERIFY(applet.takeTransmitOffered());
+        // A copy made while the holder line shows keeps it hidden too.
+        auto* lateSlices = qobject_cast<TxKeyingSection*>(registry.createWidget(noSlices, &host));
+        QVERIFY(lateSlices);
+        QVERIFY(lateSlices->holderLabel()->isHidden());
+        QVERIFY(lateSlices->takeTransmitButton()->isHidden());
+        // Shown again once the copy stops hiding them.
+        lateSlices->setSliceIndicatorsHidden(false);
+        QVERIFY(!lateSlices->holderLabel()->isHidden());
+        QVERIFY(!lateSlices->takeTransmitButton()->isHidden());
+        applet.setTakeTransmitOffered(false, false);
+        QVERIFY(lateSlices->takeTransmitButton()->isHidden());
+    }
+
+    void theOrderMovesPartsAndLines()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+        QWidget host;
+
+        const auto copyWithOrder = [&](const char* type, const QStringList& order) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            entry.config.insert(SectionParts::orderKey(), QJsonArray::fromStringList(order));
+            QWidget* row = registry.createWidget(entry, &host);
+            if (row) {
+                laidOut(row);
+            }
+            return row;
+        };
+
+        // MOX left of TUNE.
+        auto* swapped = qobject_cast<TxKeyingSection*>(copyWithOrder("tx.keying", {"mox", "tune"}));
+        QVERIFY(swapped);
+        QVERIFY(lineIndex(swapped, swapped->moxButton()) < lineIndex(swapped, swapped->tuneButton()));
+        QVERIFY(swapped->moxButton()->geometry().x() < swapped->tuneButton()->geometry().x());
+        // Each keeps its stretch.
+        QBoxLayout* line = qobject_cast<QBoxLayout*>(
+            swapped->layout()->itemAt(columnIndex(swapped, swapped->moxButton()))->layout());
+        QVERIFY(line);
+        QCOMPARE(line->stretch(lineIndex(swapped, swapped->moxButton())), 1);
+        QCOMPARE(line->stretch(lineIndex(swapped, swapped->tuneButton())), 1);
+
+        // The letters above the buttons, the holder line and Take transmit
+        // with them.
+        auto* lettersFirst = qobject_cast<TxKeyingSection*>(
+            copyWithOrder("tx.keying", {"sliceIndicators", "tune", "mox"}));
+        QVERIFY(lettersFirst);
+        const int letters = columnIndex(lettersFirst, lettersFirst->sliceIndicatorRow());
+        const int holder = columnIndex(lettersFirst, lettersFirst->holderLabel());
+        const int take = columnIndex(lettersFirst, lettersFirst->takeTransmitButton());
+        const int buttons = columnIndex(lettersFirst, lettersFirst->tuneButton());
+        QCOMPARE(letters, 0);
+        QCOMPARE(holder, 1);
+        QCOMPARE(take, 2);
+        QCOMPARE(buttons, 3);
+        QCOMPARE(columnIndex(lettersFirst, lettersFirst->moxButton()), buttons);
+        QVERIFY(lettersFirst->sliceIndicatorRow()->geometry().y()
+                < lettersFirst->tuneButton()->geometry().y());
+        QVERIFY(lineIndex(lettersFirst, lettersFirst->tuneButton())
+                < lineIndex(lettersFirst, lettersFirst->moxButton()));
+
+        // A line part listed last still moves its whole line with the first.
+        auto* mixed = qobject_cast<TxKeyingSection*>(
+            copyWithOrder("tx.keying", {"mox", "sliceIndicators", "tune", "unknownPart"}));
+        QVERIFY(mixed);
+        QCOMPARE(columnIndex(mixed, mixed->moxButton()), 0);
+        QCOMPARE(columnIndex(mixed, mixed->tuneButton()), 0);
+        QCOMPARE(columnIndex(mixed, mixed->sliceIndicatorRow()), 1);
+        QVERIFY(lineIndex(mixed, mixed->moxButton()) < lineIndex(mixed, mixed->tuneButton()));
+
+        // Unknown ids are ignored; unlisted parts keep their built place.
+        auto* unknown = qobject_cast<TxKeyingSection*>(copyWithOrder("tx.keying", {"bogus"}));
+        QVERIFY(unknown);
+        QVERIFY(lineIndex(unknown, unknown->tuneButton()) < lineIndex(unknown, unknown->moxButton()));
+        QCOMPARE(columnIndex(unknown, unknown->sliceIndicatorRow()), 1);
+
+        // The VOX line reorders: hold, VOX, threshold.
+        auto* vox = qobject_cast<TxVoxSection*>(copyWithOrder("tx.vox", {"hold", "vox", "threshold"}));
+        QVERIFY(vox);
+        const SectionParts& parts = vox->parts();
+        QWidget* holdSlider = parts.widgets(QStringLiteral("hold")).first();
+        QWidget* holdValue = parts.widgets(QStringLiteral("hold")).last();
+        QWidget* voxButton = parts.widgets(QStringLiteral("vox")).first();
+        QWidget* thresholdGroup = parts.widgets(QStringLiteral("threshold")).first();
+        QWidget* thresholdValue = parts.widgets(QStringLiteral("threshold")).last();
+        QCOMPARE(lineIndex(vox, holdSlider), 0);
+        QCOMPARE(lineIndex(vox, holdValue), 1);
+        QCOMPARE(lineIndex(vox, voxButton), 2);
+        QCOMPARE(lineIndex(vox, thresholdGroup), 3);
+        QCOMPARE(lineIndex(vox, thresholdValue), 4);
+        QVERIFY(holdSlider->geometry().x() < voxButton->geometry().x());
+        QVERIFY(voxButton->geometry().x() < thresholdGroup->geometry().x());
+        QBoxLayout* voxLine = qobject_cast<QBoxLayout*>(vox->layout()->itemAt(0)->layout());
+        QVERIFY(voxLine);
+        QCOMPARE(voxLine->stretch(lineIndex(vox, holdSlider)), 1);
+        QCOMPARE(voxLine->stretch(lineIndex(vox, thresholdGroup)), 1);
+        QCOMPARE(voxLine->stretch(lineIndex(vox, voxButton)), 0);
+
+        // The effective order the editor shows is the one the row uses.
+        QCOMPARE(SectionParts::effectiveOrder({{"tune", 0}, {"mox", 0}, {"sliceIndicators", -1}},
+                                              QJsonArray{"sliceIndicators", "mox", "bogus"}),
+                 (QStringList{"sliceIndicators", "mox", "tune"}));
+    }
+
+    void theEditorOffersTheTogglesAndTheOrder()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            QWidget host;
+            QWidget* row = registry.createWidget(registry.makeEntry(id), &host);
+            QVERIFY2(row, type);
+            const QStringList partIds = partsOf(row)->ids();
+
+            const QVector<ContentProperty> properties = registry.declaredProperties(id);
+            QVERIFY2(!properties.isEmpty(), type);
+            QCOMPARE(properties.last().kind, ContentProperty::Kind::Order);
+            QCOMPARE(properties.last().key, QStringLiteral("order"));
+            QCOMPARE(properties.last().choices.size(), partIds.size());
+
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(registry.makeEntry(id));
+            QVERIFY2(!editorText(editor).contains(QStringLiteral("Unsupported")), type);
+            QVERIFY2(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")), type);
+            QVERIFY2(editor.findChild<QWidget*>(QStringLiteral("property_order")), type);
+            auto* list = editor.findChild<QListWidget*>(QStringLiteral("property_orderList"));
+            QVERIFY2(list, type);
+            QCOMPARE(list->count(), partIds.size());
+            QVERIFY(list->toolTip().contains(QStringLiteral("one line stay together")));
+            for (const QString& part : partIds) {
+                auto* toggle = editor.findChild<QCheckBox*>(
+                    QStringLiteral("property_") + SectionParts::hideKey(part));
+                QVERIFY2(toggle, qPrintable(id + QLatin1Char(' ') + part));
+                QVERIFY(!toggle->isChecked());
+            }
+
+            // Advanced bindings stay disabled, with the reason.
+            QGroupBox* advanced = nullptr;
+            for (QGroupBox* group : editor.findChildren<QGroupBox*>()) {
+                if (group->title() == QStringLiteral("Advanced bindings")) {
+                    advanced = group;
+                }
+            }
+            QVERIFY2(advanced, type);
+            QVERIFY(!advanced->isEnabled());
+            QCOMPARE(advanced->toolTip(),
+                     QStringLiteral("These controls follow the TX panel; they have no source of their own."));
+
+            // A toggle writes its key.
+            QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+            const QString firstKey = SectionParts::hideKey(partIds.first());
+            editor.findChild<QCheckBox*>(QStringLiteral("property_") + firstKey)->setChecked(true);
+            QCOMPARE(edited.count(), 1);
+            QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(firstKey), QJsonValue(true));
+        }
+
+        // The order list moves an item; a move back to the built order
+        // writes no order.
+        ContentPropertyEditor editor(registry);
+        editor.setEntry(registry.makeEntry(QStringLiteral("tx.keying")));
+        auto* list = editor.findChild<QListWidget*>(QStringLiteral("property_orderList"));
+        auto* up = editor.findChild<QPushButton*>(QStringLiteral("property_orderUp"));
+        auto* down = editor.findChild<QPushButton*>(QStringLiteral("property_orderDown"));
+        QVERIFY(list && up && down);
+        QCOMPARE(list->item(0)->text(), QStringLiteral("TUNE button"));
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+
+        list->setCurrentRow(0);
+        down->click();
+        QCOMPARE(edited.count(), 1);
+        QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
+                 QJsonValue(QJsonArray{"mox", "tune", "sliceIndicators"}));
+        QCOMPARE(list->item(0)->text(), QStringLiteral("MOX button"));
+        QCOMPARE(list->currentRow(), 1);
+
+        // The slice indicators move above the whole line.
+        list->setCurrentRow(2);
+        up->click();
+        QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
+                 QJsonValue(QJsonArray{"sliceIndicators", "mox", "tune"}));
+        down->click();
+        QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
+                 QJsonValue(QJsonArray{"mox", "tune", "sliceIndicators"}));
+        list->setCurrentRow(0);
+        down->click();
+        QVERIFY(!qvariant_cast<ContentEntry>(edited.last().at(0)).config.contains(QStringLiteral("order")));
+
+        // A stored order shows as the row lays it out.
+        ContentEntry stored = registry.makeEntry(QStringLiteral("tx.vox"));
+        stored.config.insert(QStringLiteral("order"), QJsonArray{"hold", "vox", "threshold"});
+        ContentPropertyEditor voxEditor(registry);
+        voxEditor.setEntry(stored);
+        auto* voxList = voxEditor.findChild<QListWidget*>(QStringLiteral("property_orderList"));
+        QVERIFY(voxList);
+        QCOMPARE(voxList->item(0)->text(), QStringLiteral("Hold"));
+        QCOMPARE(voxList->item(1)->text(), QStringLiteral("VOX button"));
+        QCOMPARE(voxList->item(2)->text(), QStringLiteral("Threshold and level"));
+    }
+
+    void hidingEveryPartLeavesAnEmptyRow()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        for (const char* type : kRowTypes) {
+            const QString id = QString::fromLatin1(type);
+            ContentEntry entry = registry.makeEntry(id);
+            for (const ContentProperty& property : registry.declaredProperties(id)) {
+                if (property.kind == ContentProperty::Kind::Toggle) {
+                    entry.config.insert(property.key, true);
+                }
+            }
+            QWidget host;
+            QWidget* row = registry.createWidget(entry, &host);
+            QVERIFY2(row, type);
+            laidOut(row);
+            const SectionParts* parts = partsOf(row);
+            for (const QString& part : parts->ids()) {
+                QVERIFY(parts->isHidden(part));
+                for (QWidget* widget : parts->widgets(part)) {
+                    QVERIFY(widget->isHidden());
+                }
+            }
+            ContentPropertyEditor editor(registry);
+            editor.setEntry(entry);
+            QVERIFY2(editor.findChild<QWidget*>(QStringLiteral("property_order")), type);
+        }
     }
 };
 

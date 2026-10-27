@@ -1,5 +1,13 @@
-// no-port-check: NereusSDR-original Qt property adapter; global-unit control disabled in container drafts.
+// no-port-check: NereusSDR-original Qt property adapter.
+// Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R2: Units offers Follow global and each unit; a
+//                 unit chosen here stays when the global setting changes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "SignalTextItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/SignalTextItem.h"
 
 #include <QCheckBox>
@@ -9,8 +17,14 @@
 #include <QComboBox>
 #include <QFontComboBox>
 #include <QColorDialog>
+#include <QSpinBox>
 
 namespace NereusSDR {
+
+namespace {
+// The Units row's Follow global choice (no unit has the value -1).
+constexpr int kFollowGlobalUnits = -1;
+} // namespace
 
 SignalTextItemEditor::SignalTextItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
@@ -20,9 +34,8 @@ SignalTextItemEditor::SignalTextItemEditor(QWidget* parent)
 
 void SignalTextItemEditor::useGlobalUnits()
 {
-    m_comboUnits->setEnabled(false);
-    m_comboUnits->setToolTip(tr("Signal units and decimal precision follow the global multimeter preferences."));
-    auto* note = new QLabel(m_comboUnits->toolTip(), this);
+    auto* note = new QLabel(tr("Decimal precision follows the global multimeter preferences. "
+                               "Units follow them too unless a unit is chosen above."), this);
     note->setWordWrap(true);
     addRow(tr("Global preferences"), note);
 }
@@ -33,15 +46,14 @@ void SignalTextItemEditor::setItem(MeterItem* item)
     SignalTextItem* x = qobject_cast<SignalTextItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
 
-    const int unitsIdx = m_comboUnits->findData(static_cast<int>(x->units()));
+    const int unitsIdx = m_comboUnits->findData(
+        x->unitsSetHere() ? static_cast<int>(x->units()) : kFollowGlobalUnits);
     m_comboUnits->setCurrentIndex(unitsIdx >= 0 ? unitsIdx : 0);
 
     m_chkShowValue->setChecked(x->showValue());
@@ -49,15 +61,25 @@ void SignalTextItemEditor::setItem(MeterItem* item)
     m_chkShowType->setChecked(x->showType());
     m_chkPeakHold->setChecked(x->peakHold());
 
-    applyColor(m_btnColour, x->colour());
-    applyColor(m_btnPeakColour, x->peakValueColour());
-    applyColor(m_btnMarkerColour, x->markerColour());
+    applyColor(m_btnColour, QStringLiteral("SignalText.colour"), x->colour());
+    applyColor(m_btnPeakColour, QStringLiteral("SignalText.peakValueColour"), x->peakValueColour());
+    applyColor(m_btnMarkerColour, QStringLiteral("SignalText.markerColour"), x->markerColour());
 
     m_fontCombo->setCurrentFont(QFont(x->fontFamily()));
     m_spinFontSize->setValue(static_cast<double>(x->fontSize()));
 
     const int barIdx = m_comboBarStyle->findData(static_cast<int>(x->barStyleMode()));
     m_comboBarStyle->setCurrentIndex(barIdx >= 0 ? barIdx : 0);
+
+    const int typeIdx = m_comboTypeStyle->findData(static_cast<int>(x->typeStyle()));
+    m_comboTypeStyle->setCurrentIndex(typeIdx >= 0 ? typeIdx : 0);
+    applyColor(m_btnTypeColour, QStringLiteral("SignalText.typeColour"), x->typeColour());
+    m_chkShowSubMarker->setChecked(x->showSubMarker());
+    applyColor(m_btnSubMarkerColour, QStringLiteral("SignalText.subMarkerColour"), x->subMarkerColour());
+    applyColor(m_btnBackgroundColour, QStringLiteral("SignalText.backgroundColour"), x->backgroundColour());
+    m_chkPeakNeedsHold->setChecked(x->peakValueNeedsPeakHold());
+    m_spinHistoryMs->setValue(x->historyDurationMs());
+    m_spinIgnoreHistoryMs->setValue(x->ignoreHistoryMs());
 
     endProgrammaticUpdate();
 }
@@ -68,7 +90,10 @@ void SignalTextItemEditor::buildTypeSpecific()
 
     // Units
     m_comboUnits = new QComboBox(this);
-    m_comboUnits->setObjectName("signalGlobalUnits");
+    m_comboUnits->setObjectName("signalUnits");
+    m_comboUnits->setToolTip(tr("Follow global uses the global multimeter units; "
+                                "a unit chosen here stays when that setting changes."));
+    m_comboUnits->addItem(tr("Follow global"), kFollowGlobalUnits);
     m_comboUnits->addItem(QStringLiteral("dBm"),    static_cast<int>(SignalTextItem::Units::Dbm));
     m_comboUnits->addItem(QStringLiteral("S-Units"), static_cast<int>(SignalTextItem::Units::SUnits));
     m_comboUnits->addItem(QStringLiteral("μV"),      static_cast<int>(SignalTextItem::Units::Uv));
@@ -77,7 +102,12 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (isProgrammaticUpdate()) { return; }
         SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
         if (!x) { return; }
-        x->setUnits(static_cast<SignalTextItem::Units>(m_comboUnits->currentData().toInt()));
+        const int choice = m_comboUnits->currentData().toInt();
+        if (choice == kFollowGlobalUnits) {
+            x->followGlobalUnits();
+        } else {
+            x->setOwnUnits(static_cast<SignalTextItem::Units>(choice));
+        }
         notifyChanged();
     });
 
@@ -126,10 +156,9 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->colour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.colour"));
             x->setColour(chosen);
-            m_btnColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("SignalText.colour"), chosen);
             notifyChanged();
         }
     });
@@ -142,10 +171,9 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->peakValueColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.peakValueColour"));
             x->setPeakValueColour(chosen);
-            m_btnPeakColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPeakColour, QStringLiteral("SignalText.peakValueColour"), chosen);
             notifyChanged();
         }
     });
@@ -158,10 +186,9 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->markerColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.markerColour"));
             x->setMarkerColour(chosen);
-            m_btnMarkerColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnMarkerColour, QStringLiteral("SignalText.markerColour"), chosen);
             notifyChanged();
         }
     });
@@ -200,6 +227,102 @@ void SignalTextItemEditor::buildTypeSpecific()
         SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
         if (!x) { return; }
         x->setBarStyleMode(static_cast<SignalTextItem::BarStyle>(m_comboBarStyle->currentData().toInt()));
+        notifyChanged();
+    });
+
+    // A color button row that sets one color on the item.
+    const auto colourRow = [this](QPushButton*& button, const QString& label, const QString& field,
+                                  QColor (SignalTextItem::*get)() const,
+                                  void (SignalTextItem::*set)(const QColor&)) {
+        button = new QPushButton(this);
+        button->setFixedSize(40, 18);
+        QPushButton* b = button;
+        connect(b, &QPushButton::clicked, this, [this, b, label, field, get, set]() {
+            SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+            if (!x) { return; }
+            const QColor chosen = QColorDialog::getColor((x->*get)(), this, label,
+                                                         QColorDialog::ShowAlphaChannel);
+            if (!chosen.isValid()) { return; }
+            markColourPicked(field);
+            (x->*set)(chosen);
+            ItemColourLook::paintSwatch(b, field, chosen);
+            notifyChanged();
+        });
+        addRow(label, button);
+    };
+
+    // Type: the units under the value, or the reading's PK / AVG / FFT mark.
+    m_comboTypeStyle = new QComboBox(this);
+    m_comboTypeStyle->addItem(QStringLiteral("Units"),
+                              static_cast<int>(SignalTextItem::TypeStyle::UnitsLabel));
+    m_comboTypeStyle->addItem(QStringLiteral("Reading (PK, AVG or FFT)"),
+                              static_cast<int>(SignalTextItem::TypeStyle::ReadingGlyph));
+    m_comboTypeStyle->setToolTip(QStringLiteral(
+        "What Show type draws: the units under the value, or a mark in the top "
+        "right for the reading: PK for peak, AVG for average, FFT for the "
+        "strongest spectrum bin."));
+    addRow(QStringLiteral("Type shows"), m_comboTypeStyle);
+    connect(m_comboTypeStyle, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (isProgrammaticUpdate()) { return; }
+        SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+        if (!x) { return; }
+        x->setTypeStyle(static_cast<SignalTextItem::TypeStyle>(m_comboTypeStyle->currentData().toInt()));
+        notifyChanged();
+    });
+    colourRow(m_btnTypeColour, QStringLiteral("Type color"), QStringLiteral("SignalText.typeColour"),
+              &SignalTextItem::typeColour, &SignalTextItem::setTypeColour);
+
+    // The uV and dBm sub line.
+    m_chkShowSubMarker = makeCheckRow(QStringLiteral("Show μV and dBm"));
+    m_chkShowSubMarker->setToolTip(QStringLiteral(
+        "Show the reading in μV and dBm under the value, and beside the peak."));
+    connect(m_chkShowSubMarker, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+        if (!x) { return; }
+        x->setShowSubMarker(on);
+        notifyChanged();
+    });
+    colourRow(m_btnSubMarkerColour, QStringLiteral("μV and dBm color"), QStringLiteral("SignalText.subMarkerColour"),
+              &SignalTextItem::subMarkerColour, &SignalTextItem::setSubMarkerColour);
+    colourRow(m_btnBackgroundColour, QStringLiteral("Background color"), QStringLiteral("SignalText.backgroundColour"),
+              &SignalTextItem::backgroundColour, &SignalTextItem::setBackgroundColour);
+
+    m_chkPeakNeedsHold = makeCheckRow(QStringLiteral("Peak value only with peak hold"));
+    m_chkPeakNeedsHold->setToolTip(QStringLiteral(
+        "On: the peak value shows only while Peak hold is on, and reads the held "
+        "peak. Off: Show peak value alone shows it, reading the highest value "
+        "over the history time."));
+    connect(m_chkPeakNeedsHold, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+        if (!x) { return; }
+        x->setPeakValueNeedsPeakHold(on);
+        notifyChanged();
+    });
+
+    // History
+    addHeader(QStringLiteral("History"));
+    m_spinHistoryMs = makeIntRow(QStringLiteral("History (ms)"),
+                                 kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+    m_spinHistoryMs->setToolTip(QStringLiteral("How far back the peak value looks."));
+    connect(m_spinHistoryMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        if (isProgrammaticUpdate()) { return; }
+        SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+        if (!x) { return; }
+        x->setHistoryDurationMs(v);
+        notifyChanged();
+    });
+    m_spinIgnoreHistoryMs = makeIntRow(QStringLiteral("Ignore history (ms)"),
+                                       kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+    m_spinIgnoreHistoryMs->setToolTip(QStringLiteral(
+        "After switching between receive and transmit, or changing band, let "
+        "the meter settle this long before it gathers history."));
+    connect(m_spinIgnoreHistoryMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        if (isProgrammaticUpdate()) { return; }
+        SignalTextItem* x = qobject_cast<SignalTextItem*>(m_item);
+        if (!x) { return; }
+        x->setIgnoreHistoryMs(v);
         notifyChanged();
     });
 }

@@ -1,6 +1,7 @@
 #include "ImageItemEditor.h"
 #include "../../meters/MeterItem.h"
 
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QFileDialog>
@@ -23,7 +24,24 @@ void ImageItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
     m_editPath->setText(img->imagePath());
+    m_chkDarkMode->setChecked(img->darkMode());
     endProgrammaticUpdate();
+    refreshDarkModeAvailability();
+}
+
+// Dark mode does something only when the image has a "-dark" file beside
+// it (the ANAN face has none): otherwise it stays visible, disabled, with
+// the reason. A saved Dark mode is kept and shown.
+void ImageItemEditor::refreshDarkModeAvailability()
+{
+    const ImageItem* img = qobject_cast<const ImageItem*>(m_item);
+    const QString path = img ? img->imagePath() : QString();
+    const bool available = !path.isEmpty()
+        && ImageItem::variantPath(path, true, 0.0) != ImageItem::variantPath(path, false, 0.0);
+    m_chkDarkMode->setEnabled(available);
+    m_chkDarkMode->setToolTip(available
+        ? QStringLiteral("Use the image's -dark file (for example meter-dark.png) when there is one")
+        : noArtworkReason());
 }
 
 void ImageItemEditor::buildTypeSpecific()
@@ -46,12 +64,26 @@ void ImageItemEditor::buildTypeSpecific()
 
     addRow(QStringLiteral("Image path"), rowWidget);
 
+    // Dark mode: use the image's "-dark" file when there is one beside it.
+    m_chkDarkMode = makeCheckRow(QStringLiteral("Dark mode"));
+    m_chkDarkMode->setObjectName(QStringLiteral("imageDarkMode"));
+    m_chkDarkMode->setToolTip(QStringLiteral(
+        "Use the image's -dark file (for example meter-dark.png) when there is one"));
+    connect(m_chkDarkMode, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        ImageItem* img = qobject_cast<ImageItem*>(m_item);
+        if (!img) { return; }
+        img->setDarkMode(on);
+        notifyChanged();
+    });
+
     // Apply path when the user finishes editing the line edit directly
     connect(m_editPath, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         ImageItem* img = qobject_cast<ImageItem*>(m_item);
         if (!img) { return; }
         img->setImagePath(m_editPath->text());
+        refreshDarkModeAvailability();
         notifyChanged();
     });
 
@@ -69,6 +101,7 @@ void ImageItemEditor::buildTypeSpecific()
             beginProgrammaticUpdate();
             m_editPath->setText(path);
             endProgrammaticUpdate();
+            refreshDarkModeAvailability();
             notifyChanged();
         }
     });

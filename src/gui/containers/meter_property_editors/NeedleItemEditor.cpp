@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Shadow, peak hold, peak hold color and ignore history
+//                 rows; history and power limit ranges from Thetis setup.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -59,6 +65,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NeedleItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "../../meters/MeterItem.h"
 
@@ -161,9 +168,7 @@ void NeedleItemEditor::setItem(MeterItem* item)
 
     // Needle color button
     const QColor nc = needle->needleColor();
-    m_btnNeedleColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(nc.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnNeedleColor, QStringLiteral("Needle.needleColor"), nc);
 
     m_spinAttack->setValue(static_cast<double>(needle->attackRatio()));
     m_spinDecay->setValue(static_cast<double>(needle->decayRatio()));
@@ -177,13 +182,17 @@ void NeedleItemEditor::setItem(MeterItem* item)
     m_comboDirection->setCurrentIndex(
         needle->direction() == NeedleItem::NeedleDirection::CounterClockwise ? 1 : 0);
 
+    m_chkShadow->setChecked(needle->shadow());
+    m_chkPeakHold->setChecked(needle->peakHold());
+    const QColor pc = needle->peakHoldColour();
+    ItemColourLook::paintSwatch(m_btnPeakHoldColor, QStringLiteral("Needle.peakHoldColour"), pc);
+
     m_chkHistory->setChecked(needle->historyEnabled());
     m_spinHistoryDuration->setValue(needle->historyDuration());
+    m_spinIgnoreHistory->setValue(needle->ignoreHistoryMs());
 
     const QColor hc = needle->historyColor();
-    m_btnHistoryColor->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-            .arg(hc.name(QColor::HexArgb)));
+    ItemColourLook::paintSwatch(m_btnHistoryColor, QStringLiteral("Needle.historyColor"), hc);
 
     m_chkNormaliseTo100W->setChecked(needle->normaliseTo100W());
     m_spinMaxPower->setValue(static_cast<double>(needle->maxPower()));
@@ -299,10 +308,9 @@ void NeedleItemEditor::buildTypeSpecific()
             needle->needleColor(), this, QStringLiteral("Needle color"),
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.needleColor"));
             needle->setNeedleColor(chosen);
-            m_btnNeedleColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnNeedleColor, QStringLiteral("Needle.needleColor"), chosen);
             notifyChanged();
         }
     });
@@ -349,6 +357,47 @@ void NeedleItemEditor::buildTypeSpecific()
         notifyChanged();
     });
     addLabeled(needleForm, QStringLiteral("Direction"), m_comboDirection);
+
+    m_chkShadow = new QCheckBox(needleGroup);
+    m_chkShadow->setStyleSheet(kCheckStyle);
+    connect(m_chkShadow, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        NeedleItem* needle = qobject_cast<NeedleItem*>(m_item);
+        if (!needle) { return; }
+        needle->setShadow(on);
+        notifyChanged();
+    });
+    addLabeled(needleForm, QStringLiteral("Shadow"), m_chkShadow);
+
+    m_chkPeakHold = new QCheckBox(needleGroup);
+    m_chkPeakHold->setStyleSheet(kCheckStyle);
+    m_chkPeakHold->setToolTip(QStringLiteral(
+        "Mark the highest reading over the history duration."));
+    connect(m_chkPeakHold, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        NeedleItem* needle = qobject_cast<NeedleItem*>(m_item);
+        if (!needle) { return; }
+        needle->setPeakHold(on);
+        notifyChanged();
+    });
+    addLabeled(needleForm, QStringLiteral("Peak hold"), m_chkPeakHold);
+
+    m_btnPeakHoldColor = new QPushButton(needleGroup);
+    m_btnPeakHoldColor->setFixedSize(40, 18);
+    connect(m_btnPeakHoldColor, &QPushButton::clicked, this, [this]() {
+        NeedleItem* needle = qobject_cast<NeedleItem*>(m_item);
+        if (!needle) { return; }
+        const QColor chosen = QColorDialog::getColor(
+            needle->peakHoldColour(), this, QStringLiteral("Peak hold color"),
+            QColorDialog::ShowAlphaChannel);
+        if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.peakHoldColour"));
+            needle->setPeakHoldColour(chosen);
+            ItemColourLook::paintSwatch(m_btnPeakHoldColor, QStringLiteral("Needle.peakHoldColour"), chosen);
+            notifyChanged();
+        }
+    });
+    addLabeled(needleForm, QStringLiteral("Peak hold color"), m_btnPeakHoldColor);
 
     m_form->addRow(needleGroup);
 
@@ -446,7 +495,9 @@ void NeedleItemEditor::buildTypeSpecific()
     addLabeled(histForm, QStringLiteral("History enabled"), m_chkHistory);
 
     m_spinHistoryDuration = new QSpinBox(histGroup);
-    styleSpinI(m_spinHistoryDuration, 100, 60000);
+    styleSpinI(m_spinHistoryDuration, kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+    m_spinHistoryDuration->setToolTip(QStringLiteral(
+        "How long the history and the peak hold look back."));
     connect(m_spinHistoryDuration, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (isProgrammaticUpdate() || !m_item) { return; }
@@ -457,6 +508,21 @@ void NeedleItemEditor::buildTypeSpecific()
     });
     addLabeled(histForm, QStringLiteral("Duration (ms)"), m_spinHistoryDuration);
 
+    m_spinIgnoreHistory = new QSpinBox(histGroup);
+    styleSpinI(m_spinIgnoreHistory, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+    m_spinIgnoreHistory->setToolTip(QStringLiteral(
+        "After switching between receive and transmit, or changing band, let "
+        "the meter settle this long before it gathers history and peak values."));
+    connect(m_spinIgnoreHistory, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        NeedleItem* needle = qobject_cast<NeedleItem*>(m_item);
+        if (!needle) { return; }
+        needle->setIgnoreHistoryMs(v);
+        notifyChanged();
+    });
+    addLabeled(histForm, QStringLiteral("Ignore history (ms)"), m_spinIgnoreHistory);
+
     m_btnHistoryColor = new QPushButton(histGroup);
     m_btnHistoryColor->setFixedSize(40, 18);
     connect(m_btnHistoryColor, &QPushButton::clicked, this, [this]() {
@@ -466,10 +532,9 @@ void NeedleItemEditor::buildTypeSpecific()
             needle->historyColor(), this, QStringLiteral("History color"),
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.historyColor"));
             needle->setHistoryColor(chosen);
-            m_btnHistoryColor->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnHistoryColor, QStringLiteral("Needle.historyColor"), chosen);
             notifyChanged();
         }
     });
@@ -493,7 +558,9 @@ void NeedleItemEditor::buildTypeSpecific()
     addLabeled(pwrForm, QStringLiteral("Normalize to 100 W"), m_chkNormaliseTo100W);
 
     m_spinMaxPower = new QDoubleSpinBox(pwrGroup);
-    styleSpin(m_spinMaxPower, 1.0, 10000.0, 1.0, 1);
+    styleSpin(m_spinMaxPower, kMinBarPowerLimitW, kMaxBarPowerLimitW, 0.1, 1);
+    m_spinMaxPower->setToolTip(QStringLiteral(
+        "Power limit of the scale when normalizing to 100 W."));
     connect(m_spinMaxPower, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate() || !m_item) { return; }
@@ -502,7 +569,7 @@ void NeedleItemEditor::buildTypeSpecific()
         needle->setMaxPower(static_cast<float>(v));
         notifyChanged();
     });
-    addLabeled(pwrForm, QStringLiteral("Max power (W)"), m_spinMaxPower);
+    addLabeled(pwrForm, QStringLiteral("Power limit (W)"), m_spinMaxPower);
 
     m_form->addRow(pwrGroup);
 
