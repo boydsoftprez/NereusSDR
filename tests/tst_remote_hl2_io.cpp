@@ -792,10 +792,15 @@ void TstRemoteHl2Io::dxOutputsFromARemoteWindowOnAndOffTheAir()
     QSignalSpy rejected(&s.proxy, &SettingsProxy::valueRejected);
     const AnvelinaDxOutputs& dx = s.core.model->anvelinaDxOutputs();
     QCOMPARE(int(dx.wireByte()), 0x00);
+    // The production model-to-connection wiring, which carries the DX byte
+    // to the Core's connection (injectConnectionForTest does no wiring).
+    s.core.model->wireBandOutputsReportForTest();
+    QCOMPARE(int(s.core.p1.ocExtrasByte()), 0x00);
 
     // Off the air.
     s.proxy.setValue(hw(QStringLiteral("oc/dx/out8/enabled")), QStringLiteral("True"));
     QTRY_COMPARE(int(dx.wireByte()), 0x04);
+    QTRY_COMPARE(int(s.core.p1.ocExtrasByte()), 0x04);
     QVERIFY(reloads.contains(QStringLiteral("ocDx")));
     QVERIFY(!reloads.contains(QStringLiteral("oc")));
 
@@ -804,6 +809,7 @@ void TstRemoteHl2Io::dxOutputsFromARemoteWindowOnAndOffTheAir()
     QTRY_VERIFY(s.core.model->isCoreOnAir());
     s.proxy.setValue(hw(QStringLiteral("oc/dx/out10/enabled")), QStringLiteral("True"));
     QTRY_COMPARE(int(dx.wireByte()), 0x14);
+    QTRY_COMPARE(int(s.core.p1.ocExtrasByte()), 0x14);
     s.proxy.setValue(hw(QStringLiteral("oc/dx/out7/label")), QStringLiteral("Amp"));
     QTRY_COMPARE(dx.label(7), QStringLiteral("Amp"));
     QCOMPARE(s.settings.value(hw(QStringLiteral("oc/dx/out10/enabled"))).toString(),

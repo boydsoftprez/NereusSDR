@@ -747,6 +747,7 @@ public slots:
     /// high-priority byte 1397 and Protocol 1 bank 17 on an ANVELINAPRO3.
     /// RadioModel hands it over on this object's thread; safe to call
     /// before the connection runs. A change calls onOcExtrasChanged.
+    // Same role as Thetis SetOCExtraBits, netInterface.c:409-418 [v2.10.3.15]
     void setOcExtrasByte(quint8 bits)
     {
         if (m_ocExtrasByte.exchange(bits) != bits) {

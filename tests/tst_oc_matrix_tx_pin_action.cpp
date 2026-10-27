@@ -321,6 +321,51 @@ private slots:
         QVERIFY(!conn.ocTune());
     }
 
+    // A MOX drop walks out while TUNE stays on, and TUNE clears in
+    // MoxState::TxToRxFlush, after hardwareFlipped(false) has sent MOX off.
+    // No hold may be left behind: the flag drops after MOX off, and the
+    // next key goes out without TUNE's pins.
+    void radioModel_tuneClearingAfterFlipToRx_leavesNoHold()
+    {
+        OcLoggingConnection conn;
+        RadioModel model;
+        prepare(model, conn);
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        // ptt_out_delay long enough to act inside TxToRxFlush.
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 500, 0);
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QVERIFY(conn.ocTune());
+
+        conn.log.clear();
+        model.moxController()->setMox(false);
+        pump();
+        QCOMPARE(model.moxController()->state(), MoxState::TxToRxFlush);
+        QVERIFY(model.isTransmitting());
+        QVERIFY(model.transmitModel().isTune());
+        QVERIFY(conn.log.contains(QStringLiteral("mox:0")));
+
+        model.transmitModel().setTune(false);
+        pump();
+        const int moxOff = conn.log.indexOf(QStringLiteral("mox:0"));
+        const int tuneOff = conn.log.indexOf(QStringLiteral("tune:0"));
+        QVERIFY2(moxOff >= 0 && tuneOff > moxOff, qPrintable(conn.log.join(u' ')));
+        QVERIFY(!conn.ocTune());
+
+        QTRY_COMPARE_WITH_TIMEOUT(model.moxController()->state(), MoxState::Rx, 5000);
+        conn.log.clear();
+        model.moxController()->setMox(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QVERIFY2(!conn.log.contains(QStringLiteral("tune:1")), qPrintable(conn.log.join(u' ')));
+        QVERIFY(!conn.ocTune());
+
+        model.moxController()->setMox(false);
+        QTRY_COMPARE_WITH_TIMEOUT(model.moxController()->state(), MoxState::Rx, 5000);
+    }
+
     // Another source's key accepted while a TUNE start is setting up ends
     // the TUNE without releasing that key (finishCutShortTuneStart). TUNE
     // never keyed, so its flag drops at once and stays down for the other
@@ -363,6 +408,11 @@ private slots:
         QVERIFY(model.moxController()->isMox());   // the other source's key stays
         pump();
         QVERIFY2(!conn.ocTune(), qPrintable(conn.log.join(u' ')));
+        // The drop reaches the connection before the other key's MOX on,
+        // so that key never goes out with TUNE's pins.
+        const int tuneOff = conn.log.indexOf(QStringLiteral("tune:0"));
+        const int moxOn = conn.log.indexOf(QStringLiteral("mox:1"));
+        QVERIFY2(tuneOff >= 0 && moxOn > tuneOff, qPrintable(conn.log.join(u' ')));
 
         model.moxController()->setMox(false);
         pump();

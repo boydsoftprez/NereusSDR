@@ -23736,9 +23736,24 @@ void RadioModel::wireOcTxModes()
     // never comes), and a remote window never holds (its TUNE and key are
     // the Core's). Two-tone needs no hold: TwoToneController clears it
     // after the release has settled.
+    //
+    // isTransmitting() stays true through MoxState::TxToRxFlush, which
+    // starts after hardwareFlipped(false) was emitted. A TUNE that clears
+    // there (a MOX drop walking out with TUNE still on) must not set the
+    // hold: no further hardwareFlipped would release it, and the next key
+    // would go out with TUNE's pins until its own hardwareFlipped(true).
+    // The drop is queued instead, behind onMoxHardwareFlipped's MOX off if
+    // that is still waiting, so it still reaches the connection after it.
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
-        m_ocTuneHold = !on && m_role != Role::Remote
-                       && m_moxController != nullptr && isTransmitting();
+        const bool releasing = !on && m_role != Role::Remote
+                               && m_moxController != nullptr && isTransmitting();
+        if (releasing && m_moxController->state() == MoxState::TxToRxFlush) {
+            m_ocTuneHold = false;
+            QMetaObject::invokeMethod(this, [this]() { pushOcTxModes(); },
+                                      Qt::QueuedConnection);
+            return;
+        }
+        m_ocTuneHold = releasing;
         pushOcTxModes();
     });
     connect(&m_transmitModel, &TransmitModel::twoToneActiveChanged, this,
@@ -23768,6 +23783,9 @@ void RadioModel::wireRadioSpeakerState()
     // still walking to receive when Tune clears, with MOX off not yet sent.
     // Never on a remote window: its Tune and transmit state are the Core's,
     // its own controller never keys, so no hardwareFlipped would clear it.
+    // This hold shares the OC TUNE hold's window (wireOcTxModes): Tune
+    // clearing in MoxState::TxToRxFlush, after hardwareFlipped(false), sets
+    // it with no hardwareFlipped left to clear it until the next key.
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
         m_tuneSidetoneHold = !on && m_role != Role::Remote
                              && m_moxController != nullptr && isTransmitting();
