@@ -333,7 +333,7 @@ length; the sending is Task 3), R-CW-38 (the level formula), R-CW-51.
       // min(keyDownMs, 255, 900 / max(speedWpm, 1)); From deskHPSDR old_protocol.c:2823-2831 [@f3d857c]
   int cwRadioSidetoneLevel(bool sidetone, bool radioSidetone, bool radioMuted,
                            CwBreakInMode mode, float monitorVolume);
-      // 0 unless all three allow; round(v*100*1.27) Semi/Qsk, round(v*100*0.73) Off;
+      // 0 unless all three allow; txaf = round(v*100); (int)(txaf*1.27) Semi/Qsk, (int)(txaf*0.73) Off;
       // From Thetis console.cs:13046-13089 [v2.10.3.15]
   quint8 composeP2CwModeControl(const CwWireState& s, bool eer);
       // bit0 eer, 1 enable, 2 reverse, 3 iambic (mode != Straight), 4 level > 0,
@@ -347,8 +347,8 @@ length; the sending is Task 3), R-CW-38 (the level formula), R-CW-51.
 - Helpers: `cwHangMs(Semi, 300, 10)` = 310, `(Semi, 1000, 500)` = 1023, `(Qsk, 300, 10)`
   = 10, `(Off, 300, 10)` = 0. `cwRfDelayMs(7, 25)` = 7, `(300, 5)` = 180,
   `(200, 30)` = 30, `(50, 0)` = 50 (speed treated as 1, then 255 cap, then 50).
-  `cwRadioSidetoneLevel(true, true, false, Semi, 0.5f)` = 64 (63.5 rounds to 64),
-  `(..., Off, 0.5f)` = 37 (36.5 rounds to 37), `(true, true, true, Semi, 0.5f)` = 0,
+  `cwRadioSidetoneLevel(true, true, false, Semi, 0.5f)` = 63 (Thetis truncates),
+  `(..., Off, 0.5f)` = 36, `(true, true, true, Semi, 0.5f)` = 0,
   `(true, false, false, Semi, 1.0f)` = 0, `(true, true, false, Semi, 1.0f)` = 127.
   `composeP2CwModeControl` for every bit alone, EER kept.
 - P1 Standard, Anvelina Pro3, Red Pitaya and HL2, from a context with speed 30,
