@@ -30,6 +30,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - applyDraftFromButton(): OK and Apply say why in a
+//                 message box when a new or duplicated container in the
+//                 draft cannot be saved. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -210,6 +214,9 @@ private:
     void populateItemList();
     void updatePreview();
     void applyToContainer();
+    // OK and Apply with a draft: applyDraft(), and when that is refused and
+    // the draft adds a container (New, Duplicate), a message box says why.
+    CommitResult applyDraftFromButton();
 
     // Find the MeterWidget inside the container's content hierarchy.
     // Handles both direct MeterWidget content and MeterWidget nested

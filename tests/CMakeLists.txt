@@ -726,6 +726,9 @@ nereus_add_test(tst_container_remembered_place)
 nereus_add_test(tst_container_window_monitors)
 # Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
 nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
+# A refused container change says why: the stuck states stay on screen until
+# a reload, New Container says why in a box, refusals are logged (offscreen).
+nereus_add_test(tst_mainwindow_container_refused_save fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
 # ADC bars read the ADC behind their slice; the ADC maximum bar names why it is empty.
 nereus_add_test(tst_meter_adc_slice)

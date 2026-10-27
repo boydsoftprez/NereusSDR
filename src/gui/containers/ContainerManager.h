@@ -20,6 +20,12 @@
 //   2026-10-25 - setTransmitting also reaches the items that change on
 //                 transmit. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - A good reload that ends a state refusing every save
+//                 clears storageError(), so moves and resizes save again
+//                 at once; RefusalShownByCaller lets a caller that shows a
+//                 refusal in its own message box keep workspaceError (and
+//                 its toast) quiet. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 - bringAppletOnScreen, hiddenByOwnFlags, keepWindowReachable
 //                 and keepWindowsReachable: a floating window is shown where
 //                 its header can be reached, and Containers > Hidden lists
@@ -165,6 +171,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointer>
 #include <QTimer>
 #include <QSet>
+#include <QScopedValueRollback>
 #include "ContainerDocument.h"
 #include "gui/NereusGuiExport.h"
 
@@ -252,6 +259,17 @@ public:
     // True while any header drag or grip resize is in progress.
     bool containerDragActive() const;
     QString storageError() const { return m_storageError; }
+    // While one is alive, a refused commitWorkspace is still logged and kept
+    // in storageError(), but workspaceError is not emitted: the caller shows
+    // the refusal itself (the New Container message box), so no toast
+    // repeats it.
+    class RefusalShownByCaller {
+    public:
+        explicit RefusalShownByCaller(ContainerManager& manager)
+            : m_rollback(manager.m_refusalShownByCaller, true) {}
+    private:
+        QScopedValueRollback<bool> m_rollback;
+    };
     bool isReconciling() const { return m_reconciling; }
     // Workspace profiles: while suppressed, no geometry is captured into
     // the workspace (a profile apply settles its layout first). Turning it
@@ -624,6 +642,7 @@ private:
     // Floating windows shown away from their remembered place.
     QSet<QString> m_displaced;
     QString m_storageError;
+    bool m_refusalShownByCaller = false;
     QTimer m_geometryCommit;
     bool m_edgeHintsPending = false;
     QSet<QString> m_pendingGeometry;
