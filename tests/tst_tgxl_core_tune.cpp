@@ -71,6 +71,11 @@
 //               expiry and the holder leaving; the take during the tune is
 //               B's tx.take, waited for without a fixed wait. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: PR 670 fix wave 2: the overlap is made deterministic with
+//               the give-back held and rechecked by the test; the recall
+//               case waits for the sweep's end before the press and
+//               records any key with a signal spy. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -453,51 +458,35 @@ void tunerLetsGo(FakeTuner& tuner)
 }
 
 // PR 670 fix wave (I1): device `id`'s own Tuner Genius tune (its
-// tx.tunerTune's cycle) starts the moment the tuner's tune is over (the
-// radio back in receive, TUN off complete with no settle), before the
-// give-back's 50 ms recheck. The amplifier operating, it waits for its
-// standby with nothing keyed. Sets `overlapped` when the give-back still
-// waited when it started.
-void deviceTuneOverlapsTheGiveBack(Core& core, FakeTuner& tuner, const QByteArray& id,
-                                   bool* overlapped)
+// tx.tunerTune's cycle) runs while the give-back's recheck is pending, and
+// a recheck sees it in progress. Deterministic: the give-back is held
+// (setTunerLoanHeldForTest) through the tuner's tune off, the device's
+// cycle starts once the radio is back in receive and TUN is off, and the
+// recheck runs at once in the same turn (recheckTunerLoanForTest), so no
+// timer or machine stall can come between. The amplifier operating, the
+// device's cycle waits for its standby with nothing keyed.
+void deviceTuneOverlapsTheGiveBack(Core& core, FakeTuner& tuner, const QByteArray& id)
 {
-    core.model->setTuneOffSettleMsForTest(0);
-    // The tuner echoes nothing more: an echoed tune off would end the
-    // device's cycle before the test looks at it.
-    tuner.lan.echo = LanClient::Echo::Off;
     MoxController* mox = core.model->moxController();
-    bool posted = false;
-    bool started = false;
-    QString why;
-    // Connected after RadioModel's own rxReady handler, so its TUN-off
-    // completion (a zero-time single shot) runs first.
-    const QMetaObject::Connection once =
-        QObject::connect(mox, &MoxController::rxReady, mox, [&]() {
-            if (posted) {
-                return;
-            }
-            posted = true;
-            QTimer::singleShot(0, mox, [&]() {
-                *overlapped = core.server->hasTunerLoanForTest();
-                ampOperating(core);
-                KeyerIdentity keyer;
-                keyer.deviceId = id;
-                keyer.source = PttMode::Manual;
-                started = core.model->startTgxlAutotuneFor(keyer, &why);
-            });
-        });
+    core.server->setTunerLoanHeldForTest(true);
     tunerLetsGo(tuner);
-    QTRY_VERIFY(posted);
-    QTRY_VERIFY2(started || !why.isEmpty(), "the device's tune was not asked");
-    QObject::disconnect(once);
-    QVERIFY2(started, qPrintable(why));
+    QTRY_COMPARE(mox->state(), MoxState::Rx);
+    QTRY_VERIFY(!core.model->isTune());
+    QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
+    QVERIFY(core.server->hasTunerLoanForTest());
+    ampOperating(core);
+    KeyerIdentity keyer;
+    keyer.deviceId = id;
+    keyer.source = PttMode::Manual;
+    QString why;
+    QVERIFY2(core.model->startTgxlAutotuneFor(keyer, &why), qPrintable(why));
     QVERIFY(core.model->isTgxlAutotuneInProgress());
     QCOMPARE(core.model->tgxlAutotuneDeviceId(), id);
-    // The give-back's 50 ms rechecks run while the device's cycle waits for
-    // the amplifier (its failsafe is 1.5 s), so a recheck sees a cycle in
-    // progress, as the finding's case has it.
-    QTest::qWait(200);
-    QVERIFY(core.model->isTgxlAutotuneInProgress());
+    core.server->recheckTunerLoanForTest();
+    QVERIFY(core.server->tunerLoanWaitedOnAnotherCycleForTest());
+    QVERIFY(core.server->hasTunerLoanForTest());
+    QVERIFY(core.server->transmitHolder()->isHeldBy(
+        QByteArray(KeyerIdentity::kStationDeviceId)));
 }
 
 // Tune-ended lane: the ends of a device's cycle before its carrier keyed.
@@ -1233,9 +1222,7 @@ private slots:
         const QByteArray station(KeyerIdentity::kStationDeviceId);
 
         tunerPressTakes(core, tuner);
-        bool overlapped = false;
-        deviceTuneOverlapsTheGiveBack(core, tuner, a.key.fingerprint(), &overlapped);
-        QVERIFY2(overlapped, "the give-back ran before the device's tune started");
+        deviceTuneOverlapsTheGiveBack(core, tuner, a.key.fingerprint());
         // Nothing goes back while the device's cycle runs.
         QVERIFY(holder->isHeldBy(station));
         QVERIFY(core.server->hasTunerLoanForTest());
@@ -1294,34 +1281,25 @@ private slots:
         // The first press, a device's tune overlapping its give-back.
         tunerPressTakes(core, tuner);
         QCOMPARE(arbiter->txBoundSliceId(), desktopSlice);
-        bool overlapped = false;
-        deviceTuneOverlapsTheGiveBack(core, tuner, a.key.fingerprint(), &overlapped);
-        QVERIFY2(overlapped, "the give-back ran before the device's tune started");
+        deviceTuneOverlapsTheGiveBack(core, tuner, a.key.fingerprint());
         QVERIFY(core.model->cancelTgxlAutotuneFor(a.key.fingerprint()));
         QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
         QTRY_COMPARE(arbiter->txBoundSliceId(), p);
         // The amplifier confirms standby, then the operate=1 the cycle's
         // end sent it.
         amp->injectLineForTesting(QStringLiteral("S0|status state=STANDBY"));
-        QTest::qWait(100);
         amp->injectLineForTesting(QStringLiteral("S0|status state=OPERATE"));
+        QTRY_VERIFY(!core.model->ampChangingOver());
 
         // A moves its flag to q; the second press finds it there. The
-        // tune=1 frames the overlap left unechoed are counted (the answer
-        // window), so the tuner's first tune ons answer them; it presses
-        // until one is its own TUNE.
+        // amplifier operating again, its cycle waits for the standby.
         core.invoke(appA, "tx.setTxSlice", {int64("sliceId", q)});
         QTRY_COMPARE(arbiter->txBoundSliceId(), q);
-        tuner.lan.echo = LanClient::Echo::PerFrame;
-        for (int press = 0; press < 5 && !mox->isMox(); ++press) {
-            tuner.push(QStringLiteral("S0|state tuning=1"));
-            tuner.lan.send(QStringLiteral("transmit tune on"));
-            // The amplifier operating, a cycle waits for its standby.
-            QTest::qWait(200);
-            amp->injectLineForTesting(QStringLiteral("S0|status state=STANDBY"));
-            QTest::qWaitFor([mox]() { return mox->isMox(); }, 500);
-        }
-        QVERIFY(mox->isMox());
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        tuner.lan.send(QStringLiteral("transmit tune on"));
+        QTRY_VERIFY(core.model->isTgxlAutotuneInProgress());
+        amp->injectLineForTesting(QStringLiteral("S0|status state=STANDBY"));
+        QTRY_VERIFY(mox->isMox());
         QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
         QCOMPARE(arbiter->txBoundSliceId(), desktopSlice);
         tunerLetsGo(tuner);
@@ -1528,14 +1506,24 @@ private slots:
         tx->setFrequency(7'100'000.0);
         QTRY_COMPARE(tuner.count(QStringLiteral("autotune")), 2);
 
+        // PR 670 fix wave: any key at all in the answer's window is seen
+        // (a brief one between polls included), not only the state read
+        // at the end.
+        QSignalSpy keys(mox, &MoxController::moxStateChanged);
         tuner.push(QStringLiteral("S0|state tuning=1"));
         tuner.lan.send(QStringLiteral("transmit tune on"));
         QTest::qWait(500);
         QVERIFY(!mox->isMox());
+        QCOMPARE(keys.count(), 0);
         QVERIFY(!core.model->isTune());
         QVERIFY(holder->isHeldBy(a.key.fingerprint()));
         tuner.lan.send(QStringLiteral("transmit tune off"));
         tuner.push(QStringLiteral("S0|state tuning=0"));
+        // The sweep's end (tuning=0, on the tuner's own :9010 link) is read
+        // before the press: on a loaded machine it could land after it and
+        // end the press's cycle as that cycle's sweep end (CI, load 12).
+        QTRY_VERIFY(!core.model->tunerModel()->isTuning());
+        QCOMPARE(keys.count(), 0);
 
         // Answered: the next tune on is a press again.
         tuner.lan.send(QStringLiteral("transmit tune on"));

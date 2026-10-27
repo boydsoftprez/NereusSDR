@@ -186,8 +186,9 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-26: PR 670 fix wave: TunerLoan tied to its own cycle (serial,
 //               cycleEnded), tunerLoanTakeStands, dropTunerLoanForStationKey,
-//               hasTunerLoanForTest. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               hasTunerLoanForTest, and the test hold and recheck
+//               (setTunerLoanHeldForTest, recheckTunerLoanForTest).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
 //               a desktop window before its radio connects. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1064,6 +1065,22 @@ public:
     /// TGXL tune lane (PR 670 fix wave): a tuner's TUNE loan is still
     /// waiting to give transmit back.
     bool hasTunerLoanForTest() const { return m_tunerLoan.has_value(); }
+    /// While held, the give-back does nothing and schedules no recheck, so
+    /// a test can start another cycle at a point it chooses and then run
+    /// the recheck itself (recheckTunerLoanForTest). A recheck timer armed
+    /// before the hold finds it held and stops.
+    void setTunerLoanHeldForTest(bool held) { m_tunerLoanHeldForTest = held; }
+    /// Lets the give-back go and runs its recheck now, synchronously.
+    void recheckTunerLoanForTest()
+    {
+        m_tunerLoanHeldForTest = false;
+        returnTunerLoan();
+    }
+    /// The last recheck waited on another tuner cycle in progress.
+    bool tunerLoanWaitedOnAnotherCycleForTest() const
+    {
+        return m_tunerLoan.has_value() && m_tunerLoan->waitedOnAnotherCycle;
+    }
     /// Deterministic export expiry; caller drives cleanup after advancing time.
     void setSettingsExportClockForTest(std::function<qint64()> clock)
     { m_settingsExportNowForTest = std::move(clock); }
@@ -2558,6 +2575,7 @@ private:
     static constexpr int kTunerLoanWaitMs = 5000;
     std::optional<TunerLoan> m_tunerLoan;
     quint64 m_tunerLoanSerial = 0;
+    bool m_tunerLoanHeldForTest = false;
     /// Fix wave M6: a tx.take and its copies (the same command id on the
     /// same session): the first is run; a copy while it runs is answered by
     /// its one result, and a later copy gets the same answer. Never a second

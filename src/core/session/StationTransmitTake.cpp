@@ -83,6 +83,9 @@
 //               the station keeps transmit"); the expiry names what it
 //               waited on. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-27: PR 670 fix wave 2: a test hold of the give-back
+//               (setTunerLoanHeldForTest). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -441,6 +444,11 @@ void StationServer::returnTunerLoan()
     // back here.
     const bool otherCycle = m_radioModel->isTgxlAutotuneInProgress();
     const bool moxOn = mox != nullptr && (mox->isMox() || mox->state() != MoxState::Rx);
+    // A test's hold (setTunerLoanHeldForTest): nothing goes back and no
+    // recheck is scheduled until the test runs one (recheckTunerLoanForTest).
+    if (m_tunerLoanHeldForTest) {
+        return;
+    }
     if (otherCycle || moxOn || m_transmitHolder->state() == TransmitHolder::State::Transferring
         || m_transmitHolder->isFenced() || m_transmitHolder->isStopUnconfirmed()) {
         m_tunerLoan->waitedOnAnotherCycle = otherCycle;
