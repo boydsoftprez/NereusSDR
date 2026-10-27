@@ -2551,7 +2551,8 @@ target_compile_definitions(tst_p1_oc_matrix_wiring PRIVATE NEREUS_BUILD_TESTS)
 # ── OC transmit pin actions (2026-10-26) ─────────────────────────────────────
 # OcMatrix::maskFor(band, tx, tune, twoTone) masks each TX pin by its TX pin
 # action (Thetis Penny.cs adjustForTXAction); receive is unchanged. Also the
-# P1 OC byte with setOcTxModes and its hold of a flag that falls while keyed.
+# P1 OC byte with setOcTxModes, and RadioModel's TUNE flag order (raised
+# before the key, dropped after MOX off, at once on a re-key or handover).
 nereus_add_test(tst_oc_matrix_tx_pin_action)
 target_compile_definitions(tst_oc_matrix_tx_pin_action PRIVATE NEREUS_BUILD_TESTS)
 

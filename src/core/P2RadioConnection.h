@@ -561,9 +561,8 @@ private slots:
     void onEstablishedSilenceTimeout();
 
 private:
-    // RadioConnection::setOcTxModes: keyed is m_mox; a change sends the
-    // high-priority packet when the OC byte it carries changed.
-    bool ocTxKeyed() const override { return m_mox.load(); }
+    // RadioConnection::setOcTxModes: a change sends the high-priority
+    // packet when the OC byte it carries changed.
     void onOcTxModesChanged() override { pushBandOutputsIfChanged(); }
     // RadioConnection::setOcExtrasByte: a change sends the high-priority
     // packet, which carries byte 1397.

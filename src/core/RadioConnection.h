@@ -726,24 +726,15 @@ public slots:
     ///
     /// Thetis sets _tuning before it keys and clears it after MOX is off
     /// (console.cs:30059, 30157, 30173 [v2.10.3.15]; Thetis-Enhanced (EU2AV)
-    /// console.cs:30129, 30227, 30243 [@567a7ec]), and recomputes the
-    /// pins only on a MOX or frequency change, so a flag never drops while
-    /// the radio is still keyed for it. NereusSDR's TUNE and two-tone can
-    /// clear before the unkey reaches this thread, so a flag that falls
-    /// while keyed is held until the key ends (releaseOcTxModeHold); one
-    /// that rises applies at once. Without the hold a MOX-only pin would
-    /// close for the frames between the two.
+    /// console.cs:30129, 30227, 30243 [@567a7ec]). RadioModel reproduces
+    /// that order (RadioModel::pushOcTxModes: TUNE's flag rises before the
+    /// key is queued and falls after MOX off is queued), so this object
+    /// only stores the pair and puts a changed byte on the wire.
     void setOcTxModes(bool tune, bool twoTone)
     {
-        m_ocTuneRequested = tune;
-        m_ocTwoToneRequested = twoTone;
-        const bool keyed = ocTxKeyed();
-        const bool appliedTune = tune || (keyed && m_ocTune.load());
-        const bool appliedTwoTone = twoTone || (keyed && m_ocTwoTone.load());
-        const bool changed = appliedTune != m_ocTune.load()
-                             || appliedTwoTone != m_ocTwoTone.load();
-        m_ocTune.store(appliedTune);
-        m_ocTwoTone.store(appliedTwoTone);
+        const bool changed = tune != m_ocTune.load() || twoTone != m_ocTwoTone.load();
+        m_ocTune.store(tune);
+        m_ocTwoTone.store(twoTone);
         if (changed) {
             onOcTxModesChanged();
         }
@@ -1070,9 +1061,6 @@ public slots:
     void clearTransmitCut();
 
 protected:
-    // setOcTxModes' inputs. Whether the radio is keyed (the protocol's
-    // m_mox); the base has no key and holds nothing.
-    virtual bool ocTxKeyed() const { return false; }
     // Called when the applied TUNE / two-tone pair changed, to put the new
     // OC byte on the wire. The base does nothing.
     virtual void onOcTxModesChanged() {}
@@ -1080,15 +1068,6 @@ protected:
     // put it on the wire. Protocol 1 carries bank 17 in its frame rotation,
     // so the base does nothing.
     virtual void onOcExtrasChanged() {}
-    // Every place the protocol's MOX goes false calls this: the held flags
-    // take the requested values. Unkeyed they no longer reach the OC byte
-    // (receive uses the RX pins), so nothing is sent.
-    void releaseOcTxModeHold()
-    {
-        m_ocTune.store(m_ocTuneRequested);
-        m_ocTwoTone.store(m_ocTwoToneRequested);
-    }
-
     // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
     // in ms: the test clock when one is set, the wall clock otherwise.
     qint64 iqSequenceGapClockMs() const
@@ -1405,12 +1384,9 @@ private:
     // The transmit cut latch (cutTransmit / clearTransmitCut).
     std::atomic<bool> m_transmitCut{false};
     // setOcTxModes: the TUNE and two-tone flags the OC byte reads (atomic,
-    // read by whichever thread composes the frame), and the values last
-    // requested (this object's thread only).
+    // read by whichever thread composes the frame).
     std::atomic<bool> m_ocTune{false};
     std::atomic<bool> m_ocTwoTone{false};
-    bool m_ocTuneRequested{false};
-    bool m_ocTwoToneRequested{false};
     // setOcExtrasByte: the DX open collector byte (atomic, read by whichever
     // thread composes the frame).
     std::atomic<quint8> m_ocExtrasByte{0};

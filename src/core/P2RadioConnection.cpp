@@ -857,7 +857,6 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     // stale setter delivered after the previous LinkLost must not carry MOX,
     // PureSignal, or relay intent into this SendStart sequence.
     m_mox.store(false);
-    releaseOcTxModeHold();
     m_puresignalRun = false;
     m_trxRelay = false;
     m_tx[0].pttOut = 0;
@@ -1677,9 +1676,6 @@ void P2RadioConnection::setMox(bool enabled)
     }
     m_mox = enabled;
     if (!enabled) {
-        // The OC pin actions' TUNE / two-tone flags held through the key
-        // (RadioConnection::setOcTxModes) take their requested values.
-        releaseOcTxModeHold();
         // 2026-07-27 (Codex review, PR #306): open a bounded grace window so
         // the heartbeat keeps re-emitting MOX-off for a short while after
         // unkey.
@@ -4040,7 +4036,6 @@ void P2RadioConnection::stopForEstablishedSilence()
     // packet: byte 4 must be exactly run=0/MOX=0. Clear the related local
     // transmit intents as well so a reused object cannot re-key itself.
     m_mox.store(false);
-    releaseOcTxModeHold();
     m_puresignalRun = false;
     m_trxRelay = false;
     m_tx[0].pttOut = 0;

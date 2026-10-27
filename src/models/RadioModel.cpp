@@ -37,6 +37,10 @@
 //   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
 //                the OC transmit pin actions (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-26 - wireOcTxModes: TUNE's OC flag falls after MOX off is
+//                queued (m_ocTuneHold), reproducing Thetis's unkey before
+//                _tuning clears; the connection no longer holds it (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -2967,14 +2971,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
             [this](bool) { refreshRadioStatusPtt(); });
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this,
             [this](bool) { updateCoreOnAir(); });
-    // The OC Outputs TX pin actions read TUNE and two-tone beside MOX.
-    // TUNE's change is emitted inside setTune(true) before it keys, so it
-    // is queued ahead of the MOX bit; the connection holds a flag that
-    // falls while keyed until MOX is off (RadioConnection::setOcTxModes).
-    connect(&m_transmitModel, &TransmitModel::tuneChanged, this,
-            [this](bool) { pushOcTxModes(); });
-    connect(&m_transmitModel, &TransmitModel::twoToneActiveChanged, this,
-            [this](bool) { pushOcTxModes(); });
+    // The OC Outputs TX pin actions read TUNE and two-tone beside MOX:
+    // wireOcTxModes, at the end of construction, after onMoxHardwareFlipped's
+    // queued connection.
     if (m_pureSignalFacade) {
         connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
                 this, &RadioModel::updateCoreOnAir);
@@ -5220,6 +5219,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // Radio speaker (R-SPK-15): the CW or Tune flag and the amplifier
     // status line follow the transmit mode, Tune and the key.
     wireRadioSpeakerState();
+    // The OC Outputs TX pin actions' TUNE and two-tone inputs.
+    wireOcTxModes();
 }
 
 RadioModel::~RadioModel()
@@ -21540,7 +21541,9 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     if (m_connection != nullptr) {
         m_connection->setOcExtrasByte(m_anvelinaDxOutputs.wireByte());
     }
-    // The TX pin actions' TUNE and two-tone state as it stands now.
+    // The TX pin actions' TUNE and two-tone state as it stands now; nothing
+    // has keyed the new connection, so no TUNE flag is held for it.
+    m_ocTuneHold = false;
     pushOcTxModes();
 
     // Wire CalibrationController to P2RadioConnection so hzToPhaseWord()
@@ -23705,11 +23708,53 @@ void RadioModel::pushOcTxModes()
     if (m_connection == nullptr) {
         return;
     }
-    const bool tune = m_transmitModel.isTune();
+    const bool tune = m_transmitModel.isTune() || m_ocTuneHold;
     const bool twoTone = m_transmitModel.isTwoToneActive();
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, tune, twoTone]() {
         conn->setOcTxModes(tune, twoTone);
     });
+}
+
+void RadioModel::wireOcTxModes()
+{
+    // Thetis sets _tuning before it keys and clears it after MOX is off:
+    //   From Thetis console.cs:30059, 30157, 30173 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) console.cs:30129, 30227, 30243 [@567a7ec]
+    //     _tuning = true;                                                  // used for a few things
+    //     ...                                             (then keys)
+    //     chkMOX.Checked = false;                                         // we're done
+    //     ...
+    //     _tuning = false;
+    // so the OC pins (Penny.cs UpdateExtCtrl, recomputed on the MOX edge)
+    // never see TUNE drop while TUNE's key is on the wire. TransmitModel's
+    // tune flag rises inside setTune(true) before it keys, so its push is
+    // queued ahead of the MOX bit. It falls before the unkey walk has
+    // queued MOX off, so the pushed flag is held (m_ocTuneHold) until
+    // hardwareFlipped(false) has queued it, with the rules of the
+    // sidetone hold (wireRadioSpeakerState): a key that is not TUNE's also
+    // ends it (a re-key during the unkey walk, where hardwareFlipped(false)
+    // never comes), and a remote window never holds (its TUNE and key are
+    // the Core's). Two-tone needs no hold: TwoToneController clears it
+    // after the release has settled.
+    connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
+        m_ocTuneHold = !on && m_role != Role::Remote
+                       && m_moxController != nullptr && isTransmitting();
+        pushOcTxModes();
+    });
+    connect(&m_transmitModel, &TransmitModel::twoToneActiveChanged, this,
+            [this](bool) { pushOcTxModes(); });
+    if (m_moxController != nullptr) {
+        // Queued, and connected after onMoxHardwareFlipped's own queued
+        // connection, so this runs after that slot has queued MOX off.
+        connect(m_moxController, &MoxController::hardwareFlipped, this,
+                [this](bool isTx) {
+                    if (m_ocTuneHold && (!isTx || !m_transmitModel.isTune())) {
+                        m_ocTuneHold = false;
+                        pushOcTxModes();
+                    }
+                },
+                Qt::QueuedConnection);
+    }
 }
 
 void RadioModel::wireRadioSpeakerState()
@@ -30483,6 +30528,13 @@ void RadioModel::finishCutShortTuneStart(quint64 tag)
     // power back without releasing that key, as setMoxFromButton does.
     m_pendingTuneOff = true;
     m_transmitModel.setTune(false);
+    // TUNE never keyed here: the key on the wire is the other source's, so
+    // the OC TUNE flag drops at once (wireOcTxModes holds it only for
+    // TUNE's own unkey).
+    if (m_ocTuneHold) {
+        m_ocTuneHold = false;
+        pushOcTxModes();
+    }
     completeTuneOff();
 }
 

@@ -2681,11 +2681,6 @@ void P1RadioConnection::setMox(bool enabled)
         discardTxIqOnUnkey();
     }
     m_mox = enabled;
-    if (!enabled) {
-        // The OC pin actions' TUNE / two-tone flags held through the key
-        // (RadioConnection::setOcTxModes) take their requested values.
-        releaseOcTxModeHold();
-    }
 
     // The low-pass on both MOX edges, as HdwMOXChanged re-drives it:
     //   From Thetis console.cs:29097-29099 (key) and 29146-29148 (unkey)

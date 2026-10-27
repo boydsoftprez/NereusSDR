@@ -5,12 +5,35 @@
 // MOX, TUNE and two-tone (Thetis Penny.cs adjustForTXAction); receive is
 // untouched (adjustForRX with no consider-PA pins). Pin numbers in the
 // names are the UI's 1-based pins; the code's are 0-based.
+//
+// TUNE's flag reaches the connection from RadioModel in Thetis's order:
+// it rises before the key and falls after MOX off (console.cs:30059, 30157,
+// 30173 [v2.10.3.15]: _tuning = true before chkMOX.Checked = true;
+// chkMOX.Checked = false before _tuning = false). The connection only
+// stores it. A re-key during TUNE's unkey walk, and another source's key
+// that ends a TUNE start, drop it at once.
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - The TUNE hold moved from the connection to RadioModel:
+//                p1_tune_off_held_until_unkey replaced by RadioModel-level
+//                tests (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 
 #include <QtTest/QtTest>
 
+#include <QCoreApplication>
+#include <QScopeGuard>
+
+#include "core/MoxController.h"
 #include "core/OcMatrix.h"
 #include "core/P1RadioConnection.h"
+#include "core/RadioConnection.h"
+#include "core/SliceOwnership.h"
+#include "core/TxChannel.h"
+#include "core/cat/CatTxCoordinator.h"
 #include "models/Band.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -31,6 +54,74 @@ int p1OcByte(P1RadioConnection& conn)
     quint8 buf[5] = {};
     conn.composeCcForBankForTest(0, buf);
     return int(buf[2]) >> 1;
+}
+
+// Logs MOX and the OC TUNE / two-tone pair in arrival order; the base
+// stores the pair, so ocTune() / ocTwoTone() read back what arrived.
+class OcLoggingConnection : public RadioConnection {
+    Q_OBJECT
+public:
+    QStringList log;
+
+    explicit OcLoggingConnection(QObject* parent = nullptr)
+        : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void setMox(bool enabled) override { log << QStringLiteral("mox:%1").arg(int(enabled)); }
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void sendTxIq(const float*, int) override {}
+    void setWatchdogEnabled(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+
+protected:
+    void onOcTxModesChanged() override
+    {
+        log << QStringLiteral("tune:%1").arg(int(ocTune()));
+    }
+};
+
+void pump()
+{
+    for (int i = 0; i < 6; ++i) {
+        QCoreApplication::processEvents();
+    }
+}
+
+// A Core RadioModel keyed by its own MoxController, timers at zero, with
+// `conn` as its connection and one USB slice.
+void prepare(RadioModel& model, OcLoggingConnection& conn)
+{
+    model.setCapsForTest(/*hasAlex=*/false);
+    model.injectConnectionForTest(&conn);
+    model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+    model.setTuneOffSettleMsForTest(0);
+    model.addSlice();
+    SliceModel* slice = model.activeSlice();
+    QVERIFY(slice != nullptr);
+    slice->setDspMode(DSPMode::USB);
+    pump();
+    conn.log.clear();
 }
 
 } // namespace
@@ -146,9 +237,10 @@ private slots:
         QCOMPARE(p1OcByte(conn), 0x02);   // TUNE: the TUNE pin only
     }
 
-    // A flag that falls while keyed is held until the key ends, so the
-    // MOX-only pin does not close in the frames before MOX off.
-    void p1_tune_off_held_until_unkey()
+    // The connection stores the pair as RadioModel sends it: a TUNE flag
+    // that falls while keyed applies at once (RadioModel orders it after
+    // MOX off; see the radioModel_* tests).
+    void p1_tune_flag_applies_as_sent()
     {
         OcMatrix m;
         m.setPin(Band::Band20m, 0, /*tx=*/true, true);
@@ -164,14 +256,131 @@ private slots:
         conn.setMox(true);
         QCOMPARE(p1OcByte(conn), 0x00);
 
-        conn.setOcTxModes(false, false);  // TUNE ended, MOX off still queued
-        QVERIFY(conn.ocTune());
-        QCOMPARE(p1OcByte(conn), 0x00);
-
-        conn.setMox(false);
+        conn.setOcTxModes(false, false);
         QVERIFY(!conn.ocTune());
-        conn.setMox(true);                // the next voice key
         QCOMPARE(p1OcByte(conn), 0x01);
+        conn.setMox(false);
+    }
+
+    // ── RadioModel: TUNE's flag in Thetis's order ────────────────────────
+
+    // TUNE: the flag reaches the connection before MOX on, and leaves it
+    // after MOX off.
+    void radioModel_tuneFlagRisesBeforeKeyAndFallsAfterUnkey()
+    {
+        OcLoggingConnection conn;
+        RadioModel model;
+        prepare(model, conn);
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        const int tuneOn = conn.log.indexOf(QStringLiteral("tune:1"));
+        const int moxOn = conn.log.indexOf(QStringLiteral("mox:1"));
+        QVERIFY2(tuneOn >= 0 && moxOn > tuneOn, qPrintable(conn.log.join(u' ')));
+        QVERIFY(conn.ocTune());
+
+        conn.log.clear();
+        model.setTune(false);
+        QVERIFY(conn.ocTune());   // TUNE has cleared; MOX off not yet sent
+        pump();
+        QVERIFY(!model.moxController()->isMox());
+        const int moxOff = conn.log.indexOf(QStringLiteral("mox:0"));
+        const int tuneOff = conn.log.indexOf(QStringLiteral("tune:0"));
+        QVERIFY2(moxOff >= 0 && tuneOff > moxOff, qPrintable(conn.log.join(u' ')));
+        QVERIFY(!conn.ocTune());
+    }
+
+    // A voice key during TUNE's unkey walk cancels the walk, so MOX off
+    // never comes. The key drops the TUNE flag, so MOX-only pins open and
+    // TUNE-only pins close for the voice transmission.
+    void radioModel_rekeyDuringUnkeyWalk_dropsTuneFlag()
+    {
+        OcLoggingConnection conn;
+        RadioModel model;
+        prepare(model, conn);
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QVERIFY(conn.ocTune());
+
+        model.setTune(false);
+        QVERIFY(!model.moxController()->isMox());
+        QVERIFY(conn.ocTune());
+        model.moxController()->setMox(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QVERIFY(!model.transmitModel().isTune());
+        QVERIFY(!conn.ocTune());
+
+        model.moxController()->setMox(false);
+        pump();
+        QVERIFY(!conn.ocTune());
+    }
+
+    // Another source's key accepted while a TUNE start is setting up ends
+    // the TUNE without releasing that key (finishCutShortTuneStart). TUNE
+    // never keyed, so its flag drops at once and stays down for the other
+    // key.
+    void radioModel_handoverEndingTune_dropsTuneFlagUnderAnotherKey()
+    {
+        OcLoggingConnection conn;
+        TxChannel channel(1);
+        RadioModel model;
+        prepare(model, conn);
+        const auto detach = qScopeGuard([&model] {
+            model.injectTxChannelForTest(nullptr);
+            model.injectConnectionForTest(nullptr);
+        });
+        model.injectTxChannelForTest(&channel);
+        model.addSlice();
+        model.sliceOwnership()->setOwner(0, SliceOwnership::stationDevice());
+        model.sliceOwnership()->setOwner(1, SliceOwnership::stationDevice());
+        model.sliceById(0)->setFrequency(14'200'000);
+        model.sliceById(1)->setFrequency(14'250'000);
+        model.moxController()->setMoxCheck(
+            [] { return safety::BandPlanGuard::MoxCheckResult{true, QString()}; });
+        SliceModel* const slice = model.sliceById(0);
+        slice->setDspMode(DSPMode::CWU);
+
+        // The other source keys while TUNE's CW-to-SSB swap is under way.
+        bool cut = false;
+        connect(slice, &SliceModel::dspModeChanged, &model, [&model, &cut](DSPMode mode) {
+            if (!cut && mode == DSPMode::USB) {
+                cut = true;
+                model.moxController()->setMox(true);
+            }
+        });
+        CatTxCoordinator tx(model);
+        tx.requestTransmit(1, 0, CatTransmitKind::Tune);
+        pump();
+        QVERIFY(cut);
+        QTRY_VERIFY(!model.isTune());
+        QVERIFY(!model.transmitModel().isTune());
+        QVERIFY(model.moxController()->isMox());   // the other source's key stays
+        pump();
+        QVERIFY2(!conn.ocTune(), qPrintable(conn.log.join(u' ')));
+
+        model.moxController()->setMox(false);
+        pump();
+        QVERIFY(!conn.ocTune());
+    }
+
+    // Two-tone's flag follows TransmitModel at once, both ways.
+    void radioModel_twoToneFlagFollowsTransmitModel()
+    {
+        OcLoggingConnection conn;
+        RadioModel model;
+        prepare(model, conn);
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+
+        model.transmitModel().setTwoToneActive(true);
+        QVERIFY(conn.ocTwoTone());
+        model.transmitModel().setTwoToneActive(false);
+        QVERIFY(!conn.ocTwoTone());
     }
 
     // Two-tone rising while keyed applies at once.

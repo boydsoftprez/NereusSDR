@@ -600,9 +600,8 @@ private slots:
     void onConnectTimeout();
 
 private:
-    // RadioConnection::setOcTxModes: keyed is m_mox; a change forces bank 0
-    // (the OC byte's bank) onto the next frame, as setMox does.
-    bool ocTxKeyed() const override { return m_mox.load(); }
+    // RadioConnection::setOcTxModes: a change forces bank 0 (the OC byte's
+    // bank) onto the next frame, as setMox does.
     void onOcTxModesChanged() override { m_forceBank0Next = true; }
 
     // ── The announced receiver count has two inputs ──────────────────────

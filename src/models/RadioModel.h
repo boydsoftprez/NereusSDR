@@ -19,6 +19,9 @@
 //   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
 //                the OC transmit pin actions (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-26 - wireOcTxModes and m_ocTuneHold: TUNE's OC flag falls after
+//                MOX off is queued (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -7247,8 +7250,10 @@ private:
     void refreshSidetoneExpected();
     // The OC transmit pin actions' TUNE and two-tone inputs
     // (RadioConnection::setOcTxModes), queued to the connection's thread as
-    // setMox is.
+    // setMox is. TUNE is isTune() or m_ocTuneHold.
     void pushOcTxModes();
+    // Constructor wiring for pushOcTxModes and m_ocTuneHold.
+    void wireOcTxModes();
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;
@@ -8999,6 +9004,9 @@ private:
     // it up after Tune ends until the radio has unkeyed.
     bool m_sidetoneExpected{false};
     bool m_tuneSidetoneHold{false};
+    // The OC pin actions' TUNE flag, held from TUNE's end until MOX off is
+    // queued (wireOcTxModes).
+    bool m_ocTuneHold{false};
     // Remote role: the Core's reports as it last sent them.
     int  m_stationRadioSpeakerAvailability{0};
     bool m_stationSpeakerAmplifierAvailable{false};
