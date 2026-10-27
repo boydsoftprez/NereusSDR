@@ -59,6 +59,16 @@
 //                          ALC_G and ALC_GROUP readings, with the meters, as
 //                          a local window's container meters show them
 //                          (A9, txReadingsVersion 3)
+//   micPeakDb .. cfcPeakDb the container meter bars' six peak readings
+//                          (txReadingsVersion 4)
+//   rfHeld                 the Core holds the keyer's RF silent while it
+//                          stays keyed (remote transmit hold then cut: its
+//                          link or its microphone audio went quiet)
+//   rfHeldReason           "link" or "mic" ("link" when both); "" while
+//                          not held
+//   rfHoldSerial           advances by one as each hold ends
+//   rfLastHoldMs           how long the hold that ended last lasted, in
+//                          milliseconds; 0 before the first
 //
 // Updates: while keyed the meters are read ten times a second (the
 // transmit lane's cached readings; never a WDSP call on the event loop)
@@ -121,6 +131,10 @@
 //   2026-10-10: The six peak readings (micPeakDb .. cfcPeakDb) appended
 //               (txReadingsVersion 4). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: rfHeld, rfHeldReason,
+//               rfHoldSerial and rfLastHoldMs appended (txStateVersion
+//               stays 2), set by setRfHold, on holdChanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -211,8 +225,18 @@ class NEREUS_CORE_EXPORT TransmitState final : public QObject {
     Q_PROPERTY(double eqPeakDb READ eqPeakDb NOTIFY metersChanged)
     Q_PROPERTY(double levelerPeakDb READ levelerPeakDb NOTIFY metersChanged)
     Q_PROPERTY(double cfcPeakDb READ cfcPeakDb NOTIFY metersChanged)
+    // Remote transmit hold then cut (txStateVersion stays 2): the keyer's
+    // RF hold, appended so every earlier ordinal stays.
+    Q_PROPERTY(bool rfHeld READ rfHeld NOTIFY holdChanged)
+    Q_PROPERTY(QString rfHeldReason READ rfHeldReason NOTIFY holdChanged)
+    Q_PROPERTY(quint64 rfHoldSerial READ rfHoldSerial NOTIFY holdChanged)
+    Q_PROPERTY(qint64 rfLastHoldMs READ rfLastHoldMs NOTIFY holdChanged)
 
 public:
+    // The rfHeldReason values.
+    static constexpr const char* kHoldLink = "link";
+    static constexpr const char* kHoldMic = "mic";
+
     // The link's stopReason values.
     static constexpr const char* kStopLinkLost = "linkLost";
     static constexpr const char* kStopMicStarved = "micStarved";
@@ -303,6 +327,18 @@ public:
     double forwardRawPowerWatts() const { return m_forwardRawPowerWatts; }
     double forwardAdcVolts() const { return m_forwardAdcVolts; }
     double reflectedAdcVolts() const { return m_reflectedAdcVolts; }
+    bool rfHeld() const { return m_rfHeld; }
+    QString rfHeldReason() const { return m_rfHeldReason; }
+    quint64 rfHoldSerial() const { return m_rfHoldSerial; }
+    qint64 rfLastHoldMs() const { return m_rfLastHoldMs; }
+
+    /// The Core's (StationServer): the keyer's RF is held (`held`, for
+    /// `reason`, kHoldLink or kHoldMic) or no longer. A hold that starts or
+    /// changes its reason emits holdChanged once; ending one clears the
+    /// reason, advances rfHoldSerial by one and sets rfLastHoldMs to how
+    /// long it lasted on this object's clock. The same state again changes
+    /// nothing.
+    void setRfHold(bool held, const QString& reason);
 
     // ---- Parity Task 33: the txCfcCompression record ----
 
@@ -382,6 +418,9 @@ signals:
     void swrChanged();
     /// Parity Task 33: forwardAdcRaw, reflectedAdcRaw.
     void adcRawChanged();
+    /// Remote transmit hold then cut: rfHeld, rfHeldReason, rfHoldSerial,
+    /// rfLastHoldMs.
+    void holdChanged();
 
 private:
     void onTransmittingChanged(bool keyed);
@@ -425,6 +464,13 @@ private:
     Holder m_holder;
     qint64 m_stationHolderForSeconds{0};
     qint64 m_stationKeyedForSeconds{0};
+    // Remote transmit hold then cut: the keyer's RF hold, and when the one
+    // on now began (this object's clock).
+    bool m_rfHeld{false};
+    QString m_rfHeldReason;
+    quint64 m_rfHoldSerial{0};
+    qint64 m_rfLastHoldMs{0};
+    qint64 m_rfHoldSinceMs{0};
 
     // Control logging lane: this key's stage reading peaks, from the
     // readings the pump already took (kNoReadingDb while none came).

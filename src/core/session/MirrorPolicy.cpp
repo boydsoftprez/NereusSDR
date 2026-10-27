@@ -231,6 +231,9 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - SliceAccess receiverHolderDeviceId Outbound. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Remote transmit hold then cut: TransmitState rfHeld,
+//                 rfHeldReason, rfHoldSerial and rfLastHoldMs Outbound.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -1171,6 +1174,11 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitState", "eqPeakDb", MirrorDirection::Outbound },
     { "TransmitState", "levelerPeakDb", MirrorDirection::Outbound },
     { "TransmitState", "cfcPeakDb", MirrorDirection::Outbound },
+    // Remote transmit hold then cut: the keyer's RF hold.
+    { "TransmitState", "rfHeld", MirrorDirection::Outbound },
+    { "TransmitState", "rfHeldReason", MirrorDirection::Outbound },
+    { "TransmitState", "rfHoldSerial", MirrorDirection::Outbound },
+    { "TransmitState", "rfLastHoldMs", MirrorDirection::Outbound },
 
     // Normal PS3 configuration is distinct from operational arming/actions.
     { "PureSignalSettings", "autoCalEnabled", MirrorDirection::Bidirectional },

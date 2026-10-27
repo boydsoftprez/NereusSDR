@@ -41,6 +41,9 @@
 //               same modes), the holdRf hook and isHolding; onStarved
 //               never stops, and onNoAudio is the 10 s cut in every mode.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, Task 5: releaseHold, for
+//               the key's end and for TUNE or two-tone starting. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -94,6 +97,10 @@ public:
     bool onNoAudio(const QByteArray& deviceId);
     /// Whether the Mic hold is on now.
     bool isHolding() const { return m_holding; }
+    /// The key the hold was for ended, or TUNE or two-tone started (they
+    /// use no microphone): a hold on now is released (holdRf(false)), with
+    /// no stop. Nothing when none is on.
+    void releaseHold();
 
 private:
     void setHolding(bool held);

@@ -1,7 +1,7 @@
 # Remote transmit stop: hold first, cut later
 
-Status: proposed, waiting for JJ's sign-off (2026-10-26). Nothing here is
-built. Changing transmit safety behavior needs his explicit yes.
+Status: Approved by JJ on 2026-10-26; built by
+2026-10-26-remote-transmit-hold-then-cut-plan.md.
 
 Author: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 

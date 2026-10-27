@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut, Task 5: noAudio also
+//               reaches StationServer::remoteMicNoAudio (the 10 s cut).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut: the microphone line's
 //               noAudio is forwarded as micNoAudio, beside starved.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3321,6 +3324,10 @@ void DaemonMediaController::startMicLine(MediaPeer* peer)
     connect(m_micReceiver.get(), &RemoteMicReceiver::noAudio, this, [this]() {
         if (!m_micDeviceId.isEmpty()) {
             emit micNoAudio(m_micDeviceId);
+            // Task 5: the Core's cut, as starved reaches the server above.
+            if (m_server) {
+                m_server->remoteMicNoAudio(m_micDeviceId);
+            }
         }
     });
     // Fix wave C2: this device's line, by device; it writes the feed only

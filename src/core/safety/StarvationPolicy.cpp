@@ -17,6 +17,8 @@
 //                 carrier modes and audio again releases it; onNoAudio
 //                 stops in every mode and releases a hold. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, Task 5: releaseHold.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/StarvationPolicy.h"
@@ -111,6 +113,15 @@ bool StarvationPolicy::onNoAudio(const QByteArray& deviceId)
         setHolding(false);
     }
     return true;
+}
+
+void StarvationPolicy::releaseHold()
+{
+    if (!m_holding) {
+        return;
+    }
+    qCInfo(lcDsp) << "Microphone hold released: its key ended, or TUNE or two-tone started";
+    setHolding(false);
 }
 
 void StarvationPolicy::setHolding(bool held)

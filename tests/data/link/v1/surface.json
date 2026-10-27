@@ -8957,6 +8957,30 @@
                     "kind": "f64",
                     "name": "cfcPeakDb",
                     "ordinal": 49
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "rfHeld",
+                    "ordinal": 50
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "rfHeldReason",
+                    "ordinal": 51
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "rfHoldSerial",
+                    "ordinal": 52
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "rfLastHoldMs",
+                    "ordinal": 53
                 }
             ]
         },

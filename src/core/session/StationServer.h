@@ -181,6 +181,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut: remoteMicNoAudio (the 10 s
+//               no-audio cut), and the keyer's link and microphone holds as
+//               the Core sets, publishes and logs them (m_linkRfHold,
+//               m_micRfHold, the hooks and handlers). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
 //               a desktop window before its radio connects. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1626,6 +1631,11 @@ public:
     /// starved (true) or carries audio again (false) while it is keyed on
     /// it; the per-mode action (StarvationPolicy) follows.
     void remoteMicStarved(const QByteArray& deviceId, bool starved);
+    /// Remote transmit hold then cut: `deviceId`'s microphone line has had
+    /// no audio packets for RemoteMicConfig::kNoAudioCutMs while it is
+    /// keyed on it: the Core stops transmitting (StarvationPolicy::onNoAudio,
+    /// micStarved), in every mode.
+    void remoteMicNoAudio(const QByteArray& deviceId);
     /// Task 37: the device whose accepted write turned VOX on, while VOX is
     /// on; empty when VOX is off or was turned on at the Core itself.
     QByteArray voxArmedBy() const { return m_voxArmedBy; }
@@ -2294,6 +2304,31 @@ private:
     /// to stop transmitting (the watchdog's linkLost, the starvation's
     /// micStarved), in the words it stops with. Called before StopAllTx.
     void recordTransmitStop(const char* stopReason, const QString& text);
+    // Remote transmit hold then cut: the watchdog's hold hook. On, it holds
+    // the TX channel's Link bit while `deviceId` is keyedBy and the radio
+    // transmits. Off does nothing here: holdEnded, which says how the hold
+    // ended, lets the bit go (onWatchdogHoldEnded).
+    void onWatchdogHold(const QByteArray& deviceId, bool held);
+    void onWatchdogHoldStarted(const QByteArray& deviceId, qint64 silentMs);
+    // A hold that ended because its key ended keeps the Link bit until MOX
+    // reaches receive (RadioModel clears every bit then), so the unkey's
+    // drain sends no real samples; any other end lets it go at once.
+    // `how` is the log's words for RemoteTxWatchdog::HoldEnd.
+    void onWatchdogHoldEnded(const QByteArray& deviceId, qint64 lengthMs, bool keyEnded,
+                             const QString& how);
+    // The starvation's holdRf hook: the Mic bit, for the keyer.
+    void onStarvationHold(bool held);
+    // Every bit is clear (MOX reached receive, or the last one let go): a
+    // hold still published ends as "the key ended", one event-loop turn
+    // later, so a cut's own end (its stop runs first) is told first.
+    void onRemoteRfHoldsCleared();
+    // TUNE or two-tone started (they use no microphone): a microphone hold
+    // is released.
+    void releaseMicHoldForMicrophoneUnused();
+    void clearLinkRfBit();
+    void endMicRfHold(const QString& how);
+    // The keyer's holds on `txState` (rfHeld, rfHeldReason).
+    void publishRfHold();
     /// Ruling 7.4 (D60): the on-air refusal for a change from `requester`,
     /// or empty (nobody on the air, or the holder's own change).
     TxRefusal onAirRefusal(const QByteArray& requester) const;
@@ -2985,6 +3020,28 @@ private:
         std::make_shared<std::atomic<std::chrono::steady_clock::rep>>(0);
     StarvationPolicy m_starvation;
     QByteArray m_watchedKeyedDevice;
+    // Remote transmit hold then cut: a hold of the keyer's RF as the Core
+    // publishes and logs it (link, from the watchdog; mic, from the
+    // starvation), with the key it was for and when it began.
+    struct RfHoldState {
+        bool on = false;
+        QByteArray deviceId;
+        quint32 keyEpoch = 0;
+        qint64 sinceMs = 0;
+    };
+    RfHoldState m_linkRfHold;
+    RfHoldState m_micRfHold;
+    // The key the TX channel's Link bit is set for. It can outlast the
+    // published hold: a key that ended keeps it until MOX reaches receive,
+    // or a new key comes first.
+    QByteArray m_linkRfBitDevice;
+    quint32 m_linkRfBitEpoch = 0;
+    // How the next microphone hold release ends, when not "audio
+    // returned" (the 10 s cut, TUNE or two-tone starting, a new key).
+    QString m_micRfHoldEnding;
+    // Advances with each hold that starts, so a deferred end never ends a
+    // newer one.
+    quint64 m_rfHoldGeneration = 0;
     QByteArray m_voxArmedBy;
     // iPhone app plan Task 39: the `txState` object. Qt-parented to this, so
     // its meter timer is one of the server's timers (the conformance

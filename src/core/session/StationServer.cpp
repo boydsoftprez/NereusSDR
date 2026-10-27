@@ -1,6 +1,14 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut, Task 5: the watchdog's hold
+//               hook and the starvation's holdRf set the TX channel's Link
+//               and Mic bits for the keyer; holdStarted and holdEnded, and
+//               the microphone's, reach txState (setRfHold) and the control
+//               log; a held key that ends keeps its Link bit until MOX
+//               reaches receive; TUNE or two-tone starting releases a
+//               microphone hold; remoteMicNoAudio is the 10 s cut. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut, fix wave A: the destructor
 //               disarms the cut guard while the model's cut line is still
 //               set, so a guard hold is released on the TX channel rather
@@ -3054,6 +3062,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             };
             hooks.deviceName = [this](const QByteArray& id) { return deviceNameForStop(id); };
+            // Remote transmit hold then cut: a quiet link's RF is held
+            // silent while the key stays on.
+            hooks.hold = [this](const QByteArray& deviceId, bool held) {
+                onWatchdogHold(deviceId, held);
+            };
             m_txWatchdog->setHooks(std::move(hooks));
         }
         // Control logging lane: a watchdog stop, beside the keepalives and
@@ -3068,6 +3081,30 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     }
                     m_controlLog.watchdogStopped(deviceId, transport, info, linkClosed,
                                                  silentMs);
+                });
+        // Remote transmit hold then cut: the watchdog's holds, published on
+        // txState and logged, each with how it ended.
+        connect(m_txWatchdog.get(), &RemoteTxWatchdog::holdStarted, this,
+                &StationServer::onWatchdogHoldStarted);
+        connect(m_txWatchdog.get(), &RemoteTxWatchdog::holdEnded, this,
+                [this](const QByteArray& deviceId, qint64 lengthMs, RemoteTxWatchdog::HoldEnd how) {
+                    QString words;
+                    switch (how) {
+                    case RemoteTxWatchdog::HoldEnd::Heard:
+                        words = QStringLiteral("keepalives returned");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::Cut:
+                        words = QStringLiteral("cut");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::KeyEnded:
+                        words = QStringLiteral("the key ended");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::LinkClosed:
+                        words = QStringLiteral("link closed");
+                        break;
+                    }
+                    onWatchdogHoldEnded(deviceId, lengthMs,
+                                        how == RemoteTxWatchdog::HoldEnd::KeyEnded, words);
                 });
         // Remote transmit cut off the main thread (2026-10-15): the guard
         // judges the watchdog's hold and cut deadlines from the "tx"
@@ -3145,8 +3182,32 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             };
             hooks.deviceName = [this](const QByteArray& id) { return deviceNameForStop(id); };
+            // Remote transmit hold then cut: a starved line in a carrier
+            // mode holds the keyer's RF silent while the key stays on.
+            hooks.holdRf = [this](bool held) { onStarvationHold(held); };
             m_starvation.setHooks(std::move(hooks));
         }
+        // Remote transmit hold then cut: MOX reaching receive clears every
+        // hold bit (RadioModel); a hold still published ends with it.
+        connect(m_radioModel, &RadioModel::remoteRfHoldChanged, this, [this](bool held) {
+            if (!held) {
+                onRemoteRfHoldsCleared();
+            }
+        });
+        // TUNE and two-tone use no microphone, so they are never held by it:
+        // a microphone hold on when either starts is released.
+        connect(&m_radioModel->transmitModel(), &TransmitModel::tuneChanged, this,
+                [this](bool on) {
+                    if (on) {
+                        releaseMicHoldForMicrophoneUnused();
+                    }
+                });
+        connect(&m_radioModel->transmitModel(), &TransmitModel::twoToneActiveChanged, this,
+                [this](bool on) {
+                    if (on) {
+                        releaseMicHoldForMicrophoneUnused();
+                    }
+                });
 
         // Task 37 (carried from the desktop's transmit): the device whose
         // write turned VOX on is watched while VOX stays on, and VOX goes
@@ -10567,6 +10628,23 @@ void StationServer::followKeyedForWatchdog()
             m_txCutGuard->disarm();
         }
     }
+    // Remote transmit hold then cut: a hold kept past its key's end (until
+    // MOX reaches receive) is let go when a new key comes first, so the new
+    // key is never held for the old one's silence.
+    if (!keyedBy.isEmpty()) {
+        if (!m_linkRfBitDevice.isEmpty() && !m_linkRfHold.on
+            && (keyedBy.deviceId != m_linkRfBitDevice || keyedBy.epoch != m_linkRfBitEpoch)) {
+            clearLinkRfBit();
+        }
+        if (m_micRfHold.on
+            && (keyedBy.deviceId != m_micRfHold.deviceId || keyedBy.epoch != m_micRfHold.keyEpoch)) {
+            m_micRfHoldEnding = QStringLiteral("the key ended");
+            m_starvation.releaseHold();
+            endMicRfHold(m_micRfHoldEnding);
+            m_micRfHoldEnding.clear();
+            m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
+        }
+    }
 }
 
 quint64 StationServer::mediaEpochOfDevice(const QByteArray& deviceId) const
@@ -10742,6 +10820,184 @@ void StationServer::remoteMicStarved(const QByteArray& deviceId, bool starved)
     }
     if (m_radioModel->remoteRadioMicKeyActive(deviceId)) { return; }
     m_starvation.onStarved(deviceId, starved);
+}
+
+void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
+{
+    if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
+        // Only a key that is this device's is its line's to stop.
+        return;
+    }
+    if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
+        return;
+    }
+    // The cut: its stop first, then the hold's release, which ends as cut.
+    m_micRfHoldEnding = QStringLiteral("cut");
+    m_starvation.onNoAudio(deviceId);
+    m_micRfHoldEnding.clear();
+}
+
+// ── Remote transmit hold then cut: the keyer's holds ─────────────────────
+
+void StationServer::onWatchdogHold(const QByteArray& deviceId, bool held)
+{
+    if (!held || !m_radioModel) {
+        // The release is onWatchdogHoldEnded's: it knows how the hold ended.
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != deviceId || !m_radioModel->isTransmitting()) {
+        // Not the key on the air: nothing of its to hold.
+        return;
+    }
+    m_linkRfBitDevice = deviceId;
+    m_linkRfBitEpoch = keyedBy.epoch;
+    m_radioModel->setRemoteRfHold(TxChannel::RfHold::Link, true);
+}
+
+void StationServer::onWatchdogHoldStarted(const QByteArray& deviceId, qint64 silentMs)
+{
+    if (m_linkRfBitDevice != deviceId || m_linkRfHold.on) {
+        // The hook held nothing (not the keyer's), so nothing is published.
+        return;
+    }
+    m_linkRfHold = {true, deviceId, m_linkRfBitEpoch, m_deviceSessions->now()};
+    ++m_rfHoldGeneration;
+    m_controlLog.transmitHoldStarted(deviceId, QString::fromLatin1(TransmitState::kHoldLink),
+                                     silentMs);
+    publishRfHold();
+}
+
+void StationServer::onWatchdogHoldEnded(const QByteArray& deviceId, qint64 lengthMs,
+                                        bool keyEnded, const QString& how)
+{
+    // Review A: a held key that ended keeps its Link bit until MOX reaches
+    // receive (RadioModel clears every bit there), so its unkey drain sends
+    // no real samples. Any other end (keepalives returned, the cut after its
+    // stop, the link closed after its stop) lets it go now.
+    const bool published = m_linkRfHold.on && m_linkRfHold.deviceId == deviceId;
+    if (published) {
+        m_linkRfHold = {};
+    }
+    if (!keyEnded && m_linkRfBitDevice == deviceId) {
+        clearLinkRfBit();
+    }
+    if (!published) {
+        return;
+    }
+    // Fix wave A: a cut by the hold's bound reports, in its stop line, the
+    // silence since the last counted keepalive; this line has the hold's
+    // own length.
+    m_controlLog.transmitHoldEnded(deviceId, lengthMs, how);
+    publishRfHold();
+}
+
+void StationServer::onStarvationHold(bool held)
+{
+    if (!m_radioModel) {
+        return;
+    }
+    if (held) {
+        const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+        if (keyedBy.isEmpty() || keyedBy.deviceId == QByteArray(KeyerIdentity::kStationDeviceId)
+            || !m_radioModel->isTransmitting()) {
+            return;
+        }
+        m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, true);
+        if (!m_micRfHold.on) {
+            m_micRfHold = {true, keyedBy.deviceId, keyedBy.epoch, m_deviceSessions->now()};
+            ++m_rfHoldGeneration;
+            // The line counts as starved after kStarvationMs without audio.
+            m_controlLog.transmitHoldStarted(keyedBy.deviceId,
+                                             QString::fromLatin1(TransmitState::kHoldMic),
+                                             RemoteMicConfig::kStarvationMs);
+            publishRfHold();
+        }
+        return;
+    }
+    endMicRfHold(m_micRfHoldEnding.isEmpty() ? QStringLiteral("audio returned")
+                                             : m_micRfHoldEnding);
+    m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
+}
+
+void StationServer::onRemoteRfHoldsCleared()
+{
+    // Every bit is clear now, the Link bit's key with them.
+    m_linkRfBitDevice.clear();
+    m_linkRfBitEpoch = 0;
+    if (!m_linkRfHold.on && !m_micRfHold.on) {
+        return;
+    }
+    // One turn later: a cut's stop can reach receive before its own end
+    // (holdEnded Cut, the 10 s cut's release) is told, and that end is
+    // the one to log.
+    const quint64 generation = m_rfHoldGeneration;
+    QTimer::singleShot(0, this, [this, generation]() {
+        if (generation != m_rfHoldGeneration) {
+            return;
+        }
+        if (m_linkRfHold.on) {
+            const RfHoldState was = std::exchange(m_linkRfHold, RfHoldState{});
+            m_controlLog.transmitHoldEnded(was.deviceId, m_deviceSessions->now() - was.sinceMs,
+                                           QStringLiteral("the key ended"));
+        }
+        if (m_micRfHold.on) {
+            m_micRfHoldEnding = QStringLiteral("the key ended");
+            m_starvation.releaseHold();
+            endMicRfHold(m_micRfHoldEnding);
+            m_micRfHoldEnding.clear();
+        }
+        publishRfHold();
+    });
+}
+
+void StationServer::releaseMicHoldForMicrophoneUnused()
+{
+    if (!m_starvation.isHolding() && !m_micRfHold.on) {
+        return;
+    }
+    m_micRfHoldEnding = QStringLiteral("the key ended");
+    // holdRf(false): the published hold ends and the Mic bit goes.
+    m_starvation.releaseHold();
+    if (m_micRfHold.on) {
+        endMicRfHold(m_micRfHoldEnding);
+        if (m_radioModel) {
+            m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
+        }
+    }
+    m_micRfHoldEnding.clear();
+}
+
+void StationServer::clearLinkRfBit()
+{
+    m_linkRfBitDevice.clear();
+    m_linkRfBitEpoch = 0;
+    if (m_radioModel) {
+        m_radioModel->setRemoteRfHold(TxChannel::RfHold::Link, false);
+    }
+}
+
+void StationServer::endMicRfHold(const QString& how)
+{
+    if (!m_micRfHold.on) {
+        return;
+    }
+    const RfHoldState was = std::exchange(m_micRfHold, RfHoldState{});
+    m_controlLog.transmitHoldEnded(was.deviceId, m_deviceSessions->now() - was.sinceMs, how);
+    publishRfHold();
+}
+
+void StationServer::publishRfHold()
+{
+    if (m_transmitState == nullptr) {
+        return;
+    }
+    // Both at once read "link": the link is the bigger trouble.
+    const bool held = m_linkRfHold.on || m_micRfHold.on;
+    const char* reason = m_linkRfHold.on ? TransmitState::kHoldLink
+        : m_micRfHold.on                 ? TransmitState::kHoldMic
+                                         : "";
+    m_transmitState->setRfHold(held, QString::fromLatin1(reason));
 }
 
 void StationServer::onTransmitHolderChanged()

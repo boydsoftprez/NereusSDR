@@ -28,7 +28,10 @@
 //     transmit-watch link), kept apart from the control gap lines;
 //   * (for DaemonMediaController) the media connection's selected pair;
 //   * a transmit watchdog stop, with the channel and age of the last
-//     keepalive and the control state it happened in.
+//     keepalive and the control state it happened in;
+//   * each transmit hold (RF held silent while the device stays keyed):
+//     when it starts, with the silence that started it, and when it ends,
+//     with its length and how it ended.
 //
 // Before a device signs in only message kinds are logged. Names a device
 // sends are logged only when they match a strict pattern; reasons have
@@ -41,6 +44,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-01: Created (control logging lane). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: transmitHoldStarted and
+//               transmitHoldEnded, one line each. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -147,6 +153,13 @@ public:
     /// `peer` are its control session when known (transport may be null).
     void watchdogStopped(const QByteArray& deviceId, SessionTransport* transport,
                          const PeerInfo& peer, bool linkClosed, qint64 silentMs);
+    /// Remote transmit hold then cut: `deviceId`'s RF is held silent while
+    /// it stays keyed. `what` is "link" (no keepalive for `silentMs`) or
+    /// "mic" (no microphone audio for `silentMs`).
+    void transmitHoldStarted(const QByteArray& deviceId, const QString& what, qint64 silentMs);
+    /// That hold ended after `lengthMs`, `how`: "keepalives returned",
+    /// "audio returned", "cut", "the key ended" or "link closed".
+    void transmitHoldEnded(const QByteArray& deviceId, qint64 lengthMs, const QString& how);
 
     /// `name` as the log may print it, or "an unrecognized name".
     static QString safeName(const QByteArray& name);

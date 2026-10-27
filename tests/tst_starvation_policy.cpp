@@ -30,6 +30,9 @@
 //               no-audio signal stops transmitting in every mode, releasing
 //               a hold; TUNE and two-tone are neither held nor stopped.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, Task 5: releaseHold lets
+//               go of a hold with no stop. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/StarvationPolicy.h"
@@ -181,6 +184,7 @@ private slots:
     void theStopSentenceIsPlain();
     void theDeviceIdIsLoggedInHex_data();
     void theDeviceIdIsLoggedInHex();
+    void releaseHoldReleasesWithNoStop();
 };
 
 void TestStarvationPolicy::theTableCoversEveryModeOnce()
@@ -482,6 +486,31 @@ void TestStarvationPolicy::theDeviceIdIsLoggedInHex()
     for (const QChar c : lines.front()) {
         QVERIFY2(c.unicode() >= 0x20 && c.unicode() < 0x7f, qPrintable(lines.front()));
     }
+}
+
+// Task 5: the key's end, or TUNE or two-tone starting, releases a hold
+// with no stop; with no hold on it does nothing.
+void TestStarvationPolicy::releaseHoldReleasesWithNoStop()
+{
+    StarvationPolicy policy;
+    std::vector<bool> holds;
+    int stops = 0;
+    StarvationPolicy::Hooks hooks;
+    hooks.transmitMode = [] { return std::optional<DSPMode>(DSPMode::AM); };
+    hooks.microphoneUnused = [] { return false; };
+    hooks.stopAllTx = [&stops](const QString&) { ++stops; };
+    hooks.holdRf = [&holds](bool held) { holds.push_back(held); };
+    policy.setHooks(std::move(hooks));
+    policy.releaseHold();
+    QVERIFY(holds.empty());
+    QVERIFY(!policy.onStarved(kPhone, true));
+    QVERIFY(policy.isHolding());
+    policy.releaseHold();
+    QVERIFY(!policy.isHolding());
+    QCOMPARE(holds, (std::vector<bool>{true, false}));
+    policy.releaseHold();
+    QCOMPARE(holds.size(), size_t(2));
+    QCOMPARE(stops, 0);
 }
 
 QTEST_GUILESS_MAIN(TestStarvationPolicy)
