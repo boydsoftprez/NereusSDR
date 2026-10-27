@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 18, Roundtable's row after FreeDV
 // Reporter. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, CWX opens its page; a Core that lists it unbuilt
+//             leaves it out (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import NereusModels
 
@@ -33,6 +36,7 @@ enum StationToolList {
         case txEqualizer
         case pureSignal
         case diversity
+        case cwx
         case catControl
         case tciServer
         case vaxAudio
@@ -77,11 +81,16 @@ enum StationToolList {
     /// The tools a radio without their hardware leaves out when the Core
     /// does not offer them (the hardware-presence exception).
     static let hardwareTools: Set<String> = ["pureSignal", "diversity"]
+    /// The tools a Core lists unoffered while its desktop has not built
+    /// them: left out, as a tool the desktop lacks (D41). CWX was such a
+    /// tool before CW transmit.
+    static let unbuiltTools: Set<String> = [cwxId]
+    static let cwxId = "cwx"
 
     /// Why a tool this app has a page for cannot open when the Core does
     /// not offer it, or nil when it is left out instead.
     static func reasonWhenNotOffered(_ id: String) -> String? {
-        if hardwareTools.contains(id) {
+        if hardwareTools.contains(id) || unbuiltTools.contains(id) {
             return nil
         }
         switch id {
@@ -118,6 +127,8 @@ enum StationToolList {
               tag: .core, page: .pureSignal),
         Known(id: "diversity", title: "Diversity", detail: "Two-receiver diversity and phasing",
               tag: .core, page: .diversity),
+        Known(id: cwxId, title: "CWX", detail: "Send CW from text and the Core's eight memories",
+              tag: .core, page: .cwx),
         Known(id: "catControl", title: "CAT Control",
               detail: "The Core's CAT channels for logging and digital-mode apps", tag: .core, page: .catControl),
         Known(id: "tciServer", title: "TCI Server", detail: "TCI apps connected to the Core",

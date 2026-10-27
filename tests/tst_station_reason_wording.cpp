@@ -50,6 +50,14 @@
 // in use compare as they are ("slice removed", "slice stream binding
 // changed"). The last two are plain as written and are scanned anyway.
 //
+// 2026-10-26: CW transmit, the remote CW verbs' notHolder refusal and the
+// CW keyer gate's refusal are placed. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+//
+// 2026-10-27: CW transmit final fix wave F2: transmit's
+// cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+//
 //   2026-10-11  J.J. Boyd / KG4VCF  Band filters that combine: RadioModel's
 //                                    sharedLnaReason is scanned, and the
 //                                    note it gives the filter label
@@ -92,6 +100,14 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27  J.J. Boyd / KG4VCF  StationTransmitTake.cpp forwards
+//                                    sessionTransmitRefusal(it.key()), the
+//                                    tuner give-back's permission recheck.
+//                                    AI tooling: Anthropic Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  Remote transmit hold then cut: txState's
+//                                    rfHeldReason is a code ("link",
+//                                    "mic"), placed beside stopReason.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX-only values 4 and 5 insert two of
 //                                    the SKU's receive-only names.
 //                                    AI tooling: Anthropic Claude Code.
@@ -1117,7 +1133,44 @@ const QList<ReasonSource>& reasonSources()
           // Canonical producer's plain words scanned below.
           QStringLiteral("m_radioModel->legacyDiversityRefusal(id, update.value.toBool())"),
           QStringLiteral("m_radioModel->diversityEligibility(id)"),
-          QStringLiteral("stationFreezeRefusal(id).text")}},
+          QStringLiteral("stationFreezeRefusal(id).text"),
+          // CW transmit Task 14: the remote CW verbs' and the holder
+          // probe's refusal to a device that does not hold transmit
+          // (TxRefusal.cpp's words, scanned there).
+          QStringLiteral("TxRefusals::notHolder()"),
+          QStringLiteral("TxRefusals::notHolder().text"),
+          // RadioModel::requestCwxFor's refusal: the sender's own words
+          // (CwxSender.h) or TxRefusal.cpp's, each scanned.
+          QStringLiteral("m_radioModel->requestCwxFor(requester, start)")}},
+        // CW transmit Task 14: the CWX sender's refusals, which the remote
+        // CW verbs send an app (memory numbers are plain).
+        {"src/core/CwxSender.h", {}, {}, 4},
+        // CW transmit: the break-in fallback notices, which the keying gate
+        // reports as a refusal (RadioModel, MoxController::reportCwRefusal).
+        // The getters return the reason CwKeyerController.cpp stored.
+        // CW transmit Task 14: the holder probe's setter, no words of its
+        // own (StationServer.cpp installs it, scanned there).
+        {"src/models/RadioModel.h", {QStringLiteral("setCwxHolderRefusal")}, {}, 0, {},
+         {QStringLiteral("std::move(probe)")}},
+        {"src/models/CwKeyerController.h",
+         {QStringLiteral("qskUnavailableReason"), QStringLiteral("semiUnavailableReason")}, {}, 0,
+         {}, {QStringLiteral("m_qskReason"), QStringLiteral("m_semiReason")}},
+        // CW transmit final fix wave F2: transmit's cwQskUnavailableReason
+        // carries the keyer controller's reason (CwKeyerController.cpp,
+        // scanned); its setter and getter have no words of their own.
+        {"src/models/TransmitModel.h", {QStringLiteral("cwQskUnavailableReason")}, {}, 0, {},
+         {QStringLiteral("m_cwQskUnavailableReason")}},
+        {"src/models/TransmitModel.cpp", {QStringLiteral("setCwQskUnavailableReason")}, {}, 0, {},
+         {QStringLiteral("reason")}},
+        {"src/models/RadioModel.cpp",
+         {QStringLiteral("requestCwxFor"), QStringLiteral("cwxHolderRefusal")}, {}, 0, {},
+         {// The sender's words (CwxSender.h, scanned) and TxRefusal.cpp's.
+          QStringLiteral("words"), QStringLiteral("TxRefusals::notReady()"),
+          // StationServer's holder probe (TxRefusal.cpp's words) or this
+          // file's otherDeviceHoldsRefusal, scanned.
+          QStringLiteral("m_cwxHolderRefusal(device)"),
+          QStringLiteral("device.isEmpty() ? otherDeviceHoldsRefusal() : QString()"),
+          QStringLiteral("m_cwKeyerController->refusal()")}},
         // iPhone app Task 74 (R-IOS-30): the confirm step's answers and
         // refusals, confirm.request and notice reasons, and the chooser's
         // `why`. Device names inserted are the operator's own words (ruling
@@ -1141,7 +1194,11 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("takenReason(takerName)"), QStringLiteral("refusal.text"),
           // The session's own transmit gate (StationTxGate, TxRefusal.cpp's
           // words).
-          QStringLiteral("sessionTransmitRefusal(transport)")}},
+          QStringLiteral("sessionTransmitRefusal(transport)"),
+          // TGXL tune lane (PR 670): the same gate, asked of the earlier
+          // holder's session before the tuner's tune gives transmit back
+          // (StationTxGate, TxRefusal.cpp's words; only logged).
+          QStringLiteral("sessionTransmitRefusal(it.key())")}},
         {"src/core/session/StationReceivers.cpp", {}, {}, 12,
          {QStringLiteral("anchorName"), QStringLiteral("names"), QStringLiteral("takerName"),
           QStringLiteral("name, letterWords"), QStringLiteral("number"),
@@ -1345,8 +1402,15 @@ const QList<ReasonSource>& reasonSources()
         // iPhone app plan Task 34: MoxController records and reports a
         // refusal it is given (the band plan's, the interlock's, the
         // keying gate's), whose words are scanned where they are written.
-        {"src/core/MoxController.cpp", {QStringLiteral("reportRefusal")}, {}, 0, {},
-         {QStringLiteral("reason"), QStringLiteral("refusal")}},
+        // CW transmit: the CW keyer gate's refusal, given by RadioModel's
+        // keying gate (TxRefusal.cpp's words, scanned there).
+        {"src/core/MoxController.cpp",
+         {QStringLiteral("reportRefusal"), QStringLiteral("cwKeyerRefusal"),
+          QStringLiteral("cwMoxPressRefusal"), QStringLiteral("reportCwRefusal")}, {}, 0, {},
+         {QStringLiteral("reason"), QStringLiteral("refusal"), QStringLiteral("r.text"),
+          QStringLiteral("r"),
+          QStringLiteral("m_cwKeyerGate ? m_cwKeyerGate() : TxRefusal{}"),
+          QStringLiteral("refused")}},
         {"src/core/MoxController.h", {QStringLiteral("lastRefusal")}, {}, 0, {}, {}},
         // iPhone app Task 13 (R-IOS-08): the device administration verbs'
         // command.result, forwarded by the dispatcher as result.reason; the
@@ -1928,7 +1992,17 @@ const QList<ReasonSource>& reasonSources()
          // refuse(why) and the shared notUnderstood: each literal is scanned here.
          {QStringLiteral("why"), QStringLiteral("notUnderstood")}},
         {"src/models/TransmitModel.cpp", {QStringLiteral("settingRangeRefusal")}, {}, 7,
-         {QStringLiteral("hi"), QStringLiteral("kVoxThresholdDbMin"),
+         {QStringLiteral("hi"),
+          // CW transmit: the CW and CWX settings' ranges, numbers.
+          QStringLiteral("kCwxRepeatDelaySMin"), QStringLiteral("kCwxRepeatDelaySMax"),
+          QStringLiteral("kCwxSpeedMin"), QStringLiteral("kCwxSpeedMax"),
+          QStringLiteral("kCwBreakInDelayMsMin"), QStringLiteral("kCwBreakInDelayMsMax"),
+          QStringLiteral("kCwKeyDownDelayMsMin"), QStringLiteral("kCwKeyDownDelayMsMax"),
+          QStringLiteral("kCwKeyUpDelayMsMin"), QStringLiteral("kCwKeyUpDelayMsMax"),
+          QStringLiteral("kCwKeyerSpeedMin"), QStringLiteral("kCwKeyerSpeedMax"),
+          QStringLiteral("kCwKeyerWeightMin"), QStringLiteral("kCwKeyerWeightMax"),
+          QStringLiteral("kCwAutoModeReturnMsMin"), QStringLiteral("kCwAutoModeReturnMsMax"),
+          QStringLiteral("kVoxThresholdDbMin"),
           QStringLiteral("kVoxThresholdDbMax"), QStringLiteral("kVoxHangTimeMsMin"),
           QStringLiteral("kVoxHangTimeMsMax"), QStringLiteral("kCpdrLevelDbMin"),
           QStringLiteral("kCpdrLevelDbMax"), QStringLiteral("kAmCarrierLevelMin"),
@@ -1960,9 +2034,12 @@ const QList<ReasonSource>& reasonSources()
         // iPhone app plan Task 39: txState's stopReason is the wire code
         // (linkLost, timeOut, ...), never shown; its words are stopText,
         // scanned with the property texts. Task 38's lastTransmitStopReason
-        // is a code, which half and a limit, never shown either.
-        {"src/core/session/TransmitStateFacade.h", {QStringLiteral("stopReason")}, {}, 0, {},
-         {QStringLiteral("m_stopReason")}},
+        // is a code, which half and a limit, never shown either. Remote
+        // transmit hold then cut: rfHeldReason is a code too ("link" or
+        // "mic"), never shown; the Held words are the app's own.
+        {"src/core/session/TransmitStateFacade.h",
+         {QStringLiteral("stopReason"), QStringLiteral("rfHeldReason")}, {}, 0, {},
+         {QStringLiteral("m_stopReason"), QStringLiteral("m_rfHeldReason")}},
         {"src/models/RadioModel.h", {QStringLiteral("lastTransmitStopReason")}, {}, 0, {},
          {QStringLiteral("m_lastTransmitStopReason")}},
     };
@@ -1979,6 +2056,12 @@ struct AppSideReason {
 const QList<AppSideReason>& appSideReasons()
 {
     static const QList<AppSideReason> sites{
+        // CW transmit: the serial key input's failure, shown on this
+        // machine's own CW Setup page and its log; never sent to an app.
+        {"src/models/RadioModel.cpp", "setCwSerialKeyRefusal",
+         "the serial CW key's failure, shown on the local CW Setup page only"},
+        {"src/models/RadioModel.h", "cwSerialKeyRefusal",
+         "the serial CW key's failure, shown on the local CW Setup page only"},
         {"src/core/session/RemoteTransmitClient.h", "micSourceReason",
          "this window's pending/refused source getter; Core sentences scanned at their source"},
         {"src/models/RadioModel.cpp", "micSourceChangeReason",

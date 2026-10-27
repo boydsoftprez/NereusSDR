@@ -6,6 +6,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send {text},
+//                                    cw.memory {number}, cw.stop {} and
+//                                    cw.key {down} (remoteCwVersion 1),
+//                                    read here and answered by the Core's
+//                                    TransmitAccess::cw. AI-assisted via
+//                                    Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  setAlexRxAntennaForRadio takes an
 //                                    RX-only value 0..5 (Thetis's checkbox
 //                                    sum). AI-assisted via Anthropic Claude
@@ -1013,6 +1019,16 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          "remoteTxVersion", 2, kRadioIdentitySessionProtocolMinor},
         {"tx.tunerTune", {arg("on", kBool)}, "remoteTxVersion", 2,
          kRadioIdentitySessionProtocolMinor},
+        // CW transmit (R-CW-49): CW from the device that holds transmit,
+        // sent by the Core's CWX sender behind its keying gate. cw.key holds
+        // the hand key; the Core releases it 3 s after its last press.
+        {"cw.send", {arg("text", kUtf8)}, "remoteCwVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"cw.memory", {arg("number", kInt)}, "remoteCwVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"cw.stop", {}, "remoteCwVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"cw.key", {arg("down", kBool)}, "remoteCwVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntenna", {arg("band", kInt), arg("antenna", kInt)},
          "radioHardwareVersion", 6, kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntennaForRadio", {arg("mac", kUtf8), arg("band", kInt), arg("antenna", kInt)},
@@ -1557,6 +1573,11 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleTxTake(invoke);
         return;
     }
+    if (invoke.commandVerb == "cw.send" || invoke.commandVerb == "cw.memory"
+        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key") {
+        handleCw(invoke);
+        return;
+    }
 
     if (invoke.commandVerb.startsWith("notch.")) {
         handleNotchAction(invoke);
@@ -2013,6 +2034,51 @@ void SessionCommandDispatcher::handleTxKeying(const SessionMessage& invoke)
         self->emitResultAs(owner, SessionMessages::commandResult(verb, id, result.accepted,
                                                                  reason, {}, values));
     });
+}
+
+void SessionCommandDispatcher::handleCw(const SessionMessage& invoke)
+{
+    // CW transmit (R-CW-49): the rules are the Core's (TransmitAccess::cw);
+    // this reads the arguments.
+    CwRequest request;
+    bool readable = false;
+    if (invoke.commandVerb == "cw.send") {
+        request.kind = CwRequest::Kind::Send;
+        readable = hasExactlyArguments(invoke.arguments, {"text"})
+            && findUtf8Argument(invoke.arguments, "text", &request.text);
+    } else if (invoke.commandVerb == "cw.memory") {
+        request.kind = CwRequest::Kind::Memory;
+        QVariant raw;
+        bool converted = false;
+        readable = hasExactlyArguments(invoke.arguments, {"number"})
+            && hasWireKind(invoke.arguments, "number", MirrorWireKind::Int64)
+            && findArgument(invoke.arguments, "number", &raw);
+        const qlonglong number = readable ? raw.toLongLong(&converted) : 0;
+        readable = readable && converted && number >= std::numeric_limits<int>::min()
+            && number <= std::numeric_limits<int>::max();
+        request.number = readable ? static_cast<int>(number) : 0;
+    } else if (invoke.commandVerb == "cw.stop") {
+        request.kind = CwRequest::Kind::Stop;
+        readable = hasExactlyArguments(invoke.arguments, {});
+    } else {
+        request.kind = CwRequest::Kind::Key;
+        QVariant down;
+        readable = hasExactlyArguments(invoke.arguments, {"down"})
+            && findArgument(invoke.arguments, "down", &down) && down.typeId() == QMetaType::Bool;
+        request.down = readable && down.toBool();
+    }
+    if (!readable) {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("The Core could not read this request."), {});
+        return;
+    }
+    if (!m_transmitAccess.cw) {
+        // No Core transmit rules behind this dispatcher: nothing keys.
+        emitRefusal(invoke.commandVerb, invoke.commandId, TxRefusals::stationReceiveOnly());
+        return;
+    }
+    const QString owner = m_sessionOwner;
+    emitResultAs(owner, m_transmitAccess.cw(invoke, owner, m_requester, request));
 }
 
 void SessionCommandDispatcher::handleTxTake(const SessionMessage& invoke)

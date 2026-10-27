@@ -603,6 +603,20 @@ if(TARGET wdsp_static)
     # runs ahead leaves a real TX channel's output bit-identical. Not
     # REALTIME: the hold waits for the caller's stall, not a wall-clock bound.
     nereus_add_test(tst_wdsp_dexchange_order EXTRA_LABELS core)
+    # 2026-10-27: a drain (SetChannelState(ch, 0, 1)) that reaches its 100 ms
+    # timeout with a flush already requested waits for that flush, so it
+    # never lands after the next SetChannelState(ch, 1, 0) and leaves a
+    # running channel bypassed (tst_hl2_tune_magnitude_replay's CI hang).
+    # The worker is held in dsplock.c's test-only exchange hook until the
+    # re-key; the hold's 2 s valve only frees the fixed drain's wait, so the
+    # test cannot fail on time alone and is not REALTIME. A second case holds
+    # the drain itself (dsplock.c's test-only drain hook) between raising the
+    # down-slew and raising flushflag; its 1 s valve likewise only frees the
+    # fixed drain.
+    nereus_add_test(tst_wdsp_drain_timeout_flush WdspChannelStateProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspChannelStateProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_drain_timeout_flush PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_drain_timeout_flush PRIVATE WDSP_STATIC_BUILD)
     # R-R3-39: the DSP control lanes (ordering, keyed jobs, barriers,
     # request completion) and the WDSP caller check that counts WDSP calls
     # made from the event loop. wdsp_static arrives through the core
@@ -634,6 +648,15 @@ if(TARGET wdsp_static)
     # (Thetis's order). REALTIME: wall-clock bounds on real channels; it
     # plans through the shared wisdom cache, so the default 120 s holds.
     nereus_add_test(tst_stop_transmit_now EXTRA_LABELS core REALTIME)
+    # Remote transmit hold then cut (2026-10-26): the TX channel's RF hold.
+    # A held key still sends every block at the same cadence, all zeros, to
+    # the connection and the AM monitor tap; the gate, the run sequence and
+    # rfGateOpened are untouched; the last reason off sends real output on
+    # the next block; closeRfGate still stops everything; RadioModel's
+    # setRemoteRfHold emits on the mask's edges, MOX's return to receive
+    # clears it, and the TX time-out does not see it. REALTIME, as
+    # tst_stop_transmit_now: a real TX channel runs.
+    nereus_add_test(tst_tx_rf_hold EXTRA_LABELS core REALTIME)
     if(NOT WIN32)
         # R-R3-41: linux_port.c's thread-start hook fires once per channel
         # worker and flush thread, on that thread, with its kind and channel.
@@ -1164,6 +1187,79 @@ target_compile_definitions(tst_p1_wire_format PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-A AlexFilterMap shared freq→bits helpers (Task 3+4) ──
 nereus_add_test(tst_alex_filter_map)
+
+# CW transmit (R-CW-11, R-CW-13, R-CW-16, R-CW-38): the CW wire state, its
+# clamps and the hang, RF delay, sidetone level and P2 mode-control helpers.
+nereus_add_test(tst_cw_wire_state)
+
+# CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line, the P1 key
+# overlay on the EP2 sender's frame, and the P2 CW wire through a loopback
+# fake radio, the transmit cut included.
+nereus_add_test(tst_cw_key_line)
+nereus_add_test(tst_p1_cw_key_overlay)
+target_compile_definitions(tst_p1_cw_key_overlay PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_p2_cw_wire fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# CW transmit (R-CW-05 to R-CW-07, R-CW-10, R-CW-20, R-CW-22, D16): the
+# keyer gate's truth table, and the CW keyer controller's inputs,
+# availability, fallbacks, composition, push and the QSK time-out against a
+# RadioModel with a fake connection.
+nereus_add_test(tst_cw_keyer_gate)
+nereus_add_test(tst_cw_keyer_controller)
+
+# CW transmit Task 12 (R-CW-41 to R-CW-43, R-CW-47): the Phone/CW applet's
+# CW page, the TX applet in CW and Setup > DSP > CW against a fake
+# connection; nothing keys the radio.
+nereus_add_test(tst_cw_page)
+
+# CW transmit Task 13 (R-CW-44): the CWX applet on the CWX sender, and Tools >
+# CWX, the status label and CAT ZZKO in the window.
+nereus_add_test(tst_cwx_applet)
+
+# CW transmit Task 13 (R-CW-24, R-CW-45): passbands drawn from the passband
+# origin, the dial plus the CW receive shift.
+nereus_add_test(tst_passband_origin_drawing)
+
+# CW transmit Task 8 (R-CW-15, R-CW-31 to R-CW-33): the CWX sender's element
+# timing with an injected clock, its key line writes, the HL2 CWX PTT, the
+# Key watchdog, repeat and refusals; RadioModel's request gate, aborts and
+# key-line release; and one wall-clock case (each key edge within 2 ms on
+# the sender's own thread), hence REALTIME.
+nereus_add_test(tst_cwx_sender REALTIME)
+
+# CW transmit Task 9 (R-CW-35): the TCI CW commands (macros, cw_msg, the
+# terminal, speeds, keyer with its 3 s watchdog and timed releases, stop,
+# the owner and refusals) on a local model with a fake connection. The
+# keyer timings run on the wall clock (3 s watchdog), hence REALTIME.
+nereus_add_test(tst_tci_cw REALTIME)
+
+# CW transmit Task 14 (R-CW-48, R-CW-49): the remote CW verbs (cw.send,
+# cw.memory, cw.stop, cw.key) on a test Core with a fake connection, the
+# remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
+# watchdog runs on the wall clock, hence REALTIME.
+nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+
+# CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
+# injected line source (paddles, the key and PTT lines, the gate, stops,
+# the cut, fresh edges, the thread's join) and its RadioModel wiring (port
+# conflicts with CAT, the PTT line in Semi, connection swaps).
+nereus_add_test(tst_cw_serial_key_input)
+# CW transmit Task 10 (R-CW-37): the auto mode switch and its return on a
+# RadioModel. The return waits run on the wall clock (300 ms and less).
+nereus_add_test(tst_cw_auto_mode_switch)
+
+# CW transmit Task 11 (R-CW-39, R-CW-40): the computer sidetone (the
+# sidetone.c port alone, then in the audio engine on a RadioModel with a
+# fake speakers bus and a fake connection for the paddle status).
+nereus_add_test(tst_cw_sidetone)
+target_compile_definitions(tst_cw_sidetone PRIVATE NEREUS_BUILD_TESTS)
+
+# CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
+# QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
+# fallback notice and the TX channel skip on a RadioModel.
+nereus_add_test(tst_mox_controller_cw)
+nereus_add_test(tst_cw_qsk_side_effects)
 
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
@@ -3607,8 +3703,8 @@ nereus_add_test(tst_nf_aware_grid)
 nereus_add_test(tst_band_plan_guard)
 
 # ── Phase 3M-1b Task K.1: BandPlanGuard SSB-mode allow-list for TX ─────────
-# isModeAllowedForTx: 4 allowed (LSB/USB/DIGL/DIGU) + 8 rejected
-# (CWL/CWU/AM/SAM/DSB/FM/DRM/SPEC). checkMoxAllowed: reason strings for each
+# isModeAllowedForTx: allowed (LSB/USB/DIGL/DIGU/AM/SAM/DSB/CWL/CWU) and
+# rejected (FM/DRM/SPEC). checkMoxAllowed: reason strings for each
 # rejection class + ok path (LSB/USB on valid freq) + freq/band reject on
 # an otherwise-allowed mode. ~20 test cases.
 nereus_add_test(tst_band_plan_guard_mode_allow_list)
@@ -3618,8 +3714,8 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #   MoxController::setMoxCheck(fn) + moxRejected(QString) signal.
 #
 # MoxController cases (8):
-#   1. CWL → moxRejected("CW transmit is not available on this Core"); state stays Rx.
-#   2. CWU → moxRejected with CW reason.
+#   1. CWL → accepted (CW transmit, R-CW-05); the carrier alone is checked.
+#   2. CWU → accepted.
 #   3. AM  → accepted (AM/SAM/DSB TX enabled); FM still rejected.
 #   4. FM  → moxRejected with audio-modes reason.
 #   5. LSB (allowed) → MOX engages; moxRejected NOT emitted.
@@ -3631,7 +3727,7 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #
 # TxApplet::tooltipForMode static helper (12):
 #   USB/LSB/DIGL/DIGU → normal "Manual transmit (MOX)" tooltip.
-#   CWL/CWU → "CW transmit is not available on this Core".
+#   CWL/CWU → normal "Manual transmit (MOX)" tooltip.
 #   AM/SAM/DSB → allowed; FM → "FM transmit is not available on this Core";
 #   DRM → "DRM transmit is not available on this Core".
 #   SPEC → "Mode not supported for TX".
@@ -4541,8 +4637,9 @@ nereus_add_test(tst_mox_controller_prime_wdsp_state)
 #     onX2Ptt — each press emits pttModeChanged(Xxx) then moxStateChanged(true);
 #     each release emits moxStateChanged(false); the unkey clears PttMode
 #     (Task 7: chkMOX_CheckedChanged2 console.cs:29547 [v2.10.3.15]).
-#   onTciPtt keys with PttMode::Tci (Task 7). Rejected slot: onCwPtt
-#     (deferred to 3M-2): press and release emit no signals.
+#   onTciPtt keys with PttMode::Tci (Task 7). onCwPtt, the serial PTT line,
+#     keys only in CW with Semi break-in (CW transmit Task 5); outside CW its
+#     press and release emit no signals.
 #   Cross-source rules (§G): PollPTT keys only from receive and releases only
 #     in the source's own mode (Task 7).
 #   Idempotency (§H): repeated press does not double-emit.
@@ -10266,6 +10363,17 @@ nereus_add_test(tst_tx_eq_set_curve
 nereus_add_test(tst_cfc_set_profile
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CW transmit (R-CW-01, R-CW-02, R-CW-03): the CW settings on TransmitModel,
+# the CW pitch accessor and property, and the settings on `transmit`
+# (transmitSettingsVersion 16). Loopback only, no RF, no audio device.
+nereus_add_test(tst_cw_settings
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# CW transmit (R-CW-23, R-CW-24, R-CW-27, R-CW-28): the CW receive shift in
+# the composed WDSP shift and the demodulated frequency, passbandOriginHz,
+# and a pitch change moving the CW filters, the shift and the APF but never
+# the dial. A never-opened connection, no RF, no audio device.
+nereus_add_test(tst_cw_pitch_follow)
 # Control logging lane: the Core's log lines for each control write and
 # command, its answer and handling time, and the gaps between a device's
 # control messages, rate-limited. Loopback only, no RF, no audio device.
@@ -11669,6 +11777,9 @@ nereus_split_test(tst_cat_rx_commands ENV NEREUS_CAT_RX_COMMANDS_GROUP
 
 nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
 nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+# CW transmit Task 9 (R-CW-02, R-CW-34): the CAT CW and CWX commands on a
+# local model with a fake connection; the sender runs on the wall clock.
+nereus_add_test(tst_cat_cw_commands CORE_ONLY)
 nereus_add_test(tst_cat_coverage CORE_ONLY)
 # CI load round, 2026-10-26: 783 fixture rows took 84 s of the 120 s limit
 # on a quiet Linux runner and timed out on a busy one; the test's main()

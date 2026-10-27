@@ -20,6 +20,17 @@
 // 2026-10-25 (Roundtable fix wave): RoundtableWire's "a station id" check
 // label is in notShown, and the rule no longer sets that phrase aside for
 // every string. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, CW keys now, so "CW transmit is not available on
+// this Core" is no longer shown by BandPlanGuard or TxApplet. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CWX applet and the CWX refusal words read in
+// user words. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CW page, the DSP > CW transmit groups and the
+// TX applet in CW are swept (Task 12). J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+// 2026-10-27: CW transmit final fix wave F4: the QSK protocol reason is
+// plain now, so its exemption is gone. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -38,6 +49,7 @@
 #include <QLabel>
 #include <QRegularExpression>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QUuid>
 
@@ -54,13 +66,20 @@
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/UnbuiltFeatures.h"
+#include "core/CwxSender.h"
+#include "gui/applets/CwxApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/TxFilterSection.h"
+#include "gui/applets/TxMonitorSection.h"
 #include "gui/containers/MmioEndpointsDialog.h"
 #include "gui/containers/MmioVariablePickerPopup.h"
 #include "gui/setup/CatNetworkSetupPages.h"
+#include "gui/setup/DspSetupPages.h"
 #include "gui/setup/FourO3APage.h"
 #include "gui/widgets/NnrControls.h"
 #include "models/Band.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -826,6 +845,90 @@ private slots:
         }
     }
 
+    // CW transmit (R-CW-41, R-CW-42, R-CW-43): the CW page, the DSP > CW
+    // transmit groups and the TX applet in CW read in user words, with no
+    // em dash and no "yet", in their tooltips and accessible text too.
+    void cwScreensAreInUserWords()
+    {
+        static const QRegularExpression yet(QStringLiteral("\\byet\\b"),
+                                            QRegularExpression::CaseInsensitiveOption);
+        const auto check = [](const QWidget& root, int floor) {
+            QStringList shown = shownText(root);
+            QList<const QWidget*> widgets{&root};
+            for (const QWidget* child : root.findChildren<const QWidget*>()) {
+                widgets.append(child);
+            }
+            for (const QWidget* w : widgets) {
+                shown << w->accessibleName() << w->accessibleDescription();
+            }
+            shown.removeAll(QString());
+            QVERIFY2(shown.size() >= floor, qPrintable(QString::number(shown.size())));
+            for (const QString& text : shown) {
+                if (text.trimmed().isEmpty()) { continue; }
+                QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+                QVERIFY2(!text.contains(QChar(0x2014)), qPrintable(text));
+                QVERIFY2(!yet.match(text).hasMatch(), qPrintable(text));
+            }
+        };
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::CWU);
+
+        PhoneCwApplet applet(&model);
+        const QWidget* cwPage = applet.findChild<QWidget*>(QStringLiteral("cwSpeedSlider"));
+        while (cwPage && !qobject_cast<QStackedWidget*>(cwPage->parentWidget())) {
+            cwPage = cwPage->parentWidget();
+        }
+        QVERIFY(cwPage);
+        check(*cwPage, 30);
+        applet.setCwSettingsPermitted(false);
+        check(*cwPage, 30);
+
+        CwSetupPage setup(&model);
+        for (const char* group : {"cwKeyerGroup", "cwBreakInGroup", "cwSidetoneGroup",
+                                  "cwSerialGroup", "cwOptionsGroup"}) {
+            const auto* box = setup.findChild<QGroupBox*>(QLatin1String(group));
+            QVERIFY2(box, group);
+            check(*box, 3);
+        }
+        setup.setHasSidetoneGenerator(false);
+        check(*setup.findChild<QGroupBox*>(QStringLiteral("cwSidetoneGroup")), 3);
+
+        // The TX applet in CW: the controls the CW layer greys, and MON.
+        // (The applet's older readouts are outside this task.)
+        TxApplet tx(&model);
+        QVERIFY(tx.cwLayerActiveForTest());
+        const auto* filter = tx.findChild<TxFilterSection*>();
+        const auto* mon = tx.findChild<TxMonitorSection*>();
+        QVERIFY(filter && mon && tx.voxButton());
+        check(*mon, 2);
+        for (const QWidget* w : {static_cast<const QWidget*>(tx.voxButton()),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxLevButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxEqButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxCfcButton"))),
+                                 static_cast<const QWidget*>(filter->filterLowSpin()),
+                                 static_cast<const QWidget*>(filter->filterHighSpin()),
+                                 static_cast<const QWidget*>(tx.moxButton())}) {
+            QVERIFY(w);
+            check(*w, 1);
+        }
+
+        // The CWX applet (R-CW-44), with its send and settings greyed by
+        // the remote window's reasons too.
+        CwxApplet cwx(&model);
+        check(cwx, 12);
+        cwx.setSendPermitted(false, QStringLiteral("Sending CW from a remote window needs a newer Core."));
+        cwx.setCwxSettingsPermitted(false);
+        check(cwx, 12);
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNotCwText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNothingToSendText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxMemoryEmptyText).arg(5)));
+    }
+
     // Lane B carry (R-R3-40, R-R3-08, R-R3-37): the NNR step-back wording
     // from the DSP overload batch and the Core-busy pan wording read in user
     // words, and a Core reason about NNR passes OperatorReasonText unchanged.
@@ -1127,13 +1230,13 @@ private slots:
              {"coming in Phase", "RX/TX band mismatch", "TX-allowed range",
               "Mode not supported for TX",
               "Transmit is on a different band from receive"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core",
               "Transmit would be on %1 while another slice you have open is on %2, and Setup "
               "is set to prevent transmitting on a different band."}},
             {"src/gui/applets/TxApplet.cpp", true,
              {"coming in Phase"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core"}},
             {"src/gui/MainWindow.cpp", false,
              {"Phase 3F closeout:", "AntennaSwitchToast surface",

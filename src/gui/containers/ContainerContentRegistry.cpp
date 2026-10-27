@@ -70,6 +70,8 @@
 //   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
 //                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - CW transmit, the CWX applet (applet:cwx). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 //   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
@@ -256,7 +258,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -442,6 +444,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:mod_monitor"), QStringLiteral("AM Mod Monitor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:cat"), QStringLiteral("CAT"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:cwx"), QStringLiteral("CWX"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:tci"), QStringLiteral("TCI Server"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:tci_clients"), QStringLiteral("TCI Clients"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:amp"), QStringLiteral("4O3A Power Genius"), ContentGroup::Panels, true);

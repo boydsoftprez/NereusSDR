@@ -1066,6 +1066,9 @@ set(CORE_SOURCES
     src/core/TciBinaryFrame.cpp
     src/core/TciServer.cpp
     src/core/codec/AlexFilterMap.cpp
+    # CW transmit (R-CW-11, R-CW-13): the CW wire state and its helpers.
+    src/core/codec/CwWireState.cpp
+    src/core/codec/CwWireState.h
     src/core/codec/P1CodecStandard.cpp
     src/core/codec/P1CodecAnvelinaPro3.cpp
     src/core/codec/P1CodecRedPitaya.cpp
@@ -1126,6 +1129,21 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
+    # CW transmit (R-CW-01, R-CW-02): the CW value types and the pitch accessor.
+    src/core/CwTypes.cpp
+    src/core/CwTypes.h
+    # CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line.
+    src/core/CwKeyLine.cpp
+    src/core/CwKeyLine.h
+    # CW transmit (R-CW-15, R-CW-31 to R-CW-33): the CWX sender.
+    src/core/CwxSender.cpp
+    src/core/CwxSender.h
+    # CW transmit (R-CW-04, R-CW-36): the serial key reader.
+    src/core/CwSerialKeyInput.cpp
+    src/core/CwSerialKeyInput.h
+    # CW transmit (R-CW-39): the computer sidetone (ChannelMaster sidetone.c).
+    src/core/CwSidetone.cpp
+    src/core/CwSidetone.h
     src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
@@ -1224,6 +1242,7 @@ set(CORE_SOURCES
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
+    src/core/safety/CwKeyerGate.cpp
     src/core/safety/SwrProtectionController.cpp
     src/core/safety/TxInhibitMonitor.cpp
     src/core/safety/TxRefusal.cpp
@@ -1736,6 +1755,7 @@ endif()
 
 set(MODEL_SOURCES
     src/models/RadioModel.cpp
+    src/models/CwKeyerController.cpp
     src/models/RxDspWorker.cpp
     src/models/ReceiverDspLoadSampler.cpp
     src/models/Band.cpp
@@ -1762,6 +1782,8 @@ set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
+    src/gui/TxHeldIndicator.cpp
+    src/gui/TxHeldIndicator.h
     src/gui/SessionEndSave.cpp
     src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp

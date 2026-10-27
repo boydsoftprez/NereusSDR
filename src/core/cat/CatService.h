@@ -68,6 +68,9 @@ Added extended CAT commands for APF funtions - May 2017.
 // 2026-10-12 - A refused setting hands back the rule it broke, for the page
 //              or the connected app to show. J.J. Boyd (KG4VCF), AI-assisted
 //              via Anthropic Claude Code.
+// 2026-10-26 - sessionHandle keeps a session alive across a held CAT TX's
+//              replay; an idle PTT pin no longer cancels a held CAT TX.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "core/NereusCoreExport.h"
 #include "CatModelAdapter.h"
@@ -119,6 +122,9 @@ public:
     quint64 openSession(int channel, CatTransportKind);
     void closeSession(quint64);
     CatSession* session(quint64);
+    // The same session, shared: a caller that runs a command on it keeps
+    // it alive for the call, as processFrame does.
+    std::shared_ptr<CatSession> sessionHandle(quint64);
     QByteArray processFrame(quint64, const QByteArray&);
     void processBytes(quint64, const QByteArray&);
     void sendToSession(quint64, const QByteArray&);

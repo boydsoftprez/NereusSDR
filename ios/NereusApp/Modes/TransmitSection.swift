@@ -1,5 +1,10 @@
 // NereusSDR for iOS: the Modes tab's transmit settings: TX filter, mic level and gain, PROC, LEV, EQ, CFC, VOX, DEXP, AM carrier and MON
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW rows in CW, as on the TX panel (R-CW-50).
+//             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: the TX filter, LEV, EQ, CFC,
+//             VOX and its level and delay greyed in CW with the desktop's
+//             words. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -26,7 +31,7 @@ struct TransmitSection: View {
             HStack(spacing: 6) {
                 ModesChrome.label("TX filter")
                 ValueField(text: ModesChrome.hertz(model.txFilterLowHz), accessibility: "TX filter low edge",
-                           disabled: !filterEditable || model.txFilterLowHz == nil, minWidth: 74, minHeight: 44) {
+                           disabled: !filterEditable || model.txFilterLowHz == nil || transmit.inCw, minWidth: 74, minHeight: 44) {
                     model.openTxFilterPad(low: true)
                 }
                 .accessibilityIdentifier("modesTxFilterLow")
@@ -34,12 +39,12 @@ struct TransmitSection: View {
                     .font(.system(size: 11))
                     .foregroundStyle(ChromeColours.textDim)
                 ValueField(text: ModesChrome.hertz(model.txFilterHighHz), accessibility: "TX filter high edge",
-                           disabled: !filterEditable || model.txFilterHighHz == nil, minWidth: 74, minHeight: 44) {
+                           disabled: !filterEditable || model.txFilterHighHz == nil || transmit.inCw, minWidth: 74, minHeight: 44) {
                     model.openTxFilterPad(low: false)
                 }
                 .accessibilityIdentifier("modesTxFilterHigh")
                 Spacer(minLength: 0)
-                PanelButton(label: "Match RX", lit: false, style: .dsp, disabled: !filterEditable) {
+                PanelButton(label: "Match RX", lit: false, style: .dsp, disabled: !filterEditable || transmit.inCw) {
                     model.matchRx()
                 }
                 .frame(width: 78)
@@ -49,6 +54,14 @@ struct TransmitSection: View {
             if let reason = transmit.settingsReason(1) {
                 ModesChrome.note("TX filter: " + reason)
                     .accessibilityIdentifier("modesTransmitReason")
+            } else if let reason = transmit.cwNotUsedReason {
+                // In CW the radio's keyer makes the signal (TxApplet's CW layer).
+                ModesChrome.note("TX filter, LEV, EQ, CFC and VOX: " + reason)
+                    .accessibilityIdentifier("modesCwNotUsedReason")
+            }
+            if transmit.inCw {
+                // CW (R-CW-50): the keyer's controls, as on the TX panel.
+                CwTransmitRows(transmit: transmit, identifierPrefix: "modes")
             }
             // The mic level beside Mic Gain, live from this phone's
             // microphone before keying, so Mic Gain can be set by it.
@@ -66,16 +79,24 @@ struct TransmitSection: View {
             }
             ModesChrome.grid(columns: 5) {
                 PanelButton(label: "LEV", lit: model.leveler == true, style: .dsp,
-                            disabled: !chainEditable || model.leveler == nil) {
+                            disabled: !chainEditable || model.leveler == nil || transmit.inCw) {
                     model.toggleLeveler()
                 }
                 .accessibilityLabel("Leveler")
-                PanelButton(label: "EQ", lit: model.eq == true, style: .dsp, disabled: !chainEditable || model.eq == nil) {
+                .accessibilityHint(transmit.cwNotUsedReason ?? "")
+                .accessibilityIdentifier("modesLeveler")
+                PanelButton(label: "EQ", lit: model.eq == true, style: .dsp,
+                            disabled: !chainEditable || model.eq == nil || transmit.inCw) {
                     model.toggleEq()
                 }
-                PanelButton(label: "CFC", lit: model.cfc == true, style: .dsp, disabled: !chainEditable || model.cfc == nil) {
+                .accessibilityHint(transmit.cwNotUsedReason ?? "")
+                .accessibilityIdentifier("modesEq")
+                PanelButton(label: "CFC", lit: model.cfc == true, style: .dsp,
+                            disabled: !chainEditable || model.cfc == nil || transmit.inCw) {
                     model.toggleCfc()
                 }
+                .accessibilityHint(transmit.cwNotUsedReason ?? "")
+                .accessibilityIdentifier("modesCfc")
                 PanelButton(label: "DEXP", lit: transmit.dexp == true, style: .dsp,
                             disabled: !chainEditable || transmit.dexp == nil) {
                     transmit.toggleDexp()
@@ -102,14 +123,14 @@ struct TransmitSection: View {
                 PanelSliderRow(label: nil, value: transmit.voxThresholdDb,
                                range: TransmitModel.voxThresholdRange,
                                accessibility: "VOX level", format: { "\(Int($0.rounded())) dB" },
-                               greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) {
+                               greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) {
                     transmit.setVoxThreshold($0)
                 }
             }
             PanelSliderRow(label: "VOX delay", value: transmit.voxHangMs,
                            range: TransmitModel.voxHangRange,
                            accessibility: "VOX delay", format: { "\(Int($0.rounded())) ms" },
-                           greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) {
+                           greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) {
                 transmit.setVoxHang($0)
             }
             HStack(spacing: 6) {
@@ -140,7 +161,8 @@ struct TransmitSection: View {
                 transmit.setAmCarrier($0)
             }
             cfcBars
-            if let reason = voxReason {
+            if let reason = voxReason, !transmit.inCw {
+                // In CW the TX filter note above says why VOX is greyed.
                 ModesChrome.note("VOX: " + reason)
                     .accessibilityIdentifier("modesVoxReason")
             }

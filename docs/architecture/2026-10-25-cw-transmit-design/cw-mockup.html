@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CW Transmit Mockup</title>
+<style>
+:root{--page:#0b0b0d;--ink:#dcdce1;--ink2:#9a9aa2;--edge:#2c2c31;--note:#ffaa70}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--page:#0b0b0d;--ink:#dcdce1;--ink2:#9a9aa2}}
+:root[data-theme="light"]{--page:#0b0b0d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif}
+.wrap{padding:16px}
+h1{font-size:18px;margin:0 0 4px}
+.sub{color:var(--ink2);max-width:1100px;margin:0 0 12px}
+.demo{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:8px 10px;border:1px dashed #5a5a62;border-radius:6px;margin-bottom:10px;color:var(--ink2);font-size:12px}
+.demo b{color:var(--ink);font-weight:600}
+.demo select{background:#151518;color:var(--ink);border:1px solid var(--edge);border-radius:4px;padding:2px 4px;font:inherit}
+.demo .hold{padding:4px 10px;border:1px solid #5a5a62;border-radius:4px;cursor:pointer;user-select:none;color:var(--ink)}
+.demo .hold.on{background:#2f6146;border-color:#3d7a57}
+.demo .tag{font-weight:700;letter-spacing:.08em;color:#7a7a82}
+.fit{position:relative;overflow:hidden}
+.stage{position:absolute;left:0;top:0;width:1512px;height:869px;transform-origin:0 0;background-size:1512px 869px;background-repeat:no-repeat;font:11px/1 -apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased}
+.abs{position:absolute}
+img.abs{display:block}
+.btn{position:absolute;border-style:solid;border-width:0 6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;cursor:pointer;user-select:none;white-space:nowrap;border-image:url(../2026-10-25-transmit-mockup-assets/cw/btn.webp) 0 12 fill / 0 6px stretch}
+.btn[data-s=green]{border-image-source:url(../2026-10-25-transmit-mockup-assets/cw/btn-green.webp)}
+.btn[data-s=blue]{border-image-source:url(../2026-10-25-transmit-mockup-assets/cw/btn-blue.webp)}
+.btn[data-s=red]{border-image-source:url(../2026-10-25-transmit-mockup-assets/cw/btn-red.webp)}
+.btn[data-s=dis]{border-image-source:url(../2026-10-25-transmit-mockup-assets/cw/btn-dis.webp);cursor:not-allowed}
+.btn.hot{border-image:none;background:transparent;border-color:transparent;color:transparent!important}
+.inset{position:absolute;border-style:solid;border-width:0 4px;border-image:url(../2026-10-25-transmit-mockup-assets/cw/inset.webp) 0 8 fill / 0 4px stretch;display:flex;align-items:center;justify-content:center;font-size:11px}
+.inset.h22{border-image-source:url(../2026-10-25-transmit-mockup-assets/cw/inset22.webp)}
+.lbl{position:absolute;display:flex;align-items:center;font-size:11px;white-space:nowrap}
+.sl{position:absolute;border-style:solid}
+.sl .th{position:absolute;top:0;height:100%;background-size:100% 100%;pointer-events:none}
+.sl input{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.sl.dis{filter:brightness(.55)}
+.sl.dis input{cursor:not-allowed}
+.patch{position:absolute}
+.dim{position:absolute;cursor:not-allowed}
+.view{position:absolute;overflow-y:scroll;overflow-x:hidden;scrollbar-width:none}
+.view::-webkit-scrollbar{display:none}
+.tall{position:relative}
+.cwtext{position:absolute;overflow:hidden;padding:3px 5px;font-size:11px;line-height:14px;white-space:pre-wrap;outline:none;word-break:break-word}
+.cwtext .sent{opacity:.45}
+.cwtext .cur{background:#2f6146;color:#fff;border-radius:2px}
+.state{position:absolute;font-size:11px;line-height:14px;white-space:normal}
+.lamp{position:absolute;border-style:solid;border-width:0 4px;border-image:url(../2026-10-25-transmit-mockup-assets/cw/inset22.webp) 0 8 fill / 0 4px stretch;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;letter-spacing:.04em}
+.lamp[data-s=green]{border-width:0 6px;border-image:url(../2026-10-25-transmit-mockup-assets/cw/btn-green.webp) 0 12 fill / 0 6px stretch}
+.lamp[data-s=red]{border-width:0 6px;border-image:url(../2026-10-25-transmit-mockup-assets/cw/btn-red.webp) 0 12 fill / 0 6px stretch}
+.callout{position:absolute;font:600 11.5px/1.3 -apple-system,sans-serif;color:#111;background:var(--note);padding:3px 7px;border-radius:4px;white-space:nowrap;pointer-events:none;box-shadow:0 1px 4px #000a}
+.callout:after{content:"";position:absolute;left:10px;bottom:-5px;border:5px solid transparent;border-bottom:0;border-top-color:var(--note)}
+body.marknew .new{outline:2px dashed #ffaa70;outline-offset:-1px}
+body.marknew .cap-real{outline:1px solid #3d78b0}
+.cap{color:var(--ink2);font-size:12px;margin:6px 0 0;max-width:1100px}
+.legend{margin-top:18px;max-width:1100px;color:var(--ink2);font-size:12px}
+.legend table{border-collapse:collapse;width:100%}
+.legend td,.legend th{border-bottom:1px solid #222226;padding:4px 6px;text-align:left;vertical-align:top}
+.legend th{color:var(--ink);font-weight:600}
+h2{font-size:15px;margin:22px 0 6px}
+</style></head>
+<body>
+<div class="wrap">
+<h1>CW transmit: what the operator sees</h1>
+<p class="sub">Built on real captures of NereusSDR (the preview tool, workspace look, 1512×869 at 2×). The new controls work, and so do the demo switches above the window. New parts are drawn from the real components' own pixels; tick <b>Mark new parts</b> to outline them. Sample callsign KG4VCF.</p>
+<div class="demo">
+ <span class="tag">MOCKUP CONTROLS</span>
+ <span><b>Radio</b> <select id="radio">
+  <option value="7000">ANAN-7000DLE (Protocol 2, firmware 2.1)</option>
+  <option value="g2">ANAN-G2 (Saturn)</option>
+  <option value="7000old">ANAN-7000DLE (Protocol 2, firmware 1.6)</option>
+  <option value="100d">ANAN-100D (Protocol 1)</option>
+  <option value="hl2">Hermes Lite 2</option></select></span>
+ <span><b>Window</b> <select id="win"><option value="local">On the radio's computer</option><option value="remote">Remote window (through the Core)</option></select></span>
+ <span><b>Slice A</b> <select id="band"><option value="hf">20 m, 14.030 MHz</option><option value="xv">2 m transverter, 144.050 MHz</option><option value="oob">Outside the band, 14.352 MHz</option></select></span>
+ <span><b>Pitch placement</b> <select id="conv"><option value="design">This design</option><option value="today">NereusSDR today</option></select></span>
+ <span class="hold" id="paddle" title="Hold to press the paddle on the radio's KEY jack">Hold: paddle on the radio's jack</span>
+ <label><input type="checkbox" id="marknew"> Mark new parts</label>
+</div>
+<div class="fit" id="fit"><div class="stage" id="stage"></div></div>
+<p class="cap" id="pancap"></p>
+<h2>Setup &gt; DSP &gt; CW</h2>
+<p class="cap" style="margin:0 0 8px">The real Setup dialog. Every page in the tree is a capture of today's page and opens when clicked; the CW page is the one this design changes. Its Keyer, Timing and APF groups exist today behind a build switch; the new rows are made from those groups' own pieces.</p>
+<div class="fit" id="sfit"><div class="stage" id="sstage"></div></div>
+<p class="cap" id="scap"></p>
+
+<div class="legend" id="legend"></div>
+</div>
+<script>
+const G={"pan":[348,32,855,382],"statusbar":[0,823,1512,46],"flag":[505,32,252,119],"txbadge":[703,34,28,18],"chbadges":[987,40,172,22],"chbadges_tx":[963,40,172,22],"flags":{"design":{"badge":[703,34,28,18]},"today":{"badge":[659,34,28,18]},"xv":{"badge":[703,34,28,18]},"oob":{"badge":[703,34,28,18]}},"panmap":{"design":{"x0":408.5,"hz0":14030000,"pxPerHz":0.06769230769230769,"dial":14030000,"top":0,"bot":125},"today":{"x0":364.5,"hz0":14029350,"pxPerHz":0.06769230769230769,"dial":14029350,"top":0,"bot":125},"xv":{"x0":408.5,"hz0":144050000,"pxPerHz":0.06769230769230769,"dial":144050000,"top":0,"bot":125},"oob":{"x0":408.5,"hz0":14352000,"pxPerHz":0.06769230769230769,"dial":14352000,"top":0,"bot":125}},"view":[1206,50,292,773],"strip_h":958,"cwbody":[0,40,292,235],"bg_applet":"#0c0c0e","cwx":{"text":[4,293,284,60],"send":[4,355,284,22],"mem":[[4,399,70,22],[76,399,69,22],[147,399,70,22],[219,399,69,22],[4,423,70,22],[76,423,69,22],[147,423,70,22],[219,423,69,22]],"rpt":[4,447,30,22],"kb":[4,471,284,22],"sliders":[[70,379,178,18],[38,449,206,18]],"labels":[[4,379,62,18],[252,379,36,18],[248,447,40,22]],"title":[18,275,216,15],"textbg":"#0a0a18"},"hdrbg":"#0c0c0e","tabs":[[4,18,141,20],[147,18,141,20]],"tx":{"buttons":[{"rect":[4,657,141,22],"name":"","c":"#202025"},{"rect":[147,657,141,22],"name":"","c":"#202025"},{"rect":[4,685,284,20],"name":"TxSliceButtonA","c":"#2d5d43"},{"rect":[4,712,48,22],"name":"TxVoxButton","c":"#202025"},{"rect":[4,741,146,22],"name":"","c":"#202025"},{"rect":[154,741,71,22],"name":"TxMonitorSpeakersButton","c":"#2d5d43"},{"rect":[229,741,59,22],"name":"TxMonitorHeadphonesButton","c":"#202025"},{"rect":[4,793,93,22],"name":"TxLevButton","c":"#2d5d43"},{"rect":[99,793,94,22],"name":"TxEqButton","c":"#202025"},{"rect":[195,793,93,22],"name":"TxCfcButton","c":"#202025"},{"rect":[4,900,93,22],"name":"","c":"#202025"},{"rect":[99,900,94,22],"name":"TxAppletPsaBtn","c":"#202025"},{"rect":[195,900,93,22],"name":"TxAppletDupBtn","c":"#202025"}],"sliders":[[70,609,192,18],[70,633,192,18],[56,711,56,16],[169,715,56,16],[70,769,188,18]],"labels":[[4,515,284,16],[4,609,62,18],[266,609,22,18],[4,633,62,18],[266,633,22,18],[116,711,49,24],[229,711,59,24],[4,769,62,18],[262,769,26,18],[4,849,56,26],[64,849,13,26],[175,849,12,26],[4,881,284,13],[8,928,276,22]],"combos":[[4,821,284,22]],"spins":[[81,849,90,26],[191,849,97,26]],"applet":[0,513,292,439]},"green_src":[1210,260,284,20],"red_src":[1210,232,141,22],"groove_cap":12.0,"thumb_w":12.0,"arrows_src":[[44,320,21,17],[108,320,22,17]],"arrow_wh":[21,17,22],"sbthumb_src":[2.0,641.0],"sbthumb_cap":6.0,"c":{"btn":"#dcdce1","label":"#8090a0","value":"#dcdce1","hdr":"#7e7e85","dis":"#58585e","textedit":"#1e2e3e","amber":"#d8a55f"},"env_font":{"family":".AppleSystemUIFont","pixel_size":13,"point_size":13},"meter":[6,94,316,140]};
+const A='../2026-10-25-transmit-mockup-assets/cw/';const SA='../2026-10-25-transmit-mockup-assets/setup/';const SP='CW';
+const $=id=>document.getElementById(id);
+const stage=$('stage');
+stage.style.backgroundImage=`url(${A}base.webp)`;
+function px(e,r){e.style.left=r[0]+'px';e.style.top=r[1]+'px';e.style.width=r[2]+'px';e.style.height=r[3]+'px';return e}
+function el(tag,cls,parent,r){const e=document.createElement(tag);if(cls)e.className=cls;if(r)px(e,r);parent.appendChild(e);return e}
+function img(src,parent,r,cls){const i=el('img','abs '+(cls||''),parent,r);i.src=A+src;i.draggable=false;return i}
+function btn(parent,r,text,s,cls){const b=el('div','btn '+(cls||''),parent,r);b.textContent=text;b.dataset.s=s||'plain';b.style.color=s==='dis'?G.c.dis:G.c.btn;return b}
+function setB(b,s){b.dataset.s=s;b.style.color=s==='dis'?G.c.dis:G.c.btn}
+function patch(parent,r,bg){const p=el('div','patch',parent,r);p.style.background=bg;return p}
+function lbl(parent,r,text,color,align){const l=el('div','lbl',parent,r);l.textContent=text;l.style.color=color||G.c.label;if(align)l.style.justifyContent=align;return l}
+function inset(parent,r,text,h22){const i=el('div','inset'+(h22?' h22':''),parent,r);i.textContent=text;i.style.color=G.c.value;return i}
+function slider(parent,r,min,max,val,on){
+ const w=el('div','sl',parent,r),cap=G.groove_cap;
+ w.style.borderWidth=`0 ${cap}px`;w.style.borderImage=`url(${A}groove.webp) 0 ${cap*2} fill / 0 ${cap}px stretch`;
+ const th=el('div','th',w);th.style.width=G.thumb_w+'px';th.style.backgroundImage=`url(${A}thumb.webp)`;
+ const inp=el('input','',w);inp.type='range';inp.min=min;inp.max=max;inp.value=val;inp.style.left=(-cap)+'px';inp.style.width=r[2]+'px';
+ const upd=()=>{const f=(inp.value-min)/(max-min);th.style.left=(f*(r[2]-G.thumb_w)-cap)+'px'};
+ inp.addEventListener('input',()=>{upd();on&&on(+inp.value)});upd();
+ return {w,inp,set(v){inp.value=v;upd()},get v(){return +inp.value},dis(d){inp.disabled=d;w.classList.toggle('dis',d)}};
+}
+function hold(e,down,up){e.addEventListener('mousedown',ev=>{ev.preventDefault();down()});['mouseup','mouseleave'].forEach(t=>e.addEventListener(t,up));
+ e.addEventListener('touchstart',ev=>{ev.preventDefault();down()},{passive:false});e.addEventListener('touchend',up)}
+
+// ── fit the 1512×869 window to the page width ──
+function fit(){const s=Math.min(1,($('fit').parentElement.clientWidth)/1512);stage.style.transform=`scale(${s})`;$('fit').style.height=(869*s)+'px'}
+addEventListener('resize',fit);fit();
+
+// ── pan, flag and status bar: one real capture per state ──
+const panImg=img('pan-design.webp',stage,G.pan,'cap-real');
+const sbImg=img('sb-design.webp',stage,G.statusbar,'cap-real');
+const ov=document.createElementNS('http://www.w3.org/2000/svg','svg');ov.setAttribute('class','abs new');px(ov,G.pan);
+// keyed: the app's TX filter overlay recipe (fill rgba(255,120,60,46), 2 px #ff7833 edges,
+// #ffaa70 label at 11 px, 8 px in and 4 px down, drawn only when it fits) and its meter face
+const meterTx=img('meter-tx.webp',stage,G.meter);meterTx.style.display='none';meterTx.classList.add('new');
+function txBand(xa,xb,P,label){const l=Math.max(xa,0),r=Math.min(xb,G.pan[2]);if(l>=r)return '';
+ let g=`<rect x="${l}" y="${P.top}" width="${r-l}" height="${P.bot-P.top}" fill="rgba(255,120,60,${(46/255).toFixed(3)})"/>`;
+ if(xa>=0)g+=`<rect x="${xa-1}" y="${P.top}" width="2" height="${P.bot-P.top}" fill="#ff7833"/>`;
+ if(xb<=G.pan[2])g+=`<rect x="${xb-1}" y="${P.top}" width="2" height="${P.bot-P.top}" fill="#ff7833"/>`;
+ if(label&&l+8+label.length*6.2<=r)g+=`<text x="${l+8}" y="${P.top+14}" fill="#ffaa70" font-size="11" font-family="-apple-system,BlinkMacSystemFont,sans-serif">${label}</text>`;
+ return g}
+
+ov.setAttribute('viewBox',`0 0 ${G.pan[2]} ${G.pan[3]}`);ov.style.pointerEvents='none';stage.appendChild(ov);
+const chTx=img('chbadges-tx.webp',stage,G.chbadges_tx);chTx.style.display='none';
+const flagTx=img('txbadge-on.webp',stage,G.txbadge);flagTx.style.display='none';
+const callout=el('div','callout',stage);
+
+// ── right strip: real Phone / CW, CWX and TX, scrolling as the app does ──
+const view=el('div','view',stage,G.view);
+const tall=el('div','tall',view);tall.style.height=G.strip_h+'px';tall.style.width=G.view[2]+'px';
+tall.style.background=`url(${A}strip.webp) 0 0/${G.view[2]}px ${G.strip_h}px no-repeat`;
+const sbt=el('div','abs',stage);
+function sbar(){const vh=G.view[3],th=Math.max(24,vh*vh/G.strip_h),t=view.scrollTop/(G.strip_h-vh)*(vh-th);
+ px(sbt,[G.view[0]+G.view[2]+2,G.view[1]+t+2,10,th-4]);sbt.style.borderStyle='solid';const c=G.sbthumb_cap;
+ sbt.style.borderWidth=`${c}px 0`;sbt.style.borderImage=`url(${A}sbthumb.webp) ${c*2} 0 fill / ${c}px 0 stretch`}
+const sbg=img('sbgroove.webp',stage,[G.view[0]+G.view[2],G.view[1],14,G.view[3]]);stage.appendChild(sbt);
+view.addEventListener('scroll',sbar);sbar();
+
+// Phone / CW tabs (real buttons; the Phone page is the real capture)
+const tabs=G.tabs;
+const tabPhone=btn(tall,tabs[0],'Phone','plain','hot');const tabCw=btn(tall,tabs[1],'CW','plain','hot');
+const tabImgs=[img('tab-phone-sel.webp',tall,tabs[0]),img('tab-cw-plain.webp',tall,tabs[1])];
+tabImgs.forEach(i=>{i.style.display='none';i.style.pointerEvents='none'});
+const phoneBody=img('phonebody.webp',tall,G.cwbody,'cap-real');phoneBody.style.display='none';
+const cwBody=el('div','abs new',tall,G.cwbody);cwBody.style.background=G.bg_applet;
+function showTab(t){const ph=t==='phone';phoneBody.style.display=ph?'':'none';cwBody.style.display=ph?'none':'';tabImgs.forEach(i=>i.style.display=ph?'':'none')}
+tabPhone.onclick=()=>showTab('phone');tabCw.onclick=()=>showTab('cw');
+
+// ── CW page: AetherSDR's CW page layout (margins 4,2,4,6; spacing 4; 70 px left column; 36 px values) ──
+const W=G.cwbody[2],R=(i)=>2+i*26;
+const valX=W-4-36,slX=4+70+4+4+4,slW=valX-4-slX;
+const S={bi:'semi',paddle:false,hand:false,cwx:false,kb:false,rpt:false,mon:true,pitch:650,delay:300,wpm:25,st:50,pan:50,iambic:true};
+lbl(cwBody,[4,R(0),70,22],'Delay:');
+const sDelay=slider(cwBody,[slX,R(0)+2,slW,18],0,1000,S.delay,v=>{S.delay=v;vDelay.textContent=v;state()});
+const vDelay=inset(cwBody,[valX,R(0)+2,36,18],S.delay);
+lbl(cwBody,[4,R(1),70,22],'Speed:');
+const sWpm=slider(cwBody,[slX,R(1)+2,slW,18],5,60,S.wpm,v=>{S.wpm=v;vWpm.textContent=v});
+const vWpm=inset(cwBody,[valX,R(1)+2,36,18],S.wpm);
+const bSide=btn(cwBody,[4,R(2),70,22],'Sidetone','green');
+const sSide=slider(cwBody,[slX,R(2)+2,slW,18],0,100,S.st,v=>{S.st=v;vSide.textContent=v;monVol.set(v);vMon.textContent=v});
+const vSide=inset(cwBody,[valX,R(2)+2,36,18],S.st);
+lbl(cwBody,[4,R(3),8,22],'L');
+const sPan=slider(cwBody,[16,R(3)+2,W-16-16,18],0,100,50,v=>{});
+lbl(cwBody,[W-12,R(3),8,22],'R');
+sPan.inp.addEventListener('dblclick',()=>sPan.set(50));
+const bBk=btn(cwBody,[4,R(4),66,22],'Semi BK','green');
+const bIam=btn(cwBody,[74,R(4),58,22],'Iambic','blue');
+const aw=G.arrow_wh;
+const xR=W-4-aw[2],xIn=xR-4-48,xL=xIn-4-aw[0];
+lbl(cwBody,[xL-4-36,R(4),36,22],'Pitch:');
+const aL=img('arrow-l.webp',cwBody,[xL,R(4)+(22-aw[1])/2,aw[0],aw[1]]),aR=img('arrow-r.webp',cwBody,[xR,R(4)+(22-aw[1])/2,aw[2],aw[1]]);
+aL.style.cursor=aR.style.cursor='pointer';
+const vPitch=inset(cwBody,[xIn,R(4)+2,48,18],S.pitch);
+aL.onclick=()=>setPitch(S.pitch-10);aR.onclick=()=>setPitch(S.pitch+10);
+const lKey=el('div','lamp',cwBody,[4,R(5),52,22]);lKey.textContent='KEY';
+const lTx=el('div','lamp',cwBody,[60,R(5),52,22]);lTx.textContent='TX';
+const lKeyer=el('div','lamp',cwBody,[116,R(5),W-120,22]);
+const stLine=el('div','state',cwBody,[4,R(6)+2,W-8,G.cwbody[3]-R(6)-8]);stLine.style.color=G.c.label;
+
+// ── CWX: the real applet, with Stop and Key added on the Send row ──
+const C=G.cwx;
+patch(tall,[C.title[0],C.title[1]+1,C.title[2],C.title[3]-2],G.hdrbg);
+const tt=lbl(tall,C.title,'CWX',G.c.hdr);tt.style.letterSpacing='.18em';tt.style.fontWeight='700';tt.style.textTransform='uppercase';
+const cwText=el('div','cwtext',tall,[C.text[0]+2,C.text[1]+2,C.text[2]-4,C.text[3]-4]);
+cwText.contentEditable='true';cwText.spellcheck=false;cwText.style.color=G.c.value;cwText.textContent='CQ CQ EME DE KG4VCF KG4VCF K';
+const sr=C.send,gap=2,mw=C.mem[0][2];
+patch(tall,sr,G.bg_applet);
+// Stop and Key sit over M3 and M4, on their columns
+const m3=C.mem[2],m4=C.mem[3];
+const bSend=btn(tall,[sr[0],sr[1],m3[0]-gap-sr[0],sr[3]],'Send');
+const bStop=btn(tall,[m3[0],sr[1],m3[2],sr[3]],'Stop','plain','new');
+const bKey=btn(tall,[m4[0],sr[1],m4[2],sr[3]],'Key','plain','new');
+bKey.title='Hand key: transmits while held, released after 3 s';
+const cs=C.sliders[0],cv=C.labels.find(l=>l[2]===36);
+const sCwx=slider(tall,cs,5,60,22,v=>{vCwx.textContent=v});const vCwx=inset(tall,cv,22);
+const mems=['CQ CQ EME DE KG4VCF KG4VCF K','TU 73 DE KG4VCF','O O O','RO RO','RRR','73 TU','QRZ? DE KG4VCF','KG4VCF'];
+const mBtns=C.mem.map((r,i)=>{const b=btn(tall,r,'M'+(i+1),'plain','hot');b.title=mems[i]+' (right-click to edit)';
+ b.onclick=()=>{stopCwx();cwText.textContent=mems[i];sendCwx(i)};
+ b.oncontextmenu=e=>{e.preventDefault();const v=prompt('Memory M'+(i+1),mems[i]);if(v!==null){mems[i]=v;b.title=v+' (right-click to edit)'}};return b});
+const bRpt=btn(tall,C.rpt,'Rpt','plain','hot');
+const rs=C.sliders[1],rv=C.labels.filter(l=>l[3]===22).slice(-1)[0];
+const sRpt=slider(tall,rs,1,60,6,v=>{vRpt.textContent=v});const vRpt=inset(tall,rv,6,true);
+const bKb=btn(tall,C.kb,'KB→CW','plain','hot');
+bRpt.onclick=()=>{S.rpt=!S.rpt;litHot(bRpt,S.rpt)};
+bKb.onclick=()=>{S.kb=!S.kb;litHot(bKb,S.kb);state()};
+function litHot(b,on){b.classList.toggle('hot',!on);setB(b,on?'green':'plain')}
+
+// ── TX applet (real), changed in CW: MON is the sidetone; mic-only controls grey out ──
+const T=G.tx,TB=n=>T.buttons.find(b=>b.name===n);
+const tune=T.buttons[0],mox=T.buttons[1],monB=T.buttons.find(b=>b.rect[1]===TB('TxMonitorSpeakersButton').rect[1]&&b.rect[0]<10);
+const src=T.labels[0];patch(tall,[src[0]+2,src[1]+2,src[2]-4,src[3]-4],'#050507');
+const srcL=lbl(tall,src,'Radio keyer',G.c.value,'center');srcL.classList.add('new');
+const tuneB=btn(tall,tune.rect,'TUNE','plain','hot'),moxB=btn(tall,mox.rect,'MOX','plain','hot');
+// RF Power at 85, the reading on the captured FORWARD POWER face
+const sRf=slider(tall,T.sliders[0],0,100,85,v=>{vRf.textContent=v});const vRf=lblv(T.labels[2],85);
+const sTp=slider(tall,T.sliders[1],0,100,50,v=>{vTp.textContent=v});const vTp=lblv(T.labels[4],50);
+function lblv(r,v){patch(tall,r,G.bg_applet);return lbl(tall,r,v,G.c.value,'flex-end')}
+const voxR=TB('TxVoxButton').rect;
+// greyed the app's way: the disabled button frame and the theme's disabled text color, no wash
+const VOXWHY='VOX keys on microphone audio; CW sends none';
+const voxB=btn(tall,voxR,'VOX','dis','new');voxB.title=VOXWHY;
+// plain labels sit on the applet (covered whole); values sit inside their box (3 px in)
+function disText(r,text,bg,opt){const k=bg===G.bg_applet?0:3;patch(tall,[r[0]+k,r[1]+k,r[2]-2*k,r[3]-2*k],bg);const l=lbl(tall,r,text,G.c.dis,opt&&opt.align);l.classList.add('new');
+ Object.assign(l.style,{fontSize:(opt&&opt.size||12)+'px',fontWeight:opt&&opt.bold?'700':'400',cursor:'not-allowed'});if(opt&&opt.pad)l.style.paddingLeft=opt.pad+'px';l.title=opt&&opt.why||'';return l}
+const VL=T.labels.filter(l=>l[1]===voxR[1]-1);
+disText(VL[0],'-40 dB','#010101',{align:'center',why:VOXWHY});disText(VL[1],'500 ms','#010101',{align:'center',why:VOXWHY});
+T.sliders.filter(r=>Math.abs(r[1]-voxR[1])<6).forEach(r=>{const h=el('div','dim new',tall,r);h.title=VOXWHY});
+const monBtn=btn(tall,monB.rect,'MON','green','new');
+const spk=TB('TxMonitorSpeakersButton'),phn=TB('TxMonitorHeadphonesButton');
+const bSpk=btn(tall,spk.rect,'SPEAKERS','plain','hot'),bPhn=btn(tall,phn.rect,'PHONES','plain','hot');
+bSpk.onclick=()=>litHot(bSpk,bSpk.classList.contains('hot'));bPhn.onclick=()=>litHot(bPhn,bPhn.classList.contains('hot'));
+const monVol=slider(tall,T.sliders[4],0,100,50,v=>{S.st=v;sSide.set(v);vSide.textContent=v;vMon.textContent=v});
+const vMon=lblv(T.labels.find(l=>l[1]===T.sliders[4][1]&&l[0]>200),50);
+['TxLevButton','TxEqButton','TxCfcButton'].forEach((n,i)=>{const b=btn(tall,TB(n).rect,['LEV','EQ','CFC'][i],'dis','new');b.title=['Leveler','EQ','CFC'][i]+' acts on microphone audio; CW sends none'});
+const bwTop=T.combos[0][1]+T.combos[0][3]+2,bwBot=T.labels.find(l=>l[3]===13);
+const BWWHY='TX BW shapes microphone audio; the radio keyer shapes CW';
+const BL=T.labels.filter(l=>l[1]===T.spins[0][1]);
+disText(BL[0],'TX BW',G.bg_applet,{bold:true,why:BWWHY});disText(BL[1],'Lo',G.bg_applet,{why:BWWHY});disText(BL[2],'Hi',G.bg_applet,{why:BWWHY});
+disText(T.labels.find(l=>l[3]===13),'100–2900 Hz · 2.8k BW',G.bg_applet,{align:'flex-end',bold:true,size:11,why:BWWHY});
+disText([T.spins[0][0],T.spins[0][1],T.spins[0][2]-22,T.spins[0][3]],'100 Hz','#050507',{pad:8,why:BWWHY});
+disText([T.spins[1][0],T.spins[1][1],T.spins[1][2]-22,T.spins[1][3]],'2900 Hz','#050507',{pad:8,why:BWWHY});
+T.spins.forEach(r=>{const h=el('div','dim new',tall,r);h.title=BWWHY});
+['2-Tone','PS-A','DUP'].forEach((t,i)=>{const r=T.buttons[T.buttons.length-3+i].rect;const b=btn(tall,r,t,'plain','hot');b.onclick=()=>litHot(b,b.classList.contains('hot'))});
+function syncMon(){setB(monBtn,S.mon?'green':'plain');setB(bSide,S.mon?'green':'plain');sSide.dis(!S.mon);monVol.dis(!S.mon)}
+monBtn.onclick=bSide.onclick=()=>{S.mon=!S.mon;syncMon();state()};
+
+// ── behavior (the design's rules) ──
+const radios={
+ '7000':{name:'ANAN-7000DLE',qsk:true,hl2:false,why:''},
+ 'g2':{name:'ANAN-G2',qsk:true,hl2:false,why:''},
+ '7000old':{name:'ANAN-7000DLE fw 1.6',qsk:false,hl2:false,why:'QSK needs radio firmware 1.7 or later.'},
+ '100d':{name:'ANAN-100D',qsk:false,hl2:false,why:'QSK needs Protocol 2 radio firmware 1.7 or later.'},
+ 'hl2':{name:'Hermes Lite 2',qsk:false,hl2:true,why:'Hermes Lite 2 cannot do QSK.'}};
+const order=['off','semi','qsk'],biText={off:'BK Off',semi:'Semi BK',qsk:'QSK'};
+let qskOk=true,qskWhy='';
+bBk.onclick=()=>{let i=order.indexOf(S.bi);do{i=(i+1)%3}while(order[i]==='qsk'&&!qskOk);S.bi=order[i];state()};
+bIam.onclick=()=>{if(radios[$('radio').value].hl2)return;S.iambic=!S.iambic;state()};
+function setPitch(v){S.pitch=Math.max(200,Math.min(2250,v));vPitch.textContent=S.pitch;if(typeof setupPitch==='function')setupPitch(S.pitch);state()}
+const oob=()=>$('band').value==='oob';
+function txKeyed(){if(oob())return false;if(S.cwx||S.hand)return true;if(S.paddle&&S.bi!=='off')return true;if(S.paddle&&S.bi==='off'&&S.mox)return true;return false}
+moxB.onclick=()=>{if(oob())return;S.mox=!S.mox;state()};
+tuneB.onclick=()=>{if(oob())return;S.tune=!S.tune;state()};
+function variant(){const b=$('band').value;if(b!=='hf')return b;return $('conv').value==='today'?'today':'design'}
+function state(){
+ const r=radios[$('radio').value],band=$('band').value,remote=$('win').value==='remote';
+ qskOk=r.qsk;qskWhy=r.why;
+ if(qskOk&&band==='xv'){qskOk=false;qskWhy='No QSK on a transverter band: its relays are not made to switch between dots.'}
+ if(!qskOk&&S.bi==='qsk')S.bi='semi';
+ bBk.textContent=biText[S.bi];setB(bBk,S.bi==='off'?'plain':'green');bBk.title=qskOk?'Break-in: Off, Semi, QSK':'Break-in: Off, Semi. '+qskWhy;
+ sDelay.dis(S.bi!=='semi');
+ if(r.hl2){setB(bIam,'dis');bIam.title='A standard Hermes Lite 2 has no paddle keyer'}else{setB(bIam,S.iambic?'blue':'plain');bIam.title=''}
+ const v=variant();panImg.src=A+'pan-'+v+'.webp';sbImg.src=A+'sb-'+v+'.webp';
+ const tx=txKeyed();
+ lKey.dataset.s=(S.paddle||S.hand)?'green':'';lKey.style.color=(S.paddle||S.hand)?G.c.btn:G.c.label;
+ lTx.dataset.s=tx?'red':'';lTx.style.color=tx?G.c.btn:G.c.label;
+ lKeyer.textContent=oob()?'KEYER OFF':(r.hl2?'STRAIGHT KEY':'RADIO KEYER');lKeyer.style.color=oob()?G.c.amber:G.c.label;
+ setB(moxB,S.mox&&!oob()?'red':'plain');moxB.classList.toggle('hot',!(S.mox&&!oob()));
+ setB(tuneB,S.tune&&!oob()?'red':'plain');tuneB.classList.toggle('hot',!(S.tune&&!oob()));
+ const keyedAny=tx||(S.mox&&!oob())||(S.tune&&!oob());
+ chTx.style.display=keyedAny?'':'none';flagTx.style.display=keyedAny&&G.flags[v]?'':'none';
+ if(G.flags[v])px(flagTx,G.flags[v].badge);
+ let h;
+ if(oob())h='Transmit is refused at 14.352 MHz: outside the band. The radio’s keyer is off until the slice is back in the band, so the paddle cannot key it either.';
+ else if(r.hl2)h='Hermes Lite 2: the KEY jack takes a straight key or an external keyer. For paddles without one, send with CWX.';
+ else if(S.bi==='off')h='BK Off: the radio sends only while MOX is held. For sequenced EME stations that key PTT first.';
+ else if(S.bi==='qsk')h='QSK: you hear the band between dots. The radio switches itself.';
+ else h='Semi: the paddle puts the radio into transmit; it returns to receive '+S.delay+' ms after the last element.';
+ if(remote)h='Remote window: every control here acts on the Core’s radio. '+h;
+ stLine.textContent=h;stLine.style.color=oob()?G.c.amber:G.c.label;
+ setB(bSend,oob()?'dis':(S.cwx&&!S.kb?'green':'plain'));setB(bKey,oob()?'dis':(S.hand?'green':'plain'));
+ cwText.title=oob()?'Send is refused here: outside the band.':(remote?'Your text goes to the Core, which times the dots and dashes beside the radio.':'Timing runs beside the radio. CAT KY and TCI feed the same sender.');
+ sbImg.title='';
+ drawPan(v,tx);
+ if(typeof setupState==='function')setupState(r,band);
+}
+function drawPan(v,tx){
+ const P=G.panmap[v]||G.panmap.design;let g='';ov.innerHTML='';callout.style.display='none';
+ if(!P)return;
+ const X=hz=>P.x0+(hz-P.hz0)*P.pxPerHz;
+ const carrier=P.dial;
+ if(tx){const x=X(carrier),w=Math.max(6,100*P.pxPerHz);g+=txBand(x-w/2,x+w/2,P,'TX CW')}
+ const keyedAny=tx||(S.mox&&!oob())||(S.tune&&!oob());
+ meterTx.style.display=keyedAny?'':'none';
+ if(keyedAny)g+=`<rect x="3.5" y="3.5" width="${G.pan[2]-7}" height="${G.pan[3]-7}" fill="none" stroke="rgba(255,0,0,0.78)" stroke-width="3"/>`;
+ ov.innerHTML=g;
+ if(v==='design'||v==='today'){
+  const off=v==='today';callout.style.display='';
+  callout.textContent=off?(tx?'on the air 650 Hz below the station':'carrier goes out here: 650 Hz below the station'):(tx?'on the air, on the station':'carrier goes out here: on the station');
+  const cx=G.pan[0]+X(carrier);callout.style.left=(cx-10)+'px';callout.style.top=(G.pan[1]+P.top-34)+'px';
+  callout.style.background=off?'#d8a55f':'';
+ }
+ $('pancap').textContent=v==='today'?'Pan, NereusSDR today: to hear the station at the pitch, the dial sits 650 Hz below it, and the radio keys on the dial, so a reply lands 650 Hz off. The flag reads 14.029.350.':
+  v==='design'?'Pan, this design: the dial line, the passband and the carrier all sit on the station. The flag reads 14.030.000, the frequency you are on the air.':
+  v==='xv'?'Slice A on a 2 m transverter band: QSK is skipped on the break-in button, with the reason in its tooltip and on the state line.':'Slice A outside the band: Send, Key, MOX and the paddle are refused; the state line says why.';
+}
+// CWX sending
+function renderCwx(t,p){cwText.innerHTML='';const a=document.createElement('span');a.className='sent';a.textContent=t.slice(0,p);const c=document.createElement('span');c.className='cur';c.textContent=t.charAt(p);cwText.append(a,c,document.createTextNode(t.slice(p+1)))}
+function sendCwx(mi){if(oob())return;stopCwx();const t=cwText.textContent;if(!t.trim())return;S.cwx=true;S.cwxText=t;S.mi=mi;let p=0;
+ if(mi!==undefined)litHot(mBtns[mi],true);state();
+ const step=()=>{if(p>=t.length){if(S.rpt){S.cwx=false;state();S.timer=setTimeout(()=>{cwText.textContent=t;sendCwx(mi)},sRpt.v*1000);return}stopCwx();return}
+  renderCwx(t,p);p++;S.timer=setTimeout(step,6000/sCwx.v)};step()}
+function stopCwx(){clearTimeout(S.timer);if(S.cwxText!=null)cwText.textContent=S.cwxText;if(S.mi!==undefined&&mBtns[S.mi])litHot(mBtns[S.mi],false);S.cwx=false;S.cwxText=null;S.mi=undefined;state()}
+bSend.onclick=()=>{if(oob()||S.kb)return;sendCwx()};bStop.onclick=stopCwx;
+cwText.addEventListener('keydown',e=>{if(e.key==='Escape')stopCwx()});
+cwText.addEventListener('input',()=>{if(S.kb&&!oob()){S.cwx=true;state();clearTimeout(S.kbT);S.kbT=setTimeout(()=>{S.cwx=false;state()},400)}});
+let handT;
+hold(bKey,()=>{if(oob())return;S.hand=true;state();clearTimeout(handT);handT=setTimeout(()=>{S.hand=false;state()},3000)},()=>{if(!S.hand)return;clearTimeout(handT);S.hand=false;state()});
+hold($('paddle'),()=>{S.paddle=true;$('paddle').classList.add('on');state()},()=>{if(!S.paddle)return;S.paddle=false;$('paddle').classList.remove('on');state()});
+['radio','band','win','conv'].forEach(id=>$(id).addEventListener('change',state));
+$('marknew').onchange=()=>document.body.classList.toggle('marknew',$('marknew').checked);
+syncMon();state();
+// ── Setup dialog: real pages; the CW page's new rows from its own components ──
+const SG={"pages":{"Hardware Config":{"img":"setup-hardware-config.webp","sel":[168,189],"size":[900,650]},"PA Gain":{"img":"setup-pa-gain.webp","sel":[210,231],"size":[900,650]},"Watt Meter":{"img":"setup-watt-meter.webp","sel":[231,252],"size":[900,650]},"PA Values":{"img":"setup-pa-values.webp","sel":[252,273],"size":[900,650]},"Outputs":{"img":"setup-outputs.webp","sel":[294,315],"size":[900,650]},"Microphone":{"img":"setup-microphone.webp","sel":[315,336],"size":[900,650]},"Digital modes":{"img":"setup-digital-modes.webp","sel":[315,336],"size":[900,650]},"TX Profile":{"img":"setup-tx-profile.webp","sel":[315,336],"size":[900,650]},"Advanced":{"img":"setup-advanced.webp","sel":[315,336],"size":[900,650]},"AGC/ALC":{"img":"setup-agc-alc.webp","sel":[315,336],"size":[900,650]},"NR/ANF":{"img":"setup-nr-anf.webp","sel":[315,336],"size":[900,650]},"NB/SNB":{"img":"setup-nb-snb.webp","sel":[315,336],"size":[900,650]},"CW":{"img":"setup-cw.webp","sel":[315,336],"size":[900,650]},"AM/SAM":{"img":"setup-am-sam.webp","sel":[315,336],"size":[900,650]},"FM":{"img":"setup-fm.webp","sel":[315,336],"size":[900,650]},"CFC":{"img":"setup-cfc.webp","sel":[315,336],"size":[900,650]},"TNF":{"img":"setup-tnf.webp","sel":[315,336],"size":[900,650]},"Filter Presets":{"img":"setup-filter-presets.webp","sel":[315,336],"size":[900,650]},"Options":{"img":"setup-dsp-options.webp","sel":[315,336],"size":[900,650]},"Spectrum":{"img":"setup-spectrum.webp","sel":[315,336],"size":[900,650]},"Levels":{"img":"setup-levels.webp","sel":[315,336],"size":[900,650]},"Waterfall":{"img":"setup-waterfall.webp","sel":[315,336],"size":[900,650]},"View":{"img":"setup-view.webp","sel":[315,336],"size":[900,650]},"Peaks & Markers":{"img":"setup-peaks-markers.webp","sel":[315,336],"size":[900,650]},"FFT & Engine":{"img":"setup-fft-engine.webp","sel":[315,336],"size":[900,650]},"Transmit Display":{"img":"setup-transmit-display.webp","sel":[315,336],"size":[900,650]},"Multimeter":{"img":"setup-multimeter.webp","sel":[315,336],"size":[900,650]},"Power":{"img":"setup-power.webp","sel":[315,336],"size":[900,650]}},"tree":[0,0,200,650],"pitch":21,"order":["General","Startup Preferences","General Options","Filters","Cores","Your Cores","Audio with the Core","Hardware","Hardware Config","PA","PA Gain","Watt Meter","PA Values","Audio","Outputs","Microphone","Digital modes","TX Profile","Advanced","DSP","AGC/ALC","NR/ANF","NB/SNB","CW","AM/SAM","FM","CFC","TNF","Filter Presets","Options","Display","Spectrum","Levels","Waterfall","View","Peaks & Markers","FFT & Engine","Transmit Display","Multimeter","Transmit","Power","Speech Processor","DEXP/VOX"],"area":[213,42,675,600],"apf":[213,226,675,115],"group_cap":10.0,"spin_caps":[5.0,26.0],"apf_enable":[380,251,499,21],"apf_center":[380,276,447,16],"apf_val":[835,276,44,16],"sgroove_cap":12.0,"sthumb_w":12.0,"c":{"label":"#dcdce1","title":"#c4c4ca","combo":"#dcdce1","blue":"#4a7ba8","page":"#08080a","btn":"#dcdce1"},"title":[213,8,675,24],"unchecked":["pa-gain",[213,556,675,16]],"checked":["watt-meter",[213,86,675,16]]},ss=$('sstage'),SW0=SG.pages[SP].size[0],SH0=SG.pages[SP].size[1];
+ss.style.width=SW0+'px';ss.style.height=SH0+'px';ss.style.backgroundSize=SW0+'px '+SH0+'px';
+function sfit(){const s=Math.min(1,$('sfit').parentElement.clientWidth/SW0);ss.style.transform=`scale(${s})`;$('sfit').style.height=(SH0*s)+'px'}
+addEventListener('resize',sfit);sfit();
+let curPage=SP;
+const treeHit=el('div','abs',ss,SG.tree);treeHit.style.cursor='pointer';
+treeHit.onclick=e=>{const p=SG.pages[curPage];if(!p.sel)return;const s=ss.getBoundingClientRect(),k=s.width/SW0;
+ const y=(e.clientY-s.top)/k;const off=Math.floor((y-p.sel[0])/SG.pitch);const name=SG.order[SG.order.indexOf(curPage)+off];
+ if(name&&SG.pages[name])showPage(name)};
+const spOver=el('div','abs new',ss,[SG.area[0],SG.area[1]-4,SG.area[2],SH0-SG.area[1]-4]);
+spOver.style.background=SG.c.page;
+const pv=el('div','view',spOver,[0,0,SG.area[2],SH0-SG.area[1]-4]);
+const pin=el('div','tall',pv);
+function showPage(n){curPage=n;ss.style.backgroundImage=`url(${SA}${SG.pages[n].img})`;spOver.style.display=n===SP?'':'none';
+ $('scap').textContent=n===SP?'':n+': today’s page, unchanged by this design. Click '+SP+' under DSP to return.'}
+// row builders, in the CW page's metrics: label column 9..159, control 167..652, 4 px between rows
+// (14 px kept clear at the right for the page's scroll bar)
+const LX=9,CX=167,CW_=485;
+function sLabel(p,y,h,t){const l=el('div','lbl',p,[LX,y,150,h]);l.textContent=t;l.style.color=SG.c.label;l.style.fontSize='12px';return l}
+function sCombo(p,y,label,opts,val,on){sLabel(p,y,23,label);const c=el('div','abs',p,[CX,y,CW_,23]);
+ c.style.borderStyle='solid';c.style.borderWidth='0 6px';c.style.borderImage=`url(${SA}combo.webp) 0 12 fill / 0 6px stretch`;
+ const t=el('div','lbl',c,[0,0,CW_-12,23]);t.style.color=SG.c.combo;t.style.fontSize='12px';
+ const s=el('select','',c,[-6,0,CW_,23]);s.style.opacity=0;s.style.position='absolute';s.style.cursor='pointer';
+ opts.forEach(o=>{const op=document.createElement('option');op.value=o[0];op.textContent=o[1];s.appendChild(op)});s.value=val;
+ const sync=()=>{t.textContent=s.options[s.selectedIndex].textContent};s.onchange=()=>{sync();on&&on(s.value)};sync();
+ return {s,set(v){s.value=v;sync()},dis(d){s.disabled=d;c.style.opacity=d?.5:1},opt(v){return [...s.options].find(o=>o.value===v)}}}
+function sSpin(p,y,label,val,min,max,step,on){sLabel(p,y,21,label);const c=el('div','abs',p,[CX,y,CW_,21]),k=SG.spin_caps;
+ c.style.borderStyle='solid';c.style.borderWidth=`0 ${k[1]}px 0 ${k[0]}px`;c.style.borderImage=`url(${SA}spin.webp) 0 ${k[1]*2} 0 ${k[0]*2} fill / 0 ${k[1]}px 0 ${k[0]}px stretch`;
+ const i=el('input','',c,[0,0,CW_-k[0]-k[1],21]);i.style.position='absolute';i.type='text';i.value=val;
+ Object.assign(i.style,{background:'transparent',border:0,outline:0,color:SG.c.combo,font:'13px -apple-system,sans-serif',padding:'0 2px'});
+ const up=el('div','abs',c,[CW_-k[0]-k[1],0,k[1],10]),dn=el('div','abs',c,[CW_-k[0]-k[1],11,k[1],10]);up.style.cursor=dn.style.cursor='pointer';
+ const set=v=>{v=Math.max(min,Math.min(max,Math.round(+v||0)));i.value=v;on&&on(v)};
+ up.onclick=()=>{if(!i.disabled)set(+i.value+step)};dn.onclick=()=>{if(!i.disabled)set(+i.value-step)};i.onchange=()=>set(i.value);
+ return {i,set,dis(d){i.disabled=d;c.style.opacity=d?.5:1},get v(){return +i.value}}}
+function sSlider(p,y,label,min,max,val,fmt,on){sLabel(p,y,16,label);const w=fmt?CW_-52:CW_;
+ const r=[CX,y,w,16],cap=SG.sgroove_cap,d=el('div','sl',p,r);d.style.borderWidth=`0 ${cap}px`;
+ d.style.borderImage=`url(${SA}sgroove.webp) 0 ${cap*2} fill / 0 ${cap}px stretch`;
+ const th=el('div','th',d);th.style.width=SG.sthumb_w+'px';th.style.backgroundImage=`url(${SA}sthumb.webp)`;
+ const inp=el('input','',d);inp.type='range';inp.min=min;inp.max=max;inp.value=val;inp.style.left=(-cap)+'px';inp.style.width=w+'px';
+ const v=fmt?el('div','lbl',p,[CX+w+8,y,44,16]):null;if(v){v.style.color=SG.c.blue;v.style.fontWeight='700';v.style.fontSize='12px';v.style.justifyContent='flex-end'}
+ const upd=()=>{th.style.left=((inp.value-min)/(max-min)*(w-SG.sthumb_w)-cap)+'px';if(v)v.textContent=fmt(+inp.value)};
+ inp.addEventListener('input',()=>{upd();on&&on(+inp.value)});upd();
+ return {inp,set(x){inp.value=x;upd()},dis(t){inp.disabled=t;d.classList.toggle('dis',t);if(v)v.style.opacity=t?.45:1}}}
+function sCheck(p,y,text,val,on){const r=el('div','abs',p,[CX,y,CW_,20]);r.style.cursor='pointer';
+ const b=el('img','abs',r,[0,2,16,16]);const t=el('div','lbl',r,[22,0,CW_-22,20]);t.textContent=text;t.style.color=SG.c.label;t.style.fontSize='12px';
+ let v=val,dis=false;const sync=()=>{b.src=SA+(v?'chk-checked.webp':'chk-unchecked.webp');r.style.opacity=dis?.45:1;r.style.cursor=dis?'not-allowed':'pointer'};
+ r.onclick=()=>{if(dis)return;v=!v;sync();on&&on(v)};sync();
+ return {set(x){v=x;sync()},get v(){return v},dis(d){dis=d;sync()},el:r}}
+function sNote(p,y,h,text,color){const n=el('div','state',p,[LX,y,CX+CW_-LX,h]);n.textContent=text;n.style.color=color||SG.c.label;n.style.fontSize='12px';n.style.lineHeight='15px';return n}
+function sReadout(p,y,label,text){sLabel(p,y,16,label);const v=el('div','lbl',p,[CX,y,CW_,16]);v.style.color=SG.c.blue;v.style.fontWeight='700';v.style.fontSize='12px';v.textContent=text;return v}
+let gy=4;const gc=SG.group_cap;
+function group(title,build){const top=gy;let y=top+25;const rows=[];
+ const add=(h,f)=>{const r=f(y);y+=h+4;return r};const res=build(add);y+=-4+9;
+ const f=el('div','abs gframe',pin,[0,top+8,SG.area[2]-16,y-top-8]);f.style.borderStyle='solid';f.style.borderWidth=`${gc}px`;
+ f.style.borderImage=`url(${SA}group.webp) ${gc*2} fill / ${gc}px stretch`;f.style.zIndex=0;
+ const t=el('div','lbl',pin,[12,top,0,16]);t.style.width='auto';t.style.padding='0 4px';t.style.background=SG.c.page;t.style.color=SG.c.title;t.style.fontWeight='700';t.style.fontSize='13px';t.textContent=title;
+ pin.querySelectorAll(':scope > *').forEach(e=>{if(!e.classList.contains('gframe'))e.style.zIndex=1});gy=y+6;return res}
+// scrollbar thumb for the page (the strip's real scroll bar pieces)
+const pgr=el('div','abs',spOver,[SG.area[2]-14,0,14,SH0-SG.area[1]-4]);pgr.style.background=`url(${A}sbgroove.webp) 0 0/100% 100%`;
+const pth=el('div','abs',spOver);
+function psb(){const vh=pv.clientHeight,H=pin.offsetHeight;if(H<=vh){pth.style.display=pgr.style.display='none';return}pth.style.display=pgr.style.display='';
+ const th=Math.max(24,vh*vh/H),t=pv.scrollTop/(H-vh)*(vh-th),c=G.sbthumb_cap;
+ px(pth,[SG.area[2]-12,t+2,10,th-4]);pth.style.borderStyle='solid';pth.style.borderWidth=`${c}px 0`;pth.style.borderImage=`url(${A}sbthumb.webp) ${c*2} 0 fill / ${c}px 0 stretch`}
+pv.addEventListener('scroll',psb);
+
+
+function setupStart(){showPage(SP);psb()}
+var ST={};
+group('Keyer',add=>{
+ ST.mode=add(23,y=>sCombo(pin,y,'Mode',[['a','Iambic A'],['b','Iambic B'],['s','Straight key']],'b',v=>{S.iambic=v!=='s';state()}));
+ ST.weight=add(21,y=>sSpin(pin,y,'Weight',50,33,66,1));
+ ST.wpm=add(16,y=>sSlider(pin,y,'Speed (WPM)',5,60,S.wpm,v=>v+' WPM',v=>{S.wpm=v;sWpm.set(v);vWpm.textContent=v}));
+ ST.pitch=add(16,y=>sSlider(pin,y,'Pitch (Hz)',200,2250,S.pitch,v=>v+' Hz',v=>setPitch(Math.round(v/10)*10)));
+ ST.rev=add(20,y=>sCheck(pin,y,'Reverse paddles',false));
+ ST.strict=add(20,y=>sCheck(pin,y,'Strict character spacing',false));
+ ST.hl2=add(30,y=>sNote(pin,y,30,'A standard Hermes Lite 2 has no paddle keyer: its KEY jack takes a straight key or an external keyer. These settings apply only to an HL2 fitted with the add-on audio board.'));
+});
+group('Break-In',add=>{
+ ST.bi=add(23,y=>sCombo(pin,y,'Mode',[['off','Off (manual, MOX keys)'],['semi','Semi'],['qsk','QSK (full break-in)']],S.bi,v=>{if(v==='qsk'&&!qskOk){ST.bi.set(S.bi);return}S.bi=v;state()}));
+ ST.delay=add(16,y=>sSlider(pin,y,'Semi-Break-In Delay (ms)',0,1000,S.delay,v=>v+' ms',v=>{S.delay=v;sDelay.set(v);vDelay.textContent=v;state()}));
+ ST.rfd=add(21,y=>sSpin(pin,y,'Key-down to RF (ms)',7,0,255,1,()=>state()));
+ ST.kud=add(21,y=>sSpin(pin,y,'PTT release delay (ms)',10,0,500,1,()=>state()));
+ ST.hang=add(16,y=>sReadout(pin,y,'Radio hang time',''));
+ add(16,y=>sNote(pin,y,16,'The radio accepts 0 to 255 ms.'));
+});
+group('Sidetone',add=>{
+ ST.hw=add(20,y=>sCheck(pin,y,'From the radio: its headphone jack, follows the paddle with no delay',true,()=>state()));
+ ST.sw=add(20,y=>sCheck(pin,y,'From the computer: in NereusSDR’s audio, follows CWX, CAT and TCI keying',true,()=>state()));
+ ST.lvl=add(16,y=>sSlider(pin,y,'Level',0,100,S.st,v=>String(v),v=>{S.st=v;sSide.set(v);vSide.textContent=v;monVol.set(v);vMon.textContent=v}));
+});
+group('Key Input (serial port)',add=>{
+ ST.port=add(23,y=>sCombo(pin,y,'Port',[['','None'],['u','/dev/cu.usbserial-A10K'],['v','COM7 (virtual pair)']],'',v=>serialDeps()));
+ ST.pad=add(20,y=>sCheck(pin,y,'Paddles: dot on DSR, dash on CTS (the radio’s keyer times them)',false));
+ ST.skey=add(23,y=>sCombo(pin,y,'Straight key line',[['n','None'],['dsr','DSR'],['cts','CTS']],'n'));
+ ST.ptt=add(23,y=>sCombo(pin,y,'PTT line',[['n','None'],['dsr','DSR'],['cts','CTS']],'n'));
+});
+group('Options',add=>{
+ ST.auto=add(20,y=>sCheck(pin,y,'Switch to CW when the paddles are used',false,v=>ST.ret.dis(!v)));
+ ST.ret=add(21,y=>sSpin(pin,y,'Return after (ms)',2000,0,10000,100));
+});
+// APF: the real group, live
+// the capture is the page's full width; 16 px are taken out of its slider track (x 583..599)
+// so its frame and value clear the page's scroll bar, as the rows above do
+const apfTop=gy,AW=SG.apf[2],AH=SG.apf[3],CUT=16,RX=AW-76;
+const apL=el('div','abs cap-real',pin,[0,apfTop,RX-CUT,AH]);apL.style.background=`url(${SA}apf.webp) 0 0/${AW}px ${AH}px`;apL.style.zIndex=1;
+const apRt=el('div','abs cap-real',pin,[RX-CUT,apfTop,AW-RX,AH]);apRt.style.background=`url(${SA}apf.webp) ${-RX}px 0/${AW}px ${AH}px`;apRt.style.zIndex=1;
+const apfR=(r)=>{const x=r[0]-SG.apf[0];return [x>=RX?x-CUT:x,r[1]-SG.apf[1]+apfTop,x<RX&&x+r[2]>RX?r[2]-CUT:r[2],r[3]]};
+pin.style.height=(apfTop+SG.apf[3]+8)+'px';
+const apfEn=btn(pin,apfR(SG.apf_enable),'Enable','plain','hot');apfEn.style.zIndex=2;apfEn.style.height=SG.apf_enable[3]+'px';
+apfEn.onclick=()=>litHot(apfEn,apfEn.classList.contains('hot'));
+{const r=apfR(SG.apf_center);const cap=SG.sgroove_cap,d=el('div','sl',pin,r);d.style.zIndex=2;d.style.borderWidth=`0 ${cap}px`;
+ d.style.borderImage=`url(${SA}sgroove.webp) 0 ${cap*2} fill / 0 ${cap}px stretch`;const th=el('div','th',d);th.style.width=SG.sthumb_w+'px';th.style.backgroundImage=`url(${SA}sthumb.webp)`;
+ const inp=el('input','',d);inp.type='range';inp.min=200;inp.max=2250;inp.step=10;inp.value=600;inp.style.left=(-cap)+'px';inp.style.width=r[2]+'px';
+ const vr=apfR(SG.apf_val);patch(pin,vr,SG.c.page).style.zIndex=2;const v=el('div','lbl',pin,vr);v.style.zIndex=3;v.style.color=SG.c.blue;v.style.fontWeight='700';v.style.fontSize='12px';v.style.justifyContent='flex-end';
+ const upd=()=>{th.style.left=((inp.value-200)/2050*(r[2]-SG.sthumb_w)-cap)+'px';v.textContent=inp.value+' Hz'};inp.addEventListener('input',upd);upd()}
+function serialDeps(){const on=ST.port.s.value!=='';ST.pad.dis(!on);ST.skey.dis(!on);ST.ptt.dis(!on)}
+serialDeps();ST.ret.dis(true);
+function setupPitch(v){ST&&ST.pitch&&ST.pitch.set(v)}
+function setupState(r,band){
+ if(!ST||!ST.bi)return;ST.bi.set(S.bi);const q=ST.bi.opt('qsk');q.disabled=!qskOk;q.textContent=qskOk?'QSK (full break-in)':'QSK: '+qskWhy;
+ ST.delay.dis(S.bi!=='semi');ST.delay.set(S.delay);ST.wpm.set(S.wpm);ST.lvl.set(S.st);ST.lvl.dis(!S.mon);
+ ST.hl2.style.color=r.hl2?G.c.amber:SG.c.label;ST.mode.dis(r.hl2);ST.hw.dis(r.hl2);
+ const hang=S.bi==='semi'?(S.delay+ST.kud.v)+' ms (break-in delay + PTT release delay)':(S.bi==='qsk'?'0 ms (QSK)':'0 ms (off)');ST.hang.textContent=hang;
+}
+setupStart();state();
+
+// ── where each piece came from ──
+$('legend').innerHTML=`<h2>Where each piece came from</h2>
+<table><tr><th style="width:34%">Piece</th><th style="width:16%">Source</th><th>How</th></tr>
+<tr><td>Window: menu, top bar, Main Panel (S-meter, RX, Mod Monitor), both pans, flags, status bar</td><td>Real capture</td><td>The preview tool's CW scene in the workspace look, on screen (cocoa) so the pan draws. The pans are zoomed to 12 kHz with the app's own zoom call.</td></tr>
+<tr><td>Slice A in four states: this design, today, 2 m, outside the band</td><td>Real capture</td><td>One capture each, with the slice frequency and filter set before the capture.</td></tr>
+<tr><td>Keyed: flag TX badge, CH 0 TX badge, lit MOX and TUNE, the S-meter's FORWARD POWER face</td><td>Real capture</td><td>The TX scene (its meter face is swapped in while keyed), and the TX applet captured with MOX and TUNE checked (signals blocked, nothing keys).</td></tr>
+<tr><td>Phone / CW header, tabs and Phone page</td><td>Real capture</td><td>Today's applet.</td></tr>
+<tr><td>CWX applet: text, Send, Speed, M1 to M8, Rpt, KB→CW</td><td>Real capture</td><td>Today's applet, hidden in releases until CW transmit ships.</td></tr>
+<tr><td>TX applet</td><td>Real capture</td><td>Today's applet.</td></tr>
+<tr><td>Setup tree and every page</td><td>Real capture</td><td>One capture per page. The CW page's Keyer, Timing and APF groups are today's, shown with their build switch on.</td></tr>
+<tr><td>CW page body: Delay, Speed, Sidetone and level, L/R, Break-in, Iambic, Pitch</td><td>New</td><td>AetherSDR's CW page layout and sizes (70 px label column, 36 px values, 22 px rows), built from the CWX slider, value box and button pixels and the RX applet's step arrows.</td></tr>
+<tr><td>KEY, TX and keyer lamps; the state line</td><td>New</td><td>Value-box and lit-button pixels; label text style.</td></tr>
+<tr><td>CWX Stop and Key; title without "(not wired)"</td><td>New</td><td>CWX button pixels at the memory buttons' width.</td></tr>
+<tr><td>TX applet in CW: "Radio keyer" source, MON as the sidetone, greyed VOX, LEV, EQ, CFC and TX BW</td><td>New</td><td>The applet's own disabled look (its SWR Prot button frame and the theme's disabled text color, no wash) and value-box pixels.</td></tr>
+<tr><td>Keyed pan: carrier marker and red border</td><td>New</td><td>The app's own TX filter overlay recipe (its fill, 2 px edge lines and label color, size and place, with the label left off when it does not fit, as the app does) and its 3 px red transmit border, drawn on the receive capture. The app also swaps the pan to its transmit display while keyed, which needs a transmitting radio to capture. The orange tag is a mockup note, not part of the app.</td></tr>
+<tr><td>Setup CW page: Speed, Pitch, Reverse, Strict spacing; Break-In, Sidetone, Key Input, Options groups</td><td>New</td><td>The page's own group frame, combo, spin box, slider, value text and a Setup check box, in its 150 px label column and 4 px row spacing.</td></tr>
+</table>`;
+
+// state from the address for screenshots, e.g. #hand&mox&radio=hl2&band=oob
+(function(){const h=new URLSearchParams(location.hash.slice(1));['hand','mox','tune','paddle'].forEach(k=>{if(h.has(k))S[k]=true});
+ ['radio','band'].forEach(k=>{if(h.get(k)){$(k).value=h.get(k);$(k).dispatchEvent(new Event('change'))}});state();if(h.get('vscroll')){view.scrollTop=+h.get('vscroll');sbar()}if(h.get('sscroll')){pv.scrollTop=+h.get('sscroll');psb()}})();
+</script>
+</body></html>

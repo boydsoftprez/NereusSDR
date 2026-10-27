@@ -29,11 +29,15 @@
 //   2026-09-27 - Original implementation for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Anthropic
 //                Claude Code (R-IOS-13, R-R3-49).
+//   2026-10-26: CW transmit, the computer sidetone reaches the holder's
+//                mix as MON does (R-CW-39, D15). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "core/AudioEngine.h"
+#include "core/CwxSender.h"
 #include "core/IAudioBus.h"
 #include "core/MoxController.h"
 #include "core/safety/TransmitHolder.h"
@@ -381,6 +385,51 @@ private slots:
         const int before = main.calls;
         h.period(false);
         QCOMPARE(main.calls, before + 1);
+        QCOMPARE(main.peak(), 0.0f);
+        h.engine->releaseOwnerMix(holder);
+    }
+
+    // CW transmit (R-CW-39, D15): the computer sidetone fills the monitor
+    // slot, so a remote holder's mix carries it at MON's level, exactly as
+    // MON's own audio, and the Core's own outputs leave it out while that
+    // device holds. Keyed by the CWX sender's straight key; unkeyed, the
+    // holder hears nothing.
+    void cwSidetoneReachesTheHoldersMixAsMonDoes()
+    {
+        MixHarness h;
+        for (const int id : {h.sliceA, h.sliceB}) {
+            h.radio->sliceById(id)->setDspMode(DSPMode::CWU);
+        }
+        QVERIFY(h.radio->computeComputerSidetoneRun());
+        QVERIFY(h.engine->cwSidetoneRun());
+        h.engine->setTxMonitorLocal(false);
+        const int holder = h.engine->acquireOwnerMix();
+        h.engine->setOwnerMixSliceMask(holder, h.bit(h.sliceA));
+        RecordingMixTap main;
+        QVERIFY(h.engine->setOwnerMixAudioTap(holder, &main, /*speakersOnly=*/true));
+        h.engine->setOwnerMixMonitor(holder, MasterMixer::OwnerMonitor::Speakers);
+
+        QVERIFY(h.radio->cwxSender()->setHandKey(true));
+        QVERIFY(h.engine->cwSidetoneKeyed());
+        for (int p = 0; p < 20; ++p) {
+            h.period(false);
+        }
+        // Left and right are the tone's I and Q (sidetone.c), so each
+        // frame's magnitude is the sidetone's level.
+        QCOMPARE(int(main.last.size()), kFrames * 2);
+        for (int i = 0; i < kFrames; ++i) {
+            const double mag = std::hypot(double(main.last[size_t(i) * 2]),
+                                          double(main.last[size_t(i) * 2 + 1]));
+            QVERIFY2(std::fabs(mag - double(kMonLevel)) < 1e-4,
+                     qPrintable(QStringLiteral("frame %1 magnitude %2").arg(i).arg(mag)));
+        }
+        QCOMPARE(MixHarness::lastPeak(h.speakers), 0.0f);
+
+        h.radio->cwxSender()->setHandKey(false);
+        QVERIFY(!h.engine->cwSidetoneKeyed());
+        for (int p = 0; p < 20; ++p) {
+            h.period(false);
+        }
         QCOMPARE(main.peak(), 0.0f);
         h.engine->releaseOwnerMix(holder);
     }

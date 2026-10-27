@@ -214,6 +214,16 @@
 //                or a test's (RadioConnection::setIqSequenceGapClockForTest).
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Claude Code.
+//   2026-10-26 - CW transmit, m_cw and m_tx[0] from the wire state and the
+//                key line; CmdTx on a change and high priority on a key
+//                change, at once (Thetis netInterface.c SetCW* and SetCWX);
+//                CmdTx bytes 57-59 at 31 under QSK; the transmit cut zeroes
+//                CW enable, break-in and the key bits and sends both
+//                packets; the radio's dot, dash and key-out status.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit early fix wave I1: clearing the cut sends
+//                CmdTx and high priority with the restored CW state.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //
@@ -553,10 +563,33 @@ P2RadioConnection::P2RadioConnection(QObject* parent)
             emit widebandFrameReady(i, samples);
         });
     }
+
+    // CW transmit (2026-10-26): a key change from any thread posts one
+    // queued high-priority send, and none while one is pending, so a burst
+    // posts once and the send carries the latest bits. Set before any
+    // writer can hold the key line.
+    m_cwKeyPost->target.store(this, std::memory_order_release);
+    m_cwKeyLine->setOnChange([post = m_cwKeyPost]() {
+        if (post->pending.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+        P2RadioConnection* target = post->target.load(std::memory_order_acquire);
+        if (target == nullptr) {
+            post->pending.store(false, std::memory_order_release);
+            return;
+        }
+        QMetaObject::invokeMethod(target, [target]() { target->onCwKeyLineChanged(); },
+                                  Qt::QueuedConnection);
+    });
 }
 
 P2RadioConnection::~P2RadioConnection()
 {
+    // CW transmit (2026-10-26): a key change after this posts nothing.
+    // Key-line writers must already be stopped and released by
+    // RadioModel::teardownConnection before destruction starts; otherwise a
+    // callback that loaded target before it is cleared could still post.
+    m_cwKeyPost->target.store(nullptr, std::memory_order_release);
     if (m_running) {
         disconnect();
     }
@@ -1716,6 +1749,121 @@ void P2RadioConnection::setMox(bool enabled)
 
     if (m_running) {
         sendCmdHighPriority();  // immediate emit on state change for low latency
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-16, 2026-10-26)
+//
+// setCwWireState: m_cw (CmdTx bytes 5-13 and 17) from the clamped wire
+// state, and CmdTx at once on a change, as Thetis's setters do. Each of
+// them sends CmdTx when its field changes, for example
+// From Thetis ChannelMaster/netInterface.c:1139-1147 [v2.10.3.15]:
+//   void SetCWBreakIn(int enable)
+//   {
+//       if (prn->cw.break_in != enable)
+//       {
+//           prn->cw.break_in = enable;
+//           if (listenSock != INVALID_SOCKET)
+//               CmdTx();
+//       }
+//   }
+// Byte 5 keeps bit 0 (EER) as it is; the rest is composeP2CwModeControl.
+// Queued on the connection thread.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setCwWireState(const CwWireState& s)
+{
+    CwWireState next = s;
+    applyCwWireClamps(next);
+    if (m_cwWireAssigned && next == m_cwWire) {
+        return;
+    }
+    m_cwWire = next;
+    m_cwWireAssigned = true;
+    syncCwComposeState();
+    if (m_running && m_socket) {
+        sendCmdTx();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// syncCwComposeState (2026-10-26)
+//
+// m_cw and m_tx[0].cwx/dot/dash carry CW only while the codec compose is
+// the one in use. The legacy compose (NEREUS_USE_LEGACY_P2_CODEC, or no
+// codec chosen yet: composeCmd* fall back to it on !m_codec) reads m_cw and
+// m_tx[0] directly and sends no CW (R-CW-14), so on that path they hold
+// the values they had before CW: CwState{} (edge length 9) with EER kept,
+// and no key bits. Run on every CW change and whenever selectCodec decides
+// the path, so a state set before the codec is chosen reaches the wire only
+// once the codec is chosen, and never through the legacy compose.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::syncCwComposeState()
+{
+    const bool eer = (m_cw.modeControl & 0x01) != 0;
+    if (m_useLegacyP2Codec || !m_codec) {
+        m_cw = CwState{};
+        m_cw.modeControl = eer ? 0x01 : 0x00;
+        m_tx[0].cwx  = 0;
+        m_tx[0].dot  = 0;
+        m_tx[0].dash = 0;
+        return;
+    }
+    m_cw.modeControl   = composeP2CwModeControl(m_cwWire, eer);
+    m_cw.sidetoneLevel = m_cwWire.sidetoneLevel;
+    m_cw.sidetoneFreq  = m_cwWire.sidetoneFreqHz;
+    m_cw.keyerSpeed    = m_cwWire.speedWpm;
+    m_cw.keyerWeight   = m_cwWire.weight;
+    m_cw.hangDelay     = m_cwWire.hangMs;
+    m_cw.rfDelay       = m_cwWire.rfDelayMs;
+    m_cw.edgeLength    = m_cwWire.edgeLengthMs;
+    m_tx[0].cwx  = m_cwKeyLine->cwx() ? 1 : 0;
+    m_tx[0].dot  = m_cwKeyLine->dot() ? 1 : 0;
+    m_tx[0].dash = m_cwKeyLine->dash() ? 1 : 0;
+}
+
+// The key line's queued call: clears the pending flag first, so a change
+// while this runs posts again, then sends the latest bits.
+// The key bits go in high-priority byte 5 (composeCmdHighPriority, from
+// Thetis network.c:928-933) and go out at once on a change, as
+// From Thetis ChannelMaster/netInterface.c:1161-1169 [v2.10.3.15]:
+//   void SetCWDot(int bit)
+//   {
+//       if (prn->tx[0].dot != bit)
+//       {
+//           prn->tx[0].dot = bit;
+//           if (listenSock != INVALID_SOCKET)
+//               CmdHighPriority();
+//       }
+//   }
+void P2RadioConnection::onCwKeyLineChanged()
+{
+    m_cwKeyPost->pending.store(false, std::memory_order_release);
+    syncCwComposeState();
+    if (m_running && m_socket) {
+        sendCmdHighPriority();
+    }
+}
+
+void P2RadioConnection::applyTransmitCut()
+{
+    RadioConnection::applyTransmitCut();
+    // setMox(false) sends high priority only when MOX was on. The cut puts
+    // both packets on the wire, composed with the CW enable, break-in and
+    // key bits at 0 (buildCodecContext reads the cut).
+    if (m_running && m_socket) {
+        sendCmdTx();
+        sendCmdHighPriority();
+    }
+}
+
+void P2RadioConnection::onTransmitCutCleared()
+{
+    // buildCodecContext no longer reads the cut, so both packets carry the
+    // stored CW state and key bits again.
+    if (m_running && m_socket) {
+        sendCmdTx();
+        sendCmdHighPriority();
     }
 }
 
@@ -4122,10 +4270,12 @@ void P2RadioConnection::selectCodec()
     m_useLegacyP2Codec = (qEnvironmentVariableIntValue("NEREUS_USE_LEGACY_P2_CODEC") == 1);
     if (m_useLegacyP2Codec) {
         qCInfo(lcConnection) << "P2: NEREUS_USE_LEGACY_P2_CODEC=1 — using pre-refactor compose path";
+        syncCwComposeState();   // CW transmit: the legacy compose sends no CW
         return;
     }
     if (!m_caps) {
         qCWarning(lcConnection) << "P2: no caps; codec selection deferred";
+        syncCwComposeState();   // CW transmit: the legacy compose sends no CW
         return;
     }
     using HW = HPSDRHW;
@@ -4169,6 +4319,9 @@ void P2RadioConnection::selectCodec()
     }
     qCInfo(lcConnection) << "P2: selected codec for board"
                          << int(m_hardwareProfile.effectiveBoard);
+    // CW transmit (2026-10-26): a CW state set before the codec was chosen
+    // goes into m_cw now (syncCwComposeState).
+    syncCwComposeState();
 
     // Phase 3M-4 Task 17 chunk B/E: notify subscribers (RadioModel /
     // ReceiverManager) that m_codec is now valid so they can inject it
@@ -4305,9 +4458,12 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2Running  = m_running;
     // The transmit cut (2026-10-15) reads as unkeyed on the wire.
     ctx.p2PttOut   = wireMox() ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
-    ctx.p2Cwx      = m_tx[0].cwx;
-    ctx.p2Dot      = m_tx[0].dot;
-    ctx.p2Dash     = m_tx[0].dash;
+    // CW transmit (2026-10-26): the key bits read 0 while the transmit is
+    // cut, as the PTT bit does.
+    const bool cut = transmitCut();
+    ctx.p2Cwx      = cut ? 0 : m_tx[0].cwx;
+    ctx.p2Dot      = cut ? 0 : m_tx[0].dot;
+    ctx.p2Dash     = cut ? 0 : m_tx[0].dash;
     // Phase 3M-4 Task 17: PureSignal run flag — gates the DDC0/DDC1
     // frequency override in composeCmdHighPriority.  Sourced from
     // RadioConnection::m_puresignalRun which is set by setPuresignalRun(1)
@@ -4354,6 +4510,14 @@ CodecContext P2RadioConnection::buildCodecContext() const
     for (int i = 0; i < 3; ++i) {
         ctx.rxStepAttn[i] = m_adc[i].rxStepAttn;
         ctx.txStepAttn[i] = m_adc[i].txStepAttn;
+        // CW transmit (R-CW-16): in QSK NereusSDR never flips MOX, so the
+        // ADC attenuation the radio applies while it transmits (bytes
+        // 57-59) is 31 dB for every ADC, as Thetis sets ATT on TX to 31 on
+        // entering QSK (console.cs:13016-13029 [v2.10.3.15]). m_adc is not
+        // changed, so leaving QSK sends the stored value again.
+        if (m_cwWire.qskTxAttenuation) {
+            ctx.txStepAttn[i] = kCwQskTxAttenuationDb;
+        }
     }
 
     // Per-RX preamp (index 0 = RX1 preamp at byte 1403 bit 0,
@@ -4411,7 +4575,10 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2TxPhaseShift   = m_tx[0].phaseShift;
 
     // CW state
-    ctx.p2CwModeControl   = m_cw.modeControl;
+    // CW transmit (2026-10-26): under the transmit cut, CW enable (bit 1)
+    // and break-in (bit 7) read 0.
+    ctx.p2CwModeControl   = cut ? static_cast<unsigned char>(m_cw.modeControl & ~kCwCutModeBits)
+                                : m_cw.modeControl;
     ctx.p2CwSidetoneLevel = m_cw.sidetoneLevel;
     ctx.p2CwSidetoneFreq  = m_cw.sidetoneFreq;
     ctx.p2CwKeyerSpeed    = m_cw.keyerSpeed;
@@ -5287,6 +5454,21 @@ void P2RadioConnection::processHighPriorityStatus(const QByteArray& data)
     // is idempotent on repeated same-state calls.
     const bool micPtt = (raw[4] & 0x01) != 0;
     emit micPttFromRadio(micPtt);
+
+    // CW transmit (R-CW-17): the radio's dot (bit 1), dash (bit 2) and
+    // key-out (bit 7) of the same byte, emitted on change. The gateware
+    // sends dot in bit 1, dash in bit 2 and key-out in bit 7
+    // (CC_encoder.v:14, 135 [@8e86a61]). Differs from Thetis: its reader
+    // (network.c:686-693 [v2.10.3.15]) stores dot from bit 1 and dash from
+    // bit 2 as this does, but nativeGetDotDashPTT passes those bits on
+    // unshifted (netInterface.c:119-124) and its consumer reads them
+    // swapped (dot from 0x04, dash from 0x02, console.cs:25634, 25644
+    // [v2.10.3.15]). A bug
+    // the upstream has, fixed in our copy by reading the gateware's order.
+    const bool keyDot  = (raw[4] & 0x02) != 0;
+    const bool keyDash = (raw[4] & 0x04) != 0;
+    const bool keyOut  = (raw[4] & 0x80) != 0;
+    publishRadioKeyStatus(keyDot, keyDash, keyOut);
 
     //[2.10.3.13]MW0LGE adc_overload bits accumulated across status frames; reset-on-read pattern preserved [Thetis network.c:708]
     // From Thetis network.c:695-708 [v2.10.3.13]: ReadBufp[1] is the ADC overload

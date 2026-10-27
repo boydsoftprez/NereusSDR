@@ -6,9 +6,9 @@
 // states are designed for NereusSDR's Qt6 architecture; logic and
 // timer constants are derived from Thetis:
 //   console.cs:29311-29678 [v2.10.3.13] — chkMOX_CheckedChanged2
-//   console.cs:19659-19698 [v2.10.3.13] — mox_delay / space_mox_delay /
+//   console.cs:19690-19729 [v2.10.3.15] — mox_delay / space_mox_delay /
 //     key_up_delay / rf_delay / ptt_out_delay field declarations
-//   console.cs:18494-18502 [v2.10.3.13] — break_in_delay field declaration
+//   console.cs:18523-18527 [v2.10.3.15] — break_in_delay field declaration
 //   console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged (TUN
 //     slot; only the _manual_mox + _current_ptt_mode flag assignments
 //     at lines 30093-30094 and the _manual_mox clear at line 30142
@@ -38,6 +38,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-27: isMicPttHeld, isCatPttHeld, isVoxPttHeld (TGXL tune lane,
+//                PR 670). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-14: comments say how often P1 reports its PTT level: on each
 //                change and each status tick. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -268,6 +271,27 @@
 //               lastAdmitTook() and tunerTakeFinished(). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-26: CW transmit, interlockRefusal is public for the CW keyer
+//               gate. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, MOX in CW (R-CW-18 to R-CW-20, R-CW-09):
+//               setCwModeActive / setCwBreakInMode; a key in CWL or CWU
+//               walks without the TX channel (no rf_delay; no drain,
+//               key-up or MOX wait, ptt_out_delay kept); the radio's PTT
+//               keys PttMode::Cw in Off and Semi, the serial PTT line
+//               (onCwPtt) in Semi only; QSK keys from no PTT source;
+//               setCwKeyerGate, onCwKeyStatus and reportCwRefusal report
+//               the keyer gate's refusal once per hold. The delay cites
+//               refreshed to v2.10.3.15 (R-CW-52). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave: I3 (in Off with an armed
+//               interlock the CW press keys MOX, which asks for the
+//               grant), M3 (a paddle refusal is reported only in CW).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: txToRxRemainingMaxMs, the longest the TX to RX walk can
+//               still run on its own phase bounds, and isTxToRxPhaseTimed,
+//               whether a phase timer is still running, for a CAT TX held
+//               during it; stallTxToRxWalkForTest. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -280,6 +304,7 @@
 #include <QTimer>
 #include <functional>
 #include <limits>
+#include "core/CwTypes.h"
 #include "core/PttMode.h"
 #include "core/WdspTypes.h"
 #include "core/safety/BandPlanGuard.h"
@@ -349,6 +374,10 @@ struct KeyerIdentity {
     /// The same id as SliceOwnership::stationDevice().
     static constexpr char kStationDeviceId[] = "station";
     static KeyerIdentity station(PttMode source);
+    /// CW transmit (R-CW-19): the radio's key, the keyer identity of a key
+    /// the radio's PTT status (or the serial PTT line) makes in CW. The
+    /// station device's, with PttMode::Cw, not a program's.
+    static KeyerIdentity radioKey();
     bool isStation() const { return deviceId == kStationDeviceId; }
     bool operator==(const KeyerIdentity& other) const
     {
@@ -381,8 +410,11 @@ struct KeyingAnswer {
 //   spaceDelay (0ms default): m_spaceDelayTimer declared but skipped
 //     when kSpaceDelayMs == 0, matching Thetis
 //     `if (space_mox_delay > 0) Thread.Sleep(...)` pattern.
-//   breakInDelay (300ms): declared for 3M-2 CW QSK; NOT started in
-//     any 3M-1a path.
+//   breakInDelay (300ms): declared, never started (CW transmit D1: the
+//     radio's hang time ends a CW key).
+//   CW (R-CW-18): Rx → Tx at once (no rf_delay); Tx → TxToRxInFlight →
+//     TxToRxFlush at once (no drain, key-up or MOX delay) → Rx after
+//     ptt_out_delay.
 //
 // moxStateChanged fires at end of walk (TX fully engaged or fully
 // released), not at setMox() entry, so subscribers see a definitive
@@ -395,20 +427,21 @@ public:
     explicit MoxController(QObject* parent = nullptr);
     ~MoxController() override;
 
-    // ── Timer constants (from Thetis console.cs:19659-19698 [v2.10.3.13]) ──
+    // ── Timer constants (from Thetis console.cs:19690-19729 [v2.10.3.15]) ──
     //
-    // From Thetis console.cs:19687 — private int rf_delay = 30 [v2.10.3.13]
+    // From Thetis console.cs:19718 — private int rf_delay = 30 [v2.10.3.15]
     static constexpr int kRfDelayMs      = 30;
-    // From Thetis console.cs:19659 — private int mox_delay = 10 [v2.10.3.13]
+    // From Thetis console.cs:19690 — private int mox_delay = 10 [v2.10.3.15]
     static constexpr int kMoxDelayMs     = 10;
-    // From Thetis console.cs:19669 — private int space_mox_delay = 0 [v2.10.3.13]
+    // From Thetis console.cs:19700 — private int space_mox_delay = 0 [v2.10.3.15]
     static constexpr int kSpaceDelayMs   = 0;
-    // From Thetis console.cs:19677 — private int key_up_delay = 10 [v2.10.3.13]
+    // From Thetis console.cs:19708 — private int key_up_delay = 10 [v2.10.3.15]
     static constexpr int kKeyUpDelayMs   = 10;
-    // From Thetis console.cs:19694 — private int ptt_out_delay = 20 [v2.10.3.13]
+    // From Thetis console.cs:19725 — private int ptt_out_delay = 20 [v2.10.3.15]
     static constexpr int kPttOutDelayMs  = 20;
-    // From Thetis console.cs:18494 — private double break_in_delay = 300 [v2.10.3.13]
-    // 3M-2 CW QSK; not used in any 3M-1a path.
+    // From Thetis console.cs:18523 — private double break_in_delay = 300 [v2.10.3.15]
+    // Not started by any path: in CW the radio's own hang time ends the
+    // key (D1), so the host never times break-in.
     static constexpr int kBreakInDelayMs = 300;
     // Task 33: the longest the TX→RX walk waits for the TX channel's drain
     // before it goes on to mox_delay. Thetis's drain blocks at most this
@@ -476,13 +509,62 @@ public:
     // a manual key. TciServer reads it after a trx to give back the TX
     // audio lock when the trx keyed nothing (Task 7 follow-up, item 5).
     bool     isTciPttHeld()  const noexcept { return m_tciPtt; }
+    // TGXL tune lane (PR 670 fix wave 3): each PTT source's level on its
+    // own, so the Core can read the station's PTT apart from VOX (a remote
+    // device's VOX is that device's, ruling 8.4).
+    bool     isMicPttHeld()  const noexcept { return m_micPtt; }
+    bool     isCatPttHeld()  const noexcept { return m_catPtt; }
+    bool     isVoxPttHeld()  const noexcept { return m_voxPtt; }
 
     // iPhone app plan Task 77 fix round 2: a PTT source (mic, CAT, TCI, or
     // VOX triggering) is down now, keyed or held off. The Core never
     // switches the Power Genius while one is: a key may be about to start.
+    // CW transmit: the serial PTT line (onCwPtt) is a PTT source too.
     bool     anyPttSourceHeld() const noexcept
     {
-        return m_micPtt || m_catPtt || m_voxPtt || m_tciPtt;
+        return m_micPtt || m_catPtt || m_voxPtt || m_tciPtt || m_cwSerialPtt;
+    }
+
+    // ── CW transmit: MOX in CW, break-in and QSK (R-CW-18 to R-CW-20) ────────
+    //
+    // setCwModeActive: the transmit slice is in CWL or CWU. RadioModel sets
+    // it from the slice and the keyer controller. While it is set:
+    //   - a key walks without the TX channel (isCwKeying): RX to TX waits no
+    //     rf_delay; TX to RX waits for no drain, no key-up and no MOX delay
+    //     and keeps ptt_out_delay (console.cs:29651-29679 [v2.10.3.15]);
+    //   - the radio's PTT status keys PttMode::Cw as radioKey() in Off and
+    //     Semi, and the serial PTT line in Semi only (PollPTT,
+    //     console.cs:25473 and 25519-25524 [v2.10.3.15]);
+    //   - in QSK (setCwBreakInMode) no PTT source keys (console.cs:25470).
+    // TUNE keeps the voice walk: it runs the TX channel for its tone (the
+    // TX DSP mode Thetis tests is not CW while it tunes).
+    void setCwModeActive(bool txSliceInCw);
+    bool isCwModeActive() const noexcept { return m_cwModeActive; }
+    // setCwBreakInMode: the effective break-in mode (after the keyer
+    // controller's QSK and D16 fallbacks).
+    void setCwBreakInMode(CwBreakInMode effective);
+    CwBreakInMode cwBreakInMode() const noexcept { return m_cwBreakInMode; }
+    // True while the key now on (or the walk releasing it) is a CW key:
+    // RadioModel does not start the TX channel for it (R-CW-18).
+    bool isCwKeying() const noexcept { return m_cwKeying && (m_mox || m_state != MoxState::Rx); }
+
+    // setCwKeyerGate: the keyer gate's refusal now (CwKeyerController),
+    // empty when it allows. A radio PTT or serial PTT press in CW, and a dot
+    // or dash in the radio's status, that it refuses keys nothing and is
+    // reported through reportCwRefusal (R-CW-09). With none installed every
+    // CW key is allowed.
+    using CwKeyerGateFn = std::function<TxRefusal()>;
+    void setCwKeyerGate(CwKeyerGateFn gate);
+    // reportCwRefusal: emits moxRejected and moxRefused with the gate's
+    // words, once per hold of the CW key (the radio's dot or dash, its PTT
+    // in CW, the serial PTT line): a repeat of the same refusal while the
+    // key is still held is quiet (the existing quiet-repeat rule, M3). A
+    // report with no key held (a CWX send, a break-in fallback) always
+    // speaks.
+    void reportCwRefusal(const TxRefusal& r);
+    bool isCwKeyHeld() const noexcept
+    {
+        return m_cwPaddleDown || m_cwSerialPtt || (m_cwModeActive && m_micPtt);
     }
 
     // ── K.2: MOX pre-check callback ──────────────────────────────────────────
@@ -572,6 +654,14 @@ public:
     // interlock), asked without reporting anything. Empty when none would.
     // Pure existing TX safety probe for accepted tune/two-tone repeats.
     TxRefusal refusalBeforeTheGate() const;
+    // Fix wave 2, Important 2: the interlock's refusal, asked quietly.
+    // admitKey asks TX inhibit, the PA trip, receive only and this before
+    // the gate, whatever the key sets up first; the band plan and the
+    // microphone are judged after TUNE's mode swap, in setMox, and a take
+    // whose key then never starts is released by its holder.
+    // CW transmit (2026-10-26): public, so the CW keyer gate asks the same
+    // interlock (R-CW-05).
+    TxRefusal interlockRefusal() const;
 
     // A station key that starts more than MOX (TUNE, two-tone) asks the gate
     // before it changes anything, so a refused start never releases or rides
@@ -603,6 +693,9 @@ public:
     void setTxDrainTimeoutMsForTest(int ms);
     // FOR TESTING ONLY: the end-of-over tail's bound (kEndOfOverTailMaxMs).
     void setEndOfOverTailMaxMsForTest(int ms);
+    // FOR TESTING ONLY: stops the TX to RX walk's phase timers without
+    // advancing it, so the walk stalls in its current state.
+    void stallTxToRxWalkForTest();
 
     // ── RADE end-of-over callsigns: the end-of-over tail ─────────────────────
     //
@@ -668,6 +761,23 @@ public:
     // The bound of the wait running now (or of the last one): the ring's
     // length rounded up to a whole millisecond.
     int sendRingWaitCeilingMs() const noexcept { return m_sendRingCeilingMs; }
+
+    // txToRxRemainingMaxMs: the longest the TX to RX walk running now can
+    // still take before it reaches Rx, as the sum of its remaining phases'
+    // own bounds: the end-of-over tail (when one runs), the TX channel's
+    // drain wait (when awaited), the send ring's wait (the ceiling of a
+    // wait running now, or the ring's length for one still to come),
+    // mox_delay/key_up_delay and ptt_out_delay. The phase running now
+    // counts in full. Each bound is its timer's interval, so the test
+    // seams above change it too. 0 outside TxToRxInFlight and
+    // TxToRxFlush.
+    int txToRxRemainingMaxMs() const;
+    // isTxToRxPhaseTimed: the walk back to receive is in TxToRxInFlight or
+    // TxToRxFlush and one of its phase timers (end-of-over tail, TX drain
+    // bound, send ring ceiling, mox_delay/key_up_delay, ptt_out_delay) is
+    // running, so the walk will move on by itself. False for a walk that
+    // has stalled there, and outside those states. Read-only.
+    bool isTxToRxPhaseTimed() const;
 
     // ── Task 33: StopAllTx's _stop_all_tx latch ──────────────────────────────
     //
@@ -1071,8 +1181,9 @@ public slots:
     // Space and X2 are not part of PollPTT: onSpacePtt / onX2Ptt set their
     // mode on press and drive setMox directly, as before.
     //
-    // Rejected slot (CW): logs qCWarning(lcDsp) and returns without calling
-    // setMox() or updating m_pttMode. CW keying is 3M-2.
+    // CW transmit: the radio's PTT in CWL or CWU keys PttMode::Cw (see
+    // setCwModeActive); onCwPtt is the serial PTT line; onCwKeyStatus the
+    // radio's dot and dash.
 
     // onMicPttFromRadio: MIC PTT button on the radio hardware.
     //
@@ -1146,34 +1257,23 @@ public slots:
     // deferred to 3M-3a or later when X2 status-frame parsing lands.
     void onX2Ptt(bool pressed);
 
-    // ── H.4: Rejected PTT-source dispatch slot (CW) ──────────────────────────
-    //
-    // This slot EXISTS but REJECTS all calls with qCWarning(lcDsp) + return.
-    // CW is deferred to 3M-2.
-    //
-    // The slots are declared (rather than omitted) so that:
-    //   (a) tests can verify rejection behaviour via QSignalSpy;
-    //   (b) future callers can wire to a stable name without waiting for the
-    //       deferred implementation;
-    //   (c) the rejection point is explicit in the public API.
-    //
-    // Rejection pattern (qCWarning + early return; no setMox / no setPttMode
-    // update) — same shape as the historical setAntiVoxSourceVax(true) path
-    // (removed in 3M-3a-iv post-bench refactor):
-    //   qCWarning(lcDsp) << "... rejected, deferred to 3M-2";
-    //   return;   // no setMox(), no setPttMode() update
+    // ── CW transmit: the CW key's PTT sources (R-CW-19) ─────────────────────
 
-    // onCwPtt: CW keyer PTT — REJECTED (deferred to 3M-2).
+    // onCwPtt: the serial PTT line, Thetis CWInput.KeyerPTT (the PTT
+    // source API the serial key reader calls).
     //
-    // In Thetis this maps to:
-    //   PollPTT: bool cw_ptt = CWInput.KeyerPTT && ...;
-    //   _current_ptt_mode = PTTMode.CW;                     [v2.10.3.13]
-    //   From Thetis console.cs:25475 [v2.10.3.13]
-    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
-    //
-    // 3M-2 will implement the CW keyer, sidetone, and QSK/break-in state
-    // machine.  This slot logs and returns without driving MOX.
+    // From Thetis console.cs:25473 [v2.10.3.15]:
+    //   bool cw_ptt = CWInput.KeyerPTT && _current_breakin_mode == BreakIn.Semi; // CW serial PTT  //[2.10.3.9]MW0LGE only want to do this on semi breakin
+    // The level is recorded and one PollPTT pass decides: in CWL or CWU with
+    // Semi break-in a press keys PttMode::Cw (console.cs:25519-25524), and
+    // the key ends when neither it nor the radio's PTT is down
+    // (console.cs:25596-25602). Outside Semi it keys nothing.
     void onCwPtt(bool pressed);
+
+    // onCwKeyStatus: the radio's dot and dash (RadioConnection::
+    // radioKeyStatus). Neither keys MOX (the radio's keyer keys the radio);
+    // a press the keyer gate refuses is reported once per hold (R-CW-09).
+    void onCwKeyStatus(bool dot, bool dash);
 
     // onTciPtt: TCI trx (the console side of Thetis TCIPTT).
     //
@@ -1529,7 +1629,7 @@ private slots:
     void onSpaceDelayElapsed();
     void onKeyUpDelayElapsed();
     void onPttOutElapsed();
-    void onBreakInDelayElapsed(); // declared for 3M-2 CW QSK; not started in 3M-1a
+    void onBreakInDelayElapsed(); // declared, never started (D1: the radio times break-in)
     void onTxDrainTimedOut();     // Task 33: the drain wait's bound
     void onEndOfOverTailTimedOut(); // RADE end-of-over tail's bound
     void onSendRingPoll();          // G-05: is the send ring empty yet
@@ -1553,12 +1653,6 @@ private:
     // `quiet` (a held source's repeat, M3) records it and says nothing.
     void reportRefusal(const QString& reason, const TxRefusal& refusal, bool quiet);
     static TxRefusal refusalForCheck(const safety::BandPlanGuard::MoxCheckResult& result);
-    // Fix wave 2, Important 2: the interlock's refusal, asked quietly.
-    // admitKey asks TX inhibit, the PA trip, receive only and this before
-    // the gate, whatever the key sets up first; the band plan and the
-    // microphone are judged after TUNE's mode swap, in setMox, and a take
-    // whose key then never starts is released by its holder.
-    TxRefusal interlockRefusal() const;
     // isVoiceMode: true for the 8 voice-family DSP modes.
     //
     // Voice family (per Thetis CMSetTXAVoxRun, cmaster.cs:1043-1050
@@ -1775,6 +1869,9 @@ private:
         kRefusedCat = 0x02,
         kRefusedMic = 0x04,
         kRefusedVox = 0x08,
+        // CW transmit: the CW key (the radio's PTT in CW, the serial PTT
+        // line, the radio's dot and dash).
+        kRefusedCw  = 0x10,
     };
     quint8   m_refusedHeld{0};
     // R-R3-36 (Task 7 follow-up): the sources refused because the
@@ -1811,6 +1908,42 @@ private:
     // an unkey (and on a refused key).
     void dropPttOnUnkey();
 
+    // ── CW transmit (R-CW-18 to R-CW-20) ─────────────────────────────────────
+    bool m_cwModeActive{false};
+    // The settings default (TransmitModel cwBreakInMode, C4).
+    CwBreakInMode m_cwBreakInMode{CwBreakInMode::Semi};
+    // Thetis CWInput.KeyerPTT, the serial PTT line.
+    bool m_cwSerialPtt{false};
+    // The radio's dot or dash is down.
+    bool m_cwPaddleDown{false};
+    // The key now on was made in CW (latched at the key, so its release
+    // walks the same way however the mode moves meanwhile).
+    bool m_cwKeying{false};
+    CwKeyerGateFn m_cwKeyerGate;
+    // The CW key's last refusal (reportCwRefusal's quiet repeat).
+    TxRefusal m_lastCwRefusal;
+    bool qskActive() const noexcept
+    {
+        return m_cwModeActive && m_cwBreakInMode == CwBreakInMode::Qsk;
+    }
+    // cw_ptt as PollPTT reads it: the serial line, in Semi only.
+    bool cwSerialPttCounts() const noexcept
+    {
+        return m_cwSerialPtt && m_cwBreakInMode == CwBreakInMode::Semi;
+    }
+    // A CW key's hold ended: its next press is a new one (M3).
+    void clearCwHoldIfReleased();
+    // The keyer gate's refusal for a CW key-down, empty when allowed.
+    TxRefusal cwKeyerRefusal() const;
+    // The refusal for keying MOX from a CW press: cwKeyerRefusal without
+    // the armed interlock's not-yet-granted refusal (I3), since keying MOX
+    // is what asks the amplifier for the grant. The keyer itself still
+    // waits for it.
+    TxRefusal cwMoxPressRefusal() const;
+    // RX to TX and TX to RX for a key in CW (R-CW-18).
+    void finishCwKeyDown();
+    void beginCwTxToRxTeardown();
+
     // ── C.4: multicast Pre/Post rx-argument state ────────────────────────────
     // m_rx2Enabled mirrors RadioModel "RX2 enabled" flag.
     // m_vfobTx mirrors RadioModel "VFO-B is the TX VFO" flag.
@@ -1839,7 +1972,7 @@ private:
     QTimer m_spaceDelayTimer;   // 0 ms  — TX→RX: initial wait before WDSP TX off; skipped when 0 // from PSDR MW0LGE
     QTimer m_keyUpDelayTimer;   // 10 ms — TX→RX: mox_delay (SSB) or key_up_delay (CW); drives TxToRxInFlight
     QTimer m_pttOutDelayTimer;  // 20 ms — TX→RX: HW settle before WDSP RX on; drives TxToRxFlush
-    QTimer m_breakInDelayTimer; // 300 ms — 3M-2 CW QSK; NOT started from any B.3 logic
+    QTimer m_breakInDelayTimer; // 300 ms; never started (CW transmit D1)
     QTimer m_txDrainTimeoutTimer; // 100 ms: Task 33, bound on the TX→RX drain wait
     QTimer m_endOfOverTailTimer;  // 1000 ms: bound on an end-of-over tail
     QTimer m_sendRingPollTimer;     // 1 ms, repeating: G-05, looks at the send ring

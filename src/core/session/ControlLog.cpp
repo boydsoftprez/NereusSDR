@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-01: Created (control logging lane). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the hold's start and end
+//               lines. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/session/ControlLog.h"
@@ -723,6 +726,29 @@ void ControlLog::watchdogStopped(const QByteArray& deviceId, SessionTransport* t
         it->lastHeardMs.fill(-1);
         it->lastHeardAnyMs = -1;
     }
+}
+
+void ControlLog::transmitHoldStarted(const QByteArray& deviceId, const QString& what,
+                                     qint64 silentMs)
+{
+    // Every hold has its line (holds are rare; the watchdog stop's line is
+    // not budgeted either).
+    const QString silence = what == QLatin1String("mic")
+        ? QStringLiteral("no microphone audio for %1 ms").arg(silentMs)
+        : QStringLiteral("no keepalive for %1 ms").arg(silentMs);
+    qCInfo(lcControlLog).noquote()
+        << QStringLiteral("Transmit hold for %1: %2; RF off, still keyed")
+               .arg(QString::fromLatin1(deviceId.toHex()), silence);
+}
+
+void ControlLog::transmitHoldEnded(const QByteArray& deviceId, qint64 lengthMs,
+                                   const QString& how)
+{
+    qCInfo(lcControlLog).noquote()
+        << QStringLiteral("Transmit hold for %1 ended after %2 ms: %3")
+               .arg(QString::fromLatin1(deviceId.toHex()))
+               .arg(lengthMs)
+               .arg(safeText(how));
 }
 
 } // namespace NereusSDR

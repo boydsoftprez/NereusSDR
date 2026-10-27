@@ -21,7 +21,7 @@
 //
 //  2. A real TX channel on the transmit lane (no radio), the TUNE generator
 //     set as RadioModel's TUNE path sets it (setTuneTone(true, -600,
-//     kMaxToneMag), Thetis console.cs:30031-30040 [v2.10.3.15] in LSB), and
+//     kMaxToneMag), Thetis console.cs:30082, 30088-30090 [v2.10.3.15] in LSB), and
 //     64-frame blocks pumped from a worker thread the way TxWorkerThread
 //     pumps them. The samples the siphon handed the analyzer are read back
 //     out of its input ring and every block must be there once, in order.
@@ -34,6 +34,10 @@
 // Modification history (NereusSDR):
 //   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Verify both USB and LSB analyzer frequency orientation.
+//   2026-10-26: CW transmit, the TUNE frame rows at a 700 Hz CW pitch in USB,
+//                 CWU and CWL: the tone is plus or minus the pitch and the
+//                 carrier stays on the dial (R-CW-30). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include "RealtimeTestLoad.h"
@@ -226,17 +230,24 @@ private slots:
     void tuneFrameRfAxisMatchesCompensatedNco_data()
     {
         QTest::addColumn<int>("mode");
+        QTest::addColumn<int>("pitchHz");
         QTest::addColumn<double>("toneHz");
         QTest::addColumn<bool>("alreadyKeyed");
-        QTest::newRow("DIGU") << int(DSPMode::DIGU) << 600.0 << false;
-        QTest::newRow("DIGL") << int(DSPMode::DIGL) << -600.0 << false;
-        QTest::newRow("DIGU-already-keyed") << int(DSPMode::DIGU) << 600.0 << true;
-        QTest::newRow("DIGL-already-keyed") << int(DSPMode::DIGL) << -600.0 << true;
+        QTest::newRow("DIGU") << int(DSPMode::DIGU) << 600 << 600.0 << false;
+        QTest::newRow("DIGL") << int(DSPMode::DIGL) << 600 << -600.0 << false;
+        QTest::newRow("DIGU-already-keyed") << int(DSPMode::DIGU) << 600 << 600.0 << true;
+        QTest::newRow("DIGL-already-keyed") << int(DSPMode::DIGL) << 600 << -600.0 << true;
+        // R-CW-30: the tone is plus or minus the CW pitch in every mode; in
+        // CW the TX channel runs USB or LSB for it (D6).
+        QTest::newRow("USB-pitch-700") << int(DSPMode::USB) << 700 << 700.0 << false;
+        QTest::newRow("CWU-pitch-700") << int(DSPMode::CWU) << 700 << 700.0 << false;
+        QTest::newRow("CWL-pitch-700") << int(DSPMode::CWL) << 700 << -700.0 << false;
     }
 
     void tuneFrameRfAxisMatchesCompensatedNco()
     {
         QFETCH(int, mode);
+        QFETCH(int, pitchHz);
         QFETCH(double, toneHz);
         QFETCH(bool, alreadyKeyed);
         constexpr quint64 kDial = 14'074'000;
@@ -249,6 +260,8 @@ private slots:
         model.addSlice();
         SliceModel* slice = model.activeSlice();
         QVERIFY(slice);
+        model.setCwPitchHz(pitchHz);
+        QCOMPARE(model.cwPitchHz(), pitchHz);
         slice->setDspMode(static_cast<DSPMode>(mode));
         slice->setFrequency(kDial);
         // Settle the existing 100 ms connect-frequency seed before testing

@@ -43,6 +43,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  CW transmit, CWX built: its surfaces show in both windows
+//               and Tools > CWX is usable (R-CW-46). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-26  CW transmit, the DSP > CW group entries (break-in,
+//               sidetone, key input, options). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-03  J.J. Boyd / KG4VCF. Assert lossless inert unavailable records.
 //                                    AI-assisted via OpenAI Codex.
 //   2026-09-24  J.J. Boyd / KG4VCF  R3 unfinished controls, Task 1.
@@ -620,7 +626,10 @@ QMap<F, QList<Surface>> surfaces()
         applet(QStringLiteral("Phone/CW CW tab"), phoneButton(QStringLiteral("CW"))),
         applet(QStringLiteral("Phone/CW CW page"), phonePage(1)),
         onPage(QStringLiteral("CW"), QStringLiteral("keyer group"), named(QStringLiteral("cwKeyerGroup"))),
-        onPage(QStringLiteral("CW"), QStringLiteral("timing group"), named(QStringLiteral("cwTimingGroup")))};
+        onPage(QStringLiteral("CW"), QStringLiteral("break-in group"), named(QStringLiteral("cwBreakInGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("sidetone group"), named(QStringLiteral("cwSidetoneGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("key input group"), named(QStringLiteral("cwSerialGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("options group"), named(QStringLiteral("cwOptionsGroup")))};
     map[F::Memories] = {menu(QStringLiteral("&Memory Manager...")),
                         spot(QStringLiteral("displayMemoriesToggle"))};
     map[F::Cat] = {menu(QStringLiteral("&CAT Control...")), setupPage(QStringLiteral("Serial Ports")),
@@ -898,7 +907,8 @@ private slots:
             QVERIFY2(!keys.contains(entry.key), qPrintable(entry.key));
             keys.insert(entry.key);
             QCOMPARE(UnbuiltFeatures::key(entry.feature), entry.key);
-            QCOMPARE(UnbuiltFeatures::isBuilt(entry.feature), entry.feature == F::Cat);
+            QCOMPARE(UnbuiltFeatures::isBuilt(entry.feature),
+                     entry.feature == F::Cat || entry.feature == F::Cwx);
             QVERIFY2(map.contains(entry.feature) && !map.value(entry.feature).isEmpty(),
                      qPrintable(QStringLiteral("%1 has no surface checks").arg(entry.key)));
         }
@@ -985,6 +995,31 @@ private slots:
             QCOMPARE(hosts.window()->radioModel()->ownsLocalDsp(), !remote);
             QCOMPARE(shownSurfaces(map.value(F::Cat),hosts).size(),map.value(F::Cat).size());
             QAction* catAction=hosts.window()->findChild<QAction*>("catControlAction"); QVERIFY(catAction); QVERIFY(catAction->isEnabled());
+            // CW transmit (R-CW-46): CWX is built; every one of its surfaces
+            // shows and Tools > CWX is usable, in both windows.
+            {
+                // A remote window with no Core settings yet shows the Setup
+                // CW page as the disabled stand-in with its reason (R-R3-21),
+                // so its groups are checked in the local window only.
+                QWidget* cwPage = hosts.page(QStringLiteral("CW"));
+                QVERIFY(cwPage != nullptr);
+                const bool cwPageStandIn
+                    = cwPage->objectName() == QLatin1String("setupStationPlaceholder");
+                QCOMPARE(cwPageStandIn, remote);
+                const QStringList cwxShown = shownSurfaces(map.value(F::Cwx), hosts);
+                QStringList cwxMissing;
+                for (const Surface& surface : map.value(F::Cwx)) {
+                    if (cwPageStandIn && surface.host == Host::Setup) { continue; }
+                    if (!cwxShown.contains(surface.name)) { cwxMissing << surface.name; }
+                }
+                QVERIFY2(cwxMissing.isEmpty(),
+                         qPrintable((remote ? QStringLiteral("remote, not shown: ")
+                                            : QStringLiteral("local, not shown: "))
+                                    + cwxMissing.join(QStringLiteral("; "))));
+            }
+            QAction* cwxAction = hosts.window()->findChild<QAction*>(QStringLiteral("cwxAction"));
+            QVERIFY(cwxAction);
+            QVERIFY(cwxAction->isEnabled());
             QStringList shown;
             for (const UnbuiltFeatures::Entry& entry : UnbuiltFeatures::all()) {
                 if (UnbuiltFeatures::isBuilt(entry.feature)) { continue; }
@@ -1034,7 +1069,9 @@ private slots:
 
             QStringList others;
             for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
-                if (it.key() == entry.feature || it.key() == F::Cat) { continue; }
+                if (it.key() == entry.feature || it.key() == F::Cat || it.key() == F::Cwx) {
+                    continue;
+                }
                 for (const QString& s : shownSurfaces(it.value(), hosts, &used)) {
                     others << UnbuiltFeatures::key(it.key()) + QStringLiteral(": ") + s;
                 }

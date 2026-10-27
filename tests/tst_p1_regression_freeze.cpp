@@ -16,9 +16,23 @@
 // (console.cs:13259 [v2.10.3.15]: private bool mic_boost = true;). Only that
 // byte of those rows was changed in the JSON.
 //
+// Banks 12, 13 and 14 of every non-HL2 row carry the CW keyer's defaults,
+// since the codecs now send the CW settings at all times as Thetis does
+// (ChannelMaster/networkproto1.c:618-646 [v2.10.3.15], R-CW-11, R-CW-14):
+// bank 12 C3 0x99 (speed 25 | iambic B 0x80) and C4 0x32 (weight 50), bank
+// 13 C3 0x07 (RF delay 7, CW enable 0 and level 0 unchanged), bank 14 C1
+// 0x4D, C2 0x02 (hang 310) and C3 0x25, C4 0x08 (sidetone 600 Hz). These
+// are the CodecContext::cw defaults. Only those 112 bytes of those 48 rows
+// were changed in the JSON (2026-10-26); the HL2 rows the test skips are
+// left as captured, and the attenuator bytes are unchanged.
+//
 // This is THE proof that Hermes/Orion/Angelia/etc ship byte-identical
 // to pre-refactor main. If this test fails, the cutover regressed
 // something — investigate before merging.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the bank 12-14 CW defaults note (R-CW-14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include <QFile>

@@ -18,6 +18,11 @@
 //   2026-09-25 - R-R3-49 (parity Task 4): AgcAlcSetupPage and CfcSetupPage
 //                 override setTransmitSettingsPermittedAt for version 4.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, CwSetupPage's Keyer, Break-In, Sidetone, Key
+//               Input and Options groups (R-CW-43); the radio sidetone is
+//               disabled with its reason, not hidden, where the radio has
+//               no sidetone generator (R-CW-40). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -78,7 +83,7 @@
 //   AgcAlcSetupPage   — AGC / ALC / Leveler
 //   NrAnfSetupPage    — Noise Reduction / ANF / EMNR
 //   NbSnbSetupPage    — NB1 / NB2 / SNB
-//   CwSetupPage       — Keyer / Timing / APF
+//   CwSetupPage       — Keyer / Break-In / Sidetone / Key Input / Options / APF
 //   AmSamSetupPage    — SAM / Squelch  (AM TX moved to Transmit page —
 //                       Thetis grpTXAM lives on tpTransmit, not the
 //                       DSP/AM tab; mi0bot setup.designer.cs:47710-47711
@@ -98,6 +103,10 @@
 #include <QList>
 #include <functional>
 
+class QComboBox;
+class QLabel;
+class QSlider;
+class QSpinBox;
 class QTableWidget;
 
 namespace NereusSDR {
@@ -219,23 +228,73 @@ public:
     explicit CwSetupPage(RadioModel* model, QWidget* parent = nullptr,
                          DspReceiverSelection* selection = nullptr);
 
-    // P1 full-parity §4.2 — gate the "Sidetone Volume" row on
-    // BoardCapabilities.hasSidetoneGenerator.  HL2 firmware generates the
-    // CW sidetone in hardware (with its own volume control routed via the
-    // radio's audio path); standard P1 boards rely on host-generated
-    // software sidetone.  When false, the row is hidden so users on
-    // non-HL2 boards don't see a control that does nothing on their
-    // hardware.  Default: hidden (no flag set yet → no radio connected).
+    // R-CW-40: whether the radio makes a sidetone of its own
+    // (BoardCapabilities::hasSidetoneGenerator). Where it does not (the
+    // Hermes Lite 2), "From the radio" is shown disabled with the reason,
+    // never hidden. A page with no radio known keeps it enabled: the
+    // setting is kept for the next radio.
     void setHasSidetoneGenerator(bool on);
+    // Test seam: whether "From the radio" is enabled.
+    bool radioSidetoneEnabledForTest() const;
 
-    // Test seam — returns the Sidetone Volume row's visibility state.
-    // Used by tst_board_capability_flag_wiring to assert the gate works
-    // without a fully-shown widget (isVisibleTo(parent) requires a top-
-    // level shown ancestor, which is awkward in a unit test).
-    bool sidetoneRowVisibleForTest() const;
+    // R-CW-03: the CW settings came with transmitSettingsVersion 16. In a
+    // remote window they start closed until SetupDialog pushes that gate.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
+
+    // D9: the note under Key-down to RF when the speed limits it, or empty.
+    static QString keyDownClampNote(int keyDownMs, int speedWpm);
+    // R-CW-13: the radio hang time readout for a break-in mode.
+    static QString radioHangTimeText(int breakInMode, int breakInDelayMs, int keyUpDelayMs);
 
 private:
-    QWidget* m_sidetoneRow = nullptr;
+    void buildTransmitGroups(RadioModel* model);
+    void showFromModel();
+    void refreshStates();
+    void refreshBoard();
+    void refreshSerialPorts();
+
+    RadioModel* m_cwModel = nullptr;
+    bool m_updatingFromModel = false;
+    bool m_cwSettingsPermitted = true;
+    QString m_cwSettingsReason;
+    bool m_hasSidetoneGenerator = true;
+    bool m_isHl2 = false;
+
+    // Keyer
+    QComboBox* m_keyerMode = nullptr;
+    QSpinBox*  m_keyerWeight = nullptr;
+    QSlider*   m_keyerSpeed = nullptr;
+    QLabel*    m_keyerSpeedValue = nullptr;
+    QSlider*   m_pitch = nullptr;
+    QLabel*    m_pitchValue = nullptr;
+    QCheckBox* m_reversePaddles = nullptr;
+    QCheckBox* m_strictSpacing = nullptr;
+    QLabel*    m_keyerHl2Note = nullptr;
+    // Break-In
+    QComboBox* m_breakInMode = nullptr;
+    QSlider*   m_breakInDelay = nullptr;
+    QLabel*    m_breakInDelayValue = nullptr;
+    QSpinBox*  m_keyDownDelay = nullptr;
+    QLabel*    m_keyDownNote = nullptr;
+    QSpinBox*  m_keyUpDelay = nullptr;
+    QLabel*    m_hangTime = nullptr;
+    // Sidetone
+    QCheckBox* m_radioSidetone = nullptr;
+    QCheckBox* m_computerSidetone = nullptr;
+    QSlider*   m_sidetoneLevel = nullptr;
+    QLabel*    m_sidetoneLevelValue = nullptr;
+    QLabel*    m_sidetoneHl2Note = nullptr;
+    // Key Input (serial port)
+    QComboBox* m_serialPort = nullptr;
+    QLabel*    m_serialStatus = nullptr;
+    QCheckBox* m_serialPaddles = nullptr;
+    QComboBox* m_serialKeyLine = nullptr;
+    QComboBox* m_serialPttLine = nullptr;
+    // Options
+    QCheckBox* m_autoModeSwitch = nullptr;
+    QCheckBox* m_autoModeReturn = nullptr;
+    QSpinBox*  m_autoModeReturnMs = nullptr;
 };
 
 // ── AM / SAM ─────────────────────────────────────────────────────────────────

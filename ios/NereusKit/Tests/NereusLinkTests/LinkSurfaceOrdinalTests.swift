@@ -4,6 +4,10 @@
 // 2026-10-24: Roundtable capability and mirrored properties pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: merge of main: stationRoundtableVersion at 116, after displayCodecVersion; coreBuildInfo 117.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, remoteCwVersion at 75 moves every later entry
+//   one place. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: cwQskUnavailableReason pinned
+//   after the CW settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -21,7 +25,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 118)
+        #expect(capabilities.count == 119)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -35,59 +39,64 @@ import Testing
         // place.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
-            (84, "remoteRotorControlVersion", "i64"),
-            (90, "diversityControlVersion", "i64"),
-            (97, "paProfileVersion", "i64"),
-            (99, "txInhibitReasonVersion", "i64"),
-            (100, "paTransmitBandVersion", "i64"),
-            (101, "sliceAccessVersion", "i64"),
-            (102, "mediaDirectVersion", "i64"),
-            (103, "mediaStunUrls", "utf8"),
-            (104, "rx2AttenuatorVersion", "i64"),
-            (105, "radioMicVersion", "i64"),
-            (106, "rxFilterLowPassVersion", "i64"),
-            (107, "radeReasonVersion", "i64"),
-            (108, "stationCatVersion", "i64"),
+            // Remote CW (feature `remoteCw` 1) inserts remoteCwVersion after
+            // txReadingsVersion (index 75), moving every later entry one
+            // place; coreBuildInfo stays last, at 117.
+            (75, "remoteCwVersion", "i64"),
+            (85, "remoteRotorControlVersion", "i64"),
+            (91, "diversityControlVersion", "i64"),
+            (98, "paProfileVersion", "i64"),
+            (100, "txInhibitReasonVersion", "i64"),
+            (101, "paTransmitBandVersion", "i64"),
+            (102, "sliceAccessVersion", "i64"),
+            (103, "mediaDirectVersion", "i64"),
+            (104, "mediaStunUrls", "utf8"),
+            (105, "rx2AttenuatorVersion", "i64"),
+            (106, "radioMicVersion", "i64"),
+            (107, "rxFilterLowPassVersion", "i64"),
+            (108, "radeReasonVersion", "i64"),
+            (109, "stationCatVersion", "i64"),
             // The radio speaker (feature `radioSpeaker` 1) goes before the
             // build info, which is read by name.
-            (109, "radioSpeakerVersion", "i64"),
+            (110, "radioSpeakerVersion", "i64"),
             // The Core speaker (feature `coreSpeaker` 1) goes before the
             // build info too, which moves to 111.
-            (110, "coreSpeakerVersion", "i64"),
+            (111, "coreSpeakerVersion", "i64"),
             // The picture a spectrum context continues (feature
             // `spectrumPicture` 1, R-DISP-RETUNE) goes before the build
             // info as well, which moves to 112.
-            (111, "spectrumPictureVersion", "i64"),
+            (112, "spectrumPictureVersion", "i64"),
             // The radio's second firmware number (feature `firmwareBeta`
             // 1) goes before the build info too, which moves to 113.
-            (112, "firmwareBeta", "i64"),
+            (113, "firmwareBeta", "i64"),
             // The waveform feed (feature `waveform` 1, which the phone
             // does not declare) goes before the build info as well, which
             // moves to 114.
-            (113, "waveformVersion", "i64"),
+            (114, "waveformVersion", "i64"),
             // The RX meter stamps (feature `rxMeterStamps` 1, which the
             // phone does not declare) go before the build info as well,
             // which moves to 115.
-            (114, "rxMeterStampsVersion", "i64"),
+            (115, "rxMeterStampsVersion", "i64"),
             // The display codec version (feature `displayCodec` 2, NSDC
             // v2) goes before the build info as well, which moves to 116.
-            (115, "displayCodecVersion", "i64"),
+            (116, "displayCodecVersion", "i64"),
             // Roundtable (feature `roundtable` 1, which the phone
             // declares) goes after it, before the build info, which moves
             // to 117.
-            (116, "stationRoundtableVersion", "i64"),
-            (117, "coreBuildInfo", "utf8"),
+            (117, "stationRoundtableVersion", "i64"),
+            // The Remote CW insertion moves that final build-info position to 118.
+            (118, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
-        #expect((capabilities[101]["value"] as? NSNumber)?.intValue == 3)
-        #expect((capabilities[90]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
-        #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[115]["value"] as? NSNumber)?.intValue == 2)
-        #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 118)
+        #expect((capabilities[102]["value"] as? NSNumber)?.intValue == 3)
+        #expect((capabilities[91]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[106]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[85]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[109]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[117]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 119)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
@@ -342,5 +351,22 @@ import Testing
         #expect((profile["ordinal"] as? NSNumber)?.intValue == 88)
         #expect(profile["kind"] as? String == "utf8")
         #expect(profile["direction"] as? String == "outbound")
+    }
+
+    /// Why the Core does not offer QSK (`cwSettings` 1, CW transmit final
+    /// fix wave F2): the Core's alone, after the 30 CW settings, so no CW
+    /// setting the phone reads moved.
+    @Test func theQskReasonFollowsTheCwSettings() throws {
+        let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
+        let transmit = try #require(classes["TransmitModel"] as? [String: Any])
+        let properties = try #require(transmit["properties"] as? [[String: Any]])
+        let speed = try #require(properties.first { $0["name"] as? String == "cwKeyerSpeed" })
+        #expect((speed["ordinal"] as? NSNumber)?.intValue == 89)
+        let last = try #require(properties.first { $0["name"] as? String == "cwxMemory8" })
+        #expect((last["ordinal"] as? NSNumber)?.intValue == 118)
+        let reason = try #require(properties.first { $0["name"] as? String == "cwQskUnavailableReason" })
+        #expect((reason["ordinal"] as? NSNumber)?.intValue == 119)
+        #expect(reason["kind"] as? String == "utf8")
+        #expect(reason["direction"] as? String == "outbound")
     }
 }

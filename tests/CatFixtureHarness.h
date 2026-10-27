@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 The ai state reads the run-only AI/ZZAI value. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-27: CW transmit, the snapshot carries the CW keyer, CWX and pitch
+//            state. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #pragma once
 #include <QtTest>
 #define private public
@@ -246,6 +248,7 @@ struct CatTask7FixtureHarness {
   state["tx.eqPreamp"]=tx.txEqPreamp(); for(int i=0;i<10;++i){state[QStringLiteral("tx.eq%1").arg(i)]=tx.txEqBand(i);state[QStringLiteral("tx.freq%1").arg(i)]=tx.txEqFreq(i);}
   state["tx.profile"]=model.micProfileManager() ? model.micProfileManager()->activeProfileName() : QString();
   state["connected"]=model.isConnected(); state["rxOnly"]=model.isRxOnly(); state["tune"]=model.isTune(); state["identity"]=model.catService()->globalConfig().rigIdentity; state["ai"]=model.catService()->autoInformationActive(); state["serial"]=model.catService()->globalConfig().serialNumber;
+  state["tx.cwxSpeed"]=tx.cwxSpeed(); state["tx.cwKeyerSpeed"]=tx.cwKeyerSpeed(); state["tx.cwKeyerMode"]=tx.cwKeyerMode(); state["tx.cwBreakInMode"]=tx.cwBreakInMode(); state["tx.cwBreakInDelayMs"]=tx.cwBreakInDelayMs(); state["cw.pitchHz"]=model.cwPitchHz();
   state["primary.rxAntenna"]=model.sliceById(0)->rxAntenna(); state["primary.txAntenna"]=model.sliceById(0)->txAntenna(); return state;
  }
  void run(const QJsonObject& fixture) {

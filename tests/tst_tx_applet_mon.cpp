@@ -33,6 +33,11 @@
 // These tests exercise the model layer contracts that TxApplet::wireControls()
 // depends on. TxApplet itself requires a display server; widget construction is
 // not performed here (same headless pattern as the other tst_tx_applet_*.cpp tests).
+// The CW case below builds a TxApplet offscreen.
+//
+// 2026-10-26: CW transmit, MON and its level show and set the CW sidetone
+// in CW (R-CW-42), on a real TxApplet. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
@@ -40,6 +45,14 @@
 
 #include "models/TransmitModel.h"
 #include "core/audio/CompositeTxMicRouter.h"
+#include "core/AppSettings.h"
+#include "gui/applets/TxApplet.h"
+#include "gui/applets/TxMonitorSection.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <QPushButton>
+#include <QSlider>
 
 using namespace NereusSDR;
 
@@ -66,6 +79,9 @@ private slots:
     void micSource_defaultIsPc();
     void setMicSource_radio_fires();
     void setMicSource_backToPc_fires();
+
+    // CW transmit (R-CW-42)
+    void monInCw_showsAndSetsTheCwSidetone();
 };
 
 // ── MON toggle ──────────────────────────────────────────────────────────────
@@ -230,6 +246,44 @@ void TestTxAppletMon::setMicSource_backToPc_fires()
     QCOMPARE(spy.count(), 1);
     QCOMPARE(spy.at(0).at(0).value<MicSource>(), MicSource::Pc);
     QCOMPARE(tx.micSource(), MicSource::Pc);
+}
+
+// 14. In CW, MON shows and sets cwSidetone and leaves monEnabled alone; the
+//     level stays monitorVolume. Out of CW, MON is MON again.
+void TestTxAppletMon::monInCw_showsAndSetsTheCwSidetone()
+{
+    AppSettings::instance().clear();
+    {
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        TransmitModel& tx = model.transmitModel();
+        TxApplet applet(&model);
+        auto* mon = applet.findChild<TxMonitorSection*>();
+        QVERIFY(mon && mon->monButton() && mon->volumeSlider());
+        QVERIFY(!mon->monButton()->isChecked());
+
+        slice->setDspMode(DSPMode::CWL);
+        QVERIFY(tx.cwSidetone());
+        QVERIFY(mon->monButton()->isChecked());
+        mon->monButton()->click();
+        QVERIFY(!tx.cwSidetone());
+        QVERIFY(!tx.monEnabled());
+        tx.setCwSidetone(true);
+        QVERIFY(mon->monButton()->isChecked());
+        tx.setMonEnabled(false);  // a MON change in CW does not move the button
+        QVERIFY(mon->monButton()->isChecked());
+        mon->volumeSlider()->setValue(40);
+        QCOMPARE(tx.monitorVolume(), 0.40f);
+
+        slice->setDspMode(DSPMode::USB);
+        QVERIFY(!mon->monButton()->isChecked());
+        mon->monButton()->click();
+        QVERIFY(tx.monEnabled());
+        QVERIFY(tx.cwSidetone());
+    }
+    AppSettings::instance().clear();
 }
 
 QTEST_MAIN(TestTxAppletMon)

@@ -260,6 +260,16 @@
 //                or a test's (RadioConnection::setIqSequenceGapClockForTest).
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Claude Code.
+//   2026-10-26 - CW transmit, the wire state and bank 13 on an enable
+//                change, the host key bits written over the TX I/Q words
+//                on the EP2 sender thread (Thetis networkproto1.c:738-741,
+//                mi0bot networkproto1.c:1247-1258 and the HL2 store rule of
+//                mi0bot netInterface.c:1193-1224), CW zeroed under the
+//                transmit cut, and the radio's dot and dash status.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit early fix wave M1: why the HL2 store rule is
+//                applied per frame where mi0bot latches it. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*
@@ -2701,6 +2711,133 @@ void P1RadioConnection::setMox(bool enabled)
 }
 
 // ---------------------------------------------------------------------------
+// CW transmit (2026-10-26): the wire state, the cut, and the key overlay.
+//
+// setCwWireState runs queued on the connection thread, so event() holds the
+// frame lock: the state changes between two EP2 frames. A changed enable
+// puts bank 13 (C1, the CW enable) on the next frame, as setMicTipRing
+// does for bank 11. The other CW banks (12, 14) come round within 16
+// frames, as Thetis sends them in its round-robin.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setCwWireState(const CwWireState& s)
+{
+    CwWireState next = s;
+    applyCwWireClamps(next);
+    if (next.enable != m_cwWire.enable) {
+        m_forceBank13Next = true;
+    }
+    m_cwWire = next;
+}
+
+CwWireState P1RadioConnection::wireCwState() const noexcept
+{
+    CwWireState cw = m_cwWire;
+    if (transmitCut()) {
+        // The transmit cut reads as the keyer off, as wireMox() reads the
+        // MOX bit unkeyed.
+        cw.enable = false;
+        cw.breakIn = false;
+    }
+    return cw;
+}
+
+void P1RadioConnection::applyTransmitCut()
+{
+    RadioConnection::applyTransmitCut();
+    // Bank 13 next, so the radio's keyer is off within one frame of the
+    // cut (bank 0, MOX off, goes first).
+    m_forceBank13Next = true;
+}
+
+// ---------------------------------------------------------------------------
+// applyCwKeyOverlay (R-CW-12, R-CW-15)
+//
+// While the frame's CW enable is 1, every 16-bit I and Q sample of both TX
+// zones is replaced by the host key bits, in receive too. Porting from
+// Thetis ChannelMaster/networkproto1.c:732-743 [v2.10.3.15]
+// (sendProtocol1Samples; j == 1 is the I/Q set, bytes 4-7 of each sample):
+//   for (i = 0; i < 2 * 63; i++)				// for each sample from both sets, 8 bytes per
+//       for (j = 0; j < 2; j++)					// for a sample from each set, 4 bytes per
+//           for (k = 0; k < 2; k++)				// for each component of the sample, 2 per
+//           {
+//               ...
+//               if (prn->cw.cw_enable && j == 1)
+//                   temp = (prn->tx[0].dot << 2 |
+//                       prn->tx[0].dash << 1 |
+//                       prn->tx[0].cwx) & 0b00000111;
+//               prn->OutBufp[8 * i + 4 * j + 2 * k + 0] = (char)((temp >> 8) & 0xff);
+//               prn->OutBufp[8 * i + 4 * j + 2 * k + 1] = (char)(temp & 0xff);
+//           }
+// The HL2 adds bit 3. From mi0bot ChannelMaster/networkproto1.c:1247-1252 [v2.10.3.13-beta2]:
+//   if (prn->cw.cw_enable && j == 1)
+//       if (HPSDRModel == HPSDRModel_HERMESLITE)
+//           temp = (prn->tx[0].cwx_ptt << 3 |	// MI0BOT: Bit 3 in HL2 is used to signal PTT for CWX
+//                   prn->tx[0].dot << 2 |
+//                   prn->tx[0].dash << 1 |
+//                   prn->tx[0].cwx) & 0b00001111;
+//
+// NereusSDR: the words are written over what fillTxZone put there, on the
+// EP2 sender thread under the frame lock, never in sendTxIq or the ring.
+// The frame's CW enable is the one bank 13 carries (wireCwState), on the
+// codec path only (the legacy compose sends no CW, R-CW-14), and the
+// transmit cut is read here once more so a cut that lands while the frame
+// is built still leaves the words zero. With CW enable 0 the zones are as
+// fillTxZone wrote them, HL2 low-bit mask included.
+//
+// HL2 store rule: mi0bot stores the CWX bit only while break-in, MOX or
+// CWX PTT is on (mi0bot ChannelMaster/netInterface.c:1193-1224
+// [v2.10.3.13-beta2], SetCWX). NereusSDR keeps the CWX bit in CwKeyLine
+// whatever the state, and applies the same condition per frame with the
+// break-in and MOX this frame encodes. HL2 only.
+//
+// Why ours differs (a bug the upstream has, fixed in our copy): mi0bot
+// latches the bit at the moment it is written. From mi0bot
+// ChannelMaster/netInterface.c:1196-1204 [v2.10.3.13-beta2]:
+//   if (prn->tx[0].cwx != bit)
+//   {
+//       if (prn->cw.break_in == true || XmitBit == true || prn->tx[0].cwx_ptt == true)
+//       {
+//           prn->tx[0].cwx = bit;
+//       }
+// A CWX key-down stored while break-in, MOX or CWX PTT was on, whose
+// release arrives after all three have gone off, is never stored, so cwx
+// stays 1 and the radio's keyer is left keyed. Deciding per frame from the
+// live line and the frame's own break-in and MOX cannot strand the bit:
+// the release always reaches the wire, and a key-down outside the three
+// states is still not sent, as mi0bot intends.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::applyCwKeyOverlay(quint8* frame) const noexcept
+{
+    static constexpr int kSamplesPerZone = 63;
+    static constexpr int kZoneOffsets[2] = {16, 528};
+    static constexpr quint8 kCwxBit    = 0x01;
+    static constexpr quint8 kCwxPttBit = 0x08;
+
+    if (m_useLegacyCodec || !m_codec) {
+        return;
+    }
+    const CwWireState cw = wireCwState();
+    if (!cw.enable || transmitCut()) {
+        return;
+    }
+    const bool hl2 = isHl2();
+    quint8 key = m_cwKeyLine->p1Bits(hl2);
+    if (hl2 && !(cw.breakIn || wireMox() || (key & kCwxPttBit) != 0)) {
+        key = static_cast<quint8>(key & ~kCwxBit);
+    }
+    for (const int zone : kZoneOffsets) {
+        quint8* z = frame + zone;
+        for (int i = 0; i < kSamplesPerZone; ++i) {
+            quint8* iq = z + i * kTxIqBytesPerSample + 4;
+            iq[0] = 0x00;   // I hi
+            iq[1] = key;    // I lo
+            iq[2] = 0x00;   // Q hi
+            iq[3] = key;    // Q lo
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // dropTransmitForNewLink: TX safety (whole-branch review, 2026-09-30).
 //
 // A P1 link that was lost while transmitting used to reconnect with m_mox,
@@ -4377,6 +4514,9 @@ CodecContext P1RadioConnection::buildCodecContext() const
     CodecContext ctx;
     // The transmit cut (2026-10-15) reads as unkeyed on the wire.
     ctx.mox            = wireMox();
+    // CW transmit (2026-10-26): banks 12 to 14; the cut reads as the keyer
+    // off (wireCwState).
+    ctx.cw             = wireCwState();
     ctx.sampleRateCode = (m_sampleRate >= 384000) ? 3
                        : (m_sampleRate >= 192000) ? 2
                        : (m_sampleRate >=  96000) ? 1 : 0;
@@ -5903,6 +6043,12 @@ void P1RadioConnection::composeCommandFrame(quint8* frame)
     } else if (m_forceBank11Next) {
         m_ccRoundRobinIdx = 11;
         m_forceBank11Next = false;
+    } else if (m_forceBank13Next) {
+        // CW transmit (2026-10-26): the CW enable (bank 13 C1) after a
+        // change or the transmit cut; below the MOX, T/R relay and mic_trs
+        // banks, above the TX step attenuator.
+        m_ccRoundRobinIdx = 13;
+        m_forceBank13Next = false;
     } else if (m_forceBank4Next) {
         // Phase 3M-4 Task 17 P1 follow-up: priority just below bank 0/10/11
         // (which carry safety bits — MOX, T/R relay, mic_trs).  Bank 4
@@ -5944,6 +6090,9 @@ void P1RadioConnection::composeCommandFrame(quint8* frame)
     // frame[528..1031] = subframe 1 TX data zone (after 3-byte sync + 5-byte C&C)
     fillTxZone(frame + 16);
     fillTxZone(frame + 528);
+    // CW transmit (2026-10-26): while CW is enabled the I and Q words carry
+    // the host key bits instead (applyCwKeyOverlay).
+    applyCwKeyOverlay(frame);
     // Radio codec (2026-09-30): the L/R bytes of both zones carry the
     // receive audio for the radio's own speaker out (fillRadioAudioZone).
     fillRadioAudioZone(frame + 16);
@@ -6124,6 +6273,8 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // From mi0bot-Thetis networkproto1.c:478-496 [@c26a8a4].
     bool hasMicPtt = false;
     bool micPtt = false;
+    bool keyDot = false;
+    bool keyDash = false;
     for (int sub = 0; sub < 2; ++sub) {
         const int base = 8 + sub * 512;  // sync bytes at base+0..2, C&C at base+3..7
         const quint8 c0 = frame[base + 3];
@@ -6135,6 +6286,17 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
         } else {
             hasMicPtt = true;
             micPtt = (c0 & 0x01) != 0;
+            // CW transmit (R-CW-17): the radio's dot and dash, from the same
+            // ordinary subframes as PTT (I2C responses skipped).
+            // From deskhpsdr src/old_protocol.c:1666-1667 [@f3d857c]:
+            //   radio_dash = (control_in[0] >> 1) & 0x01;
+            //   radio_dot  = (control_in[0] >> 2) & 0x01;
+            // Differs from Thetis, which reads them with left shifts
+            // ((C0 << 1) & 0x1, (C0 << 2) & 0x1, networkproto1.c:330-331
+            // [v2.10.3.15], the same in mi0bot), so both are always 0 there.
+            // A bug the upstreams share, fixed in our copy (CLAUDE.md).
+            keyDash = ((c0 >> 1) & 0x01) != 0;
+            keyDot  = ((c0 >> 2) & 0x01) != 0;
         }
     }
 
@@ -6160,6 +6322,8 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             pttEmitted = true;
             emit micPttFromRadio(micPtt);
         }
+        // Emitted on change only; P1 has no key-out bit.
+        publishRadioKeyStatus(keyDot, keyDash, false);
     }
 
     // Phase 3P-H Task 4: PA telemetry — extract raw 16-bit ADC counts from

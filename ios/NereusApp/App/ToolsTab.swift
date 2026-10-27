@@ -4,6 +4,8 @@
 // 2026-10-25: Roundtable plan Task 18, Roundtable's page and room page, and
 // the swipes' ways onto Roundtable and Spot Hub. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the cwx tool opens the CWX page (R-CW-50).
+//             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -31,7 +33,7 @@ final class ToolsRouter: ObservableObject {
 /// catalogue while the tab is open. Spot Hub opens its page and the pages
 /// under it, each with its way back (R-IOS-25, D32); FreeDV Reporter opens
 /// its station list (R-IOS-26), and Spot Hub's FreeDV row opens the Core's
-/// reporter connection. TX Equalizer, PureSignal, Diversity, TCI Server,
+/// reporter connection. TX Equalizer, PureSignal, Diversity, CWX, TCI Server,
 /// VAX Audio and Support Bundle open their own pages. CAT Control opens its
 /// page and the pages under it (a channel, CAT Options, CAT PTT, Test and
 /// log), all sharing one model while any of them is open. An older Core's
@@ -63,6 +65,7 @@ struct ToolsTab: View {
         case txEqualizer
         case pureSignal
         case diversity
+        case cwx
         case catControl
         case catControlPage(CatControlModel.Route)
         case tciServer
@@ -82,6 +85,7 @@ struct ToolsTab: View {
             case .txEqualizer: return "TX Equalizer"
             case .pureSignal: return "PureSignal"
             case .diversity: return "Diversity"
+            case .cwx: return "CWX"
             case .catControl: return "CAT Control"
             case .catControlPage(let page): return page.title
             case .tciServer: return "TCI Server"
@@ -101,6 +105,7 @@ struct ToolsTab: View {
             case .txEqualizer: self = .txEqualizer
             case .pureSignal: self = .pureSignal
             case .diversity: self = .diversity
+            case .cwx: self = .cwx
             case .catControl: self = .catControl
             case .tciServer: self = .tciServer
             case .vaxAudio: self = .vaxAudio
@@ -273,14 +278,14 @@ struct ToolsTab: View {
             SpotSourcePage(spots: spots, source: source)
         case .spotHubPage(.identity)?:
             SpotIdentityPage(spots: spots)
-        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .catControl?,
+        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .cwx, .catControl?,
              .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?, .rotor?, .roundtableRoom?:
             EmptyView()
         }
     }
 
     /// The pages of the Core's tools, each with its own scrolling and number pad.
-    private static let stationPages: Set<Page> = [.txEqualizer, .pureSignal, .diversity, .tciServer, .vaxAudio,
+    private static let stationPages: Set<Page> = [.txEqualizer, .pureSignal, .diversity, .cwx, .tciServer, .vaxAudio,
                                                   .supportBundle, .rotor]
 
     @ViewBuilder
@@ -297,6 +302,10 @@ struct ToolsTab: View {
         case .diversity:
             ToolScreen(model: app.diversity) {
                 DiversityPage(model: $0)
+            }
+        case .cwx:
+            ToolScreen(model: CwxModel(mirror: app.mirror, commands: app.commands)) {
+                CwxPage(model: $0, take: app.main.take)
             }
         case .tciServer:
             ToolScreen(model: TciServerModel(mirror: app.mirror, commands: app.commands, records: app.records),
@@ -373,7 +382,7 @@ struct ToolsTab: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ChromeColours.accentText)
                 .accessibilityIdentifier("freedv.website")
-        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .catControl,
+        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .cwx, .catControl,
              .catControlPage, .tciServer, .vaxAudio, .supportBundle, .rotor, .roundtable, .roundtableRoom:
             LinkChip(link: link, core: core)
         }

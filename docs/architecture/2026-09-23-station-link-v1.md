@@ -906,6 +906,23 @@ desktop's remote window does not declare it either: it derives the same
 form from `cfcParaEqData` itself, and its CFC dialog sends
 `cfc.setProfile` on a Core that offers version 15.
 
+**`remoteCw` 1** (R-CW-48, R-CW-49): the client sends CW through the
+Core's CWX sender with `cw.send`, `cw.memory`, `cw.stop` and `cw.key`
+(section 18.10). A peer that declares it at minor 11 together with
+`remoteTx` 1 is sent `remoteCwVersion` (section 6.3) and may send those
+verbs; any other peer sees exactly the wire it was built for, and a cw.*
+verb from it is refused "Update this app to send CW through this Core."
+The station does not declare it. The desktop's remote window declares it.
+
+**`cwSettings` 1** (R-CW-03, R-CW-48, `transmitSettingsVersion` 16): the
+client reads and changes the CW settings on `transmit` (section 7.1). A
+peer that declares it at minor 11 is sent the 30 CW properties in
+`transmit`'s schema, snapshot and deltas, and the read-only
+`cwQskUnavailableReason` after them (section 7.1); a peer that does not sees
+exactly the wire it was built for, without them, and its write of one is
+refused "Update this app to change the CW settings on this Core.". The
+station does not declare it. The desktop's remote window declares it.
+
 **`coreAddresses` 1** (the phone's direct addresses, 2026-09-29): the
 client dials the Core at the addresses the Core itself reports, so a phone
 away from home can reach a Core's global IPv6 address directly. A peer
@@ -1225,7 +1242,7 @@ table.
 | `pairingVersion` | 1 |
 | `stationCatalogVersion` | 1 |
 | `displayExtrasVersion` | 4 |
-| `transmitSettingsVersion` | 15 |
+| `transmitSettingsVersion` | 16 |
 | `bandSelectVersion` | 1 |
 | `meterReadingsVersion` | 1 |
 | `dspInfoVersion` | 1 |
@@ -1244,6 +1261,7 @@ table.
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
 | `txReadingsVersion` | 4 |
+| `remoteCwVersion` | 1 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -2310,6 +2328,12 @@ When a feature is off, its version is 0:
   window as in a local one, with the average beside it. A window below 4
   shows each peak meter disabled with the same sentence, never hidden and
   never a 0; the averages are unchanged.
+- `remoteCwVersion` (R-CW-48): sent right after `txReadingsVersion`, and
+  only with it, to a peer that declared `remoteCw` 1. 1 on a Core with its
+  own radio model: the Core takes `cw.send`, `cw.memory`, `cw.stop` and
+  `cw.key` (section 18.10). A window that is sent no entry shows its CWX
+  applet's Send, Stop, Key, memories and KB to CW disabled with "Sending
+  CW from a remote window needs a newer Core.", never hidden.
 
 `txPermitted` (iPhone app plan Task 34) is true only for a session the
 station transmit gate permits (section 18.1): false until
@@ -2682,48 +2706,49 @@ older window sees only the values it was built for.
 | 73 | `txRefusalFix` | `utf8` |
 | 74 | `txStateVersion` | `i64` |
 | 75 | `txReadingsVersion` | `i64` |
-| 76 | `mediaTunnelVersion` | `i64` |
-| 77 | `mediaRelayRoutingVersion` | `i64` |
-| 78 | `settingsHygieneVersion` | `i64` |
-| 79 | `settingsBackupVersion` | `i64` |
-| 80 | `remoteIqVersion` | `i64` |
-| 81 | `txModMonitorVersion` | `i64` |
-| 82 | `setupDescriptionVersion` | `i64` |
-| 83 | `miniDisplayVersion` | `i64` |
-| 84 | `accessoryTxVersion` | `i64` |
-| 85 | `remoteRotorControlVersion` | `i64` |
-| 86 | `radioAntennaRowsVersion` | `i64` |
-| 87 | `vaxVersion` | `i64` |
-| 88 | `txEqCurveVersion` | `i64` |
-| 89 | `band2mVersion` | `i64` |
-| 90 | `diversityPatternVersion` | `i64` |
-| 91 | `diversityControlVersion` | `i64` |
-| 92 | `logCategoryListVersion` | `i64` |
-| 93 | `radioModelsVersion` | `i64` |
-| 94 | `coreAddressesVersion` | `i64` |
-| 95 | `audioQualityVersion` | `i64` |
-| 96 | `stationTciSettingsVersion` | `i64` |
-| 97 | `adcAttenuatorVersion` | `i64` |
-| 98 | `paProfileVersion` | `i64` |
-| 99 | `radeStatusVersion` | `i64` |
-| 100 | `txInhibitReasonVersion` | `i64` |
-| 101 | `paTransmitBandVersion` | `i64` |
-| 102 | `sliceAccessVersion` | `i64` |
-| 103 | `mediaDirectVersion` | `i64` |
-| 104 | `mediaStunUrls` | `utf8` |
-| 105 | `rx2AttenuatorVersion` | `i64` |
-| 106 | `radioMicVersion` | `i64` |
-| 107 | `rxFilterLowPassVersion` | `i64` |
-| 108 | `radeReasonVersion` | `i64` |
-| 109 | `stationCatVersion` | `i64` |
-| 110 | `radioSpeakerVersion` | `i64` |
-| 111 | `coreSpeakerVersion` | `i64` |
-| 112 | `spectrumPictureVersion` | `i64` |
-| 113 | `firmwareBeta` | `i64` |
-| 114 | `waveformVersion` | `i64` |
-| 115 | `rxMeterStampsVersion` | `i64` |
-| 116 | `displayCodecVersion` | `i64` |
-| 117 | `stationRoundtableVersion` | `i64` |
+| 76 | `remoteCwVersion` | `i64` |
+| 77 | `mediaTunnelVersion` | `i64` |
+| 78 | `mediaRelayRoutingVersion` | `i64` |
+| 79 | `settingsHygieneVersion` | `i64` |
+| 80 | `settingsBackupVersion` | `i64` |
+| 81 | `remoteIqVersion` | `i64` |
+| 82 | `txModMonitorVersion` | `i64` |
+| 83 | `setupDescriptionVersion` | `i64` |
+| 84 | `miniDisplayVersion` | `i64` |
+| 85 | `accessoryTxVersion` | `i64` |
+| 86 | `remoteRotorControlVersion` | `i64` |
+| 87 | `radioAntennaRowsVersion` | `i64` |
+| 88 | `vaxVersion` | `i64` |
+| 89 | `txEqCurveVersion` | `i64` |
+| 90 | `band2mVersion` | `i64` |
+| 91 | `diversityPatternVersion` | `i64` |
+| 92 | `diversityControlVersion` | `i64` |
+| 93 | `logCategoryListVersion` | `i64` |
+| 94 | `radioModelsVersion` | `i64` |
+| 95 | `coreAddressesVersion` | `i64` |
+| 96 | `audioQualityVersion` | `i64` |
+| 97 | `stationTciSettingsVersion` | `i64` |
+| 98 | `adcAttenuatorVersion` | `i64` |
+| 99 | `paProfileVersion` | `i64` |
+| 100 | `radeStatusVersion` | `i64` |
+| 101 | `txInhibitReasonVersion` | `i64` |
+| 102 | `paTransmitBandVersion` | `i64` |
+| 103 | `sliceAccessVersion` | `i64` |
+| 104 | `mediaDirectVersion` | `i64` |
+| 105 | `mediaStunUrls` | `utf8` |
+| 106 | `rx2AttenuatorVersion` | `i64` |
+| 107 | `radioMicVersion` | `i64` |
+| 108 | `rxFilterLowPassVersion` | `i64` |
+| 109 | `radeReasonVersion` | `i64` |
+| 110 | `stationCatVersion` | `i64` |
+| 111 | `radioSpeakerVersion` | `i64` |
+| 112 | `coreSpeakerVersion` | `i64` |
+| 113 | `spectrumPictureVersion` | `i64` |
+| 114 | `firmwareBeta` | `i64` |
+| 115 | `waveformVersion` | `i64` |
+| 116 | `rxMeterStampsVersion` | `i64` |
+| 117 | `displayCodecVersion` | `i64` |
+| 118 | `stationRoundtableVersion` | `i64` |
 | 118 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
@@ -3417,7 +3442,7 @@ An enum property lists the values its domain allows.
 | 23 | `rx2AutoAttUndoDelayMs` | `i64` | bidirectional |  |
 | 24 | `rx2PreampMode` | `i64` | bidirectional |  |
 
-**TransmitModel** (89 properties)
+**TransmitModel** (120 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3510,8 +3535,39 @@ An enum property lists the values its domain allows.
 | 86 | `micMuted` | `bool` | bidirectional |  |
 | 87 | `txEqCurve` | `utf8` | outbound |  |
 | 88 | `cfcProfile` | `utf8` | outbound |  |
+| 89 | `cwKeyerSpeed` | `i64` | bidirectional |  |
+| 90 | `cwKeyerMode` | `i64` | bidirectional |  |
+| 91 | `cwKeyerWeight` | `i64` | bidirectional |  |
+| 92 | `cwReversePaddles` | `bool` | bidirectional |  |
+| 93 | `cwStrictSpacing` | `bool` | bidirectional |  |
+| 94 | `cwBreakInMode` | `i64` | bidirectional |  |
+| 95 | `cwBreakInDelayMs` | `i64` | bidirectional |  |
+| 96 | `cwKeyDownDelayMs` | `i64` | bidirectional |  |
+| 97 | `cwKeyUpDelayMs` | `i64` | bidirectional |  |
+| 98 | `cwSidetone` | `bool` | bidirectional |  |
+| 99 | `cwRadioSidetone` | `bool` | bidirectional |  |
+| 100 | `cwComputerSidetone` | `bool` | bidirectional |  |
+| 101 | `cwAutoModeSwitch` | `bool` | bidirectional |  |
+| 102 | `cwAutoModeReturn` | `bool` | bidirectional |  |
+| 103 | `cwAutoModeReturnMs` | `i64` | bidirectional |  |
+| 104 | `cwSerialPort` | `utf8` | bidirectional |  |
+| 105 | `cwSerialPaddles` | `bool` | bidirectional |  |
+| 106 | `cwSerialKeyLine` | `i64` | bidirectional |  |
+| 107 | `cwSerialPttLine` | `i64` | bidirectional |  |
+| 108 | `cwxSpeed` | `i64` | bidirectional |  |
+| 109 | `cwxRepeat` | `bool` | bidirectional |  |
+| 110 | `cwxRepeatDelayS` | `i64` | bidirectional |  |
+| 111 | `cwxMemory1` | `utf8` | bidirectional |  |
+| 112 | `cwxMemory2` | `utf8` | bidirectional |  |
+| 113 | `cwxMemory3` | `utf8` | bidirectional |  |
+| 114 | `cwxMemory4` | `utf8` | bidirectional |  |
+| 115 | `cwxMemory5` | `utf8` | bidirectional |  |
+| 116 | `cwxMemory6` | `utf8` | bidirectional |  |
+| 117 | `cwxMemory7` | `utf8` | bidirectional |  |
+| 118 | `cwxMemory8` | `utf8` | bidirectional |  |
+| 119 | `cwQskUnavailableReason` | `utf8` | outbound |  |
 
-**TransmitState** (50 properties)
+**TransmitState** (54 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3565,6 +3621,10 @@ An enum property lists the values its domain allows.
 | 47 | `eqPeakDb` | `f64` | outbound |  |
 | 48 | `levelerPeakDb` | `f64` | outbound |  |
 | 49 | `cfcPeakDb` | `f64` | outbound |  |
+| 50 | `rfHeld` | `bool` | outbound |  |
+| 51 | `rfHeldReason` | `utf8` | outbound |  |
+| 52 | `rfHoldSerial` | `i64` | outbound |  |
+| 53 | `rfLastHoldMs` | `i64` | outbound |  |
 
 **TunerModel** (21 properties)
 
@@ -4226,6 +4286,39 @@ Notes on the keys:
   empty or unreadable, the ten-band values) into a documented form, below
   ("The CFC band editor"). Sent only to a peer that declared `cfcProfile`
   1.
+- **`transmit` at `transmitSettingsVersion` 16** (R-CW-01, R-CW-03). The
+  CW settings, each bidirectional under its setter's name and declared
+  after `cfcProfile` in `TransmitModel`: `cwKeyerSpeed` (1 to 60 WPM),
+  `cwKeyerMode` (0 straight key, 1 iambic A, 2 iambic B), `cwKeyerWeight`
+  (33 to 66), `cwReversePaddles`, `cwStrictSpacing`, `cwBreakInMode` (0
+  off, 1 semi, 2 QSK), `cwBreakInDelayMs` (0 to 1000), `cwKeyDownDelayMs`
+  (0 to 255), `cwKeyUpDelayMs` (0 to 500), `cwSidetone`,
+  `cwRadioSidetone`, `cwComputerSidetone`, `cwAutoModeSwitch`,
+  `cwAutoModeReturn`, `cwAutoModeReturnMs` (1 to 10000, rounded to 10 ms),
+  `cwSerialPort` (`utf8`, empty for none), `cwSerialPaddles`,
+  `cwSerialKeyLine` and `cwSerialPttLine` (0 none, 1 DSR, 2 CTS),
+  `cwxSpeed` (5 to 60 WPM), `cwxRepeat`, `cwxRepeatDelayS` (1 to 60) and
+  `cwxMemory1` to `cwxMemory8` (`utf8`). The integers are `i64`, the
+  switches `bool`. They take the gates of the other transmit settings; a
+  value out of range is refused with its words (for example "Choose a
+  keyer speed from 1 to 60 WPM."). None keys the radio. A Core below 16
+  has none of them. Sent only to a peer that declared `cwSettings` 1
+  (section 6.1); every other peer's `transmit` schema, snapshot and deltas
+  carry none of them, and its write of one is refused "Update this app to
+  change the CW settings on this Core.".
+- **Why QSK is not offered** (`cwQskUnavailableReason`, `utf8`, outbound,
+  after `cwxMemory8`; the CW transmit final fix wave). The Core's reason
+  in the words its own CW page shows, for example "The Hermes Lite 2 can't
+  do QSK." or "QSK needs the same antenna for receive and transmit.", and
+  empty while QSK is offered. It follows the radio, the transmit slice's
+  antennas, the band and an armed amplifier interlock. An app shows QSK
+  greyed with these words while it is not empty. A `cwBreakInMode` write
+  of 2 (QSK) while it is not empty is refused with exactly these words,
+  from any peer (CAT's `ZZQK1;` is refused by the same rule); the selection
+  stays as it was. When QSK stops being offered while it is selected, the
+  Core falls back to Semi, and an app that sees this property become non-empty
+  with QSK selected says so once. Sent only with the other CW settings, to a
+  peer that declared `cwSettings` 1.
 - **Whose each slice is** (iPhone app plan Task 73; the several-devices
   design, rulings 5.1 to 5.6). With several devices on one Core every
   slice has an owner: the device that made it, the device that adopted it
@@ -6404,6 +6497,10 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `tx.keepalive` | `sequence` i64, `epoch` i64 | `remoteTxVersion` | 1 | 11 |
 | `tx.take` | `holderEpoch` i64 (optional), `shownKeyed` bool (optional) | `remoteTxVersion` | 2 | 11 |
 | `tx.tunerTune` | `on` bool | `remoteTxVersion` | 2 | 11 |
+| `cw.send` | `text` utf8 | `remoteCwVersion` | 1 | 11 |
+| `cw.memory` | `number` i64 | `remoteCwVersion` | 1 | 11 |
+| `cw.stop` | none | `remoteCwVersion` | 1 | 11 |
+| `cw.key` | `down` bool | `remoteCwVersion` | 1 | 11 |
 | `setAlexTxAntenna` | `band` i64, `antenna` i64 | `radioHardwareVersion` | 6 | 11 |
 | `setAlexTxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64 | `radioAntennaRowsVersion` | 1 | 11 |
 | `requestIoBoardI2c` | `bus` i64, `address` i64, `register` i64, `write` bool, `value` i64 | `radioHardwareVersion` | 7 | 11 |
@@ -8234,9 +8331,10 @@ same on every machine.
 | `foreign-write-refused` | This device holds slice 0 and another device slice 1: a `property.write` to `slice:1` and to `marker:1`, and `removeSlice` and `setActiveSliceById` naming slice 1, are refused "That slice belongs to Other device 1. It can be changed only there.", with no value sent back and nothing changed; its own slice it may make active |
 | `held-for-device` | Another device, alone on the Core, leaves with `session.leave`: nobody else is on its slice, so the slice closes and is saved for it (the Core has no slice). This device, let in meanwhile, gets a slice of its own; the other device signs in again and its saved slice is restored under the lowest free letter, which this device sees as a marker with `ownerAway` false |
 | `verbs-tx-set-tx-slice` | On a Core with `remote_transmit` allow (stationSetup `remoteTransmit`), a device that declares `remoteTx` is sent `txPermitted` false in its first `capabilities` and true in the `capabilities` sent again after `snapshot.complete`, each with `remoteTxVersion` 1 and the `txRefusal` entries (`notReady` first, empty once permitted); `tx.setTxSlice` with an argument it does not take is refused "The Core could not read this request."; with `sliceId` while nobody holds transmit it is refused "Take transmit on this device first." with the values `refusalCode` `notHolder` and `refusalFix` `takeTransmit`. Runs on the station alone |
+| `verbs-cw` | `remoteCwVersion` 1 (the client declares `remoteTx` 1 and `remoteCw` 1, section 18.10): `remoteCwVersion` right after `txReadingsVersion` in both `capabilities`; `cw.send`, `cw.memory` and `cw.key` each with a misnamed argument refused "The Core could not read this request.", and with their own arguments while nobody holds transmit refused "Take transmit on this device first." with `refusalCode` `notHolder` and `refusalFix` `takeTransmit`; `cw.key {down: false}` and `cw.stop` taken. Nothing keys. |
 | `unheld-key` | On a Core with `remote_transmit` allow whose radio can key (stationSetup `transmitReady`) and whose device's media carries a microphone line (stationSetup `microphoneLine`), one device that declares `remoteTx`: each keying verb with an argument it does not take is refused "The Core could not read this request."; a program's `tx.key {trigger:"tci"}` on unheld transmit is refused `programNeedsTransmit` and nobody takes transmit; a person's `tx.key {trigger:"screen"}` takes it and keys (epoch 1; `transmitting` true, the device's entry transmitting); `tx.unkey {epoch:1}` unkeys; the same program's key then keys (epoch 2) and `tx.unkey {epoch:2}` unkeys; `tx.tune {on:true}` tunes (epoch 3, `transmit`'s `tune` true) and `{on:false}` ends it; `tx.twoTone {on:true}` on a radio with no transmit channel is refused "The two-tone test could not start on the Core." Each key and unkey also moves `txState` (section 18.8): `keyed`, who keyed and how (`keyedTrigger` `screen`, `tci`, `tune`), `keyedSinceMs` on the runner's virtual clock and 180 s left for the phone. Runs on the station and the app |
 | `key-without-microphone` | On the same Core as `unheld-key` but with no microphone line for the device (stationSetup `microphoneLine` absent): a person's `tx.key {trigger:"screen"}` is refused `micNotReady`, "This device's microphone is not connected to the Core. Wait a moment and try again.", and nothing keys; a program's key on unheld transmit is still refused `programNeedsTransmit` first. Runs on the station and the app |
-| `tx-keepalive` | On the same Core as `unheld-key`: `tx.keepalive` with an argument it does not take is refused "The Core could not read this request."; a keepalive while nothing of the device's is watched is accepted and changes nothing; the device keys (epoch 1) and sends keepalives 50 ms after the key and then 300 ms apart (sequences 2 to 4, epoch 1), each accepted, and the key stays on; then none for 450 ms: the watchdog stops transmitting (`transmitting` false, the device's entry no longer transmitting). `txState` follows the key (180 s left, 179 a second later), and the watchdog's stop is its stop: `stopReason` `linkLost`, `stopSerial` 1, "The link to Conformance device went quiet, so the Core stopped transmitting." Runs on the station and the app |
+| `tx-keepalive` | On the same Core as `unheld-key`: `tx.keepalive` with an argument it does not take is refused "The Core could not read this request."; a keepalive while nothing of the device's is watched is accepted and changes nothing; the device keys (epoch 1) and sends keepalives 50 ms after the key and then 300 ms apart (sequences 2 to 4, epoch 1), each accepted, and the key stays on; then none: about 400 ms after the last one the watchdog holds the key's RF (`rfHeld` true, `rfHeldReason` `link`, still keyed), and 3000 ms after it stops transmitting (`transmitting` false, the device's entry no longer transmitting). `txState` follows the key (180 s left, then 179, 178 and 177 a second apart), and the watchdog's stop is its stop: `stopReason` `linkLost`, `stopSerial` 1, "The link to Conformance device went quiet, so the Core stopped transmitting.", with the hold ended in the same delta (`rfHeld` false, `rfHoldSerial` 1, `rfLastHoldMs` 2600). Runs on the station and the app |
 | `grace-transmit-held` | Two devices that declare `remoteTx`: the other device keys and this one's permission goes false (`capabilities` sent again) and its `tx.key` is refused "Other device 1 has the transmitter."; the holder's link drops: this device is sent `capabilities` again with the refusal "Transmit is changing hands. Try again in a moment." and then "Other device 1 has the transmitter.", the Core stops transmitting at once (`transmitting` false) and the holder, away, still holds transmit (this device's `tx.key` is refused naming it); the holder signs in again a minute later, nothing keys until its own `tx.key` (epoch 2), and its `tx.unkey {epoch:2}` unkeys. `txState` follows each key, and the holder's dropped link is its stop: `stopReason` `linkLost`, `stopSerial` 1, "The link to Other device 1 went quiet, so the Core stopped transmitting." Runs on the station and the app |
 | `on-air-refusals` | While another device (short name "Tablet B") is keyed, this device's Protocol 1 rate change, `ps3.off`, its slice's `rxAntenna` and `transmit`'s `pureSig` are each refused "Tablet B is on the air. Try again when they stop." (commands with `refusalCode` `holderOnAir` and `refusalFix` `takeTransmit`). Runs on the station alone |
 | `take-transmit` | Two devices that declare `remoteTx` and `sessionHolder` (Task 77): the other device's `tx.take` on unheld transmit is taken at once (`holderEpoch` 1) and the transmit flag moves to its own slice (this device's `slice:0` `txSlice` false, the other's marker true); this device's `tx.take {}` is refused "Waiting for you to confirm." with `phase` `needsConfirmation` and a `confirm.request` `takeTransmit` whose `holder` names "Other device 1", `state` `listening`, `keyed` false; `confirm.proceed` takes it (`holderEpoch` 2, the flag back on `slice:0`) and the other device gets `transmitTaken` "Conformance device took transmit." with Take it back; this device's `tx.take` again is accepted and changes nothing; the other device's `tx.take {holderEpoch:2, shownKeyed:false}` takes at once. Runs on the station and the app |
@@ -8547,6 +8645,11 @@ sentence. A client shows the sentence as sent and may offer the fix.
 | `stopNotConfirmed` | The radio did not confirm it stopped transmitting. | |
 | `holderOnAir` | <short name> is on the air. Try again when they stop. ("The radio is on the air. Try again when it stops." while the radio's own PTT, or the Core's own keys, hold transmit; the same sentence for a key whose transmit binding would land on another device's slice, from a device with a slice of its own to move the flag to, while the radio is not back in receive or the flag is frozen, and for the hosting desktop's own PTT in that case) | `takeTransmit` |
 | `notHolder` | Take transmit on this device first. | `takeTransmit` |
+| `notReady` | Put the transmit slice in CW to use the radio's keyer. (a CW key while the transmit slice is not in CWL or CWU) | |
+| `notReady` | Switch the slice to CW to send. (`cw.send`, `cw.memory` or `cw.key` while the transmit slice is not in CWL or CWU, section 18.10) | |
+| `notReady` | The Core is changing its radio. Try again when it has finished. (a CW key while the Core changes its radio) | |
+| `notReady` | There is nothing to send. (`cw.send` with empty text); Memory <n> is empty. (`cw.memory` of an empty memory); There is no memory <n>. (`cw.memory` outside 1 to 8) | |
+| `notReady` | Update this app to send CW through this Core. (a cw.* verb from a peer that did not declare `remoteCw` 1) | |
 | `otherDeviceHolds` | <holder> has the transmitter. Take it to stop the transmission. (`tx.unkey`, or TUNE or two-tone off, from a device that does not hold transmit) | `takeTransmit` |
 | `keyEnded` | The Core already stopped this transmission. Key again to transmit. | |
 | `noTransmitSlice` | There is no slice to transmit on. Add a slice first. (every key while the Core has no slice; and a device's key, the hosting desktop's included, whose transmit binding would land on another device's slice (for a device on sliceAccess or the hosting desktop; for any other device, only the slice it lost when another device took control of it) while the device has no slice of its own it may transmit on; with one, its unkeyed flag moves there and the key goes ahead; and the radio's own PTT on a hosting desktop, with the flag on another device's slice, while the desktop has no slice) | |
@@ -8804,14 +8907,27 @@ iPhone app plan Task 37 (R-IOS-13; remote design sections 8.3, 12.1 and
 12.3; pairing design section 9.7; spec section 4.6 items 1 and 2).
 
 **The numbers, stated together.** A device keyed, or with VOX armed, sends
-a keepalive every 100 ms. The Core stops transmitting once more than
-400 ms pass without one from it (the link-loss deadline). A keyed device's
-microphone line counts as starved after 250 ms without audio (the
-starvation deadline). The Core's transmit buffer for the line targets
-30 ms on a steady link and never holds more than 120 ms. A client's first reconnect comes
-1000 ms after a loss. So 120 < 250 < 400 < 1000: starvation is handled
-before the link counts as lost, and the Core has stopped before any
-reconnect (`RemoteTxWatchdog`, `RemoteMicConfig`, checked at compile time).
+a keepalive every 100 ms. Hold then cut: once more than 400 ms pass
+without one from a keyed device the Core holds its RF silent (the link
+hold), and once more than 3000 ms pass it stops transmitting (the link
+cut). A keyed device's microphone line counts as starved after 250 ms
+without audio (the starvation deadline), which holds RF in the carrier
+modes (the microphone hold); 10 s without microphone audio packets stops
+transmitting in every mode (the no-audio cut). The Core's transmit buffer
+for the line targets 30 ms on a steady link and never holds more than
+120 ms. A client's first reconnect comes 1000 ms after a loss. So
+120 < 250 < 400 < 1000 < 3000: a starved line is held before a quiet link
+is, and RF is off before any reconnect, while a short outage is held, not
+cut (`RemoteTxWatchdog`, `RemoteMicConfig`, checked at compile time).
+
+**What a hold is.** The Core sends the radio silence in place of the
+device's transmit audio, so nothing is radiated (no carrier in TUNE, AM or
+FM, no tone in two-tone, no voice), while MOX, the relays, an amplifier's
+key line and the holder all stay as they are; the transmit time-out keeps
+counting from key-down. When the silence ends (a keepalive that counts, or
+audio again) and no other hold is on, RF returns by itself on the next
+block: the operator presses nothing. A hold is published on `txState`
+(section 18.8) and logged with its length and how it ended.
 
 **`tx.keepalive {sequence, epoch}`.** Under `remoteTxVersion` 1 at minor
 11, for a peer that declared `remoteTx` 1 (any other is refused "Update
@@ -8841,9 +8957,14 @@ two-tone off) ends the watch on its key at once, so a transmission that
 ends by itself after a release (a RADE end-of-over tail) is never
 taken for a lost link.
 
-**When it stops.** More than 400 ms without a keepalive that counts, or
-the device's session ending (a drop, leaving, a replacement or a
-revocation), and the Core turns off the VOX that device armed and, when
+**When it holds.** More than 400 ms without a keepalive that counts while
+the device is keyed. VOX armed with no key has nothing to hold. A
+keepalive that counts, heard within 400 ms of now, ends the hold and the
+device stays watched; a hold that has lasted more than 2600 ms is cut.
+
+**When it stops.** More than 3000 ms without a keepalive that counts (or a
+hold past its 2600 ms), or at once when the device's session ends (a drop,
+leaving, a replacement or a revocation), and the Core turns off the VOX that device armed and, when
 the key on the air is that device's, stops transmitting at once (the
 emergency stop, then StopAllTx) with "The link to <device> went quiet, so
 the Core stopped transmitting.", "<device>" being its name as
@@ -8887,12 +9008,15 @@ at the Core is refused (`micNotReady`): the Core never keys from its own
 microphone because a device armed VOX.
 
 **Microphone starvation on a live link.** When the device's line starves
-while it is keyed on it, the transmit mode decides: LSB, USB, DSB, CWL,
-CWU, DIGL, DIGU and SPEC stay keyed (silence there puts no carrier on the
-air; WDSP's DSB adds none), until the time-out or the operator ends it;
-AM, SAM, FM, DRM, RADE_U, RADE_L, RADE2_U and RADE2_L stop at once with "No microphone audio
-arrived from <device>, so the Core stopped transmitting." TUNE and
-two-tone use no microphone and are never stopped by it.
+(250 ms without audio) while it is keyed on it, the transmit mode decides:
+LSB, USB, DSB, CWL, CWU, DIGL, DIGU and SPEC stay keyed (silence there puts
+no carrier on the air; WDSP's DSB adds none); AM, SAM, FM, DRM, RADE_U,
+RADE_L, RADE2_U and RADE2_L hold RF silent while keyed, and audio again
+releases the hold. In every mode, 10 s without microphone audio packets
+stops transmitting with "No microphone audio arrived from <device>, so the
+Core stopped transmitting." TUNE and two-tone use no microphone and are
+never held or stopped by it: a microphone hold on when either starts is
+released.
 
 #### Independent transmit watch (unpublished extension)
 
@@ -8978,7 +9102,10 @@ the holder of transmit and `keyedForSeconds`, appended after `stopSerial`,
 and `stopEpoch` after them, then `highSwr` and `swrWindBackLatched`,
 added with `txDisplayVersion` 1 and sent by every Core whatever its
 `txDisplayVersion`, as `stopEpoch` is; then `forwardAdcRaw`,
-`reflectedAdcRaw` and `compressionDb`, with `txReadingsVersion` 1) goes to
+`reflectedAdcRaw` and `compressionDb`, with `txReadingsVersion` 1; then
+the hold of the keyer's RF, `rfHeld`, `rfHeldReason`, `rfHoldSerial` and
+`rfLastHoldMs`, appended after `cfcPeakDb` with `txStateVersion` still 2,
+so an older app ignores them) goes to
 a peer at minor 11 whose hello declared `remoteTx` 1, in its snapshot after
 `connectedDevices`, and as deltas. Every property is `outbound`; a write
 is refused as any outbound property's is.
@@ -9013,6 +9140,10 @@ is refused as any outbound property's is.
 | `forwardRawPowerWatts`, `forwardAdcVolts`, `reflectedAdcVolts` | Core-scaled raw forward power (W) and forward/reverse ADC voltage (V), f64, `txReadingsVersion` 2. The Core calls the same `PaTelemetryScaling` functions as native PA Values with its current radio model, on the existing PA sample/meter cadence and radio change. All three are outbound only and reset with the session |
 | `eqDb`, `levelerDb`, `levelerGainDb`, `cfcDb`, `cfcGainDb`, `alcGainDb`, `alcGroupDb` | The seven stage readings a local window's container meters show (f64, dB; A9, `txReadingsVersion` 3), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46971-46986 [v2.10.3.15]): EQ and Leveler `TXA_EQ_AV` and `TXA_LVLR_AV` floored at -30 dB, Leveler gain `TXA_LVLR_GAIN` negated and floored at 0, CFC `TXA_CFC_AV` floored at -30, CFC gain `TXA_CFC_GAIN` floored at 0, ALC gain `TXA_ALC_GAIN` plus 3 floored at -195, and ALC group `TXA_ALC_PK` floored at -30 plus `TXA_ALC_GAIN` plus 3 floored at 0. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
 | `micPeakDb`, `alcPeakDb`, `compressionPeakDb`, `eqPeakDb`, `levelerPeakDb`, `cfcPeakDb` | The six peak readings a local window's container meter bars show as their main value, beside the average (f64, dB; `txReadingsVersion` 4), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46970-46983 [v2.10.3.15]): MIC peak and ALC peak `TXA_MIC_PK` and `TXA_ALC_PK` floored at -195 dB, and COMP, EQ, Leveler and CFC peak `TXA_COMP_PK`, `TXA_EQ_PK`, `TXA_LVLR_PK` and `TXA_CFC_PK` floored at -30. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
+| `rfHeld` | The Core holds the keyer's RF silent while it stays keyed (hold then cut, section 18.7): its link went quiet for more than 400 ms, or its microphone line starved in a carrier mode. Only the key on the air is described; false while unkeyed |
+| `rfHeldReason` | Why: `link` or `mic` (`link` when both); `""` while not held |
+| `rfHoldSerial` | Advances by one as each hold ends (serial-number arithmetic); 0 before the first. An app whose own link was the one that went quiet learns of a hold it never saw from this |
+| `rfLastHoldMs` | How long the hold that ended last lasted, in milliseconds on the Core's clock; 0 before the first |
 
 The AM Mod Monitor's readings (peaks, holds, carrier, lamps and envelope
 trace) are not `txState` properties: they travel as the `txAmModulation`
@@ -9193,6 +9324,39 @@ another device it is refused "<holder> has the transmitter.", and with
 transmit unheld "Take transmit on this device first.". A carrier action
 (`tx.tune`, `tx.twoTone`, `tx.tunerTune`, `ps3.twoTone` on) is a key
 (section 18.6).
+
+### 18.10 CW (`cw.*`)
+
+R-CW-48, R-CW-49 (`remoteCwVersion` 1, for a peer that declared
+`remoteCw` 1). The Core's CWX sender sends CW for the device that holds
+transmit, through the Core's own keying gate: the radio's CW key while the
+sender runs for the holder is the holder's key, as VOX is (section 18.6).
+
+- `cw.send {text}` (`utf8`): queues the text, with CWX's prosigns and
+  speed marks. `cw.memory {number}` (`i64`, 1 to 8): queues the Core's
+  `cwxMemory<number>`. `cw.key {down}` (`bool`): the hand key, down
+  while held; the Core lets go 3 s after the last `down` with no `up`.
+  `cw.stop {}`: ends what the sender runs for this device and clears it.
+- `cw.send`, `cw.memory` and `cw.key {down: true}` need the session's own
+  gate (section 18.1) and transmit held by this device: from another
+  device while one holds it they are refused "<holder> has the
+  transmitter." (`otherDeviceHolds`, `takeTransmit`), with transmit unheld
+  "Take transmit on this device first." (`notHolder`, `takeTransmit`).
+  The sender's own refusals are `notReady` (section 18.3), and the CW
+  keyer's are its own (for example the break-in sentences).
+- `cw.stop` and `cw.key {down: false}` are always taken: they end only
+  what the sender runs for this device, never another device's CW or the
+  station's own.
+- A refusal carries `refusalCode` and `refusalFix` in its `values`, as
+  section 18.3 says; an accepted answer has no values.
+- The window sends each request three times under one id (section 18.6);
+  every copy gets the first answer and the sender acts once. The same id
+  with other bytes is refused "The Core could not read this request.".
+- The sender's work for a device ends when its link drops or it connects
+  again, at once rather than at the Key's 3 s; a transmit cut (Stop All TX)
+  and another device taking transmit end it too.
+- The Core does not send the sender's progress: a remote window marks no
+  sent or current characters.
 
 ## 19. The rendezvous
 

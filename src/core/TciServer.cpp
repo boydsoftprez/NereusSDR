@@ -6,6 +6,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-27 - CW transmit, the TCI CW commands (R-CW-35) by J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code: each command names
+//                its app to the protocol (the CW owner), and an app that
+//                leaves stops what it sends (TCIServer.cs DisconnectClient).
 //   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code: a TX handoff to, or a tune
 //                of, a bound slice this desktop client has no receiver for
@@ -2753,6 +2757,10 @@ void TciServer::onClientDisconnected()
     it = m_clients.find(ws);
     if (it == m_clients.end()) { return; }
 
+    // R-CW-35: its CW terminals turn off and what it sends stops.
+    // From Thetis TCIServer.cs:8625-8640 [v2.10.3.15] (DisconnectClient).
+    m_protocol->cwClientDisconnected(ws);
+
     // The key this app held is released first, by the path the keyed-client
     // watchdog shares (releaseKeyHeldBy).
     if (!releaseKeyHeldBy(ws) || !self || !client) { return; }
@@ -5171,7 +5179,10 @@ void TciServer::onTextMessageReceived(const QString& msg)
                                 QStringLiteral("iq_samplerate:%1;").arg(publishedIqRate()));
         return;
     }
+    // R-CW-35: the CW macros, terminal and keyer belong to one app.
+    m_protocol->setCommandOwner(ws);
     const QString response = m_protocol->handleCommand(msg);
+    m_protocol->setCommandOwner(nullptr);
 
     // Task 7 follow-up (R-R3-49): the trx keyed nothing and holds no TCI
     // level (refused by the band plan, the interlock or the microphone

@@ -36,6 +36,9 @@
 //               stamped with the session it was asked in; a notice card's
 //               Take it back is shown off once its session ends. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, foreignMarkers() puts a CW marker's passband
+//               one pitch off its dial (R-CW-24). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "gui/multidevice/MultiDeviceController.h"
@@ -486,7 +489,7 @@ void MultiDeviceController::onCommandFinished(const QByteArray& verb, quint32 co
 }
 
 QVector<SpectrumWidget::ForeignSliceMarker> MultiDeviceController::foreignMarkers(
-    const RemoteDevicesState& devices, const SliceAccessMirror* access)
+    const RemoteDevicesState& devices, const SliceAccessMirror* access, int cwPitchHz)
 {
     const QString station = QStringLiteral("station");
     QVector<SpectrumWidget::ForeignSliceMarker> out;
@@ -496,6 +499,9 @@ QVector<SpectrumWidget::ForeignSliceMarker> MultiDeviceController::foreignMarker
         f.centreHz = m.frequencyHz;
         f.filterLowHz = m.filterLowHz;
         f.filterHighHz = m.filterHighHz;
+        // R-CW-24: a CW slice's passband sits around its dial.
+        f.passbandOffsetHz = m.dspMode < 0 ? 0.0
+            : SpectrumWidget::cwPassbandOffsetHz(static_cast<DSPMode>(m.dspMode), cwPitchHz);
         // A marker's colour is its letter's (the several-devices design,
         // section 5.4); the fifth letter shares A's, the label tells them
         // apart.

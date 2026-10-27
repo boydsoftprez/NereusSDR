@@ -89,6 +89,26 @@
 //               when the layout is read again. A refused New Container
 //               shows the box alone, with no toast on top. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): a remote
+//               window's CWX applet sends through the Core's CWX sender,
+//               gated on remoteCwVersion and the transmit holder, and the
+//               TX applet's MON in CW waits for the CW settings. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CWX applet constructed and registered
+//               (Tools > CWX, the status-bar CWX label, CAT ZZKO's applet
+//               host, R-CW-44), the CW passband drawn from the CW pitch
+//               (R-CW-24, R-CW-45) and CWX built (R-CW-46). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CW page and Setup > DSP > CW follow the
+//               remote window's CW settings gate (transmitSettingsVersion
+//               16, R-CW-03, R-CW-41, R-CW-43). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-27: Remote transmit hold then cut: the TX badge reads "Held" in
+//               amber while the Core holds a remote key's RF, from the
+//               Core's own TransmitState on the Core window and the
+//               mirrored one on a remote window (TxHeldIndicator,
+//               refreshTxStatusBadge). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -1275,6 +1295,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
@@ -1466,6 +1487,7 @@ warren@wpratt.com
 #include "applets/ModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
+#include "core/CwxSender.h"
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
 #include "core/cat/CatService.h"
@@ -1564,6 +1586,7 @@ warren@wpratt.com
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTimer>
+#include <QScrollArea>
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
 #include <QPushButton>
@@ -2944,6 +2967,17 @@ void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry&
     }
 }
 
+// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
+// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
+// says; every other applet keeps its first-launch state.
+ContentEntry firstLaunchEntry(ContentEntry entry)
+{
+    if (entry.typeId == QLatin1String("applet:cwx")) {
+        entry.visible = false;
+    }
+    return entry;
+}
+
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
                                          StationClient* client)
 {
@@ -3238,6 +3272,11 @@ void MainWindow::refreshDesktopStationState()
         disconnect(m_desktopDevicesConnection);
         disconnect(m_desktopPresenceConnection);
         m_desktopBoundServer = server;
+        // Remote transmit hold then cut: the Core window's TX badge follows
+        // the hosted server's own TransmitState.
+        if (m_txHeld) {
+            m_txHeld->setTransmitState(server ? server->transmitState() : nullptr);
+        }
         // Slice control plan Task 10: the station device's requests go to
         // the server this window hosts now.
         if (m_hostingQuestionDialog) {
@@ -3747,6 +3786,7 @@ void MainWindow::refreshForeignMarkers()
             marker.centreHz = slice->frequency();
             marker.filterLowHz = slice->filterLow();
             marker.filterHighHz = slice->filterHigh();
+            marker.passbandOffsetHz = slice->cwShiftHz();  // R-CW-24
             marker.color = VfoWidget::sliceColor(marker.sliceId);
             marker.letter = slice->sliceLetter();
             if (const auto words = server->connectedDevices()->describe(subject)) {
@@ -3763,7 +3803,8 @@ void MainWindow::refreshForeignMarkers()
         // A marker for a slice the station device holds names no device;
         // its access entry says so, and the hosting desktop is named.
         markers = MultiDeviceController::foreignMarkers(*m_stationClient->remoteDevices(),
-                                                        m_stationClient->sliceAccess());
+                                                        m_stationClient->sliceAccess(),
+                                                        m_radioModel->cwPitchHz());
     }
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         if (applet && applet->spectrumWidget()) {
@@ -4509,6 +4550,8 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        // CW transmit (R-CW-49): the CWX applet hears the Core's refusals.
+        bindRemoteCwx();
         connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
                 this, [this]() { applyRemoteRoleGating(); });
         // iPhone app Task 18 (R-IOS-08): this computer's own device key.
@@ -4618,6 +4661,9 @@ void MainWindow::ensureRemoteSession()
         }
         // iPhone app plan Task 39: the Core's transmit meters.
         wireRemoteTransmitMeters();
+        // Remote transmit hold then cut: the TX badge follows the Core's
+        // hold as this window's copy of txState reads it.
+        if (m_txHeld) { m_txHeld->setTransmitState(m_stationClient->transmitState()); }
         // iPhone app plan Task 25: the Core computer's VAX channels.
         wireRemoteStationVax();
         // iPhone app plan Task 78: several devices on one Core.
@@ -7047,6 +7093,14 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     });
     refreshForeignMarkers();
 
+    // R-CW-24: the pan draws a CW passband one pitch off the dial; it holds
+    // the station pitch so no drawer reads settings per frame.
+    sw->setCwPitchHz(m_radioModel->cwPitchHz());
+    connect(m_radioModel, &RadioModel::cwPitchChanged, sw, [this, sw](int hz) {
+        sw->setCwPitchHz(hz);
+        refreshForeignMarkers();
+    });
+
     configureSpectrumForPanForTest(sw, panId);
 
     // Rotor control plan Task 8: Turn beam on this pan's spot menu, and
@@ -9295,7 +9349,8 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                placeFirstLaunchApplet(c.contents, contentRegistry->makeEntry(descriptor.typeId));
+                placeFirstLaunchApplet(c.contents,
+                                       firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -11235,7 +11290,7 @@ void MainWindow::resetDefaultLayout()
                 for (int i=0;i<retained.size();++i) {
                     if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
                 }
-                if (!found) { entry=registry->makeEntry(descriptor.typeId); }
+                if (!found) { entry=firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
                 if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
                 placeFirstLaunchApplet(main.contents, entry);
             }
@@ -11739,6 +11794,20 @@ void MainWindow::populateDefaultMeter()
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
+    // CW transmit (R-CW-44): the CWX applet, on RadioModel's CWX sender.
+    // A refused request says why in a toast.
+    m_cwxApplet = new CwxApplet(m_radioModel, nullptr);
+    panel->addApplet(m_cwxApplet);
+    connect(m_cwxApplet, &CwxApplet::requestRefused, this, [this](const QString& words) {
+        showToast(words, ToastSeverity::Warning, 4000);
+    });
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        // R-CW-49: until the Core says it takes CW (remoteCwVersion),
+        // applyRemoteRoleGating keeps the requests disabled with the reason.
+        m_cwxApplet->setSendPermitted(false, cwxRemoteSendReason());
+        bindRemoteCwx();
+    }
+
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
     // Visibility is now managed by AppletVisibilityController below
     // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
@@ -12046,6 +12115,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Roundtable")] = m_roundtableApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
+    m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -12103,6 +12173,16 @@ void MainWindow::populateDefaultMeter()
     m_appletVis->registerApplet(QStringLiteral("Roundtable"),
                                 QStringLiteral("Roundtable"),   true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
+    // CWX: placed hidden, as Thetis's CWX form is closed until opened, so
+    // no other screen changes; Tools > CWX, the status-bar CWX label and
+    // CAT ZZKO show or hide it.
+    m_appletVis->registerApplet(QStringLiteral("Cwx"), QStringLiteral("CWX"), false);
+    // CAT ZZKO (R-CW-34) reads and sets whether the applet shows.
+    m_radioModel->setCwxAppletHost(
+        [this]() { return m_appletVis && m_appletVis->isVisible(QStringLiteral("Cwx")); },
+        [this](bool shown) {
+            if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Cwx"), shown); }
+        });
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
@@ -12228,7 +12308,7 @@ void MainWindow::populateDefaultMeter()
     //
     // m_digitalApplet    = new DigitalApplet(m_radioModel, nullptr);    // TODO 3-VAX
     // m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);  // TODO 3F (multi-RX)
-    // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
+    // CwxApplet: constructed with the CAT applet above (CW transmit, R-CW-44).
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
     // CAT is registered with the live applet host above.
 
@@ -13552,8 +13632,12 @@ void MainWindow::buildMenuBar()
 
     {
         QAction* cwxAction = toolsMenu->addAction(QStringLiteral("C&WX..."));
+        cwxAction->setObjectName(QStringLiteral("cwxAction"));
         cwxAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_X));
-        cwxAction->setEnabled(false);
+        cwxAction->setToolTip(QStringLiteral("Show the CWX applet"));
+        // CW transmit (R-CW-44): shows the CWX applet, as Thetis's Tools >
+        // CWX opens its form.
+        connect(cwxAction, &QAction::triggered, this, [this]() { showCwxApplet(true); });
         // R-R3-49: hidden until CWX is built.
         UnbuiltFeatures::hideUnlessBuilt(cwxAction, UnbuiltFeature::Cwx);
     }
@@ -14047,9 +14131,20 @@ void MainWindow::buildStatusBar()
     auto* cwxLabel = new QLabel(QStringLiteral("CWX"), barWidget);
     cwxLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
-    cwxLabel->setToolTip(QStringLiteral("CW keyer"));
+    cwxLabel->setToolTip(QStringLiteral("CWX: click to show or hide the CWX applet"));
     cwxLabel->setCursor(Qt::PointingHandCursor);
     cwxLabel->setObjectName(QStringLiteral("statusCwxLabel"));
+    // CW transmit (R-CW-44): a click shows or hides the CWX applet; the
+    // label lights while CWX sends.
+    cwxLabel->installEventFilter(this);
+    m_statusCwxLabel = cwxLabel;
+    if (CwxSender* cwx = m_radioModel ? m_radioModel->cwxSender() : nullptr) {
+        connect(cwx, &CwxSender::sendingChanged, cwxLabel, [cwxLabel](bool sending) {
+            cwxLabel->setStyleSheet(sending
+                ? QStringLiteral("QLabel { color: #00ff88; font-weight: bold; font-size: 11px; }")
+                : QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
+        });
+    }
 
     // DVK
     auto* dvkLabel = new QLabel(QStringLiteral("DVK"), barWidget);
@@ -14613,21 +14708,27 @@ void MainWindow::buildStatusBar()
     safetyRow->addWidget(m_txHolderChip);
     hbox->addWidget(m_safetyGroup);
 
+    // Remote transmit hold then cut (decision 7): the TX badge reads
+    // "Held" in amber while the Core holds a remote key's RF. The
+    // indicator follows a TransmitState (the Core's own on the Core window,
+    // bound in refreshDesktopStationState; the mirrored one on a remote
+    // window, bound in ensureRemoteSession) and this window's MOX.
+    m_txHeld = new TxHeldIndicator(this);
+    connect(m_txHeld, &TxHeldIndicator::changed, this, &MainWindow::refreshTxStatusBadge);
+
     // Wire TX badge to MoxController. MoxController lives on m_radioModel;
     // both are created before buildStatusBar() runs.
     if (MoxController* mox = m_radioModel->moxController()) {
+        m_txHeld->setKeyed(mox->isMox());
         // Qt::UniqueConnection is not supported for lambda connects — this
         // connect runs once at construction so no deduplication is needed.
         connect(mox, &MoxController::moxStateChanged, this, [this](bool tx) {
+            m_txHeld->setKeyed(tx);
             // While inhibited the badge is showing the prohibition symbol and
             // must keep showing it; a MOX transition underneath must not
             // repaint over an active interlock.
             if (m_txInhibited) { return; }
-            m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
-            m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
-                                           : StatusBadge::Variant::Off);
-            m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
-                                           : tr("Receive (MOX off)"));
+            refreshTxStatusBadge();
         });
     }
 
@@ -14966,8 +15067,7 @@ void MainWindow::setTxInhibited(bool inhibited)
         // a property of transmit, so it belongs on the transmit indicator;
         // and the pill's abbreviation meant nothing to an operator who had
         // not read the source (bench report, 2026-08-03).
-        m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-prohibited.svg"));
-        m_txStatusBadge->setVariant(StatusBadge::Variant::Tx);
+        refreshTxStatusBadge();
         // The symbol says transmit is blocked; the toast says why, once, at
         // the moment it happens. Error severity because an interlock is
         // actively refusing the operator, which is what that level means.
@@ -14985,11 +15085,16 @@ void MainWindow::setTxInhibited(bool inhibited)
     }
     const bool tx = m_radioModel && m_radioModel->moxController()
                     && m_radioModel->moxController()->isMox();
-    m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
-    m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
-                                   : StatusBadge::Variant::Off);
-    m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
-                                   : tr("Receive (MOX off)"));
+    if (m_txHeld) { m_txHeld->setKeyed(tx); }
+    refreshTxStatusBadge();
+}
+
+// Remote transmit hold then cut (decision 7): the TX badge's look, from
+// the hold indicator and MOX; TX Inhibit's icon paints over every state.
+void MainWindow::refreshTxStatusBadge()
+{
+    if (!m_txStatusBadge || !m_txHeld) { return; }
+    m_txHeld->applyTo(m_txStatusBadge, m_txInhibited);
 }
 
 // ── Phase 23: TCI indicator update + Setup navigation ────────────────────────
@@ -17587,6 +17692,57 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     restackToasts();
 }
 
+// CW transmit (R-CW-44): shows or hides the CWX applet, where the operator
+// can reach its header when shown.
+void MainWindow::showCwxApplet(bool shown)
+{
+    if (m_appletVis == nullptr) { return; }
+    m_appletVis->setVisible(QStringLiteral("Cwx"), shown);
+    if (shown && m_containerManager) {
+        m_containerManager->bringAppletOnScreen(
+            ContainerContentRegistry::appletTypeForVisibilityId(QStringLiteral("Cwx")));
+    }
+    // A panel that scrolls (the classic applet panel) scrolls it into view
+    // once the layout has placed it.
+    if (shown && m_cwxApplet != nullptr) {
+        QPointer<QWidget> applet(m_cwxApplet);
+        QTimer::singleShot(0, this, [applet]() {
+            if (applet.isNull()) { return; }
+            for (QWidget* w = applet->parentWidget(); w != nullptr; w = w->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(w)) {
+                    area->ensureWidgetVisible(applet, 0, 0);
+                    return;
+                }
+            }
+        });
+    }
+}
+
+QString MainWindow::cwxRemoteSendReason()
+{
+    return QStringLiteral("Sending CW from a remote window needs a newer Core.");
+}
+
+void MainWindow::bindRemoteCwx()
+{
+    if (m_cwxApplet == nullptr || m_radioModel == nullptr
+        || m_radioModel->role() != RadioModel::Role::Remote) {
+        return;
+    }
+    if (!m_cwxApplet->hasRemoteSender()) {
+        // Each request goes through the Core's CWX sender.
+        m_cwxApplet->setRemoteSender(CwxApplet::remoteSenderFor(
+            [this]() -> RemoteTransmitClient* {
+                return m_stationClient != nullptr ? m_stationClient->remoteTransmit() : nullptr;
+            },
+            cwxRemoteSendReason()));
+    }
+    if (m_stationClient != nullptr && m_stationClient->remoteTransmit() != nullptr) {
+        connect(m_stationClient->remoteTransmit(), &RemoteTransmitClient::cwRefused, m_cwxApplet,
+                &CwxApplet::showRefusal, Qt::UniqueConnection);
+    }
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     // Container Settings' Minimizes: floating containers follow this
@@ -17636,6 +17792,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // The indicator is a QWidget (not a QLabel) so we match by pointer identity.
     if (event->type() == QEvent::MouseButtonPress) {
         if (watched == m_catIndicator) { openCatSetupPage(); return true; }
+        if (watched == m_statusCwxLabel && m_appletVis) {
+            showCwxApplet(!m_appletVis->isVisible(QStringLiteral("Cwx")));
+            return true;
+        }
         if (watched == m_tciIndicator) {
             openTciSetupPage();
             return true;  // event consumed
@@ -17919,7 +18079,8 @@ SetupDialog* MainWindow::createSetupDialog()
         // R-R3-49 (parity Task 13): and version 8, Hardware Config's OC
         // transmit pins, pin actions and transmit calibration.
         // And version 11, Transmit > Power's "Disable HF PA".
-        for (const int version : {2, 3, 4, 5, 6, 8, 11}) {
+        // CW transmit (R-CW-03): and version 16, Setup > DSP > CW.
+        for (const int version : {2, 3, 4, 5, 6, 8, 11, kTransmitSettingsCwVersion}) {
             dialog->setTransmitSettingsPermitted(transmitSettingsPermitted(version),
                                                  transmitSettingsReason(version), version);
         }
@@ -18986,6 +19147,38 @@ void MainWindow::applyRemoteRoleGating()
         m_phoneCwApplet->setTransmitPermitted(transmitPermitted, transmitReason);
         m_phoneCwApplet->setTransmitSettingsPermitted(chainPermitted, chainReason);
         m_phoneCwApplet->setTxProfilePermitted(profilePermitted, profileReason);
+        // CW transmit (R-CW-03, R-CW-41): the CW page's settings came with
+        // transmitSettingsVersion 16.
+        m_phoneCwApplet->setCwSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                                settingsReasonAt(kTransmitSettingsCwVersion));
+    }
+    // CW transmit (R-CW-44): CWX's speed, repeat and memories are the same
+    // version-16 settings.
+    if (m_cwxApplet) {
+        m_cwxApplet->setCwxSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                             settingsReasonAt(kTransmitSettingsCwVersion));
+        // R-CW-49: Send, Stop, Key, the memories and KB to CW go to the
+        // Core's CWX sender, which takes them from the device that holds
+        // transmit. Disabled with the reason, never hidden.
+        bool cwSend = true;
+        QString cwSendReason;
+        if (m_stationClient == nullptr || !m_stationClient->remoteCwAvailable()) {
+            cwSend = false;
+            cwSendReason = cwxRemoteSendReason();
+        } else if (!transmitPermitted) {
+            cwSend = false;
+            cwSendReason = transmitReason;
+        } else if (m_stationClient->knowsTransmitHolder()
+                   && !m_stationClient->holdsTransmitHere()) {
+            cwSend = false;
+            cwSendReason = holderReason.isEmpty() ? TxRefusals::notHolder().text : holderReason;
+        }
+        m_cwxApplet->setSendPermitted(cwSend, cwSendReason);
+    }
+    // R-CW-48: in CW the TX applet's MON is cwSidetone, a version-16 setting.
+    if (m_txApplet) {
+        m_txApplet->setCwSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                           settingsReasonAt(kTransmitSettingsCwVersion));
     }
     // R-R3-44: the VAX applet's TX row (VAX as the microphone).
     if (m_vaxApplet) {
@@ -19044,6 +19237,11 @@ void MainWindow::applyRemoteRoleGating()
         dialog->setTransmitSettingsPermitted(settingsAt(8), settingsReasonAt(8), 8);
         // Transmit > Power's "Disable HF PA" came with version 11.
         dialog->setTransmitSettingsPermitted(settingsAt(11), settingsReasonAt(11), 11);
+        // CW transmit (R-CW-03, R-CW-43): Setup > DSP > CW's CW settings
+        // came with version 16.
+        dialog->setTransmitSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                             settingsReasonAt(kTransmitSettingsCwVersion),
+                                             kTransmitSettingsCwVersion);
         dialog->setStationSettingsAvailable(stationAvailable, stationSettingsReason());
     }
     // Parity Task 19 (B7.2): and the Spot Hub's Core settings and sources.

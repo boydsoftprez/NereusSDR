@@ -15,6 +15,8 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29 - TciExtras removed (built). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, Cwx built (R-CW-46). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/UnbuiltFeatureList.h"
@@ -183,7 +185,9 @@ QString key(UnbuiltFeature feature)
 
 bool isBuilt(UnbuiltFeature feature)
 {
-    if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::ContainerFilterDisplay
+    // CW transmit (R-CW-46): CWX is built, as CAT is; its entry stays so the
+    // gate sites and the surface checks keep their names.
+    if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::Cwx || feature == UnbuiltFeature::ContainerFilterDisplay
         || feature == UnbuiltFeature::ContainerClickBox) {
         return true;
     }

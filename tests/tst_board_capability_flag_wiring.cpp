@@ -40,6 +40,13 @@
 //   2026-05-02 — Implemented for NereusSDR by J.J. Boyd (KG4VCF),
 //                with AI-assisted transformation via Anthropic
 //                Claude Code.
+//   2026-10-26: CW transmit, hasSidetoneGenerator per board (R-CW-40):
+//                true for every board whose Thetis path sends the
+//                sidetone level, false for both HL2 rows. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the sidetone row cases read the row as
+//                disabled with its reason, never hidden. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -194,12 +201,11 @@ private slots:
 
     // ── Task 4.2 — hasSidetoneGenerator ──────────────────────────────────────
     //
-    // HL2 firmware generates the CW sidetone in hardware (with its own
-    // volume control routed through the radio's audio path); standard P1
-    // boards rely on host-generated software sidetone. We use the
-    // BoardCapabilities.hasSidetoneGenerator flag to visibility-gate the
-    // "Sidetone Volume" row in CwSetupPage so users on non-HL2 boards
-    // don't see a control that does nothing on their hardware.
+    // CW transmit (R-CW-40) fixed the flag in the table: true for every
+    // board whose Thetis path sends the radio's sidetone level (P1 bank 13
+    // C2, networkproto1.c:636; P2 byte 6, network.c:1202 [v2.10.3.15]),
+    // false for both HL2 rows until the bench check (V-HW-6). The flag
+    // enables the radio sidetone row in CwSetupPage.
     //
     // Thetis upstream comparison (setup.cs [v2.10.3.13+501e3f51]):
     // Thetis does NOT board-gate the sidetone control — chkSideTones,
@@ -208,45 +214,64 @@ private slots:
     // gate is therefore NereusSDR-specific use of the populated flag,
     // not a port of an upstream gate.
 
-    // Case 1: Default — before any setHasSidetoneGenerator() call, the
-    // sidetone row is hidden (so users opening Setup before any radio
-    // connects don't see a useless control).
-    void sidetoneRow_hiddenByDefault()
+    // R-CW-40: the table rows.
+    void sidetoneGenerator_perBoardRow()
     {
-        CwSetupPage page(nullptr);
-        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+        const HPSDRHW sends[] = {HPSDRHW::Atlas,     HPSDRHW::Hermes,     HPSDRHW::HermesII,
+                                 HPSDRHW::Angelia,   HPSDRHW::Orion,      HPSDRHW::OrionMKII,
+                                 HPSDRHW::HermesC10, HPSDRHW::Saturn,     HPSDRHW::SaturnMKII,
+                                 HPSDRHW::Andromeda};
+        for (const HPSDRHW board : sends) {
+            QVERIFY2(BoardCapsTable::forBoard(board).hasSidetoneGenerator,
+                     qPrintable(QStringLiteral("board %1").arg(static_cast<int>(board))));
+        }
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesLite).hasSidetoneGenerator);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).hasSidetoneGenerator);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Unknown).hasSidetoneGenerator);
     }
 
-    // Case 2: When the flag is true (HL2 family connected), the row
-    // becomes visible.
-    void sidetoneRow_visibleWhenFlagTrue()
+    // R-CW-40 (CW transmit, Task 12): the row is disabled with its reason,
+    // never hidden. Case 1: no radio known, the setting is kept for the
+    // next radio, so the row is enabled.
+    void sidetoneRow_enabledWithNoRadio()
+    {
+        CwSetupPage page(nullptr);
+        QCOMPARE(page.radioSidetoneEnabledForTest(), true);
+    }
+
+    // Case 2: a board that has a sidetone generator enables the row.
+    void sidetoneRow_enabledWhenFlagTrue()
     {
         CwSetupPage page(nullptr);
         page.setHasSidetoneGenerator(true);
-        QCOMPARE(page.sidetoneRowVisibleForTest(), true);
+        QCOMPARE(page.radioSidetoneEnabledForTest(), true);
     }
 
-    // Case 3: When the flag flips back to false (e.g. user disconnects
-    // HL2 then connects an Atlas/Hermes), the row hides again.
-    void sidetoneRow_hidesWhenFlagFlipsFalse()
+    // Case 3: when the flag flips to false (an HL2 after an Atlas or
+    // Hermes), the row greys with its reason and stays shown.
+    void sidetoneRow_disablesWhenFlagFlipsFalse()
     {
         CwSetupPage page(nullptr);
         page.setHasSidetoneGenerator(true);
         page.setHasSidetoneGenerator(false);
-        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+        QCOMPARE(page.radioSidetoneEnabledForTest(), false);
+        auto* row = page.findChild<QWidget*>(QStringLiteral("cwRadioSidetoneCheck"));
+        QVERIFY(row != nullptr);
+        QVERIFY(!row->isHidden());
+        QVERIFY(!row->toolTip().isEmpty());
+        QCOMPARE(row->accessibleDescription(), row->toolTip());
     }
 
-    // Case 4: Repeated calls with the same value are idempotent (no
-    // visibility flicker on noisy connection-state-changed signals).
+    // Case 4: repeated calls with the same value are idempotent.
     void sidetoneRow_idempotentOnRepeat()
     {
         CwSetupPage page(nullptr);
         page.setHasSidetoneGenerator(true);
         page.setHasSidetoneGenerator(true);
-        QCOMPARE(page.sidetoneRowVisibleForTest(), true);
+        QCOMPARE(page.radioSidetoneEnabledForTest(), true);
         page.setHasSidetoneGenerator(false);
         page.setHasSidetoneGenerator(false);
-        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+        QCOMPARE(page.radioSidetoneEnabledForTest(), false);
     }
 
     // ── Task 4.3 — hasPennyLane ──────────────────────────────────────────────

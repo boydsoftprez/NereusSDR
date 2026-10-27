@@ -30,13 +30,18 @@
 // Task 37 (R-IOS-13; remote design section 12.1): while this window has a
 // key down or on, asked TUNE or two-tone on, or has VOX armed, it sends
 // tx.keepalive {sequence, epoch} every 100 ms, so the Core's watchdog
-// knows the link is alive. Each goes once: on the media connection's "tx"
-// data channel when that is open (unordered, never retransmitted), and
-// otherwise on the session. The sequence starts at 1 and rises by one with
-// every keepalive, and never starts again while the link lasts; the epoch
-// is the window's key's (from its answer), or 4294967295 before the answer
-// and for a key that has none (VOX, TUNE, two-tone), which the Core counts
-// as never older.
+// knows the link is alive. Each sequence goes on the media connection's
+// "tx" data channel when that is open, and on the session as well. The
+// channel is unordered and never retransmitted, so a relay can drop a
+// send the library already accepted; four drops in a row is the Core's
+// 400 ms quiet link, which turns VOX off and cuts a live transmission.
+// The session copy of the same sequence still arrives. The Core counts a
+// sequence once, so the copy changes nothing when the channel copy got
+// there. The sequence starts at 1 and rises by one with every keepalive,
+// and never starts again while the link lasts; the epoch is the window's
+// key's (from its answer), or 4294967295 before the answer and for a key
+// that has none (VOX, TUNE, two-tone), which the Core counts as never
+// older.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -84,6 +89,13 @@
 //               microphone line follows a program key that arrives or ends
 //               under the screen key (the key down does not move then).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): sendCwText,
+//               sendCwMemory, stopCw, setCwKey, setCwAvailable and
+//               cwRefused. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: A keepalive the "tx" channel accepts is also sent on the
+//               session, same sequence. A relay drop of the channel copy
+//               was a quiet link: VOX turned off mid-transmission.
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -147,8 +159,9 @@ public:
     /// The session's tx.keepalive (sent once, never three times).
     void setSessionKeepalive(KeepaliveSender sender) { m_sessionKeepalive = std::move(sender); }
     /// The media connection's "tx" data channel; tried first while no
-    /// release waits for its primary-session delivery barrier. Unset, or
-    /// false (no channel open), the session carries it.
+    /// release waits for its primary-session delivery barrier. The session
+    /// carries the same sequence either way: when this send is accepted,
+    /// and when it is unset or returns false.
     void setChannelKeepalive(KeepaliveSender sender) { m_channelKeepalive = std::move(sender); }
     /// Independent watch socket: one copy of this timer's sequence/epoch.
     /// Its result never replaces the existing channel-or-primary copy.
@@ -202,6 +215,19 @@ public:
     /// before its carrier keyed (its notice tuneEnded). The TUNE asked for
     /// is over: the next press asks it on again, and its keepalives stop.
     void tunerTuneEnded();
+
+    // ---- CW transmit (R-CW-48): the Core's CWX sender ----
+    /// The Core told this window remoteCwVersion 1 or later.
+    void setCwAvailable(bool available) { m_cwAvailable = available; }
+    /// The cw.* verbs can go now (remote transmit and remoteCwVersion).
+    bool cwAvailable() const { return m_available && m_cwAvailable; }
+    /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
+    /// {down}, each kCopies times under one id. They return the id, or 0
+    /// when nothing could be sent. A refusal arrives as cwRefused.
+    quint32 sendCwText(const QString& text);
+    quint32 sendCwMemory(int number);
+    quint32 stopCw();
+    quint32 setCwKey(bool down);
 
     // ---- A program through this window's TCI server ("tci") ----
     /// programAudio: the program's trx carried ",tci", so its own audio
@@ -265,6 +291,8 @@ signals:
     void programAudioKeyChanged(bool programAudio);
     void holdsTransmitChanged(bool holds);
     void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
+    /// CW transmit (R-CW-48): the Core refused a cw.* request, in its words.
+    void cwRefused(const QString& reason, const QString& code, const QString& fix);
 
 private:
     enum class Phase { Idle, Waiting, On };
@@ -276,7 +304,7 @@ private:
         /// A program key asked with ",tci": it brings its own audio.
         bool programAudio{false};
     };
-    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource };
+    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw };
     struct Pending {
         Kind kind;
         QByteArray verb;
@@ -301,6 +329,7 @@ private:
     QString m_micSourceReason;
     Sender m_sender;
     bool m_available{false};
+    bool m_cwAvailable{false};
     Key m_screen;
     Key m_program;
     std::function<void(const Answer&)> m_programAnswer;

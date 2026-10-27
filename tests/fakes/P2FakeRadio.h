@@ -3,6 +3,11 @@
 // no-port-check: NereusSDR-original loopback test fixture. It implements the
 // documented Protocol 2 packet shapes needed to exercise the production UDP
 // path; it is not a translation of an upstream implementation.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, every high-priority and DUC (CmdTx) packet
+//               kept whole, for the CW wire tests. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 
 #pragma once
 
@@ -74,6 +79,11 @@ public:
     // General command packets (60 bytes, command byte 0x00, outbound base
     // port) and byte 38 of the last one, the network watchdog (R-R3-49).
     int generalDatagrams() const { return m_generalDatagrams; }
+    // Every high-priority packet (1444 bytes, outbound base + 3) and every
+    // DUC specific packet (CmdTx, 60 bytes, outbound base + 2), whole, in
+    // arrival order.
+    const QVector<QByteArray>& highPriorityPackets() const { return m_highPriorityPackets; }
+    const QVector<QByteArray>& txPackets() const { return m_txPackets; }
     int lastGeneralWatchdog() const { return m_lastGeneralWatchdog; }
 
 private:
@@ -102,6 +112,8 @@ private:
     quint8 m_lastHighPriorityFlags{0};
     int m_lastHighPriorityOcByte{-1};
     QVector<HighPriorityRecord> m_highPriorityRecords;
+    QVector<QByteArray> m_highPriorityPackets;
+    QVector<QByteArray> m_txPackets;
     int m_generalDatagrams{0};
     int m_lastGeneralWatchdog{-1};
     quint32 m_ddcSequence{0};

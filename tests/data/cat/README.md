@@ -23,7 +23,7 @@ effect assertions; Task7 supplies the remaining TX/global setup.
 
 The exact production registry matches all 349 active catalogue descriptors and
 all 419 CSV rows. All 70 inactive descriptors remain unregistered. Mapping totals
-are Faithful15, Adapted163, SourceInert42, Unavailable129 and Inactive70. Explicit
+are Faithful15, Adapted176, SourceInert42, Unavailable116 and Inactive70. Explicit
 unavailable commands refuse before mutation for their mapped missing native
 capabilities. Source-inert values retain only source-proven constants. Equal
 get/set widths follow GetFirst for ZZZM/ZZZV, SetFirst for unavailable ZZJS.

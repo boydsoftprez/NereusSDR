@@ -160,6 +160,12 @@ boydsoftprez@gmail.com
 //                 Core log; RxChannel records DFNR and MNR the same way.
 //                 Measures only; NR behavior is unchanged. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - WdspWaitDrainFlush: channel.c's timed-out drain waits for
+//                 the flush its own down-slew asked for, logging as
+//                 WdspWaitWorkerExit does on the same monotonic clock; and
+//                 the test-only drain hook (WDSPSetTestDrainHook). By J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "comm.h"
@@ -188,6 +194,9 @@ WdspCallerCheckHook volatile wdsp_caller_check_hook = 0;
 
 // Test-only exchange hook (WDSPSetTestExchangeHook), 0 when none.
 WdspTestExchangeHookFn volatile wdsp_test_exchange_hook = 0;
+
+// Test-only drain hook (WDSPSetTestDrainHook), 0 when none.
+WdspTestDrainHookFn volatile wdsp_test_drain_hook = 0;
 
 // Threads currently blocked entering each channel's csDSP.
 static volatile long dsp_waiters[MAX_CHANNELS];
@@ -671,6 +680,29 @@ void WdspWaitWorkerExit (int channel)
 	load_store64 (&last_exit_wait_us[channel], (long long)(dsplock_now_us () - start));
 }
 
+void WdspWaitDrainFlush (int channel)
+{
+	int64_t start, next_log;
+	if (!valid_channel (channel))
+	{
+		return;
+	}
+	start = dsplock_now_us ();
+	next_log = start + kWorkerExitLogIntervalMs * 1000;
+	while (_InterlockedAnd (&ch[channel].flushflag, 1))
+	{
+		int64_t now;
+		Sleep (1);
+		now = dsplock_now_us ();
+		if (now >= next_log)
+		{
+			dprintf ("wdsp: channel %d drain still waiting for its flush "
+				"(%d ms past the timeout)\n", channel, (int)((now - start) / 1000));
+			next_log += kWorkerExitLogIntervalMs * 1000;
+		}
+	}
+}
+
 // Raises *target's bits to include bits (lock-free; any thread).
 static void load_or64 (volatile long long* target, long long bits)
 {
@@ -891,6 +923,16 @@ void WDSPSetTestExchangeHook (WdspTestExchangeHookFn hook)
 	InterlockedExchangePointer ((PVOID volatile*)&wdsp_test_exchange_hook, (PVOID)hook);
 #else
 	__atomic_store_n (&wdsp_test_exchange_hook, hook, __ATOMIC_RELEASE);
+#endif
+}
+
+PORT
+void WDSPSetTestDrainHook (WdspTestDrainHookFn hook)
+{
+#ifdef _WIN32
+	InterlockedExchangePointer ((PVOID volatile*)&wdsp_test_drain_hook, (PVOID)hook);
+#else
+	__atomic_store_n (&wdsp_test_drain_hook, hook, __ATOMIC_RELEASE);
 #endif
 }
 

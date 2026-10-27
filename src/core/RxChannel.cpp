@@ -103,6 +103,8 @@
 //                 channel early (the stream binding now rides the geometry
 //                 barrier), so the guard is a safety net. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, setApfFreq keeps the value for apfFreqHz()
+//                 (R-CW-27). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2069,6 +2071,7 @@ void RxChannel::setApfEnabled(bool enabled)
 
 void RxChannel::setApfFreq(double hz)
 {
+    m_apfFreqHz = hz;
 #ifdef HAVE_WDSP
     runKeyed(laneParameter("setApfFreq"), 0, [=, this]() {
         // From Thetis Project Files/Source/Console/radio.cs:1929-1946

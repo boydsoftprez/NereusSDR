@@ -34,6 +34,11 @@
 //                attenuator range above 31 dB on Alex boards (value + 2,
 //                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, banks 12 (C2 bit 6, C3, C4), 13 and 14 carry
+//               the radio keyer's settings from CodecContext::cw, sent at
+//               all times as Thetis does (networkproto1.c:618-646
+//               [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -343,13 +348,39 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
             return;
         }
 
-        // Bank 13 — CW enable / sidetone level
-        // Source: networkproto1.c:634-638 [@501e3f5]
-        case 13: out[0] = C0base | 0x1E; return;
+        // 0x18, 1A are reserved [original inline comment from networkproto1.c:631]
+
+        // Bank 13 — CW enable / sidetone level / RF delay
+        // From Thetis networkproto1.c:633-638 [v2.10.3.15]
+        //   case 13: // CW
+        //       C0 |= 0x1e; //C0 0001 111x
+        //       C1 = prn->cw.cw_enable;
+        //       C2 = prn->cw.sidetone_level;
+        //       C3 = prn->cw.rf_delay;
+        //       C4 = 0;
+        case 13:
+            out[0] = C0base | 0x1E; //C0 0001 111x
+            out[1] = ctx.cw.enable ? 0x01 : 0x00;
+            out[2] = quint8(ctx.cw.sidetoneLevel);
+            out[3] = quint8(ctx.cw.rfDelayMs);
+            out[4] = 0;
+            return;
 
         // Bank 14 — CW hang / sidetone freq
-        // Source: networkproto1.c:642-646 [@501e3f5]
-        case 14: out[0] = C0base | 0x20; return;
+        // From Thetis networkproto1.c:641-646 [v2.10.3.15]
+        //   case 14: // CW
+        //       C0 |= 0x20; //C0 0010 000x
+        //       C1 = (prn->cw.hang_delay >> 2) & 0b11111111;
+        //       C2 = (prn->cw.hang_delay & 0b00000011);
+        //       C3 = (prn->cw.sidetone_freq >> 4) & 0b11111111;
+        //       C4 = (prn->cw.sidetone_freq) & 0b00001111;
+        case 14:
+            out[0] = C0base | 0x20; //C0 0010 000x
+            out[1] = quint8((ctx.cw.hangMs >> 2) & 0xFF);
+            out[2] = quint8(ctx.cw.hangMs & 0x03);
+            out[3] = quint8((ctx.cw.sidetoneFreqHz >> 4) & 0xFF);
+            out[4] = quint8(ctx.cw.sidetoneFreqHz & 0x0F);
+            return;
 
         // Bank 15 — EER PWM
         // Source: networkproto1.c:650-654 [@501e3f5]
@@ -515,9 +546,39 @@ void P1CodecStandard::bank12(const CodecContext& ctx, quint8 out[5]) const
         out[1] = quint8(ctx.rxStepAttn[1] & 0xFF) | 0x20;
     }
     out[2] = quint8((ctx.rxStepAttn[2] & 0x1F) | 0x20);
-    // C3 / C4 = CW keyer defaults — zero for Phase A; Phase 3M-2 wires CW.
-    out[3] = 0;
-    out[4] = 0;
+    bank12CwKeyer(ctx, out);
+}
+
+// Bank 12's CW keyer half: reverse paddles in C2 bit 6, speed and keyer mode
+// in C3, weight and strict spacing in C4.
+// From Thetis networkproto1.c:618-628 [v2.10.3.15]
+//   C2 = (prn->adc[2].rx_step_attn & 0b00011111) | 0b00100000 |
+//       ((prn->cw.rev_paddle & 1) << 6);
+//
+//   if (prn->cw.iambic == 0)
+//       CWMode = 0b00000000;
+//   else if (prn->cw.mode_b == 0)
+//       CWMode = 0b01000000;
+//   else
+//       CWMode = 0b10000000;
+//   C3 = (prn->cw.keyer_speed & 0b00111111) | CWMode;
+//   C4 = (prn->cw.keyer_weight & 0b01111111) | ((prn->cw.strict_spacing) << 7);
+void P1CodecStandard::bank12CwKeyer(const CodecContext& ctx, quint8 out[5])
+{
+    if (ctx.cw.reversePaddles) {
+        out[2] = quint8(out[2] | 0x40);
+    }
+    quint8 cwMode = 0x00;
+    const auto mode = static_cast<CwKeyerMode>(ctx.cw.keyerMode);
+    if (mode == CwKeyerMode::Straight) {
+        cwMode = 0x00;
+    } else if (mode == CwKeyerMode::IambicA) {
+        cwMode = 0x40;
+    } else {
+        cwMode = 0x80;
+    }
+    out[3] = quint8((ctx.cw.speedWpm & 0x3F) | cwMode);
+    out[4] = quint8((ctx.cw.weight & 0x7F) | (ctx.cw.strictSpacing ? 0x80 : 0x00));
 }
 
 // =================================================================

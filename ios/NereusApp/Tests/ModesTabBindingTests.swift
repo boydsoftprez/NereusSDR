@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the Modes tab against a Core: each radio's lists and ranges, and each control's write
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW rows in CW write the Core's CW settings and
+//   the pitch, and the CW passband is drawn about the dial (R-CW-24, R-CW-50).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -489,6 +492,69 @@ struct ModesTabBindingTests {
         #expect(await settle { modes.apfTuneHz == 120 })
         modes.setApfTune(900)
         #expect(await answer(station, key: "slice:0", "apfTuneHz") == .i64(500))
+        await model.disconnect()
+    }
+
+    @Test("in CWU the CW rows write the Core's speed, break-in, delay, sidetone and level, and the station pitch")
+    func cwRowsWriteTheirSettings() async throws {
+        let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
+        let transmit = model.main.transmit
+        // USB: no CW rows.
+        #expect(!transmit.inCw)
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+            .init(ordinal: 89, name: "cwKeyerSpeed", value: .i64(25)),
+            .init(ordinal: 94, name: "cwBreakInMode", value: .i64(1)),
+            .init(ordinal: 95, name: "cwBreakInDelayMs", value: .i64(300)),
+            .init(ordinal: 98, name: "cwSidetone", value: .bool(true)),
+        ])))
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        await deliver(station, key: "slice:0", property: "dspMode", ordinal: 2, value: .enumeration(Int64(cwu.id)))
+        #expect(await settle { transmit.inCw && transmit.cwSpeedWpm == 25 })
+        #expect(transmit.cwSettingsEditable && transmit.cwSettingsReason == nil)
+        #expect(transmit.cwBreakInMode == 1 && transmit.cwBreakInDelayMs == 300 && transmit.cwSidetone == true)
+        #expect(transmit.cwBreakInDelayReason == nil && transmit.cwSidetoneLevelReason == nil)
+        #expect(transmit.cwPitchHz == 600)
+        transmit.setCwSpeed(30.4)
+        #expect(await answer(station, key: "transmit", "cwKeyerSpeed") == .i64(30))
+        transmit.setCwSpeed(99)
+        #expect(await answer(station, key: "transmit", "cwKeyerSpeed") == .i64(60))
+        transmit.setCwBreakInDelay(455)
+        #expect(await answer(station, key: "transmit", "cwBreakInDelayMs") == .i64(460))
+        transmit.setCwSidetoneLevel(0.25)
+        #expect(await answer(station, key: "transmit", "monitorVolume") == .f64(0.25))
+        transmit.toggleCwSidetone()
+        #expect(await answer(station, key: "transmit", "cwSidetone") == .bool(false))
+        // Sidetone off: its level greys with the desktop's words and sends nothing.
+        #expect(await settle { transmit.cwSidetoneLevelReason == TransmitModel.cwSidetoneLevelOffReason })
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInQsk)
+        #expect(await answer(station, key: "transmit", "cwBreakInMode") == .i64(2))
+        // QSK: Delay greys with the desktop's words and sends nothing.
+        #expect(await settle { transmit.cwBreakInDelayReason == TransmitModel.cwDelayQskReason })
+        let before = station.messages.count
+        transmit.setCwBreakInDelay(200)
+        transmit.setCwSidetoneLevel(0.8)
+        await idle()
+        #expect(station.messages.count == before)
+        // The pitch is the Core's station setting, written as the desktop's setter rounds it.
+        transmit.setCwPitch(654)
+        let pitch = await station.waitForMessage(within: .seconds(30)) { message in
+            if case .settingsWrite(let write) = message { return write.key == BandSlice.cwPitchKey }
+            return false
+        }
+        guard case .settingsWrite(let write)? = pitch else {
+            Issue.record("no CWPitch write reached the Core")
+            return
+        }
+        #expect(write.properties.first?.value == .utf8("650"))
+        #expect(await settle { transmit.cwPitchHz == 650 })
+        // The CWU passband follows: drawn from the dial minus the pitch.
+        #expect(await settle { model.main.slices.entries.first { $0.id == 0 }?.slice.passbandOffsetHz == -650 })
+        // Nothing keys.
+        #expect(!station.messages.contains { message in
+            if case .commandInvoke(let invoke) = message { return invoke.verb.hasPrefix("tx.") || invoke.verb.hasPrefix("cw.") }
+            return false
+        })
         await model.disconnect()
     }
 

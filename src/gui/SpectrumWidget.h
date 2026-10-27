@@ -9,6 +9,12 @@
 //                 the Roundtable room tags along the foot of the spectrum
 //                 (setRoundtableTags, roundtableRoomClicked, the fold list)
 //                 and their test seams (Roundtable plan Task 14).
+//   2026-10-26: CW transmit, every passband drawer and the filter-edge grab
+//                 draw from the passband origin, the dial plus the CW
+//                 receive shift (setCwPitchHz, cwPassbandOffsetHz,
+//                 SliceMarkerGeometry::originHz,
+//                 ForeignSliceMarker::passbandOffsetHz; R-CW-24, R-CW-45).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //                 remoteTraceStartShareForTest().
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
@@ -513,6 +519,7 @@ mw0lge@grange-lane.co.uk
 #include <optional>
 #include <QStringList>
 
+#include "core/CwTypes.h"
 #include "core/spectrum/ActivePeakHoldTrace.h"
 #include "core/spectrum/DisplayFollowers.h"
 #include "core/spectrum/PeakBlobDetector.h"
@@ -2305,6 +2312,18 @@ public:
     // ---- VFO / filter overlay ----
     void setVfoFrequency(double hz);
     void setFilterOffset(int lowHz, int highHz);  // updates filter passband overlay
+    /// R-CW-24 (D5): the station CW pitch, cached here so a drawer never
+    /// reads settings per frame. In CWU and CWL a passband is drawn from the
+    /// dial plus cwPassbandOffsetHz (minus the pitch in CWU, plus it in
+    /// CWL), as SliceModel::passbandOriginHz() puts it; the VFO line and the
+    /// TX marker stay on the dial.
+    void setCwPitchHz(int hz);
+    int cwPitchHz() const { return m_cwPitchHz; }
+    /// SliceModel::cwShiftHz() from a mode and a pitch.
+    static double cwPassbandOffsetHz(DSPMode mode, int pitchHz);
+    /// Where the pan's own filter pair is drawn from (m_vfoHz plus the CW
+    /// shift of the pan's own slice mode).
+    double ownPassbandOriginHz() const;
 
     // ---- CTUN mode (SmartSDR-style independent pan) ----
     void setCtunEnabled(bool enabled);
@@ -2404,6 +2423,10 @@ public:
         bool   active{true};
         QColor lineColor;  // VFO centre line and triangle
         QColor edgeColor;  // filter edge lines
+        // R-CW-24: filter offset 0, the dial plus the CW receive shift
+        // (centreHz outside CW). The passband and its edges are drawn from
+        // here; the centre line stays on centreHz.
+        double originHz{0.0};
     };
 
     /// iPhone app plan Task 78 (the several-devices design, section 12
@@ -2417,6 +2440,9 @@ public:
         double  centreHz{0.0};
         int     filterLowHz{0};
         int     filterHighHz{0};
+        // R-CW-24: the CW receive shift of the slice's mode; its passband
+        // is drawn from centreHz plus this.
+        double  passbandOffsetHz{0.0};
         QColor  color;
         QString letter;
         QString ownerShortName;
@@ -5062,6 +5088,8 @@ private:
     int     m_txFilterLow{100};   // default matches TransmitModel::m_filterLow
     int     m_txFilterHigh{2900}; // default matches TransmitModel::m_filterHigh
     DSPMode m_txMode{DSPMode::USB};
+    // R-CW-24: the station CW pitch (setCwPitchHz).
+    int     m_cwPitchHz{kCwPitchDefaultHz};
     // Signed Hz offset added to m_vfoHz for the TX overlay position so the
     // orange band tracks XIT shifts (xitEnabled ? xitHz : 0).  Updated via
     // setTxVfoOffsetHz from MainWindow on SliceModel xit signals.

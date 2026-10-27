@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48): remoteCwAvailable.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares
 //                                    rxMeterStamps 1 and holds a slice's
 //                                    stamped RX meter readings until their
@@ -1715,6 +1717,9 @@ public:
     /// the Core told this window remoteTxVersion 1 or later.
     RemoteTransmitClient* remoteTransmit() override { return m_remoteTransmit; }
     bool remoteTransmitAvailable() const;
+    /// CW transmit (R-CW-48): the cw.* verbs, while remote transmit is
+    /// available and the Core told this window remoteCwVersion 1.
+    bool remoteCwAvailable() const;
     bool remoteMicSourceAvailable() const override;
     CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 

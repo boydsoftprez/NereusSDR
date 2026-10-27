@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable's thirteen verbs pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the four remote CW verbs pinned.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -83,7 +85,8 @@ import Testing
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
         // Roundtable adds its thirteen roundtable.* verbs.
-        #expect(commands.count == 185)
+        // Remote CW adds cw.send, cw.memory, cw.stop and cw.key.
+        #expect(commands.count == 189)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -110,6 +113,10 @@ import Testing
             ("roundtable.markMentionRead", "stationRoundtableVersion", 1, ["upToMs"], ["i64"]),
             ("roundtable.webSignIn", "stationRoundtableVersion", 1, [], []),
             ("roundtable.deleteArchive", "stationRoundtableVersion", 1, ["confirm"], ["utf8"]),
+            ("cw.send", "remoteCwVersion", 1, ["text"], ["utf8"]),
+            ("cw.memory", "remoteCwVersion", 1, ["number"], ["i64"]),
+            ("cw.stop", "remoteCwVersion", 1, [], []),
+            ("cw.key", "remoteCwVersion", 1, ["down"], ["bool"]),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })

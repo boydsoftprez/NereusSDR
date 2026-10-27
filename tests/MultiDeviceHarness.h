@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: F3: optional model factory after scratch AppSettings is
+//               bound, for controlled CWX time. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 74 (R-IOS-02, R-IOS-30),
 //               copied from tst_station_multi_session's harness, with
@@ -48,6 +51,7 @@
 #include <QTemporaryDir>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -238,11 +242,14 @@ struct Core {
     quint32 nextCommandId = 1;
     qint64 now = 0;
 
-    explicit Core(bool upgradedWithToken = false)
+    using ModelFactory = std::function<std::unique_ptr<RadioModel>()>;
+
+    explicit Core(bool upgradedWithToken = false, ModelFactory modelFactory = {})
     {
         settings = std::make_unique<AppSettings>(
             settingsDir.filePath(QStringLiteral("NereusSDR.settings")));
-        model = std::make_unique<RadioModel>();
+        // Keep model construction after the scratch settings binding.
+        model = modelFactory ? modelFactory() : std::make_unique<RadioModel>();
         model->setBoardForTest(HPSDRHW::HermesLite);
         RadioInfo info;
         info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:01");

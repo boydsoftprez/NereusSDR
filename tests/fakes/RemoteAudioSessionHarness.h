@@ -60,6 +60,8 @@
 //   2026-10-07: hideTxState, for the remote unkey audio resume tests
 //               (R-R3-21, R-R3-51). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: CW transmit, hideRemoteCw (R-CW-48). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //
 // =================================================================
 
@@ -149,12 +151,12 @@ public:
             || (grantTransmit && wire.contains("\"capabilities\""))
             || (forgeNextAudioContext && wire.contains("\"audio-context\""))
             || ((hideAudioProfile || hideAudioClock || hideReceiverAudio || hideHeadphonesMix
-                 || hideTxMonitorAudio || hideTxState)
+                 || hideTxMonitorAudio || hideTxState || hideRemoteCw)
                 && wire.contains("\"capabilities\""));
         SessionMessage message;
         if (mayRewrite && SessionMessages::decode(wire, &message)) {
             if ((hideAudioProfile || hideAudioClock || hideReceiverAudio || hideHeadphonesMix
-                 || hideTxMonitorAudio || hideTxState || grantTransmit)
+                 || hideTxMonitorAudio || hideTxState || hideRemoteCw || grantTransmit)
                 && message.kind == SessionMessageKind::Capabilities) {
                 StationCapabilities capabilities = StationCapabilities::fromUpdates(message.updates);
                 if (grantTransmit) { capabilities.txPermitted = true; }
@@ -164,6 +166,10 @@ public:
                 if (hideHeadphonesMix) { capabilities.headphonesMixVersion = 0; }
                 if (hideTxMonitorAudio) { capabilities.txMonitorAudioVersion = 0; }
                 if (hideTxState) { capabilities.txStateVersion = 0; }
+                if (hideRemoteCw) {
+                    capabilities.remoteCwEntry = false;
+                    capabilities.remoteCwVersion = 0;
+                }
                 ++hiddenAudioProfiles;
                 LoopbackTransport::sendText(SessionMessages::encode(
                     SessionMessages::capabilities(capabilities.toUpdates())));
@@ -216,6 +222,7 @@ public:
     bool hideHeadphonesMix = false;
     bool hideTxMonitorAudio = false;
     bool hideTxState = false;
+    bool hideRemoteCw = false;
     bool declareRemoteTx = true;
     bool grantTransmit = false;
 
@@ -361,6 +368,7 @@ struct RemoteAudioSessionHarness {
         station->hideHeadphonesMix = hideHeadphonesMix;
         station->hideTxMonitorAudio = hideTxMonitorAudio;
         station->hideTxState = hideTxState;
+        station->hideRemoteCw = hideRemoteCw;
         station->grantTransmit = grantTransmit;
         clientEnd->declareRemoteTx = declareRemoteTx;
         stationLink = station;
@@ -404,7 +412,7 @@ struct RemoteAudioSessionHarness {
             QCOMPARE(client.agreedMinor(), *helloMinor);
         }
         if (hideAudioProfile || hideAudioClock || hideReceiverAudio || hideHeadphonesMix
-            || hideTxMonitorAudio || hideTxState) {
+            || hideTxMonitorAudio || hideTxState || hideRemoteCw) {
             // On a reconnect the server can still report media from the
             // session being replaced; wait for this link's capabilities.
             QTRY_VERIFY(station->hiddenAudioProfiles >= 1 && client.isHandshakeComplete());
@@ -414,6 +422,7 @@ struct RemoteAudioSessionHarness {
             if (hideHeadphonesMix) { QCOMPARE(client.capabilities().headphonesMixVersion, 0); }
             if (hideTxMonitorAudio) { QCOMPARE(client.capabilities().txMonitorAudioVersion, 0); }
             if (hideTxState) { QCOMPARE(client.capabilities().txStateVersion, 0); }
+            if (hideRemoteCw) { QCOMPARE(client.capabilities().remoteCwVersion, 0); }
         }
     }
 
@@ -523,6 +532,9 @@ struct RemoteAudioSessionHarness {
     // Set before connectSession(): the Core appears to predate the mirrored
     // transmit state (no txStateVersion).
     bool hideTxState = false;
+    // CW transmit (R-CW-48): set before connectSession(): the Core appears
+    // to predate the remote CW verbs (no remoteCwVersion).
+    bool hideRemoteCw = false;
     // Task 36: set before connectSession(): the window's hello declares
     // remoteTx 1 (as the desktop's own does; false takes it out); the
     // Core's capabilities say txPermitted.

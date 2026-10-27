@@ -21,6 +21,9 @@
 //   2026-04-21 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code.
+//   2026-10-26: CW transmit, the radio's dot, dash and key-out status
+//               (radioKeyStatus, R-CW-17). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -190,6 +193,59 @@ private slots:
         for (int i = 0; i < 6; ++i) {
             QCOMPARE(args.at(i).value<quint16>(), quint16(0xFFFF));
         }
+    }
+
+    // ── CW transmit (R-CW-17): status byte 4 bits 1, 2, 7 ────────────────
+    // Dot bit 1, dash bit 2, key-out bit 7, as the gateware sends them
+    // (CC_encoder.v:14, 135 [@8e86a61]; Thetis's consumer reads dot and
+    // dash swapped). PTT (bit 0) alone is not a key. Fires only on change.
+    void radioKeyStatusFromByte4_data()
+    {
+        QTest::addColumn<int>("byte4");
+        QTest::addColumn<bool>("dot");
+        QTest::addColumn<bool>("dash");
+        QTest::addColumn<bool>("keyOut");
+        QTest::newRow("dot 0x02")     << 0x02 << true  << false << false;
+        QTest::newRow("dash 0x04")    << 0x04 << false << true  << false;
+        QTest::newRow("keyOut 0x80")  << 0x80 << false << false << true;
+        QTest::newRow("all 0x86")     << 0x86 << true  << true  << true;
+    }
+    void radioKeyStatusFromByte4()
+    {
+        QFETCH(int, byte4);
+        QFETCH(bool, dot);
+        QFETCH(bool, dash);
+        QFETCH(bool, keyOut);
+        P2RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &RadioConnection::radioKeyStatus);
+        QByteArray pkt = makeHighPriorityPacket(0, 0, 0, 0, 0, 0);
+        pkt[4] = char(byte4);
+        conn.processHighPriorityStatusForTest(pkt);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toBool(), dot);
+        QCOMPARE(spy.at(0).at(1).toBool(), dash);
+        QCOMPARE(spy.at(0).at(2).toBool(), keyOut);
+
+        conn.processHighPriorityStatusForTest(pkt);
+        QCOMPARE(spy.count(), 1);
+        pkt[4] = char(0x01);   // PTT only: all three up
+        conn.processHighPriorityStatusForTest(pkt);
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(1).at(0).toBool(), false);
+        QCOMPARE(spy.at(1).at(1).toBool(), false);
+        QCOMPARE(spy.at(1).at(2).toBool(), false);
+    }
+
+    void radioKeyStatusPttAloneDoesNotFire()
+    {
+        P2RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &RadioConnection::radioKeyStatus);
+        QByteArray pkt = makeHighPriorityPacket(0, 0, 0, 0, 0, 0);
+        pkt[4] = char(0x01);
+        conn.processHighPriorityStatusForTest(pkt);
+        QCOMPARE(spy.count(), 0);
     }
 };
 

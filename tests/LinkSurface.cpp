@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48): the capture declares
+//               remoteCw 1 and cwSettings 1, and captures remoteCwVersion.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the capture
 //                                    declares displayCodec 2, so
 //                                    displayCodecVersion and the start's
@@ -703,6 +706,9 @@ std::optional<QList<QByteArray>> liveSessionWire(
     clientEnd->sendText(SessionMessages::encode(SessionMessages::hello(
         kSessionProtocolMajor, kSessionProtocolMinor, 0, QStringLiteral("link-surface"),
         {kSessionProtocolMajor}, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"remoteTx", 1},
+                                  // CW transmit (R-CW-48): remoteCwVersion
+                                  // and transmit's CW settings.
+                                  {"remoteCw", 1}, {"cwSettings", 1},
                                   {"settingsHygiene", 2}, {"coreBuildInfo", 1},
                                   {"settingsBackup", 1},
                                   {"setupDescription", 1}, {"miniDisplay", 1},
@@ -821,6 +827,9 @@ QJsonArray captureCapabilities()
     caps.sessionHolderEntry = true;
     // iPhone app plan Task 34: sent to a peer that declared remoteTx.
     caps.remoteTxEntry = true;
+    // CW transmit (R-CW-48): sent inside it to a peer that declared remoteCw.
+    caps.remoteCwEntry = true;
+    caps.remoteCwVersion = 1;
     // Declaration version 1: StationCapabilities.h:731-733 and
     // StationServer.cpp:13156-13157. This is not a sampled live value.
     caps.txWatchPathVersion = 1;

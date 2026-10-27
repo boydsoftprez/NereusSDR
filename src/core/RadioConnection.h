@@ -70,9 +70,17 @@
 //               holds it still instead of racing the wall clock.
 //               NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Claude Code.
+//   2026-10-26: CW transmit, setCwWireState, cwKeyLine and the
+//               radioKeyStatus signal (R-CW-12, R-CW-16, R-CW-17).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: onTransmitCutCleared, a
+//               hook clearTransmitCut runs when it clears the latch.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
+#include "CwKeyLine.h"
+#include "codec/CwWireState.h"
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
 #include "RadioLinkStats.h"
@@ -1061,6 +1069,24 @@ public slots:
     // posted.
     void clearTransmitCut();
 
+    // --- CW transmit (2026-10-26) ---
+    // The radio keyer's settings and gate (R-CW-07, R-CW-11, R-CW-16).
+    // Called queued on the connection thread. The state is clamped
+    // (applyCwWireClamps) and stored. P1 puts bank 13 on the next frame
+    // when the enable changes; P2 sends CmdTx at once on a change. While
+    // the transmit is cut, CW enable, break-in and the key bits read 0
+    // wherever the codec context is built. The default only stores it.
+    virtual void setCwWireState(const NereusSDR::CwWireState& s);
+
+public:
+    // The host's key bits (CWX, dot, dash, HL2 CWX PTT). Created with the
+    // connection, never null; any thread may write it. The connection
+    // reads it on its send threads (P1) or sends high priority on a
+    // change (P2). A writer must stop before the connection is destroyed.
+    std::shared_ptr<CwKeyLine> cwKeyLine() const { return m_cwKeyLine; }
+    // The stored wire state (this object's thread).
+    const CwWireState& cwWireState() const noexcept { return m_cwWire; }
+
 protected:
     // Called when the applied TUNE / two-tone pair changed, to put the new
     // OC byte on the wire. The base does nothing.
@@ -1082,6 +1108,20 @@ protected:
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
     // once and keeps re-sending MOX off for its grace window.
     virtual void applyTransmitCut();
+    // This object's thread, from clearTransmitCut when it cleared a set
+    // latch (early fix wave I1). The default does nothing: P1 sends the
+    // restored state on its next frames. P2 sends CmdTx and high priority,
+    // which nothing else resends while receiving.
+    virtual void onTransmitCutCleared() {}
+
+    // CW transmit (2026-10-26): emits radioKeyStatus when the three bits
+    // differ from the last ones published. This object's thread.
+    void publishRadioKeyStatus(bool dot, bool dash, bool keyOut);
+
+    // CW transmit (2026-10-26): the stored wire state (setCwWireState) and
+    // the host key line (cwKeyLine).
+    CwWireState m_cwWire;
+    std::shared_ptr<CwKeyLine> m_cwKeyLine{std::make_shared<CwKeyLine>()};
 
 signals:
     // --- Telemetry ---
@@ -1283,6 +1323,18 @@ signals:
     //   (ReadBufp points to raw[4] in NereusSDR — after 4-byte seq prefix.)
     void micPttFromRadio(bool pressed);
 
+    // CW transmit (R-CW-17): the radio's dot, dash and key-out status,
+    // emitted on change, on this object's thread. P1 reports keyOut false
+    // (it has no key-out bit). P1 reads dash (C0 >> 1) & 1 and dot
+    // (C0 >> 2) & 1 of each ordinary status subframe (deskHPSDR
+    // old_protocol.c:1666-1667 [@f3d857c]; Thetis networkproto1.c:329-331
+    // [v2.10.3.15] shifts left and always reads 0). P2 reads status byte 4
+    // bit 1 dot, bit 2 dash, bit 7 key-out (gateware CC_encoder.v:14, 135
+    // [@8e86a61]; Thetis network.c:686-693 [v2.10.3.15] stores dot and dash
+    // swapped against console.cs:25634, 25644). A connection that stops
+    // being connected publishes all three up.
+    void radioKeyStatus(bool dot, bool dash, bool keyOut);
+
     // The radio's user digital inputs (Thetis prn->user_dig_in), emitted
     // when the value changes and on the first status that carries it.
     // Task 13: TxInhibitMonitor reads the TX inhibit input from these bits
@@ -1391,6 +1443,8 @@ private:
     // setOcExtrasByte: the DX open collector byte (atomic, read by whichever
     // thread composes the frame).
     std::atomic<quint8> m_ocExtrasByte{0};
+    // publishRadioKeyStatus's last bits: dot 0x1, dash 0x2, keyOut 0x4.
+    quint8 m_radioKeyStatusBits{0};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one

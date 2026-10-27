@@ -61,6 +61,11 @@
 //               not only while one waits: the TCI server and the remote
 //               window's rigctld share this one program key. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): the cw.* verbs and
+//               cwRefused. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: keepaliveTick sends the session copy even after the "tx"
+//               channel accepts the same sequence. J.J. Boyd (KG4VCF),
+//               AI-assisted via Grok.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -232,11 +237,14 @@ void RemoteTransmitClient::keepaliveTick()
         if (!self || m_sessionGeneration != sessionGeneration) { return; }
         if (sent) {
             ++m_channelKeepalives;
-            return;
         }
     }
-    // A channel callback can issue an off before declining the send.
-    // Recheck its new fence before attempting another path in this tick.
+    // The channel is unordered and never retransmitted. A send it accepts
+    // can still vanish on a relay, and four lost copies is the Core's
+    // quiet link: VOX off, and a live transmission cut. The session carries
+    // this same sequence either way. The Core counts a sequence once.
+    // A channel callback can issue an off before it returns. Recheck that
+    // fence before the session copy.
     if (m_releaseDispatches != 0 || m_pendingReleases != 0 || m_releaseFailureSticky) {
         return;
     }
@@ -269,6 +277,7 @@ void RemoteTransmitClient::setAvailable(bool available)
 void RemoteTransmitClient::retireSession()
 {
     m_available = false;
+    m_cwAvailable = false;
     // The Core unkeys a device whose link drops and never keys it
     // again by itself; nothing here survives.
     // Task 37: a new link starts its keepalives from 1.
@@ -323,6 +332,28 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
         }
     }
     return id;
+}
+
+// CW transmit (R-CW-48): the Core's CWX sender for this window. The Core
+// answers every copy alike and acts once; a refusal is cwRefused.
+quint32 RemoteTransmitClient::sendCwText(const QString& text)
+{
+    return cwAvailable() ? send("cw.send", {utf8Argument("text", text)}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::sendCwMemory(int number)
+{
+    return cwAvailable() ? send("cw.memory", {int64Argument("number", number)}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::stopCw()
+{
+    return cwAvailable() ? send("cw.stop", {}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::setCwKey(bool down)
+{
+    return cwAvailable() ? send("cw.key", {boolArgument("down", down)}, Kind::Cw) : 0;
 }
 
 void RemoteTransmitClient::setScreenKey(bool down)
@@ -643,6 +674,11 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
                                        << (accepted ? "accepted" : "refused:") << reason;
 
     switch (kind) {
+    case Kind::Cw:
+        if (!accepted) {
+            emit cwRefused(shown, code, fix);
+        }
+        return;
     case Kind::MicSource: {
         m_micSourcePending = false;
         const bool valid = values.size() == 1 && values.first().ordinal == 0

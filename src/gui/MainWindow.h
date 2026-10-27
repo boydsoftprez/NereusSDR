@@ -32,6 +32,16 @@
 //   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
 //               (Roundtable plan Task 12). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): bindRemoteCwx(), the
+//               remote window's CWX applet on the Core's CWX sender. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CWX applet's status label, showCwxApplet()
+//               and cwxRemoteSendReason(). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
+//   2026-10-27: Remote transmit hold then cut: m_txHeld and
+//               refreshTxStatusBadge(), so the TX badge reads "Held" while
+//               the Core holds a remote key's RF. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -314,6 +324,7 @@ namespace NereusSDR {
 enum class ToastSeverity : int;
 
 class RadioModel;
+class TxHeldIndicator;
 class MeterItem;
 class VfoDisplayItem;
 class DialItem;
@@ -2119,6 +2130,11 @@ private:
     QPointer<class StatusToast> m_txInhibitToast;
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
+    // Remote transmit hold then cut: what the TX badge shows while the
+    // Core holds a remote key's RF ("Held"), and MOX otherwise. Painted
+    // by refreshTxStatusBadge(); a child of this window.
+    TxHeldIndicator* m_txHeld{nullptr};
+    void refreshTxStatusBadge();
     // Task 78: who holds transmit when it is another device (or the
     // radio), beside the TX badge in the safety group. Hidden otherwise.
     StatusBadge* m_txHolderChip{nullptr};
@@ -2290,6 +2306,13 @@ private:
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
+    QLabel*                 m_statusCwxLabel{nullptr};
+    // CW transmit (R-CW-44): Tools > CWX, the status-bar label and ZZKO.
+    void showCwxApplet(bool shown);
+    static QString cwxRemoteSendReason();
+    // CW transmit (R-CW-49): a remote window's CWX applet sends through the
+    // Core (cw.send, cw.memory, cw.stop, cw.key) and shows its refusals.
+    void bindRemoteCwx();
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
     QPointer<class CatLogWindow> m_catLogWindow;

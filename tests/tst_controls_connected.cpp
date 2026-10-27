@@ -32,6 +32,9 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  Mode grid clicks set DSPMode
 //                                    (LSB + index): index 10 SAM, 8 SPEC.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, the CW page in the main
+//                                    window and its remote settings gate.
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -515,6 +518,48 @@ private slots:
         QVERIFY(carrier != nullptr);
         QVERIFY(!carrier->isEnabled());
         QCOMPARE(carrier->toolTip(), IStationLink::transmitSettingsUnavailableReason());
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // CW transmit (R-CW-41): the CW page in the main window reaches the
+    // keyer settings both ways.
+    void cwPageReachesTheKeyerSettings()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        TransmitModel& tx = window->radioModel()->transmitModel();
+        auto* applet = window->findChild<PhoneCwApplet*>();
+        QVERIFY(applet != nullptr);
+        auto* speed = applet->findChild<QSlider*>(QStringLiteral("cwSpeedSlider"));
+        auto* iambic = applet->findChild<QPushButton*>(QStringLiteral("cwIambicButton"));
+        QVERIFY(speed != nullptr && iambic != nullptr);
+        QVERIFY2(speed->isEnabled(), "the CW speed slider is greyed");
+        speed->setValue(31);
+        QCOMPARE(tx.cwKeyerSpeed(), 31);
+        tx.setCwKeyerSpeed(18);
+        QCOMPARE(speed->value(), 18);
+        QVERIFY(iambic->isChecked());
+        iambic->click();
+        QCOMPARE(tx.cwKeyerMode(), 0);  // Straight
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // In a remote window with no Core taking the CW settings, the CW page's
+    // settings are greyed with the transmit settings' reason, never hidden.
+    void cwPageFollowsTheRemoteSettingsGate()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace(remoteCore(), false));
+        auto* applet = sessions.window()->findChild<PhoneCwApplet*>();
+        QVERIFY(applet != nullptr);
+        for (const char* name : {"cwSpeedSlider", "cwSidetoneButton", "cwIambicButton",
+                                 "cwBreakInButton"}) {
+            auto* w = applet->findChild<QWidget*>(QLatin1String(name));
+            QVERIFY2(w != nullptr, name);
+            QVERIFY2(!w->isEnabled(), name);
+            QCOMPARE(w->toolTip(), IStationLink::transmitSettingsUnavailableReason());
+        }
         QVERIFY(sessions.replace({}, false));
     }
 

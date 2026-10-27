@@ -24,6 +24,11 @@
 // Both are asserted on the real TciServer broadcast queue rather than on
 // signal-receiver counts, because the defect is in frame CONTENT (which
 // receiver a frame addresses), not in whether a connect exists.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, CWU and CWL rows: dds and if keep today's
+//               RF-true values and vfo = dds + if (D4, R-CW-26). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -280,6 +285,43 @@ private slots:
                               QStringLiteral("vfo:%1,1,14300000;").arg(a),
                               QStringLiteral("dds:%1,14300000;").arg(a),
                               QStringLiteral("if:%1,0,0;").arg(a)}));
+    }
+
+    // CW transmit D4 (R-CW-26): in CW the receiver moves one pitch in the
+    // WDSP shift, not on the DDC, so dds stays the real stream centre and if
+    // stays vfo - centre + RIT: the same lines as USB, and vfo = dds + if.
+    // (Thetis adds GetDSPcwPitchShiftToZero to both, TCIServer.cs:2154 and
+    // :2412 [v2.10.3.15], because its DDC moves; ours does not.)
+    void cw_keeps_dds_and_if_rf_true_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::newRow("CWU") << static_cast<int>(DSPMode::CWU);
+        QTest::newRow("CWL") << static_cast<int>(DSPMode::CWL);
+        QTest::newRow("USB") << static_cast<int>(DSPMode::USB);
+    }
+    void cw_keeps_dds_and_if_rf_true()
+    {
+        QFETCH(int, mode);
+        RadioModel model;
+        TciServer  server(&model);
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = model.sliceById(a);
+        QVERIFY(sa);
+        TciProtocol* proto = server.protocolForTest();
+        QVERIFY(proto);
+
+        sa->setDspMode(static_cast<DSPMode>(mode));
+        sa->setFrequency(14200000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+        QVERIFY(drainTick(proto).contains(QStringLiteral("dds:%1,14200000;").arg(a)));
+
+        sa->setFrequency(14210000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+        QCOMPARE(tuningLines(drainTick(proto), a),
+                 (QStringList{QStringLiteral("if:%1,0,10000;").arg(a),
+                              QStringLiteral("vfo:%1,0,14210000;").arg(a),
+                              QStringLiteral("if:%1,1,10000;").arg(a),
+                              QStringLiteral("vfo:%1,1,14210000;").arg(a)}));
     }
 
     // Task 12 (R-R3-49): an app's if follows a pan move with the VFO still.

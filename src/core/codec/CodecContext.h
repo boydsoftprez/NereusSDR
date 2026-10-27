@@ -20,6 +20,9 @@
 //                Code).
 //   2026-10-26 - bpf2GndOnTx: "Gnd BPF2 on Tx", P2 Alex1 bit 8 while keyed
 //                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26: CW transmit, the CW wire state the P1 codecs read (cw) and
+//               the P2 CW edge length 9. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #pragma once
@@ -29,6 +32,7 @@
 #include <cstdint>
 
 #include "../HpsdrModel.h"
+#include "CwWireState.h"
 
 namespace NereusSDR {
 
@@ -294,7 +298,12 @@ struct CodecContext {
     int     p2CwKeyerWeight{0};
     int     p2CwHangDelay{0};
     int     p2CwRfDelay{0};
-    int     p2CwEdgeLength{7};  // From Thetis create_rnet:1454
+    // Edge length 9: Thetis's create_rnet seeds 7 (netInterface.c:1454), and
+    // Setup then sends 9 at all times.
+    // From Thetis setup.cs:29327 [v2.10.3.15]
+    //   // for DL1YCF CW Edge
+    //   NetworkIO.SetCWEdgeLength(9);
+    int     p2CwEdgeLength{9};
 
     // P2 Mic state — prn->mic.*. Used in CmdTx bytes 50-51.
     unsigned char p2MicControl{0};
@@ -559,6 +568,13 @@ struct CodecContext {
     // Duplex / diversity (bank 0 C4 bits 2 + 7).
     bool    duplex{true};
     bool    diversity{false};
+
+    // The radio keyer's settings, P1 banks 12 C2 bit 6, C3, C4; 13 C1-C3;
+    // 14 C1-C4 (Thetis networkproto1.c:618-646 [v2.10.3.15]). Sent at all
+    // times, as Thetis does; `cw.enable` follows R-CW-07. The P2 codec reads
+    // the p2Cw* fields above, which the P2 connection fills from the same
+    // CwWireState.
+    CwWireState cw;
 
     // HL2-only state (mi0bot networkproto1.c:1162-1176, banks 17-18).
     int     hl2PttHang{0};       // 5-bit

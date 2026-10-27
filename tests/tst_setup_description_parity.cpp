@@ -2,6 +2,9 @@
 // 2026-10-24: General version 30, the Filters page's Limit filter edges to
 // sidebands row against GeneralFiltersPage. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
+// 2026-10-26: CW transmit, a named desktop-only list for the CW page's new
+// rows, so the phone's described DSP > CW page keeps only the APF (R-CW-50).
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 
 #include "core/setup/SetupDescriptionService.h"
@@ -98,6 +101,32 @@ public:
     CommandOutcome requestRemoveSlice(int) override { return {}; }
     CommandOutcome requestActiveSlice(int) override { return {}; }
     CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+};
+
+// R-CW-50 (C13): Setup > DSP > CW's rows that stay on the desktop. The phone
+// gets the operator functions on its transmit panel and CWX page instead, so
+// resources/setup/dsp.json describes only the APF rows of this page.
+const QStringList kDesktopOnlyCwIds{
+    QStringLiteral("dsp.cw.keyer.pitch"),
+    QStringLiteral("dsp.cw.keyer.speed"),
+    QStringLiteral("dsp.cw.keyer.mode"),
+    QStringLiteral("dsp.cw.keyer.weight"),
+    QStringLiteral("dsp.cw.keyer.reversePaddles"),
+    QStringLiteral("dsp.cw.keyer.strictSpacing"),
+    QStringLiteral("dsp.cw.breakIn.mode"),
+    QStringLiteral("dsp.cw.breakIn.delay"),
+    QStringLiteral("dsp.cw.breakIn.keyDownDelay"),
+    QStringLiteral("dsp.cw.breakIn.keyUpDelay"),
+    QStringLiteral("dsp.cw.sidetone.radio"),
+    QStringLiteral("dsp.cw.sidetone.computer"),
+    QStringLiteral("dsp.cw.sidetone.level"),
+    QStringLiteral("dsp.cw.serial.port"),
+    QStringLiteral("dsp.cw.serial.paddles"),
+    QStringLiteral("dsp.cw.serial.keyLine"),
+    QStringLiteral("dsp.cw.serial.pttLine"),
+    QStringLiteral("dsp.cw.options.autoModeSwitch"),
+    QStringLiteral("dsp.cw.options.autoModeReturn"),
+    QStringLiteral("dsp.cw.options.autoModeReturnMs"),
 };
 
 QJsonArray controls(const QJsonObject& category)
@@ -2126,6 +2155,44 @@ private slots:
             withoutSlice, QStringLiteral("dsp.nrAnf.nr1Taps")));
         QVERIFY(unavailable != nullptr);
         QVERIFY(!unavailable->isEnabledTo(&withoutSlice));
+    }
+
+    // R-CW-50: the CW page's rows beyond the APF are named desktop-only, so
+    // the phone's described DSP > CW page does not grow; every other dsp.cw
+    // row on the desktop page is described.
+    void cwPageRowsBeyondTheApfStayDesktopOnly()
+    {
+        AppSettings::instance().clear();
+        RadioModel model;
+        model.addSlice();
+        SetupDescriptionService service;
+        service.setBoardCapabilities(model.boardCapabilities());
+        CwSetupPage cw(&model);
+        QStringList described;
+        for (const QJsonValue& raw : controls(service.category(QStringLiteral("dsp")))) {
+            const QString id = raw.toObject().value("id").toString();
+            if (id.startsWith(QLatin1String("dsp.cw."))) { described.append(id); }
+        }
+        QCOMPARE(described, (QStringList{QStringLiteral("dsp.cw.apfEnabled"),
+                                         QStringLiteral("dsp.cw.apfCenter")}));
+        QStringList onDesktop;
+        for (QObject* object : cw.findChildren<QObject*>()) {
+            QStringList ids = object->property("nereusSetupIds").toStringList();
+            ids.append(object->property("nereusSetupId").toString());
+            for (const QString& id : std::as_const(ids)) {
+                if (id.startsWith(QLatin1String("dsp.cw.")) && !onDesktop.contains(id)) {
+                    onDesktop.append(id);
+                }
+            }
+        }
+        for (const QString& id : std::as_const(described)) {
+            QVERIFY2(onDesktop.contains(id), qPrintable(id));
+            onDesktop.removeAll(id);
+        }
+        QStringList expected = kDesktopOnlyCwIds;
+        expected.sort();
+        onDesktop.sort();
+        QCOMPARE(onDesktop, expected);
     }
 
     void agcEditsFollowTheSelectedSliceAndRetireOldWidgets()
