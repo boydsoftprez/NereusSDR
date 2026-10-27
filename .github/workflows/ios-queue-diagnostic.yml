@@ -85,19 +85,75 @@ jobs:
       - name: Boot and settle iPhone 17
         run: ios/scripts/sim-settle.sh 'iPhone 17'
 
+      - name: Discover and validate the two compiled test identifiers
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/queue-diagnostic"
+          # Apple's xcodebuild manual defines flat enumeration as identifiers
+          # suitable for subsequent -only-testing arguments; enumeration runs no tests.
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath "$RUNNER_TEMP/queue-derived-data" \
+            -jobs 2 -parallel-testing-enabled NO test-without-building \
+            -enumerate-tests -test-enumeration-style flat \
+            -test-enumeration-format json \
+            -test-enumeration-output-path "$evidence/enumeration.json" \
+            2>&1 | tee "$evidence/enumeration.log"
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > "$evidence/enumeration.exit"
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          python3 - "$evidence" <<'PYIDS'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          def strings(value):
+              if isinstance(value, str):
+                  yield value
+              elif isinstance(value, list):
+                  for item in value:
+                      yield from strings(item)
+              elif isinstance(value, dict):
+                  for item in value.values():
+                      yield from strings(item)
+          values = set(strings(json.loads((root / 'enumeration.json').read_text())))
+          methods = ('relevantEventsBackpressurePump', 'mediaEventsBackpressurePump')
+          selected = []
+          for method in methods:
+              base = 'NereusSDRTests/SessionEventLanesTests/' + method
+              matches = sorted(values.intersection({base, base + '()'}))
+              if len(matches) != 1:
+                  raise SystemExit(f'INVALID: expected one enumerated identity for {method}; found {matches!r}')
+              selected.append(matches[0])
+          (root / 'selected-identifiers.txt').write_text('\n'.join(selected) + '\n')
+          (root / 'enumeration-validation.txt').write_text('VALID: exactly two allowlisted compiled identities\n')
+          print('Selected compiled identifiers: ' + repr(selected))
+          PYIDS
+
       - name: Run the two real pump tests
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/queue-diagnostic"
+          test "$(cat "$evidence/enumeration-validation.txt")" = \
+            'VALID: exactly two allowlisted compiled identities' || exit 1
+          selection=()
+          while IFS= read -r identifier; do
+            selection+=("-only-testing:$identifier")
+          done < "$evidence/selected-identifiers.txt"
+          test "${#selection[@]}" -eq 2 || exit 1
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             -derivedDataPath "$RUNNER_TEMP/queue-derived-data" \
             -resultBundlePath "$evidence/queue.xcresult" \
             -jobs 2 -parallel-testing-enabled NO \
-            -only-testing:NereusSDRTests/SessionEventLanesTests/relevantEventsBackpressurePump \
-            -only-testing:NereusSDRTests/SessionEventLanesTests/mediaEventsBackpressurePump \
+            "${selection[@]}" \
             test-without-building 2>&1 | tee "$evidence/test.log"
           status=${PIPESTATUS[0]}
           printf '%s\n' "$status" > "$evidence/test.exit"
@@ -165,6 +221,8 @@ jobs:
               count = summary.get('totalTestCount')
               details = f'totalTestCount={count!r}; identities={found}; test.exit={read("test.exit")!r}'
               if (count == 2 and all(found) and read('build.exit') == '0'
+                      and read('enumeration.exit') == '0'
+                      and read('enumeration-validation.txt') == 'VALID: exactly two allowlisted compiled identities'
                       and read('test.exit') == '0' and read('summary.exit') == '0'
                       and read('tests.exit') == '0' and read('sources-after-check.exit') == '0'):
                   result = 'GREEN: both selected identities found, count 2, xcodebuild passed'
