@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-22: NSDC v2 start, keyframe, replacement and frame-loop cases.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27: Add wanted-audio MediaNotReady recovery and supersession regressions.
+//   J.J. Boyd (KG4VCF), AI-assisted via Codex.
 
 import Foundation
 import LinkSessionTestSupport
@@ -1243,6 +1245,453 @@ import Testing
         rig.recorder.advanceClock(by: 1)
         await rig.timers.advance(by: 1)
         #expect(rig.recorder.sent("start").count == 2, "selected NEW without RTP must restart promptly")
+    }
+
+    /// A transient Core refusal does not change this phone's request for
+    /// audio. Recovery must ask again on the same connected peer without
+    /// requiring the operator to mute and unmute. Advance to the retry's
+    /// own deadline so this regression does not choose a new timing policy.
+    @Test func wantedAudioRetriesMediaNotReadyOnTheSamePeer() async throws {
+        let rig = try Rig()
+        // The reason field is sent only after the Core offers detailed
+        // audio status; a media-only connection accepts the older shape.
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        let ssrc = MediaControlClient.audioSsrc(forConnection: id)
+        await rig.client.setAudioEnabled(true)
+        #expect(rig.recorder.sent("audio").count == 1)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+
+        var notReady = Self.audioContext(id, revision: 1, generation: 1, ssrc: ssrc,
+                                         enabled: false, detail: true)
+        notReady["reason"] = "media-not-ready"
+        await rig.deliver(notReady)
+        let acceptedNotReady = await rig.recorder.settle {
+            rig.recorder.events.contains { event in
+                if case .audioContext(let context) = event {
+                    return !context.enabled && context.offReason == .mediaNotReady
+                        && context.revision == 1 && context.anchor.generation == 1 && context.anchor.ssrc == ssrc
+                }
+                return false
+            }
+        }
+        try #require(acceptedNotReady, "the client must accept the fixture's current MediaNotReady context")
+        #expect(rig.playback.anchor == nil)
+        #expect(rig.recorder.sent("start").count == 1)
+        let retryAt = try #require(rig.timers.pendingDueTimes.min(),
+                                    "wanted audio needs a retry after the Core reports media-not-ready")
+        rig.recorder.advanceClock(by: UInt64(retryAt))
+        await rig.timers.advance(by: retryAt)
+        let retried = try #require(rig.recorder.sent("audio").last)
+        #expect(rig.recorder.sent("audio").count == 2)
+        #expect(retried["connectionId"] == .string(id))
+        #expect(retried["revision"] == 2)
+        #expect(retried["enabled"] == .bool(true))
+        #expect(rig.recorder.sent("start").count == 1)
+
+        await rig.deliver(Self.audioContext(id, revision: 2, generation: 2, ssrc: ssrc, detail: true))
+        #expect(rig.playback.anchor?.generation == 2)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    /// Quick automatic recovery uses one constant positive wait after each
+    /// accepted refusal, including after enabled audio becomes unavailable again.
+    @Test func mediaNotReadyRetriesAtConstantOneSecondAfterEachAcceptedRefusal() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(true)
+        var revision: UInt32 = 1
+        var generation: UInt32 = 1
+        for _ in 1...7 {
+            try await Self.deliverAcceptedNotReady(rig, id: id, revision: revision, generation: generation)
+            let due = try #require(rig.timers.pendingDueTimes.first)
+            #expect(rig.timers.pendingDueTimes == [rig.timers.now + 1_000])
+            // A duplicate context cannot add another retry or move its deadline.
+            rig.recorder.advanceClock(by: 400)
+            await rig.timers.advance(by: 400)
+            try await Self.deliverAcceptedNotReady(rig, id: id, revision: revision, generation: generation)
+            #expect(rig.timers.pendingDueTimes == [due])
+            rig.recorder.advanceClock(by: 599)
+            await rig.timers.advance(by: 599)
+            #expect(rig.recorder.sent("audio").count == Int(revision))
+            rig.recorder.advanceClock(by: 1)
+            await rig.timers.advance(by: 1)
+            revision += 1
+            generation += 1
+            #expect(rig.recorder.sent("audio").count == Int(revision))
+            #expect(rig.recorder.sent("audio").last?["revision"] == .number(Double(revision)))
+            #expect(rig.recorder.sent("audio").last?["connectionId"] == .string(id))
+            #expect(rig.recorder.sent("start").count == 1)
+            // An unanswered retry cannot book another retry by itself.
+            #expect(rig.timers.pendingDueTimes.isEmpty)
+            rig.recorder.advanceClock(by: 1_000)
+            await rig.timers.advance(by: 1_000)
+            #expect(rig.recorder.sent("audio").count == Int(revision))
+        }
+        await rig.deliver(Self.audioContext(id, revision: revision, generation: generation,
+                                            ssrc: MediaControlClient.audioSsrc(forConnection: id), detail: true))
+        #expect(rig.playback.anchor?.generation == generation)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        generation += 1
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: revision, generation: generation)
+        #expect(rig.timers.pendingDueTimes == [rig.timers.now + 1_000])
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test(arguments: [false, true])
+    func mediaNotReadyRetryIsCancelledByMuteOrSessionEnd(endSession: Bool) async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1)
+        let due = try #require(rig.timers.pendingDueTimes.first)
+        if endSession {
+            await rig.client.handle(.stateChanged(.stopped))
+        } else {
+            await rig.client.setAudioEnabled(false)
+            #expect(rig.recorder.sent("audio").last?["enabled"] == .bool(false))
+        }
+        let sent = rig.recorder.sent("audio").count
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        let elapsed = max(0, due - rig.timers.now)
+        rig.recorder.advanceClock(by: UInt64(elapsed))
+        await rig.timers.advance(by: elapsed)
+        #expect(rig.recorder.sent("audio").count == sent)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func aNewProfileRevisionSupersedesMediaNotReadyAndAnOldContextCannotRearmIt() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1,
+                                                "audioProfileVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1, profile: true)
+        let due = try #require(rig.timers.pendingDueTimes.first)
+        await rig.client.setAudioRequest(.init(lossless: true), choosing: true)
+        #expect(rig.recorder.sent("audio").last?["revision"] == 2)
+        #expect(rig.recorder.sent("audio").last?["profile"] == "lossless")
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        var stale = Self.audioContext(id, revision: 1, generation: 2,
+                                      ssrc: MediaControlClient.audioSsrc(forConnection: id),
+                                      enabled: false, detail: true, profile: true)
+        stale["reason"] = "media-not-ready"
+        await rig.deliver(stale)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        let elapsed = max(0, due - rig.timers.now)
+        rig.recorder.advanceClock(by: UInt64(elapsed))
+        await rig.timers.advance(by: elapsed)
+        #expect(rig.recorder.sent("audio").count == 2)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test(arguments: [true, false])
+    func mediaNotReadyRetryIsCancelledByAcceptedEnabledOrOtherOffReason(enabled: Bool) async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1)
+        #expect(rig.timers.pendingDueTimes == [rig.timers.now + 1_000])
+        var context = Self.audioContext(id, revision: 1, generation: 2,
+                                        ssrc: MediaControlClient.audioSsrc(forConnection: id),
+                                        enabled: enabled, detail: true)
+        if !enabled { context["reason"] = "radio-offline" }
+        await rig.deliver(context)
+        let accepted = await rig.recorder.settle {
+            rig.recorder.events.contains { event in
+                if case .audioContext(let heard) = event {
+                    return heard.anchor.generation == 2 && heard.enabled == enabled
+                        && (enabled || heard.offReason == .radioOffline)
+                }
+                return false
+            }
+        }
+        try #require(accepted)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        rig.recorder.advanceClock(by: 1_000)
+        await rig.timers.advance(by: 1_000)
+        #expect(rig.recorder.sent("audio").count == 1)
+        #expect(rig.recorder.sent("start").count == 1)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func staleAndInvalidContextsCannotCancelCurrentMediaNotReadyRetry() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        let ssrc = MediaControlClient.audioSsrc(forConnection: id)
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 2)
+        let due = try #require(rig.timers.pendingDueTimes.first)
+        // Each would cancel recovery if accepted: wrong revision, stale
+        // generation, wrong SSRC, another peer, then an invalid detail shape.
+        await rig.deliver(Self.audioContext(id, revision: 9, generation: 3, ssrc: ssrc, detail: true))
+        await rig.deliver(Self.audioContext(id, revision: 1, generation: 1, ssrc: ssrc, detail: true))
+        await rig.deliver(Self.audioContext(id, revision: 1, generation: 3, ssrc: ssrc &+ 1, detail: true))
+        await rig.deliver(Self.audioContext(id + "-retired", revision: 1, generation: 3, ssrc: ssrc, detail: true))
+        await rig.deliver(Self.audioContext(id, revision: 1, generation: 3, ssrc: ssrc))
+        #expect(rig.timers.pendingDueTimes == [due])
+        rig.recorder.advanceClock(by: 1_000)
+        await rig.timers.advance(by: 1_000)
+        #expect(rig.recorder.sent("audio").count == 2)
+        #expect(rig.recorder.sent("audio").last?["connectionId"] == .string(id))
+        #expect(rig.recorder.sent("audio").last?["revision"] == 2)
+        #expect(rig.recorder.sent("start").count == 1)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func aNewBitrateRevisionSupersedesMediaNotReadyRetry() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1,
+                                                "audioProfileVersion": 1, "audioQualityVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1, profile: true)
+        await rig.client.setAudioRequest(.init(opusBitrate: 48_000))
+        #expect(rig.recorder.sent("audio").count == 2)
+        #expect(rig.recorder.sent("audio").last?["revision"] == 2)
+        #expect(rig.recorder.sent("audio").last?["opusBitrate"] == 48_000)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        rig.recorder.advanceClock(by: 1_000)
+        await rig.timers.advance(by: 1_000)
+        #expect(rig.recorder.sent("audio").count == 2)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func mediaNotReadyDoesNotRetryWhenAudioIsNotWanted() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        await rig.client.setAudioEnabled(false)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1)
+        #expect(rig.timers.pendingDueTimes.isEmpty)
+        rig.recorder.advanceClock(by: 1_000)
+        await rig.timers.advance(by: 1_000)
+        #expect(rig.recorder.sent("audio").count == 1)
+        #expect(rig.recorder.sent("audio").last?["enabled"] == .bool(false))
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func mediaNotReadyRetryRefreshesAfterControlRouteMovesWithoutReplacementSupport() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1])
+        try await rig.connect()
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        await rig.client.setAudioEnabled(true)
+        try await Self.deliverAcceptedNotReady(rig, id: id, revision: 1, generation: 1)
+        rig.recorder.advanceClock(by: 400)
+        await rig.timers.advance(by: 400)
+        await rig.client.controlRouteDidMove(peerFactory: rig.recorder.peerFactory,
+                                             connectDeadline: .seconds(5), safeToReplace: { true })
+        #expect(rig.timers.pendingDueTimes == [rig.timers.now + 1_000])
+        #expect(rig.recorder.sent("audio").count == 1)
+        #expect(rig.recorder.sent("start").count == 1)
+        #expect(!peer.isClosed)
+        rig.recorder.advanceClock(by: 600)
+        await rig.timers.advance(by: 600)
+        #expect(rig.recorder.sent("audio").count == 1, "the retired route deadline cannot send")
+        rig.recorder.advanceClock(by: 400)
+        await rig.timers.advance(by: 400)
+        #expect(rig.recorder.sent("audio").count == 2)
+        #expect(rig.recorder.sent("audio").last?["connectionId"] == .string(id))
+        #expect(rig.recorder.sent("audio").last?["revision"] == 2)
+        #expect(rig.recorder.sent("start").count == 1)
+        #expect(!peer.isClosed)
+        await rig.client.handle(.stateChanged(.stopped))
+    }
+
+    @Test(arguments: [false, true])
+    func anAlreadyStartedMediaNotReadyRetryCannotSendAfterControlRouteRefresh(replacementSupported: Bool) async throws {
+        let clock = StartedClock()
+        let recorder = MediaControlRecorder()
+        let client = MediaControlClient(send: recorder.sender, peerFactory: recorder.peerFactory,
+                                        clock: recorder.clock, timers: clock,
+                                        onMediaConnected: recorder.onMediaConnected)
+        recorder.listen(to: client)
+        await client.handle(.message(.hello(.init(major: 1, minor: 11, settingsSchema: 0,
+                                                peer: "nereusd", majors: [1], features: [:]))))
+        var capabilities: [String: Int64] = ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1]
+        if replacementSupported { capabilities["mediaReplaceVersion"] = 1 }
+        await client.handle(.message(.capabilities(Self.capabilities(capabilities))))
+        await client.handle(.message(.snapshotComplete))
+        let peer = try #require(recorder.peers.last)
+        let id = try #require(await client.connectionId)
+        peer.become(.connected)
+        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        await client.setAudioEnabled(true)
+        var context = Self.audioContext(id, revision: 1, generation: 1,
+                                        ssrc: MediaControlClient.audioSsrc(forConnection: id),
+                                        enabled: false, detail: true)
+        context["reason"] = "media-not-ready"
+        await client.handle(.message(.mediaControl(.init(payload: context))))
+        let oldAction = try #require(clock.take(after: 1_000))
+        await client.controlRouteDidMove(peerFactory: recorder.peerFactory,
+                                         connectDeadline: .seconds(5), safeToReplace: { false })
+        #expect(clock.count(after: 1_000) == 1)
+        await oldAction()
+        #expect(recorder.sent("audio").count == 1)
+        #expect(clock.count(after: 1_000) == 1, "old callback cannot clear the refreshed route timer")
+        if replacementSupported {
+            // Safety can remain false indefinitely. Polling for permission
+            // to replace must leave OLD's accepted audio refusal recoverable.
+            for _ in 0..<4 {
+                #expect(clock.count(after: 500) == 1)
+                let poll = try #require(clock.take(after: 500))
+                await poll()
+                #expect(clock.count(after: 1_000) == 1)
+                #expect(recorder.sent("audio").count == 1)
+                #expect(recorder.sent("replace").isEmpty)
+                #expect(recorder.peers.count == 1)
+            }
+        } else {
+            #expect(clock.count(after: 500) == 0)
+        }
+        let refreshedAction = try #require(clock.take(after: 1_000))
+        await refreshedAction()
+        #expect(recorder.sent("audio").count == 2)
+        #expect(recorder.sent("audio").last?["connectionId"] == .string(id))
+        #expect(recorder.sent("audio").last?["revision"] == 2)
+        #expect(clock.count(after: 1_000) == 0)
+        #expect(recorder.sent("start").count == 1)
+        #expect(!peer.isClosed)
+        await client.handle(.stateChanged(.stopped))
+    }
+
+    @Test func acceptedReplacementCancelsEvenAnAlreadyStartedMediaNotReadyRetry() async throws {
+        let clock = StartedClock()
+        let recorder = MediaControlRecorder()
+        let client = MediaControlClient(send: recorder.sender, peerFactory: recorder.peerFactory,
+                                        clock: recorder.clock, timers: clock,
+                                        onMediaConnected: recorder.onMediaConnected)
+        recorder.listen(to: client)
+        await client.handle(.message(.hello(.init(major: 1, minor: 11, settingsSchema: 0,
+                                                peer: "nereusd", majors: [1], features: [:]))))
+        await client.handle(.message(.capabilities(Self.capabilities(
+            ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1, "mediaReplaceVersion": 1]))))
+        await client.handle(.message(.snapshotComplete))
+        let peer = try #require(recorder.peers.last)
+        let id = try #require(await client.connectionId)
+        peer.become(.connected)
+        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        await client.setAudioEnabled(true)
+        var context = Self.audioContext(id, revision: 1, generation: 1,
+                                        ssrc: MediaControlClient.audioSsrc(forConnection: id),
+                                        enabled: false, detail: true)
+        context["reason"] = "media-not-ready"
+        await client.handle(.message(.mediaControl(.init(payload: context))))
+        let oldAction = try #require(clock.take(after: 1_000))
+        await client.controlRouteDidMove(peerFactory: recorder.peerFactory,
+                                         connectDeadline: .seconds(5), safeToReplace: { true })
+        #expect(clock.count(after: 1_000) == 1)
+        let refreshedAction = try #require(clock.take(after: 1_000))
+        let replacement = try #require(recorder.sent("replace").last)
+        let newID = try #require(replacement["connectionId"])
+        await client.handle(.message(.mediaControl(.init(payload: [
+            "op": "replace", "connectionId": newID, "replaces": .string(id),
+        ]))))
+        let acceptedID = try #require(await client.connectionId)
+        #expect(newID == .string(acceptedID))
+        #expect(clock.count(after: 1_000) == 0)
+        let audioCount = recorder.sent("audio").count
+        await oldAction()
+        await refreshedAction()
+        #expect(recorder.sent("audio").count == audioCount)
+        #expect(clock.count(after: 1_000) == 0)
+        #expect(recorder.sent("start").count == 1)
+        #expect(recorder.sent("replace").count == 1)
+        #expect(recorder.peers.count == 2)
+        await client.handle(.stateChanged(.stopped))
+    }
+
+    @Test(arguments: ["mute", "profile", "session", "owner", "enabled", "other-reason"])
+    func anAlreadyStartedMediaNotReadyRetryCannotOutliveSupersession(supersession: String) async throws {
+        let clock = StartedClock()
+        let recorder = MediaControlRecorder()
+        let client = MediaControlClient(send: recorder.sender, peerFactory: recorder.peerFactory,
+                                        clock: recorder.clock, timers: clock,
+                                        onMediaConnected: recorder.onMediaConnected)
+        recorder.listen(to: client)
+        await client.handle(.message(.hello(.init(major: 1, minor: 11, settingsSchema: 0,
+                                                peer: "nereusd", majors: [1], features: [:]))))
+        await client.handle(.message(.capabilities(Self.capabilities(
+            ["remoteMediaVersion": 1, "remoteAudioStatusVersion": 1, "audioProfileVersion": 1]))))
+        await client.handle(.message(.snapshotComplete))
+        let peer = try #require(recorder.peers.last)
+        let id = try #require(await client.connectionId)
+        peer.become(.connected)
+        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        await client.setAudioEnabled(true)
+        let ssrc = MediaControlClient.audioSsrc(forConnection: id)
+        var notReady = Self.audioContext(id, revision: 1, generation: 1, ssrc: ssrc,
+                                         enabled: false, detail: true, profile: true)
+        notReady["reason"] = "media-not-ready"
+        await client.handle(.message(.mediaControl(.init(payload: notReady))))
+        let oldAction = try #require(clock.take(after: 1_000))
+        switch supersession {
+        case "mute":
+            await client.setAudioEnabled(false)
+            await client.setAudioEnabled(true)
+            notReady["revision"] = 3
+            notReady["generation"] = 2
+            await client.handle(.message(.mediaControl(.init(payload: notReady))))
+            #expect(clock.count(after: 1_000) == 1)
+        case "profile":
+            await client.setAudioRequest(.init(lossless: true), choosing: true)
+        case "session":
+            await client.handle(.stateChanged(.stopped))
+        case "owner":
+            let station = ScriptedStation()
+            let session = StationSession(endpoint: StationEndpoint(host: "shack.example.net"), trust: station.trust,
+                                         authenticator: TokenAuthenticator(token: "conformance-token"),
+                                         clock: ManualLinkClock(), transportFactory: station.factory)
+            #expect(await client.activateLogicalSession(session, owner: 1))
+        default:
+            let enabled = supersession == "enabled"
+            var context = Self.audioContext(id, revision: 1, generation: 2, ssrc: ssrc,
+                                            enabled: enabled, detail: true, profile: true)
+            if !enabled { context["reason"] = "encoder-unavailable" }
+            await client.handle(.message(.mediaControl(.init(payload: context))))
+        }
+        let audioCount = recorder.sent("audio").count
+        let pendingCount = clock.count(after: 1_000)
+        await oldAction()
+        #expect(recorder.sent("audio").count == audioCount)
+        #expect(clock.count(after: 1_000) == pendingCount,
+                "a started old callback must not clear a newer retry timer")
+        #expect(recorder.sent("start").count == 1)
+        await client.handle(.stateChanged(.stopped))
+    }
+
+    private static func deliverAcceptedNotReady(_ rig: Rig, id: String, revision: UInt32,
+                                               generation: UInt32, profile: Bool = false) async throws {
+        let ssrc = MediaControlClient.audioSsrc(forConnection: id)
+        var context = Self.audioContext(id, revision: revision, generation: generation, ssrc: ssrc,
+                                        enabled: false, detail: true, profile: profile)
+        context["reason"] = "media-not-ready"
+        await rig.deliver(context)
+        let accepted = await rig.recorder.settle {
+            rig.recorder.events.contains { event in
+                if case .audioContext(let heard) = event {
+                    return !heard.enabled && heard.offReason == .mediaNotReady && heard.revision == revision
+                        && heard.anchor.generation == generation && heard.anchor.ssrc == ssrc
+                }
+                return false
+            }
+        }
+        try #require(accepted, "the current negotiated MediaNotReady context must be accepted")
     }
 
     @Test func audioStaysOffUntilAskedForAndEachContextReanchorsPlayback() async throws {

@@ -4,6 +4,9 @@
 // 2026-10-22: NSDC v2: start declares displayCodecVersion 2, a replacement keeps it,
 //   keyframes are asked for on v1 connections only, and every released frame is yielded.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27: Retry wanted audio on the same peer after accepted media-not-ready,
+//   with request, route and logical-session supersession fences.
+//   J.J. Boyd (KG4VCF), AI-assisted via Codex.
 
 import CryptoKit
 import Foundation
@@ -260,6 +263,21 @@ public actor MediaControlClient {
     /// Rises with every `audio` sent, across connections; never 0.
     private var audioRevision: UInt32 = 0
     private var audioGeneration: UInt32?
+    /// One accepted media-not-ready answer owns at most one same-peer retry.
+    /// Every answer waits the same positive interval; no unanswered request loops.
+    private static let audioNotReadyRetryDelay: Duration = .milliseconds(1_000)
+    private var audioNotReadyRetryTimer: (any LinkTimer)?
+    private var audioNotReadyRetryToken: UInt64 = 0
+    private var currentAudioMediaNotReady = false
+    private struct AudioNotReadyRetryTicket: Sendable {
+        let token: UInt64
+        let owner: UInt64
+        let mediaIdentity: ObjectIdentifier
+        let mediaID: String
+        let routeGeneration: Int
+        let revision: UInt32
+        let generation: UInt32
+    }
     /// What the Core's last enabled audio-context on this connection runs:
     /// lossless, or Opus at its bitrate (nil without detail).
     private var runningAudio: (lossless: Bool, opusBitrate: Int?)?
@@ -693,8 +711,22 @@ public actor MediaControlClient {
                                     safeToReplace: @escaping @Sendable () async -> Bool) async {
         usePeers(peerFactory, connectDeadline: connectDeadline)
         self.safeToReplace = safeToReplace
+        let retainedMedia = media
+        let retainedOwner = logicalOwner
+        let retainedRevision = audioRevision
+        let notReadyGeneration = currentAudioMediaNotReady && audioAnswered ? audioGeneration : nil
+        cancelAudioNotReadyRetry()
         routeGeneration &+= 1
         onAirRefusals = 0
+        if let retainedMedia, self.media === retainedMedia,
+           logicalOwner == retainedOwner, audioRevision == retainedRevision, audioWanted,
+           let notReadyGeneration, audioGeneration == notReadyGeneration {
+            // The selected peer stays in use until replacement is accepted.
+            // No suspension has separated the accepted answer from this
+            // route update, so only its ticket changes, never its intent.
+            currentAudioMediaNotReady = true
+            armAudioNotReadyRetry(on: retainedMedia, generation: notReadyGeneration)
+        }
         guard gates.mediaReplace, snapshotComplete, media != nil else {
             return
         }
@@ -1042,6 +1074,7 @@ public actor MediaControlClient {
     /// Ends the current media connection, its subscriptions and its audio,
     /// and reports it closed unless its own state already said so.
     private func retire(reporting: Bool = true) {
+        cancelAudioNotReadyRetry()
         retireMicrophoneEvents()
         stopClockProbing()
         resetLadder()
@@ -1420,6 +1453,7 @@ public actor MediaControlClient {
         replacement = nil
         let expectedPlayingAudio = receivedPlayingAudio && audioWanted && audioGeneration != nil
         candidate.selectedRouteGeneration = routeGeneration
+        cancelAudioNotReadyRetry()
         retireMicrophoneEvents()
         media = candidate
         // The direct media ladder: the connection in use is now the new one,
@@ -1808,6 +1842,7 @@ public actor MediaControlClient {
     /// Asks the Core for audio or stops it. Sent at once on a connected
     /// media connection, otherwise when the next one connects.
     public func setAudioEnabled(_ enabled: Bool) async {
+        cancelAudioNotReadyRetry()
         let wasWanted = audioWanted
         audioWanted = enabled
         if !enabled {
@@ -1921,6 +1956,7 @@ public actor MediaControlClient {
         guard request != audioRequest || wasFallback else {
             return
         }
+        cancelAudioNotReadyRetry()
         let addsBitrate = !wasFallback && Self.onlyAddsBitrate(request, to: audioRequest)
         audioRequest = request
         guard audioWanted, let media, media.connected else {
@@ -1982,6 +2018,7 @@ public actor MediaControlClient {
     }
 
     private func setLosslessFallback(_ fallenBack: Bool) {
+        if fallenBack != losslessFallback { cancelAudioNotReadyRetry() }
         losslessFallback = fallenBack
         uplink.setLosslessFallback(fallenBack)
     }
@@ -2036,6 +2073,7 @@ public actor MediaControlClient {
     }
 
     private func sendAudio() async {
+        cancelAudioNotReadyRetry()
         guard let media else {
             return
         }
@@ -2065,6 +2103,42 @@ public actor MediaControlClient {
             }
         }
         await transmit(payload)
+    }
+
+    /// Also revokes a callback already taken by the timer executor. Changing
+    /// intent never leaves a captured profile or revision waiting to be replayed.
+    private func cancelAudioNotReadyRetry() {
+        audioNotReadyRetryToken &+= 1
+        audioNotReadyRetryTimer?.cancel()
+        audioNotReadyRetryTimer = nil
+        currentAudioMediaNotReady = false
+    }
+
+    private func armAudioNotReadyRetry(on media: Media, generation: UInt32) {
+        guard audioNotReadyRetryTimer == nil, currentAudioMediaNotReady,
+              logicalOwner == 0 || logicalSession != nil,
+              snapshotComplete, gates.media, self.media === media,
+              media.connected, audioWanted else { return }
+        let ticket = AudioNotReadyRetryTicket(
+            token: audioNotReadyRetryToken, owner: logicalOwner,
+            mediaIdentity: ObjectIdentifier(media), mediaID: media.id,
+            routeGeneration: routeGeneration, revision: audioRevision, generation: generation)
+        audioNotReadyRetryTimer = timers.schedule(after: Self.audioNotReadyRetryDelay) { [weak self] in
+            await self?.audioNotReadyRetryDue(ticket)
+        }
+    }
+
+    private func audioNotReadyRetryDue(_ ticket: AudioNotReadyRetryTicket) async {
+        guard ticket.token == audioNotReadyRetryToken, ticket.owner == logicalOwner,
+              logicalOwner == 0 || logicalSession != nil,
+              let media, ObjectIdentifier(media) == ticket.mediaIdentity, media.id == ticket.mediaID,
+              routeGeneration == ticket.routeGeneration, audioRevision == ticket.revision,
+              audioGeneration == ticket.generation, audioNotReadyRetryTimer != nil,
+              snapshotComplete, gates.media, media.connected, audioWanted,
+              audioAnswered, currentAudioMediaNotReady else { return }
+        // sendAudio invalidates this ticket and reads the current allowed intent
+        // before its first suspension. Only a new accepted refusal can arm again.
+        await sendAudio()
     }
 
     // MARK: Transmit monitor
@@ -2115,6 +2189,9 @@ public actor MediaControlClient {
               context.anchor.ssrc == media.audioSsrc else {
             return
         }
+        // Only an accepted current context can replace the retry's authority.
+        // Invalid or stale answers above leave the current timer untouched.
+        cancelAudioNotReadyRetry()
         audioGeneration = context.anchor.generation
         runningAudio = context.enabled ? (context.lossless, context.encoder?.targetBitrate) : nil
         audioAnswered = true
@@ -2168,6 +2245,10 @@ public actor MediaControlClient {
         }
         media.peer.setExpectedAudioSsrc(dualAudio == nil ? context.anchor.ssrc : nil)
         reconcileLinkTrial(losslessPlaying: context.enabled && context.lossless && audioWanted)
+        currentAudioMediaNotReady = !context.enabled && context.offReason == .mediaNotReady
+        if currentAudioMediaNotReady {
+            armAudioNotReadyRetry(on: media, generation: context.anchor.generation)
+        }
         eventSink.yield(.audioContext(context))
     }
 
