@@ -53,6 +53,12 @@
 //               generation as the starvation check; noAudio once per quiet
 //               period. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: a watch that
+//               ends (setWatching(false), stop()) never reads as audio
+//               returning: it emits watchEnded with the silence so far, not
+//               starved(false); starved(true) carries the measured silence;
+//               audioArrived marks a watch's first packet. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/RemoteMicReceiver.h"
@@ -1041,15 +1047,9 @@ void RemoteMicReceiver::stop()
         ++m_waitGeneration;
         done(false);
     }
-    if (m_starved) {
-        m_starved = false;
-        emit starved(false);
-    }
-    m_watching = false;
-    ++m_starvationGeneration;
-    m_starvationCheckPending = false;
-    m_noAudioCheckPending = false;
-    m_noAudioSignalled = false;
+    // Fix wave B: a watched line that ends is no audio returning: the
+    // owner is told how long it had been quiet, never starved(false).
+    endWatch();
     const std::lock_guard<std::mutex> lock(m_lineLock);
     if (m_decoder->opus != nullptr) {
         opus_decoder_destroy(m_decoder->opus);
@@ -1154,9 +1154,16 @@ void RemoteMicReceiver::afterPacket(bool wroteAudio)
     if (!isRunning()) {
         return;
     }
+    // Fix wave B: a watch's first packet, once, before the end of a
+    // starvation: the owner learns its line carries audio (a line that
+    // replaced one which ended mid-key has never starved).
+    if (m_watching && !m_audioArrivedSignalled) {
+        m_audioArrivedSignalled = true;
+        emit audioArrived();
+    }
     if (m_starved) {
         m_starved = false;
-        emit starved(false);
+        emit starved(false, 0);
     }
     // A packet ends the quiet period: the next one may signal no audio
     // again. A pending no-audio check finds the newer packet and waits on.
@@ -1349,23 +1356,40 @@ void RemoteMicReceiver::setWatching(bool watching)
     if (watching == m_watching) {
         return;
     }
-    m_watching = watching;
+    if (!watching) {
+        endWatch();
+        return;
+    }
+    m_watching = true;
     ++m_starvationGeneration;
     m_starvationCheckPending = false;
     m_noAudioCheckPending = false;
     m_noAudioSignalled = false;
-    if (watching) {
-        // Measured from the later of the last audio and the start of the
-        // watch.
-        const qint64 at = now();
-        qint64 last = m_lastAudioMs.load(std::memory_order_acquire);
-        while (last < at
-               && !m_lastAudioMs.compare_exchange_weak(last, at, std::memory_order_acq_rel)) {
-        }
-        scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
-    } else if (m_starved) {
-        m_starved = false;
-        emit starved(false);
+    m_audioArrivedSignalled = false;
+    // Measured from the later of the last audio and the start of the watch.
+    const qint64 at = now();
+    qint64 last = m_lastAudioMs.load(std::memory_order_acquire);
+    while (last < at
+           && !m_lastAudioMs.compare_exchange_weak(last, at, std::memory_order_acq_rel)) {
+    }
+    scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
+}
+
+void RemoteMicReceiver::endWatch()
+{
+    const bool wasWatching = m_watching;
+    const bool wasStarved = m_starved;
+    m_watching = false;
+    m_starved = false;
+    ++m_starvationGeneration;
+    m_starvationCheckPending = false;
+    m_noAudioCheckPending = false;
+    m_noAudioSignalled = false;
+    m_audioArrivedSignalled = false;
+    if (wasWatching) {
+        const qint64 quiet =
+            std::max<qint64>(0, now() - m_lastAudioMs.load(std::memory_order_acquire));
+        emit watchEnded(quiet, wasStarved);
     }
 }
 
@@ -1398,7 +1422,7 @@ void RemoteMicReceiver::checkStarvation()
             if (!m_noAudioCheckPending && !m_noAudioSignalled) {
                 scheduleNoAudioCheck(static_cast<int>(RemoteMicConfig::kNoAudioCutMs - quiet));
             }
-            emit starved(true);
+            emit starved(true, quiet);
         }
         return;   // the next audio schedules the next check
     }

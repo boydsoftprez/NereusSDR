@@ -1,6 +1,19 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-27: Remote transmit hold then cut, fix wave B: a microphone
+//               line that ends while its device is keyed is no audio, never
+//               audio returning: the Mic hold stays (or is set at 250 ms,
+//               by the mode) and the Core cuts 10 s after the last packet
+//               of any line for the key, on its own timer, unless a watched
+//               line delivers first (remoteMicLineEnded,
+//               remoteMicAudioArrived, judgeEndedMicLine). The hold start
+//               logs the measured silence; a hold released by TUNE or
+//               two-tone starting, or by a new key, says so; the policy
+//               counts a hold only while it set the Mic bit. The same
+//               device signing in again ends a watched key as the
+//               watchdog's closed-link stop. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut, Task 5: the watchdog's hold
 //               hook and the starvation's holdRf set the TX channel's Link
 //               and Mic bits for the keyer; holdStarted and holdEnded, and
@@ -3187,6 +3200,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             hooks.holdRf = [this](bool held) { onStarvationHold(held); };
             m_starvation.setHooks(std::move(hooks));
         }
+        // Fix wave B: a keyed device's microphone line that ended is judged
+        // on the Core's clock by a child timer, as the watchdog's is (the
+        // conformance runner's virtual clock drives both).
+        m_endedMicLineTimer = new QTimer(this);
+        m_endedMicLineTimer->setSingleShot(true);
+        m_endedMicLineTimer->setTimerType(Qt::PreciseTimer);
+        connect(m_endedMicLineTimer, &QTimer::timeout, this, &StationServer::judgeEndedMicLine);
         // Remote transmit hold then cut: MOX reaching receive clears every
         // hold bit (RadioModel); a hold still published ends with it.
         connect(m_radioModel, &RadioModel::remoteRfHoldChanged, this, [this](bool held) {
@@ -6888,12 +6908,25 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             const QString stopText =
                 noteHolderStopped(device.deviceId, TransmitState::kStopLinkLost);
             if (!self) { return; }
+            // Remote transmit hold then cut, fix wave B: the older link is
+            // closed for the replacement, so a key it holds is the
+            // watchdog's closed-link stop, as a dropped link's is (its hold
+            // ends as "link closed"; the reason recorded above stays). The
+            // watch must be ended this way before the stop clears keyedBy,
+            // or the watch ends as the key's own end.
+            bool watchdogStopped = false;
+            if (m_txWatchdog && m_txWatchdog->isWatching(device.deviceId)) {
+                watchdogStopped =
+                    m_radioModel && m_radioModel->keyedBy().deviceId == device.deviceId;
+                m_txWatchdog->linkClosed(device.deviceId);
+                if (!self) { return; }
+            }
             // Unkey drain review (G-05): that stop is the Core's, so it is
             // Stop All TX, as a dropped link's is. The fence's own unkey (the
             // unkey gate's normal unkey) is the operator's, and would hold
             // the hardware keyed for the queued transmit audio, up to the
             // send ring's length.
-            if (!stopText.isEmpty() && m_radioModel) {
+            if (!watchdogStopped && !stopText.isEmpty() && m_radioModel) {
                 m_radioModel->stopAllTx(stopText);
                 if (!self) { return; }
             }
@@ -10631,6 +10664,12 @@ void StationServer::followKeyedForWatchdog()
     // Remote transmit hold then cut: a hold kept past its key's end (until
     // MOX reaches receive) is let go when a new key comes first, so the new
     // key is never held for the old one's silence.
+    // Fix wave B: an ended microphone line waits only for its own key.
+    if (!m_endedMicLine.deviceId.isEmpty()
+        && (keyedBy.deviceId != m_endedMicLine.deviceId
+            || keyedBy.epoch != m_endedMicLine.keyEpoch)) {
+        dropEndedMicLine();
+    }
     if (!keyedBy.isEmpty()) {
         if (!m_linkRfBitDevice.isEmpty() && !m_linkRfHold.on
             && (keyedBy.deviceId != m_linkRfBitDevice || keyedBy.epoch != m_linkRfBitEpoch)) {
@@ -10638,7 +10677,7 @@ void StationServer::followKeyedForWatchdog()
         }
         if (m_micRfHold.on
             && (keyedBy.deviceId != m_micRfHold.deviceId || keyedBy.epoch != m_micRfHold.keyEpoch)) {
-            m_micRfHoldEnding = QStringLiteral("the key ended");
+            m_micRfHoldEnding = QStringLiteral("a new key");
             m_starvation.releaseHold();
             endMicRfHold(m_micRfHoldEnding);
             m_micRfHoldEnding.clear();
@@ -10812,14 +10851,128 @@ void StationServer::txChannelMessage(quint64 mediaEpoch, const QByteArray& messa
                         std::max<qint64>(0, heldUs) / 1000, watched);
 }
 
-void StationServer::remoteMicStarved(const QByteArray& deviceId, bool starved)
+void StationServer::remoteMicStarved(const QByteArray& deviceId, bool starved, qint64 quietMs)
 {
     if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
         // Only a key that is this device's is its line's to stop.
         return;
     }
     if (m_radioModel->remoteRadioMicKeyActive(deviceId)) { return; }
+    if (!starved && m_endedMicLine.deviceId == deviceId) {
+        // Fix wave B: a packet on a line for the key: an ended line's wait
+        // is over.
+        dropEndedMicLine();
+    }
+    m_micStarvedQuietMs = starved ? quietMs : -1;
     m_starvation.onStarved(deviceId, starved);
+    m_micStarvedQuietMs = -1;
+}
+
+void StationServer::remoteMicLineEnded(const QByteArray& deviceId, qint64 quietMs,
+                                       bool wasStarved)
+{
+    if (!m_radioModel || deviceId.isEmpty() || m_endedMicLineTimer == nullptr) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != deviceId || !m_radioModel->isTransmitting()) {
+        // Not this device's key on the air: the watch ended with its key.
+        return;
+    }
+    if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
+        return;
+    }
+    if (keyStopped(keyedBy.epoch)) {
+        // The key is already being stopped (a stop's walk to receive ends
+        // the watch while keyedBy still names it): nothing more to cut.
+        return;
+    }
+    const qint64 lastPacketMs = m_deviceSessions->now() - std::max<qint64>(0, quietMs);
+    if (m_endedMicLine.deviceId == deviceId && m_endedMicLine.keyEpoch == keyedBy.epoch) {
+        // Another line for the same key ended with no packet in between:
+        // the deadline runs from the earliest last packet, never later.
+        m_endedMicLine.lastPacketMs = std::min(m_endedMicLine.lastPacketMs, lastPacketMs);
+    } else {
+        m_endedMicLine = {deviceId, keyedBy.epoch, lastPacketMs, false};
+    }
+    qCInfo(lcStation).noquote()
+        << QStringLiteral("Microphone line from %1 ended while keyed, %2 ms after its last "
+                          "packet (%3); no audio until a new line delivers")
+               .arg(QString::fromLatin1(deviceId.toHex()))
+               .arg(m_deviceSessions->now() - m_endedMicLine.lastPacketMs)
+               .arg(wasStarved ? QStringLiteral("starved") : QStringLiteral("not starved"));
+    judgeEndedMicLine();
+}
+
+void StationServer::remoteMicAudioArrived(const QByteArray& deviceId)
+{
+    if (m_endedMicLine.deviceId.isEmpty() || m_endedMicLine.deviceId != deviceId) {
+        return;
+    }
+    dropEndedMicLine();
+    if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
+        return;
+    }
+    qCInfo(lcStation).noquote()
+        << QStringLiteral("Microphone audio from %1 arrived on a new line; its cut is cancelled")
+               .arg(QString::fromLatin1(deviceId.toHex()));
+    // Audio returned: a hold is released, as on any line's packet.
+    m_starvation.onStarved(deviceId, false);
+}
+
+void StationServer::judgeEndedMicLine()
+{
+    if (m_endedMicLineTimer != nullptr) {
+        m_endedMicLineTimer->stop();
+    }
+    if (m_endedMicLine.deviceId.isEmpty() || !m_radioModel) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != m_endedMicLine.deviceId || keyedBy.epoch != m_endedMicLine.keyEpoch
+        || !m_radioModel->isTransmitting() || keyStopped(keyedBy.epoch)) {
+        // Its key ended, or another stop already ends it.
+        dropEndedMicLine();
+        return;
+    }
+    const QByteArray deviceId = m_endedMicLine.deviceId;
+    const qint64 quiet = m_deviceSessions->now() - m_endedMicLine.lastPacketMs;
+    if (!m_endedMicLine.starvationJudged && quiet >= RemoteMicConfig::kStarvationMs) {
+        // As starved: the mode decides (a Hold mode holds), and a hold on
+        // stays.
+        m_endedMicLine.starvationJudged = true;
+        if (!m_starvation.isHolding()) {
+            m_micStarvedQuietMs = quiet;
+            m_starvation.onStarved(deviceId, true);
+            m_micStarvedQuietMs = -1;
+        }
+    }
+    if (quiet >= RemoteMicConfig::kNoAudioCutMs) {
+        // No audio packets for 10 s from any line for the key: the cut.
+        dropEndedMicLine();
+        remoteMicNoAudio(deviceId);
+        return;
+    }
+    const qint64 due = (m_endedMicLine.starvationJudged ? RemoteMicConfig::kNoAudioCutMs
+                                                        : RemoteMicConfig::kStarvationMs)
+        - quiet;
+    // Checked at least every kStarvationMs, on the Core's clock.
+    m_endedMicLineTimer->start(
+        static_cast<int>(std::clamp<qint64>(due, 1, RemoteMicConfig::kStarvationMs)));
+}
+
+bool StationServer::keyStopped(quint32 keyEpoch) const
+{
+    return m_transmitState != nullptr && m_transmitState->stopSerial() > 0
+        && m_transmitState->stopEpoch() == static_cast<qint64>(keyEpoch);
+}
+
+void StationServer::dropEndedMicLine()
+{
+    m_endedMicLine = {};
+    if (m_endedMicLineTimer != nullptr) {
+        m_endedMicLineTimer->stop();
+    }
 }
 
 void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
@@ -10830,6 +10983,9 @@ void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
     }
     if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
         return;
+    }
+    if (m_endedMicLine.deviceId == deviceId) {
+        dropEndedMicLine();
     }
     // The cut: its stop first, then the hold's release, which ends as cut.
     m_micRfHoldEnding = QStringLiteral("cut");
@@ -10901,16 +11057,21 @@ void StationServer::onStarvationHold(bool held)
         const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
         if (keyedBy.isEmpty() || keyedBy.deviceId == QByteArray(KeyerIdentity::kStationDeviceId)
             || !m_radioModel->isTransmitting()) {
+            // Fix wave B: declined, so the policy counts no hold.
+            m_starvation.forgetHold();
             return;
         }
         m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, true);
         if (!m_micRfHold.on) {
             m_micRfHold = {true, keyedBy.deviceId, keyedBy.epoch, m_deviceSessions->now()};
             ++m_rfHoldGeneration;
-            // The line counts as starved after kStarvationMs without audio.
+            // The silence the line measured when it starved (at least
+            // kStarvationMs).
             m_controlLog.transmitHoldStarted(keyedBy.deviceId,
                                              QString::fromLatin1(TransmitState::kHoldMic),
-                                             RemoteMicConfig::kStarvationMs);
+                                             m_micStarvedQuietMs >= 0
+                                                 ? m_micStarvedQuietMs
+                                                 : qint64(RemoteMicConfig::kStarvationMs));
             publishRfHold();
         }
         return;
@@ -10925,6 +11086,12 @@ void StationServer::onRemoteRfHoldsCleared()
     // Every bit is clear now, the Link bit's key with them.
     m_linkRfBitDevice.clear();
     m_linkRfBitEpoch = 0;
+    if (!m_micRfHold.on) {
+        // Fix wave B: the Mic bit is gone; the policy counts no hold. A
+        // published one is released below, one turn later, so a cut's own
+        // end is the one logged.
+        m_starvation.forgetHold();
+    }
     if (!m_linkRfHold.on && !m_micRfHold.on) {
         return;
     }
@@ -10956,7 +11123,7 @@ void StationServer::releaseMicHoldForMicrophoneUnused()
     if (!m_starvation.isHolding() && !m_micRfHold.on) {
         return;
     }
-    m_micRfHoldEnding = QStringLiteral("the key ended");
+    m_micRfHoldEnding = QStringLiteral("TUNE or two-tone started");
     // holdRf(false): the published hold ends and the Mic bit goes.
     m_starvation.releaseHold();
     if (m_micRfHold.on) {

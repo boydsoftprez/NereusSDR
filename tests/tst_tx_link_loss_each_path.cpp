@@ -97,6 +97,13 @@
 //               cut; a starved microphone holds AM and cuts every mode at
 //               10 s. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: signing in
+//               again is a second window object on the same key while the
+//               first link stays severed and unclosed; the window's media
+//               dropped mid-hold keeps the hold and cuts at last packet +
+//               10 s, in AM and USB; the short outage's hold is timed from
+//               the restore edge with room for a 250 ms main-thread stall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -696,6 +703,8 @@ private slots:
         qint64 firstHeardMs = -1;
         qint64 unheldMs = -1;
         bool channelHeldAtFirstHeard = true;
+        QElapsedTimer severed;
+        qint64 heldAtSeveredMs = -1;
         QObject scope;   // last: disconnects before the values go
         QObject::connect(watchdog, &RemoteTxWatchdog::keepaliveHeard, &scope,
                          [&](const QByteArray& id, qint64) {
@@ -710,7 +719,12 @@ private slots:
             }
         });
 
-        QElapsedTimer severed;
+        QObject::connect(watchdog, &RemoteTxWatchdog::holdStarted, &scope,
+                         [&](const QByteArray& id, qint64) {
+            if (id == device && heldAtSeveredMs < 0) {
+                heldAtSeveredMs = severed.elapsed();
+            }
+        });
         h.stationLink->setSevered(true);
         severed.start();
         QTRY_COMPARE_WITH_TIMEOUT(held.count(), 1, 3000);
@@ -725,6 +739,7 @@ private slots:
         QCOMPARE(tripped.count(), 0);
 
         // Restored: the keepalives cross again.
+        const qint64 restoredAtSeveredMs = severed.elapsed();
         restored.start();
         h.stationLink->setSevered(false);
         QTRY_COMPARE_WITH_TIMEOUT(ended.count(), 1, 3000);
@@ -737,12 +752,22 @@ private slots:
         QCOMPARE(ended.first().at(2).value<RemoteTxWatchdog::HoldEnd>(),
                  RemoteTxWatchdog::HoldEnd::Heard);
         QVERIFY(!channelHeldAtFirstHeard);
-        QVERIFY2(unheldMs <= firstHeardMs + 200,
+        // Fix wave B: room for a 250 ms main-thread stall in the bound.
+        QVERIFY2(unheldMs <= firstHeardMs + 200 + 250,
                  qPrintable(QStringLiteral("%1 %2").arg(unheldMs).arg(firstHeardMs)));
         QVERIFY(!tx.isRfHeld());
         QVERIFY(!h.station.isRemoteRfHeld());
+        // Fix wave B: the hold's length, timed from its own start and the
+        // restore edge (the first counted keepalive after it), on the test's
+        // clock: both ends are read in the handlers that report them, so a
+        // stalled main thread moves both alike.
         const qint64 holdMs = ended.first().at(1).toLongLong();
-        QVERIFY2(holdMs >= 1000 && holdMs <= 1400, qPrintable(QString::number(holdMs)));
+        QVERIFY(heldAtSeveredMs >= 0);
+        const qint64 expectedHoldMs = restoredAtSeveredMs - heldAtSeveredMs + firstHeardMs;
+        QVERIFY2(std::abs(holdMs - expectedHoldMs) <= 50,
+                 qPrintable(QStringLiteral("%1 %2").arg(holdMs).arg(expectedHoldMs)));
+        QVERIFY2(holdMs >= 1500 - kHoldBoundMs - 250 && holdMs <= 1400 + 250,
+                 qPrintable(QString::number(holdMs)));
 
         // The key goes on with nothing stopped; txState counts one hold.
         QTest::qWait(1500);
@@ -754,8 +779,8 @@ private slots:
         TransmitState* const core = h.server.transmitState();
         QVERIFY(!core->rfHeld());
         QCOMPARE(core->rfHoldSerial(), quint64(1));
-        QVERIFY2(core->rfLastHoldMs() >= 1000 && core->rfLastHoldMs() <= 1400,
-                 qPrintable(QString::number(core->rfLastHoldMs())));
+        QVERIFY2(std::abs(core->rfLastHoldMs() - holdMs) <= 50,
+                 qPrintable(QStringLiteral("%1 %2").arg(core->rfLastHoldMs()).arg(holdMs)));
         QCOMPARE(core->stopSerial(), quint32(0));
         QTRY_COMPARE(h.client.transmitState()->rfHoldSerial(), quint64(1));
         QCOMPARE(h.client.transmitState()->rfLastHoldMs(), core->rfLastHoldMs());
@@ -769,10 +794,13 @@ private slots:
         h.station.injectTxChannelForTest(nullptr);
     }
 
-    // The window signs in again while its key is held (its old link quiet,
-    // never closed): the Core ends the old session, and with it transmit at
-    // once as a closed link, not at the 3000 ms cut; the new session finds
-    // transmit stopped.
+    // The window signs in again while its key is held: a second window
+    // object on the same device key signs in over a new link while the
+    // first link stays severed and unclosed (fix wave B, review Important
+    // 1). The Core ends the old session for the replacement (ruling 4.8),
+    // and with it transmit at once as a closed link, well inside the
+    // 3000 ms cut; the first link saw no close before the Core's own; the
+    // new session finds transmit stopped.
     void signingInAgainWhileHeldStopsAtOnce()
     {
         TxChannel tx{WdspEngine::kTxChannelId};   // outlives the harness
@@ -792,28 +820,66 @@ private slots:
         h.remote.setMoxFromButton(true);
         QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
         QTest::qWait(500);
-        h.stationLink->setSevered(true);
+        const QPointer<Test::RewritingTransport> firstLink = h.stationLink;
+        QVERIFY(!firstLink.isNull());
+        firstLink->setSevered(true);
         QTRY_COMPARE_WITH_TIMEOUT(held.count(), 1, 3000);
         QVERIFY(tx.isRfHeld());
         QVERIFY(h.station.moxController()->isMox());
         QCOMPARE(tripped.count(), 0);
+        // Nothing has closed the first link.
+        QVERIFY(firstLink->isOpen());
+        QVERIFY(firstLink->closeReason().isEmpty());
 
-        // The same window, a new session on a new link.
-        QElapsedTimer again;
-        again.start();
-        h.connectSession();
-        if (QTest::currentTestFailed()) {
-            return;
-        }
+        // What the first link had seen when the stop came.
+        bool firstLinkOpenAtStop = false;
+        QString firstLinkCloseAtStop;
+        QObject scope;   // last: disconnects before the values go
+        QObject::connect(watchdog, &RemoteTxWatchdog::tripped, &scope,
+                         [&](const QByteArray&, bool, qint64) {
+            if (!firstLink.isNull()) {
+                firstLinkOpenAtStop = firstLink->isOpen();
+                firstLinkCloseAtStop = firstLink->closeReason();
+            }
+        });
+
+        // A second window object, the same device key, a new link.
+        RadioModel remoteAgain{RadioModel::Role::Remote};
+        remoteAgain.setConnectionStateForTest(ConnectionState::Connected);
+        SettingsProxy proxyAgain;
+        StationClient again{&remoteAgain, &proxyAgain};
+        again.setDeviceIdentity(h.windowKey, QStringLiteral("Shack MacBook"),
+                                QStringLiteral("MacBook"));
+        auto* stationEnd = new Test::LoopbackTransport(QStringLiteral("station again"));
+        auto* clientEnd = new Test::LoopbackTransport(QStringLiteral("client again"));
+        stationEnd->linkTo(clientEnd);
+        QString pin = h.server.certificateFingerprint();
+        pin.remove(QLatin1Char(':'));
+        clientEnd->setPeerCertificateSha256(QByteArray::fromHex(pin.toLatin1()));
+        QElapsedTimer signIn;
+        signIn.start();
+        again.startSession(clientEnd, QString(), QString(),
+                           h.server.stationIdentity().fingerprint());
+        h.server.acceptTransport(stationEnd);
+
         QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 3000);
-        const qint64 stoppedAfterMs = again.elapsed();
+        const qint64 stoppedAfterMs = signIn.elapsed();
         const Trip trip = tripOf(tripped);
-        qInfo("signed in again while held: stopped %lld ms after the sign-in, %lld ms after "
-              "the last keepalive",
-              static_cast<long long>(stoppedAfterMs), static_cast<long long>(trip.silentMs));
+        qInfo("signed in again from a second window while held: stopped %lld ms after the "
+              "sign-in, %lld ms after the last keepalive; the first link %s, close reason "
+              "\"%s\"",
+              static_cast<long long>(stoppedAfterMs), static_cast<long long>(trip.silentMs),
+              firstLinkOpenAtStop ? "open" : "closed", qPrintable(firstLinkCloseAtStop));
         QVERIFY(trip.linkClosed);
         QVERIFY2(trip.silentMs < RemoteTxWatchdog::kLinkCutMs,
                  qPrintable(QString::number(trip.silentMs)));
+        QVERIFY2(stoppedAfterMs < RemoteTxWatchdog::kLinkCutMs / 2,
+                 qPrintable(QString::number(stoppedAfterMs)));
+        // The first link was never closed by its window: open, or closed
+        // only by the Core for the replacement.
+        QVERIFY2(firstLinkCloseAtStop.isEmpty()
+                     || firstLinkCloseAtStop == QStringLiteral("This device connected again."),
+                 qPrintable(firstLinkCloseAtStop));
         QCOMPARE(ended.count(), 1);
         QCOMPARE(ended.first().at(2).value<RemoteTxWatchdog::HoldEnd>(),
                  RemoteTxWatchdog::HoldEnd::LinkClosed);
@@ -824,15 +890,16 @@ private slots:
         // The new session finds transmit stopped, with the reason (its
         // snapshot can come while MOX is still walking back to receive, so
         // keyed is waited for), and nothing keys again.
-        QTRY_VERIFY(h.client.isHandshakeComplete());
-        QTRY_COMPARE(h.client.transmitState()->stopSerial(), quint32(1));
-        QCOMPARE(h.client.transmitState()->stopReason(), QStringLiteral("linkLost"));
-        QTRY_VERIFY(!h.client.transmitState()->keyed());
-        QVERIFY(!h.client.transmitState()->rfHeld());
+        QTRY_VERIFY(again.isHandshakeComplete());
+        QTRY_COMPARE(again.transmitState()->stopSerial(), quint32(1));
+        QCOMPARE(again.transmitState()->stopReason(), QStringLiteral("linkLost"));
+        QTRY_VERIFY(!again.transmitState()->keyed());
+        QVERIFY(!again.transmitState()->rfHeld());
         QTest::qWait(500);
         QVERIFY(!h.station.moxController()->isMox());
         QCOMPARE(tripped.count(), 1);
         QCOMPARE(stopped.count(), 1);
+        again.disconnectFromStation(QStringLiteral("test complete"));
         h.client.disconnectFromStation(QStringLiteral("test complete"));
         h.station.injectTxChannelForTest(nullptr);
     }
@@ -1367,18 +1434,28 @@ private slots:
     {
         QTest::addColumn<int>("mode");
         QTest::addColumn<bool>("holds");
-        QTest::newRow("AM holds, then cuts") << static_cast<int>(DSPMode::AM) << true;
-        QTest::newRow("USB stays keyed, then cuts") << static_cast<int>(DSPMode::USB) << false;
+        QTest::addColumn<bool>("dropMedia");
+        QTest::newRow("AM holds, then cuts") << static_cast<int>(DSPMode::AM) << true << false;
+        QTest::newRow("USB stays keyed, then cuts")
+            << static_cast<int>(DSPMode::USB) << false << false;
+        QTest::newRow("AM, media dropped while held")
+            << static_cast<int>(DSPMode::AM) << true << true;
+        QTest::newRow("USB, media dropped") << static_cast<int>(DSPMode::USB) << false << true;
     }
 
     // The keyed window's microphone stops on a live link (the keepalives
     // go on). AM holds the RF within 300 ms of the last microphone packet
     // the Core received and USB does not; with no audio for 10 s, both stop
-    // transmitting with the microphone's reason.
+    // transmitting with the microphone's reason. Fix wave B (review
+    // Important 2): the window's media dropped between the hold and the cut
+    // (the Core's microphone line torn down, and replaced when the window
+    // starts media again) is no audio: the hold stays on, and the cut
+    // still lands 10 s after the last packet of the first line.
     void starvationOnALiveLinkHoldsAmThenCutsEveryMode()
     {
         QFETCH(int, mode);
         QFETCH(bool, holds);
+        QFETCH(bool, dropMedia);
         Test::RemoteAudioSessionHarness h;
         h.pairWindow = true;
         h.makeTransmitReady();
@@ -1420,24 +1497,55 @@ private slots:
                 stoppedMs = quiet.elapsed();
             }
         });
+        // The line in use now (a dropped media connection replaces it), and
+        // its accepted count.
+        QPointer<RemoteMicReceiver> line(receiver);
+        const QPointer<RemoteMicReceiver> firstLine(receiver);
         quint64 accepted = receiver->stats().accepted;
         qint64 lastPacketMs = 0;
+        qint64 droppedMs = -1;
+        bool heldAfterDrop = false;
+        bool heldWhenLineGone = !holds;
         giving->store(false);
         quiet.start();
         while (h.station.moxController()->isMox()
                && quiet.elapsed() < RemoteMicConfig::kNoAudioCutMs + 5000) {
-            const quint64 now = receiver->stats().accepted;
-            if (now != accepted) {
-                accepted = now;
-                lastPacketMs = quiet.elapsed();
+            RemoteMicReceiver* const current = daemonMedia.micReceiver();
+            if (current != line.data()) {
+                line = current;
+                accepted = current != nullptr ? current->stats().accepted : 0;
+            }
+            if (!line.isNull()) {
+                const quint64 now = line->stats().accepted;
+                if (now != accepted) {
+                    accepted = now;
+                    lastPacketMs = quiet.elapsed();
+                }
+            }
+            // Between the hold and the cut: the window's media goes.
+            if (dropMedia && droppedMs < 0 && quiet.elapsed() >= 1500
+                && (!holds || heldMs >= 0)) {
+                droppedMs = quiet.elapsed();
+                remoteMedia.dropMediaPeerForTest();
+            }
+            if (droppedMs >= 0 && firstLine.isNull() && !heldAfterDrop) {
+                heldAfterDrop = true;
+                heldWhenLineGone = h.station.isRemoteRfHeld() == holds;
             }
             QTest::qWait(2);
         }
-        qInfo("microphone silent: last packet at %lld ms, held at %lld ms, stopped at %lld ms",
+        qInfo("microphone silent: last packet at %lld ms, held at %lld ms, media dropped at "
+              "%lld ms, stopped at %lld ms",
               static_cast<long long>(lastPacketMs), static_cast<long long>(heldMs),
-              static_cast<long long>(stoppedMs));
+              static_cast<long long>(droppedMs), static_cast<long long>(stoppedMs));
         QVERIFY(!starved.isEmpty());
         QVERIFY(!h.station.moxController()->isMox());
+        if (dropMedia) {
+            QVERIFY2(droppedMs >= 0, "the media was never dropped");
+            QVERIFY2(firstLine.isNull(), "the Core's first microphone line was never torn down");
+            QVERIFY2(heldWhenLineGone, "the hold changed when the microphone line went");
+            QVERIFY(droppedMs < stoppedMs);
+        }
         if (holds) {
             QVERIFY2(heldMs >= 0, "AM was not held");
             QVERIFY2(heldMs - lastPacketMs <= 300,

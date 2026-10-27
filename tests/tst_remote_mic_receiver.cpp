@@ -49,6 +49,11 @@
 //               10 s after the last packet while watched, reset by a packet
 //               and cancelled by the end of the watch or the line. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: the end of a
+//               watch or of the line is watchEnded with its silence, never
+//               starved(false); starved(true) carries the silence;
+//               audioArrived once per watch. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/MediaPeer.h"
@@ -263,6 +268,8 @@ private slots:
     void aPacketRestartsTheNoAudioWait();
     void endingTheWatchCancelsThePendingNoAudio();
     void stoppingTheLineCancelsThePendingNoAudio();
+    void aLineEndingMidKeyIsNeverAudioReturning();
+    void audioArrivedMarksAWatchsFirstPacket();
     void anOlderReceiptCannotMoveTheLastAudioBack();
     // R-IOS-13 (2026-09-27): the small adaptive buffer.
     void steadyPacketsHoldTheSmallestTargetWithoutUnderrun();
@@ -975,12 +982,14 @@ void TestRemoteMicReceiver::starvationIsSignalledOnlyWhileWatched()
     time.advanceTo(1250);
     QCOMPARE(starved.count(), 1);
     QCOMPARE(starved.at(0).at(0).toBool(), true);
+    QCOMPARE(starved.at(0).at(1).toLongLong(), qint64(250));
     QVERIFY(receiver.isStarved());
 
     // Audio again ends it.
     receiver.submit(l16Packet(0.1f, 2, 192));
     QCOMPARE(starved.count(), 2);
     QCOMPARE(starved.at(1).at(0).toBool(), false);
+    QCOMPARE(starved.at(1).at(1).toLongLong(), qint64(0));
 
     // Steady audio: no starvation.
     for (quint16 s = 3; s < 200; ++s) {
@@ -989,14 +998,22 @@ void TestRemoteMicReceiver::starvationIsSignalledOnlyWhileWatched()
     }
     QCOMPARE(starved.count(), 2);
 
-    // Starved again, then the key ends: the starvation ends with it.
+    // Starved again, then the watch ends: it ends the starvation, but
+    // as the watch's end with its silence, never as audio (fix wave B).
+    QSignalSpy ended(&receiver, &RemoteMicReceiver::watchEnded);
     time.advanceTo(time.nowMs + 300);
     QCOMPARE(starved.count(), 3);
     receiver.setWatching(false);
-    QCOMPARE(starved.count(), 4);
-    QCOMPARE(starved.at(3).at(0).toBool(), false);
+    QCOMPARE(starved.count(), 3);
+    QVERIFY(!receiver.isStarved());
+    QCOMPARE(ended.count(), 1);
+    QCOMPARE(ended.at(0).at(0).toLongLong(), qint64(300));
+    QCOMPARE(ended.at(0).at(1).toBool(), true);
     time.advanceTo(time.nowMs + 1000);
-    QCOMPARE(starved.count(), 4);
+    QCOMPARE(starved.count(), 3);
+    // Not watched: turning it off again ends nothing.
+    receiver.setWatching(false);
+    QCOMPARE(ended.count(), 1);
 }
 
 // Remote transmit hold then cut (2026-10-26): watched with no packets, the
@@ -1093,6 +1110,94 @@ void TestRemoteMicReceiver::stoppingTheLineCancelsThePendingNoAudio()
     receiver.stop();
     time.advanceTo(60000);
     QCOMPARE(noAudio.count(), 0);
+}
+
+// Fix wave B: a watched line that stops (torn down or replaced) mid-key,
+// starved or not, is the watch's end with the silence since its last
+// packet, and never starved(false), which only a packet means. An unwatched
+// line that stops reports nothing.
+void TestRemoteMicReceiver::aLineEndingMidKeyIsNeverAudioReturning()
+{
+    {
+        FakeTime time;
+        RemoteMicFeed feed;
+        RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+        QSignalSpy starved(&receiver, &RemoteMicReceiver::starved);
+        QSignalSpy ended(&receiver, &RemoteMicReceiver::watchEnded);
+        QVERIFY(receiver.start(kMicSsrc, true));
+        feed.setInUse(true);
+        receiver.setWatching(true);
+        receiver.submit(l16Packet(0.1f, 1, 0));
+        time.advanceTo(1000);
+        QCOMPARE(starved.count(), 1);
+        QCOMPARE(starved.at(0).at(0).toBool(), true);
+        receiver.stop();
+        QCOMPARE(starved.count(), 1);
+        QCOMPARE(ended.count(), 1);
+        QCOMPARE(ended.at(0).at(0).toLongLong(), qint64(1000));
+        QCOMPARE(ended.at(0).at(1).toBool(), true);
+    }
+    {
+        // Ended before it starved: 100 ms after its last packet.
+        FakeTime time;
+        RemoteMicFeed feed;
+        RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+        QSignalSpy starved(&receiver, &RemoteMicReceiver::starved);
+        QSignalSpy ended(&receiver, &RemoteMicReceiver::watchEnded);
+        QVERIFY(receiver.start(kMicSsrc, true));
+        feed.setInUse(true);
+        receiver.setWatching(true);
+        time.advanceTo(200);
+        receiver.submit(l16Packet(0.1f, 1, 0));
+        time.advanceTo(300);
+        receiver.stop();
+        QCOMPARE(starved.count(), 0);
+        QCOMPARE(ended.count(), 1);
+        QCOMPARE(ended.at(0).at(0).toLongLong(), qint64(100));
+        QCOMPARE(ended.at(0).at(1).toBool(), false);
+        time.advanceTo(20000);
+        QCOMPARE(starved.count(), 0);
+    }
+    {
+        // Never watched: nothing to report.
+        FakeTime time;
+        RemoteMicFeed feed;
+        RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+        QSignalSpy ended(&receiver, &RemoteMicReceiver::watchEnded);
+        QVERIFY(receiver.start(kMicSsrc, true));
+        time.advanceTo(1000);
+        receiver.stop();
+        QCOMPARE(ended.count(), 0);
+    }
+}
+
+// Fix wave B: a watch's first packet is reported once; a packet while the
+// line is not watched is not, and a new watch reports its own first packet.
+void TestRemoteMicReceiver::audioArrivedMarksAWatchsFirstPacket()
+{
+    FakeTime time;
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+    QSignalSpy arrived(&receiver, &RemoteMicReceiver::audioArrived);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    receiver.submit(l16Packet(0.1f, 1, 0));
+    QCOMPARE(arrived.count(), 0);
+    receiver.setWatching(true);
+    time.advanceTo(10);
+    receiver.submit(l16Packet(0.1f, 2, 192));
+    QCOMPARE(arrived.count(), 1);
+    time.advanceTo(14);
+    receiver.submit(l16Packet(0.1f, 3, 384));
+    QCOMPARE(arrived.count(), 1);
+    receiver.setWatching(false);
+    time.advanceTo(18);
+    receiver.submit(l16Packet(0.1f, 4, 576));
+    QCOMPARE(arrived.count(), 1);
+    receiver.setWatching(true);
+    time.advanceTo(22);
+    receiver.submit(l16Packet(0.1f, 5, 768));
+    QCOMPARE(arrived.count(), 2);
 }
 
 // TX mic thread fix round 2: the last audio only moves forward. A packet

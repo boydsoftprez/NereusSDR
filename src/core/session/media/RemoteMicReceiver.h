@@ -102,6 +102,10 @@
 //               noAudio signal, once 10 s after the line's last packet
 //               while watched. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: watchEnded and
+//               audioArrived; starved carries the measured silence, and
+//               only a packet ends a starvation. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioRingSpsc.h"
@@ -706,10 +710,11 @@ public:
 
     /// Whether a device holding transmit is keyed on this line's audio now.
     /// While it is, 250 ms without audio emits starved(true), and audio
-    /// arriving again starved(false). Turning it off ends a starvation.
-    /// Remote transmit hold then cut: while it is, kNoAudioCutMs without
-    /// a packet emits noAudio() once; a packet starts the wait again, and
-    /// turning the watch off or stopping the line cancels it.
+    /// arriving again starved(false). Remote transmit hold then cut: while
+    /// it is, kNoAudioCutMs without a packet emits noAudio() once; a packet
+    /// starts the wait again. Fix wave B: turning the watch off, or
+    /// stopping the line, cancels both waits and emits watchEnded (never
+    /// starved(false): only a packet is audio returning).
     void setWatching(bool watching);
     bool isWatching() const { return m_watching; }
     bool isStarved() const { return m_starved; }
@@ -717,10 +722,19 @@ public:
     Stats stats() const;
 
 signals:
-    void starved(bool starved);
+    /// While watching: true once the line has been quiet `quietMs` (at
+    /// least kStarvationMs); false when a packet ends that (`quietMs` 0).
+    void starved(bool starved, qint64 quietMs);
     /// Once per quiet period, kNoAudioCutMs after the last packet, while
     /// watching.
     void noAudio();
+    /// Fix wave B: a watch ended (setWatching(false) or stop()) with no
+    /// audio returning, `quietMs` after the line's last packet (or the
+    /// watch's start, when later); `wasStarved` when it had starved. The
+    /// owner must not take it for audio.
+    void watchEnded(qint64 quietMs, bool wasStarved);
+    /// Fix wave B: the first packet of a watch, once per watch.
+    void audioArrived();
 
 private:
     /// TX mic thread: the event loop's part of a packet (the end of a
@@ -731,6 +745,9 @@ private:
     void writeAudio(const float* mono, int frames);
     void checkReady();
     void refuseWaitAfter(int ms, bool onlyBeforeFirstPacket);
+    // Fix wave B: ends a watch (both waits cancelled); watchEnded when it
+    // was on.
+    void endWatch();
     void scheduleStarvationCheck(int ms);
     void checkStarvation();
     void scheduleNoAudioCheck(int ms);
@@ -784,6 +801,8 @@ private:
     // last audio and under the same generation as the starvation check.
     bool m_noAudioCheckPending{false};
     bool m_noAudioSignalled{false};
+    // Fix wave B: audioArrived was emitted in this watch.
+    bool m_audioArrivedSignalled{false};
     // TX mic thread: when the line's audio last came, on m_clock, set by
     // the delivering thread at the packet's receipt there.
     std::atomic<qint64> m_lastAudioMs{0};

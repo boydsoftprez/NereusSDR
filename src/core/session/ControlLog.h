@@ -48,6 +48,9 @@
 //   2026-10-26: Remote transmit hold then cut: transmitHoldStarted and
 //               transmitHoldEnded, one line each. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: two more ends,
+//               "TUNE or two-tone started" and "a new key". J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -158,7 +161,8 @@ public:
     /// "mic" (no microphone audio for `silentMs`).
     void transmitHoldStarted(const QByteArray& deviceId, const QString& what, qint64 silentMs);
     /// That hold ended after `lengthMs`, `how`: "keepalives returned",
-    /// "audio returned", "cut", "the key ended" or "link closed".
+    /// "audio returned", "cut", "the key ended", "link closed", "TUNE or
+    /// two-tone started" (a microphone hold) or "a new key".
     void transmitHoldEnded(const QByteArray& deviceId, qint64 lengthMs, const QString& how);
 
     /// `name` as the log may print it, or "an unrecognized name".

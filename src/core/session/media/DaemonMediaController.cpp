@@ -4,6 +4,11 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Remote transmit hold then cut, fix wave B: the line's
+//               watchEnded and audioArrived reach StationServer (a line
+//               ending mid-key is no audio returning), starved carries its
+//               silence, and the noAudio entry takes the display lock.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut, Task 5: noAudio also
 //               reaches StationServer::remoteMicNoAudio (the 10 s cut).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3313,21 +3318,41 @@ void DaemonMediaController::startMicLine(MediaPeer* peer)
     }
     // Task 37 (remote design section 12.3): starvation while the device is
     // keyed on its line takes the Core's per-mode action.
-    connect(m_micReceiver.get(), &RemoteMicReceiver::starved, this, [this](bool starved) {
+    connect(m_micReceiver.get(), &RemoteMicReceiver::starved, this,
+            [this](bool starved, qint64 quietMs) {
         const auto displayHold = displayGuard();
         if (m_server && !m_micDeviceId.isEmpty()) {
-            m_server->remoteMicStarved(m_micDeviceId, starved);
+            m_server->remoteMicStarved(m_micDeviceId, starved, quietMs);
         }
     });
     // Remote transmit hold then cut (2026-10-26): 10 s without audio
     // packets while keyed, with the line's device.
     connect(m_micReceiver.get(), &RemoteMicReceiver::noAudio, this, [this]() {
+        const auto displayHold = displayGuard();
         if (!m_micDeviceId.isEmpty()) {
             emit micNoAudio(m_micDeviceId);
             // Task 5: the Core's cut, as starved reaches the server above.
             if (m_server) {
                 m_server->remoteMicNoAudio(m_micDeviceId);
             }
+        }
+    });
+    // Fix wave B: the watch ending (the line stopped here, torn down or
+    // replaced, or no longer watched) is no audio returning; the server
+    // keeps a hold and cuts 10 s after the line's last packet unless a
+    // watched line for the device delivers first (audioArrived). Both
+    // carry the device, still set while stopMicLine stops the receiver.
+    connect(m_micReceiver.get(), &RemoteMicReceiver::watchEnded, this,
+            [this](qint64 quietMs, bool wasStarved) {
+        const auto displayHold = displayGuard();
+        if (m_server && !m_micDeviceId.isEmpty()) {
+            m_server->remoteMicLineEnded(m_micDeviceId, quietMs, wasStarved);
+        }
+    });
+    connect(m_micReceiver.get(), &RemoteMicReceiver::audioArrived, this, [this]() {
+        const auto displayHold = displayGuard();
+        if (m_server && !m_micDeviceId.isEmpty()) {
+            m_server->remoteMicAudioArrived(m_micDeviceId);
         }
     });
     // Fix wave C2: this device's line, by device; it writes the feed only

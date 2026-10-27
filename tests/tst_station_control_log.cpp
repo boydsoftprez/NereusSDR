@@ -18,6 +18,9 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  Remote transmit hold then cut: the
 //                                    hold's start and end lines.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  Fix wave B: the "TUNE or two-tone
+//                                    started" and "a new key" ends.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -724,6 +727,8 @@ private slots:
         log.transmitHoldEnded(id, 12, QStringLiteral("the key ended"));
         log.transmitHoldEnded(id, 30, QStringLiteral("link closed"));
         log.transmitHoldEnded(id, 7, QStringLiteral("audio returned"));
+        log.transmitHoldEnded(id, 40, QStringLiteral("TUNE or two-tone started"));
+        log.transmitHoldEnded(id, 55, QStringLiteral("a new key"));
         QCOMPARE(capture.lines(QStringLiteral("Transmit hold ")),
                  (QStringList{
                      QStringLiteral("Transmit hold for abcd: no keepalive for 401 ms; RF off, "
@@ -739,6 +744,9 @@ private slots:
                      QStringLiteral("Transmit hold for abcd ended after 12 ms: the key ended"),
                      QStringLiteral("Transmit hold for abcd ended after 30 ms: link closed"),
                      QStringLiteral("Transmit hold for abcd ended after 7 ms: audio returned"),
+                     QStringLiteral("Transmit hold for abcd ended after 40 ms: TUNE or "
+                                    "two-tone started"),
+                     QStringLiteral("Transmit hold for abcd ended after 55 ms: a new key"),
                  }));
         // The watchdog's stop line is unchanged beside them.
         QCOMPARE(capture.lines(QStringLiteral("Transmit watchdog stop ")).size(), 0);
