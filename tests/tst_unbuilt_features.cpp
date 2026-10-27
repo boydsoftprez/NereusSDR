@@ -43,6 +43,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  CW transmit, the DSP > CW group entries (break-in,
+//               sidetone, key input, options). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-03  J.J. Boyd / KG4VCF. Assert lossless inert unavailable records.
 //                                    AI-assisted via OpenAI Codex.
 //   2026-09-24  J.J. Boyd / KG4VCF  R3 unfinished controls, Task 1.
@@ -616,7 +619,10 @@ QMap<F, QList<Surface>> surfaces()
         applet(QStringLiteral("Phone/CW CW tab"), phoneButton(QStringLiteral("CW"))),
         applet(QStringLiteral("Phone/CW CW page"), phonePage(1)),
         onPage(QStringLiteral("CW"), QStringLiteral("keyer group"), named(QStringLiteral("cwKeyerGroup"))),
-        onPage(QStringLiteral("CW"), QStringLiteral("timing group"), named(QStringLiteral("cwTimingGroup")))};
+        onPage(QStringLiteral("CW"), QStringLiteral("break-in group"), named(QStringLiteral("cwBreakInGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("sidetone group"), named(QStringLiteral("cwSidetoneGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("key input group"), named(QStringLiteral("cwSerialGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("options group"), named(QStringLiteral("cwOptionsGroup")))};
     map[F::Memories] = {menu(QStringLiteral("&Memory Manager...")),
                         spot(QStringLiteral("displayMemoriesToggle"))};
     map[F::Cat] = {menu(QStringLiteral("&CAT Control...")), setupPage(QStringLiteral("Serial Ports")),

@@ -22,6 +22,9 @@
 //               stretch latches with the key up), I2 (an interlock grant
 //               counts only for the key now on), M4 (the HL2 reason
 //               first). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, radioKeyStatusChanged for the CW page's KEY
+//               and TX lamps (R-CW-41). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -105,6 +108,8 @@ public:
 signals:
     void keyerStateChanged();      // allowed, refusal, effective mode or availability changed
     void wireStateChanged(const NereusSDR::CwWireState& s);
+    // The radio's dot, dash or key-out changed (onRadioKeyStatus).
+    void radioKeyStatusChanged(bool dot, bool dash, bool keyOut);
 
 private:
     void wireSlices();

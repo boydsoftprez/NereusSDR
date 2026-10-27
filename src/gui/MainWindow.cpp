@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CW page and Setup > DSP > CW follow the
+//               remote window's CW settings gate (transmitSettingsVersion
+//               16, R-CW-03, R-CW-41, R-CW-43). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -16927,7 +16931,8 @@ SetupDialog* MainWindow::createSetupDialog()
         // R-R3-49 (parity Task 13): and version 8, Hardware Config's OC
         // transmit pins, pin actions and transmit calibration.
         // And version 11, Transmit > Power's "Disable HF PA".
-        for (const int version : {2, 3, 4, 5, 6, 8, 11}) {
+        // CW transmit (R-CW-03): and version 16, Setup > DSP > CW.
+        for (const int version : {2, 3, 4, 5, 6, 8, 11, kTransmitSettingsCwVersion}) {
             dialog->setTransmitSettingsPermitted(transmitSettingsPermitted(version),
                                                  transmitSettingsReason(version), version);
         }
@@ -17956,6 +17961,10 @@ void MainWindow::applyRemoteRoleGating()
         m_phoneCwApplet->setTransmitPermitted(transmitPermitted, transmitReason);
         m_phoneCwApplet->setTransmitSettingsPermitted(chainPermitted, chainReason);
         m_phoneCwApplet->setTxProfilePermitted(profilePermitted, profileReason);
+        // CW transmit (R-CW-03, R-CW-41): the CW page's settings came with
+        // transmitSettingsVersion 16.
+        m_phoneCwApplet->setCwSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                                settingsReasonAt(kTransmitSettingsCwVersion));
     }
     // R-R3-44: the VAX applet's TX row (VAX as the microphone).
     if (m_vaxApplet) {
@@ -18014,6 +18023,11 @@ void MainWindow::applyRemoteRoleGating()
         dialog->setTransmitSettingsPermitted(settingsAt(8), settingsReasonAt(8), 8);
         // Transmit > Power's "Disable HF PA" came with version 11.
         dialog->setTransmitSettingsPermitted(settingsAt(11), settingsReasonAt(11), 11);
+        // CW transmit (R-CW-03, R-CW-43): Setup > DSP > CW's CW settings
+        // came with version 16.
+        dialog->setTransmitSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                             settingsReasonAt(kTransmitSettingsCwVersion),
+                                             kTransmitSettingsCwVersion);
         dialog->setStationSettingsAvailable(stationAvailable, stationSettingsReason());
     }
     // Parity Task 19 (B7.2): and the Spot Hub's Core settings and sources.

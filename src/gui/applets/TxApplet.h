@@ -168,6 +168,11 @@
 //   2026-10-13 - Expose the window-owned DUP presentation and click signal.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-26: CW transmit, the CW layer (R-CW-42): in CW, MON and its
+//               level show and set cwSidetone and monitorVolume, and VOX,
+//               LEV, EQ, CFC and TX BW are disabled with their reason
+//               through a fourth gate layer with its own saved keys.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -614,6 +619,22 @@ private:
     // back.
     void removeReceiveOnlyLock();
     void applyReceiveOnlyLock();
+    // CW transmit (R-CW-42): the CW layer. In CW the radio's keyer makes
+    // the signal, so the microphone-chain controls (VOX, LEV, EQ, CFC and
+    // TX BW) are disabled with cwNotUsedReason(). It sits between the
+    // remote layers below and the receive-only lock above: a change to a
+    // layer below takes the receive-only lock and this layer off, changes
+    // the layer, and puts them back in that order.
+    void removeCwLock();
+    void applyCwLock();
+    QList<QWidget*> cwLockedControls() const;
+    // MON's button shows cwSidetone in CW and monEnabled otherwise.
+    void showMonitorForMode();
+    bool m_cwMode{false};
+public:
+    static QString cwNotUsedReason();
+    bool cwLayerActiveForTest() const { return m_cwMode; }
+private:
     // Task 16 fix wave (M3), slice control plan Task 11: follow the
     // transmit slice's mode for the MOX tooltip and the TX filter status,
     // and its frequency for the TX band; the connections are the current

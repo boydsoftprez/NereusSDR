@@ -49,6 +49,10 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit, the DSP > CW groups (break-in, sidetone, key
+//                input, options) and the sidetone row disabled, never
+//                hidden, on an HL2. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 //   2026-10-26 - CW transmit (R-CW-40): the sidetone row case reads a
 //                Saturn, since the HL2 rows no longer claim a sidetone.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -3257,7 +3261,10 @@ private slots:
         };
         QList<Check> checks{
             {"CW", "keyer group", named("cwKeyerGroup")},
-            {"CW", "timing group", named("cwTimingGroup")},
+            {"CW", "break-in group", named("cwBreakInGroup")},
+            {"CW", "sidetone group", named("cwSidetoneGroup")},
+            {"CW", "key input group", named("cwSerialGroup")},
+            {"CW", "options group", named("cwOptionsGroup")},
             {"CW", "peak filter bandwidth", text("Bandwidth")},
             {"CW", "peak filter gain", text("Gain")},
             {"AM/SAM", "synchronous AM group", named("samGroup")},
@@ -3462,6 +3469,8 @@ private slots:
 
     // R-R3-46 (carried): the DSP > CW page's sidetone row, built after the
     // Core's radio is known, shows that radio's answer at once.
+    // CW transmit (Task 12): the row is enabled, never hidden, for a radio
+    // with a sidetone generator, and disabled with its reason for an HL2.
     void cwSidetoneRowReadsTheCoresRadioAtBuild()
     {
         RadioModel remote(RadioModel::Role::Remote);
@@ -3475,7 +3484,23 @@ private slots:
         caps.radioProtocol = 2;
         remote.applyStationCapabilities(caps);
         CwSetupPage page(&remote);
-        QVERIFY(page.sidetoneRowVisibleForTest());
+        // A remote window starts with the CW settings gated until the Core
+        // takes them (version 16); the board's answer shows under the gate.
+        QVERIFY(!page.radioSidetoneEnabledForTest());
+        page.setTransmitSettingsPermittedAt(kTransmitSettingsCwVersion, true, QString());
+        QVERIFY(page.radioSidetoneEnabledForTest());
+
+        RadioModel hl2(RadioModel::Role::Remote);
+        caps.macAddress = QStringLiteral("AA:BB:CC:DD:EE:4A");
+        caps.board = HPSDRHW::HermesLite;
+        caps.hpsdrModel = HPSDRModel::HERMESLITE;
+        caps.radioProtocol = 1;
+        hl2.applyStationCapabilities(caps);
+        CwSetupPage hl2Page(&hl2);
+        hl2Page.setTransmitSettingsPermittedAt(kTransmitSettingsCwVersion, true, QString());
+        QVERIFY(!hl2Page.radioSidetoneEnabledForTest());
+        auto* row = hl2Page.findChild<QWidget*>(QStringLiteral("cwRadioSidetoneCheck"));
+        QVERIFY(row != nullptr && !row->isHidden() && !row->toolTip().isEmpty());
     }
 
     // A remote window that does not know the Core's radio yet: its

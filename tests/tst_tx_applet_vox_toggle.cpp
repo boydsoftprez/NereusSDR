@@ -24,12 +24,23 @@
 //     checked state contract: button should reflect model state via signal.
 //  7. No feedback loop — setVoxEnabled(false) twice → only one signal emitted
 //     after initial set (idempotent guard).
+//  8. CW (R-CW-42): the TX applet's VOX button greys in CW with the reason
+//     and comes back as it was on leaving CW (offscreen TxApplet).
+//
+// 2026-10-26: CW transmit, case 8. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
 #include <QSignalSpy>
 
 #include "models/TransmitModel.h"
+#include "core/AppSettings.h"
+#include "gui/applets/TxApplet.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <QPushButton>
 
 using namespace NereusSDR;
 
@@ -45,6 +56,7 @@ private slots:
     void voxEnabledChanged_firesFalse();
     void voxEnabled_visualChangeOnToggle();
     void noFeedbackLoop_idempotentFalse();
+    void voxButton_greysInCwWithTheReason();
 };
 
 // ── 1. Default state ─────────────────────────────────────────────────────────
@@ -140,6 +152,36 @@ void TestTxAppletVoxToggle::noFeedbackLoop_idempotentFalse()
     // Calling setVoxEnabled(true) again → no-op (idempotent guard).
     tx.setVoxEnabled(true);
     QCOMPARE(spy.count(), 1);
+}
+
+// ── 8. CW: VOX is not used, greyed with the reason, never hidden ─────────────
+void TestTxAppletVoxToggle::voxButton_greysInCwWithTheReason()
+{
+    AppSettings::instance().clear();
+    {
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        TxApplet applet(&model);
+        QPushButton* vox = applet.voxButton();
+        QVERIFY(vox);
+        const bool wasEnabled = vox->isEnabled();
+        const QString tip = vox->toolTip();
+        const QString description = vox->accessibleDescription();
+
+        slice->setDspMode(DSPMode::CWU);
+        QVERIFY(!vox->isEnabled());
+        QVERIFY(!vox->isHidden());
+        QCOMPARE(vox->toolTip(), QStringLiteral("Not used in CW: the radio makes the signal."));
+        QCOMPARE(vox->accessibleDescription(), TxApplet::cwNotUsedReason());
+
+        slice->setDspMode(DSPMode::USB);
+        QCOMPARE(vox->isEnabled(), wasEnabled);
+        QCOMPARE(vox->toolTip(), tip);
+        QCOMPARE(vox->accessibleDescription(), description);
+    }
+    AppSettings::instance().clear();
 }
 
 QTEST_MAIN(TestTxAppletVoxToggle)

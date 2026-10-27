@@ -1051,6 +1051,11 @@ target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_cw_keyer_gate)
 nereus_add_test(tst_cw_keyer_controller)
 
+# CW transmit Task 12 (R-CW-41 to R-CW-43, R-CW-47): the Phone/CW applet's
+# CW page, the TX applet in CW and Setup > DSP > CW against a fake
+# connection; nothing keys the radio.
+nereus_add_test(tst_cw_page)
+
 # CW transmit Task 8 (R-CW-15, R-CW-31 to R-CW-33): the CWX sender's element
 # timing with an injected clock, its key line writes, the HL2 CWX PTT, the
 # Key watchdog, repeat and refusals; RadioModel's request gate, aborts and

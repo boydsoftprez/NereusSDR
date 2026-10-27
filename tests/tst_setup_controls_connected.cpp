@@ -22,6 +22,9 @@
 //   2026-10-26: CW transmit, the APF Center Freq range and value follow
 //               the CW pitch (R-CW-27). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit, the DSP > CW transmit controls and their
+//               version 16 gate (R-CW-43). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -41,6 +44,7 @@
 #include "core/AppSettings.h"
 #include "core/BuildIdentity.h"
 #include "core/RadioDiscovery.h"
+#include "core/session/IStationLink.h"
 #include "gui/GuiSessionCoordinator.h"
 #include "gui/MainWindow.h"
 #include "gui/SMeterWidget.h"
@@ -53,6 +57,7 @@
 #include "gui/setup/GeneralSetupPages.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -228,6 +233,56 @@ private slots:
         QCOMPARE(slice->apfTuneHz(), 100);
         slice->setApfTuneHz(-50);
         QCOMPARE(center->value(), 550);
+    }
+
+    // CW transmit (R-CW-43): the DSP > CW transmit controls carry their
+    // Setup ids, reach their settings both ways, and grey with the transmit
+    // settings' reason when the CW settings are not taken (version 16).
+    void cwTransmitControlsReachTheirSettings()
+    {
+        RadioModel model;
+        ensureSlice(model);
+        TransmitModel& tx = model.transmitModel();
+        CwSetupPage page(&model);
+        const auto byId = [&page](const char* id) -> QWidget* {
+            for (QWidget* w : page.findChildren<QWidget*>()) {
+                if (w->property("nereusSetupId").toString() == QLatin1String(id)) { return w; }
+            }
+            return nullptr;
+        };
+        const char* ids[] = {"dsp.cw.keyer.mode", "dsp.cw.keyer.weight", "dsp.cw.keyer.speed",
+                             "dsp.cw.keyer.pitch", "dsp.cw.keyer.reversePaddles",
+                             "dsp.cw.keyer.strictSpacing", "dsp.cw.breakIn.mode",
+                             "dsp.cw.breakIn.delay", "dsp.cw.breakIn.keyDownDelay",
+                             "dsp.cw.breakIn.keyUpDelay", "dsp.cw.sidetone.radio",
+                             "dsp.cw.sidetone.computer", "dsp.cw.sidetone.level",
+                             "dsp.cw.serial.port", "dsp.cw.serial.paddles",
+                             "dsp.cw.serial.keyLine", "dsp.cw.serial.pttLine",
+                             "dsp.cw.options.autoModeSwitch", "dsp.cw.options.autoModeReturn",
+                             "dsp.cw.options.autoModeReturnMs"};
+        for (const char* id : ids) {
+            QVERIFY2(byId(id) != nullptr, id);
+        }
+        auto* speed = qobject_cast<QSlider*>(byId("dsp.cw.keyer.speed"));
+        auto* mode = qobject_cast<QComboBox*>(byId("dsp.cw.keyer.mode"));
+        QVERIFY(speed && mode);
+        QVERIFY(speed->isEnabled());
+        speed->setValue(42);
+        QCOMPARE(tx.cwKeyerSpeed(), 42);
+        tx.setCwKeyerSpeed(12);
+        QCOMPARE(speed->value(), 12);
+        tx.setCwKeyerMode(1);
+        QCOMPARE(mode->currentData().toInt(), 1);
+
+        page.setTransmitSettingsPermittedAt(16, false, QString());
+        QVERIFY(!speed->isEnabled());
+        QVERIFY(!speed->isHidden());
+        QCOMPARE(speed->toolTip(), IStationLink::transmitSettingsUnavailableReason());
+        QVERIFY(OperatorWording::isPlain(speed->toolTip()));
+        // An older version's gate does not reach the CW settings.
+        page.setTransmitSettingsPermittedAt(16, true, QString());
+        page.setTransmitSettingsPermittedAt(3, false, QString());
+        QVERIFY(speed->isEnabled());
     }
 
     // DSP > AM/SAM and DSP > FM: the squelch thresholds are the slice's.

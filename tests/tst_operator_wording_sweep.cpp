@@ -17,6 +17,9 @@
 // 2026-10-26: CW transmit, CW keys now, so "CW transmit is not available on
 // this Core" is no longer shown by BandPlanGuard or TxApplet. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CW page, the DSP > CW transmit groups and the
+// TX applet in CW are swept (Task 12). J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -34,6 +37,7 @@
 #include <QLabel>
 #include <QRegularExpression>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QUuid>
 
@@ -50,13 +54,18 @@
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/TxFilterSection.h"
+#include "gui/applets/TxMonitorSection.h"
 #include "gui/containers/MmioEndpointsDialog.h"
 #include "gui/containers/MmioVariablePickerPopup.h"
 #include "gui/setup/CatNetworkSetupPages.h"
+#include "gui/setup/DspSetupPages.h"
 #include "gui/setup/FourO3APage.h"
 #include "gui/widgets/NnrControls.h"
 #include "models/Band.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -816,6 +825,83 @@ private slots:
                  qPrintable(closed.join(QLatin1Char('|'))));
         for (const QString& text : closed) {
             QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+        }
+    }
+
+    // CW transmit (R-CW-41, R-CW-42, R-CW-43): the CW page, the DSP > CW
+    // transmit groups and the TX applet in CW read in user words, with no
+    // em dash and no "yet", in their tooltips and accessible text too.
+    void cwScreensAreInUserWords()
+    {
+        static const QRegularExpression yet(QStringLiteral("\\byet\\b"),
+                                            QRegularExpression::CaseInsensitiveOption);
+        const auto check = [](const QWidget& root, int floor) {
+            QStringList shown = shownText(root);
+            QList<const QWidget*> widgets{&root};
+            for (const QWidget* child : root.findChildren<const QWidget*>()) {
+                widgets.append(child);
+            }
+            for (const QWidget* w : widgets) {
+                shown << w->accessibleName() << w->accessibleDescription();
+            }
+            shown.removeAll(QString());
+            QVERIFY2(shown.size() >= floor, qPrintable(QString::number(shown.size())));
+            for (QString text : shown) {
+                // Known conflict, reported to the plan's controller: the
+                // plan's R-CW-20 reason names the protocol. It is the
+                // keyer controller's text, checked here once it is reworded.
+                text.remove(QLatin1String(kCwQskNeedsP2Reason));
+                if (text.trimmed().isEmpty()) { continue; }
+                QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+                QVERIFY2(!text.contains(QChar(0x2014)), qPrintable(text));
+                QVERIFY2(!yet.match(text).hasMatch(), qPrintable(text));
+            }
+        };
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::CWU);
+
+        PhoneCwApplet applet(&model);
+        const QWidget* cwPage = applet.findChild<QWidget*>(QStringLiteral("cwSpeedSlider"));
+        while (cwPage && !qobject_cast<QStackedWidget*>(cwPage->parentWidget())) {
+            cwPage = cwPage->parentWidget();
+        }
+        QVERIFY(cwPage);
+        check(*cwPage, 30);
+        applet.setCwSettingsPermitted(false);
+        check(*cwPage, 30);
+
+        CwSetupPage setup(&model);
+        for (const char* group : {"cwKeyerGroup", "cwBreakInGroup", "cwSidetoneGroup",
+                                  "cwSerialGroup", "cwOptionsGroup"}) {
+            const auto* box = setup.findChild<QGroupBox*>(QLatin1String(group));
+            QVERIFY2(box, group);
+            check(*box, 3);
+        }
+        setup.setHasSidetoneGenerator(false);
+        check(*setup.findChild<QGroupBox*>(QStringLiteral("cwSidetoneGroup")), 3);
+
+        // The TX applet in CW: the controls the CW layer greys, and MON.
+        // (The applet's older readouts are outside this task.)
+        TxApplet tx(&model);
+        QVERIFY(tx.cwLayerActiveForTest());
+        const auto* filter = tx.findChild<TxFilterSection*>();
+        const auto* mon = tx.findChild<TxMonitorSection*>();
+        QVERIFY(filter && mon && tx.voxButton());
+        check(*mon, 2);
+        for (const QWidget* w : {static_cast<const QWidget*>(tx.voxButton()),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxLevButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxEqButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxCfcButton"))),
+                                 static_cast<const QWidget*>(filter->filterLowSpin()),
+                                 static_cast<const QWidget*>(filter->filterHighSpin()),
+                                 static_cast<const QWidget*>(tx.moxButton())}) {
+            QVERIFY(w);
+            check(*w, 1);
         }
     }
 

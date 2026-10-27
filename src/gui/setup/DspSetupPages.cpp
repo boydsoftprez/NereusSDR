@@ -10,6 +10,12 @@
 //   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               (R-IOS-06, R-IOS-27).
+//   2026-10-26: CW transmit, Setup > DSP > CW (R-CW-43): Keyer, Break-In,
+//               Sidetone, Key Input and Options groups replace the Keyer and
+//               Timing placeholders ("Bug", "Letter Spacing", "Dot-Dash
+//               Ratio" go); the radio sidetone is disabled with its reason
+//               where the radio has no sidetone generator (R-CW-40).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the APF Center Freq range and readout follow
 //               the CW pitch (RadioModel::cwPitchHz, R-CW-27). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
@@ -144,11 +150,14 @@
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
 #include "core/CwTypes.h"
+#include "core/codec/CwWireState.h"
+#include "models/CwKeyerController.h"
 #include "core/RadioConnection.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/IStationLink.h"
+#include "core/session/StationCapabilities.h"
 #include "core/wdsp_api.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
@@ -178,11 +187,16 @@
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QStandardItemModel>
 #include <QVBoxLayout>
 
 #include <cmath>
 #include <functional>
 #include <memory>
+
+#ifdef HAVE_SERIALPORT
+#include <QSerialPortInfo>
+#endif
 
 namespace NereusSDR {
 
@@ -2113,88 +2127,20 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent,
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // From Thetis setup.cs — tabDSP / tabPageCW controls:
-//   comboCWKeyerMode, udCWKeyerWeight, tbCWLetterSpacing, tbCWDotDashRatio,
-//   udCWSemiBreakInDelay, tbCWSidetoneVolume,
+//   comboCWKeyerMode, udCWKeyerWeight, udCWSemiBreakInDelay,
 //   chkAPFEnable, udAPFFreq, udAPFBandwidth, tbAPFGain
+//
+// CW transmit (R-CW-43): Keyer, Break-In, Sidetone, Key Input (serial port)
+// and Options, as the approved mockup draws them, then APF unchanged. The
+// ranges and defaults are R-CW-01's (TransmitModel's constants, cited
+// there). Each control writes its TransmitModel property and follows it.
 //
 CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent,
                          DspReceiverSelection* selection)
     : ReceiverDspSetupPage("CW", model, parent, selection)
+    , m_cwModel(model)
 {
-    // ── Keyer ─────────────────────────────────────────────────────────────────
-    QGroupBox* keyerGrp = addSection("Keyer");
-    QVBoxLayout* keyerLay = qobject_cast<QVBoxLayout*>(keyerGrp->layout());
-
-    auto* keyerMode = new QComboBox;
-    keyerMode->addItems({"Iambic A", "Iambic B", "Bug", "Straight"});
-    addLabeledCombo(keyerLay, "Mode", keyerMode);
-
-    auto* keyerWeight = new QSpinBox;
-    keyerWeight->setRange(10, 90);
-    addLabeledSpinner(keyerLay, "Weight", keyerWeight);
-
-    auto* letterSpacing = new QSlider(Qt::Horizontal);
-    letterSpacing->setRange(0, 100);
-    addLabeledSlider(keyerLay, "Letter Spacing", letterSpacing);
-
-    auto* dotDashRatio = new QSlider(Qt::Horizontal);
-    dotDashRatio->setRange(100, 500);
-    addLabeledSlider(keyerLay, "Dot-Dash Ratio", dotDashRatio);
-
-    disableGroup(keyerGrp);
-    // R-R3-49: the CW keyer settings are hidden until CWX and CW transmit
-    // are built.
-    keyerGrp->setObjectName(QStringLiteral("cwKeyerGroup"));
-    UnbuiltFeatures::hideUnlessBuilt(keyerGrp, UnbuiltFeature::Cwx);
-
-    // ── Timing ────────────────────────────────────────────────────────────────
-    QGroupBox* timingGrp = addSection("Timing");
-    QVBoxLayout* timingLay = qobject_cast<QVBoxLayout*>(timingGrp->layout());
-
-    auto* semiDelay = new QSlider(Qt::Horizontal);
-    semiDelay->setRange(0, 2000);
-    addLabeledSlider(timingLay, "Semi-Break-In Delay (ms)", semiDelay);
-
-    // P1 full-parity §4.2 — Sidetone Volume row is wrapped in a single
-    // QWidget so we can visibility-gate the whole row (label + slider) on
-    // BoardCapabilities.hasSidetoneGenerator via setHasSidetoneGenerator().
-    // We bypass the addLabeledSlider() helper here because it stitches the
-    // label and slider into a QHBoxLayout that's added to timingLay
-    // directly — there's no row-level QWidget to toggle.  Default:
-    // hidden until a board with hasSidetoneGenerator=true connects.
-    //
-    // Thetis upstream comparison (setup.cs [v2.10.3.13+501e3f51]
-    // chkSideTones / chkDSPKeyerSidetone[_software]):  Thetis does NOT
-    // board-gate its sidetone controls — they're always visible and
-    // mutually-exclusive via the toggle logic at setup.cs:8823-8854.
-    // This visibility gate is NereusSDR-specific use of the populated
-    // hasSidetoneGenerator flag, not a port of an upstream gate.
-    m_sidetoneRow = new QWidget;
-    auto* sidetoneRowLay = new QHBoxLayout(m_sidetoneRow);
-    sidetoneRowLay->setContentsMargins(0, 0, 0, 0);
-    sidetoneRowLay->setSpacing(8);
-    auto* sidetoneLbl = new QLabel("Sidetone Volume");
-    sidetoneLbl->setFixedWidth(150);
-    // Match SetupPage::makeLabeledRow label styling (kLabelStyle in
-    // SetupPage.cpp).  Inlined here because the helper is file-scope.
-    sidetoneLbl->setStyleSheet(QStringLiteral(
-        "QLabel { color: #c8d8e8; font-size: 12px; }"));
-    auto* sidetoneVol = new QSlider(Qt::Horizontal);
-    sidetoneVol->setRange(0, 100);
-    sidetoneVol->setStyleSheet(
-        "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; "
-        "border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #00b4d8; width: 12px; "
-        "height: 12px; border-radius: 6px; margin: -4px 0; }");
-    sidetoneRowLay->addWidget(sidetoneLbl);
-    sidetoneRowLay->addWidget(sidetoneVol, 1);
-    timingLay->addWidget(m_sidetoneRow);
-    m_sidetoneRow->setVisible(false);
-
-    disableGroup(timingGrp);
-    // R-R3-49: break-in delay and sidetone are keyer settings too.
-    timingGrp->setObjectName(QStringLiteral("cwTimingGroup"));
-    UnbuiltFeatures::hideUnlessBuilt(timingGrp, UnbuiltFeature::Cwx);
+    buildTransmitGroups(model);
 
     // ── APF ───────────────────────────────────────────────────────────────────
     QGroupBox* apfGrp = addSection("APF");
@@ -2280,58 +2226,577 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent,
         return conns;
     });
 
-    // P1 full-parity §4.2 — subscribe to model so the Sidetone Volume row
-    // visibility reflects the connected board's hasSidetoneGenerator flag
-    // automatically.  SetupDialog is constructed lazily on every Setup
-    // menu click (see SetupDialog.cpp) so this page can't be poked from
-    // MainWindow's connectionStateChanged slot — instead it tracks model
-    // signals itself, mirroring HardwarePage's same-pattern wiring at
-    // HardwarePage.cpp:144-153.
+    // R-CW-40 / R-CW-15: the radio's sidetone and the Hermes Lite 2 notes
+    // follow the connected board. SetupDialog builds its pages lazily, so
+    // the page tracks the model itself (as HardwarePage does).
     if (model) {
-        connect(model, &RadioModel::currentRadioChanged,
-                this, [this](const NereusSDR::RadioInfo& info) {
-            const auto& caps = NereusSDR::BoardCapsTable::forBoard(info.boardType);
-            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
-        });
-        connect(model, &RadioModel::connectionStateChanged,
-                this, [this](NereusSDR::ConnectionState s) {
-            if (s != NereusSDR::ConnectionState::Connected) {
-                // On any non-Connected transition (Disconnected /
-                // Connecting / Disconnecting / Error), hide the row so
-                // the user doesn't see a useless control between
-                // sessions.
-                setHasSidetoneGenerator(false);
-            }
-        });
-        // Apply current state — the dialog may have been opened while a
-        // radio is already connected.
-        if (model->isConnected() && model->connection()) {
-            const auto& caps = NereusSDR::BoardCapsTable::forBoard(
-                model->connection()->radioInfo().boardType);
-            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
-        } else if (!model->ownsLocalDsp()
-                   && !model->currentRadioInfo().macAddress.isEmpty()) {
-            // R-R3-46 (carried): a remote window has no connection of its
-            // own; the Core's radio, once known, is the model's stored
-            // radio info, and currentRadioChanged fired before this page
-            // was built.
-            const auto& caps = NereusSDR::BoardCapsTable::forBoard(
-                model->currentRadioInfo().boardType);
-            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
-        }
+        connect(model, &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo&) { refreshBoard(); });
+        connect(model, &RadioModel::connectionStateChanged, this,
+                [this](NereusSDR::ConnectionState) { refreshBoard(); });
     }
+    refreshBoard();
+    // R-CW-03: in a remote window the CW settings start closed until
+    // SetupDialog pushes transmitSettingsVersion 16.
+    if (model && !model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(kTransmitSettingsCwVersion, false, QString());
+    }
+}
+
+namespace {
+
+// Words Setup > DSP > CW shows (R-CW-47).
+constexpr auto kCwSetupDelayOffReason =
+    "Break-in is off: MOX keys the radio, so there is no break-in delay.";
+constexpr auto kCwSetupDelayQskReason =
+    "QSK returns to receive between elements, so there is no break-in delay.";
+constexpr auto kCwSetupNoRadioSidetoneReason =
+    "This radio may have no sidetone of its own. Use the sidetone from the computer.";
+constexpr auto kCwSetupChoosePortReason = "Choose a serial port first.";
+constexpr auto kCwSetupRemotePortReason =
+    "The serial port is chosen on the Core's computer.";
+constexpr auto kCwSetupAutoSwitchOffReason = "Turn on switching to CW first.";
+constexpr auto kCwSetupAutoReturnOffReason = "Turn on returning to the previous mode first.";
+
+QStringList cwSerialPortsHere()
+{
+    QStringList ports;
+#ifdef HAVE_SERIALPORT
+    for (const QSerialPortInfo& port : QSerialPortInfo::availablePorts()) {
+        ports.append(port.systemLocation());
+    }
+#endif
+    return ports;
+}
+
+void setCwComboItemEnabled(QComboBox* combo, int index, bool enabled, const QString& tip)
+{
+    auto* items = qobject_cast<QStandardItemModel*>(combo->model());
+    if (!items || index < 0 || index >= items->rowCount()) { return; }
+    QStandardItem* item = items->item(index);
+    item->setFlags(enabled ? (item->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable)
+                           : (item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable)));
+    item->setData(enabled ? QVariant() : QVariant(tip), Qt::ToolTipRole);
+}
+
+QLabel* cwNote(const QString& text)
+{
+    auto* note = new QLabel(text);
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral("QLabel { color: #8090a0; font-size: 11px; }"));
+    return note;
+}
+
+} // namespace
+
+QString CwSetupPage::keyDownClampNote(int keyDownMs, int speedWpm)
+{
+    // D9 / R-CW-13: the radio uses min(key-down, 255, 900 / wpm).
+    const int limit = cwRfDelayMs(kCwWireRfDelayMaxMs, speedWpm);
+    if (keyDownMs <= limit) {
+        return {};
+    }
+    return QStringLiteral("At %1 WPM the radio uses at most %2 ms.").arg(speedWpm).arg(limit);
+}
+
+QString CwSetupPage::radioHangTimeText(int breakInMode, int breakInDelayMs, int keyUpDelayMs)
+{
+    const auto mode = static_cast<CwBreakInMode>(breakInMode);
+    const int hang = cwHangMs(mode, breakInDelayMs, keyUpDelayMs);
+    if (mode == CwBreakInMode::Semi) {
+        return QStringLiteral("%1 ms (break-in delay + PTT release delay)").arg(hang);
+    }
+    if (mode == CwBreakInMode::Qsk) {
+        return QStringLiteral("%1 ms (PTT release delay)").arg(hang);
+    }
+    return QStringLiteral("%1 ms (break-in off)").arg(hang);
+}
+
+void CwSetupPage::buildTransmitGroups(RadioModel* model)
+{
+    // ── Keyer ─────────────────────────────────────────────────────────────────
+    QGroupBox* keyerGrp = addSection("Keyer");
+    keyerGrp->setObjectName(QStringLiteral("cwKeyerGroup"));
+    auto* keyerLay = qobject_cast<QVBoxLayout*>(keyerGrp->layout());
+
+    m_keyerMode = new QComboBox;
+    m_keyerMode->setObjectName(QStringLiteral("cwKeyerModeCombo"));
+    m_keyerMode->setProperty("nereusSetupId", "dsp.cw.keyer.mode");
+    m_keyerMode->addItem(QStringLiteral("Iambic A"), static_cast<int>(CwKeyerMode::IambicA));
+    m_keyerMode->addItem(QStringLiteral("Iambic B"), static_cast<int>(CwKeyerMode::IambicB));
+    m_keyerMode->addItem(QStringLiteral("Straight key"), static_cast<int>(CwKeyerMode::Straight));
+    addLabeledCombo(keyerLay, "Mode", m_keyerMode);
+
+    m_keyerWeight = new QSpinBox;
+    m_keyerWeight->setObjectName(QStringLiteral("cwKeyerWeightSpin"));
+    m_keyerWeight->setProperty("nereusSetupId", "dsp.cw.keyer.weight");
+    m_keyerWeight->setRange(TransmitModel::kCwKeyerWeightMin, TransmitModel::kCwKeyerWeightMax);
+    addLabeledSpinner(keyerLay, "Weight", m_keyerWeight);
+
+    m_keyerSpeed = new QSlider(Qt::Horizontal);
+    m_keyerSpeed->setObjectName(QStringLiteral("cwKeyerSpeedSlider"));
+    m_keyerSpeed->setProperty("nereusSetupId", "dsp.cw.keyer.speed");
+    m_keyerSpeed->setRange(TransmitModel::kCwKeyerSpeedMin, TransmitModel::kCwKeyerSpeedMax);
+    m_keyerSpeedValue = new QLabel;
+    addLabeledSlider(keyerLay, "Speed (WPM)", m_keyerSpeed, m_keyerSpeedValue);
+
+    m_pitch = new QSlider(Qt::Horizontal);
+    m_pitch->setObjectName(QStringLiteral("cwPitchSlider"));
+    m_pitch->setProperty("nereusSetupId", "dsp.cw.keyer.pitch");
+    m_pitch->setRange(kCwPitchMinHz, kCwPitchMaxHz);
+    m_pitch->setSingleStep(kCwPitchStepHz);
+    m_pitch->setPageStep(kCwPitchStepHz * 10);
+    m_pitchValue = new QLabel;
+    addLabeledSlider(keyerLay, "Pitch (Hz)", m_pitch, m_pitchValue);
+
+    m_reversePaddles = new QCheckBox(QStringLiteral("Reverse paddles"));
+    m_reversePaddles->setObjectName(QStringLiteral("cwReversePaddlesCheck"));
+    m_reversePaddles->setProperty("nereusSetupId", "dsp.cw.keyer.reversePaddles");
+    keyerLay->addWidget(m_reversePaddles);
+    m_strictSpacing = new QCheckBox(QStringLiteral("Strict character spacing"));
+    m_strictSpacing->setObjectName(QStringLiteral("cwStrictSpacingCheck"));
+    m_strictSpacing->setProperty("nereusSetupId", "dsp.cw.keyer.strictSpacing");
+    keyerLay->addWidget(m_strictSpacing);
+
+    // R-CW-15: on the Hermes Lite 2 the keyer settings are still sent.
+    m_keyerHl2Note = cwNote(QStringLiteral(
+        "A standard Hermes Lite 2 KEY jack takes a straight key or an external keyer. "
+        "These keyer settings are still sent to the radio."));
+    m_keyerHl2Note->setObjectName(QStringLiteral("cwKeyerHl2Note"));
+    keyerLay->addWidget(m_keyerHl2Note);
+    UnbuiltFeatures::hideUnlessBuilt(keyerGrp, UnbuiltFeature::Cwx);
+
+    // ── Break-In ──────────────────────────────────────────────────────────────
+    QGroupBox* breakInGrp = addSection("Break-In");
+    breakInGrp->setObjectName(QStringLiteral("cwBreakInGroup"));
+    auto* breakInLay = qobject_cast<QVBoxLayout*>(breakInGrp->layout());
+
+    m_breakInMode = new QComboBox;
+    m_breakInMode->setObjectName(QStringLiteral("cwBreakInModeCombo"));
+    m_breakInMode->setProperty("nereusSetupId", "dsp.cw.breakIn.mode");
+    m_breakInMode->addItem(QStringLiteral("Off (MOX keys the radio)"),
+                           static_cast<int>(CwBreakInMode::Off));
+    m_breakInMode->addItem(QStringLiteral("Semi"), static_cast<int>(CwBreakInMode::Semi));
+    m_breakInMode->addItem(QStringLiteral("QSK (full break-in)"),
+                           static_cast<int>(CwBreakInMode::Qsk));
+    addLabeledCombo(breakInLay, "Mode", m_breakInMode);
+
+    m_breakInDelay = new QSlider(Qt::Horizontal);
+    m_breakInDelay->setObjectName(QStringLiteral("cwBreakInDelaySlider"));
+    m_breakInDelay->setProperty("nereusSetupId", "dsp.cw.breakIn.delay");
+    m_breakInDelay->setRange(TransmitModel::kCwBreakInDelayMsMin,
+                             TransmitModel::kCwBreakInDelayMsMax);
+    m_breakInDelay->setSingleStep(10);
+    m_breakInDelay->setPageStep(100);
+    m_breakInDelayValue = new QLabel;
+    addLabeledSlider(breakInLay, "Semi-Break-In Delay (ms)", m_breakInDelay, m_breakInDelayValue);
+
+    m_keyDownDelay = new QSpinBox;
+    m_keyDownDelay->setObjectName(QStringLiteral("cwKeyDownDelaySpin"));
+    m_keyDownDelay->setProperty("nereusSetupId", "dsp.cw.breakIn.keyDownDelay");
+    m_keyDownDelay->setRange(TransmitModel::kCwKeyDownDelayMsMin,
+                             TransmitModel::kCwKeyDownDelayMsMax);
+    addLabeledSpinner(breakInLay, "Key-down to RF (ms)", m_keyDownDelay);
+    m_keyDownNote = cwNote(QString());
+    m_keyDownNote->setObjectName(QStringLiteral("cwKeyDownNote"));
+    breakInLay->addWidget(m_keyDownNote);
+
+    m_keyUpDelay = new QSpinBox;
+    m_keyUpDelay->setObjectName(QStringLiteral("cwKeyUpDelaySpin"));
+    m_keyUpDelay->setProperty("nereusSetupId", "dsp.cw.breakIn.keyUpDelay");
+    m_keyUpDelay->setRange(TransmitModel::kCwKeyUpDelayMsMin, TransmitModel::kCwKeyUpDelayMsMax);
+    addLabeledSpinner(breakInLay, "PTT release delay (ms)", m_keyUpDelay);
+
+    m_hangTime = new QLabel;
+    m_hangTime->setObjectName(QStringLiteral("cwRadioHangTime"));
+    addLabeledLabel(breakInLay, "Radio hang time", m_hangTime);
+    UnbuiltFeatures::hideUnlessBuilt(breakInGrp, UnbuiltFeature::Cwx);
+
+    // ── Sidetone ──────────────────────────────────────────────────────────────
+    QGroupBox* sidetoneGrp = addSection("Sidetone");
+    sidetoneGrp->setObjectName(QStringLiteral("cwSidetoneGroup"));
+    auto* sidetoneLay = qobject_cast<QVBoxLayout*>(sidetoneGrp->layout());
+    m_radioSidetone = new QCheckBox(QStringLiteral(
+        "From the radio: its headphone jack, follows the paddle with no delay"));
+    m_radioSidetone->setObjectName(QStringLiteral("cwRadioSidetoneCheck"));
+    m_radioSidetone->setProperty("nereusSetupId", "dsp.cw.sidetone.radio");
+    sidetoneLay->addWidget(m_radioSidetone);
+    m_computerSidetone = new QCheckBox(QStringLiteral(
+        "From the computer: in NereusSDR's audio, follows CWX, CAT, TCI and serial keying"));
+    m_computerSidetone->setObjectName(QStringLiteral("cwComputerSidetoneCheck"));
+    m_computerSidetone->setProperty("nereusSetupId", "dsp.cw.sidetone.computer");
+    sidetoneLay->addWidget(m_computerSidetone);
+    m_sidetoneLevel = new QSlider(Qt::Horizontal);
+    m_sidetoneLevel->setObjectName(QStringLiteral("cwSidetoneLevelSlider"));
+    m_sidetoneLevel->setProperty("nereusSetupId", "dsp.cw.sidetone.level");
+    m_sidetoneLevel->setRange(0, 100);
+    m_sidetoneLevelValue = new QLabel;
+    addLabeledSlider(sidetoneLay, "Level", m_sidetoneLevel, m_sidetoneLevelValue);
+    // R-CW-40: the Hermes Lite 2 note.
+    m_sidetoneHl2Note = cwNote(QStringLiteral(
+        "A Hermes Lite 2 may have no sidetone of its own. Use the sidetone from the computer."));
+    m_sidetoneHl2Note->setObjectName(QStringLiteral("cwSidetoneHl2Note"));
+    sidetoneLay->addWidget(m_sidetoneHl2Note);
+    UnbuiltFeatures::hideUnlessBuilt(sidetoneGrp, UnbuiltFeature::Cwx);
+
+    // ── Key Input (serial port) ──────────────────────────────────────────────
+    QGroupBox* serialGrp = addSection("Key Input (serial port)");
+    serialGrp->setObjectName(QStringLiteral("cwSerialGroup"));
+    auto* serialLay = qobject_cast<QVBoxLayout*>(serialGrp->layout());
+    m_serialPort = new QComboBox;
+    m_serialPort->setObjectName(QStringLiteral("cwSerialPortCombo"));
+    m_serialPort->setProperty("nereusSetupId", "dsp.cw.serial.port");
+    addLabeledCombo(serialLay, "Port", m_serialPort);
+    m_serialStatus = cwNote(QString());
+    m_serialStatus->setObjectName(QStringLiteral("cwSerialStatus"));
+    m_serialStatus->setStyleSheet(QStringLiteral("QLabel { color: #ffb800; font-size: 11px; }"));
+    serialLay->addWidget(m_serialStatus);
+    m_serialPaddles = new QCheckBox(QStringLiteral(
+        "Paddles: dot on DSR, dash on CTS (the radio's keyer times them)"));
+    m_serialPaddles->setObjectName(QStringLiteral("cwSerialPaddlesCheck"));
+    m_serialPaddles->setProperty("nereusSetupId", "dsp.cw.serial.paddles");
+    serialLay->addWidget(m_serialPaddles);
+    const auto lineCombo = [](const char* name, const char* id) {
+        auto* combo = new QComboBox;
+        combo->setObjectName(QLatin1String(name));
+        combo->setProperty("nereusSetupId", id);
+        combo->addItem(QStringLiteral("None"), static_cast<int>(CwSerialLine::None));
+        combo->addItem(QStringLiteral("DSR"), static_cast<int>(CwSerialLine::Dsr));
+        combo->addItem(QStringLiteral("CTS"), static_cast<int>(CwSerialLine::Cts));
+        return combo;
+    };
+    m_serialKeyLine = lineCombo("cwSerialKeyLineCombo", "dsp.cw.serial.keyLine");
+    addLabeledCombo(serialLay, "Straight key line", m_serialKeyLine);
+    m_serialPttLine = lineCombo("cwSerialPttLineCombo", "dsp.cw.serial.pttLine");
+    addLabeledCombo(serialLay, "PTT line", m_serialPttLine);
+    UnbuiltFeatures::hideUnlessBuilt(serialGrp, UnbuiltFeature::Cwx);
+
+    // ── Options ───────────────────────────────────────────────────────────────
+    QGroupBox* optionsGrp = addSection("Options");
+    optionsGrp->setObjectName(QStringLiteral("cwOptionsGroup"));
+    auto* optionsLay = qobject_cast<QVBoxLayout*>(optionsGrp->layout());
+    m_autoModeSwitch = new QCheckBox(QStringLiteral("Switch to CW when the paddles are used"));
+    m_autoModeSwitch->setObjectName(QStringLiteral("cwAutoModeSwitchCheck"));
+    m_autoModeSwitch->setProperty("nereusSetupId", "dsp.cw.options.autoModeSwitch");
+    optionsLay->addWidget(m_autoModeSwitch);
+    m_autoModeReturn = new QCheckBox(QStringLiteral("Return to the previous mode"));
+    m_autoModeReturn->setObjectName(QStringLiteral("cwAutoModeReturnCheck"));
+    m_autoModeReturn->setProperty("nereusSetupId", "dsp.cw.options.autoModeReturn");
+    optionsLay->addWidget(m_autoModeReturn);
+    m_autoModeReturnMs = new QSpinBox;
+    m_autoModeReturnMs->setObjectName(QStringLiteral("cwAutoModeReturnMsSpin"));
+    m_autoModeReturnMs->setProperty("nereusSetupId", "dsp.cw.options.autoModeReturnMs");
+    m_autoModeReturnMs->setRange(TransmitModel::kCwAutoModeReturnMsMin,
+                                 TransmitModel::kCwAutoModeReturnMsMax);
+    m_autoModeReturnMs->setSingleStep(TransmitModel::kCwAutoModeReturnMsStep);
+    addLabeledSpinner(optionsLay, "Return after (ms)", m_autoModeReturnMs);
+    UnbuiltFeatures::hideUnlessBuilt(optionsGrp, UnbuiltFeature::Cwx);
+
+    refreshSerialPorts();
+    if (!model) {
+        refreshStates();
+        return;
+    }
+
+    // ── Page to model ────────────────────────────────────────────────────────
+    TransmitModel& tx = model->transmitModel();
+    const auto guarded = [this](auto fn) {
+        return [this, fn](auto value) {
+            if (m_updatingFromModel) { return; }
+            fn(value);
+        };
+    };
+    connect(m_keyerMode, qOverload<int>(&QComboBox::activated), this, guarded([this, &tx](int i) {
+        tx.setCwKeyerMode(m_keyerMode->itemData(i).toInt());
+    }));
+    connect(m_keyerWeight, qOverload<int>(&QSpinBox::valueChanged), this,
+            guarded([&tx](int v) { tx.setCwKeyerWeight(v); }));
+    connect(m_keyerSpeed, &QSlider::valueChanged, this,
+            guarded([&tx](int v) { tx.setCwKeyerSpeed(v); }));
+    connect(m_pitch, &QSlider::valueChanged, this, guarded([model](int v) {
+        // C3: 10 Hz steps.
+        model->setCwPitchHz(clampCwPitchHz(v));
+    }));
+    connect(m_reversePaddles, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwReversePaddles(on); }));
+    connect(m_strictSpacing, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwStrictSpacing(on); }));
+    connect(m_breakInMode, qOverload<int>(&QComboBox::activated), this,
+            guarded([this, &tx](int i) {
+        tx.setCwBreakInMode(m_breakInMode->itemData(i).toInt());
+        showFromModel();
+    }));
+    connect(m_breakInDelay, &QSlider::valueChanged, this,
+            guarded([&tx](int v) { tx.setCwBreakInDelayMs(v); }));
+    connect(m_keyDownDelay, qOverload<int>(&QSpinBox::valueChanged), this,
+            guarded([&tx](int v) { tx.setCwKeyDownDelayMs(v); }));
+    connect(m_keyUpDelay, qOverload<int>(&QSpinBox::valueChanged), this,
+            guarded([&tx](int v) { tx.setCwKeyUpDelayMs(v); }));
+    connect(m_radioSidetone, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwRadioSidetone(on); }));
+    connect(m_computerSidetone, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwComputerSidetone(on); }));
+    connect(m_sidetoneLevel, &QSlider::valueChanged, this, guarded([&tx](int v) {
+        tx.setMonitorVolume(static_cast<float>(v) / 100.0f);
+    }));
+    connect(m_serialPort, qOverload<int>(&QComboBox::activated), this,
+            guarded([this, &tx](int i) {
+        tx.setCwSerialPort(m_serialPort->itemData(i).toString());
+    }));
+    connect(m_serialPaddles, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwSerialPaddles(on); }));
+    connect(m_serialKeyLine, qOverload<int>(&QComboBox::activated), this,
+            guarded([this, &tx](int i) {
+        tx.setCwSerialKeyLine(m_serialKeyLine->itemData(i).toInt());
+    }));
+    connect(m_serialPttLine, qOverload<int>(&QComboBox::activated), this,
+            guarded([this, &tx](int i) {
+        tx.setCwSerialPttLine(m_serialPttLine->itemData(i).toInt());
+    }));
+    connect(m_autoModeSwitch, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwAutoModeSwitch(on); }));
+    connect(m_autoModeReturn, &QCheckBox::toggled, this,
+            guarded([&tx](bool on) { tx.setCwAutoModeReturn(on); }));
+    connect(m_autoModeReturnMs, qOverload<int>(&QSpinBox::valueChanged), this,
+            guarded([&tx](int v) { tx.setCwAutoModeReturnMs(v); }));
+
+    // ── Model to page ────────────────────────────────────────────────────────
+    const auto show = [this]() { showFromModel(); };
+    for (auto signal : {&TransmitModel::cwKeyerModeChanged, &TransmitModel::cwKeyerWeightChanged,
+                        &TransmitModel::cwKeyerSpeedChanged, &TransmitModel::cwBreakInModeChanged,
+                        &TransmitModel::cwBreakInDelayMsChanged,
+                        &TransmitModel::cwKeyDownDelayMsChanged,
+                        &TransmitModel::cwKeyUpDelayMsChanged,
+                        &TransmitModel::cwSerialKeyLineChanged,
+                        &TransmitModel::cwSerialPttLineChanged,
+                        &TransmitModel::cwAutoModeReturnMsChanged}) {
+        connect(&tx, signal, this, show);
+    }
+    for (auto signal : {&TransmitModel::cwReversePaddlesChanged,
+                        &TransmitModel::cwStrictSpacingChanged,
+                        &TransmitModel::cwSidetoneChanged,
+                        &TransmitModel::cwRadioSidetoneChanged,
+                        &TransmitModel::cwComputerSidetoneChanged,
+                        &TransmitModel::cwSerialPaddlesChanged,
+                        &TransmitModel::cwAutoModeSwitchChanged,
+                        &TransmitModel::cwAutoModeReturnChanged}) {
+        connect(&tx, signal, this, show);
+    }
+    connect(&tx, &TransmitModel::cwSerialPortChanged, this, [this](const QString&) {
+        refreshSerialPorts();
+        showFromModel();
+    });
+    connect(&tx, &TransmitModel::monitorVolumeChanged, this, show);
+    connect(model, &RadioModel::cwPitchChanged, this, show);
+    connect(model, &RadioModel::cwSerialKeyRefusalChanged, this, show);
+    if (CwKeyerController* keyer = model->cwKeyerController()) {
+        connect(keyer, &CwKeyerController::keyerStateChanged, this, show);
+    }
+    showFromModel();
+}
+
+void CwSetupPage::refreshSerialPorts()
+{
+    if (!m_serialPort) { return; }
+    const QString current = m_cwModel ? m_cwModel->transmitModel().cwSerialPort() : QString();
+    QStringList ports;
+    // R-CW-04: the port is on the Core's computer; a remote window lists
+    // only the Core's choice.
+    if (!m_cwModel || m_cwModel->ownsLocalDsp()) {
+        ports = cwSerialPortsHere();
+    }
+    if (!current.isEmpty() && !ports.contains(current)) {
+        ports.prepend(current);
+    }
+    QSignalBlocker block(m_serialPort);
+    m_serialPort->clear();
+    m_serialPort->addItem(QStringLiteral("None"), QString());
+    for (const QString& port : std::as_const(ports)) {
+        m_serialPort->addItem(port, port);
+    }
+    m_serialPort->setCurrentIndex(std::max(0, m_serialPort->findData(current)));
+}
+
+void CwSetupPage::showFromModel()
+{
+    if (!m_cwModel) {
+        refreshStates();
+        return;
+    }
+    const TransmitModel& tx = m_cwModel->transmitModel();
+    const bool was = m_updatingFromModel;
+    m_updatingFromModel = true;
+    const auto setCombo = [](QComboBox* combo, const QVariant& data) {
+        const QSignalBlocker block(combo);
+        combo->setCurrentIndex(std::max(0, combo->findData(data)));
+    };
+    setCombo(m_keyerMode, tx.cwKeyerMode());
+    m_keyerWeight->setValue(tx.cwKeyerWeight());
+    m_keyerSpeed->setValue(tx.cwKeyerSpeed());
+    m_keyerSpeedValue->setText(QStringLiteral("%1 WPM").arg(tx.cwKeyerSpeed()));
+    m_pitch->setValue(m_cwModel->cwPitchHz());
+    m_pitchValue->setText(QStringLiteral("%1 Hz").arg(m_cwModel->cwPitchHz()));
+    m_reversePaddles->setChecked(tx.cwReversePaddles());
+    m_strictSpacing->setChecked(tx.cwStrictSpacing());
+
+    // The mode the radio uses (the keyer controller's fallbacks, R-CW-20,
+    // R-CW-22) in a local window; the Core's setting in a remote one.
+    int mode = tx.cwBreakInMode();
+    const CwKeyerController* keyer = m_cwModel->ownsLocalDsp() ? m_cwModel->cwKeyerController()
+                                                               : nullptr;
+    if (keyer) {
+        mode = static_cast<int>(keyer->effectiveBreakInMode());
+    }
+    setCombo(m_breakInMode, mode);
+    m_breakInDelay->setValue(tx.cwBreakInDelayMs());
+    m_breakInDelayValue->setText(QStringLiteral("%1 ms").arg(tx.cwBreakInDelayMs()));
+    m_keyDownDelay->setValue(tx.cwKeyDownDelayMs());
+    m_keyUpDelay->setValue(tx.cwKeyUpDelayMs());
+    const QString clamp = keyDownClampNote(tx.cwKeyDownDelayMs(), tx.cwKeyerSpeed());
+    m_keyDownNote->setText(clamp.isEmpty() ? QStringLiteral("The radio accepts 0 to 255 ms.")
+                                           : QStringLiteral("The radio accepts 0 to 255 ms. ")
+                                                 + clamp);
+    m_hangTime->setText(radioHangTimeText(mode, tx.cwBreakInDelayMs(), tx.cwKeyUpDelayMs()));
+
+    m_radioSidetone->setChecked(tx.cwRadioSidetone());
+    m_computerSidetone->setChecked(tx.cwComputerSidetone());
+    const int level = qRound(tx.monitorVolume() * 100.0f);
+    m_sidetoneLevel->setValue(level);
+    m_sidetoneLevelValue->setText(QString::number(level));
+
+    setCombo(m_serialPort, tx.cwSerialPort());
+    m_serialPaddles->setChecked(tx.cwSerialPaddles());
+    setCombo(m_serialKeyLine, tx.cwSerialKeyLine());
+    setCombo(m_serialPttLine, tx.cwSerialPttLine());
+    const QString refusal = m_cwModel->cwSerialKeyRefusal();
+    m_serialStatus->setText(refusal);
+    m_serialStatus->setVisible(!refusal.isEmpty());
+
+    m_autoModeSwitch->setChecked(tx.cwAutoModeSwitch());
+    m_autoModeReturn->setChecked(tx.cwAutoModeReturn());
+    m_autoModeReturnMs->setValue(tx.cwAutoModeReturnMs());
+    m_updatingFromModel = was;
+    refreshStates();
+}
+
+// Each control's own availability under the remote window's CW settings
+// gate. A disabled control says why in its tooltip and accessible
+// description (R-CW-47); nothing is hidden.
+void CwSetupPage::refreshStates()
+{
+    if (!m_keyerMode) { return; }
+    const auto set = [this](QWidget* control, bool ownEnabled, const QString& ownReason) {
+        const bool enabled = m_cwSettingsPermitted && ownEnabled;
+        const QString tip = !m_cwSettingsPermitted ? m_cwSettingsReason
+                            : ownEnabled ? QString() : ownReason;
+        control->setEnabled(enabled);
+        control->setToolTip(tip);
+        control->setAccessibleDescription(tip);
+    };
+    for (QWidget* control : {static_cast<QWidget*>(m_keyerMode),
+                             static_cast<QWidget*>(m_keyerWeight),
+                             static_cast<QWidget*>(m_keyerSpeed),
+                             static_cast<QWidget*>(m_reversePaddles),
+                             static_cast<QWidget*>(m_strictSpacing),
+                             static_cast<QWidget*>(m_breakInMode),
+                             static_cast<QWidget*>(m_keyDownDelay),
+                             static_cast<QWidget*>(m_keyUpDelay),
+                             static_cast<QWidget*>(m_computerSidetone),
+                             static_cast<QWidget*>(m_sidetoneLevel),
+                             static_cast<QWidget*>(m_autoModeSwitch)}) {
+        set(control, true, QString());
+    }
+
+    const TransmitModel* tx = m_cwModel ? &m_cwModel->transmitModel() : nullptr;
+    const CwKeyerController* keyer = m_cwModel && m_cwModel->ownsLocalDsp()
+        ? m_cwModel->cwKeyerController() : nullptr;
+    const int mode = m_breakInMode->currentData().toInt();
+    set(m_breakInDelay, mode == static_cast<int>(CwBreakInMode::Semi),
+        mode == static_cast<int>(CwBreakInMode::Qsk) ? QLatin1String(kCwSetupDelayQskReason)
+                                                     : QLatin1String(kCwSetupDelayOffReason));
+    // R-CW-20, R-CW-22: an unavailable QSK or Semi is greyed in the list
+    // with its reason, never removed.
+    const bool qskOk = !keyer || keyer->qskAvailable();
+    const bool semiOk = !keyer || keyer->semiAvailable();
+    setCwComboItemEnabled(m_breakInMode, m_breakInMode->findData(static_cast<int>(CwBreakInMode::Qsk)),
+                          qskOk, keyer ? keyer->qskUnavailableReason() : QString());
+    setCwComboItemEnabled(m_breakInMode, m_breakInMode->findData(static_cast<int>(CwBreakInMode::Semi)),
+                          semiOk, keyer ? keyer->semiUnavailableReason() : QString());
+    m_breakInMode->setItemText(m_breakInMode->findData(static_cast<int>(CwBreakInMode::Qsk)),
+                               qskOk ? QStringLiteral("QSK (full break-in)")
+                                     : QStringLiteral("QSK: ") + keyer->qskUnavailableReason());
+    if (m_cwSettingsPermitted && (!qskOk || !semiOk)) {
+        const QString why = !semiOk ? keyer->semiUnavailableReason() : keyer->qskUnavailableReason();
+        m_breakInMode->setToolTip(why);
+        m_breakInMode->setAccessibleDescription(why);
+    }
+
+    // R-CW-40: the radio's own sidetone, where the radio has one.
+    set(m_radioSidetone, m_hasSidetoneGenerator, QLatin1String(kCwSetupNoRadioSidetoneReason));
+    m_keyerHl2Note->setVisible(m_isHl2);
+    m_sidetoneHl2Note->setVisible(m_isHl2);
+
+    // R-CW-04: the serial port is the Core's; the lines need a port.
+    const bool localPorts = !m_cwModel || m_cwModel->ownsLocalDsp();
+    set(m_serialPort, localPorts, QLatin1String(kCwSetupRemotePortReason));
+    const bool hasPort = tx && !tx->cwSerialPort().isEmpty();
+    for (QWidget* control : {static_cast<QWidget*>(m_serialPaddles),
+                             static_cast<QWidget*>(m_serialKeyLine),
+                             static_cast<QWidget*>(m_serialPttLine)}) {
+        set(control, hasPort, QLatin1String(kCwSetupChoosePortReason));
+    }
+    // R-CW-37: the return follows the switch.
+    const bool autoOn = tx && tx->cwAutoModeSwitch();
+    set(m_autoModeReturn, autoOn, QLatin1String(kCwSetupAutoSwitchOffReason));
+    set(m_autoModeReturnMs, autoOn && tx->cwAutoModeReturn(),
+        autoOn ? QLatin1String(kCwSetupAutoReturnOffReason)
+               : QLatin1String(kCwSetupAutoSwitchOffReason));
+    // The pitch is a station setting, not a transmit one: no gate.
+    m_pitch->setEnabled(true);
+}
+
+void CwSetupPage::refreshBoard()
+{
+    if (!m_cwModel) {
+        setHasSidetoneGenerator(true);
+        return;
+    }
+    HPSDRHW board = HPSDRHW::Unknown;
+    if (m_cwModel->isConnected() && m_cwModel->connection()) {
+        board = m_cwModel->connection()->radioInfo().boardType;
+    }
+    if (board == HPSDRHW::Unknown) {
+        // R-R3-46 (carried): a remote window has no connection of its own;
+        // the radio, once known, is the model's stored radio info.
+        board = m_cwModel->currentRadioInfo().boardType;
+    }
+    m_isHl2 = board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly;
+    // No radio known: the setting is kept for the next radio.
+    setHasSidetoneGenerator(board == HPSDRHW::Unknown
+                            || BoardCapsTable::forBoard(board).hasSidetoneGenerator);
 }
 
 void CwSetupPage::setHasSidetoneGenerator(bool on)
 {
-    if (m_sidetoneRow != nullptr) {
-        m_sidetoneRow->setVisible(on);
-    }
+    m_hasSidetoneGenerator = on;
+    refreshStates();
 }
 
-bool CwSetupPage::sidetoneRowVisibleForTest() const
+bool CwSetupPage::radioSidetoneEnabledForTest() const
 {
-    return m_sidetoneRow != nullptr && !m_sidetoneRow->isHidden();
+    return m_radioSidetone != nullptr && m_radioSidetone->isEnabled();
+}
+
+void CwSetupPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                 const QString& reason)
+{
+    if (version != kTransmitSettingsCwVersion) {
+        return;
+    }
+    m_cwSettingsPermitted = permitted;
+    m_cwSettingsReason = reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason;
+    refreshStates();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

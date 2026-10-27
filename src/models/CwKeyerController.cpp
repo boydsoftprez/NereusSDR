@@ -131,12 +131,16 @@ void CwKeyerController::reevaluate()
 
 void CwKeyerController::onRadioKeyStatus(bool dot, bool dash, bool keyOut)
 {
+    const bool changed = m_dot != dot || m_dash != dash || m_keyOut != keyOut;
     m_dot = dot;
     m_dash = dash;
     m_keyOut = keyOut;
     if (m_stopLatched && !dot && !dash && !keyOut) {
         m_stopLatched = false;
         evaluate();
+    }
+    if (changed) {
+        emit radioKeyStatusChanged(dot, dash, keyOut);
     }
 }
 
