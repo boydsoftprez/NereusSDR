@@ -184,6 +184,10 @@
 //   2026-10-26: TunerLoan: the tuner's own front-panel TUNE gives transmit
 //               and the flag back when its cycle ends. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 670 fix wave: TunerLoan tied to its own cycle (serial,
+//               cycleEnded), tunerLoanTakeStands, dropTunerLoanForStationKey,
+//               hasTunerLoanForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
 //               a desktop window before its radio connects. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1057,6 +1061,9 @@ public:
     /// as not paired. This counts such a session as paired for that gate,
     /// so a window test can take transmit. Set before the window connects.
     void setTokenSessionsMayTransmitForTest(bool may) { m_tokenSessionsMayTransmitForTest = may; }
+    /// TGXL tune lane (PR 670 fix wave): a tuner's TUNE loan is still
+    /// waiting to give transmit back.
+    bool hasTunerLoanForTest() const { return m_tunerLoan.has_value(); }
     /// Deterministic export expiry; caller drives cleanup after advancing time.
     void setSettingsExportClockForTest(std::function<qint64()> clock)
     { m_settingsExportNowForTest = std::move(clock); }
@@ -2511,7 +2518,7 @@ private:
     /// slice) is noted at its first key; when the cycle ends, transmit
     /// goes back to that holder (or is let go, when nobody held it) and
     /// the flag back to its slice, unless something else changed them
-    /// meanwhile (another take, another key at the station).
+    /// meanwhile (another take, a real key at the station).
     struct TunerLoan {
         /// Who held transmit when the press came; nullopt: nobody.
         std::optional<TransmitHolder::Holder> holder;
@@ -2520,19 +2527,37 @@ private:
         /// Where the tune moved the flag (ruling 8.11 on a hosting
         /// desktop); -1 when it did not move it.
         int flagMovedTo = -1;
-        /// Rechecks while the radio walks back to receive, and whether
-        /// one is due.
+        /// Fix wave (PR 670, I1): this loan's number, so a recheck left
+        /// from an earlier loan never acts on a later one.
+        quint64 serial = 0;
+        /// The tuner cycle this loan was taken for has ended. Any cycle
+        /// running after that is another one (a device's tx.tunerTune, or
+        /// a later press, which starts its own loan).
+        bool cycleEnded = false;
+        /// Rechecks while the radio walks back to receive (or another
+        /// cycle runs), and whether one is due.
         int waits = 0;
         bool rechecking = false;
+        /// The last recheck waited on another tuner cycle (the words of
+        /// the expiry).
+        bool waitedOnAnotherCycle = false;
     };
     void noteTunerLoan();
-    /// Gives back what the tuner's cycle took, once MOX reads off and no
-    /// transfer runs (rechecked every kUnstartedTakeRecheckMs, up to
-    /// kTunerLoanWaitMs; a new tuner cycle carries the loan on).
+    /// Gives back what the tuner's cycle took, once its cycle has ended,
+    /// no other cycle runs, MOX reads off and no transfer runs (rechecked
+    /// every kUnstartedTakeRecheckMs, up to kTunerLoanWaitMs).
     void returnTunerLoan();
     void restoreTunerLoanFlag(const TunerLoan& loan, const QByteArray& holder);
+    /// The tune's own take is the only change of holder since the press:
+    /// the station holds by the radio's PTT, one epoch on.
+    bool tunerLoanTakeStands(const TunerLoan& loan) const;
+    /// Fix wave (PR 670, I2): a real key at the station during the tune
+    /// (its MOX, its PTT, two-tone, VOX; anything but the tuner's own
+    /// press) keeps transmit with the station when the tune ends.
+    void dropTunerLoanForStationKey();
     static constexpr int kTunerLoanWaitMs = 5000;
     std::optional<TunerLoan> m_tunerLoan;
+    quint64 m_tunerLoanSerial = 0;
     /// Fix wave M6: a tx.take and its copies (the same command id on the
     /// same session): the first is run; a copy while it runs is answered by
     /// its one result, and a later copy gets the same answer. Never a second

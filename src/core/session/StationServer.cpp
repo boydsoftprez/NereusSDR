@@ -4,6 +4,11 @@
 //   2026-10-26: The keying gate notes the tuner's own TUNE (noteTunerLoan)
 //               and the cycle's end gives transmit back (returnTunerLoan).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 670 fix wave: every cycle's end rechecks the tuner's
+//               loan; a real station key (requestAccepted) drops it, a
+//               gate question does not (JJ, "Option 1 the station keeps
+//               transmit"). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -2935,21 +2940,31 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             if (keyer.isStation() && keyer.tunerPress) {
                 noteTunerLoan();
             }
-            const KeyingAnswer answer = answerKey(source, keyer);
-            // Any other key at the station meanwhile (its PTT, its MOX or
-            // TUNE, VOX) is the station's own: what the tune took stays.
-            if (m_tunerLoan && keyer.isStation() && !keyer.tunerPress
-                && answer.verdict != KeyingVerdict::Refuse) {
-                qCInfo(lcDsp) << "Another key at the station during the tuner's tune: transmit"
-                                 " stays with the station when the tune ends";
-                m_tunerLoan.reset();
-            }
-            return answer;
+            return answerKey(source, keyer);
         });
-        // TGXL tune lane: the tuner's own cycle (no device's) has ended.
+        // TGXL tune lane (JJ, 2026-10-26, "Option 1 the station keeps
+        // transmit"). Fix wave (PR 670, I2): a real key at the station
+        // during the tune (its MOX, two-tone; anything but the tuner's own
+        // press) is the station's own: what the tune took stays. Seen where
+        // the key is accepted, not at the gate: during the carrier a station
+        // key never asks the gate, and a gate question that keys nothing
+        // (TCI's program refusal check) is not a key.
+        connect(mox, &MoxController::requestAccepted, this,
+                [this](const KeyerIdentity& requester, quint64, bool requestedOn) {
+                    if (m_tunerLoan && requestedOn && requester.isStation()
+                        && !requester.tunerPress) {
+                        dropTunerLoanForStationKey();
+                    }
+                });
+        // A PTT pressed during the tune keys nothing while TUN is up; one
+        // held when the tune ends is read there (returnTunerLoan).
+        // TGXL tune lane: a tuner cycle has ended. Fix wave (PR 670, I1):
+        // every cycle's end, a device's included, rechecks the loan; the
+        // first end after the press is its own cycle's.
         connect(m_radioModel, &RadioModel::tgxlAutotuneEnded, this,
-                [this](const QByteArray& deviceId, const QString&) {
-                    if (deviceId.isEmpty() && m_tunerLoan) {
+                [this](const QByteArray&, const QString&) {
+                    if (m_tunerLoan) {
+                        m_tunerLoan->cycleEnded = true;
                         returnTunerLoan();
                     }
                 });
