@@ -7,8 +7,10 @@
 //                 Claude Code.
 //   2026-10-26 - meter.adcMax is available on the container parity branch:
 //                 the saved entry is kept with its record and its bar is
-//                 built and veiled with its reason. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//                 built and veiled with its reason; the empty path is
+//                 checked at its own field, since the branch's IMAGE and
+//                 MAGICEYE records carry fields after it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QColor>
 #include <QImage>
@@ -139,18 +141,22 @@ private slots:
     void emptyImagePathLoadsWithoutAFileWarning_data()
     {
         QTest::addColumn<QString>("typeId");
-        QTest::newRow("IMAGE") << QStringLiteral("IMAGE");
-        QTest::newRow("MAGICEYE") << QStringLiteral("MAGICEYE");
+        // The path's field: IMAGE|x|y|w|h|bindingId|zOrder|path|darkMode and
+        // MAGICEYE|x|y|w|h|bindingId|zOrder|glowColor|bezelPath|... .
+        QTest::addColumn<int>("pathField");
+        QTest::newRow("IMAGE") << QStringLiteral("IMAGE") << 7;
+        QTest::newRow("MAGICEYE") << QStringLiteral("MAGICEYE") << 8;
     }
     void emptyImagePathLoadsWithoutAFileWarning()
     {
         QFETCH(QString, typeId);
+        QFETCH(int, pathField);
         QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
         ContainerContentRegistry registry;
         ContentEntry entry = registry.makeEntry(typeId);
         const QString record = entry.config.value(QStringLiteral("legacyRecord")).toString();
         QCOMPARE(record.section(QLatin1Char('|'), 0, 0), typeId);
-        QCOMPARE(record.section(QLatin1Char('|'), -1), QString());
+        QCOMPARE(record.section(QLatin1Char('|'), pathField, pathField), QString());
         std::unique_ptr<MeterItem> item(
             registry.createMeterItem(entry, nullptr, ContentRenderMode::Validation));
         QVERIFY(item);
