@@ -1486,6 +1486,15 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Keep the TUNE observation seam test-only in tests-off
 //                builds. J.J. Boyd (KG4VCF), AI-assisted via Codex.
+//   2026-10-26 - stopTransmitNow emits transmitStopBegan once the gate is
+//                closed and MOX off is queued, so a CAT TX held during
+//                the walk back to receive is dropped at the stop. J.J.
+//                Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
+//   2026-10-26 - stopAllTx emits stopAllTxRequested first, before its
+//                early return, so a Stop All TX in the walk's ptt_out
+//                phase drops a held CAT TX. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -30425,6 +30434,11 @@ void RadioModel::stopTransmitNow(const QString& reason)
     }
 
     qCInfo(lcConnection).noquote() << "Transmit stopped at once:" << reason;
+
+    // A request held for the end of the walk back to receive (a CAT TX)
+    // never keys after a stop: its holder drops it here, before stopAllTx
+    // drops MOX. Last, so nothing it does delays the stop above.
+    emit transmitStopBegan();
 }
 
 // ---------------------------------------------------------------------------
@@ -30460,6 +30474,12 @@ void RadioModel::stopTransmitNow(const QString& reason)
 // ---------------------------------------------------------------------------
 void RadioModel::stopAllTx(const QString& message)
 {
+    // NereusSDR: every Stop All TX first tells a holder of a CAT TX waiting
+    // for the end of the walk back to receive, even one that stops nothing
+    // below (the walk's ptt_out phase, or Rx before the held TX runs). It
+    // changes nothing on the transmit path.
+    emit stopAllTxRequested();
+
     // From Thetis console.cs:45324 [v2.10.3.15]: StopAllTx
     const bool moxOn = mox();
     const bool manualMoxOn = m_moxController && m_moxController->isManualMox();

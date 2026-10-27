@@ -87,6 +87,10 @@ Added extended CAT commands for APF funtions - May 2017.
 //              0) captures that slice when it arrives, instead of reading
 //              "Invalid binding" until the operator picks it again.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26 - An idle PTT pin releases only its own claim; its release
+//              edge, like RX;, also cancels a CAT TX held during the walk
+//              back to receive. sessionHandle for that TX's replay.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -802,6 +806,7 @@ void CatService::closeSession(quint64 id)
     emit sessionClosed(id);
 }
 CatSession* CatService::session(quint64 id) { return m_sessions.contains(id) ? m_sessions.value(id).get() : m_testers.value(id).get(); }
+std::shared_ptr<CatSession> CatService::sessionHandle(quint64 id) { return m_sessions.contains(id) ? m_sessions.value(id) : m_testers.value(id); }
 QByteArray CatService::processFrame(quint64 id, const QByteArray& frame)
 {
     const std::shared_ptr<CatSession> current = m_sessions.value(id);
@@ -979,8 +984,14 @@ void CatService::applyPttSample(int channel, bool cts, bool dsr) {
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
     if (!asserted) {
+        // Only the release edge cancels a CAT TX held for the end of the
+        // walk back to receive; an idle pin, sampled every 20 ms, does
+        // not. Thetis ORs the pin into cat_ptt (console.cs:25476-25477
+        // [v2.10.3.15]), so an idle pin never clears a CAT TX there either.
+        const bool releaseEdge = input->asserted;
         input->asserted = false; input->armed = true;
-        m_txCoordinator.releasePtt(input->sessionId);
+        if (releaseEdge) { m_txCoordinator.releasePtt(input->sessionId); }
+        else { m_txCoordinator.releasePttClaim(input->sessionId); }
         if (self && generation == m_lifecycleGeneration && m_ptt == input) { setPttState("Armed"); }
         return;
     }
