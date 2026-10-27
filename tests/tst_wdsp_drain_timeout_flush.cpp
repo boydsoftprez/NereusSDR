@@ -9,6 +9,10 @@
 //                 implementation via Anthropic Claude Code: a flush that
 //                 WDSP's drain timed out waiting for never lands after the
 //                 channel is switched on again.
+//   2026-10-27 - Second case by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code: a drain held
+//                 between raising the down-slew and raising flushflag lets
+//                 no fexchange0 end the slew there.
 // =================================================================
 //
 // SetChannelState(ch, 0, 1) raises the down-slew and waits up to 100 ms for
@@ -32,6 +36,13 @@
 // while csDSP is taken. The channel is switched on again as soon as the
 // drain returns, then the worker is let go. The channel must come back
 // running, not bypassed.
+//
+// The second case holds the drain itself (dsplock.c's test-only drain hook)
+// after it raises the down-slew and before it raises flushflag, and makes
+// the 9 slew calls from this thread meanwhile. Unlocked, as upstream, those
+// calls end the slew there and the flush runs before flushflag is set, so a
+// drain that then waits for its flush waits forever. With the flags raised
+// under csEXCH the calls wait for the drain, and it returns.
 
 #include <QtTest>
 
@@ -45,6 +56,8 @@
 extern "C" int nereus_channel_exchange(int channel);
 extern "C" int nereus_channel_downflag(int channel);
 extern "C" int nereus_channel_exec_bypass(int channel);
+extern "C" int nereus_channel_flushflag(int channel);
+extern "C" void nereus_channel_clear_flushflag(int channel);
 
 namespace {
 
@@ -77,6 +90,16 @@ constexpr auto kHoldValve = std::chrono::milliseconds(2000);
 constexpr auto kLateFlushWatch = std::chrono::milliseconds(1000);
 constexpr auto kWaitLimit = std::chrono::milliseconds(20000);
 constexpr int kAttempts = 3;
+// The held drain lets go once the slew calls are done and their flush has
+// run or, when those calls wait for it (they do once fixed), after this long.
+constexpr auto kDrainHoldValve = std::chrono::milliseconds(1000);
+// How long the held drain waits, after it sees a flush run, for that flush
+// to finish.
+constexpr auto kFlushSettle = std::chrono::milliseconds(100);
+// How long a drain gets to return once let go: far past its own 100 ms
+// timeout and any late flush. One that has not returned by then waits for a
+// flush that already ran.
+constexpr auto kDrainReturnLimit = std::chrono::milliseconds(10000);
 
 std::atomic<int> g_exchanges{0};
 std::atomic<bool> g_holdArmed{false};
@@ -84,6 +107,12 @@ std::atomic<bool> g_holding{false};
 std::atomic<bool> g_held{false};
 std::atomic<bool> g_keyOnDone{false};
 std::atomic<bool> g_drainReturned{false};
+
+std::atomic<bool> g_drainHoldArmed{false};
+std::atomic<bool> g_inDrainHold{false};
+std::atomic<bool> g_slewCallsDone{false};
+std::atomic<bool> g_slewEndedInDrainHold{false};
+std::atomic<bool> g_flushRanInDrainHold{false};
 
 void idle()
 {
@@ -109,6 +138,36 @@ void onExchange(int channel)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     g_holding.store(false);
+}
+
+// In SetChannelState's drain, after it raises the down-slew and before it
+// raises flushflag (while it holds csEXCH, once fixed).
+void onDrain(int channel)
+{
+    if (channel != kChannel) {
+        return;
+    }
+    bool armed = true;
+    if (!g_drainHoldArmed.compare_exchange_strong(armed, false)) {
+        return;
+    }
+    g_inDrainHold.store(true);
+    const auto valve = Clock::now() + kDrainHoldValve;
+    while (!g_slewCallsDone.load() && Clock::now() < valve) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    // A flush the ended slew asked for runs now unless it needs this lock.
+    while (g_slewCallsDone.load() && nereus_channel_exec_bypass(kChannel) == 0
+           && Clock::now() < valve) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    g_slewEndedInDrainHold.store(g_slewCallsDone.load());
+    g_flushRanInDrainHold.store(nereus_channel_exec_bypass(kChannel) == 1);
+    if (g_flushRanInDrainHold.load()) {
+        // flushChannel sets exec_bypass, then leaves its locks and clears
+        // flushflag; let it get that far before the drain raises the flag.
+        std::this_thread::sleep_for(kFlushSettle);
+    }
 }
 
 template <typename Pred>
@@ -195,11 +254,72 @@ Attempt runAttempt()
     if (a.bypassAfterKeyOn == 0 && a.exchangeAfterKeyOn == 1) {
         const int before = g_exchanges.load();
         step(3 * kCallsPerExchange);
-        a.progressed = g_exchanges.load() >= before + 2;
+        // The hook counts each exchange after it releases the output that
+        // let this thread run on, so the count can trail the calls a little.
+        a.progressed = waitFor([before] { return g_exchanges.load() >= before + 2; }, kWaitLimit);
     }
     SetChannelState(kChannel, 0, 0);
     CloseChannel(kChannel);
     return a;
+}
+
+struct DrainHold {
+    bool held = false;
+    bool slewEndedInHold = false;
+    bool flushRanInHold = false;
+    bool drainReturned = false;
+    int flushflagAfter = -1;
+};
+
+DrainHold runDrainHold()
+{
+    g_drainHoldArmed.store(false);
+    g_inDrainHold.store(false);
+    g_slewCallsDone.store(false);
+    g_slewEndedInDrainHold.store(false);
+    g_flushRanInDrainHold.store(false);
+    g_drainReturned.store(false);
+
+    std::vector<double> in(static_cast<size_t>(kInSize) * 2, 0.0);
+    std::vector<double> out(static_cast<size_t>(kOutSize) * 2, 0.0);
+    for (int i = 0; i < kInSize; ++i) {
+        in[static_cast<size_t>(2 * i)] = 0.25;
+    }
+
+    OpenChannel(kChannel, kInSize, kDspSize, kInRate, kDspRate, kOutRate,
+                1,       // type: TX
+                0,       // state: off until started
+                0.000, 0.010, 0.000, 0.010,   // WdspEngine's TX slews
+                1);      // bfo: fexchange0 waits for output, as in the Core
+    SetChannelState(kChannel, 1, 0);
+
+    DrainHold d;
+    g_drainHoldArmed.store(true);
+    std::thread keyThread([] {
+        SetChannelState(kChannel, 0, 1);
+        g_drainReturned.store(true);
+    });
+    d.held = waitFor([] { return g_inDrainHold.load(); }, kWaitLimit);
+    if (d.held) {
+        // A new channel's 16 output blocks cover these calls; the worker is
+        // not needed.
+        for (int c = 0; c < kSlewCalls; ++c) {
+            int error = 0;
+            fexchange0(kChannel, in.data(), out.data(), &error);
+        }
+        g_slewCallsDone.store(true);
+    }
+    d.drainReturned = waitFor([] { return g_drainReturned.load(); }, kDrainReturnLimit);
+    if (!d.drainReturned) {
+        // Free the drain so the test ends with a failure, not a hang.
+        nereus_channel_clear_flushflag(kChannel);
+    }
+    keyThread.join();
+    d.slewEndedInHold = g_slewEndedInDrainHold.load();
+    d.flushRanInHold = g_flushRanInDrainHold.load();
+    d.flushflagAfter = nereus_channel_flushflag(kChannel);
+    CloseChannel(kChannel);
+    return d;
 }
 
 } // namespace
@@ -208,8 +328,17 @@ class TestWdspDrainTimeoutFlush : public QObject {
     Q_OBJECT
 
 private slots:
-    void initTestCase() { WDSPSetTestExchangeHook(onExchange); }
-    void cleanupTestCase() { WDSPSetTestExchangeHook(nullptr); }
+    void initTestCase()
+    {
+        WDSPSetTestExchangeHook(onExchange);
+        WDSPSetTestDrainHook(onDrain);
+    }
+
+    void cleanupTestCase()
+    {
+        WDSPSetTestDrainHook(nullptr);
+        WDSPSetTestExchangeHook(nullptr);
+    }
 
     void timedOutDrainsFlushNeverLandsOnARunningChannel()
     {
@@ -230,6 +359,18 @@ private slots:
         QCOMPARE(a.exchangeAfterKeyOn, 1);
         QCOMPARE(a.bypassAfterKeyOn, 0);
         QVERIFY2(a.progressed, "the channel did not process again after the re-key");
+    }
+
+    void drainStartLetsNoSlewEndBeforeItsFlushIsExpected()
+    {
+        const DrainHold d = runDrainHold();
+        QVERIFY2(d.held, "the drain never reached the hook");
+        QVERIFY2(d.drainReturned,
+                 "the drain kept waiting for a flush that ran before flushflag was set");
+        QVERIFY2(!d.slewEndedInHold,
+                 "fexchange0 ended the down-slew before the drain raised flushflag");
+        QVERIFY2(!d.flushRanInHold, "the flush ran before the drain raised flushflag");
+        QCOMPARE(d.flushflagAfter, 0);
     }
 };
 

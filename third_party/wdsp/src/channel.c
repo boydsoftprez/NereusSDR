@@ -48,12 +48,17 @@ warren@wpratt.com
 // and leave a running channel with exec_bypass set (its worker then skips
 // every dexchange, and a blocking fexchange0 caller waits for output
 // forever), or take csDSP and wait for csEXCH while that caller holds it.
-// The timeout branch now resets the flags under csEXCH, so no fexchange is
-// mid-block. When the channel was exchanging as the drain began and a
-// fexchange has since ended the down-slew (it clears exchange before it
-// releases Sem_Flush), it waits for the flush thread to finish before
-// returning, reporting through dprintf about every 2 s. A drain that completes
-// in time, or that starts on a channel already not exchanging, is unchanged.
+// The drain now notes whether the channel is exchanging and raises downflag
+// and flushflag in one block under csEXCH, in upstream order. fexchange0/2
+// test downflag only under csEXCH, so no down-slew can end, and no flush be
+// asked for, before flushflag is set. The timeout branch resets the flags
+// under csEXCH too, so no fexchange is mid-block. When the channel was
+// exchanging as the drain began and a fexchange has since ended the
+// down-slew (it clears exchange before it releases Sem_Flush), it waits for
+// the flush thread to finish before returning (dsplock.c WdspWaitDrainFlush,
+// which reports through dprintf every 2 s of waiting). A drain that
+// completes in time, or that starts on a channel already not exchanging,
+// returns as upstream does.
 
 #include "comm.h"
 
@@ -310,9 +315,16 @@ int SetChannelState (int channel, int state, int dmode)
 		switch (ch[channel].state)
 		{
 		case 0:
-			was_exchanging = _InterlockedAnd (&ch[channel].exchange, 1);	// NereusSDR (2026-10-27)
+			// NereusSDR (2026-10-27): see the header. Upstream sets the two
+			// flags unlocked (Thetis wdsp/channel.c:271-272 [v2.10.3.15]); a down-slew
+			// that ended between them asked for a flush before flushflag was
+			// set, and nothing would clear it.
+			EnterCriticalSection (&ch[channel].csEXCH);
+			was_exchanging = _InterlockedAnd (&ch[channel].exchange, 1);
 			InterlockedBitTestAndSet (&a->slew.downflag, 0);
+			WdspTestDrainHook (channel);	// NereusSDR test-only seam (dsplock.h); off by default
 			InterlockedBitTestAndSet (&ch[channel].flushflag, 0);
+			LeaveCriticalSection (&ch[channel].csEXCH);
 			if (dmode)
 			{
 				while (_InterlockedAnd (&ch[channel].flushflag, 1) && count < timeout) 
@@ -331,16 +343,16 @@ int SetChannelState (int channel, int state, int dmode)
 				// down-slew clears it during a drain, together with its
 				// release of Sem_Flush, under csEXCH (the other writers are
 				// this function and channel rebuilds, which the caller runs
-				// one at a time with it). flushChannel clears flushflag once
-				// it has run, after it leaves both locks. The wait has no
-				// bound: the flush thread lives until CloseChannel and needs
-				// only csDSP and csEXCH, each held for one block, so a wait
-				// that never ends means the flush thread itself is stuck,
-				// which would stall upstream's next drain or teardown as
-				// well. It reports every 2000 waits, as WdspWaitWorkerExit
-				// does.
+				// one at a time with it). flushflag was set, under csEXCH,
+				// before any such call could run, and flushChannel clears it
+				// once it has run, after it leaves both locks. The wait has
+				// no bound: the flush thread lives until CloseChannel and
+				// needs only csDSP and csEXCH, each held for one block, so a
+				// wait that never ends means the flush thread itself is
+				// stuck, which would stall upstream's next drain or teardown
+				// as well. WdspWaitDrainFlush reports every 2 s of waiting,
+				// as WdspWaitWorkerExit does.
 				int flush_pending;
-				int waited = 0;
 				EnterCriticalSection (&ch[channel].csEXCH);
 				flush_pending = was_exchanging && !_InterlockedAnd (&ch[channel].exchange, 1);
 				InterlockedBitTestAndReset (&ch[channel].exchange, 0);
@@ -348,13 +360,8 @@ int SetChannelState (int channel, int state, int dmode)
 					InterlockedBitTestAndReset (&ch[channel].flushflag, 0);
 				InterlockedBitTestAndReset (&a->slew.downflag, 0);
 				LeaveCriticalSection (&ch[channel].csEXCH);
-				while (flush_pending && _InterlockedAnd (&ch[channel].flushflag, 1))
-				{
-					Sleep(1);
-					if (++waited % 2000 == 0)
-						dprintf ("wdsp: channel %d drain still waiting for its flush "
-							"(at least %d ms past the timeout)\n", channel, waited);
-				}
+				if (flush_pending)
+					WdspWaitDrainFlush (channel);
 			}
 			break;
 		case 1:
