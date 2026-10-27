@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Final fix wave F14: macOS time-constraint policy on the
+//               sender thread only, with the existing QoS as fallback.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: CW transmit, the CWX sender (R-CW-15, R-CW-31 to
 //               R-CW-33): reimplemented in C++20/Qt6 for NereusSDR on a
 //               thread of its own, keying the host key line. J.J. Boyd
@@ -175,17 +178,25 @@ mw0lge@grange-lane.co.uk
 #include "core/CwxSender.h"
 
 #include "core/CwKeyLine.h"
+#include "core/LogCategories.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/platform/ThreadPlacement.h"
 
 #include <QMetaObject>
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
 #include <pthread.h>
+#endif
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
 #endif
 #if defined(Q_OS_WIN)
 #include <windows.h>
@@ -468,6 +479,68 @@ constexpr auto kNapMax = std::chrono::microseconds(500);
 // The last stretch before a deadline is a yield loop.
 constexpr auto kSpinWindow = std::chrono::milliseconds(1);
 
+#if defined(Q_OS_MAC)
+void setCwxTimeConstraintPolicy()
+{
+    // NereusSDR-original, F14. Source: the macOS SDK's mach/thread_policy.h
+    // THREAD_TIME_CONSTRAINT_POLICY comments: period 0 means nonperiodic
+    // arrivals; all durations use absolute-time units; computation is a
+    // nominal budget, and the kernel floors it to constraint / 2.
+    // Elements can change speed (20 ms at 60 WPM), repeat gaps and the
+    // direct-key watchdog differ, and idle waits have no fixed period.
+    // Keep period 0 rather than reserving an element-rate periodic slot.
+    //
+    // Task 8's 2026-10-27 standalone wait-loop experiment used period 0,
+    // nominal 500 us computation and 2 ms constraint: the documented floor
+    // makes that computation 1 ms. Use the existing 1 ms final yield
+    // window as our nominal computation and retain its 2 ms constraint
+    // (1 ms nominal scheduling latency). The coarse wait and 500 us naps
+    // remain unchanged. A normal tick updates key atomics and posts queued
+    // notifications; the sidetone callback only stores an atomic. Repeat
+    // memory rebuilding also allocates here, so 1 ms is an initial budget
+    // estimate, not a measured upper bound for all sender work. Loaded
+    // edge, CPU and stop measurements are still required for acceptance.
+    constexpr auto kComputation = kSpinWindow;
+    constexpr auto kConstraint = kSpinWindow * 2;
+    mach_timebase_info_data_t timebase{};
+    const kern_return_t timebaseResult = mach_timebase_info(&timebase);
+    if (timebaseResult != KERN_SUCCESS || timebase.numer == 0 || timebase.denom == 0) {
+        qCWarning(lcConnection)
+            << "CWX timing priority could not read the clock scale; keeping the existing priority."
+            << timebaseResult;
+        return;
+    }
+    // These fixed durations are at most 2 ms, so multiplication by the
+    // 32-bit denominator fits uint64_t. Round up to avoid a zero tick or
+    // requesting less budget than the duration represents.
+    const auto absoluteTime = [&timebase](std::chrono::nanoseconds duration) {
+        const std::uint64_t nanoseconds = static_cast<std::uint64_t>(duration.count());
+        return (nanoseconds * timebase.denom + timebase.numer - 1) / timebase.numer;
+    };
+    const std::uint64_t computation = absoluteTime(kComputation);
+    const std::uint64_t constraint = absoluteTime(kConstraint);
+    if (computation == 0 || computation > constraint
+        || constraint > std::numeric_limits<std::uint32_t>::max()) {
+        qCWarning(lcConnection)
+            << "CWX timing priority cannot represent its clock budget; keeping the existing priority.";
+        return;
+    }
+    thread_time_constraint_policy_data_t policy{};
+    policy.period = 0;
+    policy.computation = static_cast<std::uint32_t>(computation);
+    policy.constraint = static_cast<std::uint32_t>(constraint);
+    policy.preemptible = TRUE; // ignored by the current SDK, retained for older systems
+    // The policy targets the calling sender pthread, as in the Task 8 bench.
+    const kern_return_t result = thread_policy_set(
+        pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+        reinterpret_cast<thread_policy_t>(&policy), THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+    if (result != KERN_SUCCESS) {
+        qCWarning(lcConnection)
+            << "CWX timing priority was refused; keeping the existing priority." << result;
+    }
+}
+#endif
+
 void shortNap(std::chrono::microseconds length)
 {
 #if defined(Q_OS_WIN)
@@ -539,6 +612,14 @@ void CwxSender::run()
         prio = elevateAudioThreadPriority();
 #endif
     }
+
+#if defined(Q_OS_MAC)
+    // F14: JJ approved this for the CWX sender only ("Cw your recommendation
+    // yes"). This is the only NereusSDR thread requesting Mach time-
+    // constraint scheduling. Install the existing QoS above first so an OS
+    // refusal leaves that fallback intact; no other thread/platform changes.
+    setCwxTimeConstraintPolicy();
+#endif
 
     std::unique_lock<std::mutex> lock(m_mutex);
     while (!m_quit) {
@@ -865,6 +946,9 @@ void CwxSender::applyLineLocked()
             m_keyListener(keyed);
         }
     }
+    // F13, manager ruling subject to JJ veto: unlike mi0bot's unconditional
+    // message CWX PTT, Off without MOX sends neither the key nor HL2 PTT.
+    // The computer sidetone above follows the logical key independently.
     const bool allowed = m_breakIn || m_mox;
     const bool key = (m_key || m_handKey) && allowed;
     const bool ptt = m_hl2 && m_ptt && allowed;

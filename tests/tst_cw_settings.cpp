@@ -5,6 +5,12 @@
 // audio device or radio socket is opened.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: F5 restore correction: switching radios keeps the new
+//               radio's unplugged selection, including fresh restore and
+//               reentrant request validation. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
+//   2026-10-27: Final fix wave: authoritative port refusal and a different-computer mirror.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, created: defaults, clamps, idempotent setters
 //               and persistence of the CW settings; clampCwPitchHz,
 //               stationCwPitchHz and RadioModel::setCwPitchHz; the
@@ -15,6 +21,9 @@
 //               offered reaches the window, and a QSK write where it is not
 //               offered is refused with it. J.J. Boyd (KG4VCF), AI-assisted
 //               via Claude Code.
+//   2026-10-27: CW transmit final fix wave F5: a peer's serial port write
+//               takes only None or one of the Core's ports. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -27,6 +36,7 @@
 
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
+#include "core/CwSerialKeyInput.h"
 #include "core/CwTypes.h"
 #include "core/HardwareProfile.h"
 #include "core/session/MirrorPolicy.h"
@@ -214,6 +224,7 @@ class TstCwSettings : public QObject {
 private slots:
     void initTestCase();
     void init();
+    void cleanup();
     void cleanupTestCase();
 
     void freshProfileReadsTheDefaults();
@@ -229,6 +240,11 @@ private slots:
     void eachSettingRoundTripsThroughTheCore();
     void outOfRangeWritesAreRefusedWithTheRange();
     void qskWriteWhereItIsNotOfferedIsRefusedWithTheReason();
+    void serialPortWriteTakesOnlyTheCoresPorts();
+    void directSerialPortWriteRefusesUnknownWithoutPersisting();
+    void remoteMirrorKeepsACorePortAbsentFromThisComputer();
+    void savedSerialPortForNextRadioReplacesThePreviousPortEvenWhenUnavailable();
+    void freshModelKeepsItsSavedUnavailableSerialPort();
 
 private:
     QTemporaryDir m_securityDir;
@@ -251,10 +267,18 @@ void TstCwSettings::init()
     for (const CwSetting& c : cwSettings()) {
         s.remove(QStringLiteral("hardware/%1/tx/%2").arg(kMac, QLatin1String(c.key)));
     }
+    // F5: the round trip's port is one of the test Core's serial ports.
+    setCwSerialPortNamesForTest(QStringList{QStringLiteral("/dev/tty.usbserial-1")});
+}
+
+void TstCwSettings::cleanup()
+{
+    setCwSerialPortNamesForTest(std::nullopt);
 }
 
 void TstCwSettings::cleanupTestCase()
 {
+    setCwSerialPortNamesForTest(std::nullopt);
     const QString path = AppSettings::instance().filePath();
     QFile::remove(path);
     QFile::remove(path + QStringLiteral(".bak"));
@@ -629,6 +653,132 @@ void TstCwSettings::qskWriteWhereItIsNotOfferedIsRefusedWithTheReason()
     s.core->cwKeyerController()->reevaluate();
     QCoreApplication::processEvents();
     QCOMPARE(coreSaid.count(), 1);
+}
+
+// F5: the reader opens the port and turns on DTR and RTS, so a peer's
+// cwSerialPort write takes only None or one of the Core's own serial
+// ports. Any other path is refused with plain words and the port stays.
+void TstCwSettings::serialPortWriteTakesOnlyTheCoresPorts()
+{
+    setCwSerialPortNamesForTest(QStringList{QStringLiteral("/dev/cu.usbserial-7"),
+                                            QStringLiteral("cu.usbserial-7")});
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    TransmitModel& coreTx = s.core->transmitModel();
+    for (const QString& port : {QStringLiteral("/etc/passwd"), QStringLiteral("/dev/disk0"),
+                                QStringLiteral("../../etc/passwd"), QStringLiteral("COM99")}) {
+        const SessionPropertyResult refused =
+            s.writeTransmit("cwSerialPort", MirrorWireKind::Utf8, QVariant(port));
+        QVERIFY2(!refused.accepted, qPrintable(port));
+        QCOMPARE(refused.reason, QStringLiteral("That serial port is not on the Core's computer."));
+        QVERIFY2(OperatorWording::isPlain(refused.reason), qPrintable(refused.reason));
+        QVERIFY(coreTx.cwSerialPort().isEmpty());
+    }
+    for (const QString& port : {QStringLiteral("/dev/cu.usbserial-7"),
+                                QStringLiteral("cu.usbserial-7"), QString()}) {
+        const SessionPropertyResult taken =
+            s.writeTransmit("cwSerialPort", MirrorWireKind::Utf8, QVariant(port));
+        QVERIFY2(taken.accepted, qPrintable(taken.reason));
+        QCOMPARE(coreTx.cwSerialPort(), port);
+    }
+}
+
+// F5: direct local writes use the Core's validation too; neither the
+// accepted value nor its persisted setting changes on refusal.
+void TstCwSettings::directSerialPortWriteRefusesUnknownWithoutPersisting()
+{
+    RadioModel model;
+    TransmitModel& tx = model.transmitModel();
+    tx.loadFromSettings(kMac);
+    const QString accepted = QStringLiteral("/dev/tty.usbserial-1");
+    tx.setCwSerialPort(accepted);
+    QCOMPARE(tx.cwSerialPort(), accepted);
+    const QString key = QStringLiteral("hardware/%1/tx/CW_SerialPort").arg(kMac);
+    QCOMPARE(AppSettings::instance().value(key).toString(), accepted);
+    QSignalSpy changed(&tx, &TransmitModel::cwSerialPortChanged);
+    QSignalSpy refused(&model, &RadioModel::cwSerialKeyRefusalChanged);
+    QTest::ignoreMessage(QtWarningMsg, "CW serial key input: That serial port is not on the Core's computer.");
+    tx.setCwSerialPort(QStringLiteral("/etc/passwd"));
+    QCOMPARE(tx.cwSerialPort(), accepted);
+    QCOMPARE(AppSettings::instance().value(key).toString(), accepted);
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(refused.count(), 1);
+    QCOMPARE(model.cwSerialKeyRefusal(), QString::fromLatin1(kCwSerialPortNotHereText));
+    tx.setCwSerialPort(QString());
+    QVERIFY(tx.cwSerialPort().isEmpty());
+    QCOMPARE(changed.count(), 1);
+}
+
+// F5: Core and window can enumerate different computers. Applying an
+// accepted mirror value is not a request to open a port on the window.
+void TstCwSettings::remoteMirrorKeepsACorePortAbsentFromThisComputer()
+{
+    setCwSerialPortNamesForTest(QStringList{QStringLiteral("client-only")});
+    RadioModel window(RadioModel::Role::Remote);
+    TransmitModel& tx = window.transmitModel();
+    QSignalSpy changed(&tx, &TransmitModel::cwSerialPortChanged);
+    const QString corePort = QStringLiteral("core-only");
+    QVERIFY(!cwSerialPortIsHere(corePort));
+    QVERIFY(tx.setProperty("cwSerialPort", corePort));
+    QCOMPARE(tx.cwSerialPort(), corePort);
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(window.cwSerialKeyRefusal().isEmpty());
+}
+
+// F5 correction: restoring another radio must replace the old selection,
+// even while the new radio's saved port is unplugged. It must never fall
+// back to opening/persisting the previous radio's enumerated port.
+void TstCwSettings::savedSerialPortForNextRadioReplacesThePreviousPortEvenWhenUnavailable()
+{
+    const QString previousMac = QStringLiteral("AA:BB:CC:DD:EE:44");
+    const QString previousPort = QStringLiteral("/dev/tty.usbserial-1");
+    const QString missingPort = QStringLiteral("saved-but-unplugged");
+    const QString savedKey = QStringLiteral("hardware/%1/tx/CW_SerialPort").arg(kMac);
+    AppSettings& settings = AppSettings::instance();
+    settings.setValue(savedKey, missingPort);
+    TransmitModel tx;
+    tx.loadFromSettings(previousMac);
+    tx.setCwSerialPort(previousPort);
+    QCOMPARE(tx.cwSerialPort(), previousPort);
+    QSignalSpy changed(&tx, &TransmitModel::cwSerialPortChanged);
+    QSignalSpy refused(&tx, &TransmitModel::cwSerialPortRefused);
+    tx.loadFromSettings(kMac);
+    QCOMPARE(tx.cwSerialPort(), missingPort);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.first().first().toString(), missingPort);
+    QCOMPARE(refused.count(), 0); // a trusted restore is not an invalid request
+    tx.persistToSettings(kMac);
+    QCOMPARE(settings.value(savedKey).toString(), missingPort);
+    QCOMPARE(settings.value(QStringLiteral("hardware/%1/tx/CW_SerialPort").arg(previousMac)).toString(),
+             previousPort);
+
+    // Restoring the label does not bypass the guard at the actual open.
+    CwSerialKeyInput input(CwSerialKeyInput::createPlatformLineSource());
+    QString error;
+    QTest::ignoreMessage(QtWarningMsg, "CW serial key: not a serial port here: saved-but-unplugged");
+    QVERIFY(!input.start(tx.cwSerialPort(), false, CwSerialLine::None, CwSerialLine::None, &error));
+    QVERIFY(!input.isReading());
+    QCOMPARE(error, QString::fromLatin1(kCwSerialPortNotHereText));
+}
+
+void TstCwSettings::freshModelKeepsItsSavedUnavailableSerialPort()
+{
+    const QString missingPort = QStringLiteral("saved-but-unplugged");
+    const QString savedKey = QStringLiteral("hardware/%1/tx/CW_SerialPort").arg(kMac);
+    AppSettings::instance().setValue(savedKey, missingPort);
+    TransmitModel tx;
+    QSignalSpy refused(&tx, &TransmitModel::cwSerialPortRefused);
+    // A restore must not temporarily disable request validation while it
+    // emits: a reentrant direct request still has to be refused.
+    connect(&tx, &TransmitModel::cwSerialPortChanged, &tx, [&tx]() {
+        tx.setCwSerialPort(QStringLiteral("/etc/passwd"));
+    });
+    tx.loadFromSettings(kMac);
+    QCOMPARE(tx.cwSerialPort(), missingPort);
+    QCOMPARE(refused.count(), 1);
+    QCOMPARE(refused.first().first().toString(), QString::fromLatin1(kCwSerialPortNotHereText));
+    tx.persistToSettings(kMac);
+    QCOMPARE(AppSettings::instance().value(savedKey).toString(), missingPort);
 }
 
 QTEST_MAIN(TstCwSettings)

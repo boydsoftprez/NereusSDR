@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: F3: controlled watchdog expiry and direct queued-close
+//               release evidence replace wall-clock proxies. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW verbs, capability and the CW
 //               settings' peer gate (R-CW-48, R-CW-49). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
@@ -20,13 +23,116 @@
 #include "MultiDeviceHarness.h"
 #include "fakes/QuietRadioConnection.h"
 
+#include "core/CwKeyLine.h"
 #include "core/CwTypes.h"
 #include "core/CwxSender.h"
 #include "core/safety/TxRefusal.h"
 
-#include <QElapsedTimer>
+#include <QEvent>
+#include <QPointer>
+#include <QThread>
+
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 namespace {
+
+// Test-owned monotonic time. Returning from sleep on every generation change
+// lets the sender re-read a shortened deadline as well as an advanced clock.
+// The fixture shuts this down before RadioModel destroys/joins the sender.
+class ControlledCwxTime {
+public:
+    using TimePoint = std::chrono::steady_clock::time_point;
+
+    TimePoint now()
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return timePoint(m_nowMs);
+    }
+    qint64 nowMs()
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_nowMs;
+    }
+    void sleep(TimePoint until)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (m_shutdown || timePoint(m_nowMs) >= until) {
+            return;
+        }
+        // Keep a wake that arrives between run()'s deadline snapshot and
+        // entry here; otherwise a just-shortened deadline could be missed.
+        if (m_wakePending) {
+            m_wakePending = false;
+            return;
+        }
+        m_waiting = true;
+        m_waitingAtMs = m_nowMs;
+        m_deadlineMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            until - timePoint(0)).count();
+        const quint64 generation = m_generation;
+        m_changed.wait(lock, [this, generation]() {
+            return m_shutdown || m_generation != generation;
+        });
+        m_waiting = false;
+        m_wakePending = false;
+    }
+    void advanceTo(qint64 ms)
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_nowMs = ms;
+            m_waiting = false;
+            m_wakePending = true;
+            ++m_generation;
+        }
+        m_changed.notify_all();
+    }
+    void wake()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_waiting = false;
+            m_wakePending = true;
+            ++m_generation;
+        }
+        m_changed.notify_all();
+    }
+    bool waitingAt(qint64 nowMs, qint64 deadlineMs)
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_waiting && m_waitingAtMs == nowMs && m_deadlineMs == deadlineMs;
+    }
+    void shutdown()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_shutdown = true;
+        }
+        m_changed.notify_all();
+    }
+    std::unique_ptr<CwxSender> makeSender()
+    {
+        return std::make_unique<CwxSender>([this]() { return now(); },
+                                          [this](TimePoint until) { sleep(until); });
+    }
+
+private:
+    static TimePoint timePoint(qint64 ms)
+    {
+        return TimePoint{} + std::chrono::hours(1000) + std::chrono::milliseconds(ms);
+    }
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+    qint64 m_nowMs{0};
+    qint64 m_waitingAtMs{-1};
+    qint64 m_deadlineMs{-1};
+    quint64 m_generation{0};
+    bool m_waiting{false};
+    bool m_wakePending{false};
+    bool m_shutdown{false};
+};
 
 const QHash<QByteArray, int> kCwPeer{{"deviceAuth", 1}, {"sessionHolder", 1},
                                      {"remoteTx", 1}, {"remoteCw", 1}, {"cwSettings", 1}};
@@ -38,10 +144,21 @@ const QString kCwSettingsWrite = QStringLiteral("Update this app to change the C
 // 20 m CWU with Semi break-in and CWX at 5 WPM, so a short text is still
 // queued when the answer arrives.
 struct CwCore {
-    Core core{true};
+    ControlledCwxTime time; // Outlives Core's model and sender.
+    std::atomic<bool> lastKey{false};
+    std::atomic<int> downs{0};
+    std::atomic<int> ups{0};
+    std::atomic<qint64> upAt{-1};
+    std::atomic<bool> deliveringPeerClose{false};
+    std::atomic<int> upsDuringPeerCloseOnMain{0};
+    Core core;
     NereusSDR::Test::QuietRadioConnection conn;
 
-    CwCore()
+    explicit CwCore(bool controlledTime = false)
+        : core(true, controlledTime ? Core::ModelFactory([this]() {
+                   return std::make_unique<RadioModel>(RadioModel::Role::Local,
+                                                       time.makeSender(), nullptr);
+               }) : Core::ModelFactory{})
     {
         core.model->injectConnectionForTest(&conn);
         core.model->wireCwKeyerConnectionForTest();
@@ -52,6 +169,25 @@ struct CwCore {
             slice->setDspMode(DSPMode::CWU);
             slice->setFrequency(14050000.0);
         }
+        // QuietRadioConnection and its base install no key callback. Own
+        // this observer before any writer starts; unlike keyHeldChanged,
+        // CwKeyLine calls it directly on the thread that changed the bit.
+        QThread* const mainThread = QCoreApplication::instance()->thread();
+        conn.cwKeyLine()->setOnChange([this, mainThread]() {
+            const bool key = conn.cwKeyLine()->cwx();
+            if (lastKey.exchange(key) == key) {
+                return; // HL2 PTT changes are not additional CWX key edges.
+            }
+            if (key) {
+                downs.fetch_add(1);
+            } else {
+                upAt.store(time.nowMs());
+                ups.fetch_add(1);
+                if (deliveringPeerClose.load() && QThread::currentThread() == mainThread) {
+                    upsDuringPeerCloseOnMain.fetch_add(1);
+                }
+            }
+        });
         QCoreApplication::processEvents();
     }
     ~CwCore()
@@ -59,6 +195,8 @@ struct CwCore {
         if (CwxSender* cwx = core.model->cwxSender()) {
             cwx->stop();
         }
+        time.shutdown(); // Unblocks a fake sleeper even after QVERIFY fails.
+        conn.cwKeyLine()->setOnChange({});
         core.server.reset();
         core.model->injectConnectionForTest(nullptr);
     }
@@ -269,26 +407,38 @@ private slots:
     // cw.key down with no up: the Core's sender lets go after 3 s.
     void aHeldKeyIsReleasedAfterThreeSeconds()
     {
-        CwCore rig;
+        CwCore rig(true);
         Device a(QStringLiteral("iPhone"), QStringLiteral("phone"));
         rig.core.pair(a);
         LoopbackTransport* app = rig.core.signIn(a, kCwPeer);
         QVERIFY(admitted(app));
         QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
-        QElapsedTimer held;
-        held.start();
         const QJsonObject down = rig.core.invoke(app, "cw.key", {boolArg("down", true)});
         QVERIFY2(down.value(QStringLiteral("accepted")).toBool(),
                  qPrintable(down.value(QStringLiteral("reason")).toString()));
         QVERIFY(rig.cwx()->isKeyHeld());
-        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), CwxSender::kKeyWatchdogMs + 2000);
-        QVERIFY(held.elapsed() >= CwxSender::kKeyWatchdogMs - 100);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, CwxSender::kKeyWatchdogMs), 2000);
+        QCOMPARE(rig.downs.load(), 1);
+        rig.time.advanceTo(CwxSender::kKeyWatchdogMs - 1);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            rig.time.waitingAt(CwxSender::kKeyWatchdogMs - 1, CwxSender::kKeyWatchdogMs), 2000);
+        QVERIFY(rig.cwx()->isKeyHeld());
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        QCOMPARE(rig.ups.load(), 0);
+        rig.time.advanceTo(CwxSender::kKeyWatchdogMs);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isSending(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.ups.load(), 1, 2000);
+        QCOMPARE(rig.upAt.load(), qint64(CwxSender::kKeyWatchdogMs));
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!rig.cwx()->isSending());
     }
 
     // cw.key up lets go at once.
     void keyUpReleases()
     {
-        CwCore rig;
+        CwCore rig(true);
         Device a(QStringLiteral("iPhone"), QStringLiteral("phone"));
         rig.core.pair(a);
         LoopbackTransport* app = rig.core.signIn(a, kCwPeer);
@@ -297,9 +447,17 @@ private slots:
         QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", true)})
                     .value(QStringLiteral("accepted")).toBool());
         QVERIFY(rig.cwx()->isKeyHeld());
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, CwxSender::kKeyWatchdogMs), 2000);
+        QCOMPARE(rig.downs.load(), 1);
+        QCOMPARE(rig.ups.load(), 0);
         QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", false)})
                     .value(QStringLiteral("accepted")).toBool());
         QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!rig.cwx()->isSending());
+        QCOMPARE(rig.ups.load(), 1);
+        QCOMPARE(rig.upAt.load(), qint64(0));
     }
 
     // A key held when the link drops is released by the Core at once, not
@@ -315,18 +473,35 @@ private slots:
         QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", true)})
                     .value(QStringLiteral("accepted")).toBool());
         QVERIFY(rig.cwx()->isKeyHeld());
-        QElapsedTimer dropped;
-        dropped.start();
+        const QPointer<LoopbackTransport> peer(app->peerForTest());
+        QVERIFY(peer);
+        QVERIFY(app->isOpen());
+        QVERIFY(peer->isOpen());
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        QCOMPARE(rig.downs.load(), 1);
+        QCOMPARE(rig.ups.load(), 0);
         app->closeLink(QStringLiteral("network lost"));
-        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), CwxSender::kKeyWatchdogMs + 2000);
-        QVERIFY2(dropped.elapsed() < CwxSender::kKeyWatchdogMs / 2,
-                 qPrintable(QString::number(dropped.elapsed())));
+        QVERIFY(!app->isOpen());
+        QVERIFY(peer->isOpen()); // The Core-side close is still queued.
+        QVERIFY(rig.cwx()->isKeyHeld());
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        rig.deliveringPeerClose.store(true);
+        QCoreApplication::sendPostedEvents(peer.data(), QEvent::MetaCall);
+        rig.deliveringPeerClose.store(false);
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!rig.cwx()->isSending());
+        QCOMPARE(rig.ups.load(), 1);
+        // A watchdog edge is written on CwxSender's worker and cannot
+        // satisfy this direct, main-thread close-dispatch observation.
+        QCOMPARE(rig.upsDuringPeerCloseOnMain.load(), 1);
     }
 
     // A transmit cut (Stop All TX) releases a held key and stops the text.
     void aTransmitCutReleasesTheKey()
     {
-        CwCore rig;
+        CwCore rig(true);
         Device a(QStringLiteral("iPhone"), QStringLiteral("phone"));
         rig.core.pair(a);
         LoopbackTransport* app = rig.core.signIn(a, kCwPeer);
@@ -335,8 +510,16 @@ private slots:
         QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", true)})
                     .value(QStringLiteral("accepted")).toBool());
         QVERIFY(rig.cwx()->isKeyHeld());
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, CwxSender::kKeyWatchdogMs), 2000);
+        QCOMPARE(rig.downs.load(), 1);
+        QCOMPARE(rig.ups.load(), 0);
         rig.core.model->stopAllTx(QStringLiteral("Transmit stopped."));
         QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), 1000);
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!rig.cwx()->isSending());
+        QCOMPARE(rig.ups.load(), 1);
+        QCOMPARE(rig.upAt.load(), qint64(0));
     }
 
     // Another device taking transmit ends the holder's CW at once.

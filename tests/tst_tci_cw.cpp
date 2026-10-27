@@ -14,6 +14,9 @@
 // connection's own and the fake connection sends nothing.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: F3: controlled sender time proves watchdog and timed
+//               releases at exact logical deadlines, including a repeated
+//               held press. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: CW transmit, CAT and TCI CW commands. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
 // =================================================================
@@ -24,7 +27,12 @@
 #include <QSignalSpy>
 
 #include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <type_traits>
 
 #include "core/AppSettings.h"
 #include "core/CwKeyLine.h"
@@ -41,6 +49,109 @@
 using namespace NereusSDR;
 
 namespace {
+
+// In particular, the injection overload requires its third argument, so
+// existing (Role, nullptr) calls still select the QObject-parent overload.
+static_assert(std::is_constructible_v<RadioModel>);
+static_assert(std::is_constructible_v<RadioModel, QObject*>);
+static_assert(std::is_constructible_v<RadioModel, RadioModel::Role>);
+static_assert(std::is_constructible_v<RadioModel, RadioModel::Role, std::nullptr_t>);
+
+// Test-owned monotonic time. Returning from sleep on every generation change
+// lets the sender re-read a shortened deadline as well as an advanced clock.
+// The fixture shuts this down before RadioModel destroys/joins the sender.
+class ControlledCwxTime {
+public:
+    using TimePoint = std::chrono::steady_clock::time_point;
+
+    TimePoint now()
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return timePoint(m_nowMs);
+    }
+    qint64 nowMs()
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_nowMs;
+    }
+    void sleep(TimePoint until)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (m_shutdown || timePoint(m_nowMs) >= until) {
+            return;
+        }
+        // Keep a wake that arrives between run()'s deadline snapshot and
+        // entry here; otherwise a just-shortened deadline could be missed.
+        if (m_wakePending) {
+            m_wakePending = false;
+            return;
+        }
+        m_waiting = true;
+        m_waitingAtMs = m_nowMs;
+        m_deadlineMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            until - timePoint(0)).count();
+        const quint64 generation = m_generation;
+        m_changed.wait(lock, [this, generation]() {
+            return m_shutdown || m_generation != generation;
+        });
+        m_waiting = false;
+        m_wakePending = false;
+    }
+    void advanceTo(qint64 ms)
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_nowMs = ms;
+            m_waiting = false;
+            m_wakePending = true;
+            ++m_generation;
+        }
+        m_changed.notify_all();
+    }
+    void wake()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_waiting = false;
+            m_wakePending = true;
+            ++m_generation;
+        }
+        m_changed.notify_all();
+    }
+    bool waitingAt(qint64 nowMs, qint64 deadlineMs)
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_waiting && m_waitingAtMs == nowMs && m_deadlineMs == deadlineMs;
+    }
+    void shutdown()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_shutdown = true;
+        }
+        m_changed.notify_all();
+    }
+    std::unique_ptr<CwxSender> makeSender()
+    {
+        return std::make_unique<CwxSender>([this]() { return now(); },
+                                          [this](TimePoint until) { sleep(until); });
+    }
+
+private:
+    static TimePoint timePoint(qint64 ms)
+    {
+        return TimePoint{} + std::chrono::hours(1000) + std::chrono::milliseconds(ms);
+    }
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+    qint64 m_nowMs{0};
+    qint64 m_waitingAtMs{-1};
+    qint64 m_deadlineMs{-1};
+    quint64 m_generation{0};
+    bool m_waiting{false};
+    bool m_wakePending{false};
+    bool m_shutdown{false};
+};
 
 class TciCwMockConnection : public RadioConnection {
     Q_OBJECT
@@ -93,24 +204,27 @@ void pump(int passes = 6)
     }
 }
 
-// When the CWX bit last went up and down, on the wall clock from `clock`.
+// CWX key edges, on controlled sender time when that fixture mode is used.
 struct KeyTimes {
     QElapsedTimer clock;
     std::atomic<qint64> downAt{-1};
     std::atomic<qint64> upAt{-1};
     std::atomic<int> downs{0};
+    std::atomic<int> ups{0};
 };
 
 // A local model with a fake connection, one slice on 20 m CWU bound for
 // transmit, Semi break-in, CWX at 60 WPM, and the TCI protocol on it.
 struct Rig {
+    ControlledCwxTime time; // Declared first: outlives the owned sender.
     RadioModel model;
     TciCwMockConnection conn;
     SliceModel* slice{nullptr};
     std::unique_ptr<TciProtocol> tci;
     KeyTimes times;
 
-    Rig()
+    explicit Rig(bool controlledTime = false)
+        : model(RadioModel::Role::Local, controlledTime ? time.makeSender() : nullptr, nullptr)
     {
         AppSettings::instance().clear();
         model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::OrionMKII, 22));
@@ -124,13 +238,15 @@ struct Rig {
         model.transmitModel().setCwxSpeed(60);
         tci = std::make_unique<TciProtocol>(&model);
         times.clock.start();
-        conn.cwKeyLine()->setOnChange([this]() {
+        conn.cwKeyLine()->setOnChange([this, controlledTime]() {
             const bool down = conn.cwKeyLine()->cwx();
+            const qint64 now = controlledTime ? time.nowMs() : times.clock.elapsed();
             if (down) {
-                times.downAt.store(times.clock.elapsed());
+                times.downAt.store(now);
                 times.downs.fetch_add(1);
             } else {
-                times.upAt.store(times.clock.elapsed());
+                times.upAt.store(now);
+                times.ups.fetch_add(1);
             }
         });
         pump();
@@ -138,6 +254,7 @@ struct Rig {
     ~Rig()
     {
         model.cwxSender()->stop();
+        time.shutdown(); // Also runs after an early QVERIFY return.
         pump();
         conn.cwKeyLine()->setOnChange({});
         tci.reset();
@@ -272,7 +389,7 @@ private slots:
     // ── The keyer ──────────────────────────────────────────────────────────
     void keyerKeysTheCwxBitAndMoxInSemi()
     {
-        Rig rig;
+        Rig rig(true);
         QCOMPARE(rig.cmd(QStringLiteral("keyer:0,true;")), QString());
         QVERIFY(rig.keyed());
         QVERIFY(rig.cwx()->isKeyHeld());
@@ -285,7 +402,7 @@ private slots:
 
     void keyerInOffRaisesNoMox()
     {
-        Rig rig;
+        Rig rig(true);
         rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
         pump();
         rig.cmd(QStringLiteral("keyer:0,true;"));
@@ -297,50 +414,92 @@ private slots:
 
     void keyerWithNoReleaseDrops3000MsAfterThePress()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true;"));
         QVERIFY(rig.keyed());
-        const qint64 down = rig.times.downAt.load();
-        // A second press while held does not restart the count (Thetis).
-        QTest::qWait(500);
+        QVERIFY(rig.cwx()->isKeyHeld());
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, 3000), 2000);
+        QCOMPARE(rig.times.downs.load(), 1);
+        QCOMPARE(rig.times.ups.load(), 0);
+
+        // Reach the second press while the original Key is demonstrably
+        // held. Repeated presses must neither add an edge nor move expiry.
+        rig.time.advanceTo(500);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(500, 3000), 2000);
+        QVERIFY(rig.keyed());
+        QVERIFY(rig.cwx()->isKeyHeld());
         rig.cmd(QStringLiteral("keyer:0,true;"));
-        QTRY_VERIFY_WITH_TIMEOUT(!rig.keyed(), 6000);
-        const qint64 held = rig.times.upAt.load() - down;
-        qInfo() << "TCI keyer watchdog: held" << held << "ms";
-        QVERIFY2(held >= 2990 && held < 3500, qPrintable(QString::number(held)));
+        rig.time.wake();
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(500, 3000), 2000);
+        QCOMPARE(rig.times.downs.load(), 1);
+        rig.time.advanceTo(2999);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(2999, 3000), 2000);
+        QVERIFY(rig.keyed());
+        QCOMPARE(rig.times.ups.load(), 0);
+        rig.time.advanceTo(3000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isSending(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.times.ups.load(), 1, 2000);
+        QVERIFY(!rig.keyed());
+        QCOMPARE(rig.times.upAt.load(), qint64(3000));
         QTRY_VERIFY(!rig.model.mox());
         QVERIFY(!rig.cwx()->isSending());
     }
 
     void keyerPressWithADurationReleasesOnTime()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true,120;"));
         QVERIFY(rig.keyed());
-        const qint64 down = rig.times.downAt.load();
-        QTRY_VERIFY_WITH_TIMEOUT(!rig.keyed(), 3000);
-        const qint64 held = rig.times.upAt.load() - down;
-        qInfo() << "TCI keyer timed press: held" << held << "ms";
-        QVERIFY2(held >= 115 && held < 1000, qPrintable(QString::number(held)));
+        rig.time.wake();
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, 120), 2000);
+        rig.time.advanceTo(119);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(119, 120), 2000);
+        QVERIFY(rig.keyed());
+        QVERIFY(rig.cwx()->isKeyHeld());
+        QCOMPARE(rig.times.downs.load(), 1);
+        QCOMPARE(rig.times.ups.load(), 0);
+        rig.time.advanceTo(120);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isSending(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.times.ups.load(), 1, 2000);
+        QVERIFY(!rig.keyed());
+        QCOMPARE(rig.times.downAt.load(), qint64(0));
+        QCOMPARE(rig.times.upAt.load(), qint64(120));
         QTRY_VERIFY(!rig.model.mox());
     }
 
     void keyerReleaseWithADurationCountsFromThePress()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true;"));
-        const qint64 down = rig.times.downAt.load();
-        rig.cmd(QStringLiteral("keyer:0,false,200;"));
         QVERIFY(rig.keyed());
-        QTRY_VERIFY_WITH_TIMEOUT(!rig.keyed(), 3000);
-        const qint64 held = rig.times.upAt.load() - down;
-        qInfo() << "TCI keyer timed release: held" << held << "ms";
-        QVERIFY2(held >= 195 && held < 1000, qPrintable(QString::number(held)));
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, 3000), 2000);
+        rig.time.advanceTo(80);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(80, 3000), 2000);
+        QVERIFY(rig.cwx()->isKeyHeld());
+        rig.cmd(QStringLiteral("keyer:0,false,200;"));
+        rig.time.wake(); // Interrupt the already-entered 3 s sleep.
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(80, 200), 2000);
+        QVERIFY(rig.keyed());
+        rig.time.advanceTo(199);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(199, 200), 2000);
+        QVERIFY(rig.keyed());
+        QCOMPARE(rig.times.ups.load(), 0);
+        rig.time.advanceTo(200);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isKeyHeld(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.cwx()->isSending(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.times.ups.load(), 1, 2000);
+        QVERIFY(!rig.keyed());
+        QCOMPARE(rig.times.downs.load(), 1);
+        QCOMPARE(rig.times.downAt.load(), qint64(0));
+        QCOMPARE(rig.times.upAt.load(), qint64(200));
+        QTRY_VERIFY(!rig.model.mox());
     }
 
     void cwMacrosStopReleasesTheKeyerAndItsMox()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true;"));
         QVERIFY(rig.model.mox());
         rig.cmd(QStringLiteral("cw_macros_stop;"));
@@ -351,7 +510,7 @@ private slots:
 
     void leavingCwReleasesTheKeyerAndItsMox()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true;"));
         QVERIFY(rig.keyed());
         rig.slice->setDspMode(DSPMode::USB);
@@ -379,7 +538,7 @@ private slots:
 
     void macroWhileTheKeyerIsHeldIsIgnored()
     {
-        Rig rig;
+        Rig rig(true);
         rig.cmd(QStringLiteral("keyer:0,true;"));
         QVERIFY(rig.cwx()->isKeyHeld());
         rig.cmd(QStringLiteral("cw_macros:0,CQ;"));
@@ -391,7 +550,7 @@ private slots:
     // ── The owner ──────────────────────────────────────────────────────────
     void anotherAppCannotKeyWhileOneOwnsTheKeyerAndLeavingStopsIt()
     {
-        Rig rig;
+        Rig rig(true);
         int appA = 0;
         int appB = 0;
         rig.tci->setCommandOwner(&appA);

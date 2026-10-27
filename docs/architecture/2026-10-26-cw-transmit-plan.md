@@ -821,7 +821,7 @@ watchdog cite `TCIServer.cs:8233, 9066-9093, 8287`).
   `CATCommands.cs:3581-3645`; `KY` read never changes the mode; `KY` set in USB on 40 m
   switches to CWL first, on 20 m to CWU (D13 note in the code).
 - `ZZKS020;` sets CWX speed 20; `ZZKS099;` clamps to 60; `ZZKM3;` sends memory 3;
-  `ZZKM9;` answers `?;`; `ZZSS;` stops; `ZZCS025;` sets the keyer speed; `ZZCL0700;`
+  `ZZKM9;` answers `?;`; `ZZSS;` stops; `ZZCS25;` sets the keyer speed; `ZZCL0700;`
   sets the pitch 700 and reads back `ZZCL0700;`; `ZZQK1;` answers `?;` where QSK is
   unavailable; `ZZCD1500;` clamps to 1000 (note about Thetis's 150 to 5000).
 - TCI: `cw_macros:0,CQ TEST;` sends; `cw_macros_speed:28;` sets and reports;

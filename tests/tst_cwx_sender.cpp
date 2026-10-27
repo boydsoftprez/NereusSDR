@@ -16,6 +16,14 @@
 // fake connections' own, and the fake connections send nothing.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: F7 review correction: stop the model during a controlled
+//               Off/no-MOX post-message hang without a stop announcement.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Final fix wave F13: HL2 in Off never drives CWX or its PTT
+//               without MOX, including the message hang and held Key.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Final fix wave: quiet logical Off stops and a keyed MOX positive control.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: CW transmit, the CWX sender. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
 //   2026-10-27: CW transmit, the Key's timed release for the TCI keyer
@@ -27,11 +35,13 @@
 #include <QCoreApplication>
 #include <QSignalSpy>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #if !defined(Q_OS_WIN)
@@ -41,6 +51,7 @@
 #include "OperatorWording.h"
 #include "RealtimeTestLoad.h"
 #include "core/AppSettings.h"
+#include "core/AudioEngine.h"
 #include "core/CwKeyLine.h"
 #include "core/CwTypes.h"
 #include "core/CwxSender.h"
@@ -82,11 +93,24 @@ public:
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_frozen = true;
     }
+    // One-shot barrier before advancing to this element deadline. The
+    // preceding tick has finished when frozenBefore() observes the sleeper.
+    void freezeBefore(SteadyTime until)
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        m_freezeBefore = until;
+    }
+    bool frozenBefore(SteadyTime until)
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_frozen && m_sleepingUntil == until;
+    }
     void thaw()
     {
         {
             const std::lock_guard<std::mutex> lock(m_mutex);
             m_frozen = false;
+            m_freezeBefore.reset(); // Teardown also cancels a not-yet-reached barrier.
         }
         m_cv.notify_all();
     }
@@ -94,7 +118,13 @@ public:
     {
         {
             std::unique_lock<std::mutex> lock(m_mutex);
+            if (m_freezeBefore == until) {
+                m_freezeBefore.reset();
+                m_frozen = true;
+            }
+            m_sleepingUntil = until;
             m_cv.wait(lock, [this] { return !m_frozen; });
+            m_sleepingUntil.reset();
         }
         if (m_hook && m_hook(until)) {
             return;
@@ -114,6 +144,8 @@ private:
     std::condition_variable m_cv;
     SteadyTime m_now{SteadyTime{} + 1000h};
     bool m_frozen{false};
+    std::optional<SteadyTime> m_freezeBefore;
+    std::optional<SteadyTime> m_sleepingUntil;
     std::function<bool(SteadyTime)> m_hook;
 };
 
@@ -316,11 +348,18 @@ struct LineWatch {
 // A local model on a P2 OrionMKII with a fake connection, one slice on
 // 20 m CWU, Semi break-in, CWX at 60 WPM.
 struct Rig {
+    FakeTime* const time;
     RadioModel model;
     CwxMockConnection conn;
     SliceModel* slice{nullptr};
 
-    Rig()
+    explicit Rig(FakeTime* testTime = nullptr)
+        : time(testTime)
+        , model(RadioModel::Role::Local,
+                testTime ? std::make_unique<CwxSender>(
+                    [testTime]() { return testTime->now(); },
+                    [testTime](SteadyTime until) { testTime->sleep(until); }) : nullptr,
+                nullptr)
     {
         AppSettings::instance().clear();
         model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::OrionMKII, 22));
@@ -336,6 +375,10 @@ struct Rig {
     }
     ~Rig()
     {
+        if (time != nullptr) {
+            model.cwxSender()->stop();
+            time->thaw(); // Always unblock before model destruction joins.
+        }
         model.injectConnectionForTest(nullptr);
         AppSettings::instance().clear();
     }
@@ -659,6 +702,63 @@ private slots:
         QCOMPARE(b.rec.snaps(), expected);
     }
 
+    // F13: the sender's manual-Off rule also gates the HL2 PTT bit.
+    // A full fake-clock message traverses its hang with no wire edges.
+    void hl2InOffWithoutMox_messageAndHangStayOff_data()
+    {
+        QTest::addColumn<bool>("memory");
+        QTest::newRow("text") << false;
+        QTest::newRow("memory") << true;
+    }
+
+    void hl2InOffWithoutMox_messageAndHangStayOff()
+    {
+        QFETCH(bool, memory);
+        Bench b;
+        b.time.set(b.time.start);
+        b.sender->setHl2(true);
+        b.sender->setBreakInActive(false);
+        b.sender->setMemories({QStringLiteral("E")});
+        QVERIFY(memory ? b.sender->sendMemory(1) : b.sender->sendText(QStringLiteral("E")));
+        QTRY_VERIFY(b.idle());
+        QVERIFY(b.time.ms(b.time.now()) >= 300); // message plus the existing hang
+        QVERIFY(b.rec.snaps().empty());
+        QVERIFY(!b.line->cwx());
+        QVERIFY(!b.line->cwxPtt());
+
+        // MOX supplies the manual key in Off for either request path.
+        b.sender->setMoxActive(true);
+        QVERIFY(memory ? b.sender->sendMemory(1) : b.sender->sendText(QStringLiteral("E")));
+        QTRY_VERIFY(b.idle());
+        QVERIFY(b.rec.anyPtt());
+        QCOMPARE(b.rec.keyEdges().size(), size_t(2));
+        QVERIFY(!b.line->cwx());
+        QVERIFY(!b.line->cwxPtt());
+    }
+
+    void hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt()
+    {
+        Bench b;
+        b.time.set(b.time.start);
+        b.time.freeze();
+        b.sender->setHl2(true);
+        b.sender->setBreakInActive(false);
+        b.sender->setKeyHeld(true);
+        QVERIFY(b.sender->isKeyHeld());
+        QVERIFY(b.rec.snaps().empty());
+        QVERIFY(!b.line->cwx());
+        QVERIFY(!b.line->cwxPtt());
+        b.sender->setMoxActive(true);
+        QVERIFY(b.line->cwx());
+        QVERIFY(b.line->cwxPtt());
+        b.sender->setMoxActive(false);
+        QVERIFY(!b.line->cwx());
+        QVERIFY(!b.line->cwxPtt());
+        b.sender->setKeyHeld(false);
+        QVERIFY(!b.sender->isKeyHeld());
+        b.time.thaw();
+    }
+
     void nonHl2NeverSetsThePtt()
     {
         Bench b;
@@ -917,6 +1017,146 @@ private slots:
         QTest::qWait(300);
         QVERIFY(!watch.keyed.load());
         QVERIFY(!rig.conn.cwKeyLine()->cwx());
+    }
+
+    void modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly()
+    {
+        Rig rig;
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
+        pump();
+        QVERIFY(!rig.model.mox());
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        QVERIFY(rig.cwx()->sendText(QString(1000, QLatin1Char('T'))));
+        QVERIFY(rig.cwx()->isSending());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(!rig.cwx()->isSending());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QCOMPARE(stopped.count(), 0);
+        rig.cwx()->setKeyHeld(true);
+        QVERIFY(rig.cwx()->isKeyHeld());
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QCOMPARE(stopped.count(), 0);
+    }
+
+    // F7: finish the entire character, then stop inside the existing hang.
+    // No repeat, current mark, queued text or held Key can explain sending.
+    void modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly()
+    {
+        FakeTime time; // Outlives Rig's injected sender and its join.
+        std::atomic<bool> lastLogicalKey{false};
+        std::atomic<int> logicalDowns{0};
+        std::atomic<int> logicalUps{0};
+        std::atomic<qint64> downAt{-1};
+        std::atomic<qint64> upAt{-1};
+        Rig rig(&time);
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
+        rig.model.transmitModel().setCwxRepeat(false);
+        pump();
+        QCOMPARE(rig.model.cwKeyerController()->effectiveBreakInMode(), CwBreakInMode::Off);
+        QVERIFY(!rig.model.mox());
+        QVERIFY(!rig.model.transmitModel().cwxRepeat());
+        QVERIFY(rig.model.audioEngine()->cwSidetoneRun());
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        QSignalSpy started(rig.cwx(), &CwxSender::characterStarted);
+
+        // The existing E schedule is one dot plus three up elements. At
+        // 60 WPM the PTT lead is 40 ms: down40, up60, trailing ups80/100,
+        // then the empty-queue hang tick120. Park before its next tick140,
+        // well before the existing 300 ms hang from down40 ends at340.
+        const int elementMs = CwxSender::elementMs(60);
+        const qint64 leadMs = (CwxSender::kPttDelayMs / elementMs) * elementMs;
+        const qint64 hangOnlyAtMs = leadMs + 4 * elementMs;
+        const SteadyTime parkedDeadline = time.start
+            + std::chrono::milliseconds(hangOnlyAtMs + elementMs);
+        time.freezeBefore(parkedDeadline);
+        AudioEngine* const engine = rig.model.audioEngine();
+        // Observe the model's actual sidetone feed without replacing its
+        // key listener. This hook runs after each completed sender tick.
+        time.setHook([&time, &lastLogicalKey, &logicalDowns, &logicalUps,
+                      &downAt, &upAt, engine](SteadyTime) {
+            const bool key = engine->cwSidetoneKeyed();
+            if (lastLogicalKey.exchange(key) != key) {
+                if (key) {
+                    downAt.store(time.ms(time.now()));
+                    logicalDowns.fetch_add(1);
+                } else {
+                    upAt.store(time.ms(time.now()));
+                    logicalUps.fetch_add(1);
+                }
+            }
+            return false;
+        });
+        QVERIFY(rig.cwx()->sendText(QStringLiteral("E")));
+        QTRY_VERIFY_WITH_TIMEOUT(time.frozenBefore(parkedDeadline), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 2000);
+        QCOMPARE(started.first().first().toInt(), 0);
+        QCOMPARE(time.ms(time.now()), hangOnlyAtMs);
+        QCOMPARE(logicalDowns.load(), 1);
+        QCOMPARE(logicalUps.load(), 1);
+        QCOMPARE(downAt.load(), leadMs);
+        QCOMPARE(upAt.load(), leadMs + elementMs);
+        QCOMPARE(rig.cwx()->queuedCharacters(), 0);
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!engine->cwSidetoneKeyed());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!rig.model.mox());
+        QVERIFY(rig.cwx()->isSending()); // Only the existing hang remains.
+
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(!rig.cwx()->isSending());
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QCOMPARE(rig.cwx()->queuedCharacters(), 0);
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
+        QVERIFY(!engine->cwSidetoneKeyed());
+        QVERIFY(!rig.model.mox());
+        pump();
+        QCOMPARE(stopped.count(), 0);
+        QCOMPARE(logicalDowns.load(), 1);
+        QCOMPARE(logicalUps.load(), 1);
+        QCOMPARE(time.ms(time.now()), hangOnlyAtMs); // Never traversed hang.
+    }
+
+    void modelStopAllTxInOffWithMox_announcesAndClearsSender()
+    {
+        Rig rig;
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
+        pump();
+        rig.model.moxController()->setMox(true);
+        QVERIFY(rig.model.mox());
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        rig.cwx()->setKeyHeld(true);
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(!rig.cwx()->isSending());
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QCOMPARE(stopped.count(), 1);
+    }
+
+    void modelStopAllTxInQsk_announcesAndClearsSender()
+    {
+        Rig rig;
+        rig.model.setCapsForTest(/*hasAlex=*/false);
+        rig.model.cwKeyerController()->reevaluate();
+        QVERIFY2(rig.model.cwKeyerController()->qskAvailable(),
+                 qPrintable(rig.model.cwKeyerController()->qskUnavailableReason()));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        pump();
+        QCOMPARE(rig.model.cwKeyerController()->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        QVERIFY(!rig.model.mox());
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        rig.cwx()->setKeyHeld(true);
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(!rig.cwx()->isSending());
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!rig.conn.cwKeyLine()->cwx());
+        QCOMPARE(stopped.count(), 1);
     }
 
     void modelStopAllTxStopsCwx()

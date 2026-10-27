@@ -23,6 +23,9 @@
 //   2026-10-27: CW transmit final fix wave F2: the round trip's Core offers
 //               QSK, which it now refuses where it is not offered. J.J.
 //               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F5: the round trip's serial port
+//               names are the Core's ports. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //   2026-10-04: Regression coverage for unkeyed PC preview demand, the actual
 //               Phone/CW gauge, source lifecycle and pre-key PCM discard.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -139,6 +142,7 @@
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/CwSerialKeyInput.h"
 #include "core/CwTypes.h"
 #include "core/CwxSender.h"
 #include "core/IAudioBus.h"
@@ -2341,6 +2345,10 @@ private slots:
             QVERIFY2(h.station.transmitModel().cwQskUnavailableReason().isEmpty(),
                      qPrintable(h.station.transmitModel().cwQskUnavailableReason()));
         }
+        // F5: the Core takes only its own serial ports from a window; the
+        // names written below are the test Core's.
+        setCwSerialPortNamesForTest(QStringList{QStringLiteral("CQ"), QStringLiteral("CQCQ")});
+        const auto restorePorts = qScopeGuard([] { setCwSerialPortNamesForTest(std::nullopt); });
         const QStringList names{
             QStringLiteral("cwKeyerSpeed"), QStringLiteral("cwKeyerMode"),
             QStringLiteral("cwKeyerWeight"), QStringLiteral("cwReversePaddles"),

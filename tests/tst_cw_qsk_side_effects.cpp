@@ -473,6 +473,7 @@ private slots:
     {
         Rig rig;
         rig.selectBreakIn(CwBreakInMode::Qsk);
+        rig.model.setCwQskGapManualForTest(true);
         TxTimeOutTimer* tot = rig.model.txTimeOutTimer();
         QVERIFY(tot);
         QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
@@ -505,7 +506,10 @@ private slots:
         // break-in delay (400 ms here).
         rig.key(false, false, false);
         QVERIFY(tot->isTicking());
-        QTRY_VERIFY_WITH_TIMEOUT(!tot->isTicking(), 3000);
+        QVERIFY(rig.model.cwQskGapPendingForTest());
+        rig.model.endCwQskGapForTest();
+        QVERIFY(!rig.model.cwQskGapPendingForTest());
+        QVERIFY(!tot->isTicking());
     }
 
     // ── F1: a remote window is not a second writer ───────────────────────

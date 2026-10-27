@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - F3: constructor-only CWX sender injection for controlled
+//                test time, with normal model wiring. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-26 - CW transmit, remote CW (R-CW-49): requestCwxFor,
 //                stopCwxFor, cwxSendingFor, cwxActiveFor and
 //                setCwxHolderRefusal, so the Core's CWX sender runs a
@@ -1303,6 +1306,10 @@ public:
     // DaemonApp.cpp, every test) keeps resolving to the constructor above
     // and keeps defaulting to Role::Local without any change on its end.
     RadioModel(Role role, QObject* parent = nullptr);
+    // F3 test seam: supply an idle sender constructed with its Clock/Sleeper.
+    // Ownership transfers before normal CW wiring, which still runs once.
+    // The parent argument is required so (Role, nullptr) stays unambiguous.
+    RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObject* parent);
     ~RadioModel() override;
 
     // Remote-daemon R2 Task 4.

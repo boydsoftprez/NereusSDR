@@ -575,6 +575,9 @@ P2RadioConnection::P2RadioConnection(QObject* parent)
 P2RadioConnection::~P2RadioConnection()
 {
     // CW transmit (2026-10-26): a key change after this posts nothing.
+    // Key-line writers must already be stopped and released by
+    // RadioModel::teardownConnection before destruction starts; otherwise a
+    // callback that loaded target before it is cleared could still post.
     m_cwKeyPost->target.store(nullptr, std::memory_order_release);
     if (m_running) {
         disconnect();

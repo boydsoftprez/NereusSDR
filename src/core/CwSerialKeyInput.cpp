@@ -27,6 +27,13 @@
 //              of their own, edge driven (Linux TIOCMIWAIT, Windows
 //              WaitCommEvent, macOS a 1 ms TIOCMGET poll), keying the host
 //              key line. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27 - Final fix wave F5: only one of this computer's serial ports
+//              is opened (cwSerialPortIsHere), so no writer can make the
+//              reader open another path. J.J. Boyd (KG4VCF), AI-assisted
+//              via Claude Code.
+// 2026-10-27 - Final fix wave F5/F6: normalize opened port names and carry
+//              the gate's refusal to the main thread once per physical
+//              key hold. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "core/CwSerialKeyInput.h"
 
@@ -36,10 +43,17 @@
 #include "core/platform/ThreadPlacement.h"
 
 #include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QtGlobal>
+
+#ifdef HAVE_SERIALPORT
+#include <QSerialPortInfo>
+#endif
 
 #include <chrono>
 #include <condition_variable>
+#include <optional>
 #include <utility>
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
@@ -60,6 +74,32 @@
 namespace NereusSDR {
 
 namespace {
+
+QMutex& portNamesForTestLock()
+{
+    static QMutex lock;
+    return lock;
+}
+
+std::optional<QStringList>& portNamesForTest()
+{
+    static std::optional<QStringList> names;
+    return names;
+}
+
+// Final fix wave F5: a name the readers would open that is not one of this
+// computer's ports is refused before anything is opened.
+bool refuseUnknownPort(const QString& port, QString* error)
+{
+    if (cwSerialPortIsHere(port)) {
+        return false;
+    }
+    qCWarning(lcConnection).noquote() << "CW serial key: not a serial port here:" << port;
+    if (error != nullptr) {
+        *error = QString::fromLatin1(kCwSerialPortNotHereText);
+    }
+    return true;
+}
 
 void nameThisThread()
 {
@@ -83,6 +123,9 @@ public:
     bool open(const QString& port, QString* error) override
     {
         closePort();
+        if (refuseUnknownPort(port, error)) {
+            return false;
+        }
         m_stop.store(false, std::memory_order_release);
         // A bare name ("ttyUSB0", "cu.usbserial-1410") is under /dev.
         const QString path = port.startsWith(QLatin1Char('/'))
@@ -331,6 +374,9 @@ public:
     bool open(const QString& port, QString* error) override
     {
         closePort();
+        if (refuseUnknownPort(port, error)) {
+            return false;
+        }
         if (m_stopEvent != nullptr) {
             ResetEvent(m_stopEvent);
         }
@@ -482,6 +528,36 @@ public:
 
 } // namespace
 
+QStringList cwSerialPortNamesHere()
+{
+    {
+        QMutexLocker lock(&portNamesForTestLock());
+        if (portNamesForTest().has_value()) {
+            return *portNamesForTest();
+        }
+    }
+    QStringList names;
+#ifdef HAVE_SERIALPORT
+    for (const QSerialPortInfo& info : QSerialPortInfo::availablePorts()) {
+        names.append(info.systemLocation());
+        names.append(info.portName());
+    }
+#endif
+    return names;
+}
+
+bool cwSerialPortIsHere(const QString& port)
+{
+    const QString name = port.trimmed();
+    return !name.isEmpty() && cwSerialPortNamesHere().contains(name);
+}
+
+void setCwSerialPortNamesForTest(std::optional<QStringList> names)
+{
+    QMutexLocker lock(&portNamesForTestLock());
+    portNamesForTest() = std::move(names);
+}
+
 std::unique_ptr<CwSerialKeyInput::LineSource> CwSerialKeyInput::createPlatformLineSource()
 {
 #if defined(Q_OS_LINUX)
@@ -513,7 +589,7 @@ bool CwSerialKeyInput::start(const QString& port, bool paddles, CwSerialLine key
                              CwSerialLine pttLine, QString* error)
 {
     stopReading();
-    if (!m_source->open(port, error)) {
+    if (!m_source->open(port.trimmed(), error)) {
         return false;
     }
     {
@@ -549,6 +625,7 @@ void CwSerialKeyInput::stopReading()
     // Nothing is read now: no line counts as down.
     m_level = {false, false};
     m_blocked = {false, false};
+    m_refusalPosted = false;
     m_paddleDown.store(false, std::memory_order_release);
 }
 
@@ -607,6 +684,35 @@ void CwSerialKeyInput::onLevelsLocked(bool dsr, bool cts)
         m_level[kCts] = cts;
         onEdgeLocked(kCts, cts);
     }
+    // Both levels are updated before deciding whether the physical hold
+    // ended: changing from one paddle to the other is still one hold.
+    if (!keyHeldLocked()) {
+        m_refusalPosted = false;
+    }
+}
+
+bool CwSerialKeyInput::keyHeldLocked() const
+{
+    if (m_keyLine != CwSerialLine::None) {
+        return (lineIs(m_keyLine, kDsr) && m_level[kDsr])
+            || (lineIs(m_keyLine, kCts) && m_level[kCts]);
+    }
+    return m_pttLine == CwSerialLine::None && m_paddles
+        && (m_level[kDsr] || m_level[kCts]);
+}
+
+void CwSerialKeyInput::postGateRefusalLocked()
+{
+    if (m_refusalPosted || m_gateRefusal.isEmpty()) {
+        return;
+    }
+    m_refusalPosted = true;
+    const TxRefusal refusal = m_gateRefusal;
+    // The main thread supplied the gate's words with its state. Never
+    // read models on this reader thread, and keep the refusal if the gate
+    // changes again before this queued notification is delivered.
+    QMetaObject::invokeMethod(this, [this, refusal]() { emit keyRefused(refusal); },
+                              Qt::QueuedConnection);
 }
 
 bool CwSerialKeyInput::lineIs(CwSerialLine chosen, Line line) const
@@ -674,8 +780,14 @@ void CwSerialKeyInput::setStraightLocked(Line line, bool down)
     if (m_blocked[line] || m_straightOn) {
         return;
     }
-    if (!m_gateAllowed.load(std::memory_order_acquire) || !m_straightSink
-        || !m_straightSink(true)) {
+    if (!m_gateAllowed.load(std::memory_order_acquire)) {
+        m_blocked[line] = true;
+        postGateRefusalLocked();
+        return;
+    }
+    if (!m_straightSink || !m_straightSink(true)) {
+        // The sender may be busy with text or its Key. This is not a
+        // refusal by the keyer gate and must not invent its reason.
         m_blocked[line] = true;
         return;
     }
@@ -701,7 +813,12 @@ void CwSerialKeyInput::setPaddleLocked(Line line, bool down)
     if (m_blocked[line] || on) {
         return;
     }
-    if (!m_gateAllowed.load(std::memory_order_acquire) || !m_line) {
+    if (!m_gateAllowed.load(std::memory_order_acquire)) {
+        m_blocked[line] = true;
+        postGateRefusalLocked();
+        return;
+    }
+    if (!m_line) {
         m_blocked[line] = true;
         return;
     }
@@ -776,11 +893,15 @@ void CwSerialKeyInput::setStraightKeySink(StraightKeySink sink)
     m_straightSink = std::move(sink);
 }
 
-void CwSerialKeyInput::setGateAllowed(bool allowed)
+void CwSerialKeyInput::setGateAllowed(bool allowed, const TxRefusal& refusal)
 {
     const std::lock_guard<std::mutex> lock(m_mutex);
-    m_gateAllowed.store(allowed, std::memory_order_release);
+    m_gateRefusal = refusal;
+    const bool wasAllowed = m_gateAllowed.exchange(allowed, std::memory_order_acq_rel);
     if (!allowed) {
+        if (wasAllowed && keyHeldLocked()) {
+            postGateRefusalLocked();
+        }
         releaseKeyBitsLocked();
     }
 }

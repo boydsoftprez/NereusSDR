@@ -121,6 +121,14 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-10-27 - F5 restore correction: retain the selected radio's saved
+//                 serial port while unplugged; validate direct requests
+//                 independently of trusted restore. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - Final fix wave F5: serial-port authority and refusal signal
+//                 for local writes, without client-local validation of the
+//                 remote mirror. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-18 - setTunePowerForTxBand no longer sets the tune drive
 //                source (Thetis parity; Setup alone chooses it). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1768,6 +1776,12 @@ public:
     bool cwAutoModeReturn() const noexcept { return m_cwAutoModeReturn; }
     int cwAutoModeReturnMs() const noexcept { return m_cwAutoModeReturnMs; }
     QString cwSerialPort() const { return m_cwSerialPort; }
+    // F5: only a remote mirror disables local port validation. The Core
+    // validates requests against its own devices before mirroring them.
+    void setCwSerialPortAuthoritative(bool authoritative)
+    {
+        m_cwSerialPortAuthoritative = authoritative;
+    }
     bool cwSerialPaddles() const noexcept { return m_cwSerialPaddles; }
     int cwSerialKeyLine() const noexcept { return m_cwSerialKeyLine; }
     int cwSerialPttLine() const noexcept { return m_cwSerialPttLine; }
@@ -2857,6 +2871,7 @@ signals:
     void cwAutoModeReturnChanged(bool on);
     void cwAutoModeReturnMsChanged(int ms);
     void cwSerialPortChanged(const QString& text);
+    void cwSerialPortRefused(const QString& words);
     void cwSerialPaddlesChanged(bool on);
     void cwSerialKeyLineChanged(int line);
     void cwSerialPttLineChanged(int line);
@@ -3071,6 +3086,11 @@ private:
     /// No-op when m_persistMac is empty (before loadFromSettings is called).
     void persistOne(const QString& key, const QVariant& value) const;
 
+    // Requests validate before applying. A trusted per-radio restore must
+    // retain an unplugged selection, without re-persisting it or temporarily
+    // disabling validation while the changed signal is emitted.
+    void applyCwSerialPort(const QString& text, bool persist);
+
     // ── Mic gain (3M-1b C.1) ──────────────────────────────────────────────
     // From Thetis console.cs:28805-28817 [v2.10.3.13] (setAudioMicGain).
     // Default -6 dB per plan §0 row 11 (NereusSDR safety addition).
@@ -3153,6 +3173,7 @@ private:
     bool m_cwAutoModeReturn = false;  // From Thetis console.cs:25684 [v2.10.3.15]: off
     int  m_cwAutoModeReturnMs = kCwAutoModeReturnMsDefault;
     QString m_cwSerialPort;  // empty = none (spec D14)
+    bool m_cwSerialPortAuthoritative{true};
     bool m_cwSerialPaddles = false;  // From Thetis SDRSerialPortII.cs:259-263 [v2.10.3.15]: off
     int  m_cwSerialKeyLine = kCwSerialKeyLineDefault;
     int  m_cwSerialPttLine = kCwSerialPttLineDefault;

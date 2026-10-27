@@ -20,6 +20,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - F3: constructor-only CWX sender injection for controlled
+//                test time, preserving default creation and normal wiring.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27 - Final fix wave F5/F6/F7: validate authoritative serial-port
+//                 writes, deliver refused key holds through the existing
+//                 operator route, and release logical Off CWX activity
+//                 without an on-air stop notice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -2145,7 +2153,12 @@ void RadioModel::setTxAnalyzer(TxAnalyzer* a)
 }
 
 RadioModel::RadioModel(QObject* parent)
-    : RadioModel(Role::Local, parent)
+    : RadioModel(Role::Local, {}, parent)
+{
+}
+
+RadioModel::RadioModel(Role role, QObject* parent)
+    : RadioModel(role, {}, parent)
 {
 }
 
@@ -2157,7 +2170,7 @@ RadioModel::RadioModel(QObject* parent)
 // pointer members (grouped with m_connectionState instead, for thematic
 // locality), and assigning it here avoids having to reorder either list
 // to match the other.
-RadioModel::RadioModel(Role role, QObject* parent)
+RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObject* parent)
     : QObject(parent)
     , m_discovery(new RadioDiscovery(this))
     , m_receiverManager(new ReceiverManager(this))
@@ -2165,6 +2178,14 @@ RadioModel::RadioModel(Role role, QObject* parent)
     , m_wdspEngine(new WdspEngine(this))
 {
     m_role = role;
+    // F3: an injected idle sender takes the same wiring at the existing
+    // wireCwxSender call below; there is no live replacement path.
+    m_cwxSender = std::move(senderForTest);
+    // F5: a remote mirror holds ports on the Core's computer. Only an
+    // authoritative local/Core model checks direct writes against here.
+    m_transmitModel.setCwSerialPortAuthoritative(role != Role::Remote);
+    connect(&m_transmitModel, &TransmitModel::cwSerialPortRefused,
+            this, &RadioModel::setCwSerialKeyRefusal);
     // R-CW-02: the station CW pitch as saved (a remote window re-reads it
     // when the Core's settings arrive).
     m_cwPitchHz = stationCwPitchHz();
@@ -30463,11 +30484,24 @@ void RadioModel::stopAllTx(const QString& message)
         && !(m_cwKeyerController && m_cwKeyerController->isStopLatched());
     // CW transmit (R-CW-32): the CWX sender keying in Semi or QSK with MOX
     // off (or its Key held) is on the air too.
-    const bool cwxOn = (m_cwxSender && m_cwxSender->isSending())
-        // R-CW-36: likewise a serial paddle, straight key or PTT line held.
-        || (m_cwSerialKey && m_cwSerialKey->isKeying());
+    const bool cwBreakInActive = m_cwKeyerController
+        && m_cwKeyerController->effectiveBreakInMode() != CwBreakInMode::Off;
+    const bool cwxOn = (cwBreakInActive || moxOn)
+        && ((m_cwxSender && m_cwxSender->isSending())
+            // R-CW-36: likewise a serial paddle or straight key. A serial
+            // PTT that really keyed MOX is already counted by moxOn.
+            || (m_cwSerialKey && m_cwSerialKey->isKeying()));
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
         && !cwKeyed && !cwxOn) {
+        // F7: Off without MOX may still have logical CWX text, its hang,
+        // or a computer sidetone. Stop releases those host keys too, but
+        // nothing was on air, so there is no transmit-stop announcement.
+        if (m_cwxSender) {
+            m_cwxSender->stop();
+        }
+        if (m_cwSerialKey) {
+            m_cwSerialKey->releaseKeys();
+        }
         return;
     }
 
@@ -32737,7 +32771,9 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
 // ---------------------------------------------------------------------------
 void RadioModel::wireCwxSender()
 {
-    m_cwxSender = std::make_unique<CwxSender>();
+    if (!m_cwxSender) {
+        m_cwxSender = std::make_unique<CwxSender>();
+    }
     CwxSender* const cwx = m_cwxSender.get();
     cwx->setRequestGate([this]() -> QString {
         const SliceModel* tx = txBoundSlice();
@@ -32974,12 +33010,20 @@ void RadioModel::wireCwSerialKey(std::unique_ptr<CwSerialKeyInput> input)
                 m_moxController, &MoxController::onCwPtt);
     }
     connect(reader, &CwSerialKeyInput::paddleActivity, this, &RadioModel::noteCwKeyActivity);
+    connect(reader, &CwSerialKeyInput::keyRefused, this, [this](const TxRefusal& refusal) {
+        // F6: the reader queues one gate refusal per physical hold. The
+        // existing operator route delivers the same reason to clients.
+        if (m_moxController) {
+            m_moxController->reportCwRefusal(refusal);
+        }
+    });
     connect(reader, &CwSerialKeyInput::failed, this, [this](const QString& words) {
         m_cwSerialRunningConfig.clear();
         setCwSerialKeyRefusal(words);
     });
     const auto followKeyer = [this, reader]() {
-        reader->setGateAllowed(m_cwKeyerController && m_cwKeyerController->keyerAllowed());
+        reader->setGateAllowed(m_cwKeyerController && m_cwKeyerController->keyerAllowed(),
+                               m_cwKeyerController ? m_cwKeyerController->refusal() : TxRefusal{});
     };
     if (m_cwKeyerController) {
         connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,

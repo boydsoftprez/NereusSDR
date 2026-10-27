@@ -489,7 +489,13 @@ note in each freeze test's header, as was done for bank 10 mic boost.
 R-CW-15. **[TX]** On HL2 the CWX sender also drives `cwx_ptt` (bit 3) for the
 length of a message plus its hang (mi0bot `cwx.cs:289`), and the CWX bit is
 stored only while break-in, MOX or CWX PTT is on (mi0bot nI:1193-1224). This
-rule is HL2 only. QSK is never offered on HL2. The Setup page notes that a
+rule is HL2 only. The sender gates both CWX and CWX PTT on break-in or
+MOX (R-CW-32): in Off without MOX it sends neither bit, including during the
+message's hang. This intentionally differs from mi0bot's unconditional CWX
+PTT for a message. It preserves Off meaning no transmission without MOX;
+F13 is the manager's ruling, subject to JJ's veto, not an operator bench
+pass. The computer sidetone still follows the logical key in Off.
+QSK is never offered on HL2. The Setup page notes that a
 standard HL2 KEY jack takes a straight key or an external keyer; iambic
 settings stay enabled and are sent.
 

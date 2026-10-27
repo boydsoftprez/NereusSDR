@@ -15,6 +15,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - F5 restore correction: retain the selected radio's saved
+//                 serial port while unplugged; validate direct requests
+//                 independently of trusted restore. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - Final fix wave F5: direct authoritative serial-port writes
+//                 validate before persistence; remote mirrors retain the
+//                 Core's accepted port. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
 //                exists: greyed on Windows with the PC Mic route, a saved
 //                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
@@ -127,6 +135,10 @@
 //                 and settingRangeRefusal() refuses QSK where it is not
 //                 offered with the reason. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F5: settingRangeRefusal()
+//                 takes only None or one of the Core's serial ports for
+//                 cwSerialPort. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -345,6 +357,7 @@
 #include "core/AppSettings.h"
 #include "core/ParaEqCurve.h"
 #include "core/CfcProfile.h"
+#include "core/CwSerialKeyInput.h"
 #include "core/PaProfile.h"
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
@@ -1385,6 +1398,16 @@ QString TransmitModel::settingRangeRefusal(const QByteArray& propertyName,
         return scalar(kCwKeyerWeightMin, kCwKeyerWeightMax,
             QStringLiteral("Choose a keyer weight from %1 to %2.")
                 .arg(kCwKeyerWeightMin).arg(kCwKeyerWeightMax));
+    }
+    if (propertyName == "cwSerialPort") {
+        // Final fix wave F5: only None or one of the Core's own serial
+        // ports. The reader opens the port and turns on DTR and RTS, so a
+        // peer can never name some other path.
+        const QString port = value.toString().trimmed();
+        if (port.isEmpty() || cwSerialPortIsHere(port)) {
+            return {};
+        }
+        return QString::fromLatin1(kCwSerialPortNotHereText);
     }
     if (propertyName == "cwBreakInMode") {
         const QString range = scalar(kCwBreakInModeMin, kCwBreakInModeMax,
@@ -2785,7 +2808,10 @@ void TransmitModel::loadFromSettings(const QString& mac)
                         QStringLiteral("False")).toString() == QLatin1String("True"));
     setCwAutoModeReturnMs(s.value(pfx + QLatin1String("CW_AutoModeReturnMs"),
                         QString::number(kCwAutoModeReturnMsDefault)).toInt());
-    setCwSerialPort(s.value(pfx + QLatin1String("CW_SerialPort"), QString()).toString());
+    // F5 correction: restore the saved selection even while unplugged.
+    // The platform reader still refuses to open a name not enumerated now.
+    // Keeping the previous radio's port here could open the wrong device.
+    applyCwSerialPort(s.value(pfx + QLatin1String("CW_SerialPort"), QString()).toString(), false);
     setCwSerialPaddles(s.value(pfx + QLatin1String("CW_SerialPaddles"),
                         QStringLiteral("False")).toString() == QLatin1String("True"));
     setCwSerialKeyLine(s.value(pfx + QLatin1String("CW_SerialKeyLine"),
@@ -4784,9 +4810,24 @@ void TransmitModel::setCwAutoModeReturnMs(int ms)
 
 void TransmitModel::setCwSerialPort(const QString& text)
 {
+    const QString port = text.trimmed();
+    if (m_cwSerialPortAuthoritative) {
+        const QString refusal = settingRangeRefusal("cwSerialPort", port);
+        if (!refusal.isEmpty()) {
+            emit cwSerialPortRefused(refusal);
+            return;
+        }
+    }
+    applyCwSerialPort(port, true);
+}
+
+void TransmitModel::applyCwSerialPort(const QString& text, bool persist)
+{
     if (text == m_cwSerialPort) { return; }
     m_cwSerialPort = text;
-    persistOne(QStringLiteral("CW_SerialPort"), m_cwSerialPort);
+    if (persist) {
+        persistOne(QStringLiteral("CW_SerialPort"), m_cwSerialPort);
+    }
     emit cwSerialPortChanged(m_cwSerialPort);
 }
 

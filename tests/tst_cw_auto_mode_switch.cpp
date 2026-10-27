@@ -14,6 +14,8 @@
 // socket or keys a radio.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Final fix wave: enumerated fake-port fixture isolation.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, the auto mode switch. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
 // =================================================================
@@ -209,8 +211,16 @@ class TestCwAutoModeSwitch : public QObject {
     Q_OBJECT
 
 private slots:
-    void init() { AppSettings::instance().clear(); }
-    void cleanup() { AppSettings::instance().clear(); }
+    void init()
+    {
+        AppSettings::instance().clear();
+        setCwSerialPortNamesForTest(QStringList{QStringLiteral("fake0")});
+    }
+    void cleanup()
+    {
+        setCwSerialPortNamesForTest(std::nullopt);
+        AppSettings::instance().clear();
+    }
 
     // From Thetis console.cs:25712-25730 [v2.10.3.15]: LSB and DIGL go to
     // CWL, everything else to CWU.

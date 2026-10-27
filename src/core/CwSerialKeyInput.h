@@ -27,19 +27,29 @@
 //              of their own, edge driven (Linux TIOCMIWAIT, Windows
 //              WaitCommEvent, macOS a 1 ms TIOCMGET poll), keying the host
 //              key line. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27 - Final fix wave F5: only one of this computer's serial ports
+//              is opened (cwSerialPortIsHere), so no writer can make the
+//              reader open another path. J.J. Boyd (KG4VCF), AI-assisted
+//              via Claude Code.
+// 2026-10-27 - Final fix wave F5/F6: normalize opened port names and carry
+//              the gate's refusal to the main thread once per physical
+//              key hold. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
 
 #include "core/CwTypes.h"
+#include "core/safety/TxRefusal.h"
 #include "core/NereusCoreExport.h"
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace NereusSDR {
@@ -53,6 +63,26 @@ inline constexpr char kCwSerialPortInUseByCatPttText[] =
     "That port is in use by the CAT PTT input.";
 inline constexpr char kCwSerialPortOpenFailedText[] = "The port %1 could not be opened.";
 inline constexpr char kCwSerialPortLostText[] = "The serial key port stopped working.";
+// Final fix wave F5: a port name that is not one of this computer's serial
+// ports. The words the rotor refuses an unknown port with
+// (StationRotorController::unknownSerialPortReason).
+inline constexpr char kCwSerialPortNotHereText[] =
+    "That serial port is not on the Core's computer.";
+
+// Final fix wave F5: the serial ports this computer has, as the Setup list
+// offers them (QSerialPortInfo's system location, "/dev/cu.usbserial-1410"
+// or "\\.\\COM3") and as their bare names ("cu.usbserial-1410", "COM3"),
+// which the readers also open. Empty in a build without Qt SerialPort.
+NEREUS_CORE_EXPORT QStringList cwSerialPortNamesHere();
+
+// True when `port` (trimmed) is one of cwSerialPortNamesHere(). Only such a
+// name is opened, and only such a name (or none) is taken from a peer: a
+// writer can never make the Core open some other path and drive its
+// DTR and RTS lines.
+NEREUS_CORE_EXPORT bool cwSerialPortIsHere(const QString& port);
+
+// Tests: replace the computer's port list (std::nullopt restores it).
+NEREUS_CORE_EXPORT void setCwSerialPortNamesForTest(std::optional<QStringList> names);
 
 // The serial key reader (R-CW-36, D14): DSR and CTS of one serial port, read
 // on a thread of its own (ThreadRole::CwSerialKey) that waits for an edge.
@@ -125,8 +155,9 @@ public:
     void setKeyLine(std::shared_ptr<CwKeyLine> line);
     void setStraightKeySink(StraightKeySink sink);
     // R-CW-05: false releases the key bits; true keys nothing until a
-    // fresh edge. Starts false.
-    void setGateAllowed(bool allowed);
+    // fresh edge. Starts false. The main thread supplies the existing
+    // gate refusal; its snapshot is queued once per refused physical hold.
+    void setGateAllowed(bool allowed, const TxRefusal& refusal = {});
     // R-CW-08 and every stop: releases the key bits and the PTT line.
     void releaseKeys();
 
@@ -139,6 +170,7 @@ public:
 signals:
     void pttLineChanged(bool down);     // queued to the main thread
     void paddleActivity();              // for the auto mode switch
+    void keyRefused(const NereusSDR::TxRefusal& refusal); // once per physical key hold
     void failed(const QString& words);
 
 private:
@@ -153,6 +185,8 @@ private:
     void releaseKeyBitsLocked();
     void releaseAllLocked();
     void updateKeyingLocked();
+    bool keyHeldLocked() const;
+    void postGateRefusalLocked();
     bool lineIs(CwSerialLine chosen, Line line) const;
 
     std::unique_ptr<LineSource> m_source;
@@ -176,6 +210,8 @@ private:
     bool m_dashOn{false};
     bool m_straightOn{false};
     bool m_pttOn{false};
+    TxRefusal m_gateRefusal;
+    bool m_refusalPosted{false};
 };
 
 } // namespace NereusSDR

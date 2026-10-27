@@ -44,6 +44,8 @@
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - CW final correction F9: radio-keyer badge in CW.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -900,6 +902,17 @@ QString TxApplet::micSourceBadgeStyle(bool amber)
 void TxApplet::refreshMicSourceBadge()
 {
     if (!m_model || !m_micSourceBadge) { return; }
+    // CW final correction F9, approved mockup: the radio makes the CW
+    // signal. Display its keyer without changing the selected mic source.
+    if (m_cwMode) {
+        m_micSourceBadge->setText(QStringLiteral("Radio keyer"));
+        m_micSourceBadge->setToolTip(cwNotUsedReason());
+        if (m_micSourceBadgeAmber) {
+            m_micSourceBadgeAmber = false;
+            m_micSourceBadge->setStyleSheet(micSourceBadgeStyle(false));
+        }
+        return;
+    }
     MicSource source = m_model->transmitModel().micSource();
     QString reason;
     if (!m_model->ownsLocalDsp()) {
@@ -1595,6 +1608,7 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     applyCwLock();
     applyReceiveOnlyLock();
     showMonitorForMode();
+    refreshMicSourceBadge();
     // CW transmit (R-CW-48): MON's gate follows what it writes.
     applyMonitorChainGate();
 }
