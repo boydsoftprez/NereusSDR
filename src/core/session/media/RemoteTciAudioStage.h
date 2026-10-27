@@ -1,5 +1,13 @@
 #pragma once
 // no-port-check: NereusSDR-original bounded TCI stage for a remote PCM worker.
+// Modification history (NereusSDR):
+//   2026-10-27: a run that ends leaves the next run what its clients had
+//               not converted and each client's unfinished block
+//               (park/takeCarry), so a receiver restart or the
+//               lossless-to-Opus fallback drops no audio an app was owed;
+//               a client whose mailbox is full waits in the history
+//               (hasRoom) instead of evicting a block. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "core/session/media/IRemotePcmWorkerStage.h"
 
@@ -56,12 +64,22 @@ public:
         quint64 resamplerRecreateCpuNs = 0;
         quint64 maxResamplerRecreateWallNs = 0;
         int liveWdspPairs = 0;
+        // Blocks in the mailboxes now, waiting for the server's drain.
+        int queuedResults = 0;
     };
 
     explicit RemoteTciAudioStage(int receiver);
     ~RemoteTciAudioStage() override;
+    // A run's clients carry on into the next run of the same generation:
+    // a run that ends leaves here the audio its clients had not converted
+    // and each client's unfinished block, and the next run goes on from
+    // there. A receiver restart or a new context (the lossless link
+    // trial's fallback to Opus among them) therefore drops nothing an app
+    // was owed, and every app on the receiver keeps one stream.
     std::unique_ptr<IRemotePcmWorkerStage::Run> createRun() override;
     quint64 generation() const;
+    // Ends every client's stream: what is queued, in flight or carried is
+    // dropped, and the next run starts each client afresh.
     void invalidate();
     void publish(std::vector<ClientConfig> clients);
     bool popNext(Result* out);
@@ -70,12 +88,36 @@ public:
 
 private:
     friend class RemoteTciAudioRun;
+    // What a run that ended leaves the next: the stereo history its
+    // clients had not converted yet, and each client's place in it and
+    // unfinished block. Resamplers are not carried: WDSP handles live
+    // and end on the run's own thread.
+    struct ClientCarry {
+        quint64 revision = 0;
+        quint64 sequence = 0;
+        int blockInput = 0;
+        int pendingFrames = 0;
+        std::vector<float> output;
+    };
+    struct Carry {
+        quint64 receiverGeneration = 0;
+        std::vector<float> history;
+        std::map<quint64, ClientCarry> clients;
+    };
     void push(Result result);
+    // Whether this client's mailbox has room for another block. A run
+    // converts nothing more for a client with a full mailbox: its audio
+    // waits in the run's history, so a burst the worker converts faster
+    // than the drain takes it loses nothing.
+    bool hasRoom(quint64 token) const;
+    void park(Carry carry);
+    Carry takeCarry();
     int m_receiver;
     std::atomic<quint64> m_generation{1};
     mutable std::mutex m_mutex;
     std::shared_ptr<const ConfigSnapshot> m_config;
     std::map<quint64, std::deque<Result>> m_results;
+    Carry m_carry;
     quint64 m_nextDrainToken = 0;
     std::atomic<quint64> m_historySkippedFrames{0};
     std::atomic<quint64> m_mailboxEvictions{0};

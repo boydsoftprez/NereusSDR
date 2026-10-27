@@ -88,6 +88,19 @@
 //                                    CapacityLimitedTransport, as
 //                                    tst_remote_vax_feeder does. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  remoteRunRestartCarriesEveryClientsBlock:
+//                                    a run that ends leaves the next run
+//                                    every app's unconverted audio and part
+//                                    block, and a burst waits for mailbox
+//                                    room instead of evicting. The second
+//                                    app on receiver 1 takes 1000-frame
+//                                    blocks, so a restart that drops part
+//                                    blocks fails every time, not by
+//                                    chance; alignedStart probes from the
+//                                    later app's first sound, not from its
+//                                    leading silence. The mailbox cases
+//                                    expect no evictions. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -431,16 +444,24 @@ void wire(TciServer& tci, RemoteMediaController& media)
 
 // Where `later` starts inside `earlier` (stereo frames), or -1. Both apps
 // read one history, so a later app's stream is the earlier app's stream
-// from some frame on, sample for sample.
+// from some frame on, sample for sample. The probe starts at the later
+// app's first sound: a stream that starts in silence (lossless packets the
+// forced row's link lost are silence) matched any silent stretch of the
+// earlier app's, and the comparison after it then failed.
 int alignedStart(const QVector<float>& earlier, const QVector<float>& later)
 {
     constexpr int kProbeFrames = 2048;
-    if (later.size() < kProbeFrames * 2) { return -1; }
+    const int laterFrames = int(later.size() / 2);
+    int sound = 0;
+    while (sound < laterFrames && later[2 * sound] == 0.0f && later[2 * sound + 1] == 0.0f) {
+        ++sound;
+    }
+    if (sound + kProbeFrames > laterFrames) { return -1; }
     const int earlierFrames = int(earlier.size() / 2);
-    for (int start = 0; start + kProbeFrames <= earlierFrames; ++start) {
-        if (std::memcmp(earlier.constData() + 2 * start, later.constData(),
+    for (int start = sound; start + kProbeFrames <= earlierFrames; ++start) {
+        if (std::memcmp(earlier.constData() + 2 * start, later.constData() + 2 * sound,
                         size_t(kProbeFrames) * 2 * sizeof(float)) == 0) {
-            return start;
+            return start - sound;
         }
     }
     return -1;
@@ -559,8 +580,10 @@ private slots:
         tci->m_drainTimer->stop();
         const auto stage = core.workers.front()->stage;
         core.deliverRamp(0, 0, 300);
-        // Three blocks per client leave two queued and one evicted each.
-        QTRY_COMPARE_WITH_TIMEOUT(stage->diagnostics().mailboxEvictions, quint64{2}, 3000);
+        // Three blocks per client: two queued each, the third waiting in
+        // the history for room.
+        QTRY_COMPARE_WITH_TIMEOUT(stage->diagnostics().queuedResults, 4, 3000);
+        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
         int sendCalls = 0;
         tci->drainRemoteAudio([&](QWebSocket*, const QByteArray&) -> qint64 {
             ++sendCalls;
@@ -592,8 +615,12 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(texts(replies).contains(QStringLiteral("audio_start:0;")), 3000);
         tci->m_drainTimer->stop();
         const auto stage = core.workers.front()->stage;
-        core.deliverRamp(0, 0, 300);
-        QTRY_COMPARE_WITH_TIMEOUT(stage->diagnostics().mailboxEvictions, quint64{1}, 3000);
+        // Undrained, the app's mailbox fills and the rest of the audio
+        // waits in the history, until audio beyond what it holds is
+        // skipped: the drops the next tick counts.
+        core.deliverRamp(0, 0, RemoteTciAudioStage::kHistoryFrames + 300);
+        QTRY_VERIFY_WITH_TIMEOUT(stage->diagnostics().historySkippedFrames > 0, 3000);
+        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
         tci->m_remoteSaturationDrops = 99;
         connect(tci.get(), &TciServer::operatorNotice, &remote,
                 [&](const QString&, const QString&, bool) { tci.reset(); });
@@ -756,6 +783,125 @@ private slots:
         QVERIFY(!stage->popNext(&result));
     }
 
+    // A receiver restart or a new context (the lossless trial's fallback to
+    // Opus) ends the worker's run and starts another. Each app's stream
+    // runs on through it: the audio the ended run had not converted yet
+    // and each app's unfinished block reach the app, sample for sample,
+    // whatever its block size, so two apps on one receiver still hear one
+    // stream. Only invalidate() starts the apps afresh.
+    void remoteRunRestartCarriesEveryClientsBlock()
+    {
+        auto stage = std::make_shared<RemoteTciAudioStage>(0);
+        // Two apps on one receiver, at different block sizes, so each
+        // holds a different part block when a run ends.
+        stage->publish({{1, 1, 48000, 2, 3, 100, 1.0f}, {2, 1, 48000, 2, 3, 70, 1.0f}});
+        std::map<quint64, std::vector<float>> heard;
+        std::map<quint64, quint64> lastSequence;
+        const auto drain = [&] {
+            RemoteTciAudioStage::Result result;
+            while (stage->popNext(&result)) {
+                QCOMPARE(result.receiverGeneration, stage->generation());
+                QVERIFY2(result.sequence > lastSequence[result.token],
+                         qPrintable(QStringLiteral("app %1: block %2 after %3")
+                                        .arg(result.token).arg(result.sequence)
+                                        .arg(lastSequence[result.token])));
+                lastSequence[result.token] = result.sequence;
+                QCOMPARE(readLe32(result.bytes, 28), 2u);
+                const int samples = int(readLe32(result.bytes, 20));
+                QCOMPARE(result.bytes.size(), qsizetype(64 + 4 * samples));
+                std::vector<float>& into = heard[result.token];
+                const std::size_t start = into.size();
+                into.resize(start + std::size_t(samples));
+                std::memcpy(into.data() + start, result.bytes.constData() + 64,
+                            std::size_t(samples) * sizeof(float));
+            }
+        };
+        const auto feed = [](IRemotePcmWorkerStage::Run& run, int firstFrame, int frames) {
+            std::vector<float> pcm(std::size_t(frames) * 2);
+            for (int i = 0; i < frames; ++i) {
+                pcm[std::size_t(2 * i)] = FakeReceiverSource::ramp(firstFrame + i);
+                pcm[std::size_t(2 * i + 1)] = -FakeReceiverSource::ramp(firstFrame + i);
+            }
+            run.appendPcm(pcm.data(), frames);
+        };
+        const auto expectRamp = [&](quint64 token, int frames) {
+            const std::vector<float>& got = heard[token];
+            QCOMPARE(int(got.size()), 2 * frames);
+            for (int k = 0; k < frames; ++k) {
+                QVERIFY2(got[std::size_t(2 * k)] == FakeReceiverSource::ramp(k)
+                             && got[std::size_t(2 * k + 1)] == -FakeReceiverSource::ramp(k),
+                         qPrintable(QStringLiteral("app %1 frame %2").arg(token).arg(k)));
+            }
+        };
+
+        // Converts all the run can, taking the apps' blocks as the server's
+        // drain does whenever the run waits for room in a mailbox.
+        const auto serviceAll = [&](IRemotePcmWorkerStage::Run& run) {
+            do {
+                while (run.hasRunnableWork()) {
+                    run.serviceUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1),
+                                     32);
+                }
+                drain();
+            } while (run.hasRunnableWork());
+        };
+
+        // The first run converts one 96-frame step of its 150 frames, for
+        // app 1 alone, and ends with the rest still to convert.
+        auto run = stage->createRun();
+        run->reconcile();
+        feed(*run, 0, 150);
+        run->reconcile();
+        run->serviceUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1), 1);
+        drain();
+        run.reset();
+        drain();
+        QVERIFY(heard.empty());
+
+        // The next run converts what the first left, then its own audio,
+        // filling each app's part block on. App 1's 204 frames are three
+        // 100-frame blocks at once, one more than its mailbox holds: the
+        // run waits for room instead of evicting one.
+        run = stage->createRun();
+        run->reconcile();
+        feed(*run, 150, 150);
+        run->reconcile();
+        while (run->hasRunnableWork()) {
+            run->serviceUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1), 32);
+        }
+        QVERIFY(run->hasRunnableWork() == false);
+        drain();
+        QVERIFY(run->hasRunnableWork());
+        serviceAll(*run);
+        expectRamp(1, 300);
+        expectRamp(2, 280);
+        run.reset();
+        drain();
+        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
+        QCOMPARE(stage->diagnostics().historySkippedFrames, quint64{0});
+
+        // invalidate() ends the streams: app 2's 20 carried frames go, and
+        // its next block is the next run's first 70 frames, numbered afresh.
+        stage->invalidate();
+        run = stage->createRun();
+        run->reconcile();
+        feed(*run, 300, 70);
+        run->reconcile();
+        while (run->hasRunnableWork()) {
+            run->serviceUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1), 32);
+        }
+        run.reset();
+        RemoteTciAudioStage::Result result;
+        QVERIFY(stage->popNext(&result));
+        QCOMPARE(result.token, quint64{2});
+        QCOMPARE(result.sequence, quint64{1});
+        QCOMPARE(readLe32(result.bytes, 20), 140u);
+        float first = 0.0f;
+        std::memcpy(&first, result.bytes.constData() + 64, sizeof(float));
+        QCOMPARE(first, FakeReceiverSource::ramp(300));
+        QVERIFY(!stage->popNext(&result));
+    }
+
     void remoteWorkerRunFinalizesAfterDecoderFailure()
     {
         OpusAudioEncoder encoder;
@@ -815,7 +961,10 @@ private slots:
         for (auto& worker : workers) { worker.join(); }
         quint64 totalBytes = 0;
         for (const auto& stage : stages) {
-            QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{16});
+            // Each client converts two of its four blocks, all its mailbox
+            // holds, and keeps the other two in the history (it used to
+            // convert all four and evict the two oldest).
+            QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
             QCOMPARE(stage->diagnostics().liveWdspPairs, 0);
             QCOMPARE(stage->diagnostics().historySkippedFrames, quint64{0});
             RemoteTciAudioStage::Result result;
@@ -1914,6 +2063,13 @@ private slots:
         appA.sendTextMessage(QStringLiteral("audio_start:0;"));
         appB.sendTextMessage(QStringLiteral("audio_start:1;"));
         QTest::qWait(300);
+        // The second app on receiver 1 takes 1000-frame blocks, the first
+        // 2048, so each holds a different part block whenever the stream
+        // restarts (the forced row's fallback to Opus): both must still
+        // hear one stream, sample for sample, below. With one block size
+        // the two part blocks matched by chance, and a stage that dropped
+        // them on a restart failed only now and then.
+        secondAppB.sendTextMessage(QStringLiteral("audio_stream_samples:1000;"));
         secondAppB.sendTextMessage(QStringLiteral("audio_start:1;"));
         // A busy computer: the source stops for a second, 800 ms after the
         // first audio_start, so normally inside the lossless trial's first

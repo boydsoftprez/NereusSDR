@@ -218,6 +218,16 @@ mw0lge@grange-lane.co.uk
 //                listener (TciAllowedOrigins), and a keyed-client watchdog
 //                pings the app that holds a TCI key and releases that key
 //                through the disconnect path after three unanswered pings.
+//   2026-10-27 - A remote TCI run that ends leaves the next run of the
+//                same generation the audio its apps had not converted and
+//                each app's part block (parkClients,
+//                RemoteTciAudioStage::park/takeCarry), so a receiver
+//                restart or the lossless-to-Opus fallback drops nothing an
+//                app was owed. An app whose mailbox is full waits in the
+//                history instead of evicting a block (runnable, hasRoom);
+//                audio it loses to the history is counted when it is
+//                written over (skipOverwritten). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 
 // --- From TciServer.cpp ---
 // no-port-check: AetherSDR-derived Longpath file.  Transport lifecycle
@@ -2957,6 +2967,27 @@ void RemoteTciAudioStage::invalidate()
     config->clients = m_config->clients;
     m_config = std::move(config);
     m_results.clear();
+    m_carry = {};
+}
+
+void RemoteTciAudioStage::park(Carry carry)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_carry = std::move(carry);
+}
+
+RemoteTciAudioStage::Carry RemoteTciAudioStage::takeCarry()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return std::exchange(m_carry, {});
+}
+
+bool RemoteTciAudioStage::hasRoom(quint64 token) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto found = m_results.find(token);
+    return found == m_results.end()
+        || found->second.size() < std::size_t(kMaxFramesPerClient);
 }
 
 void RemoteTciAudioStage::publish(std::vector<ClientConfig> clients)
@@ -3026,13 +3057,21 @@ void RemoteTciAudioStage::noteSocketBackpressureDrop()
 
 RemoteTciAudioStage::Diagnostics RemoteTciAudioStage::diagnostics() const
 {
+    int queued = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& [token, queue] : m_results) {
+            Q_UNUSED(token);
+            queued += int(queue.size());
+        }
+    }
     return {m_historySkippedFrames.load(), m_mailboxEvictions.load(),
             m_socketBackpressureDrops.load(),
             m_serviceWallNs.load(), m_serviceCpuNs.load(), m_maxServiceWallNs.load(),
             m_maxQuantumWallNs.load(), m_serviceQuanta.load(),
             m_resamplerRecreates.load(), m_resamplerRecreateWallNs.load(),
             m_resamplerRecreateCpuNs.load(), m_maxResamplerRecreateWallNs.load(),
-            m_liveWdspPairs.load()};
+            m_liveWdspPairs.load(), queued};
 }
 
 namespace {
@@ -3061,9 +3100,25 @@ void storeMax(std::atomic<quint64>& destination, quint64 value)
 
 class RemoteTciAudioRun final : public IRemotePcmWorkerStage::Run {
 public:
-    explicit RemoteTciAudioRun(RemoteTciAudioStage& owner) : m_owner(owner) {}
+    explicit RemoteTciAudioRun(RemoteTciAudioStage& owner) : m_owner(owner)
+    {
+        // The previous run of this generation ended (a receiver restart,
+        // a new context, a decoder failure) with audio its clients had not
+        // converted yet: this run's history starts with it, ahead of this
+        // run's own audio, and its clients go on from where they were.
+        m_carry = m_owner.takeCarry();
+        if (m_carry.receiverGeneration != m_owner.generation()) {
+            m_carry = {};
+        }
+        appendPcm(m_carry.history.data(), int(m_carry.history.size() / 2));
+        m_carry.history.clear();
+        m_reconcileBase = m_written;
+    }
     ~RemoteTciAudioRun() override
     {
+        // Dropped here, each app would lose a different part block and
+        // two apps on one receiver would no longer hear one stream.
+        parkClients();
         int pairs = 0;
         for (const auto& [token, client] : m_clients) {
             Q_UNUSED(token);
@@ -3083,6 +3138,13 @@ public:
             m_history[slot + 1] = stereo[2 * i + 1];
         }
         m_written += quint64(frames);
+        // A client waiting for room in its mailbox, or behind, loses what
+        // this audio wrote over: counted now, while it waits, not when it
+        // next converts. Its resampler is reset when it does (service).
+        for (auto& [token, client] : m_clients) {
+            Q_UNUSED(token);
+            if (!client.failed) { skipOverwritten(client); }
+        }
     }
 
     void reconcile() override
@@ -3096,6 +3158,13 @@ public:
             m_reconcileBase = m_written;
             return;
         }
+        // The run's first reconciliation picks up each client the previous
+        // run of this generation left.
+        std::map<quint64, RemoteTciAudioStage::ClientCarry> carry;
+        if (!m_config && m_carry.receiverGeneration == config->receiverGeneration) {
+            carry = std::move(m_carry.clients);
+        }
+        m_carry = {};
         // Destroy every retired or revised pair before creating replacements.
         std::set<quint64> revised;
         for (auto it = m_clients.begin(); it != m_clients.end();) {
@@ -3125,6 +3194,15 @@ public:
                     m_written > RemoteTciAudioStage::kHistoryFrames
                         ? m_written - RemoteTciAudioStage::kHistoryFrames : quint64{0});
             client.output.reserve(std::size_t(desired.blockFrames * desired.channels * 8));
+            if (const auto carried = carry.find(desired.token);
+                carried != carry.end() && carried->second.revision == desired.revision
+                && quint64(carried->second.pendingFrames) <= m_reconcileBase) {
+                client.cursor = m_reconcileBase - quint64(carried->second.pendingFrames);
+                client.sequence = carried->second.sequence;
+                client.blockInput = carried->second.blockInput;
+                client.output.insert(client.output.end(), carried->second.output.begin(),
+                                     carried->second.output.end());
+            }
             if (desired.rate != 48000) {
                 client.resampler = std::make_unique<TciRxAudioResampler>(48000, desired.rate);
                 client.resampler->create();
@@ -3140,8 +3218,7 @@ public:
     bool hasRunnableWork() const override
     {
         for (const auto& [token, client] : m_clients) {
-            Q_UNUSED(token);
-            if (!client.failed && client.cursor < m_written) { return true; }
+            if (runnable(token, client)) { return true; }
         }
         return false;
     }
@@ -3156,7 +3233,7 @@ public:
             bool found = false;
             for (std::size_t tried = 0; tried < m_clients.size(); ++tried) {
                 if (it == m_clients.end()) { it = m_clients.begin(); }
-                if (!it->second.failed && it->second.cursor < m_written) {
+                if (runnable(it->first, it->second)) {
                     found = true;
                     break;
                 }
@@ -3189,19 +3266,75 @@ private:
         quint64 sequence = 0;
         int blockInput = 0;
         bool failed = false;
+        // History was skipped since the client last converted: its
+        // resampler starts again before it converts on.
+        bool skipped = false;
         std::unique_ptr<TciRxAudioResampler> resampler;
         std::vector<float> output;
     };
 
+    // A client converts on while its mailbox has room. With a full one
+    // its audio waits in the history, which holds kHistoryFrames, so a
+    // burst the worker converts faster than the drain takes it evicts
+    // nothing; only audio older than the history is skipped
+    // (skipOverwritten).
+    bool runnable(quint64 token, const Client& client) const
+    {
+        return !client.failed && client.cursor < m_written && m_owner.hasRoom(token);
+    }
+
+    // Leaves the next run the audio this run's clients have not
+    // converted and each client's place in it and unfinished block. Only
+    // the newest kHistoryFrames are kept, as skipOverwritten() keeps them.
+    void parkClients()
+    {
+        if (!m_config) { return; }
+        // An invalidated generation's results are refused, so there is
+        // nothing to carry for it.
+        if (m_config->receiverGeneration != m_owner.generation()) { return; }
+        RemoteTciAudioStage::Carry carry;
+        carry.receiverGeneration = m_config->receiverGeneration;
+        quint64 oldest = m_written;
+        for (auto& [token, client] : m_clients) {
+            if (client.failed) { continue; }
+            skipOverwritten(client);
+            oldest = std::min(oldest, client.cursor);
+            RemoteTciAudioStage::ClientCarry left;
+            left.revision = client.config.revision;
+            left.sequence = client.sequence;
+            left.blockInput = client.blockInput;
+            left.pendingFrames = int(m_written - client.cursor);
+            left.output = std::move(client.output);
+            carry.clients.emplace(token, std::move(left));
+        }
+        carry.history.resize(std::size_t(m_written - oldest) * 2);
+        for (quint64 frame = oldest; frame < m_written; ++frame) {
+            const std::size_t slot = std::size_t(frame % RemoteTciAudioStage::kHistoryFrames) * 2;
+            const std::size_t at = std::size_t(frame - oldest) * 2;
+            carry.history[at] = m_history[slot];
+            carry.history[at + 1] = m_history[slot + 1];
+        }
+        m_owner.park(std::move(carry));
+    }
+
+    // Audio older than the history is gone: the client goes on from the
+    // oldest frame kept, its unfinished block dropped.
+    void skipOverwritten(Client& client)
+    {
+        if (m_written - client.cursor <= RemoteTciAudioStage::kHistoryFrames) { return; }
+        const quint64 skipped = m_written - client.cursor - RemoteTciAudioStage::kHistoryFrames;
+        m_owner.m_historySkippedFrames.fetch_add(skipped);
+        client.cursor = m_written - RemoteTciAudioStage::kHistoryFrames;
+        client.output.clear();
+        client.blockInput = 0;
+        client.skipped = true;
+    }
+
     void service(Client& client)
     {
-        if (m_written - client.cursor > RemoteTciAudioStage::kHistoryFrames) {
-            const quint64 skipped = m_written - client.cursor
-                - RemoteTciAudioStage::kHistoryFrames;
-            m_owner.m_historySkippedFrames.fetch_add(skipped);
-            client.cursor = m_written - RemoteTciAudioStage::kHistoryFrames;
-            client.output.clear();
-            client.blockInput = 0;
+        skipOverwritten(client);
+        if (client.skipped) {
+            client.skipped = false;
             if (client.resampler) {
                 const auto resetStarted = std::chrono::steady_clock::now();
                 const quint64 cpuStarted = threadCpuNs();
@@ -3263,6 +3396,8 @@ private:
     }
 
     RemoteTciAudioStage& m_owner;
+    // What the previous run left, until this run's first reconciliation.
+    RemoteTciAudioStage::Carry m_carry;
     std::shared_ptr<const RemoteTciAudioStage::ConfigSnapshot> m_config;
     std::map<quint64, Client> m_clients;
     std::array<float, RemoteTciAudioStage::kHistoryFrames * 2> m_history{};
