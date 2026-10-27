@@ -1441,6 +1441,13 @@
 //                off while it runs; the tune tone cites refreshed to
 //                console.cs:30082/30085 [v2.10.3.15] (R-CW-52). J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit, the CWX sender (R-CW-31 to R-CW-33): made and
+//                wired here, on the current connection's key line, with
+//                its request gate; leaving CW, the keyer gate turning
+//                false, another device taking transmit, every stop, the
+//                transmit cut's catch-up and the connection going away
+//                abort it and release the key line. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1770,6 +1777,7 @@ mw0lge@grange-lane.co.uk
 #include "core/AlexSettingsKeys.h"
 #include "models/PureSignalSettings.h"
 #include "models/CwKeyerController.h"
+#include "core/CwxSender.h"
 #include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
@@ -5291,12 +5299,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
             this, &RadioModel::syncCwKeying);
     syncCwKeying();
+    // CW transmit (R-CW-31 to R-CW-33): the CWX sender.
+    wireCwxSender();
 }
 
 RadioModel::~RadioModel()
 {
-    // CW transmit: the keyer controller goes first, so nothing the teardown
-    // below signals re-evaluates it or pushes to a connection going away.
+    // CW transmit: the CWX sender stops, lets go of the key line and joins
+    // its thread first; then the keyer controller goes, so nothing the
+    // teardown below signals re-evaluates it or pushes to a connection
+    // going away.
+    m_cwxSender.reset();
     m_cwKeyerController.reset();
     // The transmit cut line may outlive this model (RemoteTxCutGuard holds
     // it); nothing it cuts after this may reach this model's objects.
@@ -28797,6 +28810,13 @@ void RadioModel::teardownConnection()
     if (!m_connection) {
         return;
     }
+    // CW transmit (early review M8): the CWX sender stops, releases its key
+    // bits and lets go of this connection's key line before anything below
+    // can destroy the connection.
+    if (m_cwxSender) {
+        m_cwxSender->stop();
+        m_cwxSender->setKeyLine(nullptr);
+    }
     // CW transmit: no key status comes from a connection going away, and
     // the next one gets the wire state pushed again (wireCwKeyerConnection).
     m_lastPushedCwWire.reset();
@@ -30281,6 +30301,11 @@ void RadioModel::stopTransmitNow(const QString& reason)
     if (m_cwKeyerController) {
         m_cwKeyerController->latchStop(m_cwQskStretch);
     }
+    // CW transmit (R-CW-32): every stop aborts the CWX sender and releases
+    // its key bits at once.
+    if (m_cwxSender) {
+        m_cwxSender->stop();
+    }
 
     // No further TX I/Q block reaches the connection after this returns,
     // and a queued channel-on no longer opens the gate.
@@ -30369,8 +30394,11 @@ void RadioModel::stopAllTx(const QString& message)
     // latched off is not stopped, or announced, a second time.
     const bool cwKeyed = cwRadioMayBeKeyed()
         && !(m_cwKeyerController && m_cwKeyerController->isStopLatched());
+    // CW transmit (R-CW-32): the CWX sender keying in Semi or QSK with MOX
+    // off (or its Key held) is on the air too.
+    const bool cwxOn = m_cwxSender && m_cwxSender->isSending();
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
-        && !cwKeyed) {
+        && !cwKeyed && !cwxOn) {
         return;
     }
 
@@ -30429,9 +30457,19 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
             && (m_twoToneController->isActive() || m_twoToneController->isActivationInFlight()))
         || endOfOverTailActive()
         // Early fix wave C1: the radio's keyer, which keys with MOX off.
-        || cwRadioMayBeKeyed();
+        || cwRadioMayBeKeyed()
+        // CW transmit: the CWX sender, which keys with MOX off too.
+        || (m_cwxSender && m_cwxSender->isSending());
     if (stillKeyed || !transmitReleaseInProgress()) {
         stopAllTx(stopText);
+    }
+    // CW transmit (early re-review): the CWX sender is stopped and its key
+    // bits released before the cut can clear. The connection keeps the key
+    // line's bits and sends them again when the cut clears (P2's
+    // onTransmitCutCleared), so a sender still holding them would key the
+    // radio again with nobody sending.
+    if (m_cwxSender) {
+        m_cwxSender->stop();
     }
     // Early fix wave C1: while the radio still reports a CW key down the
     // cut stays, so the next frame cannot key it again; it clears with the
@@ -32548,6 +32586,8 @@ void RadioModel::wireCwKeyerConnection()
     if (!m_connection || !m_cwKeyerController) {
         return;
     }
+    // CW transmit (R-CW-31): the CWX sender keys this connection's line.
+    syncCwxKeyLine();
     connect(m_connection, &RadioConnection::radioKeyStatus,
             this, &RadioModel::onCwRadioKeyStatus,
             static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
@@ -32595,6 +32635,100 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
     if (m_moxController) {
         m_moxController->onCwKeyStatus(dot, dash);
     }
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-31 to R-CW-33): the CWX sender. NereusSDR-original
+// wiring; the sender's element engine is the Thetis port (CwxSender.cpp).
+//
+// The request gate (R-CW-33), asked on the main thread at each send and Key
+// press: the transmit slice in CW (section 6's words), then the keying gate
+// (who may key: another device holding transmit on a Core), then the CW
+// keyer gate (R-CW-05). Aborts: leaving CW (syncCwKeying), the keyer gate
+// turning false and another device taking transmit (here), every stop
+// (stopTransmitNow), the transmit cut's catch-up (catchUpTransmitCut) and
+// the connection going away (teardownConnection, syncCwxKeyLine).
+// ---------------------------------------------------------------------------
+void RadioModel::wireCwxSender()
+{
+    m_cwxSender = std::make_unique<CwxSender>();
+    CwxSender* const cwx = m_cwxSender.get();
+    cwx->setRequestGate([this]() -> QString {
+        const SliceModel* tx = txBoundSlice();
+        if (tx == nullptr
+            || (tx->dspMode() != DSPMode::CWL && tx->dspMode() != DSPMode::CWU)) {
+            return QString::fromLatin1(kCwxNotCwText);
+        }
+        const QString holder = otherDeviceHoldsRefusal();
+        if (!holder.isEmpty()) {
+            return holder;
+        }
+        if (m_cwKeyerController && !m_cwKeyerController->keyerAllowed()) {
+            const QString text = m_cwKeyerController->refusal().text;
+            return text.isEmpty() ? QString::fromLatin1(safety::kCwGateNotCwText) : text;
+        }
+        return QString();
+    });
+
+    TransmitModel& tm = m_transmitModel;
+    const auto pushRepeat = [cwx, &tm]() { cwx->setRepeat(tm.cwxRepeat(), tm.cwxRepeatDelayS()); };
+    const auto pushMemories = [cwx, &tm]() {
+        cwx->setMemories({tm.cwxMemory1(), tm.cwxMemory2(), tm.cwxMemory3(), tm.cwxMemory4(),
+                          tm.cwxMemory5(), tm.cwxMemory6(), tm.cwxMemory7(), tm.cwxMemory8()});
+    };
+    cwx->setSpeedWpm(tm.cwxSpeed());
+    pushRepeat();
+    pushMemories();
+    connect(&tm, &TransmitModel::cwxSpeedChanged, cwx, &CwxSender::setSpeedWpm);
+    connect(&tm, &TransmitModel::cwxRepeatChanged, cwx, pushRepeat);
+    connect(&tm, &TransmitModel::cwxRepeatDelaySChanged, cwx, pushRepeat);
+    for (auto signal : {&TransmitModel::cwxMemory1Changed, &TransmitModel::cwxMemory2Changed,
+                        &TransmitModel::cwxMemory3Changed, &TransmitModel::cwxMemory4Changed,
+                        &TransmitModel::cwxMemory5Changed, &TransmitModel::cwxMemory6Changed,
+                        &TransmitModel::cwxMemory7Changed, &TransmitModel::cwxMemory8Changed}) {
+        connect(&tm, signal, cwx, pushMemories);
+    }
+
+    // Break-in in effect (in Off CWX keys only while MOX is held), and the
+    // keyer gate turning false aborts.
+    const auto followKeyer = [this, cwx]() {
+        if (!m_cwKeyerController) {
+            return;
+        }
+        cwx->setBreakInActive(m_cwKeyerController->effectiveBreakInMode() != CwBreakInMode::Off);
+        if (!m_cwKeyerController->keyerAllowed()) {
+            cwx->stop();
+        }
+    };
+    if (m_cwKeyerController) {
+        connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged, cwx, followKeyer);
+    }
+    followKeyer();
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxStateChanged, cwx, &CwxSender::setMoxActive);
+        cwx->setMoxActive(m_moxController->isMox());
+    }
+    // Another device taking transmit aborts.
+    connect(this, &RadioModel::transmitHolderChanged, cwx, [this, cwx]() {
+        if (!otherDeviceHoldsRefusal().isEmpty()) {
+            cwx->stop();
+        }
+    });
+}
+
+void RadioModel::syncCwxKeyLine()
+{
+    if (!m_cwxSender) {
+        return;
+    }
+    if (m_connection == nullptr) {
+        m_cwxSender->stop();
+        m_cwxSender->setKeyLine(nullptr);
+        return;
+    }
+    const HPSDRHW board = m_lastRadioInfo.boardType;
+    m_cwxSender->setHl2(board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly);
+    m_cwxSender->setKeyLine(m_connection->cwKeyLine());
 }
 
 bool RadioModel::cwRadioMayBeKeyed() const
@@ -32760,6 +32894,10 @@ void RadioModel::syncCwKeying()
     if (!inCw) {
         m_cwLastEffective.reset();
         m_cwLastSelected = -1;
+        // R-CW-32: leaving CW aborts CWX.
+        if (m_cwxSender) {
+            m_cwxSender->stop();
+        }
         return;
     }
     const int selected = tm.cwBreakInMode();

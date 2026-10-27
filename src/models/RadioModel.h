@@ -781,6 +781,10 @@
 //                tune pitch and the TX channel's TUNE mode (R-CW-30, D6),
 //                tuneToneHzForTest. J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-27: CW transmit, the CWX sender (R-CW-31 to R-CW-33): owned
+//                here, on the current connection's key line, its request
+//                gate and its aborts. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -987,6 +991,7 @@ class WidebandFftEngine;
 class CatService;
 class MoxController;
 class CwKeyerController;   // CW transmit (R-CW-05)
+class CwxSender;           // CW transmit (R-CW-31)
 struct KeyerIdentity;
 class TxChannel;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
@@ -2904,6 +2909,13 @@ public:
     /// CW transmit (R-CW-05 to R-CW-07): the keyer gate and the CW wire
     /// state this model pushes to the connection. Never null.
     CwKeyerController* cwKeyerController() const { return m_cwKeyerController.get(); }
+    /// CW transmit (R-CW-31 to R-CW-33): the CWX sender, on the current
+    /// connection's key line. Its requests pass the CWX request gate: the
+    /// transmit slice in CW, no other device holding transmit, then the
+    /// keyer gate. Leaving CW, the keyer gate turning false, another device
+    /// taking transmit, every stop, a transmit cut's catch-up and the
+    /// connection going away abort it. Never null.
+    CwxSender* cwxSender() const { return m_cwxSender.get(); }
     /// CW transmit: the band-plan half of the MOX pre-check for the
     /// transmit slice's carrier (region, extended, US 60 m, prevent TX on
     /// a different band and the band edges), shared by the MOX pre-check
@@ -5254,6 +5266,8 @@ public:
     void injectConnectionForTest(RadioConnection* conn) {
         m_connection = conn;
         syncTransmitCutTargets();
+        // CW transmit: the CWX sender leaves the old connection's key line.
+        syncCwxKeyLine();
         setConnectionState(conn != nullptr ? ConnectionState::Connected
                                             : ConnectionState::Disconnected);
     }
@@ -9838,6 +9852,15 @@ private:
     // then (a fallback notice is given once, on the change).
     std::optional<CwBreakInMode> m_cwLastEffective;
     int m_cwLastSelected{-1};
+    // ── CW transmit: the CWX sender (R-CW-31 to R-CW-33) ───────────────────
+    // Made after the keyer controller; its settings, gate and aborts.
+    void wireCwxSender();
+    // The sender on the current connection's key line (or none), the HL2
+    // flag from the radio. Early review M8: a key-line writer lets go of a
+    // connection's line before that connection goes away.
+    void syncCwxKeyLine();
+    // Reset first in the destructor, before the keyer controller.
+    std::unique_ptr<CwxSender> m_cwxSender;
     // Declared last so it goes first: nothing it is connected to signals
     // it while this model's other members are destroyed.
     std::unique_ptr<CwKeyerController> m_cwKeyerController;

@@ -1051,6 +1051,13 @@ target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_cw_keyer_gate)
 nereus_add_test(tst_cw_keyer_controller)
 
+# CW transmit Task 8 (R-CW-15, R-CW-31 to R-CW-33): the CWX sender's element
+# timing with an injected clock, its key line writes, the HL2 CWX PTT, the
+# Key watchdog, repeat and refusals; RadioModel's request gate, aborts and
+# key-line release; and one wall-clock case (each key edge within 2 ms on
+# the sender's own thread), hence REALTIME.
+nereus_add_test(tst_cwx_sender REALTIME)
+
 # CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
 # QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
 # fallback notice and the TX channel skip on a RadioModel.

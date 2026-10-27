@@ -1135,6 +1135,9 @@ set(CORE_SOURCES
     # CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line.
     src/core/CwKeyLine.cpp
     src/core/CwKeyLine.h
+    # CW transmit (R-CW-15, R-CW-31 to R-CW-33): the CWX sender.
+    src/core/CwxSender.cpp
+    src/core/CwxSender.h
     src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
