@@ -39,6 +39,19 @@ warren@wpratt.com
 // the application's caller check (dsplock.h WdspCallerCheck) before any
 // of their work; with no check installed that is one pointer test. No DSP
 // flow changes.
+//
+// NereusSDR modifications (2026-10-27, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code): when SetChannelState's drain (state 0, dmode 1) gives up
+// after its 100 ms timeout, a flush the channel's last fexchange already
+// asked for can still be waiting for the flush thread. Upstream returns
+// anyway, so that flush could land after the next SetChannelState(ch, 1, 0)
+// and leave a running channel with exec_bypass set (its worker then skips
+// every dexchange, and a blocking fexchange0 caller waits for output
+// forever), or take csDSP and wait for csEXCH while that caller holds it.
+// The timeout branch now resets the flags under csEXCH, so no fexchange is
+// mid-block, and when that fexchange had already ended the down-slew (it
+// clears exchange before it releases Sem_Flush) waits for the flush thread
+// to finish before returning. A drain that completes in time is unchanged.
 
 #include "comm.h"
 
@@ -306,9 +319,22 @@ int SetChannelState (int channel, int state, int dmode)
 			}
 			if (count >= timeout)
 			{
+				// NereusSDR (2026-10-27): see the header. Upstream reset the
+				// three flags at once, unlocked (Thetis wdsp/channel.c:281-286
+				// [v2.10.3.15]; mi0bot-Thetis the same). fexchange0/2 clear
+				// exchange and release Sem_Flush together under csEXCH, so
+				// exchange already clear here means a flush is on its way;
+				// flushChannel clears flushflag once it has run.
+				int flush_pending;
+				EnterCriticalSection (&ch[channel].csEXCH);
+				flush_pending = !_InterlockedAnd (&ch[channel].exchange, 1);
 				InterlockedBitTestAndReset (&ch[channel].exchange, 0);
-				InterlockedBitTestAndReset (&ch[channel].flushflag, 0);
+				if (!flush_pending)
+					InterlockedBitTestAndReset (&ch[channel].flushflag, 0);
 				InterlockedBitTestAndReset (&a->slew.downflag, 0);
+				LeaveCriticalSection (&ch[channel].csEXCH);
+				while (flush_pending && _InterlockedAnd (&ch[channel].flushflag, 1))
+					Sleep(1);
 			}
 			break;
 		case 1:

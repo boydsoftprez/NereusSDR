@@ -603,6 +603,17 @@ if(TARGET wdsp_static)
     # runs ahead leaves a real TX channel's output bit-identical. Not
     # REALTIME: the hold waits for the caller's stall, not a wall-clock bound.
     nereus_add_test(tst_wdsp_dexchange_order EXTRA_LABELS core)
+    # 2026-10-27: a drain (SetChannelState(ch, 0, 1)) that reaches its 100 ms
+    # timeout with a flush already requested waits for that flush, so it
+    # never lands after the next SetChannelState(ch, 1, 0) and leaves a
+    # running channel bypassed (tst_hl2_tune_magnitude_replay's CI hang).
+    # The worker is held in dsplock.c's test-only exchange hook until the
+    # re-key; the hold's 1 s valve only frees the fixed drain's wait, so the
+    # test cannot fail on time alone and is not REALTIME.
+    nereus_add_test(tst_wdsp_drain_timeout_flush WdspChannelStateProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspChannelStateProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_drain_timeout_flush PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_drain_timeout_flush PRIVATE WDSP_STATIC_BUILD)
     # R-R3-39: the DSP control lanes (ordering, keyed jobs, barriers,
     # request completion) and the WDSP caller check that counts WDSP calls
     # made from the event loop. wdsp_static arrives through the core
