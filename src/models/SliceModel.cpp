@@ -198,6 +198,12 @@
 //                filters follow the pitch, R-CW-28); the Longpath entry's
 //                correction now names them. J.J. Boyd (KG4VCF), AI-assisted
 //                via Claude Code.
+//   2026-10-26: CW transmit, a pitch change recenters each CW filter on the
+//                new pitch keeping its width, as Thetis does (console.cs:
+//                18237-18239, 18255-18257), in place of moving it by the
+//                change: recenterCwFilterOnPitch replaces
+//                shiftCwFilterForPitch (R-CW-28, D8). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -330,7 +336,7 @@
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's pitch reads use stationCwPitchHz(), its own
 //                 code, below, and its pitch follow is cwShiftHz,
-//                 shiftCwFilterForPitch and recenterStoredCwFilters.]
+//                 recenterCwFilterOnPitch and recenterStoredCwFilters.]
 //   2026-09-28 -- Filter preset table Thetis-faithful, by Martin Fischer
 //                 (OE5SOS), AI-assisted via Anthropic Claude, from Thetis
 //                 v2.10.3.15-5-g852bf0e console.cs InitFilterPresets:
@@ -2818,25 +2824,31 @@ double SliceModel::cwShiftHz() const
     return 0.0;
 }
 
-// R-CW-28 (D8): a CW filter follows a pitch change. Thetis's CWPitch setter
-// recenters every CW preset on the pitch keeping its width, then slides it
-// off the image limit (console.cs:18230-18265 [v2.10.3.15], the slide is
-// slideCwPresetAtImageLimit above). NereusSDR moves the filter by the pitch
-// change instead of centering it, so an operator's filter that sat off the
-// pitch keeps its place relative to it; a filter centered on the old pitch
-// lands centered on the new one, as in Thetis.
-void SliceModel::shiftCwFilterForPitch(int& low, int& high, DSPMode mode,
-                                       int oldPitchHz, int newPitchHz)
+// R-CW-28 (D8): a CW filter follows a pitch change by being recentered on
+// the new pitch keeping its width, then slid off the image limit
+// (slideCwPresetAtImageLimit above).
+// Porting from Thetis console.cs:18237-18239, 18255-18257 [v2.10.3.15] — the
+// CWPitch setter's loop body, original C# logic:
+//   CWL:  int bw = high - low;
+//         low = -cw_pitch - bw / 2;
+//         high = -cw_pitch + bw / 2;
+//   CWU:  bw = high - low;
+//         low = cw_pitch - bw / 2;
+//         high = cw_pitch + bw / 2;
+void SliceModel::recenterCwFilterOnPitch(int& low, int& high, DSPMode mode, int pitchHz)
 {
-    const int delta = newPitchHz - oldPitchHz;
-    if (mode == DSPMode::CWU) {
-        low += delta;
-        high += delta;
-    } else if (mode == DSPMode::CWL) {
-        low -= delta;
-        high -= delta;
-    } else {
+    if (mode != DSPMode::CWU && mode != DSPMode::CWL) {
         return;
+    }
+    const int bw = high - low;
+    if (mode == DSPMode::CWL) {
+        // Adjust CWL filters  [original inline comment from console.cs:18232]
+        low = -pitchHz - bw / 2;
+        high = -pitchHz + bw / 2;
+    } else {
+        // Adjust CWU filters  [original inline comment from console.cs:18250]
+        low = pitchHz - bw / 2;
+        high = pitchHz + bw / 2;
     }
     slideCwPresetAtImageLimit(mode, low, high);
 }
@@ -2889,7 +2901,7 @@ void SliceModel::recenterStoredCwFilters(int oldPitchHz, int newPitchHz)
         if (!lowOk || !highOk) {
             continue;
         }
-        shiftCwFilterForPitch(low, high, mode, oldPitchHz, newPitchHz);
+        recenterCwFilterOnPitch(low, high, mode, newPitchHz);
         s.setValue(lowKey, low);
         s.setValue(highKey, high);
     }

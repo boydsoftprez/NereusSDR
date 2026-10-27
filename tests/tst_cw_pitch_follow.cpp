@@ -9,6 +9,9 @@
 //   2026-10-26: CW transmit, created: the CW receive shift and its
 //               invariant, passbandOriginHz and cwShiftHz, and the pitch
 //               follow. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, a pitch change recenters each CW filter on the
+//               new pitch keeping its width (an off-pitch 300..700 at 700
+//               is 500..900). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -177,35 +180,49 @@ private slots:
         QCOMPARE(s.passbandOriginHz(), 14029300.0);
     }
 
-    // D8: a pitch change moves a CW filter by the change keeping its width;
-    // the image-limit slide from the Thetis CWPitch setter still applies.
-    void shiftCwFilterForPitchKeepsWidthAndSlides()
+    // D8: a pitch change recenters a CW filter on the new pitch keeping its
+    // width, as the Thetis CWPitch setter does (console.cs:18237-18239,
+    // 18255-18257 [v2.10.3.15]); the image-limit slide still applies.
+    void recenterCwFilterOnPitchKeepsWidthAndSlides()
     {
+        // An off-pitch CWU 300..700 (width 400) at 700: 500..900, not 400..800.
         int low = 300;
         int high = 700;
-        SliceModel::shiftCwFilterForPitch(low, high, DSPMode::CWU, 600, 700);
-        QCOMPARE(low, 400);
-        QCOMPARE(high, 800);
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWU, 700);
+        QCOMPARE(low, 500);
+        QCOMPARE(high, 900);
         low = -700;
         high = -300;
-        SliceModel::shiftCwFilterForPitch(low, high, DSPMode::CWL, 600, 700);
-        QCOMPARE(low, -800);
-        QCOMPARE(high, -400);
-        // Down to 200 Hz: CWU 100..500 would cross zero, so it slides to 0..400.
-        low = 100;
-        high = 500;
-        SliceModel::shiftCwFilterForPitch(low, high, DSPMode::CWU, 600, 200);
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWL, 700);
+        QCOMPARE(low, -900);
+        QCOMPARE(high, -500);
+        // A filter centered on the old pitch lands centered on the new one.
+        low = 450;
+        high = 750;
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWU, 700);
+        QCOMPARE(low, 550);
+        QCOMPARE(high, 850);
+        // Down to 100 Hz: CWU -100..300 would cross zero, so it slides to 0..400.
+        low = 400;
+        high = 800;
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWU, 100);
         QCOMPARE(low, 0);
         QCOMPARE(high, 400);
-        low = -500;
-        high = -100;
-        SliceModel::shiftCwFilterForPitch(low, high, DSPMode::CWL, 600, 200);
+        low = -800;
+        high = -400;
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWL, 100);
         QCOMPARE(low, -400);
         QCOMPARE(high, 0);
+        // An odd width halves as Thetis's integer bw / 2 does: 401 -> 500..900.
+        low = 300;
+        high = 701;
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::CWU, 700);
+        QCOMPARE(low, 500);
+        QCOMPARE(high, 900);
         // Any other mode is left alone.
         low = 100;
         high = 3000;
-        SliceModel::shiftCwFilterForPitch(low, high, DSPMode::USB, 600, 700);
+        SliceModel::recenterCwFilterOnPitch(low, high, DSPMode::USB, 700);
         QCOMPARE(low, 100);
         QCOMPARE(high, 3000);
     }
@@ -285,13 +302,14 @@ private slots:
         QCOMPARE(rig.b->filterHigh(), 900);
 
         // Presets: the default F5 follows the pitch, the overridden slot
-        // moves keeping its width, and both CW modes are announced.
+        // is recentered on the new pitch keeping its width, and both CW
+        // modes are announced.
         const QList<FilterPreset> cwu = store->presetsForMode(DSPMode::CWU);
         QCOMPARE(cwu.at(4).low, 500);
         QCOMPARE(cwu.at(4).high, 900);
         QCOMPARE(cwu.at(2).name, QStringLiteral("Mine"));
-        QCOMPARE(cwu.at(2).low, 400);
-        QCOMPARE(cwu.at(2).high, 800);
+        QCOMPARE(cwu.at(2).low, 500);
+        QCOMPARE(cwu.at(2).high, 900);
         QList<DSPMode> announced;
         for (const QList<QVariant>& args : std::as_const(cwuPresets)) {
             announced.append(args.at(0).value<DSPMode>());
@@ -319,7 +337,7 @@ private slots:
         rig.model.setCwPitchHz(700);
         QCOMPARE(pitch.count(), 1);
         QCOMPARE(bFilter.count(), 1);
-        QCOMPARE(store->presetsForMode(DSPMode::CWU).at(2).low, 400);
+        QCOMPARE(store->presetsForMode(DSPMode::CWU).at(2).low, 500);
     }
 
     // A remote window's filters are the Core's: its pitch follow moves

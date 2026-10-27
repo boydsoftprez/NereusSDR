@@ -19,8 +19,9 @@
 //   7. aRemoteWindowReadsAndWritesTheCoresPresets / aLocalWindowIsUnchanged:
 //      with "filters/" in Station scope, the settings proxy carries the
 //      presets to and from the Core; without it they stay local.
-//   8. followCwPitch (CW transmit R-CW-28): a pitch change moves the
-//      overridden CW slots keeping their width; defaults follow CWPitch.
+//   8. followCwPitch (CW transmit R-CW-28): a pitch change recenters the
+//      overridden CW slots on the new pitch keeping their width; defaults
+//      follow CWPitch.
 //
 // Isolation: uses AppSettings::clear() in initTestCase/init/cleanup so that
 // filter overrides written here cannot bleed into other tests.
@@ -36,6 +37,9 @@
 //                 keeping their width, the defaults follow CWPitch, voice
 //                 slots stay, and the CWPitch key refreshes the CW presets
 //                 (R-CW-28). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, followCwPitch recenters the overridden CW slots
+//                 on the new pitch keeping their width (300..700 at 700 is
+//                 500..900). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -242,7 +246,7 @@ private slots:
     }
 
     // ── 8. CW presets follow the pitch (CW transmit R-CW-28, D8) ────────────
-    void followCwPitchMovesOverriddenCwSlotsKeepingWidth()
+    void followCwPitchRecentersOverriddenCwSlotsKeepingWidth()
     {
         FilterPresetStore store;
         store.setPreset(DSPMode::CWU, 2, FilterPreset{QStringLiteral("Mine"), 300, 700});
@@ -261,13 +265,13 @@ private slots:
         QCOMPARE(spy.at(1).at(0).value<DSPMode>(), DSPMode::CWU);
         const QList<FilterPreset> cwu = store.presetsForMode(DSPMode::CWU);
         QCOMPARE(cwu.at(2).name, QStringLiteral("Mine"));
-        QCOMPARE(cwu.at(2).low, 400);
-        QCOMPARE(cwu.at(2).high, 800);
+        QCOMPARE(cwu.at(2).low, 500);   // recentered on 700, width 400
+        QCOMPARE(cwu.at(2).high, 900);
         QCOMPARE(cwu.at(4).low, 500);   // a default slot, built from CWPitch
         QCOMPARE(cwu.at(4).high, 900);
         const QList<FilterPreset> cwl = store.presetsForMode(DSPMode::CWL);
-        QCOMPARE(cwl.at(1).low, -800);
-        QCOMPARE(cwl.at(1).high, -400);
+        QCOMPARE(cwl.at(1).low, -900);
+        QCOMPARE(cwl.at(1).high, -500);
 
         // Voice presets are untouched.
         const QList<FilterPreset> usbAfter = store.presetsForMode(DSPMode::USB);
@@ -282,7 +286,7 @@ private slots:
         spy.clear();
         store.followCwPitch(700, 700);
         QCOMPARE(spy.count(), 0);
-        QCOMPARE(store.presetsForMode(DSPMode::CWU).at(2).low, 400);
+        QCOMPARE(store.presetsForMode(DSPMode::CWU).at(2).low, 500);
     }
 
     void theCwPitchKeyRefreshesTheCwPresets()

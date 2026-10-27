@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-26: CW transmit, recenterCwFilterOnPitch (a CW filter recentered on
+//              the new pitch keeping its width) replaces shiftCwFilterForPitch
+//              (R-CW-28, D8). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, cwShiftHz and passbandOriginHz; the CW term in
 //              demodulatedRxFrequency (R-CW-23, R-CW-24); shiftCwFilterForPitch
 //              and recenterStoredCwFilters for a pitch change (R-CW-28); the
@@ -296,7 +299,7 @@
 //                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's pitch constants are in core/CwTypes.h and
-//                 its pitch follow (shiftCwFilterForPitch,
+//                 its pitch follow (recenterCwFilterOnPitch,
 //                 recenterStoredCwFilters) is its own.]
 //   2026-09-28 -- presetNamesForMode (Thetis InitFilterPresets names),
 //                 commonPresetsForMode removed (no caller). Martin
@@ -1531,17 +1534,16 @@ public:
     /// TX marker stay on frequency().
     double passbandOriginHz() const { return m_frequency + cwShiftHz(); }
 
-    /// R-CW-28 (D8): moves a CW filter by a pitch change keeping its width
-    /// and its place relative to the pitch (CWU up by newPitch - oldPitch,
-    /// CWL down by it), then slides it off the image limit as Thetis does
-    /// (console.cs:18230-18265 [v2.10.3.15]). Any other mode is unchanged.
-    static void shiftCwFilterForPitch(int& low, int& high, DSPMode mode,
-                                      int oldPitchHz, int newPitchHz);
+    /// R-CW-28 (D8): recenters a CW filter on pitchHz keeping its width
+    /// (CWU on +pitch, CWL on -pitch), then slides it off the image limit, as
+    /// Thetis's CWPitch setter does (console.cs:18230-18265 [v2.10.3.15]).
+    /// Any other mode is unchanged.
+    static void recenterCwFilterOnPitch(int& low, int& high, DSPMode mode, int pitchHz);
 
     /// R-CW-28 (D8): every stored per-band CW filter of every slice
     /// (Slice<N>/Band<b>/ModeCWU|ModeCWL/FilterLow|FilterHigh, and the
     /// legacy Slice<N>/Band<b>/FilterLow|FilterHigh pair where that band's
-    /// DspMode is CW) moved by shiftCwFilterForPitch. Writes AppSettings, so
+    /// DspMode is CW) recentered by recenterCwFilterOnPitch. Writes AppSettings, so
     /// only the side that owns the settings (a local radio or the Core)
     /// calls it.
     static void recenterStoredCwFilters(int oldPitchHz, int newPitchHz);

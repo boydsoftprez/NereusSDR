@@ -18,6 +18,9 @@
 //   2026-10-26: CW transmit, followCwPitch and the CWPitch key in
 //                 followStationSetting (R-CW-28). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, followCwPitch recenters each overridden CW slot
+//                 on the new pitch keeping its width, as Thetis does
+//                 (R-CW-28, D8). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "FilterPresetStore.h"
@@ -261,7 +264,7 @@ void FilterPresetStore::followCwPitch(int oldPitchHz, int newPitchHz)
                 continue;
             }
             FilterPreset p = override.value();
-            SliceModel::shiftCwFilterForPitch(p.low, p.high, mode, oldPitchHz, newPitchHz);
+            SliceModel::recenterCwFilterOnPitch(p.low, p.high, mode, newPitchHz);
             persistPreset(mode, slot, p);
         }
         emit presetsChanged(mode);

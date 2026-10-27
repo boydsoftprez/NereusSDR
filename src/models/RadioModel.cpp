@@ -1430,6 +1430,10 @@
 //   2026-10-26: CW transmit, leaving CW with QSK selected lands break-in on
 //                Off, as Thetis does (console.cs:34571, 16163-16173), in
 //                place of Semi. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, a pitch change recenters the CW slice's current
+//                filter on the new pitch keeping its width
+//                (SliceModel::recenterCwFilterOnPitch, R-CW-28, D8). J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -11274,7 +11278,7 @@ void RadioModel::applyCwPitchChange(int oldHz, int newHz)
             // From Thetis console.cs:18283, 18297 [v2.10.3.15]: RX1Filter = rx1_filter;
             int low = slice->filterLow();
             int high = slice->filterHigh();
-            SliceModel::shiftCwFilterForPitch(low, high, mode, oldHz, newHz);
+            SliceModel::recenterCwFilterOnPitch(low, high, mode, newHz);
             slice->setFilter(low, high);
             if (!slice) {
                 continue;

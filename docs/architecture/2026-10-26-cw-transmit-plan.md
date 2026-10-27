@@ -659,7 +659,7 @@ stale Longpath headers and the APF cite).
   14.030600. `txFrequencyForSlice` stays 14.030000 (plus XIT when on).
 - Pitch 600 to 700 re-pushes every CW slice's shift once and the APF center (pitch plus
   tune); no dial or carrier change; CWU preset 400..800 becomes 500..900; an overridden
-  CWU slot 300..700 becomes 400..800; a stored per-band CWU filter 450..750 becomes
+  CWU slot 300..700 becomes 500..900 (recentered on the new pitch, width kept); a stored per-band CWU filter 450..750 becomes
   550..850; the current filter is re-applied.
 - +TNF in CWU at dial 14.030000 lands at 14.030000. `NotchModel` stores clicked
   frequencies exactly (`tst_notch_model_guards` unchanged).

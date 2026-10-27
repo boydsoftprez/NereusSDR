@@ -23,6 +23,9 @@
 //                 followStationSetting refreshes the CW presets on the
 //                 Core's CWPitch (R-CW-28). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Claude Code.
+//   2026-10-26: CW transmit, followCwPitch recenters each overridden CW slot
+//                 on the new pitch keeping its width (R-CW-28, D8). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -118,8 +121,8 @@ public:
     // ── Following the CW pitch (R-CW-28, D8) ──────────────────────────────
 
     /// The pitch moved from oldPitchHz to newPitchHz. Every overridden CWL
-    /// and CWU slot moves with it keeping its width
-    /// (SliceModel::shiftCwFilterForPitch) and is persisted; the default
+    /// and CWU slot is recentered on the new pitch keeping its width
+    /// (SliceModel::recenterCwFilterOnPitch) and is persisted; the default
     /// slots follow by themselves (SliceModel::presetsForMode reads the
     /// pitch). Emits presetsChanged for CWL and CWU. Writes the Core's
     /// settings, so RadioModel calls it only where those settings live.

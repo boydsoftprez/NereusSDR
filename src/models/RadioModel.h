@@ -774,6 +774,9 @@
 //                APF) and kApfCwPitchHz replaced by cwPitchHz (R-CW-23,
 //                R-CW-27, R-CW-28). J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-26: CW transmit, the cwPitchHz comment says a pitch change
+//                recenters the CW filters keeping their width (R-CW-28).
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1238,8 +1241,8 @@ public:
     // plus the slice's APF tune offset (R-CW-27, From Thetis setup.cs:17112
     // [v2.10.3.15]); Setup > DSP > CW's APF Center Freq uses it too.
     //
-    // A change (R-CW-28, D7, D8) moves the CW filters by it keeping their
-    // width (presets, the operator's overridden slots, the stored per-band
+    // A change (R-CW-28, D7, D8) recenters the CW filters on the new pitch
+    // keeping their width (presets, the operator's overridden slots, the stored per-band
     // CW filters and each CW slice's current filter; on a local radio or
     // the Core only, a remote window follows the Core's), then re-pushes
     // every CW slice's receive shift and every slice's APF centre. It never
