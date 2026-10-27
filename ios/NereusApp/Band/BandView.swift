@@ -14,10 +14,12 @@ import os
 ///
 /// While the Core's waterfall lines flow, the view reads the band's row
 /// clock on every frame of the screen (a display link, at most 60 a second)
-/// and draws on a steady cadence of the Core's frames, so each line goes in
-/// on the clock's grid rather than when it came over the network, and the
-/// 3D glide follows the clock. With nothing flowing the link rests and the
-/// view draws on demand, as before.
+/// and draws each line on the frame the clock puts it in, so it goes in on
+/// the clock's grid rather than when it came over the network. In 2D the
+/// trace still draws on the next frame after it comes; in 3D the band draws
+/// on a steady cadence of the Core's frames and the glide follows the
+/// clock. With nothing flowing the link rests and the view draws on demand,
+/// as before.
 struct BandView: UIViewRepresentable {
     @ObservedObject var model: BandModel
 
@@ -182,8 +184,8 @@ struct BandView: UIViewRepresentable {
         }
 
         /// One frame of the screen while lines flow: the row clock puts in
-        /// the lines it says, and the band draws when its cadence falls due
-        /// (a 2D change the screens show draws at once). With nothing
+        /// the lines it says, and the band draws: in 2D on each frame with a
+        /// line or a change, in 3D when its cadence falls due. With nothing
         /// flowing for a few frames the link rests.
         fileprivate func step(_ link: CADisplayLink) {
             guard let view, view.window != nil else {
@@ -210,8 +212,9 @@ struct BandView: UIViewRepresentable {
             }
             let flowing = model.linesFlowing
             let urgent = model.takeUrgentDraw()
-            // 2D draws on each frame the clock puts a line in; 3D glides on
-            // the cadence (BandLineDraws).
+            // 2D draws on each frame the clock puts a line in, and the trace
+            // and other changes on the next frame; 3D glides on the cadence
+            // (BandLineDraws).
             let draws = lineDraws.draws(at: now, frame: frame, interval: model.lineDrawInterval,
                                         stacked: model.drawsStack, linesPut: put, dirty: dirty,
                                         flowing: flowing, urgent: urgent)

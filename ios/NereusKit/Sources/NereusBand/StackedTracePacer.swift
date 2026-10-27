@@ -209,39 +209,34 @@ public struct FrameDrawCadence: Equatable, Sendable {
 ///
 /// In 2D each line moves the waterfall a whole line with no glide, so a
 /// line must show on the frame the clock put it in: the band draws on every
-/// frame that puts a line in, and its cadence runs on from that frame. A
-/// change the screens show (a spot, a marker, the grid following the floor)
-/// draws at once and leaves the cadence alone, and the trace between lines
-/// draws on the cadence. Were the cadence left to its own phase (it starts
-/// when the link wakes), about half the time it would sit a frame off the
-/// lines: each line would wait a frame, and a change drawn on a line's own
-/// frame would show that line a frame early, a 16.7/50 ms pair.
+/// frame that puts a line in. Only the lines wait for the clock: the
+/// spectrum trace, and a change the screens show (a spot, a marker, the
+/// grid following the floor), draw on the next frame, as they did before
+/// the clock. A draw between lines shows no new line, so the lines stay
+/// even. Drawing the trace on a cadence of the lines instead held each
+/// trace for the next line's frame: 19 ms from its arrival on average, up
+/// to 33 ms, against 8 ms and 16.7 ms on the next frame (2026-10-26).
 ///
-/// In 3D the stack glides by the clock on every drawn frame, so the band
-/// draws on the cadence while it is changed or lines flow.
+/// In 3D the stack glides by the clock on every drawn frame and takes the
+/// trace's place, so the band draws on the cadence while it is changed or
+/// lines flow.
 public struct BandLineDraws: Equatable, Sendable {
     private var cadence = FrameDrawCadence()
 
     public init() {}
 
     /// Whether the link's frame at `now` (seconds) of `frame` length draws.
-    /// `interval` is the least time between cadence draws, `linesPut` the
+    /// `interval` is the least time between 3D cadence draws, `linesPut` the
     /// lines the clock put in on this frame, `dirty` whether the band
     /// changed since it last drew, `flowing` whether lines flow, `urgent`
-    /// whether a change the screens show asked for a draw.
+    /// whether a change the screens show asked for a draw (in 2D every
+    /// change draws on the next frame, so it draws at once there too).
     public mutating func draws(at now: Double, frame: Double, interval: Double, stacked: Bool, linesPut: Int,
                                dirty: Bool, flowing: Bool, urgent: Bool) -> Bool {
         if stacked {
             return (dirty || flowing) && cadence.take(at: now, interval: interval, frame: frame)
         }
-        if linesPut > 0 {
-            cadence.lock(at: now)
-            return true
-        }
-        if urgent && dirty {
-            return true
-        }
-        return dirty && cadence.take(at: now, interval: interval, frame: frame)
+        return linesPut > 0 || dirty
     }
 
     /// The link woke: the next frame draws.

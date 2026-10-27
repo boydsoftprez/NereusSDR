@@ -267,10 +267,11 @@ struct WaterfallPacingTests {
     /// Runs the band's draws as the view's display link does in 2D (the
     /// link's step: the clock first, then ``BandLineDraws``), with a change
     /// the screens show on every `urgentEvery`th frame. Returns the frame
-    /// each line went in on and the frame each was first drawn on.
+    /// each line went in on, the frame each was first drawn on, and for each
+    /// frame's trace the seconds from its arrival to the first draw after it.
     static func drawn(_ arrivals: [Double], urgentEvery: Int,
                       draws decide: (inout BandLineDraws, Double, Int, Bool, Bool, Bool) -> Bool)
-        -> (put: [Int], shown: [Int]) {
+        -> (put: [Int], shown: [Int], traceDelays: [Double]) {
         var state = Self.state(paced: true)
         var draws = BandLineDraws()
         var linkAwake = false
@@ -278,6 +279,8 @@ struct WaterfallPacingTests {
         var put: [Int] = []
         var shown: [Int] = []
         var shownLines = state.history.linesAppended
+        var traceDelays: [Double] = []
+        var tracesWaiting: [Double] = []
         var next = 0
         var number = 0
         let end = (arrivals.last ?? base) + 2
@@ -289,6 +292,7 @@ struct WaterfallPacingTests {
             while next < arrivals.count && arrivals[next] <= now {
                 state.receive(frame: BandFixtures.frame(trace: [-80, -70], sequence: UInt32(next + 1)),
                               manualLevels: manual, at: arrivals[next])
+                tracesWaiting.append(arrivals[next])
                 next += 1
                 asked = true
             }
@@ -318,9 +322,11 @@ struct WaterfallPacingTests {
                     shown.append(number)
                 }
                 shownLines = state.history.linesAppended
+                traceDelays += tracesWaiting.map { now - $0 }
+                tracesWaiting.removeAll()
             }
         }
-        return (put, shown)
+        return (put, shown, traceDelays)
     }
 
     @Test("2D draws each line on the frame it went in, 33.3 ms apart, with spots, markers and the grid drawn between",
@@ -337,6 +343,28 @@ struct WaterfallPacingTests {
             #expect(run.shown == run.put, "phase \(phaseMs) ms, a change every \(urgentEvery) frames")
             let steady = Self.gaps(run.shown, from: 120)
             #expect(steady == [2: steady[2] ?? 0], "phase \(phaseMs) ms, a change every \(urgentEvery): \(steady)")
+        }
+    }
+
+    @Test("2D draws each frame's trace on the first screen frame after it comes, not on the next line's frame",
+          arguments: 0 ... 16)
+    func tracesDrawOnTheNextFrame(phaseMs: Int) {
+        let arrivals = Self.arrivals(lines: 600, phase: Double(phaseMs) / 1000, jitter: 0.008)
+        // A change the screens show every 3 or 7 frames, or once only.
+        for urgentEvery in [3, 7, 1_000_000] {
+            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing, urgent in
+                draws.draws(at: now, frame: Self.frame, interval: Self.period, stacked: false, linesPut: lines,
+                            dirty: dirty, flowing: flowing, urgent: urgent)
+            }
+            #expect(run.traceDelays.count == arrivals.count)
+            // As before the clock: a trace waits at most for the next screen frame.
+            let late = run.traceDelays.filter { $0 > Self.frame + 1e-9 }
+            #expect(late.isEmpty, """
+                phase \(phaseMs) ms, a change every \(urgentEvery) frames: \(late.count) traces waited past \
+                the next frame, the longest \((late.max() ?? 0) * 1000) ms
+                """)
+            // The lines still show on the frames the clock put them in.
+            #expect(run.shown == run.put, "phase \(phaseMs) ms, a change every \(urgentEvery) frames")
         }
     }
 
