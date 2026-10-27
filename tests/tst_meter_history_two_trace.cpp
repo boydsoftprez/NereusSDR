@@ -361,10 +361,13 @@ private slots:
         ContentPropertyEditor editor(registry);
         ContentEntry entry = registry.makeEntry("meter.historyGraph");
         // New faces take Thetis's trace colors and start with trace 2 off.
-        const QJsonArray channels = entry.config["properties"].toObject()["channels"].toArray();
-        QCOMPARE(channels.size(), 2);
+        // Saved, trace 2 sits under trace2Channel beside the one channel
+        // v2026.10.1 accepts.
+        const QJsonObject properties = entry.config["properties"].toObject();
+        const QJsonArray channels = properties["channels"].toArray();
+        QCOMPARE(channels.size(), 1);
         QCOMPARE(QColor(channels[0].toObject()["color"].toString()), QColor(Qt::red));
-        QCOMPARE(QColor(channels[1].toObject()["color"].toString()), QColor(Qt::yellow));
+        QCOMPARE(QColor(properties["trace2Channel"].toObject()["color"].toString()), QColor(Qt::yellow));
         QVERIFY(!entry.config["properties"].toObject().contains("trace2Context"));
         ContentEntry edited;
         connect(&editor, &ContentPropertyEditor::entryEdited, this, [&](const ContentEntry& value) { edited = value; });

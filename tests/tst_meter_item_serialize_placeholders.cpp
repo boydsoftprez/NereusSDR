@@ -8,6 +8,10 @@
 //                 save in every type's record (chained QString::arg re-scans
 //                 substituted text).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - PR 677 review fix wave (I4): the web image's background
+//                 ID is letters and digits only, so it is not a free-text
+//                 row. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-26 - The LED condition is free text too.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
@@ -48,8 +52,6 @@ QString recordOf(const ContentEntry& entry)
 // User text that QString::arg would treat as placeholders if it re-scanned
 // a substituted value. No '|': a pipe record cannot hold one.
 const QString kText = QStringLiteral("a%1b%20c%%d");
-// WebImage keeps four characters of its background ID.
-const QString kFourChar = QStringLiteral("%1%%");
 
 // One free-text field of a pipe record: write the text, read it back.
 struct TextField {
@@ -101,8 +103,8 @@ QVector<TextField> textFieldsOf(MeterItem* item)
         field(QStringLiteral("text2"), &TextOverlayItem::setText2, &TextOverlayItem::text2),
         field(QStringLiteral("url"), &WebImageItem::setUrl, &WebImageItem::url,
               QStringLiteral("https://example.invalid/") + kText),
-        field(QStringLiteral("backgroundFourChar"), &WebImageItem::setBackgroundFourChar,
-              &WebImageItem::backgroundFourChar, kFourChar),
+        // A web image's background ID is not free text: it keeps letters
+        // and digits only (tst_web_image_item, nextFourCharKeepsTheRecordWhole).
         field(QStringLiteral("backgroundImagePath"), &RotatorItem::setBackgroundImagePath,
               &RotatorItem::backgroundImagePath),
         field(QStringLiteral("azControlString"), &RotatorItem::setAzControlString,
