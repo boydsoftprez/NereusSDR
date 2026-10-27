@@ -34,6 +34,10 @@
 //   2026-10-26 - CW transmit fix wave 2 (I2): m_transmittingSettle, the
 //                 30 ms TRANSMITTING settle the un-key cancels. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F8: m_transmitASettle, the
+//                 5 ms TRANSMIT_A step the un-key and stop() cancel, and
+//                 test probes for both settles. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -79,6 +83,11 @@ namespace NereusSDR {
 class NEREUS_CORE_EXPORT SmartSdrApiListener : public QObject {
     Q_OBJECT
 public:
+    // Final fix wave F3 and F8: whether the TRANSMITTING settle and the
+    // TRANSMIT_A step are pending, so a test proves it un-keys inside them.
+    bool transmittingSettleActiveForTest() const { return m_transmittingSettle.isActive(); }
+    bool transmitAPendingForTest() const { return m_transmitASettle.isActive(); }
+
     explicit SmartSdrApiListener(QObject* parent = nullptr);
 
     // Production entry point: binds to AnyIPv4:4992 (a desktop window), or,
@@ -417,6 +426,15 @@ private:
     static constexpr int kTransmittingSettleMs = 30;
     QTimer  m_transmittingSettle;
     QString m_transmittingSource;
+
+    // Final fix wave F8: the C6 TRANSMIT_A step, ~5 ms after TRANSMITTING
+    // (pcap T+167.734 -> T+167.740), a member timer for the same reason:
+    // an un-key within 5 ms of TRANSMITTING sent TRANSMIT_A after the idle
+    // sequence.
+    static constexpr int kTransmitASettleMs = 5;
+    QTimer      m_transmitASettle;
+    QStringList m_transmitAHandles;
+    void broadcastTransmitA();
 
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: actual emission
     // of the canonical TRANSMITTING S-frame + RF-flow gate release.

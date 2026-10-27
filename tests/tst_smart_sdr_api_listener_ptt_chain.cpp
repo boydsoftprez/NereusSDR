@@ -12,6 +12,10 @@
 //   2026-10-26  CW transmit fix wave 2 (I2): a key released inside the
 //                 30 ms settle sends no TRANSMITTING and no grant.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27  CW transmit final fix wave: the I2 test proves the settle
+//                 was running at the un-key (F3); an un-key within 5 ms of
+//                 TRANSMITTING sends no TRANSMIT_A after the idle sequence
+//                 (F8). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -181,6 +185,7 @@ private slots:
     void g20_unkeyCancelsTheRepeat();
     void g20_noAmpTransmittingIsRepeatedToo();
     void i2_unkeyInsideTheSettleSendsNoTransmittingAndNoGrant();
+    void f8_unkeyWithin5msOfTransmittingSendsNoTransmitA();
     void receiveOnlyStationBlocksNativeAccessoryProxy();
 };
 
@@ -900,15 +905,15 @@ void SmartSdrApiListenerPttChainTest::i2_unkeyInsideTheSettleSendsNoTransmitting
     drain(&pgxl, 50);
     pgxl.write("C11|interlock ready 1\n");
     pgxl.flush();
-    // The ACK is processed once its reply arrives; one more pass runs the
-    // advance, which starts the settle.
+    // The ACK is processed once its reply arrives; the advance then starts
+    // the settle. F3: the un-key comes only once the settle is running, so
+    // the test proves the cancel rather than passing with nothing pending.
     QByteArray seen;
     QVERIFY(waitFor([&]() {
         seen.append(pgxl.readAll());
-        return seen.contains("R11|");
+        return seen.contains("R11|") && listener.transmittingSettleActiveForTest();
     }));
-    QCoreApplication::processEvents();
-    QCoreApplication::processEvents();
+    QVERIFY(listener.transmittingSettleActiveForTest());
     const int grantsAtUnkey = grantSpy.count();
     listener.setInterlockTransmitting(false, QStringLiteral("MOX"));
 
@@ -923,6 +928,46 @@ void SmartSdrApiListenerPttChainTest::i2_unkeyInsideTheSettleSendsNoTransmitting
         }
     }
     QCOMPARE(grantSpy.count(), grantsAtUnkey);
+}
+
+// Final fix wave F8: TRANSMIT_A follows TRANSMITTING by ~5 ms (C6). An
+// un-key inside those 5 ms cancels it, so no amplifier hears TRANSMIT_A
+// after the idle sequence. Voice (MOX) here; the un-key is made from the
+// grant itself, while the step is known to be pending.
+void SmartSdrApiListenerPttChainTest::f8_unkeyWithin5msOfTransmittingSendsNoTransmitA()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    QTcpSocket pgxl;
+    pgxl.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&pgxl);
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&pgxl);
+
+    bool pendingAtUnkey = false;
+    int grants = 0;
+    connect(&listener, &SmartSdrApiListener::interlockGranted, this, [&](const QString&) {
+        ++grants;
+        pendingAtUnkey = listener.transmitAPendingForTest();
+        listener.setInterlockTransmitting(false, QStringLiteral("MOX"));
+    });
+    listener.setInterlockTransmitting(true, QStringLiteral("MOX"));
+    drain(&pgxl, 50);
+    pgxl.write("C11|interlock ready 1\n");
+    pgxl.flush();
+    QVERIFY(waitFor([&]() { return grants == 1; }));
+    QVERIFY(pendingAtUnkey);
+    QVERIFY(!listener.transmitAPendingForTest());
+
+    const QList<TimedLine> lines = drainTimed(&pgxl, 300);
+    bool sawTransmitting = false;
+    for (const TimedLine& t : lines) {
+        sawTransmitting = sawTransmitting || t.line.contains(QStringLiteral("state=TRANSMITTING"));
+        QVERIFY2(!t.line.contains(QStringLiteral("state=TRANSMIT_A")), qPrintable(t.line));
+    }
+    QVERIFY(sawTransmitting);
+    QCOMPARE(interlockLinesIn(lines, QStringLiteral("UNKEY_REQUESTED")).size(), 1);
 }
 
 void SmartSdrApiListenerPttChainTest::g20_noAmpTransmittingIsRepeatedToo()

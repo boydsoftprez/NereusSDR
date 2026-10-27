@@ -31,6 +31,9 @@
 // 2026-10-26: CW transmit fix wave 2 (I2): the 30 ms TRANSMITTING settle
 // is a member timer that an un-key and stop() cancel. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F8: the 5 ms TRANSMIT_A step is a
+// member timer too, cancelled by an un-key and stop(). J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -74,6 +77,13 @@ SmartSdrApiListener::SmartSdrApiListener(QObject* parent)
         m_transmittingSource.clear();
         broadcastTransmitting(source);
     });
+
+    // C6 TRANSMIT_A step after TRANSMITTING (see broadcastTransmitting).
+    m_transmitASettle.setSingleShot(true);
+    m_transmitASettle.setTimerType(Qt::PreciseTimer);
+    m_transmitASettle.setInterval(kTransmitASettleMs);
+    connect(&m_transmitASettle, &QTimer::timeout,
+            this, &SmartSdrApiListener::broadcastTransmitA);
 }
 
 void SmartSdrApiListener::armInterlockRepeat(const QByteArray& frame)
@@ -211,6 +221,9 @@ void SmartSdrApiListener::stop()
     m_pttAckTimeout.stop();
     m_transmittingSettle.stop();
     m_transmittingSource.clear();
+    // F8: nor a TRANSMIT_A still to go.
+    m_transmitASettle.stop();
+    m_transmitAHandles.clear();
     cancelInterlockRepeat();
     closeServers();
 
@@ -473,6 +486,10 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // cannot land in the next key.
         m_transmittingSettle.stop();
         m_transmittingSource.clear();
+        // Final fix wave F8: likewise the TRANSMIT_A step still to go, so
+        // no amplifier hears TRANSMIT_A after the idle sequence.
+        m_transmitASettle.stop();
+        m_transmitAHandles.clear();
         // G-20: the un-key is a state change; the keyed state is not
         // repeated after it.
         cancelInterlockRepeat();
@@ -567,20 +584,28 @@ void SmartSdrApiListener::broadcastTransmitting(const QString& source)
             keyedHandles << it->ampHandle;
         }
     }
-    QTimer::singleShot(5, this, [this, keyedHandles]() {
-        for (const QString& h : keyedHandles) {
-            const QString body = QStringLiteral("amplifier 0x%1 state=TRANSMIT_A").arg(h);
-            const QByteArray frame =
-                QStringLiteral("S0|%1\n").arg(body).toUtf8();
-            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-                QTcpSocket* sock = jt.key();
-                if (sock && sock->isOpen()) { sock->write(frame); }
-            }
-            qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=TRANSMIT_A";
-        }
-    });
+    // Final fix wave F8: a member timer the un-key and stop() cancel (was
+    // an uncancelled QTimer::singleShot(5, ...)).
+    m_transmitAHandles = keyedHandles;
+    m_transmitASettle.start();
 
     emit interlockGranted(source);
+}
+
+void SmartSdrApiListener::broadcastTransmitA()
+{
+    const QStringList keyedHandles = m_transmitAHandles;
+    m_transmitAHandles.clear();
+    for (const QString& h : keyedHandles) {
+        const QString body = QStringLiteral("amplifier 0x%1 state=TRANSMIT_A").arg(h);
+        const QByteArray frame =
+            QStringLiteral("S0|%1\n").arg(body).toUtf8();
+        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+            QTcpSocket* sock = jt.key();
+            if (sock && sock->isOpen()) { sock->write(frame); }
+        }
+        qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=TRANSMIT_A";
+    }
 }
 
 void SmartSdrApiListener::broadcastUnkeySequence(const QString& initiatorName)
