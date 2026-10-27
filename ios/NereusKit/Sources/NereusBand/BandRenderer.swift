@@ -1631,8 +1631,19 @@ public final class BandRenderer {
                                            availableFactor: overlay.availableSpanFactor)
         uniforms.look = SIMD4(Float(StackedTrace.haze), Float(StackedTrace.curtainFootColour),
                               Float(StackedTrace.lineHalfWidthPixels), Float(rowSpan))
-        uniforms.view = SIMD4(Float(view.lowHz - stackReferenceHz), Float(view.spanHz),
-                              Float(min(max(overlay.glide, 0), 1)), Float(StackedTrace.visibleRows))
+        uniforms.view = SIMD4(Float(view.lowHz - stackReferenceHz), Float(view.spanHz), 0,
+                              Float(StackedTrace.visibleRows))
+        // The glide's depths and opacities, and the lines' and the ends'
+        // constants, from StackedTraceGeometry and StackedTrace: the
+        // numbers the tests check are the ones the shader draws with.
+        let glide = min(max(overlay.glide, 0), 1)
+        uniforms.glides = SIMD4(Float(glide), Float(StackedTraceGeometry.frontOpacity(glide: glide)),
+                                Float(StackedTraceGeometry.backOpacity(glide: glide)),
+                                Float(StackedTraceGeometry.backDepth))
+        uniforms.line = SIMD4(Float(StackedTrace.lineGrey), Float(StackedTrace.lineGreyFarShare),
+                              Float(StackedTrace.lineFarStrength), Float(StackedTrace.lineNearExtra))
+        uniforms.lineFloor = SIMD4(Float(StackedTrace.lineOverFloorShare), Float(StackedTrace.lineFloorSpan),
+                                   Float(StackedTrace.sideFadePixels), Float(StackedTrace.lineEdgeSoftening))
         var shadows = Array(repeating: SIMD4<Float>(0, 0, 0, 0), count: StackedUniforms.shadowSlots)
         var cues = shadows
         var passbands = 0
@@ -1873,8 +1884,8 @@ public final class BandRenderer {
 }
 
 /// The 3D view's shader uniforms, laid out as `StackedUniforms` in
-/// `Band.metal`: nine four-float rows and two arrays of eight, then the
-/// viewport and five counts.
+/// `Band.metal`: two four-float rows, two arrays of eight, eight more rows,
+/// then the viewport and five counts.
 struct StackedUniforms {
     typealias Eight = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                        SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -1890,6 +1901,9 @@ struct StackedUniforms {
     var look = SIMD4<Float>(0, 0, 0, 0)
     var view = SIMD4<Float>(0, 0, 0, 0)
     var shadowMeta = SIMD4<Float>(0, 0, 0, 0)
+    var glides = SIMD4<Float>(0, 0, 0, 0)
+    var line = SIMD4<Float>(0, 0, 0, 0)
+    var lineFloor = SIMD4<Float>(0, 0, 0, 0)
     var viewport = SIMD2<Float>(0, 0)
     var columns: UInt32 = 0
     var capacity: UInt32 = 0

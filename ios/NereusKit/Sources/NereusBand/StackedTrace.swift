@@ -78,23 +78,27 @@ public enum StackedTrace {
     public static let curtainFootColour = 0.6
     /// The rows' ends fade out over this many pixels, so the stacked ends
     /// do not stand as a hard comb against the dark outside the surface.
-    /// The shader draws with the same number.
+    /// The renderer passes it to the shader.
     public static let sideFadePixels = 8.0
 
     /// The ridge lines over the stack (the desktop's values): a light grey
-    /// ``lineGrey`` over the background, at ``lineFarStrength`` at the back
-    /// up to that plus ``lineNearExtra`` at the front, and at
+    /// ``lineGrey``, mixed over the background by ``lineGreyFarShare`` at
+    /// the back up to all of it at the front, at ``lineFarStrength`` at the
+    /// back up to that plus ``lineNearExtra`` at the front, and at
     /// ``lineOverFloorShare`` of that where the level is within
-    /// ``lineFloorSpan`` of the colour span over the floor. The shader
-    /// draws with the same numbers.
+    /// ``lineFloorSpan`` of the colour span over the floor. The renderer
+    /// passes them to the shader, so these are the numbers it draws with.
     public static let lineGrey = 0.92
+    public static let lineGreyFarShare = 0.45
     public static let lineFarStrength = 0.12
     public static let lineNearExtra = 0.5
     public static let lineOverFloorShare = 0.42
     public static let lineFloorSpan = 0.035
-    /// Each ridge line is a ribbon this many pixels either side of the
-    /// ridge, its edges softened, so it is thin at any screen scale.
+    /// Each ridge line is a strip this many pixels either side of the
+    /// ridge, so it is thin at any screen scale. Its edges soften from
+    /// ``lineEdgeSoftening`` of the way out from the ridge.
     public static let lineHalfWidthPixels = 1.0
+    public static let lineEdgeSoftening = 0.15
 
     /// The 3D Angle's curves: the back row's width and the rise of the back
     /// row's foot, from angle 0 to angle 100, and the tallest ridge allowed.
@@ -229,8 +233,12 @@ public struct StackedTraceShape: Equatable, Sendable {
 }
 
 /// Where the stack's rows land in the spectrum's plot, in pixels from its
-/// top-left corner, for one set of settings: what the renderer's shader
-/// computes for each vertex, here for the tests and the dBm scale.
+/// top-left corner, for one set of settings, for the tests and the dBm
+/// scale. The shader works each vertex out the same way. The numbers it
+/// works with come from here and ``StackedTrace``: the glide's opacities at
+/// the front and the back, the back's depth, the line and side fade
+/// constants (``StackedUniforms``). The tests that draw the stack check
+/// what the shader makes of them.
 public struct StackedTraceGeometry: Equatable, Sendable {
     public let size: CGSize
     public let shape: StackedTraceShape
@@ -298,7 +306,8 @@ public struct StackedTraceGeometry: Equatable, Sendable {
     }
 
     /// How strong a ridge line is at `depth` over a level `colourShare` of
-    /// the colour span above the floor, before the glide shares it out.
+    /// the colour span above the floor, before the glide shares it out and
+    /// the strip's edges soften it.
     public static func lineStrength(depth: Double, colourShare: Double) -> Double {
         let nearness = 1 - min(max(depth, 0), 1)
         let share = min(max(colourShare, 0), 1)
@@ -310,14 +319,15 @@ public struct StackedTraceGeometry: Equatable, Sendable {
     }
 
     /// The opacities of a ridge line's two layers at one depth, `glide` of
-    /// the way to the next row: the older row's line fades out, and the
-    /// newer's, drawn over it, fades in strengthened so that where both
-    /// rows draw the same line it keeps its `strength` all the way.
+    /// the way to the next row, as the shader works them out: the older
+    /// row's line gives way, and the newer's, drawn over it, covers the
+    /// part of what the older leaves that makes the pair cover `strength`,
+    /// so that where both rows draw the same line it keeps its strength.
     public static func lineOpacities(glide: Double, strength: Double) -> (older: Double, newer: Double) {
         let share = min(max(glide, 0), 1)
         let older = strength * (1 - share)
-        let newer = strength * share / max(1 - older, 0.0001)
-        return (older, newer)
+        let left = 1 - older
+        return (older, left > 0 ? (strength - older) / left : 0)
     }
 
     /// Where a frequency lands across the plot at `depth`: `unit` is its

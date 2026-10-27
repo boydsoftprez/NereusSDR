@@ -873,4 +873,96 @@ import Testing
         let share = Double(half - clear) / Double(max(whole - clear, 1))
         #expect(share > 0.3 && share < 0.7, "half way, half grown in: \(share)")
     }
+
+    /// A ridge line two different rows share keeps its strength through the
+    /// glide, as drawn: the older row's line gives way at its depth as the
+    /// newer's comes in over it, and where both draw the same line the pair
+    /// covers what one line covers. Drawn without the newer layer's make-up
+    /// the shared line dips at mid-glide by a quarter of its strength
+    /// squared. The older row's carrier is at the left, the newer's at the
+    /// right; at the centre both lie at -100 dBm. The angle sets the rows
+    /// farthest apart, so the next line back stays clear of the front's,
+    /// and 3D Gain 0 keeps the curtain under the line dark.
+    @Test func aLineTwoRowsShareKeepsItsStrengthAtMidGlide() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        settings.threeDAngle = 100
+        settings.threeDGain = 0
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        var older = [Float](repeating: -100, count: 200)
+        var newer = older
+        for index in 20..<40 {
+            older[index] = -60
+            newer[index + 140] = -60
+        }
+        var stack = StackedTraceHistory(smoothsRows: false)
+        stack.append(frame: BandFixtures.frame(trace: older, sequence: 1), coverage: coverage, wide: nil, time: 1)
+        stack.append(frame: BandFixtures.frame(trace: newer, sequence: 2), coverage: coverage, wide: nil, time: 2)
+        let plot = BandRendererTests.geometry(settings)
+        let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
+                                            scale: settings.scaleRange)
+        let ridge = geometry.ridgeY(dbm: -100, depth: 0)
+        let next = geometry.ridgeY(dbm: -100, depth: StackedTraceGeometry.lineDepth(place: 1))
+        #expect(ridge - next > 2, "the two lines' strips do not overlap: \(ridge - next) pixels apart")
+        // The front line's pixels: centres within its strip, clear of the next line's.
+        let rows = ((Int(ridge) - 2)...(Int(ridge) + 2)).filter {
+            abs(Double($0) + 0.5 - ridge) < StackedTrace.lineHalfWidthPixels
+                && Double($0) + 0.5 > next + StackedTrace.lineHalfWidthPixels
+        }
+        #expect(!rows.isEmpty)
+        let middle = BandRendererTests.width / 2
+        func brightest(_ image: Image) -> Int {
+            rows.map { image.grey(middle, $0) }.max() ?? 0
+        }
+        let start = try renderStack(stack, glide: 0, target: target, renderer: renderer, settings: settings)
+        let line = brightest(start)
+        let under = start.grey(middle, Int(ridge) + 4)
+        // The front line over the curtain: the line's grey (0.92) at the
+        // front's strength (0.12 + 0.5), less the strip's soft edge at the
+        // pixel's centre.
+        let grey = Int((StackedTrace.lineGrey * 255).rounded())
+        let strength = Double(line - under) / Double(grey - under)
+        #expect(strength > 0.4 && strength < 0.66, "the front line at \(strength) of the way to its grey over \(under)")
+        for glide in [0.25, 0.5, 0.75, 0.999] {
+            let drawn = brightest(try renderStack(stack, glide: glide, target: target, renderer: renderer,
+                                                  settings: settings))
+            #expect(drawn.isNear(line, tolerance: 2), "glide \(glide): \(drawn) against \(line)")
+        }
+    }
+
+    /// The rows' ends fade out over StackedTrace.sideFadePixels on an S
+    /// curve, as drawn: in the front row's curtain, each pixel's share of
+    /// the way from the bare band to the curtain inside follows the fade.
+    @Test func theRowsEndsFadeOverEightPixels() throws {
+        let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = BandRendererTests.plain()
+        settings.spectrumView = .stacked
+        let coverage = BandCoverage(centerHz: BandRendererTests.centre, spanHz: BandRendererTests.span)
+        let flat = [Float](repeating: -70, count: 200)
+        var stack = StackedTraceHistory(smoothsRows: false)
+        stack.append(frame: BandFixtures.frame(trace: flat, sequence: 1), coverage: coverage, wide: nil, time: 1)
+        stack.append(frame: BandFixtures.frame(trace: flat, sequence: 2), coverage: coverage, wide: nil, time: 2)
+        let plot = BandRendererTests.geometry(settings)
+        let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
+                                            scale: settings.scaleRange)
+        // Half way down the front curtain, far from its ridge line. At
+        // glide 0 the front shows the older row alone.
+        let y = Int((geometry.ridgeY(dbm: -70, depth: 0) + geometry.baselineY(depth: 0)) / 2)
+        let image = try renderStack(stack, glide: 0, target: target, renderer: renderer, settings: settings)
+        let bare = try renderStack(StackedTraceHistory(smoothsRows: false), glide: 0, target: target,
+                                   renderer: renderer, settings: settings)
+        let width = Int(plot.size.width)
+        let inside = image.grey(width / 2, y)
+        #expect(inside - bare.grey(width / 2, y) > 80, "the curtain stands out: \(inside)")
+        for pixels in 0..<12 {
+            let expected = StackedTraceGeometry.sideFade(pixels: Double(pixels) + 0.5)
+            for x in [pixels, width - 1 - pixels] {
+                let share = Double(image.grey(x, y) - bare.grey(x, y)) / Double(inside - bare.grey(x, y))
+                #expect(abs(share - expected) < 0.06, "\(x): \(share) against \(expected)")
+            }
+        }
+    }
 }
