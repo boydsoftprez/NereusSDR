@@ -1487,8 +1487,8 @@ public final class BandRenderer {
         }
     }
 
-    /// Uploads the rows the renderer has not seen, all of them after the
-    /// rows' width changed.
+    /// Uploads the rows the renderer has not seen, all of them in one copy
+    /// after the stack started over.
     private func syncStack(_ stack: StackedTraceHistory, referenceHz: Double) {
         guard stack.columns > 0, stack.count > 0 else {
             return
@@ -1511,38 +1511,71 @@ public final class BandRenderer {
         guard let texture = stackTexture else {
             return
         }
-        let fresh = uploadAll ? UInt64(stack.count) : min(stack.rowsAppended &- uploadedRows, UInt64(stack.capacity))
+        if uploadAll {
+            // A texture made this frame: no frame in flight reads it.
+            Self.uploadWhole(stack, referenceHz: stackReferenceHz, to: texture, windows: stackWindows)
+            uploadedRows = stack.rowsAppended
+            return
+        }
+        let fresh = min(stack.rowsAppended &- uploadedRows, UInt64(stack.capacity))
+        let rowFloats = stack.columns * 2
         for age in 0..<Int(min(fresh, UInt64(stack.count))) {
             let row = stack.storageRow(age: age)
-            var window = SIMD4<Float>(0, 0, 0, 0)
-            if let coverage = stack.window(storageRow: row), coverage.spanHz > 0 {
-                window = SIMD4(Float(coverage.lowHz - stackReferenceHz), Float(coverage.spanHz),
-                    stack.quiet(age: age) ?? 0, stack.quiet(age: age) == nil ? 0 : 1)
+            let window = Self.stackWindow(stack, age: age, referenceHz: stackReferenceHz)
+            // A row a frame still in flight may be drawing: the copy goes
+            // through this frame's command buffer, after those frames.
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: rowFloats) { packed in
+                stack.pack(storageRow: row, into: packed)
+                rowUploads.add(UnsafeRawBufferPointer(packed), to: texture, row: row, width: stack.columns, device: device)
             }
-            if uploadAll {
-                // A texture made this frame: no frame in flight reads it.
-                stack.packedStorageLine(row).withUnsafeBytes { raw in
-                    if let base = raw.baseAddress {
-                        texture.replace(region: MTLRegionMake2D(0, row, stack.columns, 1), mipmapLevel: 0,
-                                        withBytes: base, bytesPerRow: stack.columns * 2 * MemoryLayout<Float>.stride)
-                    }
-                }
-                stackWindows?.replace(region: MTLRegionMake2D(0, row, 1, 1), mipmapLevel: 0, withBytes: &window,
-                                      bytesPerRow: MemoryLayout<SIMD4<Float>>.stride)
-            } else {
-                // A row a frame still in flight may be drawing: the copy goes
-                // through this frame's command buffer, after those frames.
-                stack.packedStorageLine(row).withUnsafeBytes { raw in
-                    rowUploads.add(raw, to: texture, row: row, width: stack.columns, device: device)
-                }
-                if let stackWindows {
-                    withUnsafeBytes(of: window) { raw in
-                        rowUploads.add(raw, to: stackWindows, row: row, width: 1, device: device)
-                    }
+            if let stackWindows {
+                withUnsafeBytes(of: window) { raw in
+                    rowUploads.add(raw, to: stackWindows, row: row, width: 1, device: device)
                 }
             }
         }
         uploadedRows = stack.rowsAppended
+    }
+
+    /// The window texel of the row `age` rows old: its low edge from
+    /// `referenceHz` and its span, its quiet level and whether it has one.
+    static func stackWindow(_ stack: StackedTraceHistory, age: Int, referenceHz: Double) -> SIMD4<Float> {
+        guard let coverage = stack.window(age: age), coverage.spanHz > 0 else {
+            return SIMD4(0, 0, 0, 0)
+        }
+        let quiet = stack.quiet(age: age)
+        return SIMD4(Float(coverage.lowHz - referenceHz), Float(coverage.spanHz), quiet ?? 0, quiet == nil ? 0 : 1)
+    }
+
+    /// Writes every row of `stack` and its windows into textures made this
+    /// frame, one copy each: no frame in flight reads them. The rows not
+    /// held go in too; the shader never draws them.
+    static func uploadWhole(_ stack: StackedTraceHistory, referenceHz: Double, to texture: any MTLTexture,
+                            windows windowTexture: (any MTLTexture)?) {
+        let columns = stack.columns
+        let rows = stack.capacity
+        guard stack.count > 0, columns > 0, texture.width == columns, texture.height == rows else {
+            return
+        }
+        stack.packedStorage().withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                texture.replace(region: MTLRegionMake2D(0, 0, columns, rows), mipmapLevel: 0, withBytes: base,
+                                bytesPerRow: columns * 2 * MemoryLayout<Float>.stride)
+            }
+        }
+        guard let windowTexture else {
+            return
+        }
+        var windows = [SIMD4<Float>](repeating: SIMD4(0, 0, 0, 0), count: rows)
+        for age in 0..<stack.count {
+            windows[stack.storageRow(age: age)] = stackWindow(stack, age: age, referenceHz: referenceHz)
+        }
+        windows.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                windowTexture.replace(region: MTLRegionMake2D(0, 0, 1, rows), mipmapLevel: 0, withBytes: base,
+                                      bytesPerRow: MemoryLayout<SIMD4<Float>>.stride)
+            }
+        }
     }
 
     /// Copies the rows staged this frame into their textures, in a blit

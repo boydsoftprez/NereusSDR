@@ -99,8 +99,8 @@ struct StackedDensityCostTests {
         var state = BandState(waterfallLines: layout.waterfallLines)
         state.note(context: 1, coverage: Self.pan, wide: Self.wide)
         var generator = SystemRandomNumberGenerator()
-        func stack(lineBins: Int) -> StackedTraceHistory {
-            var stack = StackedTraceHistory()
+        func stack(lineBins: Int, columns: Int = StackedTrace.maxColumns) -> StackedTraceHistory {
+            var stack = StackedTraceHistory(smoothsRows: true, columns: columns)
             let wideBins = Int((Double(lineBins) / 0.35).rounded(.up))
             for sequence in 1...StackedTrace.keptRows {
                 let frame = Self.frame(Self.line(lineBins, generator: &generator),
@@ -109,7 +109,7 @@ struct StackedDensityCostTests {
             }
             return stack
         }
-        let old = stack(lineBins: 269)
+        let old = stack(lineBins: 269, columns: 769)
         let new = stack(lineBins: Self.width)
         let frame = Self.frame(Self.line(Self.width, generator: &generator), wide: [], sequence: 1)
         state.receive(frame: frame, manualLevels: .init(lowDbm: -130, highDbm: -60))

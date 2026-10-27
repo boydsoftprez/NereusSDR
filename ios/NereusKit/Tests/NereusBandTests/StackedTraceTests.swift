@@ -236,17 +236,53 @@ import Testing
                                  traceDbm: line, waterfallDbm: line, wideDbm: wideLine)
         let added = stack.append(frame: frame, coverage: pan, wide: wide, time: 10)
         #expect(added)
-        #expect(stack.count == 1 && stack.columns == 286)
+        #expect(stack.count == 1 && stack.columns == StackedTrace.maxColumns)
         let row = Array(stack.row(age: 0)!)
         let window = stack.window(age: 0)!
         #expect(abs(window.spanHz - 40_000 / 0.35) < 1e-6 && window.centerHz == 7_200_000)
         func value(at hz: Double) -> Float {
             row[Int((hz - window.lowHz) / window.spanHz * Double(row.count))]
         }
-        #expect(value(at: 7_190_250) == -70, "inside the pan, the line's own level")
-        #expect(value(at: 7_155_250) == -60, "beside it, the Core's wide row")
+        // A column narrower than a sample takes the one nearest its low edge.
+        #expect(value(at: 7_190_100) == -70, "inside the pan, the line's own level")
+        #expect(value(at: 7_155_100) == -60, "beside it, the Core's wide row")
         #expect(value(at: 7_145_000).isNaN, "past the wide row, nothing")
         #expect(stack.newestTime == 10)
+    }
+
+    /// A line of another width goes in beside the rows already held: the
+    /// stack keeps its rows, its columns and its smoothing, and the
+    /// renderer has no reason to upload it whole. Each width under 769
+    /// samples had its own columns, so a step (the quality allocator taking
+    /// a pan down a pixel at a time, a resize, a turn) emptied the stack
+    /// and uploaded it whole (2026-10-26).
+    @Test(arguments: [(600, 599), (900, 600), (256, 1320)])
+    func aWidthStepKeepsTheRows(from: Int, to: Int) throws {
+        let pan = BandCoverage(centerHz: 7_200_000, spanHz: 40_000)
+        var state = BandState(waterfallLines: 10)
+        state.stacksRows = true
+        state.note(context: 1, coverage: pan)
+        let levels = WaterfallHistory.Levels(lowDbm: -130, highDbm: -60)
+        var sequence: UInt32 = 0
+        func add(_ dbm: Float, samples: Int) {
+            sequence += 1
+            state.receive(frame: BandFixtures.frame(trace: [Float](repeating: dbm, count: samples), sequence: sequence),
+                          manualLevels: levels)
+        }
+        for _ in 0..<5 {
+            add(-100, samples: from)
+        }
+        let generation = state.stack.layoutGeneration
+        let held = try #require(state.stack.row(age: 0)).map(\.bitPattern)
+        add(-50, samples: to)
+        #expect(state.stack.count == 6 && state.stack.columns == StackedTrace.maxColumns)
+        #expect(state.stack.layoutGeneration == generation, "no whole upload")
+        #expect(try #require(state.stack.row(age: 1)).map(\.bitPattern) == held, "the rows held stay")
+        add(-50, samples: to)
+        // The median of -100, -50 and -50 is -50; 0.6 of it and 0.4 of the
+        // row before (-100) is -70. Started over, it would stand at -50.
+        let centre = state.stack.sample(age: 0, frequencyHz: pan.centerHz, view: pan, currentFloor: -200).dbm
+        #expect(abs(centre + 70) < 1e-4, "the smoothing runs on: \(centre)")
     }
 
     @Test func rowsFollowTheWaterfallsAdvanceAndStopWithIt() {
@@ -700,7 +736,8 @@ import Testing
     /// The height curve lifts the band just over the floor (0.6), each
     /// curtain's colour falls to 0.6 of the ridge's share at the floor,
     /// the rows' ends fade over 8 pixels, and a row keeps the desktop's 768
-    /// columns across the pan, so 2195 across the widest row.
+    /// columns across the pan, so 2195 across the widest row, whatever the
+    /// line's width.
     @Test func theSurfaceIsShapedLikeTheDesktops() {
         let geometry = Self.geometry()
         // Floor -126 (-120 less 3D Floor's 6), height range 100 dB.
@@ -722,10 +759,10 @@ import Testing
         var stack = StackedTraceHistory(smoothsRows: false)
         stack.append(frame: BandFixtures.frame(trace: [Float](repeating: -120, count: 400)),
                      coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000), wide: nil, time: 1)
-        #expect(stack.columns == 1143, "400 samples across the pan, one column a sample across the widest row")
+        #expect(stack.columns == 2195, "400 samples across the pan, 768 columns across it")
         stack.append(frame: BandFixtures.frame(trace: [Float](repeating: -120, count: 1320)),
                      coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000), wide: nil, time: 2)
-        #expect(stack.columns == 2195, "1320 samples across the pan, kept to 768 columns across it")
+        #expect(stack.columns == 2195 && stack.count == 2, "1320 samples across the pan, 768 columns across it")
     }
 
     /// The surface's mesh lays as many columns across a row's span as the
