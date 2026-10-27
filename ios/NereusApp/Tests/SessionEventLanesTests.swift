@@ -1,7 +1,6 @@
 // NereusSDR for iOS: the Core's messages reach the mirror at once and the command client and media control in order
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
-import CoreFoundation
 import Foundation
 import NereusKitTesting
 import NereusLink
@@ -197,21 +196,6 @@ struct SessionEventLanesTests {
         let model = try await connected(station)
         try await MainScreenShotTests.fill(station)
         try #require(await settle { model.mirror.object("slice:0")?["frequency"] != nil })
-        #if DEBUG
-        let trace = QueueWriteTrace()
-        let tracedSession = try #require(model.session)
-        station.observeDeliveryForTesting { [weak trace] in trace?.fake($0, $1) }
-        model.queueObservationForTesting = { [weak trace] in trace?.app($0, $1, $2, $3, $4, $5) }
-        model.mirror.resultObservationForTesting = { [weak trace] in trace?.mirror($0, $1) }
-        await tracedSession.observeQueueForTesting(
-            decoded: { [weak trace] in trace?.decoded($0) },
-            published: { [weak trace] in trace?.published($0) })
-        defer {
-            station.observeDeliveryForTesting(nil)
-            model.queueObservationForTesting = nil
-            model.mirror.resultObservationForTesting = nil
-        }
-        #endif
         let holder = TuneUnderLoadTests.MainHolder()
         holder.start(holdingMs: 15)
         defer { holder.stop() }
@@ -225,11 +209,6 @@ struct SessionEventLanesTests {
         }
         defer { flooding.clear() }
         try await Task.sleep(for: .seconds(1))
-        #if DEBUG
-        let busy = QueueWriteMainBusy(trace: trace)
-        busy.start()
-        defer { busy.stop() }
-        #endif
         var waits: [Double] = []
         for step in 1 ... 10 {
             let hz = 7_236_400.0 + Double(step) * 100
@@ -248,9 +227,6 @@ struct SessionEventLanesTests {
                 }
                 // Noted as it leaves the fake: the session's own read is in the wait.
                 answered.note()
-                #if DEBUG
-                if let at = answered.at { trace.begin(writeId, step: step, at: at) }
-                #endif
                 await station.deliver(.propertyResult(LinkMessage.PropertyResult(key: write.key, writeId: writeId,
                                                                                  results: [
                     .init(property: entry.name, accepted: true, reason: "", value: entry),
@@ -258,18 +234,12 @@ struct SessionEventLanesTests {
             }
             let outcome = await model.mirror.write("slice:0", property: "frequency", value: .double(hz))
             let applied = ProcessInfo.processInfo.systemUptime
-            #if DEBUG
-            trace.returned(step: step, at: applied)
-            #endif
             await core.value
             #expect(outcome.accepted && outcome.answeredByCore, "write \(step): \(outcome.reason)" as Comment)
             if let at = answered.at {
                 waits.append(max(0, applied - at) * 1_000)
             }
         }
-        #if DEBUG
-        busy.stop()
-        #endif
         let sorted = waits.sorted()
         print("SessionEventLanes write answer to applied ms (main held 15 ms a frame, readings every 5 ms): "
               + "median \(Int(sorted[sorted.count / 2])) max \(Int(sorted.last ?? 0)) of \(sorted.count)")
@@ -279,13 +249,6 @@ struct SessionEventLanesTests {
         #expect((sorted.last ?? .infinity) < 100, "an answer waited \(Int(sorted.last ?? 0)) ms")
         flooding.clear()
         await flood.value
-        #if DEBUG
-        await tracedSession.observeQueueForTesting(decoded: nil, published: nil)
-        station.observeDeliveryForTesting(nil)
-        model.queueObservationForTesting = nil
-        model.mirror.resultObservationForTesting = nil
-        print(trace.report())
-        #endif
         holder.stop()
         await model.disconnect()
     }
@@ -580,212 +543,3 @@ struct SessionEventLanesTests {
         return condition()
     }
 }
-
-#if DEBUG
-/// One test instance, ten explicitly registered IDs, fixed stage keys and counters.
-/// This file-scope type has no global-actor isolation. Sendable probes only lock it.
-private final class QueueWriteTrace: @unchecked Sendable {
-    private struct Write {
-        let step: Int
-        let answer: Double
-        var times: [String: Double] = [:]
-        var admission: [Int] = []
-    }
-    private let lock = NSLock()
-    private var writes: [UInt32: Write] = [:]
-    private var counts: [String: Int] = [:]
-    private var backlog = 0
-    private var maximumBacklog = 0
-    private var unmatchedAdmissions = 0
-    private var maximumCommandsPending = 0
-    private var maximumMediaPending = 0
-    private var maximumCommandsHigh = 0
-    private var maximumMediaHigh = 0
-    private var woke: Double?
-    private var partialWake = false
-    private var busyCount = 0
-    private var busyPartialCount = 0
-    private var busyTotalMs = 0.0
-    private var busyMaximumMs = 0.0
-
-    private func meter(_ message: LinkMessage) -> Bool {
-        if case .delta(let delta) = message {
-            return delta.key.hasPrefix("slice:") && delta.properties.contains { $0.name == "signalStrengthDbm" }
-        }
-        return false
-    }
-
-    private func note(_ id: UInt32, _ stage: String, _ at: Double) {
-        // Only begin admits IDs; unrelated traffic cannot grow storage.
-        guard writes[id] != nil, writes[id]?.times[stage] == nil else { return }
-        writes[id]?.times[stage] = at
-    }
-
-    private func note(_ message: LinkMessage, _ stage: String) {
-        guard case .propertyResult(let result) = message, writes[result.writeId] != nil else { return }
-        note(result.writeId, stage, ProcessInfo.processInfo.systemUptime)
-    }
-
-    func begin(_ id: UInt32, step: Int, at: Double) {
-        lock.withLock {
-            guard (1 ... 10).contains(step), writes.count < 10, writes[id] == nil else { return }
-            writes[id] = Write(step: step, answer: at)
-        }
-    }
-
-    func returned(step: Int, at: Double) {
-        lock.withLock {
-            guard let id = writes.first(where: { $0.value.step == step })?.key else { return }
-            note(id, "F", at)
-        }
-    }
-
-    func fake(_ message: LinkMessage, _ point: FakeStation.DeliveryPointForTesting) {
-        lock.withLock {
-            if meter(message), point == .generated || point == .drainReturned {
-                counts["meter.fake.\(point.rawValue)", default: 0] += 1
-            }
-            note(message, "fake.\(point.rawValue)")
-        }
-    }
-
-    func decoded(_ message: LinkMessage) {
-        lock.withLock {
-            if meter(message) { counts["meter.decoded", default: 0] += 1 }
-            note(message, "decoded")
-        }
-    }
-
-    func published(_ event: StationSession.Event) {
-        lock.withLock {
-            backlog += 1
-            maximumBacklog = max(maximumBacklog, backlog)
-            counts["published", default: 0] += 1
-            if case .message(let message) = event { note(message, "preYield") }
-        }
-    }
-
-    func app(_ event: StationSession.Event, _ point: AppModel.QueuePointForTesting,
-             _ commands: Int, _ media: Int, _ commandsHigh: Int, _ mediaHigh: Int) {
-        lock.withLock {
-            if point != .handled {
-                maximumCommandsPending = max(maximumCommandsPending, commands)
-                maximumMediaPending = max(maximumMediaPending, media)
-                maximumCommandsHigh = max(maximumCommandsHigh, commandsHigh)
-                maximumMediaHigh = max(maximumMediaHigh, mediaHigh)
-            }
-            if point == .admitted {
-                if backlog > 0 { backlog -= 1 } else { unmatchedAdmissions += 1 }
-                counts["admitted", default: 0] += 1
-            }
-            if case .message(let message) = event {
-                if meter(message), point == .admitted || point == .handled {
-                    counts["meter.app.\(point.rawValue)", default: 0] += 1
-                }
-                if case .propertyResult(let result) = message, writes[result.writeId] != nil {
-                    note(result.writeId, "app.\(point.rawValue)", ProcessInfo.processInfo.systemUptime)
-                    if point == .admitted { writes[result.writeId]?.admission = [commands, media, commandsHigh, mediaHigh, backlog] }
-                }
-            }
-            if point != .admitted && point != .handled {
-                let kind: String
-                switch event {
-                case .message(let message): kind = message.kind.rawValue
-                case .stateChanged: kind = "stateChanged"
-                case .refused: kind = "refused"
-                }
-                // Protocol message kinds and the four branch phases are finite.
-                counts["branch.\(point.rawValue).\(kind)", default: 0] += 1
-            }
-        }
-    }
-
-    func mirror(_ id: UInt32, _ point: MirrorStore.ResultPointForTesting) {
-        lock.withLock {
-            guard writes[id] != nil else { return }
-            note(id, "mirror.\(point.rawValue)", ProcessInfo.processInfo.systemUptime)
-        }
-    }
-
-    func busyStart(at: Double) {
-        lock.withLock { woke = at; partialWake = true }
-    }
-
-    func busyActivity(_ activity: CFRunLoopActivity) {
-        lock.withLock {
-            let now = ProcessInfo.processInfo.systemUptime
-            if activity == .afterWaiting {
-                woke = now
-                partialWake = false
-            } else {
-                closeBusy(at: now)
-            }
-        }
-    }
-
-    private func closeBusy(at now: Double) {
-        guard let start = woke else { return }
-        let ms = max(0, now - start) * 1_000
-        if partialWake { busyPartialCount += 1 } else { busyCount += 1 }
-        busyTotalMs += ms
-        busyMaximumMs = max(busyMaximumMs, ms)
-        woke = nil
-    }
-
-    func busyStop(at: Double) {
-        lock.withLock {
-            // A stop in an awake run-loop turn closes a clipped final span.
-            if woke != nil { partialWake = true }
-            closeBusy(at: at)
-        }
-    }
-
-    func report() -> String {
-        lock.withLock {
-            let stages = ["fake.generated", "fake.encoded", "fake.enqueueReturned", "fake.callbackEnter",
-                          "fake.callbackExit", "fake.drainReturned", "decoded", "preYield", "app.admitted",
-                          "app.highWaterBegin", "app.highWaterEnd", "app.barrierBegin", "app.barrierEnd",
-                          "mirror.entered", "mirror.heldSettleDone", "mirror.mergeDone",
-                          "mirror.willResume", "mirror.didResume", "app.handled", "F"]
-            var lines = ["QueueWriteTrace: seconds use systemUptime; columns below are ms relative to exact A. '-' is unobserved.",
-                         "step writeId A(seconds) " + stages.joined(separator: " ") + " admission(cmd,media,cmdHigh,mediaHigh,observedBacklog)"]
-            for (id, write) in writes.sorted(by: { $0.value.step < $1.value.step }) {
-                let values = stages.map { stage in
-                    write.times[stage].map { String(format: "%.3f", ($0 - write.answer) * 1_000) } ?? "-"
-                }
-                lines.append("\(write.step) \(id) \(String(format: "%.9f", write.answer)) "
-                             + values.joined(separator: " ") + " \(write.admission)")
-            }
-            lines.append("counts=\(counts.sorted { $0.key < $1.key }) observedBacklogMax=\(maximumBacklog) remaining=\(backlog) unmatchedAdmissions=\(unmatchedAdmissions) laneMaxima=(\(maximumCommandsPending),\(maximumMediaPending),\(maximumCommandsHigh),\(maximumMediaHigh))")
-            lines.append("mainBusy completed=\(busyCount) clipped=\(busyPartialCount) totalMs=\(busyTotalMs) maxMs=\(busyMaximumMs)")
-            return lines.joined(separator: "\n")
-        }
-    }
-}
-
-/// Same CFRunLoop wake/sleep pattern as TuneUnderLoadTests.MainBusy; no span array.
-/// Only start/stop are main-actor operations; the observer captures a thread-safe sink.
-@MainActor
-private final class QueueWriteMainBusy {
-    private let trace: QueueWriteTrace
-    private var observer: CFRunLoopObserver?
-    init(trace: QueueWriteTrace) { self.trace = trace }
-
-    func start() {
-        trace.busyStart(at: ProcessInfo.processInfo.systemUptime)
-        let trace = self.trace
-        let observer = CFRunLoopObserverCreateWithHandler(
-            nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0
-        ) { _, activity in trace.busyActivity(activity) }
-        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
-        self.observer = observer
-    }
-
-    func stop() {
-        guard let observer else { return }
-        CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
-        self.observer = nil
-        trace.busyStop(at: ProcessInfo.processInfo.systemUptime)
-    }
-}
-#endif

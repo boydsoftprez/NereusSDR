@@ -215,24 +215,6 @@ final class AppModel: ObservableObject {
     var winnerAvailabilityCheckedForTesting: (@MainActor () async -> Void)?
     var beforeMediaEventForTesting: (@MainActor (MediaControlEvent) async -> Void)?
     var afterMediaEventForTesting: (@MainActor (MediaControlEvent) async -> Void)?
-    enum QueuePointForTesting: String, Sendable {
-        case admitted, handled, highWaterBegin, highWaterEnd, barrierBegin, barrierEnd
-    }
-    var queueObservationForTesting: (@Sendable (StationSession.Event, QueuePointForTesting,
-                                               Int, Int, Int, Int) -> Void)?
-
-    private func observeQueueForTesting(_ event: StationSession.Event, _ point: QueuePointForTesting,
-                                        _ lanes: SessionEventLanes) {
-        guard let observe = queueObservationForTesting else { return }
-        if point == .handled {
-            // Handling completion needs its timestamp/count, not another lane sample.
-            // These placeholders are ignored by the collector for this phase.
-            observe(event, point, 0, 0, 0, 0)
-            return
-        }
-        observe(event, point, lanes.commands.pendingCount, lanes.media.pendingCount,
-                lanes.commands.maximumPendingCount, lanes.media.maximumPendingCount)
-    }
     #endif
 
     /// Makes a media peer for a session through the remote access service,
@@ -975,36 +957,18 @@ final class AppModel: ObservableObject {
                 guard let self else {
                     break
                 }
-                #if DEBUG
-                self.observeQueueForTesting(event, .admitted, lanes)
-                #endif
                 if case .message(let message) = event, !Self.waitsOnEveryConsumer(message) {
                     if lanes.commands.pendingCount >= Self.eventLaneHighWaterMark
                         || lanes.media.pendingCount >= Self.eventLaneHighWaterMark {
-                        #if DEBUG
-                        self.observeQueueForTesting(event, .highWaterBegin, lanes)
-                        #endif
                         await lanes.drain()
-                        #if DEBUG
-                        self.observeQueueForTesting(event, .highWaterEnd, lanes)
-                        #endif
                     }
                     self.handleAtOnce(message, event: event, from: next, owner: owner, lanes: lanes)
                 } else {
                     // Everything before it has reached the command client
                     // and media control, as when the pump waited on each.
-                    #if DEBUG
-                    self.observeQueueForTesting(event, .barrierBegin, lanes)
-                    #endif
                     await lanes.drain()
-                    #if DEBUG
-                    self.observeQueueForTesting(event, .barrierEnd, lanes)
-                    #endif
                     await self.handle(event, from: next, owner: owner, lanes: lanes)
                 }
-                #if DEBUG
-                self.observeQueueForTesting(event, .handled, lanes)
-                #endif
                 if case .stateChanged(.stopped) = event {
                     break
                 }

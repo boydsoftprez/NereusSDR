@@ -82,6 +82,19 @@ import Testing
         func count(after ms: Int64) -> Int { lock.withLock { entries.filter { $0.ms == ms }.count } }
     }
 
+    /// The app's media lane carries what `reads` names: the snapshot's end,
+    /// capabilities, `hello` and media operations, never a reading, a
+    /// property's answer or a command's.
+    @Test func readsWhatHandleActsOn() {
+        #expect(MediaControlClient.reads(.snapshotComplete))
+        #expect(MediaControlClient.reads(.mediaControl(LinkMessage.MediaControl(payload: [:]))))
+        #expect(!MediaControlClient.reads(.delta(LinkMessage.Delta(key: "slice:0", properties: []))))
+        #expect(!MediaControlClient.reads(.propertyResult(LinkMessage.PropertyResult(key: "slice:0", writeId: 1,
+                                                                                    results: []))))
+        #expect(!MediaControlClient.reads(.commandResult(LinkMessage.CommandResult(
+            verb: "radio.thing", id: 7, accepted: true, reason: "", affected: [], values: nil))))
+    }
+
     @Test func endedSessionCannotSendStartAfterAsyncRoutePreparation() async {
         let gate = PreparationGate()
         let peer = ScriptedMediaPeer(prepareHook: { _, _ in await gate.hold() })
