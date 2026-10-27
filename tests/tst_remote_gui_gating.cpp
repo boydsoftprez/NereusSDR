@@ -49,6 +49,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit (R-CW-40): the sidetone row case reads a
+//                Saturn, since the HL2 rows no longer claim a sidetone.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21 - The transmit settings gate case puts TUNE on the Tune
 //                slider too, so the chain settings gate is what it reads.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3462,14 +3465,14 @@ private slots:
     void cwSidetoneRowReadsTheCoresRadioAtBuild()
     {
         RadioModel remote(RadioModel::Role::Remote);
-        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::HermesLite).hasSidetoneGenerator);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Saturn).hasSidetoneGenerator);
         StationCapabilities caps;
         caps.macAddress = QStringLiteral("AA:BB:CC:DD:EE:49");
-        caps.board = HPSDRHW::HermesLite;
+        caps.board = HPSDRHW::Saturn;
         caps.radioConnected = true;
         caps.radioIdentityEntries = true;
-        caps.hpsdrModel = HPSDRModel::HERMESLITE;
-        caps.radioProtocol = 1;
+        caps.hpsdrModel = HPSDRModel::ANAN_G2;
+        caps.radioProtocol = 2;
         remote.applyStationCapabilities(caps);
         CwSetupPage page(&remote);
         QVERIFY(page.sidetoneRowVisibleForTest());

@@ -1457,6 +1457,12 @@
 //                connection goes; the auto mode switch and its return
 //                (console.cs:25660-25752, R-CW-37). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the computer sidetone (R-CW-39): run while
+//                the transmit slice is in CW with cwSidetone and
+//                cwComputerSidetone on, at the CW pitch, keyed by the
+//                CWX sender's own key (CWX, the TCI key and the serial
+//                straight key; never the paddle). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5312,6 +5318,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     syncCwKeying();
     // CW transmit (R-CW-31 to R-CW-33): the CWX sender.
     wireCwxSender();
+    // CW transmit (R-CW-39): the computer sidetone, keyed by the sender.
+    wireComputerSidetone();
     // CW transmit (R-CW-36, R-CW-37): the serial key reader and the auto
     // mode switch.
     wireCwSerialKey(nullptr);
@@ -23876,6 +23884,9 @@ bool RadioModel::computeSidetoneExpected() const
 
 void RadioModel::refreshSidetoneExpected()
 {
+    // R-CW-39: the computer sidetone's run follows the same transmit slice
+    // and mode changes.
+    refreshComputerSidetone();
     const bool expected = computeSidetoneExpected();
     if (expected == m_sidetoneExpected) {
         return;
@@ -32761,6 +32772,59 @@ void RadioModel::wireCwxSender()
             cwx->stop();
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-39, D15): the computer sidetone. NereusSDR-original
+// wiring of the sidetone.c port in the audio engine (CwSidetone).
+//
+// Thetis runs it while the transmit mode is CW with both sidetone switches
+// on (console.cs:10728, 15036 [v2.10.3.15]: SetSidetoneRun(0, is_cw &&
+// _cw_sidetones && _cw_sw_sidetone)) and keys it from the CWX bit
+// (netInterface.c:1172-1181 [v2.10.3.15], SetCWX's keySidetone). Here the
+// key is the CWX sender's own key, which carries CWX, the TCI key and the
+// serial straight key; the radio's paddle status (radioKeyStatus) never
+// reaches it (spec C8). The level is MON's (monitorVolume, already the
+// monitor slot's gain through setTxMonitorVolume). A remote window never
+// runs one: the Core's plays in its owner mix.
+// ---------------------------------------------------------------------------
+void RadioModel::wireComputerSidetone()
+{
+    TransmitModel& tm = m_transmitModel;
+    connect(&tm, &TransmitModel::cwSidetoneChanged, this,
+            [this](bool) { refreshComputerSidetone(); });
+    connect(&tm, &TransmitModel::cwComputerSidetoneChanged, this,
+            [this](bool) { refreshComputerSidetone(); });
+    connect(this, &RadioModel::cwPitchChanged, m_audioEngine,
+            [engine = m_audioEngine](int hz) { engine->setCwSidetonePitchHz(hz); });
+    m_audioEngine->setCwSidetonePitchHz(cwPitchHz());
+    if (CwxSender* const cwx = m_cwxSender.get()) {
+        // The sender's thread, under its lock: one atomic store.
+        cwx->setKeyListener([engine = m_audioEngine](bool down) {
+            engine->setCwSidetoneKey(down);
+        });
+    }
+    refreshComputerSidetone();
+}
+
+bool RadioModel::computeComputerSidetoneRun() const
+{
+    if (m_role == Role::Remote) {
+        return false;
+    }
+    if (!m_transmitModel.cwSidetone() || !m_transmitModel.cwComputerSidetone()) {
+        return false;
+    }
+    const SliceModel* const txSlice = txBoundSlice();
+    return txSlice != nullptr && isCwMode(txSlice->dspMode());
+}
+
+void RadioModel::refreshComputerSidetone()
+{
+    if (m_audioEngine == nullptr) {
+        return;
+    }
+    m_audioEngine->setCwSidetoneRun(computeComputerSidetoneRun());
 }
 
 void RadioModel::syncCwxKeyLine()

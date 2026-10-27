@@ -1073,6 +1073,12 @@ nereus_add_test(tst_cw_serial_key_input)
 # RadioModel. The return waits run on the wall clock (300 ms and less).
 nereus_add_test(tst_cw_auto_mode_switch)
 
+# CW transmit Task 11 (R-CW-39, R-CW-40): the computer sidetone (the
+# sidetone.c port alone, then in the audio engine on a RadioModel with a
+# fake speakers bus and a fake connection for the paddle status).
+nereus_add_test(tst_cw_sidetone)
+target_compile_definitions(tst_cw_sidetone PRIVATE NEREUS_BUILD_TESTS)
+
 # CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
 # QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
 # fallback notice and the TX channel skip on a RadioModel.

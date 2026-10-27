@@ -793,6 +793,9 @@
 //                (setCwxAppletHost) CAT ZZKO reports and toggles, absent on
 //                a headless Core (R-CW-34). J.J. Boyd (KG4VCF), AI-assisted
 //                via Claude Code.
+//   2026-10-26: CW transmit, the computer sidetone's wiring
+//                (wireComputerSidetone, computeComputerSidetoneRun,
+//                R-CW-39). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -7390,6 +7393,15 @@ private:
     // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
     bool computeSidetoneExpected() const;
     void refreshSidetoneExpected();
+    // R-CW-39: the computer sidetone (AudioEngine::setCwSidetoneRun) runs
+    // while the transmit slice is in CW with cwSidetone and
+    // cwComputerSidetone on, never on a remote window; its pitch is the CW
+    // pitch and the CWX sender's key keys it.
+    void wireComputerSidetone();
+    void refreshComputerSidetone();
+public:
+    bool computeComputerSidetoneRun() const;
+private:
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;

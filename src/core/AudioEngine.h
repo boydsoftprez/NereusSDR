@@ -325,6 +325,10 @@
 //   2026-10-16: setDeviceListInBackground(): the window's catalog lists
 //               in the background. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: CW transmit, the computer sidetone (R-CW-39, D15):
+//               setCwSidetoneRun/PitchHz/Key, produced into the transmit
+//               monitor slot from drainMixes. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -344,6 +348,7 @@
 //               ever touched by the DSP thread.
 
 #include "core/NereusCoreExport.h"
+#include "core/CwSidetone.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
 #include "audio/AsioSession.h"
@@ -1510,6 +1515,22 @@ public:
     /// transmit, whose MON plays only on that device. Any thread; the audio
     /// thread reads it at the next drain.
     void setTxMonitorLocal(bool local) { m_txMonitorLocal.store(local, std::memory_order_release); }
+
+    /// CW transmit (R-CW-39, D15): the computer sidetone, a port of
+    /// ChannelMaster's sidetone.c (CwSidetone). While it runs, each drain
+    /// fills the frames the mix will take into the transmit monitor's slot
+    /// (kTxMonitorSlotId), just before the mix is summed: no queue of its
+    /// own and no change to the block size, so it adds no delay. It plays
+    /// where MON plays, at MON's level (the slot's gain, set by
+    /// setTxMonitorVolume), and reaches a remote owner's mix as MON does.
+    /// Run, pitch and key are atomics the audio thread reads at its next
+    /// block; the key may be set from any thread (the CWX sender's).
+    void setCwSidetoneRun(bool on) { m_cwSidetone.setRun(on); }
+    bool cwSidetoneRun() const { return m_cwSidetone.isRunning(); }
+    void setCwSidetonePitchHz(double hz) { m_cwSidetone.setPitchHz(hz); }
+    double cwSidetonePitchHz() const { return m_cwSidetone.pitchHz(); }
+    void setCwSidetoneKey(bool down) { m_cwSidetone.setKey(down); }
+    bool cwSidetoneKeyed() const { return m_cwSidetone.isKeyed(); }
     bool txMonitorLocal() const { return m_txMonitorLocal.load(std::memory_order_acquire); }
     TxMonitorOutput txMonitorOutput() const
     {
@@ -2262,6 +2283,16 @@ private:
     static constexpr int kTxMonitorPumpFrames = 256;
     std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
     std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
+    // CW transmit (R-CW-39): the computer sidetone (setCwSidetoneRun).
+    // Configured in the constructor at the mix rate; rendered on the DSP
+    // thread in drainMixes. The scratch is sized with the mix scratch
+    // (constructor, ensureMixScratchFrames), never on the DSP thread.
+    CwSidetone m_cwSidetone;
+    std::vector<float> m_cwSidetoneScratch;
+    // DSP thread only: sidetone frames in the slot the mix has not taken
+    // yet, so a period drained by its last slice's call gets one block.
+    int m_cwSidetoneQueued{0};
+    void produceCwSidetone(int frames);
 
     // Sub-Phase 9 Task 9.2a — per-channel VAX rx gain / mute and master
     // VAX tx gain. Main-thread writes via set*() setters, DSP-thread

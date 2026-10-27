@@ -28,6 +28,9 @@
 //   2026-10-26: CW transmit, setHandKey, the serial straight-key line on
 //               the CWX bit (R-CW-36). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit, setKeyListener, the sender's own key for the
+//               computer sidetone (R-CW-39). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -298,6 +301,14 @@ public:
     // as the TCI key is. Returns true when the key is down after the call.
     // Any thread; stop() and setKeyLine release it.
     bool setHandKey(bool down);
+    // R-CW-39: the computer sidetone's feed. Told the sender's own key (a
+    // message's elements, the Key, the TCI key and the straight key) on
+    // each change, whether or not the line may carry it (in Off without
+    // MOX the line is left alone, the sidetone still sounds). Called on the
+    // thread that changed the key, under the sender's lock, so it must only
+    // store an atomic. Set it before keying.
+    using KeyListener = std::function<void(bool down)>;
+    void setKeyListener(KeyListener listener);
     bool isKeyHeld() const { return m_keyHeldNow.load(std::memory_order_acquire); }
     int queuedCharacters() const;                  // CAT KY/ZZKY buffer answers
     // A message, its hang or a repeat delay is running, or the Key is held.
@@ -388,6 +399,9 @@ private:
     std::atomic<bool> m_keyHeldNow{false};
     // The serial straight key (setHandKey).
     bool m_handKey{false};
+    // The key last told to m_keyListener (setKeyListener).
+    KeyListener m_keyListener;
+    bool m_listenedKey{false};
 
     std::atomic<int> m_queuedChars{0};
     std::atomic<bool> m_sending{false};

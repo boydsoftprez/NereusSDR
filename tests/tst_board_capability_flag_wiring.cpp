@@ -40,6 +40,10 @@
 //   2026-05-02 — Implemented for NereusSDR by J.J. Boyd (KG4VCF),
 //                with AI-assisted transformation via Anthropic
 //                Claude Code.
+//   2026-10-26: CW transmit, hasSidetoneGenerator per board (R-CW-40):
+//                true for every board whose Thetis path sends the
+//                sidetone level, false for both HL2 rows. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -194,12 +198,11 @@ private slots:
 
     // ── Task 4.2 — hasSidetoneGenerator ──────────────────────────────────────
     //
-    // HL2 firmware generates the CW sidetone in hardware (with its own
-    // volume control routed through the radio's audio path); standard P1
-    // boards rely on host-generated software sidetone. We use the
-    // BoardCapabilities.hasSidetoneGenerator flag to visibility-gate the
-    // "Sidetone Volume" row in CwSetupPage so users on non-HL2 boards
-    // don't see a control that does nothing on their hardware.
+    // CW transmit (R-CW-40) fixed the flag in the table: true for every
+    // board whose Thetis path sends the radio's sidetone level (P1 bank 13
+    // C2, networkproto1.c:636; P2 byte 6, network.c:1202 [v2.10.3.15]),
+    // false for both HL2 rows until the bench check (V-HW-6). The flag
+    // gates the "Sidetone Volume" row in CwSetupPage.
     //
     // Thetis upstream comparison (setup.cs [v2.10.3.13+501e3f51]):
     // Thetis does NOT board-gate the sidetone control — chkSideTones,
@@ -207,6 +210,22 @@ private slots:
     // mutually-exclusive checkboxes that are always visible.  This
     // gate is therefore NereusSDR-specific use of the populated flag,
     // not a port of an upstream gate.
+
+    // R-CW-40: the table rows.
+    void sidetoneGenerator_perBoardRow()
+    {
+        const HPSDRHW sends[] = {HPSDRHW::Atlas,     HPSDRHW::Hermes,     HPSDRHW::HermesII,
+                                 HPSDRHW::Angelia,   HPSDRHW::Orion,      HPSDRHW::OrionMKII,
+                                 HPSDRHW::HermesC10, HPSDRHW::Saturn,     HPSDRHW::SaturnMKII,
+                                 HPSDRHW::Andromeda};
+        for (const HPSDRHW board : sends) {
+            QVERIFY2(BoardCapsTable::forBoard(board).hasSidetoneGenerator,
+                     qPrintable(QStringLiteral("board %1").arg(static_cast<int>(board))));
+        }
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesLite).hasSidetoneGenerator);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).hasSidetoneGenerator);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Unknown).hasSidetoneGenerator);
+    }
 
     // Case 1: Default — before any setHasSidetoneGenerator() call, the
     // sidetone row is hidden (so users opening Setup before any radio
@@ -217,7 +236,7 @@ private slots:
         QCOMPARE(page.sidetoneRowVisibleForTest(), false);
     }
 
-    // Case 2: When the flag is true (HL2 family connected), the row
+    // Case 2: When the flag is true (a board that sends the level), the row
     // becomes visible.
     void sidetoneRow_visibleWhenFlagTrue()
     {
@@ -227,7 +246,7 @@ private slots:
     }
 
     // Case 3: When the flag flips back to false (e.g. user disconnects
-    // HL2 then connects an Atlas/Hermes), the row hides again.
+    // an Atlas/Hermes then connects an HL2), the row hides again.
     void sidetoneRow_hidesWhenFlagFlipsFalse()
     {
         CwSetupPage page(nullptr);

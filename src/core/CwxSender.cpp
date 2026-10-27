@@ -28,6 +28,9 @@
 //   2026-10-26: CW transmit, setHandKey, the serial straight-key line on
 //               the CWX bit (R-CW-36). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit, setKeyListener, the sender's own key for the
+//               computer sidetone (R-CW-39). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -853,6 +856,15 @@ void CwxSender::setKeyLocked(bool on)
 // on the way up (the [2.10.3]MW0LGE swap in quitshut and process_element).
 void CwxSender::applyLineLocked()
 {
+    // R-CW-39: the computer sidetone follows the sender's own key, ahead of
+    // the line's break-in or MOX rule and whether or not a line is set.
+    const bool keyed = m_key || m_handKey;
+    if (keyed != m_listenedKey) {
+        m_listenedKey = keyed;
+        if (m_keyListener) {
+            m_keyListener(keyed);
+        }
+    }
     const bool allowed = m_breakIn || m_mox;
     const bool key = (m_key || m_handKey) && allowed;
     const bool ptt = m_hl2 && m_ptt && allowed;
@@ -1255,6 +1267,15 @@ bool CwxSender::setHandKey(bool down)
     m_handKey = true;
     applyLineLocked();
     return true;
+}
+
+void CwxSender::setKeyListener(KeyListener listener)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    m_keyListener = std::move(listener);
+    if (m_keyListener) {
+        m_keyListener(m_listenedKey);
+    }
 }
 
 int CwxSender::queuedCharacters() const
