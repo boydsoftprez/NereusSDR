@@ -159,7 +159,7 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Latest release from GitHub. The page ships with v2026.10.1 baked in and */
+  /* Latest release from GitHub. The page ships with v2026.10.2 baked in and */
   /* only switches when every download link can be matched.              */
   /* ------------------------------------------------------------------ */
 

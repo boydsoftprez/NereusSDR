@@ -70,7 +70,7 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero__grid">
         <div class="hero__copy">
-          <p class="eyebrow">2026.10.1 is here · Free and open source</p>
+          <p class="eyebrow">2026.10.2 is here · Free and open source</p>
           <h1 id="hero-title">
             <span class="line">Your station.</span>
             <span class="line line--lit">Wherever you operate.</span>
@@ -84,12 +84,12 @@
           <div class="hero__cta">
             <a class="btn btn--primary" href="#download" data-os-cta>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-              <span data-os-cta-label>Download <span data-release-version>v2026.10.1</span></span>
+              <span data-os-cta-label>Download <span data-release-version>v2026.10.2</span></span>
             </a>
             <a class="btn" href="https://testflight.apple.com/join/61K3p3xn">Join the iPhone &amp; iPad preview</a>
           </div>
           <p class="hero__meta">
-            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.1</span>, <time data-release-date datetime="2026-10-17T22:03:26Z">17 October 2026</time></span></span>
+            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.2</span>, <time data-release-date datetime="2026-10">October 2026</time></span></span>
             <span>GPLv3</span>
             <span>Built for real stations</span>
           </p>
@@ -144,7 +144,7 @@
           <article><span class="feature-index">03 / TRANSMIT</span><h3>Take the microphone.</h3>
             <p>Voice transmit with on-screen PTT. The Core manages transmit ownership, time-outs and interlocks, with one device holding transmit at a time.</p></article>
         </div>
-        <p class="capture-note">Choose native filter presets, save named TX profiles and watch PA peak and minimum readings. Spots, station accessories and Core-described Setup controls bring the rest of your station within reach. With a 2026.10.1 Core, Tools adds <strong>CAT Control</strong> and <strong>Rotor</strong> pages, a spot shows its bearing with a Turn beam button, and the Sound panel has Radio speaker and Core speaker sections. <a href="/manual/07-iphone-operate.html">Operate from your iPhone or iPad →</a></p>
+        <p class="capture-note">Choose native filter presets, save named TX profiles and watch PA peak and minimum readings. Spots, station accessories and Core-described Setup controls bring the rest of your station within reach. The app wears the desktop's workspace look, with the same palette, panels and buttons, and on a wide iPad Setup lists its categories beside the page. The spectrum stays smooth over long sessions, the 3D waterfall draws every frame and moves at the desktop's pace, zoom is kept across launches, the flag's level can show the peak, the average or Max Bin, NB Blank no longer freezes the waterfall when a loud station keys up, and with a 2026.10.2 Core each waterfall row stands on its own, so a lost network message costs one row. With a 2026.10.1 or later Core, Tools adds <strong>CAT Control</strong> and <strong>Rotor</strong> pages, a spot shows its bearing with a Turn beam button, and the Sound panel has Radio speaker and Core speaker sections. <a href="/manual/07-iphone-operate.html">Operate from your iPhone or iPad →</a></p>
         <div class="screens" data-reveal>
           <figure class="screen"><a href="/assets/img/iphone-panadapter.png" aria-label="Open the full panadapter screenshot"><img src="/assets/img/iphone-panadapter.png" width="1320" height="2868" alt="iPhone panadapter with a VFO flag and markers for other receiver slices" loading="lazy"></a><figcaption><b>The band</b><span>Your receivers, frequencies and waterfall.</span></figcaption></figure>
           <figure class="screen"><a href="/assets/img/iphone-receive.png" aria-label="Open the full receive controls screenshot"><img src="/assets/img/iphone-receive.png" width="1206" height="2622" alt="iPhone receive panel with filter presets, AGC and noise reduction controls" loading="lazy"></a><figcaption><b>Receive controls</b><span>Filters and DSP, within reach.</span></figcaption></figure>
@@ -173,13 +173,13 @@
           <li><span class="feature-index">03 / CONSOLE</span><h3>Your choice of screen</h3><p>macOS, Windows or Linux.<br>Native iPhone and iPad.</p></li>
         </ol>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the published 2026.10.1 ARM64 Core package that matches your operating system. The guide also covers the sound card and the serial adapter a rotor or serial CAT uses.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
+          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the published 2026.10.2 ARM64 Core package that matches your operating system. The guide also covers the sound card and the serial adapter a rotor or serial CAT uses.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>Local and remote operation</h3></div><div class="panel__body"><h4>Connect from home or away.</h4><p>Find and pair with your Core on the LAN, choose an address on a VPN, or use the <strong>rendezvous (RV) service</strong> for an introduction across networks.</p><p>The station session connects directly where possible, through <strong>TURN</strong>, or through a separate <strong>WebSocket relay</strong> when needed. RV signalling handles the introduction; the Core runs the radio and DSP on every path.</p><p>Core Settings shows the selected Core and its control, audio and display paths.</p><a href="/manual/01-desktop-connect.html#connect-to-another-computers-core">Connect to a remote Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>One station, several devices</h3></div><div class="panel__body"><h4>Up to four devices share a Core.</h4><p>Desktop and mobile clients use the same station, each with its own pans and slices. Receiver access is coordinated, other devices' slices are visible as markers, and one device holds transmit at a time.</p><p>The radio's available receivers and the Core's processing capacity set what the station can run together.</p><a href="/manual/08-shared-core.html">Operate with several devices →</a></div></article>
         </div>
         <div class="network-note" data-reveal>
           <h3>A path through the networks you use.</h3>
-          <p>Nereus tries usable <strong>IPv6 and IPv4</strong> paths, with TURN and WebSocket relay alternatives when a direct route is unavailable. That matters on <strong>CGNAT and mobile broadband</strong>, where incoming IPv4 port forwarding may not be an option. <a href="https://www.t-mobile.com/support/home-internet/connect">T-Mobile Home Internet</a>, for example, does not offer configurable port forwarding. Carrier, router and firewall conditions determine which route succeeds.</p>
+          <p>Nereus races <strong>IPv6 and IPv4</strong> and keeps the first path that answers, so a silent IPv6 route no longer holds up a connection. TURN and WebSocket relay alternatives cover the times a direct route is unavailable. That matters on <strong>CGNAT and mobile broadband</strong>, where incoming IPv4 port forwarding may not be an option. <a href="https://www.t-mobile.com/support/home-internet/connect">T-Mobile Home Internet</a>, for example, does not offer configurable port forwarding. Carrier, router and firewall conditions determine which route succeeds.</p>
           <p><a href="/guides/remote-access.html#self-hosting">Run your own remote access server →</a></p>
         </div>
       </div>
@@ -499,9 +499,9 @@
             <div class="titlebar"><h3>Your desktop workspace</h3></div>
             <div class="applet__body">
               <h4>Build the panel you want.</h4>
-              <p>The workspace look is the default in 2026.10.1. Dock containers on any of the four edges, float them, or pop them out into their own windows, and show or hide each header. Workspace profiles save and recall whole layouts. Mix meters, applets and individual controls in a stack or on a Canvas; vintage S-meter faces, cross-needle meters and the AM modulation monitor give your instruments their own character.</p>
+              <p>The workspace look is the default on the desktop, and the iPhone and iPad app now wears it too. Dock containers on any of the four edges, float them, or pop them out into their own windows, and show or hide each header. Workspace profiles save and recall whole layouts. Mix meters, applets and individual controls in a stack or on a Canvas, including any row of the RX or TX applet on its own, Nereus Band Buttons in your own colors, and a Frequency (Custom) readout sized and colored your way; vintage S-meter faces, cross-needle meters and the AM modulation monitor give your instruments their own character.</p>
               <ul class="chips">
-                <li class="is-green">Workspace look</li><li>Four-edge docking</li><li>Pop-outs</li><li>Profiles</li><li>Canvas</li><li>Applets</li><li>S-meter</li><li>Cross-needle</li><li>AM monitor</li>
+                <li class="is-green">Workspace look</li><li>Four-edge docking</li><li>Pop-outs</li><li>Profiles</li><li>Canvas</li><li>Applets</li><li>RX and TX rows</li><li>Band buttons</li><li>Frequency (Custom)</li><li>S-meter</li><li>Cross-needle</li><li>AM monitor</li>
               </ul>
             </div>
           </article>
@@ -541,6 +541,17 @@
               <h4>Point the beam from any console.</h4>
               <p>Turn a Yaesu GS-232A or GS-232B rotor on a serial port, or any rotor Hamlib's rotctld runs. The Core owns the rotor, so every window and the iPhone or iPad app show one heading. Use the Rotor applet's dial, drag the compass meter, or turn the beam to a spot from its bearing.</p>
               <ul class="chips"><li class="is-blue">GS-232A/B</li><li>rotctld</li><li>Short / long path</li><li>Spot bearing</li><li>Core-owned</li></ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Roundtable</h3></div>
+            <div class="applet__body">
+              <h4>See who hears you, on every mode.</h4>
+              <p>Each frequency with people on it is a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, and the room can post short messages on that frequency. Roundtable sits in a panel and on every VFO flag on the desktop, in a sheet on the iPhone and iPad, and on a public page at <a href="https://roundtable.nereussdr.com/">roundtable.nereussdr.com</a>. Nothing is sent until you answer its first question, and one switch hides your station.</p>
+              <ul class="chips">
+                <li class="is-blue">Rooms</li><li>S-meter readings</li><li>Turns</li><li>Messages</li><li>Every mode</li><li>Public page</li>
+              </ul>
             </div>
           </article>
 
@@ -604,7 +615,7 @@
           <p>Connect your radio, get comfortable with the console, or set up a Core beside the station. Follow the guide for the job in front of you.</p>
         </header>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Operate your station</h3></div><div class="panel__body"><h4>Find the control you need.</h4><p>The user guide takes you through tuning, receivers, displays, audio, profiles and station tools on desktop and native mobile.</p><ul class="guide-links"><li><a href="/manual/">Read the user guide →</a></li><li><a href="/manual/01-desktop-connect.html">Start on the desktop →</a></li><li><a href="/manual/06-iphone-connect.html">Pair an iPhone or iPad →</a></li><li><a href="/guides/upgrading-to-2026.10.1.html">Upgrade from 2026.10.0 →</a></li><li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade from 0.5.2 →</a></li><li><a href="/manual/11-troubleshooting.html">Troubleshoot operation →</a></li></ul></div></article>
+          <article class="panel"><div class="titlebar"><h3>Operate your station</h3></div><div class="panel__body"><h4>Find the control you need.</h4><p>The user guide takes you through tuning, receivers, displays, audio, profiles and station tools on desktop and native mobile.</p><ul class="guide-links"><li><a href="/manual/">Read the user guide →</a></li><li><a href="/manual/01-desktop-connect.html">Start on the desktop →</a></li><li><a href="/manual/06-iphone-connect.html">Pair an iPhone or iPad →</a></li><li><a href="/guides/upgrading-to-2026.10.2.html">Upgrade from 2026.10.1 →</a></li><li><a href="/guides/upgrading-to-2026.10.1.html">Upgrade from 2026.10.0 →</a></li><li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade from 0.5.2 →</a></li><li><a href="/manual/11-troubleshooting.html">Troubleshoot operation →</a></li></ul></div></article>
           <article class="panel"><div class="titlebar"><h3>Run a station Core</h3></div><div class="panel__body"><h4>Put the processing where it belongs.</h4><p>Prepare a fresh Pi OS Lite or Armbian Trixie system, install the matching Core package, start the service and connect your console.</p><ul class="guide-links"><li><a href="/guides/install-core-sbc.html">Install Core on an SBC →</a></li><li><a href="/manual/01-desktop-connect.html#connect-to-another-computers-core">Connect to a remote Core →</a></li><li><a href="/manual/08-shared-core.html">Share the station →</a></li><li><a href="/guides/remote-access.html#self-hosting">Host your own RV service →</a></li></ul></div></article>
           <article class="panel"><div class="titlebar"><h3>Shape your transmitted audio</h3></div><div class="panel__body"><h4>Make your voice sound like you.</h4><p>Work through EQ and CFC, keep the settings with your transmit profile, and understand the feedback and diversity tools available to your radio.</p><ul class="guide-links"><li><a href="/guides/tx-eq-cfc.html">Use the EQ and CFC editors →</a></li><li><a href="/manual/14-voice-profiles.html">Set up voice profiles →</a></li><li><a href="/manual/18-puresignal-diversity.html">Use PureSignal and diversity →</a></li><li><a href="/manual/10-customize.html">Arrange controls and meters →</a></li></ul></div></article>
         </div>
@@ -619,16 +630,21 @@
           <p class="eyebrow">Status</p>
           <h2 id="status-title">A new chapter <strong>for your station.</strong></h2>
           <p>
-            2026.10.1 builds on the shared station of 2026.10.0. Your logging and digital programs can drive it over CAT,
-            the Core turns your antenna, each system plays through its own audio engine, and the workspace look is
-            now the default.
+            2026.10.2 brings Roundtable, where every station on a frequency shows how well it hears whoever is
+            talking, and polishes the station of 2026.10.1. The iPhone and iPad app takes the workspace look, remote
+            waterfalls hold up on lossy links and meters keep time with your audio, tuning on the pan gets easier,
+            more of the RX and TX applets fit in containers, and transmit protection gets safer.
           </p>
         </header>
 
         <div class="status">
           <ol class="releases" reversed data-reveal aria-label="Release history">
             <li class="is-latest">
-              <div><span class="ver">v2026.10.1</span><time data-release-history datetime="2026-10-17T22:03:26Z">17 Oct 2026</time></div>
+              <div><span class="ver">v2026.10.2</span><time data-release-history datetime="2026-10">Oct 2026</time></div>
+              <p>Roundtable, the workspace look on iPhone and iPad, stand-alone remote waterfall rows, remote meters held to their audio, flag drag to tune, RX and TX rows in containers, and safer transmit. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2">Read the release notes →</a></p>
+            </li>
+            <li>
+              <div><span class="ver">v2026.10.1</span><time datetime="2026-10-17T22:03:26Z">17 Oct 2026</time></div>
               <p>CAT with Hamlib rigctld, antenna rotor control, native audio engines, separate PC and RADIO volumes, and the workspace look by default. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.1">Read the release notes →</a></p>
             </li>
             <li>
@@ -667,14 +683,16 @@
 
           <div data-reveal>
             <div class="next">
-              <div class="titlebar"><h3>New in 2026.10.1</h3></div>
+              <div class="titlebar"><h3>New in 2026.10.2</h3></div>
               <div class="next__body"><ol>
-                <li><b>Your other programs, in control</b><span>CAT on up to four slice-bound channels over TCP, serial or a virtual serial port, with Hamlib rigctld beside each. Antenna rotor control for GS-232A/B and rotctld rotors, owned by the Core.</span></li>
-                <li><b>Sound through your own system</b><span>Core Audio, Windows audio and ASIO, PipeWire, PulseAudio and ALSA direct, with device lists that update by themselves, a Core speaker you choose from any window, and separate PC and RADIO volumes.</span></li>
-                <li><b>The workspace look</b><span>Containers dock on all four edges, float or pop out, with headers you show or hide and workspace profiles. Plus fixes for the display, transmit, PureSignal two-tone, remote audio and Core installs.</span></li>
+                <li><b>Roundtable: see who hears you</b><span>Each frequency with people on it becomes a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, on the desktop, the iPhone and iPad, and the <a href="https://roundtable.nereussdr.com/">public Roundtable page</a>. Nothing is sent until you answer Roundtable's first question, and one switch hides your station. It needs a 2026.10.2 Core.</span></li>
+                <li><b>The workspace look, in your hand</b><span>The iPhone and iPad app takes the desktop's palette, panels, buttons and corners, with red kept for transmit. On a wide iPad, Setup lists its categories beside the page, and the 3D waterfall draws every frame at the desktop's pace.</span></li>
+                <li><b>Steadier remote operation</b><span>Each waterfall row from a 2026.10.2 Core stands on its own, so a lost network message costs one row instead of a smear, and a remote window's meters move with what you hear. The waterfall no longer floods bright green after a Core restart, and a paired window or phone gets its own slice back when a desktop Core restarts. Connections race IPv6 and IPv4, a Mac, iPhone or iPad keeps audio and display on IPv6, and a saved Core on your LAN is tried directly.</span></li>
+                <li><b>Easier tuning, safer transmit</b><span>Drag a receiver's flag or its whole passband to tune, with trackpad steps that no longer coast. With CTUN on, a frequency you type or tune outside the zoomed view now moves the receiver there, and the receiver always hears the frequency its flag shows. TUNE uses only the drive source chosen in Setup, SWR protection lowers the drive, an open antenna drops the key, the ANAN-G2E has its own PA gain table, and a web page can no longer key the radio through TCI. A TCI program that hangs while keyed loses the key within seconds. Receive filters stay within limits however they are set, with a new option to keep them on their own sideband. RX and TX applet rows, Nereus Band Buttons and a Frequency (Custom) readout can sit in containers.</span></li>
+                <li><b>A cleaner receiver</b><span>NB Blank hides electric-fence lines without freezing the waterfall when a loud station keys up, on the desktop and the phone. A lost I/Q packet no longer draws a false bright line, an S-meter no longer sticks after a sample-rate change, and the filter presets take standard widths, so CW F1 is now 1.0 kHz. The 3D view no longer draws ridges in the noise that look like stations, and each band keeps its own antennas through band changes and restarts. Plus fixes for discovery, floating windows, CAT and TCI, and a Windows Core no longer logs a crash for its audio helper at every start.</span></li>
               </ol></div>
             </div>
-            <p class="capture-note">Updating a station? Read the <a href="/guides/upgrading-to-2026.10.1.html">2026.10.1 upgrade note</a> first. Rotor control, CAT Control on the phone and the Core speaker need a 2026.10.1 Core; older Cores and apps still connect.</p>
+            <p class="capture-note">Updating a station? Read the <a href="/guides/upgrading-to-2026.10.2.html">2026.10.2 upgrade note</a> first, update the Core and the desktop together, and check TUNE and the drive before you transmit. The new waterfall format needs a 2026.10.2 Core and updated desktop or iPhone and iPad clients, and meters held to audio need a 2026.10.2 Core and desktop. The phone app has its own version number and is updated through TestFlight; desktop and Core packages do not update it. Older Cores, windows and apps still connect.</p>
           </div>
         </div>
       </div>
@@ -687,12 +705,12 @@
         <header class="section__head" data-reveal>
           <p class="eyebrow">Download</p>
           <h2 id="download-title">Get <strong>NereusSDR.</strong></h2>
-          <p>Desktop releases are free, with no account and no telemetry. Download 2026.10.1 for your desktop, install a headless Core at the station, or join the native iPhone and iPad public preview through TestFlight.</p>
+          <p>Desktop releases are free, with no account and no telemetry. Download 2026.10.2 for your desktop, install a headless Core at the station, or join the native iPhone and iPad public preview through TestFlight.</p>
         </header>
 
         <p class="dl-meta" data-reveal>
-          <span>Latest <b data-release-version>v2026.10.1</b>, released <time data-release-date datetime="2026-10-17T22:03:26Z">17 October 2026</time></span>
-          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.1" data-release-notes>Release notes</a>
+          <span>Latest <b data-release-version>v2026.10.2</b>, released <time data-release-date datetime="2026-10">October 2026</time></span>
+          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2" data-release-notes>Release notes</a>
           <a href="https://github.com/boydsoftprez/NereusSDR/releases">All releases</a>
         </p>
 
@@ -707,14 +725,14 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-apple-silicon.dmg">
-                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.1-macOS-apple-silicon.dmg</small><span class="dl__size">127.5 MB</span></a></li>
-              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-apple-silicon.pkg">
-                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.1-macOS-apple-silicon.pkg</small><span class="dl__size">124.3 MB</span></a></li>
-              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-intel.dmg">
-                <b>Intel · DMG</b><small>NereusSDR-2026.10.1-macOS-intel.dmg</small><span class="dl__size">123.5 MB</span></a></li>
-              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-intel.pkg">
-                <b>Intel · Installer</b><small>NereusSDR-2026.10.1-macOS-intel.pkg</small><span class="dl__size">120.5 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-apple-silicon.dmg">
+                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.dmg</small><span class="dl__size"></span></a></li>
+              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-apple-silicon.pkg">
+                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.pkg</small><span class="dl__size"></span></a></li>
+              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-intel.dmg">
+                <b>Intel · DMG</b><small>NereusSDR-2026.10.2-macOS-intel.dmg</small><span class="dl__size"></span></a></li>
+              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-intel.pkg">
+                <b>Intel · Installer</b><small>NereusSDR-2026.10.2-macOS-intel.pkg</small><span class="dl__size"></span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Signed with an Apple Developer ID and notarized, so it opens normally.</p>
           </article>
@@ -731,10 +749,10 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-Windows-x64-setup.exe">
-                <b>Installer</b><small>NereusSDR-2026.10.1-Windows-x64-setup.exe</small><span class="dl__size">123.4 MB</span></a></li>
-              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-Windows-x64-portable.zip">
-                <b>Portable ZIP</b><small>NereusSDR-2026.10.1-Windows-x64-portable.zip</small><span class="dl__size">125.2 MB</span></a></li>
+              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-Windows-x64-setup.exe">
+                <b>Installer</b><small>NereusSDR-2026.10.2-Windows-x64-setup.exe</small><span class="dl__size"></span></a></li>
+              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-Windows-x64-portable.zip">
+                <b>Portable ZIP</b><small>NereusSDR-2026.10.2-Windows-x64-portable.zip</small><span class="dl__size"></span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--amber" aria-hidden="true"></i>Not code-signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.</p>
           </article>
@@ -749,16 +767,16 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-x86_64.AppImage">
-                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.1-x86_64.AppImage</small><span class="dl__size">126.0 MB</span></a></li>
-              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-aarch64.AppImage">
-                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.1-aarch64.AppImage</small><span class="dl__size">146.7 MB</span></a></li>
+              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-x86_64.AppImage">
+                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.2-x86_64.AppImage</small><span class="dl__size"></span></a></li>
+              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-aarch64.AppImage">
+                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.2-aarch64.AppImage</small><span class="dl__size"></span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Built on Ubuntu 22.04 (x86_64) and 24.04 (ARM64). Mark the file executable, then run it.</p>
           </article>
         </div>
 
-        <p class="capture-note" data-reveal><strong>Headless Core packages:</strong> <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_arm64_trixie.deb">Debian Trixie · ARM64</a> for Pi OS Lite and compatible Armbian, <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_arm64.deb">Ubuntu · ARM64</a>, and <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_amd64.deb">Ubuntu · AMD64</a>. Follow the <a href="/guides/install-core-sbc.html">Core installation guide</a> for setup and signature verification. For iPhone and iPad, <a href="https://testflight.apple.com/join/61K3p3xn">join the public TestFlight preview</a>; mobile installation is separate from desktop and Core packages.</p>
+        <p class="capture-note" data-reveal><strong>Headless Core packages:</strong> <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/nereusd_2026.10.2_arm64_trixie.deb">Debian Trixie · ARM64</a> for Pi OS Lite and compatible Armbian, <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/nereusd_2026.10.2_arm64.deb">Ubuntu · ARM64</a>, and <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/nereusd_2026.10.2_amd64.deb">Ubuntu · AMD64</a>. Follow the <a href="/guides/install-core-sbc.html">Core installation guide</a> for setup and signature verification. For iPhone and iPad, <a href="https://testflight.apple.com/join/61K3p3xn">join the public TestFlight preview</a>; mobile installation is separate from desktop and Core packages.</p>
 
         <p class="radios__note" data-reveal>
           On first launch NereusSDR measures the fastest FFT plans for your processor. That can take up to
@@ -784,21 +802,21 @@
 <pre><code><span class="c"># macOS</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-macOS-apple-silicon.dmg.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.2</span>-macOS-apple-silicon.dmg.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Linux</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-x86_64.AppImage.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.2</span>-x86_64.AppImage.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Windows: PowerShell, with Gpg4win installed</span>
 curl.exe -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-Windows-x64-setup.exe.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.2</span>-Windows-x64-setup.exe.asc</code></pre>
               </div>
             </div>
           </div>
@@ -820,7 +838,7 @@ cmake --build build
               </div>
               <p class="panel__foot">
                 Or take the signed source tarball from the release:
-                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-source.tar.gz"><span data-version-swap>NereusSDR-2026.10.1</span>-source.tar.gz</a>
+                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-source.tar.gz"><span data-version-swap>NereusSDR-2026.10.2</span>-source.tar.gz</a>
               </p>
             </div>
           </div>
@@ -950,6 +968,7 @@ cmake --build build
           <ul>
             <li><a href="#guides">Operator guides</a></li>
             <li><a href="/manual/">User guide</a></li>
+            <li><a href="/guides/upgrading-to-2026.10.2.html">Upgrade to 2026.10.2</a></li>
             <li><a href="/guides/upgrading-to-2026.10.1.html">Upgrade to 2026.10.1</a></li>
             <li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade to 2026.10.0</a></li>
             <li><a href="/guides/install-core-sbc.html">Install a station Core</a></li>
