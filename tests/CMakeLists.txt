@@ -6852,6 +6852,8 @@ endif()
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_remote_window fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_tci_remote_window PRIVATE Qt6::WebSockets)
+    nereus_add_test(tmp_tci_latency)
+    target_link_libraries(tmp_tci_latency PRIVATE Qt6::WebSockets)
 endif()
 
 # ── Phase 3J-1 Task 1.1: TCI verification matrix runner ──────────────────────

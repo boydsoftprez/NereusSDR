@@ -1,0 +1,675 @@
+# Temporary, root-reviewed exact-branch-push smoke; never a product/candidate workflow.
+# Final harness source freeze:42e14c09; HARNESS_SHA256 below is ONLY the proposed notice-adjusted diagnostic delivery.
+# Bounded smoke only. No full20s/8stall run is present.
+name: TCI latency diagnostic
+permissions:
+  contents: read
+jobs:
+  latency-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
+      HARNESS_SHA256: f0f752bae94da8ed339fb106a0591ef6a1861627fd12c0028df730825f48171d
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Prepare evidence helpers (stdlib only)
+      run: |
+        set -euo pipefail
+        export EVIDENCE_DIR="$RUNNER_TEMP/tci-latency-evidence"
+        printf 'EVIDENCE_DIR=%s\n' "$EVIDENCE_DIR" >> "$GITHUB_ENV"
+        mkdir -p "$EVIDENCE_DIR" "$RUNNER_TEMP/tci-latency-tools"
+        cat > "$RUNNER_TEMP/tci-latency-tools/driver.py" <<'PY'
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import time
+
+        ROOT = Path(os.environ['GITHUB_WORKSPACE'])
+        OUT = Path(os.environ['EVIDENCE_DIR'])
+        A = '8c110a44da4e85b36e04f4c9217bf22363332995'
+        B = '9d55f9170d7ef0dae2722967eaae1d5bc88163c7'
+        FILES = ['src/core/TciServer.cpp', 'src/core/TciServer.h',
+                 'src/core/session/media/RemoteTciAudioStage.h', 'src/gui/RemoteMediaController.cpp']
+        DIAGNOSTICS = ['.github/workflows/tci-latency-diagnostic.yml',
+                       'tests/CMakeLists.txt', 'tests/tmp_tci_latency.cpp']
+
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=ROOT)
+
+        def sha(path):
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+        def write(path, value):
+            Path(path).write_text(json.dumps(value, indent=2) + '\n')
+
+        def resource():
+            return {'epochNs': time.time_ns(), 'load': os.getloadavg(),
+                    'cpuCount': os.cpu_count(), 'meminfo': Path('/proc/meminfo').read_text(),
+                    'disk': subprocess.check_output(['df', '-k', str(ROOT)], text=True)}
+
+        def verify_source(ref):
+            for name in FILES:
+                assert (ROOT / name).read_bytes() == git('show', ref + ':' + name), name
+            expected = set() if ref == A else set(FILES)
+            actual = set(git('diff', 'HEAD', '--name-only').decode().splitlines())
+            assert actual == expected, (actual, expected)
+            assert not git('diff', '--cached', '--name-only').strip()
+            assert git('rev-parse', 'HEAD').decode().strip() == os.environ['GITHUB_SHA']
+            for name in DIAGNOSTICS:
+                assert (ROOT / name).read_bytes() == git('show', 'HEAD:' + name), name
+            assert sha(ROOT / 'tests/tmp_tci_latency.cpp') == os.environ['HARNESS_SHA256']
+
+        def logged(command, directory, stem, env=None):
+            (directory / (stem + '.command.json')).write_text(json.dumps(command) + '\n')
+            start = resource()
+            with (directory / (stem + '.log')).open('w') as stream:
+                result = subprocess.run(command, cwd=ROOT, env=env, stdout=stream,
+                                        stderr=subprocess.STDOUT)
+            write(directory / (stem + '.result.json'),
+                  {'exit': result.returncode, 'before': start, 'after': resource()})
+            (directory / (stem + '.exit')).write_text(str(result.returncode) + '\n')
+            print((directory / (stem + '.log')).read_text(), flush=True)
+            if result.returncode:
+                raise RuntimeError(f'{stem} exited {result.returncode}')
+
+        mode = sys.argv[1]
+        OUT.mkdir(parents=True, exist_ok=True)
+        if mode == 'bind':
+            assert os.environ['GITHUB_EVENT_NAME'] == 'push'
+            assert os.environ['GITHUB_REF'] == 'refs/heads/codex/tci-latency-proof'
+            assert git('rev-parse', 'HEAD').decode().strip() == os.environ['GITHUB_SHA']
+            assert git('rev-parse', 'HEAD^').decode().strip() == A
+            assert not git('status', '--porcelain').strip()
+            assert set(git('diff', '--name-only', A, 'HEAD').decode().splitlines()) == set(DIAGNOSTICS)
+            for ref in [A, B]:
+                git('cat-file', '-e', ref + '^{commit}')
+            baseline_cmake = git('show', A + ':tests/CMakeLists.txt').decode()
+            anchor = '    target_link_libraries(tst_tci_remote_window PRIVATE Qt6::WebSockets)\n'
+            assert baseline_cmake.count(anchor) == 1
+            expected_cmake = baseline_cmake.replace(anchor, anchor +
+                '    nereus_add_test(tmp_tci_latency)\n' +
+                '    target_link_libraries(tmp_tci_latency PRIVATE Qt6::WebSockets)\n')
+            assert (ROOT / 'tests/CMakeLists.txt').read_text() == expected_cmake
+            verify_source(A)
+            write(OUT / 'identity.json', {'diagnostic': os.environ['GITHUB_SHA'], 'parent': A,
+                  'projectionReference': B, 'ref': os.environ['GITHUB_REF'],
+                  'run': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                  'runner': {k: v for k, v in os.environ.items() if k.startswith('RUNNER_')},
+                  'fixtureSHA256': sha(ROOT / 'tests/tmp_tci_latency.cpp'),
+                  'diagnosticHashes': {n: sha(ROOT / n) for n in DIAGNOSTICS},
+                  'variantProductSHA256': {label: {name: hashlib.sha256(
+                      git('show', ref + ':' + name)).hexdigest() for name in FILES}
+                      for label, ref in [('A', A), ('B', B)]}})
+            (OUT / 'bound-source').write_text(os.environ['GITHUB_SHA'] + '\n')
+        elif mode in ['A', 'B']:
+            assert (OUT / 'bound-source').read_text().strip() == os.environ['GITHUB_SHA']
+            directory = OUT / mode
+            directory.mkdir(exist_ok=False)
+            if mode == 'B':
+                assert (OUT / 'A' / 'validity.json').is_file(), 'A smoke must be valid first'
+                assert json.loads((OUT / 'A' / 'validity.json').read_text())['valid'] is True
+                verify_source(A)
+                subprocess.run(['git', 'restore', '--source=' + B, '--worktree', '--', *FILES],
+                               cwd=ROOT, check=True)
+            ref = A if mode == 'A' else B
+            verify_source(ref)
+            write(OUT / 'last-build-attempt.json', {'variant': mode, 'source': ref,
+                  'status': 'attempt started; binary not yet verified'})
+            logged(['nice', '-n', '20', 'cmake', '--build', 'build', '--target',
+                    'tmp_tci_latency', '-j2'], directory, 'build')
+            # The source ref is insufficient for an existing executable: bind its actual bytes
+            # and ldd's resolved linked closure BEFORE executing either variant.
+            binary = ROOT / 'build/tests/tmp_tci_latency'
+            ldd = subprocess.check_output(['ldd', str(binary)], text=True)
+            (directory / 'ldd.txt').write_text(ldd)
+            assert 'not found' not in ldd
+            libraries = {}
+            for line in ldd.splitlines():
+                for token in line.split():
+                    if token.startswith('/') and Path(token).is_file():
+                        libraries[token] = sha(token)
+            assert libraries, 'resolved library hash inventory is required'
+            # Hash installed Qt plugin candidates in addition to ldd's linked closure.
+            # This is not a captured inventory of every object actually dlopen'ed.
+            plugin_root = Path(subprocess.check_output(
+                ['qmake', '-query', 'QT_INSTALL_PLUGINS'], text=True).strip())
+            assert plugin_root.is_dir()
+            plugins = {str(path): sha(path) for path in sorted(plugin_root.rglob('*.so'))
+                       if path.is_file()}
+            assert any(Path(name).name == 'libqoffscreen.so' for name in plugins)
+            commands = subprocess.check_output(['ninja', '-C', 'build', '-t', 'commands',
+                                               'tmp_tci_latency'], text=True)
+            (directory / 'compile-link-commands.txt').write_text(commands)
+            verify_source(ref)
+            label = 'approved8c110a44' if mode == 'A' else '8c110a44-four-product-file-9d55-projection'
+            snapshot = {'variant': mode, 'label': label, 'diagnostic': os.environ['GITHUB_SHA'],
+                        'approved': A, 'fourProductSource': ref, 'resource': resource(),
+                        'productSHA256': {n: sha(ROOT / n) for n in FILES},
+                        'fixtureSHA256': sha(ROOT / 'tests/tmp_tci_latency.cpp'),
+                        'registrationSHA256': sha(ROOT / 'tests/CMakeLists.txt'),
+                        'diagnosticHashes': {n: sha(ROOT / n) for n in DIAGNOSTICS},
+                        'run': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                        'binaryPath': str(binary), 'binarySHA256': sha(binary),
+                        'lddSHA256': sha(directory / 'ldd.txt'), 'librariesSHA256': libraries,
+                        'installedQtPluginRoot': str(plugin_root), 'installedQtPluginSHA256': plugins}
+            write(directory / 'pre-run-identity.json', snapshot)
+            write(OUT / 'last-built-identity.json', snapshot)
+            write(OUT / 'last-build-attempt.json', {'variant': mode, 'source': ref,
+                  'status': 'successful build; binary/library hashes verified before run'})
+            home = ROOT / 'build/tests/test-home/tmp_tci_latency'
+            home.mkdir(parents=True, exist_ok=True)
+            env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home),
+                       NEREUS_TEST_HOME=str(home), NEREUS_WORKSPACE_PREVIEW='0',
+                       QT_QPA_PLATFORM='offscreen', QTEST_FUNCTION_TIMEOUT='240000',
+                       LAT_STEADY_MS='2000', LAT_STALLS='1', LAT_EVIDENCE_DIR=str(directory))
+            write(directory / 'test-environment.json', {k: env[k] for k in [
+                'HOME', 'CFFIXED_USER_HOME', 'NEREUS_TEST_HOME', 'NEREUS_WORKSPACE_PREVIEW',
+                'QT_QPA_PLATFORM', 'QTEST_FUNCTION_TIMEOUT', 'LAT_STEADY_MS', 'LAT_STALLS',
+                'LAT_EVIDENCE_DIR']})
+            listing = subprocess.check_output(['ctest', '--test-dir', 'build', '--show-only=json-v1',
+                                              '-R', '^tmp_tci_latency$'], env=env, text=True)
+            (directory / 'test-list.json').write_text(listing)
+            tests = json.loads(listing)['tests']
+            assert len(tests) == 1 and tests[0]['name'] == 'tmp_tci_latency'
+            assert tests[0]['command'] == [str(binary)], 'test must execute the hashed binary'
+            logged(['ctest', '--test-dir', 'build', '-R', '^tmp_tci_latency$', '-j1',
+                    '--timeout', '120', '-V', '--output-on-failure', '--no-tests=error'],
+                   directory, 'test', env)
+            # Finish all source/executable/linked-library/plugin identity checks before
+            # publishing a full success receipt. A failure here leaves no valid=true file.
+            verify_source(ref)
+            assert sha(binary) == snapshot['binarySHA256']
+            assert all(sha(name) == value for name, value in libraries.items())
+            assert all(sha(name) == value for name, value in plugins.items())
+            post = dict(snapshot, resource=resource(),
+                        productSHA256={n: sha(ROOT / n) for n in FILES},
+                        diagnosticHashes={n: sha(ROOT / n) for n in DIAGNOSTICS},
+                        fixtureSHA256=sha(ROOT / 'tests/tmp_tci_latency.cpp'),
+                        registrationSHA256=sha(ROOT / 'tests/CMakeLists.txt'),
+                        binarySHA256=sha(binary), librariesSHA256={n: sha(n) for n in libraries},
+                        installedQtPluginSHA256={n: sha(n) for n in plugins},
+                        identityChecksComplete=True,
+                        phase='after successful test, before independent validation')
+            write(directory / 'post-run-identity.json', post)
+            # No fallible post-validation identity checks follow this final operation.
+            subprocess.run([sys.executable, str(Path(__file__).with_name('validate.py')),
+                            str(directory), mode, os.environ['GITHUB_SHA'],
+                            hashlib.sha256(git('show', 'HEAD:' + DIAGNOSTICS[0])).hexdigest(),
+                            hashlib.sha256(git('show', 'HEAD:tests/CMakeLists.txt')).hexdigest(),
+                            sha(binary)], check=True)
+        elif mode == 'restore':
+            if not (OUT / 'bound-source').exists():
+                write(OUT / 'restore.json', {'state': 'not attempted: source identity never bound'})
+                sys.exit(0)
+            assert (OUT / 'bound-source').read_text().strip() == os.environ['GITHUB_SHA']
+            subprocess.run(['git', 'restore', '--source=' + A, '--worktree', '--', *FILES],
+                           cwd=ROOT, check=True)
+            verify_source(A)
+            binary = ROOT / 'build/tests/tmp_tci_latency'
+            write(OUT / 'restore.json', {'approvedSourceRestored': True,
+                  'sourceSHA256': {n: sha(ROOT / n) for n in FILES},
+                  'lastBuiltIdentity': json.loads((OUT / 'last-built-identity.json').read_text())
+                      if (OUT / 'last-built-identity.json').exists() else None,
+                  'binaryRebuiltAfterRestore': False,
+                  'actualBinarySHA256AfterSourceRestore': sha(binary) if binary.is_file() else None,
+                  'lastBuildAttempt': json.loads((OUT / 'last-build-attempt.json').read_text())
+                      if (OUT / 'last-build-attempt.json').exists() else None,
+                  'warning': 'Source restore does NOT relabel the last-built B binary as A; no binaries uploaded.'})
+        else:
+            raise ValueError(mode)
+        PY
+        cat > "$RUNNER_TEMP/tci-latency-tools/validate.py" <<'PY'
+        import hashlib
+        import json
+        from pathlib import Path
+        import re
+        import sys
+
+        # Validation is evidence-only: no subprocesses, builds, source changes or runtime probes.
+        A = '8c110a44da4e85b36e04f4c9217bf22363332995'
+        B = '9d55f9170d7ef0dae2722967eaae1d5bc88163c7'
+        FIXTURE = 'f0f752bae94da8ed339fb106a0591ef6a1861627fd12c0028df730825f48171d'
+        WORKFLOW = '.github/workflows/tci-latency-diagnostic.yml'
+        REGISTRATION = 'tests/CMakeLists.txt'
+        HARNESS = 'tests/tmp_tci_latency.cpp'
+        # Source blob SHA256s independently pinned by integration-687-hosted-comparison-identity.json.
+        PRODUCTS = {
+            'A': {
+                'src/core/TciServer.cpp': '0a3d34e83659d4f030f9bd594fe802fc753daf56d71cdaeb0087ae26fcab1908',
+                'src/core/TciServer.h': 'd3164177132be62240667586646bb3e6d781007d73d7a2646b7e5dbe50f6aac3',
+                'src/core/session/media/RemoteTciAudioStage.h': '6da18f4b9c663976c2b1ced204518a6b391bc3bc40c256264114cebeb794cf4b',
+                'src/gui/RemoteMediaController.cpp': '11f7f2f788a9c7b4bfe8ffa2066a19042a7b151a48ddb80fb099817b29789b0c'},
+            'B': {
+                'src/core/TciServer.cpp': '568229da45d86d8726ea3f0e1a7141aa73d581be91d4381fa022da8bed4fa319',
+                'src/core/TciServer.h': '9f20c693166bb1931217beddc5e6707713f993443104bc2d42d0a86d59df1e0a',
+                'src/core/session/media/RemoteTciAudioStage.h': '3a3a6c844e005adfb0d792e54e6f6a61e85ee105e174114c0cc48ba4f43da6c8',
+                'src/gui/RemoteMediaController.cpp': '1304be8edfab89206f88ddc0f209b00951de4438c860ca1bf87b83e252ff998f'}}
+        APPS = {'A 48k 2048 (default)': 2048, 'B 48k 480': 480}
+
+        def decimal(value, nonnegative=False):
+            assert isinstance(value, str) and re.fullmatch(r'-?[0-9]+', value), repr(value)
+            value = int(value)  # Exact integer timestamp/frame arithmetic stays separate from console floats.
+            assert not nonnegative or value >= 0
+            return value
+
+        def number(value, expected=None):
+            assert type(value) is int
+            if expected is not None:
+                assert value == expected, (value, expected)
+            return value
+
+        def percentile(values, p):
+            assert values
+            return sorted(values)[min(len(values) - 1, int(p * (len(values) - 1) + 0.5))]
+
+        def summary(values):
+            return {'count': len(values), 'p50Ns': percentile(values, 0.5),
+                    'p99Ns': percentile(values, 0.99), 'maxNs': max(values)}
+
+        def digest(value):
+            assert isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value), value
+            return value
+
+        def inventory(value):
+            assert isinstance(value, dict) and value
+            for name, hashed in value.items():
+                assert isinstance(name, str) and Path(name).is_absolute(), name
+                digest(hashed)
+            return value
+
+        def read_json(path):
+            # Duplicate JSON fields are ambiguous evidence, not last-writer-wins input.
+            def pairs(items):
+                out = {}
+                for key, value in items:
+                    assert key not in out, ('duplicate JSON key', key)
+                    out[key] = value
+                return out
+            return json.loads(path.read_text(), object_pairs_hook=pairs)
+
+        def validate_identity(directory, variant, diagnostic, workflow_hash, registration_hash, binary_hash):
+            assert variant in PRODUCTS, variant
+            assert re.fullmatch(r'[0-9a-f]{40}', diagnostic), diagnostic
+            hashes = {WORKFLOW: digest(workflow_hash), REGISTRATION: digest(registration_hash), HARNESS: FIXTURE}
+            bound = read_json(directory.parent / 'identity.json')
+            assert bound['diagnostic'] == diagnostic
+            assert bound['parent'] == A and bound['projectionReference'] == B
+            assert bound['ref'] == 'refs/heads/codex/tci-latency-proof'
+            assert bound['fixtureSHA256'] == FIXTURE
+            assert bound['diagnosticHashes'] == hashes
+            assert bound['variantProductSHA256'] == PRODUCTS
+            assert all(isinstance(bound[k], str) and re.fullmatch(r'[0-9]+', bound[k])
+                       for k in ['run', 'attempt'])
+            assert (directory.parent / 'bound-source').read_text().strip() == diagnostic
+            pre = read_json(directory / 'pre-run-identity.json')
+            post = read_json(directory / 'post-run-identity.json')
+            expected = {'variant': variant,
+                        'label': 'approved8c110a44' if variant == 'A' else '8c110a44-four-product-file-9d55-projection',
+                        'diagnostic': diagnostic, 'approved': A, 'fourProductSource': A if variant == 'A' else B,
+                        'productSHA256': PRODUCTS[variant], 'fixtureSHA256': FIXTURE,
+                        'registrationSHA256': registration_hash, 'diagnosticHashes': hashes,
+                        'run': bound['run'], 'attempt': bound['attempt'],
+                        'binarySHA256': digest(binary_hash)}
+            for key, value in expected.items():
+                assert pre[key] == value and post[key] == value, ('identity', key)
+            for key in ['binarySHA256', 'librariesSHA256', 'installedQtPluginSHA256', 'binaryPath',
+                        'lddSHA256', 'installedQtPluginRoot']:
+                assert pre[key] == post[key], ('pre/post identity mismatch', key)
+            digest(pre['binarySHA256'])
+            assert Path(pre['binaryPath']).is_absolute()
+            assert pre['binaryPath'].endswith('/build/tests/tmp_tci_latency')
+            libraries = inventory(pre['librariesSHA256'])
+            ldd = (directory / 'ldd.txt').read_bytes()
+            assert hashlib.sha256(ldd).hexdigest() == digest(pre['lddSHA256'])
+            assert b'not found' not in ldd
+            linked_paths = {token for line in ldd.decode().splitlines() for token in line.split()
+                            if token.startswith('/')}
+            assert linked_paths == set(libraries), 'ldd linked closure inventory mismatch'
+            plugins = inventory(pre['installedQtPluginSHA256'])
+            plugin_root = Path(pre['installedQtPluginRoot'])
+            assert plugin_root.is_absolute()
+            assert all(plugin_root in Path(name).parents and name.endswith('.so') for name in plugins)
+            tests = read_json(directory / 'test-list.json')['tests']
+            assert len(tests) == 1 and tests[0]['name'] == 'tmp_tci_latency'
+            assert tests[0]['command'] == [pre['binaryPath']], 'test command / hashed binary mismatch'
+            assert any(Path(name).name == 'libqoffscreen.so' for name in plugins)
+            assert post['identityChecksComplete'] is True
+            assert post['phase'] == 'after successful test, before independent validation'
+            return {'expected': expected, 'binaryPath': pre['binaryPath'],
+                    'binarySHA256': pre['binarySHA256'], 'lddSHA256': pre['lddSHA256'],
+                    'librariesSHA256': libraries, 'installedQtPluginRoot': str(plugin_root),
+                    'installedQtPluginSHA256': plugins, 'prePostIdentityMatched': True,
+                    'coverage': 'ldd linked closure and installed Qt plugin candidates; actual dlopen objects unobserved'}
+
+        def accounting(arrivals, start, end, inclusive_end=False):
+            highest, gap, overlap = -1, 0, 0
+            for first, last, callback in arrivals:
+                if (callback > end) if inclusive_end else (callback >= end):
+                    break
+                if callback >= start and highest >= 0:
+                    gap += max(0, first - highest - 1)
+                    if first <= highest:
+                        overlap += min(last, highest) - first + 1
+                highest = max(highest, last)
+            return gap, overlap
+
+        def console_float(values, p, digits):
+            # Frozen fixture pct() returns NaN only for an empty population. The Linux
+            # printf %.2f/%.1f representation is compared exactly, without tolerances.
+            return format(percentile(values, p), '.' + str(digits) + 'f') if values else 'nan'
+
+        def app_lines(log):
+            lines = []
+            for line in log.splitlines():
+                if 'RESULT app' in line:
+                    found = re.fullmatch(r'(?:[0-9]+: )?(RESULT app=.*)', line)
+                    assert found, ('malformed app RESULT line', line)
+                    lines.append(found[1])
+            assert len(lines) == 2 * len(APPS), ('app RESULT count', len(lines))
+            return lines
+
+        def reconcile(lines, expected):
+            assert lines.count(expected) == 1, ('missing, duplicate or mismatched RESULT', expected, lines)
+
+        def validate_observations(directory):
+            assert (directory / 'build.exit').read_text().strip() == '0'
+            assert (directory / 'test.exit').read_text().strip() == '0'
+            log = (directory / 'test.log').read_text()
+            assert not re.search(r'\b(?:FAIL!|SKIP\s*:)', log)
+            for slot in ['malformedFrameAndNoData', 'expectedBlockSize',
+                         'reorderedFramesKeepHighWatermark', 'measure']:
+                assert re.search(r'PASS\s*:\s*TmpTciLatency::' + slot + r'\(\)', log), slot
+            lines = app_lines(log)
+            raw = read_json(directory / 'tmp-tci-latency-evidence.json')
+            assert raw['clock'] == 'same-process std::chrono::steady_clock'
+            assert raw['baseValid'] is True
+            number(raw['packetFrames'], 960)
+            number(raw['sampleRateHz'], 48000)
+            number(raw['steadyMs'], 2000)
+            number(raw['stalls'], 1)
+            number(raw['stallDurationMs'], 200)
+            post = decimal(raw['postStallWindowNs'])
+            assert post == 1000000000
+            pre_window = decimal(raw['preStallGapWindowNs'])
+            assert pre_window == 100000000
+            zero_keys = ['emptySteadyApps', 'emptyStallWindows', 'invalidFrames',
+                         'missingAgeEvaluations', 'negativeAgeEvaluations', 'nonmonotonicAgeEvaluations']
+            for key in zero_keys:
+                assert decimal(raw[key], True) == 0, key
+            start, end = decimal(raw['steadyFromNs']), decimal(raw['steadyToNs'])
+            assert start < end
+            packets = raw['packets']
+            assert isinstance(packets, list) and packets
+            append = []
+            for index, packet in enumerate(packets):
+                assert decimal(packet['packetIndex'], True) == index
+                append.append(decimal(packet['appendNs']))
+            assert all(a <= b for a, b in zip(append, append[1:]))
+            windows = raw['stallWindows']
+            assert isinstance(windows, list) and len(windows) == 1
+            windows = [(decimal(w['startNs']), decimal(w['endNs'])) for w in windows]
+            assert all(end <= a < b for a, b in windows)
+            apps = raw['apps']
+            assert isinstance(apps, list) and len(apps) == len(APPS)
+            assert {app['name']: number(app['blockFrames']) for app in apps} == APPS
+            recomputed = []
+            for app in apps:
+                name = app['name']
+                for key in zero_keys[1:]:
+                    assert decimal(app[key], True) == 0, (name, key)
+                assert app['emptySteady'] is False
+                missing = decimal(app['missingCrossings'], True)
+                assert 0 <= missing <= len(windows)  # Missing crossing is a valid observation.
+                assert isinstance(app['arrivals'], list) and app['arrivals']
+                arrivals = []
+                for record in app['arrivals']:
+                    first = decimal(record['firstFrame'], True)
+                    last = decimal(record['lastFrame'], True)
+                    callback = decimal(record['callbackNs'])
+                    assert last - first + 1 == app['blockFrames']
+                    assert first <= last < len(append) * 960
+                    assert append[first // 960] <= append[last // 960] <= callback
+                    arrivals.append((first, last, callback))
+                assert all(a[2] <= b[2] for a, b in zip(arrivals, arrivals[1:]))
+                steady = [(f, l, t) for f, l, t in arrivals if start <= t < end]
+                assert steady
+                first_ages = [t - append[f // 960] for f, l, t in steady]
+                last_ages = [t - append[l // 960] for f, l, t in steady]
+                # Exact integer ages above are authoritative raw statistics. Console ages
+                # reproduce the frozen double(absolute timestamp) subtraction separately.
+                float_first = [(float(t) - float(append[f // 960])) / 1e6 for f, l, t in steady]
+                float_last = [(float(t) - float(append[l // 960])) / 1e6 for f, l, t in steady]
+                float_threshold = max(percentile(float_last, 0.99), 1.0)
+                gap, overlap = accounting(arrivals, start, end)
+                steady_line = (f'RESULT app="{name}" steady blocks={len(steady)} no_data=0 '
+                               + ' '.join(f'{kind}_age_ms_{label}={console_float(values, p, 2)}'
+                                          for kind, values in [('first', float_first), ('last', float_last)]
+                                          for label, p in [('p50', .5), ('p99', .99), ('max', 1.0)])
+                               + f' inferredArrivalGapFrames={gap} overlapOrReorderedFrames={overlap} invalidFrames=0')
+                reconcile(lines, steady_line)
+                stalls, crossings, peaks, stall_gap, stall_overlap = [], [], [], 0, 0
+                for a, b in windows:
+                    sg, so = accounting(arrivals, a - pre_window, b + post, inclusive_end=True)
+                    stall_gap += sg
+                    stall_overlap += so
+                    timed = [(f, l, t) for f, l, t in arrivals if b <= t <= b + post]
+                    assert timed, 'every stall must have timed observations'
+                    ages = [t - append[l // 960] for f, l, t in timed]
+                    float_ages = [(float(t) - float(append[l // 960])) / 1e6 for f, l, t in timed]
+                    exact_crossings = [t - b for f, l, t in timed
+                                       if t - append[l // 960] <= max(percentile(last_ages, .99), 1000000)]
+                    console_crossings = [t - b for (f, l, t), age in zip(timed, float_ages) if age <= float_threshold]
+                    if console_crossings:
+                        crossings.append(float(console_crossings[0]) / 1e6)
+                    peaks.append(max(float_ages))
+                    stalls.append({'rawLastAgePeakNs': max(ages), 'gapFrames': sg,
+                                   'overlapOrReorderedFrames': so,
+                                   'firstCrossingExactIntegerNs': exact_crossings[0] if exact_crossings else None,
+                                   'firstCrossingConsoleArithmeticNs': console_crossings[0] if console_crossings else None,
+                                   'notSustainedRecovery': True, 'timedArrivals': len(timed)})
+                assert len(windows) - len(crossings) == missing, ('missing crossings', name)
+                stall_line = (f'RESULT app="{name}" stalls={len(windows)} '
+                              f'firstCrossing_notSustained_ms_p50={console_float(crossings, .5, 1)} '
+                              f'firstCrossing_ms_max={console_float(crossings, 1.0, 1)} missing={missing} '
+                              f'last_age_peak_ms_p50={console_float(peaks, .5, 1)} max={console_float(peaks, 1.0, 1)} '
+                              f'peakSamples={len(peaks)} inferredArrivalGapFrames={stall_gap} '
+                              f'overlapOrReorderedFrames={stall_overlap} missingAgeEvaluations=0 '
+                              'negativeAgeEvaluations=0 nonmonotonicAgeEvaluations=0')
+                reconcile(lines, stall_line)
+                recomputed.append({'name': name, 'blockFrames': app['blockFrames'],
+                                   'retainedArrivals': len(arrivals), 'steadyFirstAge': summary(first_ages),
+                                   'steadyLastAge': summary(last_ages), 'steadyGapFrames': gap,
+                                   'steadyOverlapOrReorderedFrames': overlap, 'stallGapFrames': stall_gap,
+                                   'stallOverlapOrReorderedFrames': stall_overlap, 'stalls': stalls,
+                                   'validatedConsole': [steady_line, stall_line]})
+            aggregate = ('RESULT aggregateValid=1 emptySteadyApps=0 emptyStallWindows=0 invalidFrames=0 '
+                         'missingAgeEvaluations=0 negativeAgeEvaluations=0 nonmonotonicAgeEvaluations=0 '
+                         'exportRequested=1 exportSucceeded=1 exportError=""')
+            aggregate_lines = []
+            for line in log.splitlines():
+                if 'RESULT aggregateValid' in line:
+                    found = re.fullmatch(r'(?:[0-9]+: )?(RESULT aggregateValid=.*)', line)
+                    assert found, ('malformed aggregate RESULT', line)
+                    aggregate_lines.append(found[1])
+            assert aggregate_lines == [aggregate], aggregate_lines
+            return {'sourcePackets': len(packets), 'apps': recomputed, 'consoleSummariesReconciled': True}
+
+        def main():
+            directory = Path(sys.argv[1])
+            result = {'valid': False, 'observationsValid': False, 'identityValid': False,
+                      'schemaSource': 'core-audio-687-raw-export-schema.json',
+                      'metric': 'appendPcm to same-process loopback callback; not audible/end-to-end',
+                      'smokeOnly': True, 'latencyCeilingApplied': False}
+            # Clear a previous success before doing any validation. Driver directories are
+            # new per variant; this also makes standalone repeated validation fail closed.
+            (directory / 'validity.json').write_text(json.dumps(result, indent=2) + '\n')
+            try:
+                assert len(sys.argv) == 7, 'usage: validate.py DIR EXPECTED_VARIANT DIAGNOSTIC_SHA WORKFLOW_SHA256 REGISTRATION_SHA256 BINARY_SHA256'
+                identity = validate_identity(directory, *sys.argv[2:])
+                result.update(identityValid=True, validatedIdentity=identity)
+                observations = validate_observations(directory)
+                result.update(observations, observationsValid=True, valid=True,
+                              note='No crossing/percentile ceiling imposed; short hosted smoke is exploratory.')
+            except (AssertionError, KeyError, TypeError, ValueError, OSError, IndexError, OverflowError) as exc:
+                result['error'] = f'{type(exc).__name__}: {exc}'
+            finally:
+                (directory / 'validity.json').write_text(json.dumps(result, indent=2) + '\n')
+                print(json.dumps(result, indent=2))
+            return 0 if result['valid'] else 1
+
+        if __name__ == '__main__':
+            sys.exit(main())
+        PY
+    - name: Bind exact diagnostic commit and approved product identity
+      run: |
+        set -euo pipefail
+        python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" bind
+    - name: Restore dependency downloads
+      id: deps-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ github.workspace }}/.nereus-deps
+        key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake')
+          }}
+        restore-keys: |
+          nereus-deps-${{ runner.os }}-
+    - name: Fetch and verify dependency downloads
+      shell: bash
+      run: |
+        set -euo pipefail
+        mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+        cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+              -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+              -P cmake/FetchDependencyArchives.cmake
+        git config --global --add include.path "$mirrors"
+    - name: Install system dependencies (Linux)
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake ninja-build pkg-config g++ mold ccache \
+          libgl1-mesa-dev libfftw3-dev \
+          libasound2-dev libjack-jackd2-dev \
+          libpipewire-0.3-dev libpulse-dev \
+          libssl-dev \
+          python3-websockets python3-cryptography \
+          gdb \
+          libhamlib-utils \
+          xvfb libxkbcommon-x11-0 libxcb-cursor0 \
+          libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+          libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+          libxcb-xinerama0 libxcb-xkb1
+    - name: Install Qt (Linux)
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: 6.8.*
+        host: linux
+        target: desktop
+        arch: linux_gcc_64
+        modules: qtmultimedia qtshadertools qtwebsockets qtserialport
+        cache: false
+    - name: Restore compiler cache
+      id: ccache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ${{ github.workspace }}/.ccache
+          ${{ github.workspace }}/build/Testing/Temporary/CTestCostData.txt
+        key: ccache-v2-Linux-s0-${{ github.sha }}
+        restore-keys: |
+          ccache-v2-Linux-s0-
+    - name: Configure ccache
+      shell: bash
+      run: |
+        set -euo pipefail
+        ccache="${CCACHE_BIN:-ccache}"
+        "$ccache" --set-config=max_size=5G
+        "$ccache" --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+        "$ccache" --set-config=hash_dir=false
+        "$ccache" --set-config=compiler_check=content
+        "$ccache" --zero-stats
+        echo "CCACHE_RUN_START=$(date +%s)" >> "$GITHUB_ENV"
+    - name: Configure (Linux, unsharded)
+      run: |
+        set -euo pipefail
+        nice -n 20 cmake -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+          "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+          -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
+          -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+          -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+          -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+          -DNEREUS_BUILD_TESTS=ON \
+          -DNEREUS_TEST_SHARDS=0 \
+          -DNEREUS_TEST_SHARD=0 2>&1 | tee "$EVIDENCE_DIR/configure.log"
+    - name: Record provision and toolchain
+      env:
+        DEPS_CACHE_KEY: ${{ steps.deps-cache.outputs.cache-matched-key }}
+        COMPILER_CACHE_KEY: ${{ steps.ccache-restore.outputs.cache-matched-key }}
+      run: |
+        set -euo pipefail
+        { uname -a; lscpu; cmake --version; ninja --version; g++ --version; qmake -query QT_VERSION; ccache --show-config; printf "dependency_cache=%s\ncompiler_cache=%s\n" "$DEPS_CACHE_KEY" "$COMPILER_CACHE_KEY"; } > "$EVIDENCE_DIR/toolchain-and-cache.txt"
+    - name: Build A and run only its bounded smoke
+      run: |
+        set -euo pipefail
+        python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" A
+    - name: Project four B files, rebuild and run only its bounded smoke
+      run: |
+        set -euo pipefail
+        python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" B
+    - name: Always restore approved source; retain last-built binary identity
+      if: always()
+      run: |
+        set -euo pipefail
+        export EVIDENCE_DIR="$RUNNER_TEMP/tci-latency-evidence"
+        mkdir -p "$EVIDENCE_DIR"
+        if [[ -f "$RUNNER_TEMP/tci-latency-tools/driver.py" ]]; then
+          python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" restore
+        else
+          printf "source binding/helpers unavailable; no restoration attempted\n" > "$EVIDENCE_DIR/restore-not-attempted.txt"
+        fi
+    - name: Always collect final diagnostic evidence (no binaries)
+      if: always()
+      run: |
+        set -euo pipefail
+        export EVIDENCE_DIR="$RUNNER_TEMP/tci-latency-evidence"
+        mkdir -p "$EVIDENCE_DIR"
+        { date -u; df -k .; cat /proc/loadavg; cat /proc/meminfo; git status --short; } > "$EVIDENCE_DIR/final-state.txt"
+        if command -v ccache >/dev/null; then ccache --show-stats > "$EVIDENCE_DIR/ccache-final.txt"; fi
+        if [[ -f build/Testing/Temporary/LastTest.log ]]; then cp build/Testing/Temporary/LastTest.log "$EVIDENCE_DIR/last-ctest.log"; fi
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        p=Path(os.environ["EVIDENCE_DIR"])
+        (p/"artifact-files.sha256.json").write_text(json.dumps({str(f.relative_to(p)):hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(p.rglob("*")) if f.is_file() and f.name != "artifact-files.sha256.json"},indent=2)+"\n")
+        PY
+    - name: Always upload raw diagnostic evidence only
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tci-latency-smoke-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/tci-latency-evidence/
+        retention-days: 3
+        if-no-files-found: error
+'on':
+  push:
+    branches:
+    - codex/tci-latency-proof
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: tci-latency-proof
+  cancel-in-progress: false
