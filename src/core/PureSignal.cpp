@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - Add braces to the Auto-cal resume condition. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -298,7 +300,9 @@ void PureSignal::bindSettingsSignals()
         // Thetis has no such pause: AutoCalEnabled always reaches
         // PSEnabled=true and PSRunCal=true (PSForm.cs:235-251, 272-289,
         // 644-649 [v2.10.3.15]).
-        if (run && !m_autoON) resumeAutomaticCalibrationPreference();
+        if (run && !m_autoON) {
+            resumeAutomaticCalibrationPreference();
+        }
     });
     connect(m_settings, &PureSignalSettings::autoAttenuateChanged,
             this, &PureSignal::autoAttenuateChanged);
