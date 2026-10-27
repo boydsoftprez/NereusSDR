@@ -1,11 +1,11 @@
-# Temporary, root-reviewed exact-branch-push smoke; never a product/candidate workflow.
+# Temporary exact-branch-push full comparison proposal; never a product/candidate workflow.
 # Final harness source freeze:42e14c09; HARNESS_SHA256 below is ONLY the proposed notice-adjusted diagnostic delivery.
-# Bounded smoke only. No full20s/8stall run is present.
-name: TCI latency diagnostic
+# One full comparison job: each variant uses 20 s steady and 8 stalls; pending root approval.
+name: TCI latency full comparison
 permissions:
   contents: read
 jobs:
-  latency-smoke:
+  latency-comparison:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -36,6 +36,7 @@ jobs:
         OUT = Path(os.environ['EVIDENCE_DIR'])
         A = '8c110a44da4e85b36e04f4c9217bf22363332995'
         B = '9d55f9170d7ef0dae2722967eaae1d5bc88163c7'
+        PARENT = '4657272e3f21fb0d9b4227cf9a5fb59d750b0728'
         FILES = ['src/core/TciServer.cpp', 'src/core/TciServer.h',
                  'src/core/session/media/RemoteTciAudioStage.h', 'src/gui/RemoteMediaController.cpp']
         DIAGNOSTICS = ['.github/workflows/tci-latency-diagnostic.yml',
@@ -86,7 +87,9 @@ jobs:
             assert os.environ['GITHUB_EVENT_NAME'] == 'push'
             assert os.environ['GITHUB_REF'] == 'refs/heads/codex/tci-latency-proof'
             assert git('rev-parse', 'HEAD').decode().strip() == os.environ['GITHUB_SHA']
-            assert git('rev-parse', 'HEAD^').decode().strip() == A
+            assert git('rev-parse', 'HEAD^').decode().strip() == PARENT
+            assert git('rev-parse', PARENT + '^').decode().strip() == A
+            assert git('diff', '--name-only', PARENT, 'HEAD').decode().splitlines() == [DIAGNOSTICS[0]]
             assert not git('status', '--porcelain').strip()
             assert set(git('diff', '--name-only', A, 'HEAD').decode().splitlines()) == set(DIAGNOSTICS)
             for ref in [A, B]:
@@ -99,7 +102,8 @@ jobs:
                 '    target_link_libraries(tmp_tci_latency PRIVATE Qt6::WebSockets)\n')
             assert (ROOT / 'tests/CMakeLists.txt').read_text() == expected_cmake
             verify_source(A)
-            write(OUT / 'identity.json', {'diagnostic': os.environ['GITHUB_SHA'], 'parent': A,
+            write(OUT / 'identity.json', {'diagnostic': os.environ['GITHUB_SHA'],
+                  'parent': git('rev-parse', 'HEAD^').decode().strip(), 'approvedBase': A,
                   'projectionReference': B, 'ref': os.environ['GITHUB_REF'],
                   'run': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                   'runner': {k: v for k, v in os.environ.items() if k.startswith('RUNNER_')},
@@ -114,7 +118,7 @@ jobs:
             directory = OUT / mode
             directory.mkdir(exist_ok=False)
             if mode == 'B':
-                assert (OUT / 'A' / 'validity.json').is_file(), 'A smoke must be valid first'
+                assert (OUT / 'A' / 'validity.json').is_file(), 'A comparison must be valid first'
                 assert json.loads((OUT / 'A' / 'validity.json').read_text())['valid'] is True
                 verify_source(A)
                 subprocess.run(['git', 'restore', '--source=' + B, '--worktree', '--', *FILES],
@@ -151,7 +155,7 @@ jobs:
             verify_source(ref)
             label = 'approved8c110a44' if mode == 'A' else '8c110a44-four-product-file-9d55-projection'
             snapshot = {'variant': mode, 'label': label, 'diagnostic': os.environ['GITHUB_SHA'],
-                        'approved': A, 'fourProductSource': ref, 'resource': resource(),
+                        'approved': A, 'diagnosticParent': PARENT, 'fourProductSource': ref, 'resource': resource(),
                         'productSHA256': {n: sha(ROOT / n) for n in FILES},
                         'fixtureSHA256': sha(ROOT / 'tests/tmp_tci_latency.cpp'),
                         'registrationSHA256': sha(ROOT / 'tests/CMakeLists.txt'),
@@ -169,7 +173,7 @@ jobs:
             env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home),
                        NEREUS_TEST_HOME=str(home), NEREUS_WORKSPACE_PREVIEW='0',
                        QT_QPA_PLATFORM='offscreen', QTEST_FUNCTION_TIMEOUT='240000',
-                       LAT_STEADY_MS='2000', LAT_STALLS='1', LAT_EVIDENCE_DIR=str(directory))
+                       LAT_STEADY_MS='20000', LAT_STALLS='8', LAT_EVIDENCE_DIR=str(directory))
             write(directory / 'test-environment.json', {k: env[k] for k in [
                 'HOME', 'CFFIXED_USER_HOME', 'NEREUS_TEST_HOME', 'NEREUS_WORKSPACE_PREVIEW',
                 'QT_QPA_PLATFORM', 'QTEST_FUNCTION_TIMEOUT', 'LAT_STEADY_MS', 'LAT_STALLS',
@@ -236,6 +240,7 @@ jobs:
         # Validation is evidence-only: no subprocesses, builds, source changes or runtime probes.
         A = '8c110a44da4e85b36e04f4c9217bf22363332995'
         B = '9d55f9170d7ef0dae2722967eaae1d5bc88163c7'
+        PARENT = '4657272e3f21fb0d9b4227cf9a5fb59d750b0728'
         FIXTURE = 'f0f752bae94da8ed339fb106a0591ef6a1861627fd12c0028df730825f48171d'
         WORKFLOW = '.github/workflows/tci-latency-diagnostic.yml'
         REGISTRATION = 'tests/CMakeLists.txt'
@@ -301,7 +306,8 @@ jobs:
             hashes = {WORKFLOW: digest(workflow_hash), REGISTRATION: digest(registration_hash), HARNESS: FIXTURE}
             bound = read_json(directory.parent / 'identity.json')
             assert bound['diagnostic'] == diagnostic
-            assert bound['parent'] == A and bound['projectionReference'] == B
+            assert bound['parent'] == PARENT and bound['approvedBase'] == A
+            assert bound['projectionReference'] == B
             assert bound['ref'] == 'refs/heads/codex/tci-latency-proof'
             assert bound['fixtureSHA256'] == FIXTURE
             assert bound['diagnosticHashes'] == hashes
@@ -313,7 +319,8 @@ jobs:
             post = read_json(directory / 'post-run-identity.json')
             expected = {'variant': variant,
                         'label': 'approved8c110a44' if variant == 'A' else '8c110a44-four-product-file-9d55-projection',
-                        'diagnostic': diagnostic, 'approved': A, 'fourProductSource': A if variant == 'A' else B,
+                        'diagnostic': diagnostic, 'approved': A, 'diagnosticParent': PARENT,
+                        'fourProductSource': A if variant == 'A' else B,
                         'productSHA256': PRODUCTS[variant], 'fixtureSHA256': FIXTURE,
                         'registrationSHA256': registration_hash, 'diagnosticHashes': hashes,
                         'run': bound['run'], 'attempt': bound['attempt'],
@@ -393,8 +400,8 @@ jobs:
             assert raw['baseValid'] is True
             number(raw['packetFrames'], 960)
             number(raw['sampleRateHz'], 48000)
-            number(raw['steadyMs'], 2000)
-            number(raw['stalls'], 1)
+            number(raw['steadyMs'], 20000)
+            number(raw['stalls'], 8)
             number(raw['stallDurationMs'], 200)
             post = decimal(raw['postStallWindowNs'])
             assert post == 1000000000
@@ -414,9 +421,10 @@ jobs:
                 append.append(decimal(packet['appendNs']))
             assert all(a <= b for a, b in zip(append, append[1:]))
             windows = raw['stallWindows']
-            assert isinstance(windows, list) and len(windows) == 1
+            assert isinstance(windows, list) and len(windows) == 8
             windows = [(decimal(w['startNs']), decimal(w['endNs'])) for w in windows]
             assert all(end <= a < b for a, b in windows)
+            assert all(previous[1] < following[0] for previous, following in zip(windows, windows[1:])), 'ordered distinct stall windows required'
             apps = raw['apps']
             assert isinstance(apps, list) and len(apps) == len(APPS)
             assert {app['name']: number(app['blockFrames']) for app in apps} == APPS
@@ -507,7 +515,8 @@ jobs:
             result = {'valid': False, 'observationsValid': False, 'identityValid': False,
                       'schemaSource': 'core-audio-687-raw-export-schema.json',
                       'metric': 'appendPcm to same-process loopback callback; not audible/end-to-end',
-                      'smokeOnly': True, 'latencyCeilingApplied': False}
+                      'smokeOnly': False, 'configuredSteadyMs': 20000, 'configuredStallsPerVariant': 8,
+                      'latencyCeilingApplied': False}
             # Clear a previous success before doing any validation. Driver directories are
             # new per variant; this also makes standalone repeated validation fail closed.
             (directory / 'validity.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -517,7 +526,7 @@ jobs:
                 result.update(identityValid=True, validatedIdentity=identity)
                 observations = validate_observations(directory)
                 result.update(observations, observationsValid=True, valid=True,
-                              note='No crossing/percentile ceiling imposed; short hosted smoke is exploratory.')
+                              note='No crossing/percentile ceiling imposed; hosted full comparison is exploratory.')
             except (AssertionError, KeyError, TypeError, ValueError, OSError, IndexError, OverflowError) as exc:
                 result['error'] = f'{type(exc).__name__}: {exc}'
             finally:
@@ -621,11 +630,11 @@ jobs:
       run: |
         set -euo pipefail
         { uname -a; lscpu; cmake --version; ninja --version; g++ --version; qmake -query QT_VERSION; ccache --show-config; printf "dependency_cache=%s\ncompiler_cache=%s\n" "$DEPS_CACHE_KEY" "$COMPILER_CACHE_KEY"; } > "$EVIDENCE_DIR/toolchain-and-cache.txt"
-    - name: Build A and run only its bounded smoke
+    - name: Build A and run its full comparison
       run: |
         set -euo pipefail
         python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" A
-    - name: Project four B files, rebuild and run only its bounded smoke
+    - name: Project four B files, rebuild and run its full comparison
       run: |
         set -euo pipefail
         python3 "$RUNNER_TEMP/tci-latency-tools/driver.py" B
@@ -659,7 +668,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: tci-latency-smoke-${{ github.sha }}-${{ github.run_attempt }}
+        name: tci-latency-full-${{ github.sha }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/tci-latency-evidence/
         retention-days: 3
         if-no-files-found: error
