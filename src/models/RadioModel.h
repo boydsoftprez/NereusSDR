@@ -21,6 +21,10 @@
 //   2026-10-25 - applyStreamDspGeometry doc: the barrier quiesces the
 //                external-diversity feed too; deliverStagedStreamBindingsInStep
 //                is private. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - applyStreamDspGeometry keeps the external-diversity fork
+//                connected and parks the worker for the re-rate
+//                (parkDspWorkerOnItsThread), so the fork's two legs stay
+//                paired. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -7640,6 +7644,8 @@ public:
     /// (m_stagedStreamBindings, only while a worker exists, defect F1) and
     /// applyStreamDspGeometry delivers it, so every caller reaches
     /// applyStreamDspGeometry before it returns to the event loop.
+    /// 2026-10-26: a zero-delay check warns and delivers if one ever does
+    /// not.
     void republishStreamBindings(int streamIndex);
     bool streamCtunPinned(int streamIndex) const;
     void setStreamCtunPinned(int streamIndex, bool pinned);
@@ -7699,11 +7705,15 @@ public:
     /// accumulator. Rather than order the two writes (the safe order inverts
     /// between widening and narrowing), this quiesces the I/Q feed for the
     /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
-    /// can observe a half-applied geometry at all. 2026-10-25: both feeds
-    /// into the worker, the stream feed and the external-diversity fork
-    /// (hardwareIqDataStamped, which hands its mixed chunk to every slice on
-    /// the target's stream); the fork is reconnected only if it was
-    /// connected.
+    /// can observe a half-applied geometry at all. 2026-10-26: the
+    /// external-diversity fork (hardwareIqDataStamped, which hands its mixed
+    /// chunk to every slice on the target's stream) stays connected: the
+    /// worker pairs its two legs by position, so a disconnect between the
+    /// legs of one packet would leave them apart. The worker is parked
+    /// instead (parkDspWorkerOnItsThread), by the same event that applies the
+    /// drain sizes and the bindings, for the whole re-rate; a diversity batch
+    /// queued before that event runs on the old geometry, one after it on the
+    /// new.
     ///
     /// Cheap and side-effect-free when nothing is out of step, which is every
     /// call on a single-rate radio.
@@ -7717,11 +7727,11 @@ public:
     /// size and every sub-receiver's input rate and size. RxDspWorker's
     /// m_streamSlices is the NereusSDR form of that channel set, so this is
     /// also what delivers the bindings republishStreamBindings staged:
-    ///   * out of step, inside the barrier, after the quiesce and before the
-    ///     reconnect, beside the drain sizes, so the first batch after the
-    ///     reconnect sees the new binding, the new drain size and the
-    ///     channel's new wdspInputSize() together (without a lane, after the
-    ///     blocking resetAccumulator, before the reconnect);
+    ///   * out of step, inside the barrier, after the quiesce, in the event
+    ///     that parks the worker, beside the drain sizes, so the first batch
+    ///     after the release sees the new binding, the new drain size and
+    ///     the channel's new wdspInputSize() together (without a lane, the
+    ///     same, after the blocking resetAccumulator);
     ///   * in step, as one receive-lane job, so it lands after any barrier
     ///     already queued (without a lane, queued to the worker at once);
     ///   * while a live rate change runs, staged until finishSampleRateChange
@@ -8003,6 +8013,11 @@ private:
     // True when `worker` is the running DSP worker and its thread is not
     // the caller's.
     bool dspWorkerThreadRunning(RxDspWorker* worker) const;
+    // 2026-10-26: parks `worker` on its own thread, after running
+    // `beforePark` there, and returns the function that releases it. The
+    // caller checks that the worker's thread runs and is not its own.
+    static std::function<void()> parkDspWorkerOnItsThread(
+        RxDspWorker* worker, std::function<void()> beforePark);
     // Connects a new RX channel's lane signals (NNR diagnostics and late
     // refusals, DSP-options timing) to the slice that owns it.
     void wireRxChannelLaneSignals(int channelId);

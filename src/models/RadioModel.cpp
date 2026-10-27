@@ -35,6 +35,15 @@
 //                reconnects it only if it was connected, so a diversity
 //                batch cannot reach a joining slice before its re-rate.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - applyStreamDspGeometry keeps the external-diversity fork
+//                connected: the event that applies the drain sizes and the
+//                bindings parks the worker (parkDspWorkerOnItsThread, the
+//                gate the receive lane's quiesce already used) for the
+//                re-rate, so a disconnect can no longer split the fork's two
+//                legs. A staged binding nothing delivered is warned about
+//                and delivered; an in-step binding dropped for a replaced
+//                worker is logged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -2133,28 +2142,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 || QThread::currentThread() == thread) {
                 return {};
             }
-            struct Gate {
-                std::mutex mutex;
-                std::condition_variable changed;
-                bool parked{false};
-                bool released{false};
-            };
-            auto gate = std::make_shared<Gate>();
-            QMetaObject::invokeMethod(worker, [gate]() {
-                std::unique_lock<std::mutex> lock(gate->mutex);
-                gate->parked = true;
-                gate->changed.notify_all();
-                gate->changed.wait(lock, [&gate]() { return gate->released; });
-            }, Qt::QueuedConnection);
-            {
-                std::unique_lock<std::mutex> lock(gate->mutex);
-                gate->changed.wait(lock, [&gate]() { return gate->parked; });
-            }
-            return [gate]() {
-                std::lock_guard<std::mutex> lock(gate->mutex);
-                gate->released = true;
-                gate->changed.notify_all();
-            };
+            return parkDspWorkerOnItsThread(worker, {});
         });
         connect(m_wdspEngine, &WdspEngine::rxChannelCreated, this,
                 [this](int channelId) { wireRxChannelLaneSignals(channelId); });
@@ -13675,6 +13663,20 @@ void RadioModel::republishStreamBindings(int streamIndex)
     // defect F1's shape, and republishAllStreamBindings covers a worker
     // built later.
     if (m_dspWorker) {
+        // 2026-10-26: the rule above is only a convention, so a caller that
+        // forgets it is caught on the next event-loop pass: warned about, and
+        // the binding delivered in step (PR 630's guard covers its block).
+        // Not while a live rate change holds them on purpose.
+        if (m_stagedStreamBindings.isEmpty()) {
+            QTimer::singleShot(0, this, [this]() {
+                if (m_stagedStreamBindings.isEmpty() || m_sampleRateChangeInFlight) {
+                    return;
+                }
+                qCWarning(lcDsp) << "stream bindings staged but never delivered for streams"
+                                 << m_stagedStreamBindings.keys() << "; delivering them now";
+                deliverStagedStreamBindingsInStep();
+            });
+        }
         m_stagedStreamBindings.insert(streamIndex, bound);
     }
     emit streamBindingsChanged(streamIndex, bound);
@@ -13701,6 +13703,10 @@ void RadioModel::deliverStagedStreamBindingsInStep()
         m_rxLane->post([target = m_rxWorkerTarget, worker, bindings]() {
             std::lock_guard<std::mutex> lock(target->mutex);
             if (target->worker != worker) {
+                // 2026-10-26: safe (a worker is replaced only at reconnect,
+                // which republishes every binding), but visible.
+                qCDebug(lcDsp) << "in-step stream bindings dropped: the DSP worker changed"
+                               << "before they ran, streams" << bindings.keys();
                 return;
             }
             postStreamSlicesToWorker(worker, bindings);
@@ -13830,34 +13836,39 @@ void RadioModel::applyStreamDspGeometry()
             // while the worker's thread runs, as before.
             const bool quiesce = worker != nullptr && receivers != nullptr
                                  && dspWorkerThreadRunning(worker);
-            // 2026-10-25: both feeds into the worker. The external-diversity
-            // fork hands its mixed chunk to every slice on the target's
-            // stream, so a batch of it between the new binding and the
-            // channel's re-rate would reach a joining slice at its old block.
-            // Reconnected below only if the route had it connected.
-            bool diversityFed = false;
+            // 2026-10-26: the stream feed only. The external-diversity fork
+            // stays connected: the worker pairs its two legs by position
+            // (processStampedExternalDiversityIqBatch), so a disconnect or
+            // reconnect between the legs of one packet would leave them a
+            // packet apart. The worker is parked for the re-rate instead.
             if (quiesce) {
                 QObject::disconnect(receivers, &ReceiverManager::iqDataForReceiverStamped,
                                     worker, &RxDspWorker::processStampedIqBatch);
-                diversityFed = QObject::disconnect(
-                    receivers, &ReceiverManager::hardwareIqDataStamped,
-                    worker, &RxDspWorker::processStampedExternalDiversityIqBatch);
                 runOnDspWorkerFromLane(worker, [worker]() { worker->resetAccumulator(); });
             }
-            // Half 1: the worker's per-stream drain thresholds, queued to its
-            // thread ahead of the first batch after the reconnect.
-            for (const auto& [st, inSize] : thresholds) {
-                QMetaObject::invokeMethod(worker, [worker, st = st, inSize = inSize]() {
+            // Half 1: the worker's per-stream drain thresholds, and
+            // (2026-10-25) the stream bindings beside them: the first batch
+            // after the release sees the new binding, the new drain size and
+            // the re-rated channel together, as Thetis's receive loop never
+            // sees them apart (cmaster.c:340-404 and 457-507 [v2.10.3.15],
+            // see the declaration).
+            const auto applyOnWorker = [worker, thresholds, bindings]() {
+                for (const auto& [st, inSize] : thresholds) {
                     worker->setStreamInputChunk(st, inSize);
-                }, Qt::QueuedConnection);
-            }
-            // 2026-10-25: the stream bindings, queued beside the drain sizes:
-            // the first batch after the reconnect sees the new binding, the
-            // new drain size and the re-rated channel together, as Thetis's
-            // receive loop never sees them apart (cmaster.c:340-404 and
-            // 457-507 [v2.10.3.15], see the declaration).
-            if (worker != nullptr && !bindings.isEmpty()) {
-                postStreamSlicesToWorker(worker, bindings);
+                }
+                for (auto it = bindings.cbegin(); it != bindings.cend(); ++it) {
+                    worker->setStreamSlices(it.key(), it.value());
+                }
+            };
+            // 2026-10-26: one event applies them and parks the worker, so a
+            // diversity batch queued before it runs on the old geometry and
+            // one queued after it waits for the new. Without a running
+            // worker thread they are queued, as before.
+            std::function<void()> release;
+            if (quiesce) {
+                release = parkDspWorkerOnItsThread(worker, applyOnWorker);
+            } else if (worker != nullptr) {
+                QMetaObject::invokeMethod(worker, applyOnWorker, Qt::QueuedConnection);
             }
             // Half 2: every bound slice's channel (Thetis cmaster.c:473-475
             // [v2.10.3.15], see below).
@@ -13870,11 +13881,8 @@ void RadioModel::applyStreamDspGeometry()
                         static_cast<Qt::ConnectionType>(Qt::QueuedConnection
                                                         | Qt::UniqueConnection));
             }
-            if (diversityFed) {
-                connect(receivers, &ReceiverManager::hardwareIqDataStamped,
-                        worker, &RxDspWorker::processStampedExternalDiversityIqBatch,
-                        static_cast<Qt::ConnectionType>(Qt::QueuedConnection
-                                                        | Qt::UniqueConnection));
+            if (release) {
+                release();
             }
         });
         return;
@@ -13882,7 +13890,8 @@ void RadioModel::applyStreamDspGeometry()
 
     // ── Quiesce ──────────────────────────────────────────────────────────
     // Mirrors setSampleRateLive steps 2 and 10. Disconnecting the feed
-    // (2026-10-25: both feeds, the external-diversity fork included) and
+    // (2026-10-26: the stream feed; the external-diversity fork stays
+    // connected and the worker is parked below, as on the lane) and
     // then reaching the worker through a BlockingQueuedConnection guarantees
     // two things: any in-flight processIqBatch has finished, and every event
     // already posted to the DSP thread has been consumed. (2026-10-25: the
@@ -13907,15 +13916,9 @@ void RadioModel::applyStreamDspGeometry()
     const bool quiesce = m_dspWorker != nullptr && m_receiverManager != nullptr
                          && m_dspThread != nullptr && m_dspThread->isRunning()
                          && QThread::currentThread() != m_dspThread;
-    // 2026-10-25: the external-diversity fork as well, as on the lane above,
-    // and reconnected only if it was connected.
-    bool diversityFed = false;
     if (quiesce) {
         QObject::disconnect(m_receiverManager, &ReceiverManager::iqDataForReceiverStamped,
                             m_dspWorker, &RxDspWorker::processStampedIqBatch);
-        diversityFed = QObject::disconnect(
-            m_receiverManager, &ReceiverManager::hardwareIqDataStamped,
-            m_dspWorker, &RxDspWorker::processStampedExternalDiversityIqBatch);
         QMetaObject::invokeMethod(m_dspWorker, &RxDspWorker::resetAccumulator,
                                   Qt::BlockingQueuedConnection);
     }
@@ -13934,23 +13937,37 @@ void RadioModel::applyStreamDspGeometry()
     // bindings published before wireConnectionSignals built the worker were
     // silently dropped and never re-sent. With no worker the sizes simply stay
     // out of step, and the next bind or rate change publishes them for real.
+    //
+    // 2026-10-26: applied by the event that parks the worker for the re-rate
+    // below, with the staged stream bindings (2026-10-25) beside them, so
+    // the external-diversity fork, which stays connected, cannot reach a
+    // slice between the new binding and its channel's re-rate. Queued, as
+    // before, when there is no running worker thread to park.
+    std::vector<std::pair<int, int>> thresholds;   // stream, in_size
     if (m_dspWorker) {
         for (int st = 0; st < streamCount; ++st) {
             if (m_streamInSizePushed.value(st, -1) == inSizeFor[st]) {
                 continue;
             }
             m_streamInSizePushed.insert(st, inSizeFor[st]);
-            const int inSize = inSizeFor[st];
-            QMetaObject::invokeMethod(m_dspWorker,
-                                      [w = m_dspWorker, st, inSize]() {
-                w->setStreamInputChunk(st, inSize);
-            }, Qt::QueuedConnection);
+            thresholds.emplace_back(st, inSizeFor[st]);
         }
     }
-    // 2026-10-25: the staged stream bindings, after the blocking
-    // resetAccumulator and before the reconnect, beside the drain sizes.
-    if (m_dspWorker && !bindings.isEmpty()) {
-        postStreamSlicesToWorker(m_dspWorker, bindings);
+    std::function<void()> release;
+    if (m_dspWorker) {
+        const auto applyOnWorker = [w = m_dspWorker, thresholds, bindings]() {
+            for (const auto& [st, inSize] : thresholds) {
+                w->setStreamInputChunk(st, inSize);
+            }
+            for (auto it = bindings.cbegin(); it != bindings.cend(); ++it) {
+                w->setStreamSlices(it.key(), it.value());
+            }
+        };
+        if (quiesce) {
+            release = parkDspWorkerOnItsThread(m_dspWorker, applyOnWorker);
+        } else {
+            QMetaObject::invokeMethod(m_dspWorker, applyOnWorker, Qt::QueuedConnection);
+        }
     }
 
     // ── Half 2: the WDSP channel of every slice bound to a stream ────────
@@ -13985,11 +14002,8 @@ void RadioModel::applyStreamDspGeometry()
                 m_dspWorker, &RxDspWorker::processStampedIqBatch,
                 Qt::QueuedConnection);
     }
-    if (diversityFed) {
-        connect(m_receiverManager, &ReceiverManager::hardwareIqDataStamped,
-                m_dspWorker, &RxDspWorker::processStampedExternalDiversityIqBatch,
-                static_cast<Qt::ConnectionType>(Qt::QueuedConnection
-                                                | Qt::UniqueConnection));
+    if (release) {
+        release();
     }
 }
 
@@ -17678,6 +17692,39 @@ bool RadioModel::dspWorkerThreadRunning(RxDspWorker* worker) const
     return worker != nullptr && m_rxWorkerTarget->worker == worker
         && m_rxWorkerTarget->thread != nullptr && m_rxWorkerTarget->thread->isRunning()
         && QThread::currentThread() != m_rxWorkerTarget->thread;
+}
+
+// The gate a lane barrier's quiesce parks the worker on (setRxWorkerQuiesce),
+// with `beforePark` run first on the worker's thread (2026-10-26, for
+// applyStreamDspGeometry). The caller blocks until the worker is parked.
+std::function<void()> RadioModel::parkDspWorkerOnItsThread(
+    RxDspWorker* worker, std::function<void()> beforePark)
+{
+    struct Gate {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool parked{false};
+        bool released{false};
+    };
+    auto gate = std::make_shared<Gate>();
+    QMetaObject::invokeMethod(worker, [gate, beforePark = std::move(beforePark)]() {
+        if (beforePark) {
+            beforePark();
+        }
+        std::unique_lock<std::mutex> lock(gate->mutex);
+        gate->parked = true;
+        gate->changed.notify_all();
+        gate->changed.wait(lock, [&gate]() { return gate->released; });
+    }, Qt::QueuedConnection);
+    {
+        std::unique_lock<std::mutex> lock(gate->mutex);
+        gate->changed.wait(lock, [&gate]() { return gate->parked; });
+    }
+    return [gate]() {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        gate->released = true;
+        gate->changed.notify_all();
+    };
 }
 
 // What the BlockingQueuedConnection calls into RxDspWorker did, from the

@@ -26,6 +26,10 @@
 // failing check during a lane hold lets go of the hold before it is
 // destroyed; a stack worker is detached before it dies. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-26: the external-diversity fork's two legs stay paired through a
+// joining slice's barrier, which parks the worker rather than disconnecting
+// the fork; the binding is read after the barrier, not while the worker is
+// parked. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QRegularExpression>
@@ -253,9 +257,31 @@ void holdInsideRateChange(int channel, int kind)
 }
 
 // What the diversity fake does with the two legs: the primary, unmixed.
+// 2026-10-26: it also counts its mixes, and the mixes of two legs from
+// different packets (each leg chunk carries its packet's mark in every
+// sample, markedChunk).
+std::atomic<int> g_diversityMixes {0};
+std::atomic<int> g_diversitySplitPairs {0};
 void passPrimaryLeg(int, int samples, double** inputs, double* output)
 {
+    g_diversityMixes.fetch_add(1);
+    if (inputs[0][0] != inputs[1][0]) {
+        g_diversitySplitPairs.fetch_add(1);
+    }
     std::copy(inputs[0], inputs[0] + 2 * samples, output);
+}
+
+// One leg chunk of `inSize` samples marking packet `packet`.
+QVector<float> markedChunk(int inSize, int packet)
+{
+    const float mark = 0.001f * static_cast<float>(packet);
+    QVector<float> v;
+    v.reserve(inSize * 2);
+    for (int i = 0; i < inSize; ++i) {
+        v.append(mark);
+        v.append(mark);
+    }
+    return v;
 }
 #endif
 
@@ -2535,7 +2561,10 @@ private slots:
     // (hardwareIqDataStamped). Slice B joins the target's stream from one at
     // another rate. The lane is stopped inside B's re-rate, after the barrier
     // has handed the worker the new binding: a diversity batch then must not
-    // reach B at its old block, so the barrier quiesces that fork too.
+    // reach B at its old block. 2026-10-26: the barrier parks the worker for
+    // that, and keeps the fork connected, because the worker pairs the two
+    // legs by position: a packet whose primary leg arrives before the barrier
+    // and whose secondary arrives inside it must still be mixed as one pair.
     void a_diversity_batch_inside_the_barrier_never_reaches_a_joining_slice()
     {
 #ifndef HAVE_WDSP
@@ -2580,18 +2609,23 @@ private slots:
         QMetaObject::invokeMethod(worker, [worker, a]() {
             worker->setExternalDiversityRoute(kDivId, a, kPrimaryDdc, kSecondaryDdc);
         }, Qt::BlockingQueuedConnection);
-        const auto feedDiversity = [&model, divChunk]() {
+        const auto feedLeg = [&model, divChunk](int ddc, int packet) {
             emit model.receiverManager()->hardwareIqDataStamped(
-                kPrimaryDdc, oneChunk(divChunk), ReceiverManager::enqueueClockNs());
-            emit model.receiverManager()->hardwareIqDataStamped(
-                kSecondaryDdc, oneChunk(divChunk), ReceiverManager::enqueueClockNs());
+                ddc, markedChunk(divChunk, packet), ReceiverManager::enqueueClockNs());
+        };
+        const auto feedDiversity = [&feedLeg](int packet) {
+            feedLeg(kPrimaryDdc, packet);
+            feedLeg(kSecondaryDdc, packet);
         };
 
         // The route runs: A is handed the mix at its block.
+        g_diversityMixes.store(0);
+        g_diversitySplitPairs.store(0);
         r.watchedSlice.store(a);
-        feedDiversity();
+        feedDiversity(1);
         QTRY_VERIFY_WITH_TIMEOUT(r.watchedAtStreamBlock.load() >= 1, 10000);
         QCOMPARE(r.watchedMismatched.load(), 0);
+        QCOMPARE(g_diversityMixes.load(), 1);
 
         // Watch B from here.
         r.watchedSlice.store(b);
@@ -2619,30 +2653,38 @@ private slots:
         QVERIFY(holdReceiveLane(model, hold));
         model.sliceById(b)->setFrequency(14210000.0);
         QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        // Packet 2's primary leg arrives before the barrier starts.
+        feedLeg(kPrimaryDdc, 2);
         hold.release.release();
 
-        // The lane is now inside B's re-rate: the worker holds {A, B} for the
-        // stream, B's channel is still at its old block.
+        // The lane is now inside B's re-rate, B's channel still at its old
+        // block. The worker is parked, so nothing here may wait on it.
+        // Packet 2's secondary leg and three whole packets arrive.
         QVERIFY2(g_rateHoldEntered.tryAcquire(1, 10000),
                  "the lane never reached slice B's re-rate");
-        QCOMPARE(workerStreamSlices(worker, s0), sorted(QVector<int>{a, b}));
         QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(1536000));
-        for (int i = 0; i < 3; ++i) {
-            feedDiversity();
+        feedLeg(kSecondaryDdc, 2);
+        for (int packet = 3; packet <= 5; ++packet) {
+            feedDiversity(packet);
         }
-        // Queued ahead of this round trip, so any batch the fork let in has run.
-        workerStreamSlices(worker, s0);
-        const int mismatchedInside = r.watchedMismatched.load();
 
         g_rateHoldRelease.release();
         QVERIFY(model.waitForReceiveLaneForTest(10000));
         QVERIFY2(!g_rateHoldTimedOut.load(), "the re-rate hold timed out instead of being released");
         QVERIFY2(!hold.timedOut.load(), "the lane hold timed out instead of being released");
         QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(192000));
+        QCOMPARE(workerStreamSlices(worker, s0), sorted(QVector<int>{a, b}));
+        const int mismatchedInside = r.watchedMismatched.load();
 
-        // After the barrier the fork is back: B is handed the mix at its new block.
-        feedDiversity();
+        // After the barrier: B is handed the mix at its new block, and every
+        // packet fed (1 to 6) was mixed with its own two legs.
+        feedDiversity(6);
         QTRY_VERIFY_WITH_TIMEOUT(r.watchedAtStreamBlock.load() > atBlockBefore, 10000);
+        workerStreamSlices(worker, s0);
+        qInfo("diversity: %d mixes for 6 packets, %d of them from two packets' legs",
+              g_diversityMixes.load(), g_diversitySplitPairs.load());
+        QCOMPARE(g_diversitySplitPairs.load(), 0);
+        QCOMPARE(g_diversityMixes.load(), 6);
 
         RxChannel::InputSizeMismatch taken;
         rxB->takeInputSizeMismatch(taken);
