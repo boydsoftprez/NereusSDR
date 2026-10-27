@@ -1064,6 +1064,15 @@ nereus_add_test(tst_cwx_sender REALTIME)
 # keyer timings run on the wall clock (3 s watchdog), hence REALTIME.
 nereus_add_test(tst_tci_cw REALTIME)
 
+# CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
+# injected line source (paddles, the key and PTT lines, the gate, stops,
+# the cut, fresh edges, the thread's join) and its RadioModel wiring (port
+# conflicts with CAT, the PTT line in Semi, connection swaps).
+nereus_add_test(tst_cw_serial_key_input)
+# CW transmit Task 10 (R-CW-37): the auto mode switch and its return on a
+# RadioModel. The return waits run on the wall clock (300 ms and less).
+nereus_add_test(tst_cw_auto_mode_switch)
+
 # CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
 # QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
 # fallback notice and the TX channel skip on a RadioModel.

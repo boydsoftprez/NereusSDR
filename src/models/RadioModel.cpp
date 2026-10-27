@@ -1448,6 +1448,15 @@
 //                transmit cut's catch-up and the connection going away
 //                abort it and release the key line. J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the serial key reader (R-CW-04, R-CW-36):
+//                owned here on the current connection's key line, its
+//                straight key through the CWX sender, its PTT line to
+//                MoxController, the keyer gate pushed to it, a port CAT
+//                or the CAT PTT input uses refused, released by every
+//                stop and the cut's catch-up and stopped before the
+//                connection goes; the auto mode switch and its return
+//                (console.cs:25660-25752, R-CW-37). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1753,6 +1762,7 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include "core/cat/CatService.h"
+#include "core/cat/CatSettings.h"
 #include "RadioModel.h"
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
@@ -1778,6 +1788,7 @@ mw0lge@grange-lane.co.uk
 #include "models/PureSignalSettings.h"
 #include "models/CwKeyerController.h"
 #include "core/CwxSender.h"
+#include "core/CwSerialKeyInput.h"
 #include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
@@ -5301,6 +5312,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
     syncCwKeying();
     // CW transmit (R-CW-31 to R-CW-33): the CWX sender.
     wireCwxSender();
+    // CW transmit (R-CW-36, R-CW-37): the serial key reader and the auto
+    // mode switch.
+    wireCwSerialKey(nullptr);
 }
 
 RadioModel::~RadioModel()
@@ -5309,6 +5323,9 @@ RadioModel::~RadioModel()
     // its thread first; then the keyer controller goes, so nothing the
     // teardown below signals re-evaluates it or pushes to a connection
     // going away.
+    // The serial key reader first: its straight key keys through the
+    // sender.
+    m_cwSerialKey.reset();
     m_cwxSender.reset();
     m_cwKeyerController.reset();
     // The transmit cut line may outlive this model (RemoteTxCutGuard holds
@@ -28812,7 +28829,13 @@ void RadioModel::teardownConnection()
     }
     // CW transmit (early review M8): the CWX sender stops, releases its key
     // bits and lets go of this connection's key line before anything below
-    // can destroy the connection.
+    // can destroy the connection. The serial key reader goes first, as its
+    // straight key keys through the sender.
+    if (m_cwSerialKey) {
+        m_cwSerialKey->stopReading();
+        m_cwSerialKey->setKeyLine(nullptr);
+        m_cwSerialRunningConfig.clear();
+    }
     if (m_cwxSender) {
         m_cwxSender->stop();
         m_cwxSender->setKeyLine(nullptr);
@@ -30306,6 +30329,11 @@ void RadioModel::stopTransmitNow(const QString& reason)
     if (m_cwxSender) {
         m_cwxSender->stop();
     }
+    // R-CW-36: and the serial key reader lets go of its keys and PTT line;
+    // a line still held keys nothing until it goes up and down again.
+    if (m_cwSerialKey) {
+        m_cwSerialKey->releaseKeys();
+    }
 
     // No further TX I/Q block reaches the connection after this returns,
     // and a queued channel-on no longer opens the gate.
@@ -30396,7 +30424,9 @@ void RadioModel::stopAllTx(const QString& message)
         && !(m_cwKeyerController && m_cwKeyerController->isStopLatched());
     // CW transmit (R-CW-32): the CWX sender keying in Semi or QSK with MOX
     // off (or its Key held) is on the air too.
-    const bool cwxOn = m_cwxSender && m_cwxSender->isSending();
+    const bool cwxOn = (m_cwxSender && m_cwxSender->isSending())
+        // R-CW-36: likewise a serial paddle, straight key or PTT line held.
+        || (m_cwSerialKey && m_cwSerialKey->isKeying());
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
         && !cwKeyed && !cwxOn) {
         return;
@@ -30459,7 +30489,9 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
         // Early fix wave C1: the radio's keyer, which keys with MOX off.
         || cwRadioMayBeKeyed()
         // CW transmit: the CWX sender, which keys with MOX off too.
-        || (m_cwxSender && m_cwxSender->isSending());
+        || (m_cwxSender && m_cwxSender->isSending())
+        // R-CW-36: and the serial key reader.
+        || (m_cwSerialKey && m_cwSerialKey->isKeying());
     if (stillKeyed || !transmitReleaseInProgress()) {
         stopAllTx(stopText);
     }
@@ -30470,6 +30502,11 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
     // radio again with nobody sending.
     if (m_cwxSender) {
         m_cwxSender->stop();
+    }
+    // Early re-review, R-CW-36: the serial key reader too; a line held
+    // through the cut keys nothing when it clears until it moves again.
+    if (m_cwSerialKey) {
+        m_cwSerialKey->releaseKeys();
     }
     // Early fix wave C1: while the radio still reports a CW key down the
     // cut stays, so the next frame cannot key it again; it clears with the
@@ -32588,6 +32625,8 @@ void RadioModel::wireCwKeyerConnection()
     }
     // CW transmit (R-CW-31): the CWX sender keys this connection's line.
     syncCwxKeyLine();
+    // CW transmit (R-CW-36): and so does the serial key reader.
+    syncCwSerialKey();
     connect(m_connection, &RadioConnection::radioKeyStatus,
             this, &RadioModel::onCwRadioKeyStatus,
             static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
@@ -32634,6 +32673,14 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
     // hold (MoxController::onCwKeyStatus).
     if (m_moxController) {
         m_moxController->onCwKeyStatus(dot, dash);
+    }
+    // R-CW-37: a dot or dash, and the release of the last one, drive the
+    // auto mode switch and restart its return.
+    const bool paddleDown = dot || dash;
+    const bool wasDown = m_cwRadioPaddleDown;
+    m_cwRadioPaddleDown = paddleDown;
+    if (paddleDown || wasDown) {
+        noteCwKeyActivity();
     }
 }
 
@@ -32729,6 +32776,232 @@ void RadioModel::syncCwxKeyLine()
     const HPSDRHW board = m_lastRadioInfo.boardType;
     m_cwxSender->setHl2(board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly);
     m_cwxSender->setKeyLine(m_connection->cwKeyLine());
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-04, R-CW-36): the serial key reader. NereusSDR-original
+// wiring; the line handling is the Thetis port (CwSerialKeyInput.cpp).
+//
+// The reader keys the current connection's key line: the paddles its dot
+// and dash bits, the straight-key line the CWX bit through the CWX sender
+// (the one owner of that bit, CwxSender::setHandKey), and the PTT line
+// MOX through MoxController::onCwPtt (Semi only, R-CW-19; QSK ignores it,
+// R-CW-20; a refused keyer gate is reported there). The keyer gate
+// (R-CW-05) is pushed to the reader as it changes; every stop and the
+// transmit cut's catch-up release its keys (stopTransmitNow,
+// catchUpTransmitCut); the connection going away stops it first
+// (teardownConnection, syncCwSerialKey).
+// ---------------------------------------------------------------------------
+void RadioModel::wireCwSerialKey(std::unique_ptr<CwSerialKeyInput> input)
+{
+    if (m_cwSerialKey) {
+        m_cwSerialKey->stopReading();
+        m_cwSerialKey->setKeyLine(nullptr);
+        m_cwSerialKey.reset();
+    }
+    m_cwSerialRunningConfig.clear();
+    m_cwSerialKey = input ? std::move(input)
+                          : std::make_unique<CwSerialKeyInput>(
+                                CwSerialKeyInput::createPlatformLineSource());
+    CwSerialKeyInput* const reader = m_cwSerialKey.get();
+    if (CwxSender* const cwx = m_cwxSender.get()) {
+        reader->setStraightKeySink([cwx](bool down) { return cwx->setHandKey(down); });
+    }
+    if (m_moxController) {
+        connect(reader, &CwSerialKeyInput::pttLineChanged,
+                m_moxController, &MoxController::onCwPtt);
+    }
+    connect(reader, &CwSerialKeyInput::paddleActivity, this, &RadioModel::noteCwKeyActivity);
+    connect(reader, &CwSerialKeyInput::failed, this, [this](const QString& words) {
+        m_cwSerialRunningConfig.clear();
+        setCwSerialKeyRefusal(words);
+    });
+    const auto followKeyer = [this, reader]() {
+        reader->setGateAllowed(m_cwKeyerController && m_cwKeyerController->keyerAllowed());
+    };
+    if (m_cwKeyerController) {
+        connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
+                reader, followKeyer);
+    }
+    followKeyer();
+
+    if (!m_cwAutoModeTimer) {
+        m_cwAutoModeTimer = new QTimer(this);
+        m_cwAutoModeTimer->setSingleShot(true);
+        connect(m_cwAutoModeTimer, &QTimer::timeout, this, &RadioModel::cwAutoModeTick);
+    }
+
+    TransmitModel& tm = m_transmitModel;
+    const auto resync = [this]() { syncCwSerialKey(); };
+    connect(&tm, &TransmitModel::cwSerialPortChanged, reader, resync);
+    connect(&tm, &TransmitModel::cwSerialPaddlesChanged, reader, resync);
+    connect(&tm, &TransmitModel::cwSerialKeyLineChanged, reader, resync);
+    connect(&tm, &TransmitModel::cwSerialPttLineChanged, reader, resync);
+    if (m_catService) {
+        connect(m_catService, &CatService::configurationChanged, reader, resync);
+        connect(m_catService, &CatService::globalConfigurationChanged, reader, resync);
+    }
+    syncCwSerialKey();
+}
+
+void RadioModel::replaceCwSerialKeyInputForTest(std::unique_ptr<CwSerialKeyInput> input)
+{
+    wireCwSerialKey(std::move(input));
+}
+
+QString RadioModel::cwSerialPortConflict(const QString& port) const
+{
+    if (!m_catService) {
+        return QString();
+    }
+    // R-CW-04, as the CAT PTT input refuses a CAT port
+    // (CatService::startPtt): a CAT endpoint's serial device, then the CAT
+    // PTT input's own device.
+    constexpr int kCatChannels = 4;
+    for (int channel = 1; channel <= kCatChannels; ++channel) {
+        const CatEndpointConfig config = m_catService->channelConfig(channel);
+        if (config.serialEnabled && CatSettings::sameSerialDevice(config.serialDevice, port)) {
+            return QString::fromLatin1(kCwSerialPortInUseByCatText);
+        }
+    }
+    const CatGlobalConfig global = m_catService->globalConfig();
+    if (global.pttEnabled && global.pttDeviceSource == QLatin1String("Physical")
+        && CatSettings::sameSerialDevice(global.pttSerialDevice, port)) {
+        return QString::fromLatin1(kCwSerialPortInUseByCatPttText);
+    }
+    return QString();
+}
+
+void RadioModel::setCwSerialKeyRefusal(const QString& words)
+{
+    if (m_cwSerialKeyRefusal == words) {
+        return;
+    }
+    m_cwSerialKeyRefusal = words;
+    if (!words.isEmpty()) {
+        qCWarning(lcConnection).noquote() << "CW serial key input:" << words;
+    }
+    emit cwSerialKeyRefusalChanged(words);
+}
+
+void RadioModel::syncCwSerialKey()
+{
+    if (!m_cwSerialKey) {
+        return;
+    }
+    const TransmitModel& tm = m_transmitModel;
+    const QString port = tm.cwSerialPort().trimmed();
+    const auto stopReader = [this]() {
+        m_cwSerialKey->stopReading();
+        m_cwSerialKey->setKeyLine(nullptr);
+        m_cwSerialRunningConfig.clear();
+    };
+    if (m_connection == nullptr || port.isEmpty()) {
+        stopReader();
+        setCwSerialKeyRefusal(QString());
+        return;
+    }
+    const QString conflict = cwSerialPortConflict(port);
+    if (!conflict.isEmpty()) {
+        // Nothing reads a port CAT has.
+        stopReader();
+        setCwSerialKeyRefusal(conflict);
+        return;
+    }
+    m_cwSerialKey->setKeyLine(m_connection->cwKeyLine());
+    const auto keyLine = static_cast<CwSerialLine>(tm.cwSerialKeyLine());
+    const auto pttLine = static_cast<CwSerialLine>(tm.cwSerialPttLine());
+    const QString config = QStringLiteral("%1|%2|%3|%4")
+                               .arg(port)
+                               .arg(tm.cwSerialPaddles() ? 1 : 0)
+                               .arg(static_cast<int>(keyLine))
+                               .arg(static_cast<int>(pttLine));
+    if (m_cwSerialKey->isReading() && config == m_cwSerialRunningConfig) {
+        return;
+    }
+    QString error;
+    if (!m_cwSerialKey->start(port, tm.cwSerialPaddles(), keyLine, pttLine, &error)) {
+        m_cwSerialRunningConfig.clear();
+        setCwSerialKeyRefusal(error);
+        return;
+    }
+    m_cwSerialRunningConfig = config;
+    setCwSerialKeyRefusal(QString());
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-37): the auto mode switch.
+//
+// Porting from Thetis console.cs:25699-25752 [v2.10.3.15],
+// update_for_auto_mode_return, called from the dot and dash poll
+// (console.cs:25654) with state_dot || state_dash. Thetis calls it every
+// 1 ms while a dot or dash is down; here it runs on every dot or dash edge
+// (the radio's status and the serial paddles), and the return timer
+// restarts while one is still down when it fires (cwAutoModeTick), so the
+// wait runs from the last release either way. The transmit slice stands
+// for Thetis's RX1 or RX2 with VFOBTX.
+// ---------------------------------------------------------------------------
+void RadioModel::noteCwKeyActivity()
+{
+    //[2.10.1.0]MW0LGE implements #70
+    //[2.10.3.12]MW0LGE modified to be called whenever dot/dash is present
+
+    const TransmitModel& tm = m_transmitModel;
+    if (!tm.cwAutoModeSwitch()) {
+        return;
+    }
+    SliceModel* const tx = txBoundSlice();
+    if (tx == nullptr) {
+        return;
+    }
+    const DSPMode currentMode = tx->dspMode();
+    const bool bInCW = currentMode == DSPMode::CWL || currentMode == DSPMode::CWU;
+
+    if (!bInCW) {
+        switch (currentMode) {
+        case DSPMode::LSB:
+        case DSPMode::DIGL:
+            tx->setDspMode(DSPMode::CWL);
+            break;
+        default:
+            tx->setDspMode(DSPMode::CWU);
+            break;
+        }
+    }
+
+    // return after some time, start timer
+    if (tm.cwAutoModeReturn()) {
+        if (!bInCW) {
+            m_cwOldAutoMode = currentMode;
+        }
+        m_cwAutoModeSliceId = tx->sliceIndex();
+        if (m_cwAutoModeTimer) {
+            m_cwAutoModeTimer->start(tm.cwAutoModeReturnMs());
+        }
+    } else {
+        m_cwOldAutoMode.reset();
+    }
+}
+
+// The return timer fired (Thetis cwAutoModeTick).
+void RadioModel::cwAutoModeTick()
+{
+    // A dot or dash still down: Thetis restarts the wait every 1 ms while
+    // one is (update_for_auto_mode_return from the poll).
+    if (m_cwRadioPaddleDown || (m_cwSerialKey && m_cwSerialKey->paddleDown())) {
+        if (m_cwAutoModeTimer) {
+            m_cwAutoModeTimer->start(m_transmitModel.cwAutoModeReturnMs());
+        }
+        return;
+    }
+    // From Thetis console.cs:25660-25681 [v2.10.3.15], cwAutoModeTick.
+    if (m_cwOldAutoMode) {
+        if (SliceModel* const slice = sliceById(m_cwAutoModeSliceId)) {
+            slice->setDspMode(*m_cwOldAutoMode);
+        }
+
+        m_cwOldAutoMode.reset(); //[2.10.3.12]MW0LGE fix issue where if you key when in cw it would return to old non cw mode
+    }
 }
 
 bool RadioModel::cwRadioMayBeKeyed() const

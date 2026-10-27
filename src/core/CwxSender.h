@@ -25,6 +25,9 @@
 //               (releaseKeyAfter, from TCIServer.cs scheduleKeyerRelease),
 //               isKeyHeld and keyHeldChanged (R-CW-35). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, setHandKey, the serial straight-key line on
+//               the CWX bit (R-CW-36). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -287,6 +290,14 @@ public:
     // From Thetis TCIServer.cs:9050-9064 [v2.10.3.15]
     // (scheduleKeyerReleaseLocked).
     void releaseKeyAfter(int msAfterPress);
+    // R-CW-36, the serial straight-key line (Thetis SDRSerialPortII.cs:251
+    // and 256, NetworkIO.SetCWX): the CWX bit held while `down`, with no
+    // request gate (the serial reader applies the keyer gate on its own
+    // thread) and no watchdog (a hand key may be held as long as the
+    // operator holds it). Ignored while text is sent or the Key is held,
+    // as the TCI key is. Returns true when the key is down after the call.
+    // Any thread; stop() and setKeyLine release it.
+    bool setHandKey(bool down);
     bool isKeyHeld() const { return m_keyHeldNow.load(std::memory_order_acquire); }
     int queuedCharacters() const;                  // CAT KY/ZZKY buffer answers
     // A message, its hang or a repeat delay is running, or the Key is held.
@@ -375,6 +386,8 @@ private:
     TimePoint m_keyDeadline{};
     TimePoint m_keyPressedAt{};
     std::atomic<bool> m_keyHeldNow{false};
+    // The serial straight key (setHandKey).
+    bool m_handKey{false};
 
     std::atomic<int> m_queuedChars{0};
     std::atomic<bool> m_sending{false};

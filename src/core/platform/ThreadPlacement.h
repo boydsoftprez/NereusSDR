@@ -65,6 +65,9 @@
 //               DSP thread's core where the connection thread does, and
 //               runs with everything else elsewhere. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the serial key reader role (R-CW-36), placed
+//               as the CWX sender is. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -119,6 +122,7 @@ enum class ThreadRole {
     ConnectionThread, ///< the radio connection thread (reads the radio's UDP)
     SpectrumThread,  ///< a spectrum FFT thread, told apart by a number FftEnginePool gives each
     CwxSender,       ///< the CWX sender's element timing thread (R-CW-31)
+    CwSerialKey,     ///< the serial key reader's line wait thread (R-CW-36)
 };
 
 /// Which signal processing threads are busy.
@@ -135,6 +139,7 @@ struct PlacementDemand {
     bool connectionThread{false}; ///< the radio connection thread is running
     QList<int> spectrumThreads;   ///< running spectrum threads, by FftEnginePool's number
     bool cwxSender{false};        ///< the CWX sender's thread is running
+    bool cwSerialKey{false};      ///< the serial key reader's thread is running
 };
 
 struct RoleAssignment {

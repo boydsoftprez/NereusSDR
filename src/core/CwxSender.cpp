@@ -25,6 +25,9 @@
 //               (releaseKeyAfter, from TCIServer.cs scheduleKeyerRelease),
 //               isKeyHeld and keyHeldChanged (R-CW-35). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, setHandKey, the serial straight-key line on
+//               the CWX bit (R-CW-36). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -807,8 +810,10 @@ void CwxSender::abortLocked()
     m_repeatText.clear();
     m_repeatMarker = false;
     setKeyHeldStateLocked(false);
+    m_handKey = false;
     setKeyLocked(false); //[2.10.3]MW0LGE swap
     setPttLocked(false);
+    applyLineLocked();
     m_ttx = 0; m_pause = 0; m_newptt = 0;
     m_ticking = false;
     m_queuedChars.store(0, std::memory_order_release);
@@ -849,7 +854,7 @@ void CwxSender::setKeyLocked(bool on)
 void CwxSender::applyLineLocked()
 {
     const bool allowed = m_breakIn || m_mox;
-    const bool key = m_key && allowed;
+    const bool key = (m_key || m_handKey) && allowed;
     const bool ptt = m_hl2 && m_ptt && allowed;
     if (!m_line) {
         m_lineKey = false;
@@ -1225,6 +1230,31 @@ void CwxSender::releaseKeyAfter(int msAfterPress)
         m_wake.store(true, std::memory_order_release);
     }
     m_cv.notify_all();
+}
+
+// R-CW-36: the serial straight-key line. Thetis writes NetworkIO.SetCWX from
+// the pin change (SDRSerialPortII.cs:251, 256 [v2.10.3.15]); here it goes
+// through the sender, the one writer of the CWX bit, and keys under the
+// same break-in or MOX rule as everything the sender keys.
+bool CwxSender::setHandKey(bool down)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    if (!down) {
+        if (m_handKey) {
+            m_handKey = false;
+            applyLineLocked();
+        }
+        return false;
+    }
+    if (m_handKey) {
+        return true;
+    }
+    if (m_ticking || !m_queue.empty() || m_keyHeld) {
+        return false;
+    }
+    m_handKey = true;
+    applyLineLocked();
+    return true;
 }
 
 int CwxSender::queuedCharacters() const

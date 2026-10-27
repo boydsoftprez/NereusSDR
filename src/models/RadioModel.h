@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit, the serial key reader (R-CW-04, R-CW-36) and
+//                the auto mode switch (R-CW-37): cwSerialKeyInput,
+//                cwSerialKeyRefusal and their test seams. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -996,6 +1000,7 @@ class CatService;
 class MoxController;
 class CwKeyerController;   // CW transmit (R-CW-05)
 class CwxSender;           // CW transmit (R-CW-31)
+class CwSerialKeyInput;    // CW transmit (R-CW-36)
 struct KeyerIdentity;
 class TxChannel;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
@@ -2920,6 +2925,17 @@ public:
     /// taking transmit, every stop, a transmit cut's catch-up and the
     /// connection going away abort it. Never null.
     CwxSender* cwxSender() const { return m_cwxSender.get(); }
+    /// CW transmit (R-CW-04, R-CW-36): the serial key reader on
+    /// TransmitModel::cwSerialPort, reading while a connection is up and
+    /// the port is named and not CAT's. Never null.
+    CwSerialKeyInput* cwSerialKeyInput() const { return m_cwSerialKey.get(); }
+    /// Why the serial key port is not read (CAT has it, it would not
+    /// open, it stopped working); empty while it is read or none is named.
+    QString cwSerialKeyRefusal() const { return m_cwSerialKeyRefusal; }
+    /// A reader on a line source the test drives, wired as production's.
+    void replaceCwSerialKeyInputForTest(std::unique_ptr<CwSerialKeyInput> input);
+    /// R-CW-37: the mode the auto mode switch returns the slice to.
+    std::optional<DSPMode> cwAutoModeReturnModeForTest() const { return m_cwOldAutoMode; }
     /// CW transmit (R-CW-34): the window that shows the CWX applet, for CAT
     /// ZZKO. The GUI registers whether the applet is shown and how to show
     /// or hide it; a headless Core registers nothing and ZZKO answers ?;.
@@ -5284,6 +5300,8 @@ public:
         syncTransmitCutTargets();
         // CW transmit: the CWX sender leaves the old connection's key line.
         syncCwxKeyLine();
+        // CW transmit (R-CW-36): so does the serial key reader.
+        syncCwSerialKey();
         setConnectionState(conn != nullptr ? ConnectionState::Connected
                                             : ConnectionState::Disconnected);
     }
@@ -6603,6 +6621,8 @@ signals:
     /// Scoped review (addendum G-42): who holds transmit on this Core
     /// changed (otherDeviceHoldsRefusal may read differently).
     void transmitHolderChanged();
+    /// CW transmit (R-CW-04): cwSerialKeyRefusal changed.
+    void cwSerialKeyRefusalChanged(const QString& words);
     /// R-R3-22 fix wave: see reportStationCommandFinished. The one
     /// per-command result signal: the amp applets' pending requests and
     /// the TCI switch's request wait both match their own id here (an
@@ -9877,6 +9897,31 @@ private:
     void syncCwxKeyLine();
     // Reset first in the destructor, before the keyer controller.
     std::unique_ptr<CwxSender> m_cwxSender;
+    // ── CW transmit: the serial key reader (R-CW-04, R-CW-36) ─────────────
+    // Made after the CWX sender (its straight key keys through it); its
+    // settings, the keyer gate and the PTT line. `input` null: the
+    // platform's own line source.
+    void wireCwSerialKey(std::unique_ptr<CwSerialKeyInput> input);
+    // Reads the port while a connection is up and the port is named and
+    // not CAT's; otherwise stops and lets go of the key line (early review
+    // M8). Restarts on a setting change.
+    void syncCwSerialKey();
+    // R-CW-04: the words when CAT or the CAT PTT input uses `port`.
+    QString cwSerialPortConflict(const QString& port) const;
+    void setCwSerialKeyRefusal(const QString& words);
+    // Reset before the CWX sender in the destructor.
+    std::unique_ptr<CwSerialKeyInput> m_cwSerialKey;
+    QString m_cwSerialKeyRefusal;
+    QString m_cwSerialRunningConfig;   // the port and lines being read
+    // ── CW transmit: the auto mode switch (R-CW-37) ─────────────────────────
+    // A dot or dash (the radio's status or the serial paddles): Thetis
+    // update_for_auto_mode_return and cwAutoModeTick.
+    void noteCwKeyActivity();
+    void cwAutoModeTick();
+    QTimer* m_cwAutoModeTimer{nullptr};
+    std::optional<DSPMode> m_cwOldAutoMode;    // Thetis _old_cw_auto_mode (FIRST: none)
+    int m_cwAutoModeSliceId{-1};               // Thetis _cw_auto_mode_tx_on_rx2
+    bool m_cwRadioPaddleDown{false};           // the radio reports a dot or dash down
     std::function<bool()> m_cwxAppletShown;          // R-CW-34 ZZKO
     std::function<void(bool)> m_cwxAppletSetShown;
     // Declared last so it goes first: nothing it is connected to signals

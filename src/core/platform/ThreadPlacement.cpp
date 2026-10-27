@@ -57,6 +57,9 @@
 //   2026-10-27: CW transmit, the CWX sender role (R-CW-31), on the DSP
 //               thread's core where the connection thread shares it. J.J.
 //               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the serial key reader role (R-CW-36), placed
+//               as the CWX sender is. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include "core/platform/ThreadPlacement.h"
@@ -824,6 +827,21 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
         }
         order.append({ThreadRole::CwxSender, -1, dspCpu, {}, dspCpu >= 0});
     }
+    // CW transmit (R-CW-36): the serial key reader sleeps in the kernel
+    // until a paddle or key line moves, then writes the key line within
+    // microseconds; a late wake delays the edge. Placed as the CWX sender
+    // is, for the same reason. Not measured; NereusSDR's own rule.
+    if (demand.cwSerialKey) {
+        int dspCpu = -1;
+        if (slowRunsHousekeeping && demand.dspThread) {
+            for (const RoleAssignment& a : std::as_const(order)) {
+                if (a.role == ThreadRole::DspThread) {
+                    dspCpu = a.cpu;
+                }
+            }
+        }
+        order.append({ThreadRole::CwSerialKey, -1, dspCpu, {}, dspCpu >= 0});
+    }
     plan.assignments = order;
 
     if (slowRunsHousekeeping) {
@@ -1098,6 +1116,7 @@ PlacementDemand ThreadPlacement::demandLocked() const
             demand.spectrumThreads.append(t.channel);
         }
         demand.cwxSender = demand.cwxSender || t.role == ThreadRole::CwxSender;
+        demand.cwSerialKey = demand.cwSerialKey || t.role == ThreadRole::CwSerialKey;
     }
     return demand;
 }
@@ -1114,6 +1133,7 @@ bool ThreadPlacement::roleActiveLocked(ThreadRole role, int channel) const
     case ThreadRole::ConnectionThread:
     case ThreadRole::SpectrumThread:
     case ThreadRole::CwxSender:
+    case ThreadRole::CwSerialKey:
         return true;
     case ThreadRole::TxWorkerThread:
     case ThreadRole::TxIqSender:

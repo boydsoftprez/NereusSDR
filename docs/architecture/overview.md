@@ -99,7 +99,7 @@ connection, DSP, transmit and key threads) are placed and raised through
 | **Transmit pump** (`TxWorkerThread`) | Mic and VAX audio into the TX channel |
 | **TX I/Q sender** | P1 EP2 sender / P2 TX I/Q sender, paced to the radio |
 | **CWX sender** (`NereusCwxSender`) | CwxSender: CWX text, memories and the Key on the host key line, Thetis element timing |
-| **CW serial key input** (`CwSerialKeyInput`) | Serial CW key and PTT lines (CW transmit Task 10, not yet built) |
+| **CW serial key input** (`NereusCwSerialKey`) | CwSerialKeyInput: paddles, a straight key and a PTT line on a serial port's DSR and CTS, waiting for an edge (Linux TIOCMIWAIT, Windows WaitCommEvent, macOS a 1 ms poll) |
 | **Spectrum** | FFT computation (FftEnginePool workers), waterfall data generation |
 | **Wideband FFT** (`WidebandFftThread`) | The Core's wideband display FFT (nereusd) |
 | **Waterfall ticker** (`WaterfallTickerThread`) | GUI waterfall row pacing |
