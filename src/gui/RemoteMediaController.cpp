@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-27: a receiver stream's new context (the lossless trial's
+//               fallback to Opus among them) and its restart no longer
+//               invalidate the slice's TCI stage, so apps keep every
+//               sample they were owed and all apps on a receiver hear one
+//               stream; a context that stops the stream still does, so a
+//               reused slice id never starts with the old slice's audio.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -7491,7 +7498,16 @@ void RemoteMediaController::receiveReceiverAudioContext(const QJsonObject& paylo
     stream.generation = context.generation;
     stream.context = context;
     stream.retryPending = false;
-    stream.tciStage->invalidate();
+    // 2026-10-27: the apps' TCI streams go on through a new context (the
+    // lossless trial's fallback to Opus among them): the ended run leaves
+    // the next one each app's unconverted audio and part block
+    // (RemoteTciAudioStage::createRun). Invalidating here
+    // dropped a different part block for each app, so two apps on one
+    // receiver stopped hearing one stream. A context that stops the
+    // stream (its slice removed, no room, no encoder) ends the apps'
+    // streams: the Core reuses slice ids, and a later slice must not
+    // start with this one's audio.
+    if (!context.enabled) { stream.tciStage->invalidate(); }
     stream.receiver->stop();
     stream.ssrc = 0;
     stream.runningProfile.reset();
@@ -7559,7 +7575,9 @@ void RemoteMediaController::onReceiverRestart(int sliceId, RemoteAudioReceiver* 
     Private::ReceiverStream& stream = found->second;
     qCWarning(lcRemoteMedia).noquote()
         << QStringLiteral("Remote receiver audio for slice %1: %2").arg(sliceId).arg(reason);
-    stream.tciStage->invalidate();
+    // 2026-10-27: a restart keeps the apps' TCI streams too, as a new
+    // context does (receiveReceiverAudioContext): nothing they were owed
+    // is dropped while the stream is asked for again.
     stream.receiver->stop();
     stream.ssrc = 0;
     // R-R3-23: a lossless receiver stream's restart counts against the one
