@@ -53,10 +53,18 @@
 //   and holdStarted. The key stays on and nothing is stopped; the Core
 //   sends silence in place of the device's audio. A device watched only for
 //   VOX armed is never held (there is no RF to hold).
-// - A keepalive that counts ends the hold (hold(id, false), holdEnded
-//   Heard) and the device stays watched; a new hold needs a fresh 400 ms of
-//   silence. One that does not count ends nothing.
-// - The cut: more than 3000 ms without one: stop(), which the Core makes
+// - A keepalive that counts, heard within 400 ms of now, ends the hold
+//   (hold(id, false), holdEnded Heard) and the device stays watched; a new
+//   hold needs a fresh 400 ms of silence. One that does not count, or one
+//   that counts but is older than that (heard behind a lagging main
+//   thread), ends nothing.
+// - A hold is bounded (fix wave A): one that has not ended is cut once it
+//   has lasted more than 2600 ms (kLinkHoldMaxMs, kLinkCutMs - kLinkHoldMs),
+//   or at the 3000 ms cut below, whichever comes first. Stale keepalives
+//   that count keep moving the 3000 ms cut back, so without this bound a
+//   main thread lagging by more than 400 ms would hold a key forever. The
+//   bound's check gets one late turn per hold.
+// - The cut: more than 3000 ms without one (or a hold past its bound): stop(), which the Core makes
 //   StopAllTx with "The link to <device> went quiet, so the Core stopped
 //   transmitting." and the VOX that device armed turned off. The device is
 //   no longer watched. A hold it ends is released after the stop
@@ -111,6 +119,11 @@
 //               the cut, today's stop, after 3000 ms (kLinkCutMs, replacing
 //               kLinkLossDeadlineMs). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: a hold that has
+//               not ended is cut after kLinkHoldMaxMs (2600 ms), so stale
+//               keepalives behind a lagging main thread cannot hold a key
+//               forever. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 #pragma once
 
@@ -137,6 +150,10 @@ public:
     static constexpr int kLinkHoldMs = 400;    // RF off, still keyed
     /// How long without a keepalive before the Core stops transmitting.
     static constexpr int kLinkCutMs = 3000;    // today's stop
+    /// Fix wave A: the longest a hold lasts before the cut, so a hold
+    /// started at kLinkHoldMs of silence is cut by kLinkCutMs even when
+    /// stale keepalives keep counting (each one moves kLinkCutMs back).
+    static constexpr int kLinkHoldMaxMs = kLinkCutMs - kLinkHoldMs;   // 2600
     /// TX mic thread fix round 2: how late a check may fire and still be on
     /// time. The check is a precise timer (about 1 ms of slack) and the
     /// media transports hand over what they received every 2 ms, so a
@@ -306,6 +323,10 @@ private:
         // Hold then cut: the device's RF is held silent, since heldSinceMs.
         bool held{false};
         qint64 heldSinceMs{0};
+        // Fix wave A: the hold bound's one late turn, given once per hold
+        // (cleared only when a hold starts, never by a keepalive, so a
+        // lagging main thread's stale keepalives cannot renew it).
+        bool lateHoldMaxTurnGiven{false};
     };
 
     void update(const QByteArray& deviceId, bool keyed, bool keyedChanged, quint32 epoch,

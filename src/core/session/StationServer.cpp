@@ -1,6 +1,11 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut, fix wave A: the destructor
+//               disarms the cut guard while the model's cut line is still
+//               set, so a guard hold is released on the TX channel rather
+//               than left set. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut: the cut guard also holds
 //               RF through the model's cut line (TransmitCutLine::hold)
 //               before it cuts. J.J. Boyd (KG4VCF), AI-assisted via
@@ -4396,6 +4401,13 @@ StationServer::~StationServer()
     // reaches may go first. The cut lets go of this object and the line,
     // then the guard stops and joins its thread. A receipt hook still
     // holding the guard for a moment finds nothing to cut.
+    // Remote transmit hold then cut, fix wave A: a hold the guard has on
+    // the TX channel (its Guard bit) is released first, through the line
+    // while the line is still set; the guard's own destructor below would
+    // find no line and leave the bit set.
+    if (m_txCutGuard) {
+        m_txCutGuard->disarm();
+    }
     if (m_txCutTarget) {
         const std::lock_guard<std::mutex> lock(m_txCutTarget->mutex);
         m_txCutTarget->server = nullptr;

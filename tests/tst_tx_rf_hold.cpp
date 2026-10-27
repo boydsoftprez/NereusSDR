@@ -24,6 +24,10 @@
 //     reason and emits (false).
 //   aHoldLeavesTheTimeOutAlone: the TX time-out counts the same with and
 //     without a 1 s hold and fires at the same moment.
+//   holdOnWaitsForABlockInsideTheSend: with a block stuck inside sendTxIq
+//     on a latch, setRfHold(Link, true) from another thread does not
+//     return until the latch opens, and no block the connection accepts
+//     after it returns carries a non-zero sample.
 //
 // REALTIME (as tst_stop_transmit_now): a real TX channel runs here.
 //
@@ -31,6 +35,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26 - Remote transmit hold then cut: the RF hold's contract.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Remote transmit hold then cut, fix wave A: setRfHold(on)
+//                waits for a block already inside sendTxIq. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -39,10 +46,15 @@
 #include <QCoreApplication>
 #include <QSignalSpy>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <numbers>
+#include <thread>
 #include <vector>
 
 #include "core/AmModulationAnalyzer.h"
@@ -102,8 +114,32 @@ public:
                 break;
             }
         }
+        // Fix wave A: one send may be held on a latch, inside the sender
+        // section, until the test opens it.
+        if (blockNextSend.exchange(false)) {
+            std::unique_lock<std::mutex> lock(latchMutex);
+            sendEntered = true;
+            latchChanged.notify_all();
+            latchChanged.wait(lock, [this] { return latchOpen; });
+        }
         blocks.push_back({n, nonZero});
     }
+
+    // Opens the latch a held send waits on.
+    void openLatch()
+    {
+        const std::lock_guard<std::mutex> lock(latchMutex);
+        latchOpen = true;
+        latchChanged.notify_all();
+    }
+    // Waits, at most `forMs`, for a held send to enter the latch.
+    bool waitForSendEntered(std::chrono::milliseconds forMs)
+    {
+        std::unique_lock<std::mutex> lock(latchMutex);
+        return latchChanged.wait_for(lock, forMs, [this] { return sendEntered; });
+    }
+
+    std::atomic<bool> blockNextSend{false};
     void setWatchdogEnabled(bool) override {}
     void setAntennaRouting(AntennaRouting) override {}
     void setMox(bool on) override { log << (on ? QStringLiteral("MOX on") : QStringLiteral("MOX off")); }
@@ -127,6 +163,12 @@ public:
     };
     std::vector<Block> blocks;
     QStringList log;
+
+private:
+    std::mutex latchMutex;
+    std::condition_variable latchChanged;
+    bool sendEntered{false};
+    bool latchOpen{false};
 };
 
 void pump(int passes = 8)
@@ -536,6 +578,48 @@ private slots:
         QCOMPARE(remaining[1], remaining[0]);
         QVERIFY(stoppedAt[0] > 0);
         QCOMPARE(stoppedAt[1], stoppedAt[0]);
+    }
+
+    void holdOnWaitsForABlockInsideTheSend()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP");
+#else
+        ChannelRig rig;
+        QVERIFY2(rig.up(&markInitialized), "the TX channel did not come up");
+
+        // The worker's next block stops inside sendTxIq on the latch.
+        const std::size_t before = rig.conn.blocks.size();
+        rig.conn.blockNextSend = true;
+        std::thread worker([&rig] { rig.drive(1); });
+        if (!rig.conn.waitForSendEntered(std::chrono::seconds(10))) {
+            rig.conn.openLatch();
+            worker.join();
+            QFAIL("the block never reached sendTxIq");
+        }
+
+        // The hold from a second thread waits for that block.
+        std::atomic<bool> holdReturned{false};
+        std::thread holder([&rig, &holdReturned] {
+            rig.tx->setRfHold(TxChannel::RfHold::Link, true);
+            holdReturned = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool returnedWhileLatched = holdReturned.load();
+        rig.conn.openLatch();
+        worker.join();
+        holder.join();
+        QVERIFY2(!returnedWhileLatched,
+                 "setRfHold(on) returned while a block was inside sendTxIq");
+        QVERIFY(holdReturned.load());
+        QVERIFY(rig.tx->isRfHeld());
+        QCOMPARE(rig.conn.blocks.size(), before + 1);
+
+        // Every block accepted after the hold returned is silent.
+        const auto after = rig.drive(kCountBlocks);
+        QCOMPARE(static_cast<int>(after.size()), kCountBlocks);
+        QCOMPARE(countNonZero(after), 0);
+#endif
     }
 };
 

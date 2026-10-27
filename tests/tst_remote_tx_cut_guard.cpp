@@ -33,6 +33,11 @@
 //               releases it, and disarm() or a new arm() releases it
 //               before returning; the main thread is held 3500 ms.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: a guard
+//               destroyed while holding calls hold(false) exactly once,
+//               on the destroying thread, before its destructor returns,
+//               and never cuts. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 
@@ -233,6 +238,7 @@ private slots:
     void receiptDuringHoldReleasesItOnTheGuardThread();
     void disarmDuringHoldReleasesBeforeReturning();
     void rearmDuringHoldReleasesTheOldHold();
+    void destroyingAHoldingGuardReleasesOnceAndNeverCuts();
 };
 
 // Acceptance 1: main held 3500 ms; RF held from about 400 ms and cut at
@@ -508,6 +514,31 @@ void TestRemoteTxCutGuard::rearmDuringHoldReleasesTheOldHold()
     // The old arm is never cut; the new one is not judging yet.
     holdMain(std::chrono::milliseconds(kBoundMs + 100));
     QCOMPARE(int(log.snapshot().size()), 2);
+}
+
+// Fix wave A: destroyed while holding, the guard calls hold(false) once,
+// on the destroying thread, before its destructor returns; no cut and
+// nothing else runs after it.
+void TestRemoteTxCutGuard::destroyingAHoldingGuardReleasesOnceAndNeverCuts()
+{
+    EventLog log;
+    auto guard = std::make_unique<RemoteTxCutGuard>(log.cutFn(), log.holdFn());
+    guard->arm(7);
+    guard->heardOffMain(7, Clock::now());
+    QVERIFY(guard->isJudging());
+    QVERIFY(holdMainUntil([&guard] { return guard->isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+
+    guard.reset();
+    const std::vector<Event> events = log.snapshot();
+    QCOMPARE(int(events.size()), 2);
+    QVERIFY(events.at(0).kind == Event::Kind::HoldOn);
+    QVERIFY(events.at(1).kind == Event::Kind::HoldOff);
+    QVERIFY(events.at(1).thread == std::this_thread::get_id());
+
+    holdMain(std::chrono::milliseconds(kBoundMs + 100));
+    QCOMPARE(int(log.snapshot().size()), 2);
+    QVERIFY(log.cuts().empty());
 }
 
 QTEST_GUILESS_MAIN(TestRemoteTxCutGuard)

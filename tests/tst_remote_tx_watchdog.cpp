@@ -53,6 +53,11 @@
 //               start and end in order with the stop, its late turn, and
 //               the new chain 120 < 250 < 400 < 1000 < 3000. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: keepalives that
+//               count but arrive 450 ms old (a lagging main thread) cannot
+//               hold a key past heldSinceMs + 2600 ms, on time or with
+//               every check late; a fresh one still ends such a hold. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -193,6 +198,9 @@ private slots:
     void keepalivesHoldTenMinutesAndOneMissedHoldsThenCuts();
     void aKeepaliveDuringTheHoldEndsIt();
     void aKeepaliveThatDoesNotCountEndsNoHold();
+    void staleKeepalivesCannotHoldAKeyForever();
+    void staleKeepalivesWithEveryCheckLateStillCut();
+    void aFreshKeepaliveEndsAHoldThatStaleOnesKept();
     void theReleaseDuringAHoldEndsItWithoutAStop();
     void theLinkClosingStopsAtOnce();
     void theLinkClosingDuringAHoldStopsAtOnce();
@@ -230,6 +238,7 @@ void TestRemoteTxWatchdog::theNumbersAreStatedTogether()
     QCOMPARE(RemoteTxWatchdog::kKeepaliveIntervalMs, 100);
     QCOMPARE(RemoteTxWatchdog::kLinkHoldMs, 400);
     QCOMPARE(RemoteTxWatchdog::kLinkCutMs, 3000);
+    QCOMPARE(RemoteTxWatchdog::kLinkHoldMaxMs, 2600);
     QCOMPARE(RemoteTxWatchdog::kFirstReconnectMs, 1000);
     QCOMPARE(RemoteMicConfig::kStarvationMs, 250);
     QCOMPARE(RemoteMicConfig::kMaxDepthMs, 120);
@@ -392,6 +401,122 @@ void TestRemoteTxWatchdog::aKeepaliveThatDoesNotCountEndsNoHold()
     QCOMPARE(rig.stops.size(), size_t(1));
     QCOMPARE(rig.holdEnds.size(), size_t(1));
     QVERIFY(rig.holdEnds.front().how == RemoteTxWatchdog::HoldEnd::Cut);
+}
+
+// Fix wave A: the Core's main thread lags by more than 400 ms, so every
+// keepalive counts (a newer sequence) but each is heard 450 ms before it is
+// handed over. Each one moves the 3000 ms cut back and none is fresh enough
+// to end the hold. The hold starts at 401 ms and is cut at its bound,
+// heldSinceMs + 2600 (+1 ms, the timer's usual one), never later, with
+// today's stop and HoldEnd::Cut.
+void TestRemoteTxWatchdog::staleKeepalivesCannotHoldAKeyForever()
+{
+    Rig rig;
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    QVERIFY(tripped.isValid());
+    rig.watchdog.setKeyed(kPhone, true, 7);
+    constexpr qint64 kAgeMs = 450;
+    quint64 sequence = 0;
+    for (qint64 t = 100; t <= 8000; t += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        rig.advanceTo(t);
+        if (!rig.watchdog.isWatching(kPhone)) {
+            break;
+        }
+        QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel,
+                                       kAgeMs));
+    }
+    QCOMPARE(rig.holds.size(), size_t(2));
+    QVERIFY(rig.holds.front().held);
+    QCOMPARE(rig.holds.front().atMs, qint64(401));
+    const qint64 heldSinceMs = rig.holds.front().atMs;
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, heldSinceMs + RemoteTxWatchdog::kLinkHoldMaxMs + 1);
+    QCOMPARE(rig.stops.front().device, kPhone);
+    QCOMPARE(rig.stops.front().message,
+             RemoteTxWatchdog::stopMessage(QStringLiteral("JJ's iPhone")));
+    QCOMPARE(tripped.count(), 1);
+    QCOMPARE(tripped.at(0).at(1).toBool(), false);
+    QVERIFY(!rig.holds.back().held);
+    QCOMPARE(rig.holds.back().atMs, rig.stops.front().atMs);
+    QCOMPARE(rig.holdEnds.size(), size_t(1));
+    QVERIFY(rig.holdEnds.front().how == RemoteTxWatchdog::HoldEnd::Cut);
+    QCOMPARE(rig.holdEnds.front().lengthMs, qint64(RemoteTxWatchdog::kLinkHoldMaxMs + 1));
+    QCOMPARE(rig.events,
+             QStringList({QStringLiteral("hold on"), QStringLiteral("holdStarted"),
+                          QStringLiteral("stop"), QStringLiteral("tripped"),
+                          QStringLiteral("hold off"), QStringLiteral("holdEnded Cut")}));
+    QVERIFY(!rig.watchdog.isWatching(kPhone));
+    QVERIFY(!rig.timerDue.has_value());
+    // A stale keepalive after the cut does not bring the watch back.
+    QVERIFY(!rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel,
+                                    kAgeMs));
+    QCOMPARE(rig.stops.size(), size_t(1));
+}
+
+// Fix wave A, the lag as the Core sees it: the check fires late too (up to
+// 100 ms behind its time, past kLateCheckSlackMs), so every check offers a
+// late turn. The hold bound's turn is given once per hold, so stale
+// keepalives counting on every turn cannot renew it: the cut comes within
+// two late turns of the bound.
+void TestRemoteTxWatchdog::staleKeepalivesWithEveryCheckLateStillCut()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 7);
+    constexpr qint64 kAgeMs = 450;
+    constexpr qint64 kStepMs = RemoteTxWatchdog::kKeepaliveIntervalMs;
+    quint64 sequence = 0;
+    for (qint64 t = kStepMs; t <= 10000; t += kStepMs) {
+        rig.nowMs = t;
+        if (rig.timerDue && *rig.timerDue <= t) {
+            rig.timerDue.reset();
+            rig.watchdog.onTimer();
+        }
+        if (!rig.watchdog.isWatching(kPhone)) {
+            break;
+        }
+        QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel,
+                                       kAgeMs));
+    }
+    QVERIFY(rig.holdsStarted() == 1);
+    const qint64 heldSinceMs = rig.holds.front().atMs;
+    QCOMPARE(rig.stops.size(), size_t(1));
+    const qint64 cutAt = rig.stops.front().atMs;
+    QVERIFY2(cutAt > heldSinceMs + RemoteTxWatchdog::kLinkHoldMaxMs
+                 && cutAt <= heldSinceMs + RemoteTxWatchdog::kLinkHoldMaxMs + 1 + 2 * kStepMs,
+             qPrintable(QStringLiteral("held at %1 ms, cut at %2 ms").arg(heldSinceMs).arg(cutAt)));
+    QCOMPARE(rig.holdEnds.size(), size_t(1));
+    QVERIFY(rig.holdEnds.front().how == RemoteTxWatchdog::HoldEnd::Cut);
+    QVERIFY(!rig.watchdog.isWatching(kPhone));
+}
+
+// Fix wave A: the bound does not change how a hold ends. Held behind stale
+// keepalives, a fresh one ends the hold (Heard) as before, and fresh ones
+// after it keep the key with no further hold and no stop.
+void TestRemoteTxWatchdog::aFreshKeepaliveEndsAHoldThatStaleOnesKept()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 7);
+    quint64 sequence = 0;
+    for (qint64 t = 100; t <= 2000; t += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        rig.advanceTo(t);
+        QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel,
+                                       450));
+    }
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+    QVERIFY(rig.holdEnds.empty());
+    rig.advanceTo(2100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel));
+    QVERIFY(!rig.watchdog.isHeld(kPhone));
+    QCOMPARE(rig.holdEnds.size(), size_t(1));
+    QVERIFY(rig.holdEnds.front().how == RemoteTxWatchdog::HoldEnd::Heard);
+    QCOMPARE(rig.holdEnds.front().lengthMs, qint64(2100 - 401));
+    for (qint64 t = 2200; t <= 10000; t += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        rig.advanceTo(t);
+        QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 7, RemoteTxWatchdog::Path::TxChannel));
+    }
+    QVERIFY(rig.stops.empty());
+    QCOMPARE(rig.holdsStarted(), 1);
+    QVERIFY(rig.watchdog.isWatching(kPhone));
 }
 
 // The device's own release (or its key read off) during a hold ends the

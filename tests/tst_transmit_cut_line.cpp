@@ -33,6 +33,9 @@
 //     armed and heard once while main sleeps, sets the Guard bit more than
 //     kLinkHoldMs and at most kLinkHoldMs + 100 ms after the heard, with no
 //     cut; a receipt clears it.
+//   aServerGoneDuringAGuardHoldClearsTheGuardBit: the station server is
+//     destroyed while its cut guard holds the TX channel; the Guard bit is
+//     clear once the destructor returns, with no cut and the key still on.
 //
 // REALTIME: wall-clock bounds while the main thread is held.
 //
@@ -54,6 +57,10 @@
 //               the Guard bit, and the server's guard holds within
 //               kLinkHoldMs + 100 ms. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: a station server
+//               destroyed during its guard's hold leaves the Guard bit
+//               clear. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -628,6 +635,55 @@ private slots:
         QVERIFY(!rig.conn.transmitCut());
 
         server.reset();
+        rig.model.moxController()->setMox(false);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.model.moxController()->state() == MoxState::Rx, 5000);
+    }
+
+    // Fix wave A: the station server goes while its guard holds the model's
+    // TX channel. The destructor releases the hold through the line before
+    // it lets go of the line, so the Guard bit is clear when it returns,
+    // nothing is cut and the key is untouched.
+    void aServerGoneDuringAGuardHoldClearsTheGuardBit()
+    {
+        Rig rig;
+        rig.model.moxController()->setMox(true);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.model.mox() && rig.tx.isRfGateOpen()
+                                     && findEntry(rig.conn.entries(), QStringLiteral("MOX on"))
+                                     && findEntry(rig.conn.entries(), QStringLiteral("relay on")),
+                                 5000);
+        QTemporaryDir settingsDir;
+        QTemporaryDir securityDir;
+        QVERIFY(settingsDir.isValid());
+        QVERIFY(securityDir.isValid());
+        AppSettings settings(settingsDir.filePath(QStringLiteral("station.settings")));
+        auto server = std::make_unique<StationServer>(
+            &rig.model, settings, Test::seedCoreIdentity(securityDir.path()));
+        server->setRemoteTransmitAllowed(true);
+        RemoteTxCutGuard* const guard = server->txCutGuard();
+        QVERIFY(guard != nullptr);
+        const std::size_t mark = rig.conn.count();
+
+        // Heard once, then silent past kLinkHoldMs with no event loop.
+        constexpr quint64 kMediaEpoch = 7;
+        guard->arm(kMediaEpoch);
+        const Clock::time_point heard = Clock::now();
+        guard->heardOffMain(kMediaEpoch, heard);
+        const Clock::time_point until =
+            heard + std::chrono::milliseconds(kHoldBoundMs + 500);
+        while (Clock::now() < until && !guard->isHolding()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        QVERIFY(guard->isHolding());
+        QCOMPARE(rig.tx.rfHoldMask(), kGuardBit);
+
+        // Gone while holding.
+        server.reset();
+        QCOMPARE(rig.tx.rfHoldMask(), 0u);
+        QVERIFY(rig.tx.isRfGateOpen());
+        QVERIFY(!rig.conn.transmitCut());
+        QCOMPARE(rig.conn.count(), mark);
+        QVERIFY(rig.model.mox());
+
         rig.model.moxController()->setMox(false);
         QTRY_VERIFY_WITH_TIMEOUT(rig.model.moxController()->state() == MoxState::Rx, 5000);
     }

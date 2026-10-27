@@ -56,14 +56,12 @@
 //   2026-10-16: cuts after more than kDeadlineMs of silence, not at it,
 //               as the watchdog does. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
-//   2026-10-26: Remote transmit hold then cut: kDeadlineMs is now
-//               RemoteTxWatchdog::kLinkCutMs (renamed from
-//               kLinkLossDeadlineMs); its hold comes later. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: Remote transmit hold then cut: holds RF (HoldFn) after
-//               more than kHoldMs of silence and cuts after more than
-//               kCutMs; kDeadlineMs is gone. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               more than kHoldMs (RemoteTxWatchdog::kLinkHoldMs) of
+//               silence and cuts after more than kCutMs
+//               (RemoteTxWatchdog::kLinkCutMs), replacing kDeadlineMs;
+//               arm(), disarm() and the destructor release a hold. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
