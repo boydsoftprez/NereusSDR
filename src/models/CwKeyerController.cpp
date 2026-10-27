@@ -17,6 +17,9 @@
 //               board before the protocol, and the protocol reason reads
 //               "QSK needs newer radio firmware.". J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F2: a remote window's QSK reason
+//               is the Core's, mirrored on transmit. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/CwKeyerController.h"
@@ -115,6 +118,8 @@ CwKeyerController::CwKeyerController(RadioModel& radio, QObject* parent)
     connect(&tm, &TransmitModel::cwReversePaddlesChanged, this, again);
     connect(&tm, &TransmitModel::cwStrictSpacingChanged, this, again);
     connect(&tm, &TransmitModel::cwBreakInModeChanged, this, again);
+    // F2: the Core's QSK reason, which a remote window's rule reads.
+    connect(&tm, &TransmitModel::cwQskUnavailableReasonChanged, this, again);
     connect(&tm, &TransmitModel::cwBreakInDelayMsChanged, this, again);
     connect(&tm, &TransmitModel::cwKeyDownDelayMsChanged, this, again);
     connect(&tm, &TransmitModel::cwKeyUpDelayMsChanged, this, again);
@@ -232,6 +237,12 @@ QString CwKeyerController::qskReasonNow(bool armed) const
     // protocol or board reason. Final fix wave F4: the board before the
     // protocol, so a radio that can never do QSK is told so, and an Orion
     // or Saturn on the older protocol is told newer firmware brings it.
+    // Final fix wave F2: a remote window shows the Core's reason, mirrored
+    // on transmit, so its QSK greying and its fallback notice follow the
+    // radio the Core sees.
+    if (m_radio.role() == RadioModel::Role::Remote) {
+        return m_radio.transmitModel().cwQskUnavailableReason();
+    }
     const RadioInfo& info = m_radio.currentRadioInfo();
     const HPSDRHW board = info.boardType;
     if (board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly) {

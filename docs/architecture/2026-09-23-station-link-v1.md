@@ -916,7 +916,8 @@ The station does not declare it. The desktop's remote window declares it.
 **`cwSettings` 1** (R-CW-03, R-CW-48, `transmitSettingsVersion` 16): the
 client reads and changes the CW settings on `transmit` (section 7.1). A
 peer that declares it at minor 11 is sent the 30 CW properties in
-`transmit`'s schema, snapshot and deltas; a peer that does not sees
+`transmit`'s schema, snapshot and deltas, and the read-only
+`cwQskUnavailableReason` after them (section 7.1); a peer that does not sees
 exactly the wire it was built for, without them, and its write of one is
 refused "Update this app to change the CW settings on this Core.". The
 station does not declare it. The desktop's remote window declares it.
@@ -3399,7 +3400,7 @@ An enum property lists the values its domain allows.
 | 23 | `rx2AutoAttUndoDelayMs` | `i64` | bidirectional |  |
 | 24 | `rx2PreampMode` | `i64` | bidirectional |  |
 
-**TransmitModel** (119 properties)
+**TransmitModel** (120 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3522,6 +3523,7 @@ An enum property lists the values its domain allows.
 | 116 | `cwxMemory6` | `utf8` | bidirectional |  |
 | 117 | `cwxMemory7` | `utf8` | bidirectional |  |
 | 118 | `cwxMemory8` | `utf8` | bidirectional |  |
+| 119 | `cwQskUnavailableReason` | `utf8` | outbound |  |
 
 **TransmitState** (50 properties)
 
@@ -4242,6 +4244,19 @@ Notes on the keys:
   (section 6.1); every other peer's `transmit` schema, snapshot and deltas
   carry none of them, and its write of one is refused "Update this app to
   change the CW settings on this Core.".
+- **Why QSK is not offered** (`cwQskUnavailableReason`, `utf8`, outbound,
+  after `cwxMemory8`; the CW transmit final fix wave). The Core's reason
+  in the words its own CW page shows, for example "The Hermes Lite 2 can't
+  do QSK." or "QSK needs the same antenna for receive and transmit.", and
+  empty while QSK is offered. It follows the radio, the transmit slice's
+  antennas, the band and an armed amplifier interlock. An app shows QSK
+  greyed with these words while it is not empty. A `cwBreakInMode` write
+  of 2 (QSK) while it is not empty is refused with exactly these words,
+  from any peer (CAT's `ZZQK1;` is refused by the same rule); the selection
+  stays as it was. When QSK stops being offered while it is selected, the
+  Core falls back to Semi, and an app that sees this property become non-empty
+  with QSK selected says so once. Sent only with the other CW settings, to a
+  peer that declared `cwSettings` 1.
 - **Whose each slice is** (iPhone app plan Task 73; the several-devices
   design, rulings 5.1 to 5.6). With several devices on one Core every
   slice has an owner: the device that made it, the device that adopted it

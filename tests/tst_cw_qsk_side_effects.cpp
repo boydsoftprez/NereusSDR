@@ -32,6 +32,9 @@
 //   2026-10-27: CW transmit final fix wave F1: a remote window writes none
 //               of QSK's keying state. J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-27: CW transmit final fix wave F2: a remote window's QSK rule
+//               reads the Core's reason and says a fallback once. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -561,6 +564,54 @@ private slots:
         for (const char* key : {"CW_QskSavedAgcMode", "CW_QskSavedHangThreshold", "CW_QskActive"}) {
             QVERIFY2(!AppSettings::instance().contains(kPfx + QLatin1String(key)), key);
         }
+    }
+
+    // ── F2: a remote window's QSK rule is the Core's ─────────────────────
+    // The window reads the Core's reason on transmit: QSK selected and in
+    // effect falls back to Semi when the Core's reason arrives, and the
+    // window says why once.
+    void remoteWindow_coresQskReason_fallsBackAndSaysWhyOnce()
+    {
+        AppSettings::instance().clear();
+        RadioModel model(RadioModel::Role::Remote);
+        model.setCapsForTest(/*hasAlex=*/false);
+        SliceModel* slice = model.sliceById(model.addSliceWithStationId(0));
+        QVERIFY(slice);
+        slice->setFrequency(14'050'000.0);
+        slice->setTxSlice(true);
+        model.txSliceArbiter()->setRemote(false);
+        model.txSliceArbiter()->syncToSliceList();
+        model.txSliceArbiter()->setRemote(true);
+        slice->setDspMode(DSPMode::CWU);
+        TransmitModel& tm = model.transmitModel();
+        tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        // The window's own radio facts would refuse QSK (a Hermes on the
+        // older protocol); the Core's empty reason says it is offered.
+        model.setLastRadioInfoForTest(hermesP1());
+        model.cwKeyerController()->reevaluate();
+        pump();
+        CwKeyerController* keyer = model.cwKeyerController();
+        QVERIFY2(keyer->qskAvailable(), qPrintable(keyer->qskUnavailableReason()));
+        QCOMPARE(keyer->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        QSignalSpy said(model.moxController(), &MoxController::moxRejected);
+
+        // The Core's reason, as the mirror writes it.
+        tm.setCwQskUnavailableReason(QString::fromLatin1(kCwQskAntennaReason));
+        pump();
+        QCOMPARE(keyer->qskUnavailableReason(), QString::fromLatin1(kCwQskAntennaReason));
+        QCOMPARE(keyer->effectiveBreakInMode(), CwBreakInMode::Semi);
+        QCOMPARE(tm.cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
+        QCOMPARE(said.count(), 1);
+        QCOMPARE(said.at(0).at(0).toString(), QString::fromLatin1(kCwQskAntennaReason));
+        keyer->reevaluate();
+        pump();
+        QCOMPARE(said.count(), 1);
+
+        // Offered again: QSK again, silently.
+        tm.setCwQskUnavailableReason(QString());
+        pump();
+        QCOMPARE(keyer->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        QCOMPARE(said.count(), 1);
     }
 
     // ── M7: QSK applied before the radio's MAC is known ──────────────────

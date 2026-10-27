@@ -3,6 +3,9 @@
 // 2026-10-26: CW transmit, the TX panel's CW rows in CWU, and greyed with the
 //   update note on a version 15 Core (R-CW-50). J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//   reason, a later fallback said once, VOX, LEV, EQ and CFC greyed in CW.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -541,6 +544,93 @@ struct TransmitScreenTests {
             return
         }
         #expect(write.properties.first?.value == .i64(18))
+        #expect(!station.keyed)
+        await model.disconnect()
+    }
+
+    @Test("QSK is greyed with the Core's reason, a later fallback is said once, and VOX, LEV, EQ and CFC grey in CW")
+    func cwQskReasonAndNotUsedInCw() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        await Self.fillTransmit(station)
+        let catalogue = try #require(ModesTabBindingTests.catalogueJSON(ModesTabBindingTests.anan))
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(catalogue)),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.catalogFeed.catalog != nil })
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        // Voice first: nothing is greyed for CW.
+        #expect(transmit.cwNotUsedReason == nil)
+        #expect(TxPanel.voxReason(transmit) != TransmitModel.cwNotUsedText)
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+            .init(ordinal: 89, name: "cwKeyerSpeed", value: .i64(25)),
+            .init(ordinal: 94, name: "cwBreakInMode", value: .i64(2)),
+            .init(ordinal: 95, name: "cwBreakInDelayMs", value: .i64(300)),
+            .init(ordinal: 98, name: "cwSidetone", value: .bool(true)),
+            .init(ordinal: 119, name: "cwQskUnavailableReason", value: .utf8("")),
+        ])))
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 2, name: "dspMode", value: .enumeration(Int64(cwu.id))),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.inCw && transmit.cwSettingsEditable })
+        #expect(transmit.cwQskReason == nil)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInQsk) == nil)
+        #expect(transmit.note == nil)
+        // In CW: VOX, LEV, EQ and CFC do nothing, with the desktop's words.
+        #expect(TransmitModel.cwNotUsedText == "Not used in CW: the radio makes the signal.")
+        #expect(transmit.cwNotUsedReason == TransmitModel.cwNotUsedText)
+        #expect(TxPanel.voxReason(transmit) == TransmitModel.cwNotUsedText)
+
+        // The antenna changes at the Core: QSK falls back, said once.
+        let antenna = "QSK needs the same antenna for receive and transmit."
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 119, name: "cwQskUnavailableReason", value: .utf8(antenna)),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.cwQskReason == antenna })
+        #expect(transmit.note == antenna)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInQsk) == antenna)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInSemi) == nil)
+        transmit.dismissNotice()
+
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 1600))
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        let host = UIHostingController(rootView: TxPanel(transmit: transmit, accessories: model.main.accessories,
+                                                         micLevel: model.main.micLevel, modes: model.main.modes,
+                                                         meters: nil, scrolls: false).preferredColorScheme(.dark))
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
+        }
+        await ShotWait.laidOut(window)
+        // Greyed, never hidden: every control is still there, with the words.
+        for label in ["Break-in QSK", "VOX", "Leveler", "EQ", "CFC", "QSK: " + antenna,
+                      "VOX, LEV, EQ and CFC: " + TransmitModel.cwNotUsedText] {
+            #expect(!AccessoryPagesTests.elements(labelled: label, in: window).isEmpty, "\(label)")
+        }
+        // QSK and VOX send nothing while greyed; Off still writes.
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInQsk)
+        transmit.toggleVox()
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInOff)
+        let write = await station.waitForMessage(within: .seconds(30)) { message in
+            if case .propertyWrite(let write) = message {
+                return write.key == "transmit"
+                    && (write.properties.first?.name == "cwBreakInMode" || write.properties.first?.name == "voxEnabled")
+            }
+            return false
+        }
+        guard case .propertyWrite(let first)? = write else {
+            Issue.record("no break-in write reached the Core")
+            return
+        }
+        #expect(first.properties.first?.name == "cwBreakInMode")
+        #expect(first.properties.first?.value == .i64(TransmitModel.cwBreakInOff))
         #expect(!station.keyed)
         await model.disconnect()
     }

@@ -1424,6 +1424,9 @@
 //                the break-in selection on entering or leaving CW, nor QSK's
 //                receive changes and restore keys; the Core owns them. J.J.
 //                Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F2: the Core publishes why QSK
+//                is not offered on TransmitModel::cwQskUnavailableReason.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the CW receive shift (composedShiftHz adds
 //                SliceModel::cwShiftHz, R-CW-23); a pitch change moves the
 //                CW filters, re-pushes the shift of every CW slice and the
@@ -5326,6 +5329,21 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
             this, &RadioModel::syncCwKeying);
     syncCwKeying();
+    // Final fix wave F2 (R-CW-20): the Core publishes why QSK is not
+    // offered, so every client greys it with these words and a write of QSK
+    // is refused with them (TransmitModel::settingRangeRefusal). A remote
+    // window's value is the Core's, mirrored.
+    if (m_role != Role::Remote) {
+        const auto publishQskReason = [this]() {
+            if (m_cwKeyerController) {
+                m_transmitModel.setCwQskUnavailableReason(
+                    m_cwKeyerController->qskUnavailableReason());
+            }
+        };
+        connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
+                this, publishQskReason);
+        publishQskReason();
+    }
     // CW transmit (R-CW-31 to R-CW-33): the CWX sender.
     wireCwxSender();
     // CW transmit (R-CW-39): the computer sidetone, keyed by the sender.

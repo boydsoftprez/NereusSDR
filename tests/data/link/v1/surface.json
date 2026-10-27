@@ -8885,6 +8885,12 @@
                     "kind": "utf8",
                     "name": "cwxMemory8",
                     "ordinal": 118
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "cwQskUnavailableReason",
+                    "ordinal": 119
                 }
             ]
         },

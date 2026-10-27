@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-26: CW transmit, remoteCwVersion at 75 moves every later entry
 //   one place. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: cwQskUnavailableReason pinned
+//   after the CW settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -303,5 +305,22 @@ import Testing
         #expect((profile["ordinal"] as? NSNumber)?.intValue == 88)
         #expect(profile["kind"] as? String == "utf8")
         #expect(profile["direction"] as? String == "outbound")
+    }
+
+    /// Why the Core does not offer QSK (`cwSettings` 1, CW transmit final
+    /// fix wave F2): the Core's alone, after the 30 CW settings, so no CW
+    /// setting the phone reads moved.
+    @Test func theQskReasonFollowsTheCwSettings() throws {
+        let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
+        let transmit = try #require(classes["TransmitModel"] as? [String: Any])
+        let properties = try #require(transmit["properties"] as? [[String: Any]])
+        let speed = try #require(properties.first { $0["name"] as? String == "cwKeyerSpeed" })
+        #expect((speed["ordinal"] as? NSNumber)?.intValue == 89)
+        let last = try #require(properties.first { $0["name"] as? String == "cwxMemory8" })
+        #expect((last["ordinal"] as? NSNumber)?.intValue == 118)
+        let reason = try #require(properties.first { $0["name"] as? String == "cwQskUnavailableReason" })
+        #expect((reason["ordinal"] as? NSNumber)?.intValue == 119)
+        #expect(reason["kind"] as? String == "utf8")
+        #expect(reason["direction"] as? String == "outbound")
     }
 }

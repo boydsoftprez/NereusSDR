@@ -3,6 +3,10 @@
 // 2026-10-26: CW transmit, the CW rows in CW: speed, pitch, break-in and its
 //             delay, the sidetone and its level (R-CW-50). J.J. Boyd (KG4VCF),
 //             AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//             reason; VOX, its level and delay, LEV, EQ and CFC greyed in CW
+//             with the desktop's words. J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import Foundation
 import NereusLink
@@ -168,15 +172,20 @@ struct TxPanel: View {
                     transmit.toggleProc()
                 }
                 .accessibilityIdentifier("txProc")
+                // In CW the radio's keyer makes the signal: LEV, EQ and CFC
+                // are greyed with the desktop's words (TxApplet's CW layer).
                 PanelButton(label: "LEV", lit: modes.leveler == true, style: .dsp,
-                            disabled: !chainEditable || modes.leveler == nil) { modes.toggleLeveler() }
+                            disabled: !chainEditable || modes.leveler == nil || transmit.inCw) { modes.toggleLeveler() }
                     .accessibilityLabel("Leveler")
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txLeveler")
                 PanelButton(label: "EQ", lit: modes.eq == true, style: .dsp,
-                            disabled: !chainEditable || modes.eq == nil) { modes.toggleEq() }
+                            disabled: !chainEditable || modes.eq == nil || transmit.inCw) { modes.toggleEq() }
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txEq")
                 PanelButton(label: "CFC", lit: modes.cfc == true, style: .dsp,
-                            disabled: !chainEditable || modes.cfc == nil) { modes.toggleCfc() }
+                            disabled: !chainEditable || modes.cfc == nil || transmit.inCw) { modes.toggleCfc() }
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txCfc")
                 PanelButton(label: "DEXP", lit: transmit.dexp == true, style: .dsp,
                             disabled: !chainEditable || transmit.dexp == nil) { transmit.toggleDexp() }
@@ -202,7 +211,10 @@ struct TxPanel: View {
                 note("TUNE and MOX: " + reason)
                     .accessibilityIdentifier("txInhibitReason")
             }
-            if let reason = Self.voxReason(transmit) {
+            if let reason = transmit.cwNotUsedReason {
+                note("VOX, LEV, EQ and CFC: " + reason)
+                    .accessibilityIdentifier("txCwNotUsedReason")
+            } else if let reason = Self.voxReason(transmit) {
                 note("VOX: " + reason)
                     .accessibilityIdentifier("txVoxReason")
             }
@@ -296,6 +308,9 @@ struct TxPanel: View {
     /// Why VOX cannot be armed: it keys, so it needs this phone's transmit
     /// permission, and its microphone line to the Core.
     static func voxReason(_ transmit: TransmitModel) -> String? {
+        if let reason = transmit.cwNotUsedReason {
+            return reason
+        }
         if !transmit.offered {
             return TransmitModel.noRemoteTransmitText
         }
@@ -486,13 +501,13 @@ struct TxPanel: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 PanelButton(label: "VOX", lit: transmit.vox, style: .dsp,
-                            disabled: Self.voxReason(transmit) != nil && !transmit.vox) { transmit.toggleVox() }
+                            disabled: (Self.voxReason(transmit) != nil && !transmit.vox) || transmit.inCw) { transmit.toggleVox() }
                     .frame(width: textSize.isAccessibilitySize ? 90 : 76)
                     .accessibilityHint(Self.voxReason(transmit) ?? "")
                     .accessibilityIdentifier("txVox")
                 PanelSliderRow(label: nil, value: transmit.voxThresholdDb, range: TransmitModel.voxThresholdRange,
                                accessibility: "VOX level", format: { "\(Int($0.rounded())) dB" },
-                               greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) { transmit.setVoxThreshold($0) }
+                               greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) { transmit.setVoxThreshold($0) }
                     .accessibilityIdentifier("txVoxLevel")
             }
             HStack(spacing: 6) {
@@ -517,7 +532,7 @@ struct TxPanel: View {
             if timingOpen {
                 PanelSliderRow(label: "VOX delay", value: transmit.voxHangMs, range: TransmitModel.voxHangRange,
                                accessibility: "VOX delay", format: { "\(Int($0.rounded())) ms" },
-                               greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) { transmit.setVoxHang($0) }
+                               greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) { transmit.setVoxHang($0) }
                     .accessibilityIdentifier("txVoxDelay")
                 PanelSliderRow(label: "Anti-VOX time", value: transmit.antiVoxTauMs, range: TransmitModel.antiVoxTimeRange,
                                accessibility: "Anti-VOX time", format: { "\(Int($0.rounded())) ms" },
@@ -660,11 +675,15 @@ struct CwTransmitRows: View {
                     .foregroundStyle(ChromeColours.textDim)
                     .frame(width: 62, alignment: .leading)
                 ForEach(TransmitModel.cwBreakInChoices, id: \.id) { choice in
+                    // QSK where the Core does not offer it: greyed with the
+                    // Core's reason, never hidden.
                     PanelButton(label: choice.label, lit: transmit.cwBreakInMode == choice.id, style: .dsp,
-                                disabled: !editable || transmit.cwBreakInMode == nil) {
+                                disabled: !editable || transmit.cwBreakInMode == nil
+                                    || transmit.cwBreakInChoiceReason(choice.id) != nil) {
                         transmit.setCwBreakInMode(choice.id)
                     }
                     .accessibilityLabel("Break-in " + choice.label)
+                    .accessibilityHint(transmit.cwBreakInChoiceReason(choice.id) ?? "")
                     .accessibilityAddTraits(transmit.cwBreakInMode == choice.id ? .isSelected : [])
                     .accessibilityIdentifier(identifierPrefix + "CwBreakIn" + choice.label)
                 }
@@ -697,6 +716,10 @@ struct CwTransmitRows: View {
                 note("Speed, Pitch, Break-in, Delay and Sidetone: " + reason)
                     .accessibilityIdentifier(identifierPrefix + "CwReason")
             } else {
+                if let reason = transmit.cwQskReason {
+                    note("QSK: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwQskReason")
+                }
                 if let reason = transmit.cwBreakInDelayReason {
                     note("Delay: " + reason)
                         .accessibilityIdentifier(identifierPrefix + "CwDelayReason")

@@ -123,6 +123,10 @@
 //                 save, and their ranges in settingRangeRefusal() (R-CW-03).
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: setCwQskUnavailableReason,
+//                 and settingRangeRefusal() refuses QSK where it is not
+//                 offered with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -1383,8 +1387,16 @@ QString TransmitModel::settingRangeRefusal(const QByteArray& propertyName,
                 .arg(kCwKeyerWeightMin).arg(kCwKeyerWeightMax));
     }
     if (propertyName == "cwBreakInMode") {
-        return scalar(kCwBreakInModeMin, kCwBreakInModeMax,
+        const QString range = scalar(kCwBreakInModeMin, kCwBreakInModeMax,
             QStringLiteral("Choose a break-in mode: off, semi or QSK."));
+        // Final fix wave F2: QSK where it is not offered is refused with
+        // the reason (R-CW-20), the rule CAT's ZZQK refuses it by, for
+        // every writer, so a write never falls back to Semi silently.
+        if (range.isEmpty() && value.toInt() == static_cast<int>(CwBreakInMode::Qsk)
+            && !m_cwQskUnavailableReason.isEmpty()) {
+            return m_cwQskUnavailableReason;
+        }
+        return range;
     }
     if (propertyName == "cwBreakInDelayMs") {
         return scalar(kCwBreakInDelayMsMin, kCwBreakInDelayMsMax,
@@ -4892,6 +4904,13 @@ void TransmitModel::setCwxMemory8(const QString& text)
     m_cwxMemory8 = text;
     persistOne(QStringLiteral("CWX_Memory8"), m_cwxMemory8);
     emit cwxMemory8Changed(m_cwxMemory8);
+}
+
+void TransmitModel::setCwQskUnavailableReason(const QString& reason)
+{
+    if (reason == m_cwQskUnavailableReason) { return; }
+    m_cwQskUnavailableReason = reason;
+    emit cwQskUnavailableReasonChanged(m_cwQskUnavailableReason);
 }
 
 } // namespace NereusSDR

@@ -20,6 +20,9 @@
 //               sender, a Core without remoteCwVersion sends nothing, and
 //               every CW setting round-trips through the mirror. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F2: the round trip's Core offers
+//               QSK, which it now refuses where it is not offered. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-04: Regression coverage for unkeyed PC preview demand, the actual
 //               Phone/CW gauge, source lifecycle and pre-key PCM discard.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -176,6 +179,7 @@
 #include "gui/meters/MeterWidget.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "gui/setup/GeneralOptionsPage.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -2325,6 +2329,18 @@ private slots:
         h.connectSession();
         QTRY_VERIFY(h.client.isHandshakeComplete());
         QVERIFY(h.client.transmitSettingsAvailable(kTransmitSettingsCwVersion));
+        // F2: break-in's next value is QSK, which the Core takes only from
+        // a radio that offers it (a Saturn on the newer protocol).
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol2;
+            info.boardType = HPSDRHW::Saturn;
+            info.firmwareVersion = 10;
+            h.station.setLastRadioInfoForTest(info);
+            h.station.cwKeyerController()->reevaluate();
+            QVERIFY2(h.station.transmitModel().cwQskUnavailableReason().isEmpty(),
+                     qPrintable(h.station.transmitModel().cwQskUnavailableReason()));
+        }
         const QStringList names{
             QStringLiteral("cwKeyerSpeed"), QStringLiteral("cwKeyerMode"),
             QStringLiteral("cwKeyerWeight"), QStringLiteral("cwReversePaddles"),

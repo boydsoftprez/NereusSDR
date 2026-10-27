@@ -234,6 +234,8 @@
 //   2026-10-26 - CW transmit, the 30 CW settings on TransmitModel
 //                 Bidirectional (R-CW-03, transmitSettingsVersion 16).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason
+//                 Outbound. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -669,6 +671,10 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitModel", "cwxMemory6", MirrorDirection::Bidirectional },
     { "TransmitModel", "cwxMemory7", MirrorDirection::Bidirectional },
     { "TransmitModel", "cwxMemory8", MirrorDirection::Bidirectional },
+    // CW transmit final fix wave F2: why QSK is not offered, the Core's
+    // alone (its keyer controller sets it); only to a peer that declared
+    // cwSettings 1 (StationServer kPeerOnlyProperties).
+    { "TransmitModel", "cwQskUnavailableReason", MirrorDirection::Outbound },
 
     // ---- TunerModel (21 entries) ----
     { "TunerModel", "relayC1", MirrorDirection::Outbound },

@@ -54,6 +54,10 @@
 // CW keyer gate's refusal are placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-10-27: CW transmit final fix wave F2: transmit's
+// cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+//
 //   2026-10-11  J.J. Boyd / KG4VCF  Band filters that combine: RadioModel's
 //                                    sharedLnaReason is scanned, and the
 //                                    note it gives the filter label
@@ -1132,6 +1136,13 @@ const QList<ReasonSource>& reasonSources()
         {"src/models/CwKeyerController.h",
          {QStringLiteral("qskUnavailableReason"), QStringLiteral("semiUnavailableReason")}, {}, 0,
          {}, {QStringLiteral("m_qskReason"), QStringLiteral("m_semiReason")}},
+        // CW transmit final fix wave F2: transmit's cwQskUnavailableReason
+        // carries the keyer controller's reason (CwKeyerController.cpp,
+        // scanned); its setter and getter have no words of their own.
+        {"src/models/TransmitModel.h", {QStringLiteral("cwQskUnavailableReason")}, {}, 0, {},
+         {QStringLiteral("m_cwQskUnavailableReason")}},
+        {"src/models/TransmitModel.cpp", {QStringLiteral("setCwQskUnavailableReason")}, {}, 0, {},
+         {QStringLiteral("reason")}},
         {"src/models/RadioModel.cpp",
          {QStringLiteral("requestCwxFor"), QStringLiteral("cwxHolderRefusal")}, {}, 0, {},
          {// The sender's words (CwxSender.h, scanned) and TxRefusal.cpp's.

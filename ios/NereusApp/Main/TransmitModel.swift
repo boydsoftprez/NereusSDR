@@ -4,6 +4,10 @@
 //             pitch, break-in and its delay, the sidetone and its level, at
 //             transmitSettingsVersion 16 (R-CW-50). J.J. Boyd (KG4VCF),
 //             AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//             reason (cwQskUnavailableReason), a later fallback said once,
+//             and VOX, LEV, EQ, CFC and the TX filter greyed in CW as on the
+//             desktop. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -190,6 +194,11 @@ final class TransmitModel: ObservableObject {
     @Published private(set) var cwBreakInMode: Int64?
     @Published private(set) var cwBreakInDelayMs: Double?
     @Published private(set) var cwSidetone: Bool?
+    /// Why the Core does not offer QSK (`cwQskUnavailableReason`), nil while
+    /// it does or where the Core has not sent it.
+    @Published private(set) var cwQskReason: String?
+    /// The CW settings were applied before this update (F2's fallback notice).
+    private var cwQskKnown = false
     /// The station pitch (the Core's `CWPitch`), as the desktop reads it.
     @Published private(set) var cwPitchHz: Int = BandSlice.cwPitchDefaultHz
 
@@ -217,6 +226,20 @@ final class TransmitModel: ObservableObject {
     static let cwDelayOffReason = "Break-in is off: MOX keys the radio, so there is no break-in delay."
     static let cwDelayQskReason = "QSK returns to receive between elements, so there is no break-in delay."
     static let cwSidetoneLevelOffReason = "Turn Sidetone on to set its level."
+    /// The desktop TX applet's words for VOX, LEV, EQ, CFC and the TX filter
+    /// in CW (TxApplet::cwNotUsedReason): the radio's keyer makes the signal.
+    static let cwNotUsedText = "Not used in CW: the radio makes the signal."
+
+    /// Why VOX, LEV, EQ, CFC and the TX filter are greyed: in CW they do nothing.
+    var cwNotUsedReason: String? {
+        inCw ? Self.cwNotUsedText : nil
+    }
+
+    /// Why a Break-in choice is greyed while the CW settings may change:
+    /// QSK where the Core does not offer it, with the Core's words.
+    func cwBreakInChoiceReason(_ mode: Int64) -> String? {
+        mode == Self.cwBreakInQsk ? cwQskReason : nil
+    }
 
     /// The CW settings may change: the Core takes them at version 16 and
     /// has sent them to this phone.
@@ -261,10 +284,12 @@ final class TransmitModel: ObservableObject {
         write(Self.transmitKey, "cwKeyerSpeed", .int(Int64(RxPanelModel.snapped(value, to: Self.cwSpeedRange).rounded())))
     }
 
-    /// Break-in: Off, Semi or QSK (`cwBreakInMode`). A radio that cannot
-    /// do QSK is refused by the Core with its words, shown in the note.
+    /// Break-in: Off, Semi or QSK (`cwBreakInMode`). QSK is greyed with the
+    /// Core's reason while the Core does not offer it, and not sent; the
+    /// Core refuses such a write with the same words in any case.
     func setCwBreakInMode(_ mode: Int64) {
-        guard cwSettingsEditable, (Self.cwBreakInOff...Self.cwBreakInQsk).contains(mode), mode != cwBreakInMode else {
+        guard cwSettingsEditable, (Self.cwBreakInOff...Self.cwBreakInQsk).contains(mode), mode != cwBreakInMode,
+              cwBreakInChoiceReason(mode) == nil else {
             return
         }
         write(Self.transmitKey, "cwBreakInMode", .int(mode))
@@ -1113,6 +1138,8 @@ final class TransmitModel: ObservableObject {
     /// starts the microphone first, so the Core's VOX hears this phone
     /// from the moment it is on; a refused arm stops it again.
     func toggleVox() {
+        // In CW the radio's keyer makes the signal, so VOX does nothing (F2).
+        guard !inCw else { return }
         guard microphoneLine else {
             note = Self.voxNeedsMicrophone
             return
@@ -1958,6 +1985,17 @@ final class TransmitModel: ObservableObject {
         set(\.cwBreakInMode, RxPanelModel.whole(transmit?["cwBreakInMode"]))
         set(\.cwBreakInDelayMs, transmit?["cwBreakInDelayMs"].number)
         set(\.cwSidetone, transmit?["cwSidetone"].flag)
+        // F2: why QSK is not offered. Once the CW settings were known, QSK
+        // selected and in CW, the reason arriving is a fallback to Semi:
+        // said once, as the desktop says it.
+        let cwKnown = cwQskKnown
+        let qskWas = cwQskReason
+        let qskWords = transmit?["cwQskUnavailableReason"].text ?? ""
+        set(\.cwQskReason, qskWords.isEmpty ? nil : qskWords)
+        cwQskKnown = cwSpeedWpm != nil
+        if cwKnown, qskWas == nil, let reason = cwQskReason, inCw, cwBreakInMode == Self.cwBreakInQsk {
+            note = reason
+        }
         set(\.activeProfile, transmit?["activeTxProfile"].text.flatMap { $0.isEmpty ? nil : $0 })
         set(\.profiles, Self.profileNames(transmit?["txProfilesJson"].text))
 

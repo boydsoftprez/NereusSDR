@@ -410,10 +410,13 @@ private slots:
         const QStringList olderFields = transmitSchemaFields(older);
         QVERIFY(cwFields.contains(QStringLiteral("cwKeyerSpeed")));
         QVERIFY(cwFields.contains(QStringLiteral("cwxMemory8")));
+        // F2: why QSK is not offered, after the 30 settings.
+        QCOMPARE(cwFields.indexOf(QStringLiteral("cwQskUnavailableReason")),
+                 cwFields.indexOf(QStringLiteral("cwxMemory8")) + 1);
         for (const QString& name : olderFields) {
             QVERIFY2(!name.startsWith(QStringLiteral("cw")), qPrintable(name));
         }
-        QCOMPARE(cwFields.size(), olderFields.size() + 30);
+        QCOMPARE(cwFields.size(), olderFields.size() + 31);
 
         older->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
             "transmit", {MirrorUpdate{0, "cwKeyerSpeed", MirrorWireKind::Int64, QVariant(qint64(30))}},

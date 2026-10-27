@@ -11,6 +11,10 @@
 //               settings on the link (transmitSettingsVersion 16), their
 //               round trip through a test Core and their range refusals.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F2: the Core's reason QSK is not
+//               offered reaches the window, and a QSK write where it is not
+//               offered is refused with it. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -34,7 +38,11 @@
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "core/MoxController.h"
+#include "core/RadioDiscovery.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 #include "OperatorWording.h"
@@ -43,6 +51,19 @@ using namespace NereusSDR;
 using NereusSDR::Test::LoopbackTransport;
 
 namespace {
+
+// F2: a radio that offers QSK (a Saturn on the newer protocol), so a QSK
+// write is taken.
+void offerQsk(RadioModel& core)
+{
+    RadioInfo info;
+    info.protocol = ProtocolVersion::Protocol2;
+    info.boardType = HPSDRHW::Saturn;
+    info.firmwareVersion = 10;
+    info.macAddress = QStringLiteral("00:1c:c0:a2:13:dd");
+    core.setLastRadioInfoForTest(info);
+    core.cwKeyerController()->reevaluate();
+}
 
 const QString kMac = QStringLiteral("AA:BB:CC:DD:EE:42");
 
@@ -207,6 +228,7 @@ private slots:
     void coreOffersTransmitSettingsVersion16();
     void eachSettingRoundTripsThroughTheCore();
     void outOfRangeWritesAreRefusedWithTheRange();
+    void qskWriteWhereItIsNotOfferedIsRefusedWithTheReason();
 
 private:
     QTemporaryDir m_securityDir;
@@ -432,6 +454,14 @@ void TstCwSettings::settingsAreOnTheLinkAfterCfcProfile()
                  MirrorDirection::Bidirectional);
         QVERIFY2(MirrorPolicy::inboundAllowed("TransmitModel", c.name), c.name);
     }
+    // F2: why QSK is not offered, read-only, right after the settings.
+    const MirrorProperty* reason = schema.byName("cwQskUnavailableReason");
+    QVERIFY(reason);
+    QCOMPARE(reason->ordinal, ++ordinal);
+    QCOMPARE(reason->kind, MirrorWireKind::Utf8);
+    QCOMPARE(MirrorPolicy::directionFor("TransmitModel", "cwQskUnavailableReason"),
+             MirrorDirection::Outbound);
+    QVERIFY(!MirrorPolicy::inboundAllowed("TransmitModel", "cwQskUnavailableReason"));
 }
 
 void TstCwSettings::coreOffersTransmitSettingsVersion16()
@@ -456,6 +486,9 @@ void TstCwSettings::eachSettingRoundTripsThroughTheCore()
     QVERIFY(s.connect());
     TransmitModel& coreTx = s.core->transmitModel();
     TransmitModel& windowTx = s.window.transmitModel();
+    // F2: QSK is one of the values written, so the Core's radio offers it.
+    offerQsk(*s.core);
+    QVERIFY2(coreTx.cwQskUnavailableReason().isEmpty(), qPrintable(coreTx.cwQskUnavailableReason()));
     for (const CwSetting& c : cwSettings()) {
         QVERIFY2(coreTx.property(c.name) == c.defaultValue, c.name);
         // As the window's control does: its own model, which the link sends
@@ -523,6 +556,79 @@ void TstCwSettings::outOfRangeWritesAreRefusedWithTheRange()
     QVERIFY(stepped.hasValue);
     QCOMPARE(stepped.value.value.toLongLong(), 1230LL);
     QVERIFY2(OperatorWording::isPlain(stepped.reason), qPrintable(stepped.reason));
+}
+
+// F2 (R-CW-20): the Core says why QSK is not offered, on `transmit`, and a
+// QSK write from any peer while it is not is refused with those words; the
+// selection stays. Where it is offered, the reason clears and QSK is taken.
+void TstCwSettings::qskWriteWhereItIsNotOfferedIsRefusedWithTheReason()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    TransmitModel& coreTx = s.core->transmitModel();
+    TransmitModel& windowTx = s.window.transmitModel();
+    // The test Core's radio is a Hermes Lite 2, which cannot do QSK.
+    const QString reason = coreTx.cwQskUnavailableReason();
+    QCOMPARE(reason, s.core->cwKeyerController()->qskUnavailableReason());
+    QVERIFY(!reason.isEmpty());
+    QVERIFY2(OperatorWording::isPlain(reason), qPrintable(reason));
+    QTRY_COMPARE(windowTx.cwQskUnavailableReason(), reason);
+    // The window's own rule reads the Core's reason.
+    QCOMPARE(s.window.cwKeyerController()->qskUnavailableReason(), reason);
+    const int before = coreTx.cwBreakInMode();
+    QVERIFY(before != static_cast<int>(CwBreakInMode::Qsk));
+
+    const SessionPropertyResult refused =
+        s.writeTransmit("cwBreakInMode", MirrorWireKind::Int64,
+                        QVariant(qlonglong(static_cast<int>(CwBreakInMode::Qsk))));
+    QVERIFY(!refused.accepted);
+    QCOMPARE(refused.reason, reason);
+    QCOMPARE(coreTx.cwBreakInMode(), before);
+    // Off and Semi are still taken.
+    const SessionPropertyResult off =
+        s.writeTransmit("cwBreakInMode", MirrorWireKind::Int64,
+                        QVariant(qlonglong(static_cast<int>(CwBreakInMode::Off))));
+    QVERIFY2(off.accepted, qPrintable(off.reason));
+    // The reason is the Core's alone: a peer's write of it is refused.
+    const SessionPropertyResult written =
+        s.writeTransmit("cwQskUnavailableReason", MirrorWireKind::Utf8, QVariant(QString()));
+    QVERIFY(!written.accepted);
+    QCOMPARE(coreTx.cwQskUnavailableReason(), reason);
+
+    offerQsk(*s.core);
+    QVERIFY(coreTx.cwQskUnavailableReason().isEmpty());
+    QTRY_VERIFY(windowTx.cwQskUnavailableReason().isEmpty());
+    const SessionPropertyResult taken =
+        s.writeTransmit("cwBreakInMode", MirrorWireKind::Int64,
+                        QVariant(qlonglong(static_cast<int>(CwBreakInMode::Qsk))));
+    QVERIFY2(taken.accepted, qPrintable(taken.reason));
+    QCOMPARE(coreTx.cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
+    QTRY_VERIFY(s.window.cwKeyerController()->qskAvailable());
+
+    // A later fallback, with the transmit slice in CW: QSK stops being
+    // offered while selected. The Core falls back to Semi and says why
+    // once; every window and app hears the reason on transmit (a remote
+    // window's own notice: tst_cw_qsk_side_effects).
+    SliceModel* coreSlice = s.core->txBoundSlice();
+    QVERIFY(coreSlice);
+    coreSlice->setDspMode(DSPMode::CWU);
+    QCoreApplication::processEvents();
+    QSignalSpy coreSaid(s.core->moxController(), &MoxController::moxRejected);
+    RadioInfo hl2;
+    hl2.macAddress = QStringLiteral("AA:BB:CC:DD:EE:01");
+    hl2.boardType = HPSDRHW::HermesLite;
+    s.core->setLastRadioInfoForTest(hl2);
+    s.core->cwKeyerController()->reevaluate();
+    QCOMPARE(s.core->cwKeyerController()->effectiveBreakInMode(), CwBreakInMode::Semi);
+    QCOMPARE(coreTx.cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
+    QCOMPARE(coreSaid.count(), 1);
+    QCOMPARE(coreSaid.at(0).at(0).toString(), reason);
+    QTRY_COMPARE(windowTx.cwQskUnavailableReason(), reason);
+    QCOMPARE(s.window.cwKeyerController()->qskUnavailableReason(), reason);
+    // Once: nothing more while it stays so.
+    s.core->cwKeyerController()->reevaluate();
+    QCoreApplication::processEvents();
+    QCOMPARE(coreSaid.count(), 1);
 }
 
 QTEST_MAIN(TstCwSettings)

@@ -331,6 +331,11 @@
 //                 (transmitSettingsVersion 16, R-CW-03), with their ranges,
 //                 defaults and hardware/<mac>/tx/ keys. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason,
+//                 the Core's reason QSK is not offered (empty while it is),
+//                 outbound only, declared last; a write of QSK while it is
+//                 not offered is refused with that reason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #pragma once
 
@@ -1545,6 +1550,14 @@ public:
                NOTIFY cwxMemory7Changed)
     Q_PROPERTY(QString cwxMemory8           READ cwxMemory8           WRITE setCwxMemory8
                NOTIFY cwxMemory8Changed)
+    // CW transmit final fix wave F2 (R-CW-20, R-CW-50): why QSK is not
+    // offered, in the Core's words (CwKeyerController::qskUnavailableReason),
+    // empty while it is. Outbound only (MirrorPolicy): the Core sets it from
+    // its keyer controller; a remote window's mirror writes it; nothing
+    // persists it. Sent only to a peer that declared cwSettings 1. Declared
+    // last so every earlier property keeps its wire ordinal.
+    Q_PROPERTY(QString cwQskUnavailableReason READ cwQskUnavailableReason
+               WRITE setCwQskUnavailableReason NOTIFY cwQskUnavailableReasonChanged)
 
     /// Bypass PA settings flag. false (default) = use board-specific table.
     bool paSettingsBypass() const noexcept { return m_paSettingsBypass; }
@@ -1769,6 +1782,7 @@ public:
     QString cwxMemory6() const { return m_cwxMemory6; }
     QString cwxMemory7() const { return m_cwxMemory7; }
     QString cwxMemory8() const { return m_cwxMemory8; }
+    QString cwQskUnavailableReason() const { return m_cwQskUnavailableReason; }
 
     // ── DEXP envelope properties (3M-3a-iii Task 7) ──────────────────────
     //
@@ -2688,6 +2702,8 @@ public slots:
     void setCwxMemory6(const QString& text);
     void setCwxMemory7(const QString& text);
     void setCwxMemory8(const QString& text);
+    // F2: not persisted; see the Q_PROPERTY.
+    void setCwQskUnavailableReason(const QString& reason);
 
     // ── DEXP envelope setters (3M-3a-iii Task 7) ───────────────────────────
     void setDexpEnabled(bool on);
@@ -2855,6 +2871,7 @@ signals:
     void cwxMemory6Changed(const QString& text);
     void cwxMemory7Changed(const QString& text);
     void cwxMemory8Changed(const QString& text);
+    void cwQskUnavailableReasonChanged(const QString& reason);
 
     // ── DEXP envelope signals (3M-3a-iii Task 7) ──────────────────────────
     void dexpEnabledChanged(bool on);
@@ -3150,6 +3167,7 @@ private:
     QString m_cwxMemory6;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
     QString m_cwxMemory7;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
     QString m_cwxMemory8;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwQskUnavailableReason;  // empty while QSK is offered (F2)
 
     // ── DEXP envelope properties (3M-3a-iii Task 7) ─────────────────────
     // From Thetis setup.Designer.cs [v2.10.3.13]:

@@ -238,6 +238,10 @@
 //               peer that declared cwSettings 1, and a device's CWX ending
 //               with its link. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //               Code.
+//   2026-10-27: CW transmit final fix wave F2: transmit's read-only
+//               cwQskUnavailableReason only to a peer that declared
+//               cwSettings 1. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -1745,6 +1749,8 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"TransmitModel", "transmit", false, "cwxMemory6", "cwSettings"},
     {"TransmitModel", "transmit", false, "cwxMemory7", "cwSettings"},
     {"TransmitModel", "transmit", false, "cwxMemory8", "cwSettings"},
+    // CW transmit final fix wave F2: why QSK is not offered (read-only).
+    {"TransmitModel", "transmit", false, "cwQskUnavailableReason", "cwSettings"},
 };
 
 // Phone wire batch: record fields that go only to a peer at
