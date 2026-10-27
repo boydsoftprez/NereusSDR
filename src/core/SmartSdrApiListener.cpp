@@ -34,6 +34,10 @@
 // 2026-10-27: CW transmit final fix wave F8: the 5 ms TRANSMIT_A step is a
 // member timer too, cancelled by an un-key and stop(). J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F12: an un-key clears every
+// amplifier's acknowledgement, so a re-key waits for a fresh one; one sent
+// after the un-key (a TGXL Tune press) is still kept. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -368,6 +372,8 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // ack arriving within that window of engage is considered valid
         // for this cycle. Acks older than 500 ms are stale (from a
         // previous cycle) and get wiped.
+        // Final fix wave F12: the un-key clears every acknowledgement, so
+        // only one sent after the last un-key can be kept here.
         static constexpr qint64 kPreAckWindowMs = 500;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         bool anyInterlockedAmp = false;
@@ -490,6 +496,15 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // no amplifier hears TRANSMIT_A after the idle sequence.
         m_transmitASettle.stop();
         m_transmitAHandles.clear();
+        // Final fix wave F12: the acknowledgements were for the key that
+        // has ended. A re-key inside the 500 ms pre-ack window below waits
+        // for each amplifier's fresh `interlock ready`. An acknowledgement
+        // that arrives after this un-key (the TGXL hardware Tune press,
+        // sent before our PTT_REQUESTED) is still kept by that window.
+        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+            it->ackReady = false;
+            it->ackReceivedMs = 0;
+        }
         // G-20: the un-key is a state change; the keyed state is not
         // repeated after it.
         cancelInterlockRepeat();

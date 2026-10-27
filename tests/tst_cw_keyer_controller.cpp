@@ -25,6 +25,10 @@
 //               Claude Code.
 //   2026-10-26: CW transmit, leaving CW with QSK selected lands on Off.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave: the grant-settle test un-keys
+//               only once the settle runs (F3) and the next key waits for a
+//               fresh acknowledgement (F12). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-27: CW transmit final fix wave F4: QSK's reasons check the
 //               board before the protocol, and the protocol reason reads
 //               "QSK needs newer radio firmware.". J.J. Boyd (KG4VCF),
@@ -863,6 +867,9 @@ private slots:
     // Fix wave 2 (I2): a key released inside the listener's 30 ms grant
     // settle leaves no grant behind; the next key is granted once, by its
     // own advance, and the keyer in Off is enabled only by that.
+    // Final fix wave: the un-key comes once the settle is known to run (F3),
+    // and the next key waits for the amplifier's fresh acknowledgement, not
+    // the one the ended key got (F12).
     void aKeyReleasedInsideTheGrantSettleLeavesNoStaleGrant()
     {
         Rig rig;
@@ -898,17 +905,24 @@ private slots:
         amp.write("C2|interlock ready 1\n");
         amp.flush();
         QVERIFY(readUntil("R2|"));
-        QCoreApplication::processEvents();   // the advance: the settle starts
-        QCoreApplication::processEvents();
+        // The advance starts the settle; the un-key comes inside it.
+        QTRY_VERIFY_WITH_TIMEOUT(listener->transmittingSettleActiveForTest(), 2000);
         const int grantsBefore = grants.count();
         // Released inside the settle, and keyed again at once.
         mox->onMicPttFromRadio(false);
         QTRY_VERIFY_WITH_TIMEOUT(!mox->isMox() && mox->state() == MoxState::Rx, 2000);
+        seen.clear();
         mox->onMicPttFromRadio(true);
         QVERIFY(mox->isMox());
-        // The new key's own (pre-acknowledged) advance grants it once.
+        QVERIFY(readUntil("PTT_REQUESTED"));
+        // F12: the old acknowledgement does not grant it.
+        QVERIFY(!listener->transmittingSettleActiveForTest());
+        QCOMPARE(grants.count(), grantsBefore);
+        QVERIFY(!k->keyerAllowed());
+        // The fresh one does, once.
+        amp.write("C3|interlock ready 1\n");
+        amp.flush();
         QTRY_VERIFY_WITH_TIMEOUT(k->keyerAllowed(), 2000);
-        QTest::qWait(150);
         QCOMPARE(grants.count() - grantsBefore, 1);
         mox->onMicPttFromRadio(false);
         QTRY_VERIFY_WITH_TIMEOUT(!mox->isMox() && mox->state() == MoxState::Rx, 2000);

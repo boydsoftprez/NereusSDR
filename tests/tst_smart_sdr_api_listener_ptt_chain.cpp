@@ -16,6 +16,10 @@
 //                 was running at the un-key (F3); an un-key within 5 ms of
 //                 TRANSMITTING sends no TRANSMIT_A after the idle sequence
 //                 (F8). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27  CW transmit final fix wave F12: a re-key within 500 ms of
+//                 an un-key waits for a fresh acknowledgement; a TGXL Tune
+//                 press's early acknowledgement is still kept. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -186,6 +190,8 @@ private slots:
     void g20_noAmpTransmittingIsRepeatedToo();
     void i2_unkeyInsideTheSettleSendsNoTransmittingAndNoGrant();
     void f8_unkeyWithin5msOfTransmittingSendsNoTransmitA();
+    void f12_reKeyAfterUnkeyWaitsForAFreshAck();
+    void f12_tgxlTuneAckBeforeTheRequestIsKept();
     void receiveOnlyStationBlocksNativeAccessoryProxy();
 };
 
@@ -968,6 +974,90 @@ void SmartSdrApiListenerPttChainTest::f8_unkeyWithin5msOfTransmittingSendsNoTran
     }
     QVERIFY(sawTransmitting);
     QCOMPARE(interlockLinesIn(lines, QStringLiteral("UNKEY_REQUESTED")).size(), 1);
+}
+
+// Final fix wave F12: the acknowledgement a key got is for that key. A
+// re-key within 500 ms of its un-key is not granted on it; the amplifier's
+// fresh `interlock ready` grants it. Voice (MOX) and TUNE alike.
+void SmartSdrApiListenerPttChainTest::f12_reKeyAfterUnkeyWaitsForAFreshAck()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    QTcpSocket pgxl;
+    pgxl.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&pgxl);
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&pgxl);
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+
+    for (const QString& source : {QStringLiteral("MOX"), QStringLiteral("TUNE")}) {
+        grantSpy.clear();
+        listener.setInterlockTransmitting(true, source);
+        drain(&pgxl, 30);
+        pgxl.write("C20|interlock ready 1\n");
+        pgxl.flush();
+        QVERIFY(grantSpy.wait(1000));
+        QCOMPARE(grantSpy.count(), 1);
+        listener.setInterlockTransmitting(false, source);
+        drain(&pgxl, 30);
+
+        // Re-keyed well inside the 500 ms window: no grant on the old ack.
+        listener.setInterlockTransmitting(true, source);
+        const QByteArray asked = drain(&pgxl, 150);
+        QVERIFY2(!findS0InterlockFrames(asked, QStringLiteral("PTT_REQUESTED")).isEmpty(),
+                 asked.constData());
+        QVERIFY2(findS0InterlockFrames(asked, QStringLiteral("TRANSMITTING")).isEmpty(),
+                 asked.constData());
+        QCOMPARE(grantSpy.count(), 1);
+        // The fresh acknowledgement grants it.
+        pgxl.write("C21|interlock ready 1\n");
+        pgxl.flush();
+        QVERIFY(grantSpy.wait(1000));
+        QCOMPARE(grantSpy.count(), 2);
+        listener.setInterlockTransmitting(false, source);
+        drain(&pgxl, 30);
+    }
+}
+
+// Final fix wave F12: the 2026-05-20 bench case stays. A TGXL hardware Tune
+// press sends `transmit tune on` and `interlock ready` before our
+// PTT_REQUESTED; that acknowledgement came after the last un-key, so the
+// TUNE key it starts is granted on it without another.
+void SmartSdrApiListenerPttChainTest::f12_tgxlTuneAckBeforeTheRequestIsKept()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    QTcpSocket tgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(tgxl.waitForConnected(1000));
+    drain(&tgxl);
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    drain(&tgxl);
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+
+    // An earlier key and its un-key.
+    listener.setInterlockTransmitting(true, QStringLiteral("MOX"));
+    drain(&tgxl, 30);
+    tgxl.write("C30|interlock ready 1\n");
+    tgxl.flush();
+    QVERIFY(grantSpy.wait(1000));
+    listener.setInterlockTransmitting(false, QStringLiteral("MOX"));
+    drain(&tgxl, 30);
+    grantSpy.clear();
+
+    // The Tune press: tune on and the acknowledgement in one burst.
+    tgxl.write("C31|transmit tune on\nC32|interlock ready 1\n");
+    tgxl.flush();
+    QByteArray seen;
+    QVERIFY(waitFor([&]() {
+        seen.append(tgxl.readAll());
+        return seen.contains("R32|");
+    }));
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    QVERIFY(grantSpy.wait(1000));
+    QCOMPARE(grantSpy.count(), 1);
+    listener.setInterlockTransmitting(false, QStringLiteral("TUNE"));
 }
 
 void SmartSdrApiListenerPttChainTest::g20_noAmpTransmittingIsRepeatedToo()

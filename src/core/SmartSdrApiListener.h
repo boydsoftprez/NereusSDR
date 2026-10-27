@@ -38,6 +38,9 @@
 //                 5 ms TRANSMIT_A step the un-key and stop() cancel, and
 //                 test probes for both settles. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F12: ackReady is reset on
+//                 un-key too. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -321,7 +324,7 @@ private:
         //   6. us -> all:    S0|interlock state=READY reason=AMP:X (on TX release)
         int     interlockId{0};      // 0 = no interlock registered yet
         QString interlockName;       // e.g. "PG-XL", "TG" (from create name=)
-        bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage
+        bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage and un-key (F12)
         // Timestamp when ackReady was most recently set true. Used by
         // setInterlockTransmitting to decide whether to honor a "pre-ack"
         // (an `interlock ready N` that arrived BEFORE our PTT_REQUESTED
