@@ -1420,6 +1420,13 @@
 //                stop already latched in a held stretch is not announced
 //                again; the QSK gap has a manual test trigger. J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CW receive shift (composedShiftHz adds
+//                SliceModel::cwShiftHz, R-CW-23); a pitch change moves the
+//                CW filters, re-pushes the shift of every CW slice and the
+//                APF centre (applyCwPitchChange, R-CW-27, R-CW-28); the APF
+//                centre is cwPitchHz() plus the tune offset in place of
+//                kApfCwPitchHz, cited at setup.cs:17112 [v2.10.3.15]
+//                (R-CW-52). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1719,7 +1726,9 @@ mw0lge@grange-lane.co.uk
 //                 a fixed 600 (setup.cs tbRX1APFTune_Scroll).
 //                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
 //                 carried this Longpath code; the entry describes Longpath
-//                 only. Trunk's CW pitch property (R-CW-02) is its own.]
+//                 only. Trunk's CW pitch property (R-CW-02) and its pitch
+//                 follow (applyCwPitchChange, the APF centre from
+//                 cwPitchHz) are its own.]
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -11203,7 +11212,9 @@ void RadioModel::setCwPitchHz(int hz)
     if (clamped == m_cwPitchHz) {
         return;
     }
+    const int oldHz = m_cwPitchHz;
     m_cwPitchHz = clamped;
+    applyCwPitchChange(oldHz, m_cwPitchHz);
     emit cwPitchChanged(m_cwPitchHz);
 }
 
@@ -11213,8 +11224,72 @@ void RadioModel::notifyStationCwPitchMaybeChanged()
     if (hz == m_cwPitchHz) {
         return;
     }
+    const int oldHz = m_cwPitchHz;
     m_cwPitchHz = hz;
+    applyCwPitchChange(oldHz, m_cwPitchHz);
     emit cwPitchChanged(m_cwPitchHz);
+}
+
+void RadioModel::applyCwPitchChange(int oldHz, int newHz)
+{
+    // R-CW-28, D7, D8. Follows the Thetis CWPitch setter
+    // (console.cs:18212-18311 [v2.10.3.15]): the CW filters follow the pitch
+    // keeping their width, the current CW filter is re-applied, the APF is
+    // re-pushed. Two differences: the DDC never moves for the pitch here
+    // (the CW term is in the WDSP shift, so the shift is re-pushed instead of
+    // retuning, txtVFOAFreq_LostFocus), and the dial does not move while
+    // keyed (Thetis's _mox VFOAFreq += diff), because with the radio's keyer
+    // the carrier is the dial (D7). The radio sidetone follows through
+    // CwKeyerController's cwPitchChanged connection.
+    //
+    // The filters live in Station settings, so only their owner (a local
+    // radio or the Core) moves them; a remote window gets the Core's moved
+    // presets, stored filters and slice filters through the mirror, and
+    // moving them here too would move them twice.
+    const bool ownsSettings = m_role != Role::Remote;
+    if (ownsSettings) {
+        if (m_filterPresetStore) {
+            m_filterPresetStore->followCwPitch(oldHz, newHz);
+        }
+        SliceModel::recenterStoredCwFilters(oldHz, newHz);
+    }
+
+    // A filter change can reach code that removes a slice, so walk a guarded
+    // copy.
+    QList<QPointer<SliceModel>> slices;
+    slices.reserve(m_slices.size());
+    for (SliceModel* s : m_slices) {
+        slices.append(QPointer<SliceModel>(s));
+    }
+    for (const QPointer<SliceModel>& slice : slices) {
+        if (!slice) {
+            continue;
+        }
+        const DSPMode mode = slice->dspMode();
+        const bool inCw = mode == DSPMode::CWU || mode == DSPMode::CWL;
+        if (inCw && ownsSettings) {
+            // From Thetis console.cs:18283, 18297 [v2.10.3.15]: RX1Filter = rx1_filter;
+            int low = slice->filterLow();
+            int high = slice->filterHigh();
+            SliceModel::shiftCwFilterForPitch(low, high, mode, oldHz, newHz);
+            slice->setFilter(low, high);
+            if (!slice) {
+                continue;
+            }
+        }
+        RxChannel* ch = m_wdspEngine ? m_wdspEngine->rxChannel(slice->sliceIndex()) : nullptr;
+        if (!ch) {
+            continue;
+        }
+        if (inCw) {
+            // R-CW-23: the CW term moved, the stream did not.
+            pushNotchOrigin(slice, ch, slice->frequency() - slice->shiftOffsetHz());
+        }
+        // R-CW-27: every receiver's APF centre, as Thetis re-pushes RX1, RX1
+        // sub and RX2 (console.cs:18301-18309 [v2.10.3.15]).
+        // From Thetis setup.cs:17112 [v2.10.3.15] - freq = CWPitch + tuneOffset
+        ch->setApfFreq(static_cast<double>(newHz) + static_cast<double>(slice->apfTuneHz()));
+    }
 }
 
 void RadioModel::applyPanGridSetting(const QString& key)
@@ -12270,12 +12345,12 @@ bool RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, boo
     rxCh->setApfBandwidth(600.0);   // radio.cs:1948 rx_apf_bw = 600.0 Hz
     rxCh->setApfGain(1.0);          // radio.cs:1967 rx_apf_gain = 1.0
     rxCh->setApfFreq(600.0);        // radio.cs:1929 rx_apf_freq = 600.0 Hz
-    // The slice's APF tune offset on top of the 600 Hz above. It was never
-    // saved before 2026-10-11, so it was always 0 here and the line above
-    // was the whole of it; a restored offset has to reach the channel the
-    // way the apfTuneHzChanged handler sends it.
-    // From Thetis setup.cs:17071 - freq = CWPitch + tuneOffset
-    rxCh->setApfFreq(static_cast<double>(kApfCwPitchHz) + static_cast<double>(slice->apfTuneHz()));
+    // The station CW pitch plus the slice's APF tune offset, on top of the
+    // 600 Hz above. The offset was never saved before 2026-10-11, so it was
+    // always 0 here; a restored offset has to reach the channel the way the
+    // apfTuneHzChanged handler sends it. R-CW-27: the pitch is cwPitchHz().
+    // From Thetis setup.cs:17112 [v2.10.3.15] - freq = CWPitch + tuneOffset
+    rxCh->setApfFreq(static_cast<double>(m_cwPitchHz) + static_cast<double>(slice->apfTuneHz()));
     rxCh->setApfEnabled(slice->apfEnabled());
     // Squelch initial push — From Thetis radio.cs:1185,1164,1274,1293,1312
     rxCh->setSsqlEnabled(slice->ssqlEnabled());
@@ -24655,6 +24730,14 @@ double RadioModel::composedShiftHz(const SliceModel* slice,
         offset += static_cast<double>(slice->diguOffsetHz());
     }
 
+    // R-CW-23: the CW receive shift, CWU minus the pitch and CWL plus it
+    // (SliceModel::cwShiftHz, 0 in every other mode), so the receiver sits
+    // where Thetis's DDC does (console.cs:31826-31838 [v2.10.3.15]) and a
+    // carrier on the dial is heard at the pitch. It goes here, never into
+    // shiftOffsetHz: that stays the stream term alone, which the one-arg
+    // overload above and TCI's dds derive the stream centre from.
+    offset += slice->cwShiftHz();
+
     return offset;
 }
 
@@ -25483,16 +25566,16 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     });
 
     // APF tune offset → WDSP freq
-    // From Thetis Project Files/Source/Console/setup.cs:17068-17073
+    // From Thetis Project Files/Source/Console/setup.cs:17108-17114 [v2.10.3.15]
     //   freq = CWPitch + tuneOffset; slider offset range -250..+250
-    //   CW pitch default 600 Hz from Thetis console.cs
+    //   R-CW-27: CWPitch is the station pitch, cwPitchHz(); a pitch change
+    //   re-pushes it (applyCwPitchChange)
     // WDSP: third_party/wdsp/src/apfshadow.c:117
     connect(slice, &SliceModel::apfTuneHzChanged, this, [this, slice](int hz) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
-            // From Thetis setup.cs:17071 — freq = CWPitch + tuneOffset
-            // CW pitch default 600 Hz from Thetis console.cs
-            rxCh->setApfFreq(static_cast<double>(kApfCwPitchHz) + static_cast<double>(hz));
+            // From Thetis setup.cs:17112 [v2.10.3.15] — freq = CWPitch + tuneOffset
+            rxCh->setApfFreq(static_cast<double>(m_cwPitchHz) + static_cast<double>(hz));
         }
         scheduleSettingsSave(slice);
     });

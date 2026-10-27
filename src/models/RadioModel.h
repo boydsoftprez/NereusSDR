@@ -769,6 +769,11 @@
 //                the QSK time-out spans one sending stretch (I4), and the
 //                QSK restore keys are written once the radio is known
 //                (M7). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CW receive shift in composedShiftHz, the
+//                pitch change follow (applyCwPitchChange: filters, shift,
+//                APF) and kApfCwPitchHz replaced by cwPitchHz (R-CW-23,
+//                R-CW-27, R-CW-28). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1227,15 +1232,18 @@ class NEREUS_CORE_EXPORT RadioModel : public QObject, public RotorCommandSink {
 
 
 public:
-    // The CW pitch the APF centre is offset from: APF freq = CWPitch +
-    // tuneOffset. From Thetis setup.cs:17071 [v2.10.3.13]; CW pitch default
-    // 600 Hz from Thetis console.cs. Setup > DSP > CW's APF Center Freq
-    // uses the same value (R-R3-21).
-    static constexpr int kApfCwPitchHz = 600;
-
     // R-CW-02: the station CW pitch (AppSettings "CWPitch", Station scope),
     // 200..2250 Hz in 10 Hz steps (stationCwPitchHz). The value this model
-    // last read or set; cwPitchChanged follows it.
+    // last read or set; cwPitchChanged follows it. The APF centre is this
+    // plus the slice's APF tune offset (R-CW-27, From Thetis setup.cs:17112
+    // [v2.10.3.15]); Setup > DSP > CW's APF Center Freq uses it too.
+    //
+    // A change (R-CW-28, D7, D8) moves the CW filters by it keeping their
+    // width (presets, the operator's overridden slots, the stored per-band
+    // CW filters and each CW slice's current filter; on a local radio or
+    // the Core only, a remote window follows the Core's), then re-pushes
+    // every CW slice's receive shift and every slice's APF centre. It never
+    // moves a dial or the carrier.
     int cwPitchHz() const { return m_cwPitchHz; }
     // Clamps and rounds (clampCwPitchHz), saves CWPitch and emits
     // cwPitchChanged once when the value changes; an equal value does
@@ -7182,7 +7190,8 @@ private:
 
     // The total WDSP shift for a slice: the allocator's offset from its
     // hosting stream's centre, plus RIT, plus the per-mode DIG click-tune
-    // offset. Five sites push the shift (bindSliceToStream,
+    // offset, plus the CW receive shift in CWU and CWL (R-CW-23,
+    // SliceModel::cwShiftHz). Five sites push the shift (bindSliceToStream,
     // activateSliceChannel, reshiftSlicesOnStream,
     // commitStreamSampleRateChange and the RIT/DIG lambda in
     // wireSliceSignals) and they used to disagree about which terms belonged
@@ -7199,6 +7208,10 @@ private:
     /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
     /// together from one centre; WDSP sums them (nbp.c:192).
     void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
+    // R-CW-28: what a CW pitch change from oldHz to newHz does, run by
+    // setCwPitchHz and notifyStationCwPitchMaybeChanged before they emit
+    // cwPitchChanged. See cwPitchHz().
+    void applyCwPitchChange(int oldHz, int newHz);
 
     /// Coalesces notch edits during a drag. RXANBPEditNotch runs a full
     /// UpdateNBPFilters (an FFT per partition at nc=4096, plus a bpsnba

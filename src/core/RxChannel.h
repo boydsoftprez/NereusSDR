@@ -93,6 +93,9 @@
 //                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-26: CW transmit, apfFreqHz(): the value last handed to
+//                 setApfFreq, for the APF centre tests (R-CW-27). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -757,6 +760,11 @@ public:
     bool apfEnabled() const { return m_apfEnabled.load(); }
     void setApfEnabled(bool enabled);
     void setApfFreq(double hz);
+    // The value last handed to setApfFreq, in Hz (0 before the first one).
+    // WDSP has no getter for the SPCW frequency; carried so the APF centre
+    // (CW pitch + tune offset, R-CW-27) is assertable from the caller side,
+    // as shiftOffsetHz() is for the shift.
+    double apfFreqHz() const { return m_apfFreqHz; }
     void setApfBandwidth(double hz);
     void setApfGain(double gain);
     void setApfSelection(int selection);
@@ -1600,6 +1608,7 @@ private:
 
     // Shift offset carry (mirrors what was last passed to setShiftFrequency)
     double m_shiftOffsetHz{0.0};
+    double m_apfFreqHz{0.0};
 
     // Notch tune-frequency carry (mirrors what was last passed to
     // RXANBPSetTuneFrequency). Plain member, not atomic: WDSP owns the

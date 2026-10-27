@@ -18,6 +18,11 @@
 //   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): followStationSetting()
 //                 so a remote window's presets follow the Core's. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, followCwPitch moves the overridden CW slots
+//                 by a pitch change keeping their width, and
+//                 followStationSetting refreshes the CW presets on the
+//                 Core's CWPitch (R-CW-28). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 // =================================================================
 
 #pragma once
@@ -106,7 +111,19 @@ public:
     /// changes there (RadioModel::stationSettingChanged, remote windows
     /// only): a preset key emits presetsChanged for its mode, and an empty
     /// key (a whole snapshot) for all 14. Any other key is ignored.
+    /// R-CW-28: the CW presets are built from CWPitch, so the Core's
+    /// CWPitch key emits presetsChanged for CWL and CWU as well.
     void followStationSetting(const QString& key);
+
+    // ── Following the CW pitch (R-CW-28, D8) ──────────────────────────────
+
+    /// The pitch moved from oldPitchHz to newPitchHz. Every overridden CWL
+    /// and CWU slot moves with it keeping its width
+    /// (SliceModel::shiftCwFilterForPitch) and is persisted; the default
+    /// slots follow by themselves (SliceModel::presetsForMode reads the
+    /// pitch). Emits presetsChanged for CWL and CWU. Writes the Core's
+    /// settings, so RadioModel calls it only where those settings live.
+    void followCwPitch(int oldPitchHz, int newPitchHz);
 
 signals:
     /// Emitted on any mutation for the affected mode.

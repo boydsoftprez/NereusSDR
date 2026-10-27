@@ -26,6 +26,9 @@
 //                                    below it (a relay rewrites the Core's
 //                                    version to 1). AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26: CW transmit, CWU and CWL rows: +TNF lands on the dial, the
+//               carrier (R-CW-25). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -314,6 +317,10 @@ void TstNotchAddAtSlice::landsTheDesktopsTnfNotch_data()
     QTest::newRow("LSB") << static_cast<int>(DSPMode::LSB) << -2900 << -100;
     QTest::newRow("DIGU") << static_cast<int>(DSPMode::DIGU) << 200 << 2800;
     QTest::newRow("DIGL") << static_cast<int>(DSPMode::DIGL) << -2800 << -200;
+    // CW transmit (R-CW-25): the pitch-centered filter's middle puts the
+    // notch back on the dial, the carrier.
+    QTest::newRow("CWU") << static_cast<int>(DSPMode::CWU) << 400 << 800;
+    QTest::newRow("CWL") << static_cast<int>(DSPMode::CWL) << -800 << -400;
 }
 
 // The verb and the desktop's +TNF, driven on the same Core and slice, land
@@ -358,7 +365,14 @@ void TstNotchAddAtSlice::landsTheDesktopsTnfNotch()
     double demodulated = 14100000.0;
     if (static_cast<DSPMode>(mode) == DSPMode::DIGU) { demodulated += 1500.0; }
     if (static_cast<DSPMode>(mode) == DSPMode::DIGL) { demodulated += 2210.0; }
+    // R-CW-23: the CW receive shift at the default 600 Hz pitch.
+    if (static_cast<DSPMode>(mode) == DSPMode::CWU) { demodulated -= 600.0; }
+    if (static_cast<DSPMode>(mode) == DSPMode::CWL) { demodulated += 600.0; }
     QCOMPARE(byVerb.centerHz, demodulated + middle);
+    if (static_cast<DSPMode>(mode) == DSPMode::CWU
+        || static_cast<DSPMode>(mode) == DSPMode::CWL) {
+        QCOMPARE(byVerb.centerHz, 14100000.0);
+    }
     QCOMPARE(byVerb.widthHz, kDefaultNotchWidthHz);
 }
 

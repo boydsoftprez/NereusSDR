@@ -10013,6 +10013,11 @@ nereus_add_test(tst_cfc_set_profile
 nereus_add_test(tst_cw_settings
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CW transmit (R-CW-23, R-CW-24, R-CW-27, R-CW-28): the CW receive shift in
+# the composed WDSP shift and the demodulated frequency, passbandOriginHz,
+# and a pitch change moving the CW filters, the shift and the APF but never
+# the dial. A never-opened connection, no RF, no audio device.
+nereus_add_test(tst_cw_pitch_follow)
 # Control logging lane: the Core's log lines for each control write and
 # command, its answer and handling time, and the gaps between a device's
 # control messages, rate-limited. Loopback only, no RF, no audio device.

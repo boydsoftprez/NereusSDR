@@ -15,6 +15,9 @@
 //   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): followStationSetting()
 //                 so a remote window's presets follow the Core's. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, followCwPitch and the CWPitch key in
+//                 followStationSetting (R-CW-28). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 #include "FilterPresetStore.h"
@@ -226,6 +229,12 @@ void FilterPresetStore::followStationSetting(const QString& key)
         }
         return;
     }
+    // R-CW-28: the CW default slots are built from the Core's CW pitch.
+    if (key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+        emit presetsChanged(DSPMode::CWL);
+        emit presetsChanged(DSPMode::CWU);
+        return;
+    }
     // "filters/<mode>/<slot>/<field>"
     const QStringList parts = key.split(QLatin1Char('/'));
     if (parts.size() < 2 || parts.first() != QLatin1String("filters")) {
@@ -236,6 +245,27 @@ void FilterPresetStore::followStationSetting(const QString& key)
         return;  // not a mode this store keeps presets for
     }
     emit presetsChanged(mode);
+}
+
+// ── followCwPitch ─────────────────────────────────────────────────────────────
+
+void FilterPresetStore::followCwPitch(int oldPitchHz, int newPitchHz)
+{
+    if (oldPitchHz == newPitchHz) {
+        return;
+    }
+    for (DSPMode mode : {DSPMode::CWL, DSPMode::CWU}) {
+        for (int slot = 0; slot < 10; ++slot) {
+            auto override = loadSlot(mode, slot);
+            if (!override.has_value()) {
+                continue;
+            }
+            FilterPreset p = override.value();
+            SliceModel::shiftCwFilterForPitch(p.low, p.high, mode, oldPitchHz, newPitchHz);
+            persistPreset(mode, slot, p);
+        }
+        emit presetsChanged(mode);
+    }
 }
 
 } // namespace NereusSDR

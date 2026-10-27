@@ -7,6 +7,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the ifOffsetHz note says why dds and if stay
+//                 RF-true in CW (D4, R-CW-26); comment only. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code: announcesTxSlice and
 //                txFrequencyFor hold the one rule for which slice's dial
@@ -856,12 +859,17 @@ private:
     // No DIG click-tune offset: Thetis's RXOsc never carries it, while
     // NereusSDR's composed WDSP shift does.
     //
-    // No CW pitch term. Thetis's sendIF ends with
+    // No CW pitch term, on purpose (CW transmit D4, R-CW-26). Thetis's
+    // sendIF ends with
     //   offset += -consoleThreadSafe.GetDSPcwPitchShiftToZero(rx + 1); //MW0LGE [2.9.0.7] note we invert with -
     // [original inline comment from TCIServer.cs:2154]
-    // because in CW it tunes the DDC off the VFO by the pitch
-    // (console.cs:31826-31838 [v2.10.3.15]). NereusSDR does not, so the
-    // term would break vfo = dds + if here. Revisit with CW transmit (3M-2).
+    // and its sendDDS adds the same term to dds (TCIServer.cs:2412
+    // [v2.10.3.15]), because in CW Thetis tunes the DDC off the VFO by the
+    // pitch (console.cs:31826-31838 [v2.10.3.15]). NereusSDR's CW receive
+    // shift is in the WDSP shift instead (RadioModel::composedShiftHz) and
+    // the DDC stays put, so dds stays the real stream centre the TCI IQ is
+    // centred on and if stays vfo - centre + RIT. Both lines stay RF-true and
+    // vfo = dds + if holds; the term on if alone would break it by a pitch.
     static qint64 ifOffsetHz(qint64 vfoHz, qint64 centreHz, int ritHz);
 
     // The one if builder, for the init burst and the live path alike: reads

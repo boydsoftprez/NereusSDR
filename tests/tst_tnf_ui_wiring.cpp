@@ -34,6 +34,10 @@
 // are therefore either public statics, callable without an instance, or
 // resolved by name through staticMetaObject the way
 // tst_notch_hit_test.cpp resolves the notch fan-out slots.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, +TNF in CWU and CWL lands on the dial
+//               (R-CW-25). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -211,6 +215,26 @@ private slots:
         const double centre = NotchModel::tnfAddCenterHz(
             slice.effectiveRxFrequency(), slice.filterLow(), slice.filterHigh());
         QCOMPARE(centre, 14200000.0 + 250.0 + 1550.0);
+    }
+
+    // CW transmit (R-CW-25): +TNF in CW lands on the dial, the carrier.
+    // The demodulated frequency carries the CW receive shift (dial - pitch
+    // in CWU) and the pitch-centered filter's middle adds it back, as
+    // Thetis's TNFAdd and AddNotch cancel.
+    void tnf_add_centre_lands_on_the_cw_carrier()
+    {
+        SliceModel slice;
+        slice.setFrequency(14030000.0);
+        slice.setDspMode(DSPMode::CWU);
+        slice.setFilter(400, 800);
+        QCOMPARE(NotchModel::tnfAddCenterHz(slice.demodulatedRxFrequency(),
+                                            slice.filterLow(), slice.filterHigh()),
+                 14030000.0);
+        slice.setDspMode(DSPMode::CWL);
+        slice.setFilter(-800, -400);
+        QCOMPARE(NotchModel::tnfAddCenterHz(slice.demodulatedRxFrequency(),
+                                            slice.filterLow(), slice.filterHigh()),
+                 14030000.0);
     }
 
     // ── section 7: the status-bar TNF light follows the global flag ───────

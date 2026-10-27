@@ -19,6 +19,9 @@
 //   2026-10-15  J.J. Boyd / KG4VCF  DSP > FM squelch readout shows the
 //                                    0-100 number, AM keeps dB.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the APF Center Freq range and value follow
+//               the CW pitch (R-CW-27). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -322,7 +325,20 @@ private slots:
         active->setAmsqThresh(-90.0);
         active->setFmsqThresh(-60.0);
         QVERIFY(anf->isChecked());
-        QCOMPARE(center->value(), RadioModel::kApfCwPitchHz + 120);
+        QCOMPARE(center->value(), model.cwPitchHz() + 120);
+        // R-CW-27: the range is the pitch plus or minus 500 and follows a
+        // pitch change; the tune offset stays.
+        QCOMPARE(center->minimum(), model.cwPitchHz() - 500);
+        QCOMPARE(center->maximum(), model.cwPitchHz() + 500);
+        model.setCwPitchHz(700);
+        QCOMPARE(center->minimum(), 200);
+        QCOMPARE(center->maximum(), 1200);
+        QCOMPARE(center->value(), 820);
+        QCOMPARE(active->apfTuneHz(), 120);
+        center->setValue(750);
+        QCOMPARE(active->apfTuneHz(), 50);
+        model.setCwPitchHz(600);
+        QCOMPARE(center->value(), 650);
         QCOMPARE(am->value(), -90);
         QCOMPARE(fm->value(), -60);
 

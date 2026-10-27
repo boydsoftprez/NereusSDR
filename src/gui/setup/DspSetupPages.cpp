@@ -10,6 +10,9 @@
 //   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               (R-IOS-06, R-IOS-27).
+//   2026-10-26: CW transmit, the APF Center Freq range and readout follow
+//               the CW pitch (RadioModel::cwPitchHz, R-CW-27). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -140,6 +143,7 @@
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
+#include "core/CwTypes.h"
 #include "core/RadioConnection.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
@@ -164,6 +168,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
@@ -2204,15 +2209,18 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent,
     // R-R3-21: Enable and Center Freq are the active slice's APF, the VFO
     // flag's APF button and tune slider (SliceModel apfEnabled /
     // apfTuneHz). The centre is the CW pitch plus the slice's tune offset,
-    // as RadioModel sends it: From Thetis setup.cs:17071 [v2.10.3.13] --
+    // as RadioModel sends it: From Thetis setup.cs:17112 [v2.10.3.15] --
     // freq = CWPitch + tuneOffset, with RadioModel's pitch
-    // (RadioModel::kApfCwPitchHz). The range is the flag slider's
-    // -500..+500 Hz around it.
-    static constexpr int kApfPitchHz = RadioModel::kApfCwPitchHz;
+    // (RadioModel::cwPitchHz, R-CW-27). The range is the flag slider's
+    // -500..+500 Hz around it, and follows a pitch change.
+    static constexpr int kApfCenterSpanHz = 500;
+    const auto apfPitchHz = [model]() {
+        return model ? model->cwPitchHz() : kCwPitchDefaultHz;
+    };
     auto* apfCenter = new QSlider(Qt::Horizontal);
     apfCenter->setObjectName(QStringLiteral("apfCenterSlider"));
     apfCenter->setProperty("nereusSetupId", "dsp.cw.apfCenter");
-    apfCenter->setRange(kApfPitchHz - 500, kApfPitchHz + 500);
+    apfCenter->setRange(apfPitchHz() - kApfCenterSpanHz, apfPitchHz() + kApfCenterSpanHz);
     auto* apfCenterValue = new QLabel;
     addLabeledSlider(apfLay, "Center Freq", apfCenter, apfCenterValue);
 
@@ -2233,33 +2241,42 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent,
                                            UnbuiltFeature::ApfParams);
 
     bindToActiveSlice(this, model, receiverSelection(),
-                      [apfEnable, apfCenter, apfCenterValue](SliceModel* s) {
+                      [model, apfPitchHz, apfEnable, apfCenter, apfCenterValue](SliceModel* s) {
         SliceBindings conns;
         setSliceAvailable(apfEnable, s != nullptr);
         setSliceAvailable(apfCenter, s != nullptr);
         if (!s) { return conns; }
+        // R-CW-27: the range and the centre follow the pitch; the slice's
+        // tune offset stays.
+        const auto showCenter = [apfPitchHz, apfCenter, apfCenterValue](int tune) {
+            QSignalBlocker block(apfCenter);
+            const int pitch = apfPitchHz();
+            apfCenter->setRange(pitch - kApfCenterSpanHz, pitch + kApfCenterSpanHz);
+            apfCenter->setValue(pitch + tune);
+            apfCenterValue->setText(QStringLiteral("%1 Hz").arg(apfCenter->value()));
+        };
         {
             QSignalBlocker blockEnable(apfEnable);
-            QSignalBlocker blockCenter(apfCenter);
             apfEnable->setChecked(s->apfEnabled());
-            apfCenter->setValue(kApfPitchHz + s->apfTuneHz());
         }
-        apfCenterValue->setText(QStringLiteral("%1 Hz").arg(apfCenter->value()));
+        showCenter(s->apfTuneHz());
         conns << connect(apfEnable, &QPushButton::toggled, s, &SliceModel::setApfEnabled);
-        conns << connect(apfCenter, &QSlider::valueChanged, s, [s, apfCenterValue](int hz) {
+        conns << connect(apfCenter, &QSlider::valueChanged, s,
+                         [s, apfPitchHz, apfCenterValue](int hz) {
             apfCenterValue->setText(QStringLiteral("%1 Hz").arg(hz));
-            s->setApfTuneHz(hz - kApfPitchHz);
+            s->setApfTuneHz(hz - apfPitchHz());
         });
         conns << connect(s, &SliceModel::apfEnabledChanged, apfEnable, [apfEnable](bool on) {
             QSignalBlocker block(apfEnable);
             apfEnable->setChecked(on);
         });
-        conns << connect(s, &SliceModel::apfTuneHzChanged, apfCenter,
-                         [apfCenter, apfCenterValue](int tune) {
-            QSignalBlocker block(apfCenter);
-            apfCenter->setValue(kApfPitchHz + tune);
-            apfCenterValue->setText(QStringLiteral("%1 Hz").arg(apfCenter->value()));
-        });
+        conns << connect(s, &SliceModel::apfTuneHzChanged, apfCenter, showCenter);
+        if (model) {
+            conns << connect(model, &RadioModel::cwPitchChanged, apfCenter,
+                             [slice = QPointer<SliceModel>(s), showCenter](int) {
+                if (slice) { showCenter(slice->apfTuneHz()); }
+            });
+        }
         return conns;
     });
 

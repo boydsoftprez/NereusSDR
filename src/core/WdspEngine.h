@@ -75,6 +75,9 @@
 //   2026-10-10 : J.J. Boyd (KG4VCF): test-only friendship for the test of
 //                 a receive channel's first DSP > Options apply. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26: CW transmit, test-only friendship for the CW pitch follow
+//                 test (R-CW-23, R-CW-28). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 //   2026-10-22 : MaxBin hold fix (Thetis #2681) by J.J. Boyd (KG4VCF):
 //                 maxBinHoldNextDbm declared, ported from Longpath PR 215
 //                 (src/core/WdspEngine.h:631-654 [@383f058]), with
@@ -193,6 +196,9 @@ class TestRadioModelMoxHardwareFlip;
 // dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
 // the kTestChannel = 99 never-opened-channel hatch is unavailable here.
 class TestNotchTuneFrequency;
+// CW transmit (R-CW-23, R-CW-28): the CW pitch follow test opens real RX
+// channels for the same reason, to read the shift and APF pushes back.
+class TstCwPitchFollow;
 // TNF Task 2: the notch-wrapper test opens one real RX channel so the
 // RXANBP* entry points have an rxa[].ndb to dereference.
 class TestRxChannelNotchWrappers;
@@ -1137,6 +1143,8 @@ private:
     // TNF Task 1: same friendship for the notch tune-frequency test, which
     // needs really opened RX channels rather than an unopened slot.
     friend class ::TestNotchTuneFrequency;
+    // CW transmit: same friendship for the CW pitch follow test.
+    friend class ::TstCwPitchFollow;
     // TNF Task 2: same friendship for the notch-wrapper test, which primes
     // m_initialized so createRxChannel opens a real WDSP channel with a real
     // notch database.
