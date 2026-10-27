@@ -33,6 +33,9 @@
 //               state and its live reader (Roundtable plan Task 11 fix
 //               round). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: kMinDbm and kMaxDbm, the reading range the Core's client
+//               and the desktop panel share. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -69,6 +72,11 @@ inline constexpr qsizetype kMaxIncomingBytes = 1048576;
 inline constexpr int kMaxSlices = 4;
 /// Section 5.3.13: the words deleteArchive confirms with.
 inline constexpr const char* kDeleteArchiveWords = "delete my archive";
+/// Section 5.2 (`dbm`, used by 5.3.3 and 6.5): what a reading's dbm may
+/// be, -160 to 94 inclusive. Outside it a slice has no reading (a cleared
+/// slice holds -400).
+inline constexpr double kMinDbm = -160.0;
+inline constexpr double kMaxDbm = 94.0;
 
 /// Who sends a message and who receives it (5.3, 5.4, 5.5).
 enum class Direction { StationToServer, LiveToServer, ServerToStation, ServerToLive };

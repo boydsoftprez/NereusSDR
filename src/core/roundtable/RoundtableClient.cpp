@@ -24,6 +24,9 @@
 //               cleared slice holds) never enters the signal floor; a web
 //               sign-in that will get no link says so (webLinkFailed).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: the reading range is RoundtableWire::kMinDbm and kMaxDbm,
+//               shared with the desktop panel. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableClient.h"
@@ -64,9 +67,6 @@ constexpr int kCloseProtocol = 4002;
 constexpr int kCloseReplaced = 4003;
 constexpr int kCloseRevoked = 4004;
 
-// Section 6.5: what a reading's dbm may be (5.2).
-constexpr double kMinDbm = -160.0;
-constexpr double kMaxDbm = 94.0;
 constexpr qint64 kMaxHz = 99999999999LL;
 constexpr int kMaxFilterHz = 1000000;
 constexpr int kMaxSliceId = 255;
@@ -280,7 +280,7 @@ void RoundtableClient::pushMeter(int sliceId, double dbm, qint64 meterReadingNs)
     meter.wallMs = wallNow();
     // Only a value a reading may carry (5.3.3) feeds the floor: a cleared
     // slice's no-reading value would pull it down until it aged out.
-    if (std::isfinite(dbm) && dbm >= kMinDbm && dbm <= kMaxDbm) {
+    if (std::isfinite(dbm) && dbm >= RoundtableWire::kMinDbm && dbm <= RoundtableWire::kMaxDbm) {
         meter.present = meter.floor.update(dbm, monoNow());
     }
 }
@@ -1057,7 +1057,8 @@ void RoundtableClient::sendReadingsIfDue(qint64 now)
         if (meter.sentOnce && now - meter.lastSentMs < kReadingIntervalMs) {
             continue;
         }
-        if (!std::isfinite(meter.dbm) || meter.dbm < kMinDbm || meter.dbm > kMaxDbm) {
+        if (!std::isfinite(meter.dbm) || meter.dbm < RoundtableWire::kMinDbm
+            || meter.dbm > RoundtableWire::kMaxDbm) {
             continue;
         }
         if (send(m_main, RoundtableWire::reading(slice.id, meter.dbm, meter.wallMs, meter.present))) {

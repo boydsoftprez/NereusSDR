@@ -54,6 +54,9 @@
 //               accessible name "Open in its own window", so it is not
 //               taken for the container header's Pop Out arrow beside it.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: your own reading's range is RoundtableWire::kMinDbm and
+//               kMaxDbm, shared with the Core's client. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
@@ -201,11 +204,6 @@ constexpr int kBoxHeight = 46;
 // S9 is -73 dBm, 6 dB an S-unit (the mockup's sText).
 constexpr double kS9Dbm = -73.0;
 constexpr double kDbPerSUnit = 6.0;
-// What a reading's dbm may be (wire spec 6.5, RoundtableClient.cpp's
-// kMinDbm..kMaxDbm): outside it the slice has no reading (-400 after a
-// clear).
-constexpr double kMinReadingDbm = -160.0;
-constexpr double kMaxReadingDbm = 94.0;
 
 QString buttonStyle()
 {
@@ -2025,8 +2023,9 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
                 {QStringLiteral("reading"),
                  QJsonObject{{QStringLiteral("dbm"), m_ownDbm},
                              {QStringLiteral("t"), m_ownReadingMs},
-                             {QStringLiteral("present"), std::isfinite(m_ownDbm) && m_ownDbm >= kMinReadingDbm
-                                                             && m_ownDbm <= kMaxReadingDbm}}}};
+                             {QStringLiteral("present"), std::isfinite(m_ownDbm)
+                                                             && m_ownDbm >= RoundtableWire::kMinDbm
+                                                             && m_ownDbm <= RoundtableWire::kMaxDbm}}}};
             rows.append(own);
         }
     }
