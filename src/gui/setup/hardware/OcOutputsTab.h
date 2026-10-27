@@ -30,6 +30,9 @@
 //   2026-10-26 - Anvelina DX Outputs group (DX OUT 7..10, names, All on /
 //                All off) under User Dig Out, on an ANVELINAPRO3 only
 //                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - setDxOutputsAvailable: a remote window's DX group on a Core
+//                below radioHardwareVersion 14 is disabled with its reason
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -133,6 +136,11 @@ public:
     // The HF tab's "N2ADR Filter (HL2)" pointer, shown on an HL2 only
     // (HardwarePage passes caps.hasIoBoardHl2).
     void setN2adrHintVisible(bool visible);
+    // radioHardwareVersion 14: a remote window switches and names the
+    // Anvelina DX outputs only on a Core that applies them; otherwise the
+    // boxes, names and buttons are disabled with `reason` (which wins over
+    // the stopped reason). Always available locally.
+    void setDxOutputsAvailable(bool available, const QString& reason);
 
     // ── Test seams (P1 full-parity §4.3 — User Dig Out) ──────────────────
     // Exposed for tst_board_capability_flag_wiring; not part of the
@@ -217,6 +225,9 @@ private:
     QPushButton*                               m_dxAllOn{nullptr};
     QPushButton*                               m_dxAllOff{nullptr};
     QLabel*                                    m_dxReason{nullptr};
+    // setDxOutputsAvailable: false only in a remote window on an older Core.
+    bool                                       m_dxAvailable{true};
+    QString                                    m_dxUnavailableReason;
 
     // Echo-loop guard: when set, checkbox toggled() handlers skip the
     // write-back to TransmitModel.  Used during onModelUserDigOutChanged.

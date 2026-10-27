@@ -40,6 +40,13 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Radio codec lane: Swap audio channels
 //                                    from a remote window (version 13).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Anvelina filter/OC fix wave: "Gnd
+//                                    BPF2 on Tx" (version 14) from a window
+//                                    on a receive-only Core. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Anvelina DX outputs (oc/dx/...) from a
+//                                    window on and off the air. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -55,6 +62,7 @@
 #include <array>
 #include <memory>
 
+#include "core/AnvelinaDxOutputs.h"
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/HardwareProfile.h"
@@ -305,6 +313,7 @@ private slots:
     void localWindowDoesTheSame();
     void olderCoreKeepsTheToolAndSwitchesClosedWithItsReason();
     void alexHpfSwitchesFromARemoteWindowOnAndOffTheAir();
+    void dxOutputsFromARemoteWindowOnAndOffTheAir();
     void localAlexHpfSwitchesStayLiveOnTheAir();
     void alexLpfEdgesFromARemoteWindowKeepRangesAndMoveNeighbours();
     void reasonsArePlain();
@@ -743,11 +752,65 @@ void TstRemoteHl2Io::alexHpfSwitchesFromARemoteWindowOnAndOffTheAir()
     QCOMPARE(s.settings.value(hw(QStringLiteral("alex/master/hpfBypassOnPs"))).toString(),
              QStringLiteral("False"));
     QCOMPARE(rejected.count(), 1);
+    // radioHardwareVersion 14: "Gnd BPF2 on Tx" is taken by this
+    // receive-only Core from a window offered 14 (StationServer::
+    // receiveOnlyRefusesKey, isAlexBpf2GndKey) and reaches its connection
+    // through the "alex" reload. Default ticked, as Thetis's
+    // defaultAlexSettings() (setup.cs:403, 33171-33187 [v2.10.3.15]).
+    QVERIFY(s.core.p1.bpf2GndOnTx());
+    reloads.clear();
+    s.proxy.setValue(hw(QStringLiteral("alex/master/bpf2GndOnTx")), QStringLiteral("False"));
+    QTRY_VERIFY(!s.core.p1.bpf2GndOnTx());
+    QVERIFY(reloads.contains(QStringLiteral("alex")));
+    QCOMPARE(s.settings.value(hw(QStringLiteral("alex/master/bpf2GndOnTx"))).toString(),
+             QStringLiteral("False"));
+    s.proxy.setValue(hw(QStringLiteral("alex/master/bpf2GndOnTx")), QStringLiteral("True"));
+    QTRY_VERIFY(s.core.p1.bpf2GndOnTx());
+    QCOMPARE(rejected.count(), 1);
     // The LPF band edges are taken from a window offered hardware version 10.
     s.proxy.setValue(hw(QStringLiteral("alex/lpf/20m/start")), QStringLiteral("10.0"));
     QTRY_COMPARE(s.settings.value(hw(QStringLiteral("alex/lpf/20m/start"))).toString(),
                  QStringLiteral("10.0"));
     QCOMPARE(rejected.count(), 1);
+}
+
+// Anvelina filter/OC plan (radioHardwareVersion 14): a window's Anvelina DX
+// output and name cross the link to this receive-only Core, are taken on
+// and off the air (they are not transmit keys; the gateware takes byte 1397
+// keyed or not), and reach the Core's AnvelinaDxOutputs through the "ocDx"
+// reload, whose wire byte the connection sends.
+void TstRemoteHl2Io::dxOutputsFromARemoteWindowOnAndOffTheAir()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    QVERIFY(s.proxy.ready());
+    QVERIFY(s.core.model->receiveOnlyStationPolicy());
+    QCOMPARE(s.client->capabilities().radioHardwareVersion, 14);
+    QStringList reloads;
+    s.core.model->setHardwareApplyObserverForTest(
+        [&reloads](const QString& name) { reloads << name; });
+    QSignalSpy rejected(&s.proxy, &SettingsProxy::valueRejected);
+    const AnvelinaDxOutputs& dx = s.core.model->anvelinaDxOutputs();
+    QCOMPARE(int(dx.wireByte()), 0x00);
+
+    // Off the air.
+    s.proxy.setValue(hw(QStringLiteral("oc/dx/out8/enabled")), QStringLiteral("True"));
+    QTRY_COMPARE(int(dx.wireByte()), 0x04);
+    QVERIFY(reloads.contains(QStringLiteral("ocDx")));
+    QVERIFY(!reloads.contains(QStringLiteral("oc")));
+
+    // On the air, keyed by the Core's own key: taken at once.
+    s.core.key();
+    QTRY_VERIFY(s.core.model->isCoreOnAir());
+    s.proxy.setValue(hw(QStringLiteral("oc/dx/out10/enabled")), QStringLiteral("True"));
+    QTRY_COMPARE(int(dx.wireByte()), 0x14);
+    s.proxy.setValue(hw(QStringLiteral("oc/dx/out7/label")), QStringLiteral("Amp"));
+    QTRY_COMPARE(dx.label(7), QStringLiteral("Amp"));
+    QCOMPARE(s.settings.value(hw(QStringLiteral("oc/dx/out10/enabled"))).toString(),
+             QStringLiteral("True"));
+    s.core.unkey();
+    QTRY_COMPARE(s.core.model->moxController()->state(), MoxState::Rx);
+    QCOMPARE(rejected.count(), 0);
 }
 
 // Alex LPF review C1 and I1: a remote window's low-pass edge outside its

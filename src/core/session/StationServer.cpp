@@ -5,7 +5,8 @@
 //               (alex/master/bpf2GndOnTx) from a window, a transmit
 //               hardware key taken on and off the air like the Alex tab's
 //               high-pass switches. J.J. Boyd (KG4VCF), AI-assisted: Claude
-//               Code.
+//               Code. Version 14 also names OC Outputs' Anvelina DX
+//               Outputs ("ocDx" reload).
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -13735,6 +13736,12 @@ int StationServer::radioHardwareVersion() const
     // chkBPF2Gnd_CheckedChanged has no MOX check (setup.cs:18214-18218
     // [v2.10.3.15]); the radio takes it at the next TX edge. A Core below
     // 14 stores it without effect, so a window keeps the box closed.
+    // 14 also carries OC Outputs' Anvelina DX Outputs
+    // (hardware/<mac>/oc/dx/outN/{enabled,label}), which reach this Core's
+    // radio through the "ocDx" reload (RadioModel's AnvelinaDxOutputs ->
+    // RadioConnection::setOcExtrasByte, P2 byte 1397) at once, keyed or
+    // not. A Core below 14 reloads only the OC matrix for an oc/ key, so a
+    // window keeps the DX group closed.
     return m_radioModel->ioBoardFacade()->isBound() ? 14 : 2;
 }
 

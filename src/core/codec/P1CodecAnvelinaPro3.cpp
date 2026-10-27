@@ -61,9 +61,12 @@ void P1CodecAnvelinaPro3::composeCcForBank(int bank, const CodecContext& ctx,
         // C1 is the DX outputs' own byte (prn->oc_output_extras), not the
         // band OC byte this bank used to repeat.
         // NereusSDR-divergence: masked with kDxWireMask (0x1E, bits 1-4),
-        // not 0x0f, so DX OUT 10 (bit 4) reaches the radio. See
+        // not 0x0f, so DX OUT 10 (bit 4) would reach the radio. See
         // kDxWireMask in CodecContext.h (Spec page 2, "Structure of Byte
-        // 1397"; Orion.v:923 [@8e86a61]).
+        // 1397"; Orion.v:923 [@8e86a61]). Both sources describe Protocol 2
+        // byte 1397 only: no Protocol 1 Anvelina gateware is known, so this
+        // bank's bit layout follows the P2 spec by analogy, unverified on a
+        // radio.
         out[0] = (ctx.mox ? 0x01 : 0x00) | 0x26;
         out[1] = quint8(ctx.ocExtrasByte & kDxWireMask);
         out[2] = 0;

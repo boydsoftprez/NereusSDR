@@ -45,6 +45,10 @@
 //                All off) under User Dig Out, on an ANVELINAPRO3 only; held
 //                disabled with the reason while the radio is stopped
 //                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - Fix wave: a name saves when its edit finishes, not per
+//                keystroke; setDxOutputsAvailable gates the group in a
+//                remote window at radioHardwareVersion 14 (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -433,8 +437,12 @@ void OcOutputsTab::buildDxGroup()
             connect(cb, &QCheckBox::toggled, this, [this, out](bool on) {
                 m_model->anvelinaDxOutputsMutable().setOutputOn(out, on);
             });
-            connect(name, &QLineEdit::textEdited, this, [this, out](const QString& text) {
-                m_model->anvelinaDxOutputsMutable().setLabel(out, text);
+            // Saved when the edit finishes (Return or leaving the field),
+            // not per keystroke: in a remote window each save is a Core
+            // write and an "ocDx" reload whose echo would land mid-word.
+            connect(name, &QLineEdit::editingFinished, this, [this, out, name]() {
+                name->setModified(false);
+                m_model->anvelinaDxOutputsMutable().setLabel(out, name->text());
             });
         }
     }
@@ -498,9 +506,10 @@ void OcOutputsTab::syncDxFromModel()
             cb->setChecked(dx.outputOn(out));
         }
         if (QLineEdit* name = m_dxNames[static_cast<std::size_t>(column)]) {
-            // Only on a real change, so typing keeps its cursor.
+            // Only on a real change, so typing keeps its cursor, and never
+            // over an edit not yet finished (it saves on editingFinished).
             const QString label = dx.label(out);
-            if (name->text() != label) {
+            if (name->text() != label && !name->isModified()) {
                 const QSignalBlocker block(name);
                 name->setText(label);
             }
@@ -508,27 +517,43 @@ void OcOutputsTab::syncDxFromModel()
     }
 }
 
+void OcOutputsTab::setDxOutputsAvailable(bool available, const QString& reason)
+{
+    m_dxAvailable = available;
+    m_dxUnavailableReason = reason;
+    applyDxRunning();
+}
+
 void OcOutputsTab::applyDxRunning()
 {
     const bool running = m_model != nullptr && m_model->isConnected();
     const QString stopped = tr("The radio holds the DX outputs off while it is stopped.");
+    // A remote window on a Core that cannot apply the outputs: everything
+    // is a Core write, so all of it closes, and that reason wins.
+    const bool switchable = m_dxAvailable && running;
+    const QString closed = m_dxAvailable ? stopped : m_dxUnavailableReason;
     for (int column = 0; column < kDxOutputs; ++column) {
         if (QCheckBox* cb = m_dxChecks[static_cast<std::size_t>(column)]) {
-            cb->setEnabled(running);
-            cb->setToolTip(running
+            cb->setEnabled(switchable);
+            cb->setToolTip(switchable
                                ? tr("Switches USEROUT%1 on the Anvelina's DX connector.")
                                      .arg(dxOutputAt(column))
-                               : stopped);
+                               : closed);
+        }
+        if (QLineEdit* name = m_dxNames[static_cast<std::size_t>(column)]) {
+            name->setEnabled(m_dxAvailable);
+            name->setToolTip(m_dxAvailable ? tr("Your name for this output, shown here only")
+                                           : m_dxUnavailableReason);
         }
     }
     for (QPushButton* button : {m_dxAllOn, m_dxAllOff}) {
         if (button != nullptr) {
-            button->setEnabled(running);
-            button->setToolTip(running ? QString() : stopped);
+            button->setEnabled(switchable);
+            button->setToolTip(switchable ? QString() : closed);
         }
     }
     if (m_dxReason != nullptr) {
-        m_dxReason->setVisible(!running);
+        m_dxReason->setVisible(m_dxAvailable && !running);
     }
 }
 

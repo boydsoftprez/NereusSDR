@@ -60,6 +60,9 @@
 //   2026-10-26 - radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx"
 //                in a remote window (J.J. Boyd KG4VCF, AI-assisted: Claude
 //                Code).
+//   2026-10-26 - radioHardwareVersion 14: OC Outputs' Anvelina DX Outputs
+//                group in a remote window (J.J. Boyd KG4VCF, AI-assisted:
+//                Claude Code).
 // =================================================================
 
 //=================================================================
@@ -483,6 +486,12 @@ void HardwarePage::applyTransmitHardwareGates()
     m_ocOutputsTab->setTransmitPinsPermitted(offered && !onAir,
                                              offered ? RadioModel::onAirReason() : notOffered);
     m_ocOutputsTab->setPinActionsPermitted(offered, notOffered);
+    // radioHardwareVersion 14: the Anvelina DX Outputs, which the Core
+    // applies to its radio at once ("ocDx" reload). No on-air rule: the
+    // gateware takes byte 1397 keyed or not.
+    m_ocOutputsTab->setDxOutputsAvailable(
+        !m_remote || (link != nullptr && link->radioHardwareAvailable(14)),
+        IStationLink::dxOutputsUnavailableReason());
     m_paCalTab->setTransmitCalibrationPermitted(offered, notOffered);
     // The N2ADR switch: a Core at version 8 applies its whole preset, so
     // its tooltip no longer says it moves the receive filters only.
