@@ -16,14 +16,21 @@
 //   connection->cutTransmit() if a connection is set. Neither waits for the
 //   main thread or the connection thread; closeRfGate waits only for a TX
 //   I/Q block already inside sendTxIq (TxChannel's documented short spin).
-// - One mutex guards both targets and is held across cut(), so once
-//   setTargets returns, no cut can reach an object it replaced.
+// - hold(held) from any thread (2026-10-26): sets or clears only the TX
+//   channel's RfHold::Guard bit, if a TX channel is set; it never closes
+//   the gate or calls cutTransmit. On waits only for a TX I/Q block already
+//   inside sendTxIq (TxChannel::setRfHold's short spin); off never waits.
+// - One mutex guards both targets and is held across cut() and hold(), so
+//   once setTargets returns, neither can reach an object it replaced.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: hold(held) sets the TX
+//               channel's Guard hold bit. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -46,6 +53,9 @@ public:
     void setTargets(RadioConnection* connection, TxChannel* tx);
     // Any thread. Non-blocking apart from closeRfGate's short spin.
     void cut();
+    // Any thread. The TX channel's Guard hold bit only; never cutTransmit.
+    // Non-blocking apart from setRfHold's short spin.
+    void hold(bool held);
 
 private:
     std::mutex m_mutex;

@@ -66,6 +66,9 @@
 //   2026-10-22: PR 604: the SWR protection's open-antenna stop is a
 //               station stop in Thetis's warning words. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Claude Code.
+//   2026-10-26: Remote transmit hold then cut: setRfHold and the four hold
+//               properties, in a window's copy too. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/TransmitStateFacade.h"
@@ -575,6 +578,30 @@ bool TransmitState::recordStop(const QByteArray& reason, const QString& text,
     return true;
 }
 
+void TransmitState::setRfHold(bool held, const QString& reason)
+{
+    if (held) {
+        if (m_rfHeld && reason == m_rfHeldReason) {
+            return;
+        }
+        if (!m_rfHeld) {
+            m_rfHoldSinceMs = now();
+        }
+        m_rfHeld = true;
+        m_rfHeldReason = reason;
+        emit holdChanged();
+        return;
+    }
+    if (!m_rfHeld) {
+        return;
+    }
+    m_rfHeld = false;
+    m_rfHeldReason.clear();
+    m_rfLastHoldMs = std::max<qint64>(0, now() - m_rfHoldSinceMs);
+    ++m_rfHoldSerial;
+    emit holdChanged();
+}
+
 // ---- The stop texts ----
 
 QString TransmitState::durationText(int seconds)
@@ -753,6 +780,28 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
             emit adcRawChanged();
         }
         return true;
+    } else if (propertyName == "rfHeld" || propertyName == "rfHeldReason"
+               || propertyName == "rfHoldSerial" || propertyName == "rfLastHoldMs") {
+        // Remote transmit hold then cut: the Core's hold, as it sends it.
+        bool changed = false;
+        if (propertyName == "rfHeld") {
+            changed = value.toBool() != m_rfHeld;
+            m_rfHeld = value.toBool();
+        } else if (propertyName == "rfHeldReason") {
+            changed = value.toString() != m_rfHeldReason;
+            m_rfHeldReason = value.toString();
+        } else if (propertyName == "rfHoldSerial") {
+            const auto serial = static_cast<quint64>(value.toLongLong());
+            changed = serial != m_rfHoldSerial;
+            m_rfHoldSerial = serial;
+        } else {
+            changed = value.toLongLong() != m_rfLastHoldMs;
+            m_rfLastHoldMs = value.toLongLong();
+        }
+        if (changed) {
+            emit holdChanged();
+        }
+        return true;
     } else if (propertyName == "keyedForSeconds") {
         state = value.toLongLong() != m_stationKeyedForSeconds;
         m_stationKeyedForSeconds = value.toLongLong();
@@ -848,6 +897,13 @@ void TransmitState::clearStationValues()
         m_highSwr = false;
         m_swrWindBackLatched = false;
         emit swrChanged();
+    }
+    // Nothing is held on a Core that is gone; the last hold's serial and
+    // length stay, as the stop fields do.
+    if (m_rfHeld || !m_rfHeldReason.isEmpty()) {
+        m_rfHeld = false;
+        m_rfHeldReason.clear();
+        emit holdChanged();
     }
     // The stop fields stay: they say what happened, and the next Core's
     // values replace them.

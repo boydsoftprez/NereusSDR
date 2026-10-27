@@ -28,6 +28,11 @@
 //                 operator route, and release logical Off CWX activity
 //                 without an on-air stop notice. J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-26 - Remote transmit hold then cut: setRemoteRfHold sets a
+//                reason on the TX channel's RF hold and emits
+//                remoteRfHoldChanged on the mask's edges; MOX's return to
+//                receive clears every reason. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -3728,7 +3733,11 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     });
     if (m_moxController) {
         connect(m_moxController, &MoxController::stateChanged, this, [this](MoxState state) {
-            if (state == MoxState::Rx) { releaseHeldOnAirWork(); }
+            if (state == MoxState::Rx) {
+                releaseHeldOnAirWork();
+                // Remote transmit hold then cut: a hold belongs to one key.
+                clearRemoteRfHolds();
+            }
         });
     }
 
@@ -8786,6 +8795,33 @@ void RadioModel::wireTransmitProcessingChain()
     // connections are installed.
     if (m_moxController) {
         m_moxController->primeWdspState();
+    }
+}
+
+// Remote transmit hold then cut (2026-10-26). NereusSDR-original.
+void RadioModel::setRemoteRfHold(TxChannel::RfHold reason, bool on)
+{
+    const quint32 bit = static_cast<quint32>(reason);
+    const bool wasHeld = m_remoteRfHoldMask != 0u;
+    m_remoteRfHoldMask = on ? (m_remoteRfHoldMask | bit) : (m_remoteRfHoldMask & ~bit);
+    if (m_txChannel) {
+        m_txChannel->setRfHold(reason, on);
+    }
+    const bool held = m_remoteRfHoldMask != 0u;
+    if (held != wasHeld) {
+        emit remoteRfHoldChanged(held);
+    }
+}
+
+void RadioModel::clearRemoteRfHolds()
+{
+    const bool wasHeld = m_remoteRfHoldMask != 0u;
+    m_remoteRfHoldMask = 0u;
+    if (m_txChannel) {
+        m_txChannel->clearRfHolds();
+    }
+    if (wasHeld) {
+        emit remoteRfHoldChanged(false);
     }
 }
 

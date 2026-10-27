@@ -3,16 +3,18 @@
 // tests/tst_remote_tx_cut_guard.cpp  (NereusSDR)
 // =================================================================
 //
-// RemoteTxCutGuard: a keyed remote device's transmit is cut on the guard's
-// own thread when keepalives heard off the main thread stop for
-// RemoteTxWatchdog::kLinkLossDeadlineMs (400 ms), while the main thread is
-// held. "Main held" here means the test's main thread sleeps with
+// RemoteTxCutGuard: a keyed remote device's RF is held silent on the
+// guard's own thread when keepalives heard off the main thread stop for
+// more than kHoldMs (RemoteTxWatchdog::kLinkHoldMs), released when one is
+// heard again, and the transmit is cut once the silence passes kCutMs
+// (RemoteTxWatchdog::kLinkCutMs), while the main thread is held. "Main held" here means the test's main thread sleeps with
 // std::this_thread::sleep_for and runs no event loop (the guard is not a
 // QObject and needs none).
 //
-// Real time throughout: labelled realtime. A cut comes more than
-// kLinkLossDeadlineMs and at most kLinkLossDeadlineMs + 100 ms (500 ms)
-// after the last stamp, the bounds tst_tx_link_loss_each_path uses.
+// Real time throughout: labelled realtime. A hold comes more than kHoldMs
+// and at most kHoldMs + 100 ms after the last stamp, and a cut more than
+// kCutMs and at most kCutMs + 100 ms after it, the bounds
+// tst_tx_link_loss_each_path uses.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -22,7 +24,22 @@
 //   2026-10-16: a cut comes after more than kDeadlineMs of silence, never
 //               at it (the watchdog's rule): every bound is now strict.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the stop bound is named
+//               RemoteTxWatchdog::kLinkCutMs (renamed from
+//               kLinkLossDeadlineMs). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the guard holds RF at
+//               kHoldMs and cuts at kCutMs; a receipt during the hold
+//               releases it, and disarm() or a new arm() releases it
+//               before returning; the main thread is held 3500 ms.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: a guard
+//               destroyed while holding calls hold(false) exactly once,
+//               on the destroying thread, before its destructor returns,
+//               and never cuts. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
+
 
 #include "core/safety/RemoteTxCutGuard.h"
 
@@ -44,11 +61,16 @@ namespace {
 
 using Clock = RemoteTxCutGuard::Clock;
 
-constexpr qint64 kDeadlineMs = RemoteTxCutGuard::kDeadlineMs;
-constexpr qint64 kBoundMs = RemoteTxWatchdog::kLinkLossDeadlineMs + 100;
+constexpr qint64 kHoldMs = RemoteTxCutGuard::kHoldMs;
+constexpr qint64 kCutMs = RemoteTxCutGuard::kCutMs;
+constexpr qint64 kHoldBoundMs = RemoteTxWatchdog::kLinkHoldMs + 100;
+constexpr qint64 kBoundMs = RemoteTxWatchdog::kLinkCutMs + 100;
 constexpr auto kTick = 100ms;
 
-struct Cut {
+// What the guard called, in order: a hold (on or off) or a cut.
+struct Event {
+    enum class Kind { HoldOn, HoldOff, Cut };
+    Kind kind{Kind::Cut};
     quint64 epoch{0};
     quint64 serial{0};
     qint64 silentMs{0};
@@ -56,24 +78,49 @@ struct Cut {
     Clock::time_point at;
 };
 
-// Shared with the guard's CutFn; outlives the guard.
-struct CutLog {
+// Shared with the guard's CutFn and HoldFn; outlives the guard.
+struct EventLog {
     std::mutex mutex;
-    std::vector<Cut> cuts;
+    std::vector<Event> events;
 
-    RemoteTxCutGuard::CutFn fn()
+    RemoteTxCutGuard::CutFn cutFn()
     {
         return [this](quint64 epoch, quint64 serial, qint64 silentMs) {
-            const Clock::time_point at = Clock::now();
-            const std::lock_guard<std::mutex> lock(mutex);
-            cuts.push_back(Cut{epoch, serial, silentMs, std::this_thread::get_id(), at});
+            add(Event{Event::Kind::Cut, epoch, serial, silentMs, std::this_thread::get_id(),
+                      Clock::now()});
         };
     }
 
-    std::vector<Cut> snapshot()
+    RemoteTxCutGuard::HoldFn holdFn()
+    {
+        return [this](bool held) {
+            add(Event{held ? Event::Kind::HoldOn : Event::Kind::HoldOff, 0, 0, 0,
+                      std::this_thread::get_id(), Clock::now()});
+        };
+    }
+
+    std::vector<Event> snapshot()
     {
         const std::lock_guard<std::mutex> lock(mutex);
-        return cuts;
+        return events;
+    }
+
+    std::vector<Event> cuts()
+    {
+        std::vector<Event> out;
+        for (const Event& e : snapshot()) {
+            if (e.kind == Event::Kind::Cut) {
+                out.push_back(e);
+            }
+        }
+        return out;
+    }
+
+private:
+    void add(const Event& e)
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        events.push_back(e);
     }
 };
 
@@ -131,6 +178,49 @@ void holdMain(std::chrono::milliseconds forMs)
     std::this_thread::sleep_for(forMs);
 }
 
+// Sleeps the main thread (no event loop) until `done` or `forMs` passes.
+template <typename Done>
+bool holdMainUntil(Done done, std::chrono::milliseconds forMs)
+{
+    const Clock::time_point until = Clock::now() + forMs;
+    while (!done()) {
+        if (Clock::now() >= until) {
+            return false;
+        }
+        std::this_thread::sleep_for(2ms);
+    }
+    return true;
+}
+
+// One arm's whole silence, after `lastHeard`: a hold on, the cut, a hold
+// off, in that order, all on one thread that is neither main nor `other`.
+// The hold comes past kHoldMs and the cut past kCutMs, each within 100 ms.
+void verifyHoldThenCut(const std::vector<Event>& events, Clock::time_point lastHeard,
+                       quint64 epoch, quint64 serial, std::thread::id other)
+{
+    QCOMPARE(int(events.size()), 3);
+    const Event& on = events.at(0);
+    const Event& cut = events.at(1);
+    const Event& off = events.at(2);
+    QVERIFY(on.kind == Event::Kind::HoldOn);
+    QVERIFY(cut.kind == Event::Kind::Cut);
+    QVERIFY(off.kind == Event::Kind::HoldOff);
+    QVERIFY(on.thread != std::this_thread::get_id());
+    QVERIFY(on.thread != other);
+    QVERIFY(cut.thread == on.thread);
+    QVERIFY(off.thread == on.thread);
+    QCOMPARE(cut.epoch, epoch);
+    QCOMPARE(cut.serial, serial);
+    const qint64 holdAfter = msBetween(lastHeard, on.at);
+    QVERIFY2(holdAfter > kHoldMs && holdAfter <= kHoldBoundMs,
+             qPrintable(QStringLiteral("hold %1 ms after the last stamp").arg(holdAfter)));
+    const qint64 cutAfter = msBetween(lastHeard, cut.at);
+    QVERIFY2(cutAfter > kCutMs && cutAfter <= kBoundMs,
+             qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(cutAfter)));
+    QVERIFY2(cut.silentMs > kCutMs && cut.silentMs <= kBoundMs,
+             qPrintable(QStringLiteral("silentMs %1").arg(cut.silentMs)));
+}
+
 } // namespace
 
 class TestRemoteTxCutGuard : public QObject {
@@ -145,64 +235,60 @@ private slots:
     void heardOnMainHoldsJudgingGuard();
     void disarmAndRearm();
     void destroyingJudgingGuardIsPromptAndSilent();
+    void receiptDuringHoldReleasesItOnTheGuardThread();
+    void disarmDuringHoldReleasesBeforeReturning();
+    void rearmDuringHoldReleasesTheOldHold();
+    void destroyingAHoldingGuardReleasesOnceAndNeverCuts();
 };
 
-// Acceptance 1.
+// Acceptance 1: main held 3500 ms; RF held from about 400 ms and cut at
+// about 3000 ms after the last stamp, off the main thread.
 void TestRemoteTxCutGuard::cutsOnTimeWithMainHeld()
 {
-    CutLog log;
-    RemoteTxCutGuard guard(log.fn());
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
     const quint64 serial = guard.arm(7);
     QCOMPARE(serial, quint64(1));
 
     Feeder feeder(guard, 7, 500ms);
-    holdMain(1500ms);
+    holdMain(3500ms);
     feeder.join();
+    // Still held: the cut and its release, if they have not run yet.
+    std::this_thread::sleep_until(feeder.lastStamp() + std::chrono::milliseconds(kBoundMs + 50));
 
-    const std::vector<Cut> cuts = log.snapshot();
-    QCOMPARE(int(cuts.size()), 1);
-    const Cut& cut = cuts.front();
-    QVERIFY(cut.thread != std::this_thread::get_id());
-    QVERIFY(cut.thread != feeder.id());
-    QCOMPARE(cut.epoch, quint64(7));
-    QCOMPARE(cut.serial, serial);
-    const qint64 afterLast = msBetween(feeder.lastStamp(), cut.at);
-    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
-             qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
-    QVERIFY2(cut.silentMs > kDeadlineMs && cut.silentMs <= kBoundMs,
-             qPrintable(QStringLiteral("silentMs %1").arg(cut.silentMs)));
+    verifyHoldThenCut(log.snapshot(), feeder.lastStamp(), 7, serial, feeder.id());
     QVERIFY(!guard.isJudging());
+    QVERIFY(!guard.isHolding());
+
+    // Nothing more for that arm.
+    holdMain(std::chrono::milliseconds(kHoldBoundMs + 100));
+    QCOMPARE(int(log.snapshot().size()), 3);
 }
 
 // Acceptance 2.
 void TestRemoteTxCutGuard::noFalseCutWithStreamAliveWhileMainHeld()
 {
-    CutLog log;
-    RemoteTxCutGuard guard(log.fn());
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
     const quint64 serial = guard.arm(7);
 
     Feeder feeder(guard, 7, 1500ms);
     holdMain(1000ms);
-    QVERIFY(log.snapshot().empty());
+    QVERIFY(log.snapshot().empty());   // nothing held, nothing cut
     QVERIFY(guard.isJudging());
+    QVERIFY(!guard.isHolding());
 
     feeder.join();
     holdMain(std::chrono::milliseconds(kBoundMs + 200));
 
-    const std::vector<Cut> cuts = log.snapshot();
-    QCOMPARE(int(cuts.size()), 1);
-    QCOMPARE(cuts.front().epoch, quint64(7));
-    QCOMPARE(cuts.front().serial, serial);
-    const qint64 afterLast = msBetween(feeder.lastStamp(), cuts.front().at);
-    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
-             qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
+    verifyHoldThenCut(log.snapshot(), feeder.lastStamp(), 7, serial, feeder.id());
 }
 
 // Acceptance 3.
 void TestRemoteTxCutGuard::notJudgingBeforeOffMainReceipt()
 {
-    CutLog log;
-    RemoteTxCutGuard guard(log.fn());
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
     guard.arm(7);
 
     const Clock::time_point start = Clock::now();
@@ -239,8 +325,8 @@ void TestRemoteTxCutGuard::notJudgingBeforeOffMainReceipt()
 // Acceptance 4.
 void TestRemoteTxCutGuard::heardOnMainHoldsJudgingGuard()
 {
-    CutLog log;
-    RemoteTxCutGuard guard(log.fn());
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
     const quint64 serial = guard.arm(7);
     guard.heardOffMain(7, Clock::now());
     QVERIFY(guard.isJudging());
@@ -257,21 +343,16 @@ void TestRemoteTxCutGuard::heardOnMainHoldsJudgingGuard()
     QVERIFY(log.snapshot().empty());
 
     holdMain(std::chrono::milliseconds(kBoundMs + 200));
-    const std::vector<Cut> cuts = log.snapshot();
-    QCOMPARE(int(cuts.size()), 1);
-    QCOMPARE(cuts.front().serial, serial);
-    const qint64 afterLast = msBetween(lastStamp, cuts.front().at);
-    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
-             qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
+    verifyHoldThenCut(log.snapshot(), lastStamp, 7, serial, std::thread::id());
 }
 
 // Acceptance 5.
 void TestRemoteTxCutGuard::disarmAndRearm()
 {
-    CutLog log;
-    RemoteTxCutGuard guard(log.fn());
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
 
-    // disarm() before the deadline: no cut.
+    // disarm() before the hold: nothing held, no cut.
     const quint64 first = guard.arm(7);
     guard.heardOffMain(7, Clock::now());
     QVERIFY(guard.isJudging());
@@ -281,20 +362,19 @@ void TestRemoteTxCutGuard::disarmAndRearm()
     holdMain(std::chrono::milliseconds(kBoundMs + 100));
     QVERIFY(log.snapshot().empty());
 
-    // A fresh arm cuts on silence.
+    // A fresh arm holds, then cuts, on silence.
     const quint64 second = guard.arm(7);
     QVERIFY(second > first);
-    guard.heardOffMain(7, Clock::now());
+    const Clock::time_point heard2 = Clock::now();
+    guard.heardOffMain(7, heard2);
     holdMain(std::chrono::milliseconds(kBoundMs + 200));
-    std::vector<Cut> cuts = log.snapshot();
-    QCOMPARE(int(cuts.size()), 1);
-    QCOMPARE(cuts.back().serial, second);
+    verifyHoldThenCut(log.snapshot(), heard2, 7, second, std::thread::id());
 
-    // A heard after the cut does not undo it or start judging again.
+    // A heard after the cut does not undo it, hold or start judging again.
     guard.heardOffMain(7, Clock::now());
     QVERIFY(!guard.isJudging());
     holdMain(std::chrono::milliseconds(kBoundMs + 100));
-    QCOMPARE(int(log.snapshot().size()), 1);
+    QCOMPARE(int(log.snapshot().size()), 3);
 
     // arm(7) again after a cut: new serial, not judging until heardOffMain.
     const quint64 third = guard.arm(7);
@@ -302,26 +382,23 @@ void TestRemoteTxCutGuard::disarmAndRearm()
     QCOMPARE(guard.armSerial(), third);
     QVERIFY(!guard.isJudging());
     holdMain(std::chrono::milliseconds(kBoundMs + 100));
-    QCOMPARE(int(log.snapshot().size()), 1);
+    QCOMPARE(int(log.snapshot().size()), 3);
 
     const Clock::time_point heard = Clock::now();
     guard.heardOffMain(7, heard);
     QVERIFY(guard.isJudging());
     holdMain(std::chrono::milliseconds(kBoundMs + 200));
-    cuts = log.snapshot();
-    QCOMPARE(int(cuts.size()), 2);
-    QCOMPARE(cuts.back().serial, third);
-    QCOMPARE(cuts.back().epoch, quint64(7));
-    const qint64 afterLast = msBetween(heard, cuts.back().at);
-    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
-             qPrintable(QStringLiteral("cut %1 ms after the heard").arg(afterLast)));
+    const std::vector<Event> all = log.snapshot();
+    QCOMPARE(int(all.size()), 6);
+    verifyHoldThenCut(std::vector<Event>(all.begin() + 3, all.end()), heard, 7, third,
+                      std::thread::id());
 }
 
 // Acceptance 6.
 void TestRemoteTxCutGuard::destroyingJudgingGuardIsPromptAndSilent()
 {
-    CutLog log;
-    auto guard = std::make_unique<RemoteTxCutGuard>(log.fn());
+    EventLog log;
+    auto guard = std::make_unique<RemoteTxCutGuard>(log.cutFn(), log.holdFn());
     guard->arm(7);
     guard->heardOffMain(7, Clock::now());
     QVERIFY(guard->isJudging());
@@ -334,6 +411,134 @@ void TestRemoteTxCutGuard::destroyingJudgingGuardIsPromptAndSilent()
 
     holdMain(std::chrono::milliseconds(kBoundMs + 100));
     QVERIFY(log.snapshot().empty());
+}
+
+// A receipt during the hold, off main or on main: hold(false) on the
+// guard's thread, judging goes on, a later silence holds again, no cut.
+void TestRemoteTxCutGuard::receiptDuringHoldReleasesItOnTheGuardThread()
+{
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
+    guard.arm(7);
+    const Clock::time_point heard = Clock::now();
+    guard.heardOffMain(7, heard);
+
+    QVERIFY(holdMainUntil([&guard] { return guard.isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+    std::vector<Event> events = log.snapshot();
+    QCOMPARE(int(events.size()), 1);
+    QVERIFY(events.at(0).kind == Event::Kind::HoldOn);
+    const std::thread::id guardThread = events.at(0).thread;
+    QVERIFY(guardThread != std::this_thread::get_id());
+    const qint64 holdAfter = msBetween(heard, events.at(0).at);
+    QVERIFY2(holdAfter > kHoldMs && holdAfter <= kHoldBoundMs,
+             qPrintable(QStringLiteral("hold %1 ms after the heard").arg(holdAfter)));
+
+    // An off-main receipt releases it, on the guard's thread.
+    const Clock::time_point heardAgain = Clock::now();
+    guard.heardOffMain(7, heardAgain);
+    QVERIFY(holdMainUntil([&guard] { return !guard.isHolding(); }, 100ms));
+    QVERIFY(holdMainUntil([&log] { return log.snapshot().size() >= 2; }, 100ms));
+    events = log.snapshot();
+    QCOMPARE(int(events.size()), 2);
+    QVERIFY(events.at(1).kind == Event::Kind::HoldOff);
+    QVERIFY(events.at(1).thread == guardThread);
+    QVERIFY(guard.isJudging());
+
+    // A later silence holds again, from the new receipt.
+    QVERIFY(holdMainUntil([&guard] { return guard.isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+    events = log.snapshot();
+    QCOMPARE(int(events.size()), 3);
+    QVERIFY(events.at(2).kind == Event::Kind::HoldOn);
+    const qint64 againAfter = msBetween(heardAgain, events.at(2).at);
+    QVERIFY2(againAfter > kHoldMs && againAfter <= kHoldBoundMs,
+             qPrintable(QStringLiteral("second hold %1 ms after the heard").arg(againAfter)));
+
+    // An on-main receipt releases it the same way.
+    guard.heardOnMain(Clock::now());
+    QVERIFY(holdMainUntil([&guard] { return !guard.isHolding(); }, 100ms));
+    QVERIFY(holdMainUntil([&log] { return log.snapshot().size() >= 4; }, 100ms));
+    events = log.snapshot();
+    QCOMPARE(int(events.size()), 4);
+    QVERIFY(events.at(3).kind == Event::Kind::HoldOff);
+    QVERIFY(events.at(3).thread == guardThread);
+    QVERIFY(guard.isJudging());
+
+    guard.disarm();
+    holdMain(std::chrono::milliseconds(kBoundMs + 100));
+    QVERIFY(log.cuts().empty());
+    QCOMPARE(int(log.snapshot().size()), 4);
+}
+
+// disarm() during a hold: hold(false) before disarm() returns; no cut.
+void TestRemoteTxCutGuard::disarmDuringHoldReleasesBeforeReturning()
+{
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
+    guard.arm(7);
+    guard.heardOffMain(7, Clock::now());
+    QVERIFY(holdMainUntil([&guard] { return guard.isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+
+    guard.disarm();
+    std::vector<Event> events = log.snapshot();
+    QCOMPARE(int(events.size()), 2);
+    QVERIFY(events.at(0).kind == Event::Kind::HoldOn);
+    QVERIFY(events.at(1).kind == Event::Kind::HoldOff);
+    QVERIFY(!guard.isHolding());
+    QVERIFY(!guard.isJudging());
+
+    holdMain(std::chrono::milliseconds(kBoundMs + 100));
+    QCOMPARE(int(log.snapshot().size()), 2);
+}
+
+// A new arm() during the previous arm's hold releases that hold first.
+void TestRemoteTxCutGuard::rearmDuringHoldReleasesTheOldHold()
+{
+    EventLog log;
+    RemoteTxCutGuard guard(log.cutFn(), log.holdFn());
+    const quint64 first = guard.arm(7);
+    guard.heardOffMain(7, Clock::now());
+    QVERIFY(holdMainUntil([&guard] { return guard.isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+
+    const quint64 second = guard.arm(7);
+    QVERIFY(second > first);
+    std::vector<Event> events = log.snapshot();
+    QCOMPARE(int(events.size()), 2);
+    QVERIFY(events.at(1).kind == Event::Kind::HoldOff);
+    QVERIFY(!guard.isHolding());
+    QVERIFY(!guard.isJudging());
+
+    // The old arm is never cut; the new one is not judging yet.
+    holdMain(std::chrono::milliseconds(kBoundMs + 100));
+    QCOMPARE(int(log.snapshot().size()), 2);
+}
+
+// Fix wave A: destroyed while holding, the guard calls hold(false) once,
+// on the destroying thread, before its destructor returns; no cut and
+// nothing else runs after it.
+void TestRemoteTxCutGuard::destroyingAHoldingGuardReleasesOnceAndNeverCuts()
+{
+    EventLog log;
+    auto guard = std::make_unique<RemoteTxCutGuard>(log.cutFn(), log.holdFn());
+    guard->arm(7);
+    guard->heardOffMain(7, Clock::now());
+    QVERIFY(guard->isJudging());
+    QVERIFY(holdMainUntil([&guard] { return guard->isHolding(); },
+                          std::chrono::milliseconds(kHoldBoundMs + 100)));
+
+    guard.reset();
+    const std::vector<Event> events = log.snapshot();
+    QCOMPARE(int(events.size()), 2);
+    QVERIFY(events.at(0).kind == Event::Kind::HoldOn);
+    QVERIFY(events.at(1).kind == Event::Kind::HoldOff);
+    QVERIFY(events.at(1).thread == std::this_thread::get_id());
+
+    holdMain(std::chrono::milliseconds(kBoundMs + 100));
+    QCOMPARE(int(log.snapshot().size()), 2);
+    QVERIFY(log.cuts().empty());
 }
 
 QTEST_GUILESS_MAIN(TestRemoteTxCutGuard)

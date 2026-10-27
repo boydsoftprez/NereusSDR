@@ -85,6 +85,12 @@
 //   2026-10-27: PR 670 fix wave 4: every second press waits for the last
 //               sweep's tuning=0 (in place of a fixed wait). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: a 1 s link hold during a
+//               device's tune keeps the cycle, MOX and TUNE with the
+//               carrier held silent, and moves neither the tuner nor the
+//               amplifier; a 3 s silence ends the cycle with the lost
+//               link's stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -98,8 +104,10 @@
 #include "core/TuneMemoryStore.h"
 #include "core/TxChannel.h"
 #include "core/WdspEngine.h"
+#include "core/safety/RemoteTxWatchdog.h"
 #include "core/safety/TransmitHolder.h"
 #include "core/safety/TxRefusal.h"
+#include "core/session/TransmitStateFacade.h"
 #include "models/SliceModel.h"
 
 #include <QApplication>
@@ -2487,6 +2495,150 @@ private slots:
         QTRY_COMPARE(mox->state(), MoxState::Rx);
         QTRY_VERIFY(!core.model->isTune());
         QVERIFY(!core.model->isTgxlAutotuneInProgress());
+    }
+
+    // Remote transmit hold then cut: the device's link goes quiet for 1 s
+    // during its Tuner Genius tune, sweep running. The Core holds the
+    // carrier silent (the TX channel's link hold) and keeps the cycle, MOX
+    // and TUNE; the keepalive that ends the hold gives the carrier back.
+    // Neither the tuner's nor the amplifier's state moves for the hold.
+    void aLinkHoldDuringADevicesTuneKeepsTheCycle()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        MoxController* mox = core.model->moxController();
+        QSignalSpy held(core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        QSignalSpy ended(core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded);
+        QSignalSpy tripped(core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY(mox->isMox());
+        QTRY_COMPARE_WITH_TIMEOUT(tuner.count(QStringLiteral("autotune")), 1, 3000);
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        QTest::qWait(100);
+        QVERIFY(mox->isMox());
+        QCOMPARE(core.model->keyedBy().deviceId, a.key.fingerprint());
+        const qint64 epoch = core.model->keyedBy().epoch;
+        QVERIFY(!core.tx.isRfHeld());
+
+        // What the tuner and the amplifier show before the hold.
+        const int autotunes = tuner.count(QStringLiteral("autotune"));
+        const bool tuneSeen = tuner.lan.tuneSeen();
+        const bool gateOpen = core.tx.isRfGateOpen();
+        const bool ampChanging = core.model->ampChangingOver();
+        const QStringList ampWire = core.model->pgxlConnection()->recentWireForTesting();
+        const auto unchanged = [&]() {
+            QVERIFY(core.model->isTgxlAutotuneInProgress());
+            QCOMPARE(core.model->tgxlAutotuneDeviceId(), a.key.fingerprint());
+            QVERIFY(core.model->isTune());
+            QVERIFY(mox->isMox());
+            QCOMPARE(tuner.count(QStringLiteral("autotune")), autotunes);
+            QCOMPARE(tuner.lan.tuneSeen(), tuneSeen);
+            QCOMPARE(core.tx.isRfGateOpen(), gateOpen);
+            QCOMPARE(core.model->ampChangingOver(), ampChanging);
+            QCOMPARE(core.model->pgxlConnection()->recentWireForTesting(), ampWire);
+        };
+
+        // 1 s of link silence on the Core's clock, which moves with real
+        // time here, 50 ms a step, so the watchdog's real timer finds it
+        // moved.
+        for (int i = 0; i < 20; ++i) {
+            core.now += 50;
+            QTest::qWait(50);
+        }
+        QCOMPARE(held.count(), 1);
+        QCOMPARE(tripped.count(), 0);
+        QVERIFY(core.tx.isRfHeld());
+        QVERIFY(core.model->isRemoteRfHeld());
+        unchanged();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // The link is back: the carrier with it, the cycle never left.
+        QVERIFY(core.invoke(appA, "tx.keepalive", {int64("sequence", 1), int64("epoch", epoch)})
+                    .value(QStringLiteral("accepted"))
+                    .toBool());
+        QTRY_COMPARE(ended.count(), 1);
+        QCOMPARE(ended.first().at(2).value<RemoteTxWatchdog::HoldEnd>(),
+                 RemoteTxWatchdog::HoldEnd::Heard);
+        QVERIFY(!core.tx.isRfHeld());
+        QVERIFY(!core.model->isRemoteRfHeld());
+        unchanged();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(tripped.count(), 0);
+
+        // The sweep ends the cycle as usual.
+        tuner.push(QStringLiteral("S0|state tuning=0"));
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTune());
+        QVERIFY(!core.model->isTgxlAutotuneInProgress());
+        QCOMPARE(tripped.count(), 0);
+    }
+
+    // The same tune with the link quiet for 3 s: held, then cut. The
+    // cycle ends as any keyed cycle does (the lost link's stop on
+    // txState), the tuner is told tune=0, and the device gets no
+    // tuneEnded notice.
+    void aQuietLinkDuringADevicesTuneEndsTheCycle()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        MoxController* mox = core.model->moxController();
+        QSignalSpy held(core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        QSignalSpy tripped(core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY(mox->isMox());
+        QTRY_COMPARE_WITH_TIMEOUT(tuner.count(QStringLiteral("autotune")), 1, 3000);
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        QTest::qWait(100);
+        QVERIFY(mox->isMox());
+        const QStringList ampWire = core.model->pgxlConnection()->recentWireForTesting();
+
+        bool cycleRanWhileHeld = false;
+        for (int i = 0; i < 80 && tripped.isEmpty(); ++i) {
+            core.now += 50;
+            QTest::qWait(50);
+            if (held.count() == 1 && tripped.isEmpty() && core.tx.isRfHeld()) {
+                cycleRanWhileHeld = cycleRanWhileHeld
+                    || (core.model->isTgxlAutotuneInProgress() && mox->isMox());
+            }
+        }
+        QCOMPARE(held.count(), 1);
+        QVERIFY(cycleRanWhileHeld);
+        QCOMPARE(tripped.count(), 1);
+        QVERIFY(!tripped.first().at(1).toBool());
+        const qint64 silent = tripped.first().at(2).toLongLong();
+        QVERIFY2(silent > RemoteTxWatchdog::kLinkCutMs
+                     && silent <= RemoteTxWatchdog::kLinkCutMs + 100,
+                 qPrintable(QString::number(silent)));
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTune());
+        QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
+        QVERIFY(!core.tx.isRfHeld());
+        TransmitState* const state = core.server->transmitState();
+        QTRY_COMPARE(state->stopSerial(), quint32(1));
+        QCOMPARE(state->stopReason(), QStringLiteral("linkLost"));
+        QCOMPARE(state->stopText(),
+                 QStringLiteral("The link to iPhone went quiet, so the Core stopped transmitting."));
+        QTRY_VERIFY(!tuner.lan.tuneSeen());
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 1);
+        QCOMPARE(core.model->pgxlConnection()->recentWireForTesting(), ampWire);
+        QTest::qWait(300);
+        QVERIFY(tuneEndedNotices(appA).isEmpty());
     }
 
     // A device's cycle whose tuner never starts its sweep drops after the

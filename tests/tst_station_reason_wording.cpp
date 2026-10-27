@@ -104,6 +104,10 @@
 //                                    sessionTransmitRefusal(it.key()), the
 //                                    tuner give-back's permission recheck.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  Remote transmit hold then cut: txState's
+//                                    rfHeldReason is a code ("link",
+//                                    "mic"), placed beside stopReason.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX-only values 4 and 5 insert two of
 //                                    the SKU's receive-only names.
 //                                    AI tooling: Anthropic Claude Code.
@@ -1990,9 +1994,12 @@ const QList<ReasonSource>& reasonSources()
         // iPhone app plan Task 39: txState's stopReason is the wire code
         // (linkLost, timeOut, ...), never shown; its words are stopText,
         // scanned with the property texts. Task 38's lastTransmitStopReason
-        // is a code, which half and a limit, never shown either.
-        {"src/core/session/TransmitStateFacade.h", {QStringLiteral("stopReason")}, {}, 0, {},
-         {QStringLiteral("m_stopReason")}},
+        // is a code, which half and a limit, never shown either. Remote
+        // transmit hold then cut: rfHeldReason is a code too ("link" or
+        // "mic"), never shown; the Held words are the app's own.
+        {"src/core/session/TransmitStateFacade.h",
+         {QStringLiteral("stopReason"), QStringLiteral("rfHeldReason")}, {}, 0, {},
+         {QStringLiteral("m_stopReason"), QStringLiteral("m_rfHeldReason")}},
         {"src/models/RadioModel.h", {QStringLiteral("lastTransmitStopReason")}, {}, 0, {},
          {QStringLiteral("m_lastTransmitStopReason")}},
     };

@@ -15,6 +15,12 @@
 //                                    watchdog stops) and through the
 //                                    station (sign-in, close, heartbeat).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  Remote transmit hold then cut: the
+//                                    hold's start and end lines.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  Fix wave B: the "TUNE or two-tone
+//                                    started" and "a new key" ends.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -102,7 +108,8 @@ private:
     static void handle(QtMsgType type, const QMessageLogContext& context, const QString& msg)
     {
         if (msg.startsWith(QStringLiteral("Control ")) || msg.startsWith(QStringLiteral("Keepalive "))
-            || msg.startsWith(QStringLiteral("Transmit watchdog stop "))) {
+            || msg.startsWith(QStringLiteral("Transmit watchdog stop "))
+            || msg.startsWith(QStringLiteral("Transmit hold "))) {
             s_lines.append(msg);
             return;
         }
@@ -700,6 +707,49 @@ private slots:
                             "keepalive came on the media connection's tx data channel, received "
                             "404 ms ago; no control message taken on this connection; control "
                             "link: send backlog 1234 bytes")});
+    }
+
+    // Remote transmit hold then cut (decision 8): a hold's start names the
+    // silence that started it, its end its own length and how it ended,
+    // with the device in hex as the watchdog's stop line has it.
+    void transmitHoldsAreLoggedWithTheirLengthAndEnd()
+    {
+        ControlLog log;
+        log.setClock([this]() { return m_nowMs; });
+        LogCapture capture;
+        const QByteArray id = QByteArrayLiteral("\xab\xcd");
+        log.transmitHoldStarted(id, QStringLiteral("link"), 401);
+        log.transmitHoldEnded(id, 1099, QStringLiteral("keepalives returned"));
+        log.transmitHoldStarted(id, QStringLiteral("mic"), 250);
+        log.transmitHoldEnded(id, 9750, QStringLiteral("cut"));
+        log.transmitHoldStarted(id, QStringLiteral("link"), 450);
+        log.transmitHoldEnded(id, 2601, QStringLiteral("cut"));
+        log.transmitHoldEnded(id, 12, QStringLiteral("the key ended"));
+        log.transmitHoldEnded(id, 30, QStringLiteral("link closed"));
+        log.transmitHoldEnded(id, 7, QStringLiteral("audio returned"));
+        log.transmitHoldEnded(id, 40, QStringLiteral("TUNE or two-tone started"));
+        log.transmitHoldEnded(id, 55, QStringLiteral("a new key"));
+        QCOMPARE(capture.lines(QStringLiteral("Transmit hold ")),
+                 (QStringList{
+                     QStringLiteral("Transmit hold for abcd: no keepalive for 401 ms; RF off, "
+                                    "still keyed"),
+                     QStringLiteral("Transmit hold for abcd ended after 1099 ms: keepalives "
+                                    "returned"),
+                     QStringLiteral("Transmit hold for abcd: no microphone audio for 250 ms; RF "
+                                    "off, still keyed"),
+                     QStringLiteral("Transmit hold for abcd ended after 9750 ms: cut"),
+                     QStringLiteral("Transmit hold for abcd: no keepalive for 450 ms; RF off, "
+                                    "still keyed"),
+                     QStringLiteral("Transmit hold for abcd ended after 2601 ms: cut"),
+                     QStringLiteral("Transmit hold for abcd ended after 12 ms: the key ended"),
+                     QStringLiteral("Transmit hold for abcd ended after 30 ms: link closed"),
+                     QStringLiteral("Transmit hold for abcd ended after 7 ms: audio returned"),
+                     QStringLiteral("Transmit hold for abcd ended after 40 ms: TUNE or "
+                                    "two-tone started"),
+                     QStringLiteral("Transmit hold for abcd ended after 55 ms: a new key"),
+                 }));
+        // The watchdog's stop line is unchanged beside them.
+        QCOMPARE(capture.lines(QStringLiteral("Transmit watchdog stop ")).size(), 0);
     }
 
     // ---- Through the station ----
