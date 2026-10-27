@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: passive audioRestartTimingForTest records the exact retry
+//               scheduling inputs and selected delay. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-22: RemoteDisplayTelemetry::rowsBlanked, the waterfall rows the
 //               pans' NB Blank replaced, for the diagnostics line.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -613,6 +616,18 @@ public:
     /// Test only: whether an audio restart is waiting on its backoff step
     /// (so a test can order a media move against it; no production caller).
     bool audioRestartPendingForTest() const;
+    /// Test only: the last retry's scheduling inputs and result, plus the
+    /// latest request's timestamp, all on the controller's elapsed clock.
+    /// Reading does not advance the backoff. No production caller.
+    struct AudioRestartTimingForTest {
+        qint64 requestMs = -1;
+        qint64 scheduledAtMs = -1;
+        qint64 scheduledFromRequestMs = -1;
+        int delayMs = 0;
+        int streak = 0;
+        quint32 revision = 0;
+    };
+    AudioRestartTimingForTest audioRestartTimingForTest() const;
     /// Test only: while held, an audio restart's backoff step that comes
     /// due waits instead of running; releasing runs it (through the same
     /// fence as ever). No production caller.
