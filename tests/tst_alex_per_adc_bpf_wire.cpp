@@ -305,7 +305,12 @@ private slots:
 
     // Bench row 15's second half: putting the slice back on ANT1 must put
     // both slices back on one chain, which is two bands again, which is
-    // BYPASS again. The chain-1 word goes back to "no decision".
+    // BYPASS again. Idle input 2 follows Slice B's 14.2 MHz row.
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //   [original inline comment from console.cs:15449]
+    //                case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    // From Thetis console.cs:15435-15444 [v2.10.3.15]; row bits and edges
+    // are in AlexFilterMap.cpp:253-257, 312-314 (11 to 22 MHz -> 0x01).
     void saturn_moving_back_to_ant1_recombines_the_two_slices()
     {
         RadioModel model;
@@ -344,7 +349,7 @@ private slots:
                  AlexController::BpfEffective::Bypass);
         QVERIFY(!mock->bpfCalls.isEmpty());
         QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, 0x20);
-        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, -1);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, 0x01);
 
         delete mock;
     }
