@@ -585,10 +585,10 @@ CwxSender::CwxSender(Clock clock, Sleeper sleeper, QObject* parent)
     m_thread = std::thread([this] { run(); });
 }
 
-// NereusSDR-original mailbox installation, atomic binding and publication.
-// Consumption intentionally does not mutate pending flags; checkpoint stubs
-// still deny recovery. No production caller/run-loop integration is
-// supplied here.
+// NereusSDR-original mailbox installation, binding, publication and drain.
+// Matching drains preserve binding and clear only pending request flags.
+// Checkpoint stubs still deny recovery. No production caller/run-loop
+// integration is supplied here.
 void CwxSender::setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state)
 {
     const std::lock_guard<std::mutex> lock(m_mutex);
@@ -674,7 +674,7 @@ void CwxSender::publishRemoteRequest(quint32 epoch, quint32 request) noexcept
 
 quint32 CwxSender::takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept
 {
-    const quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
     if (expectedEpoch == 0
         || static_cast<quint32>(candidate >> kRemoteEpochShift) != expectedEpoch) {
         return 0;
@@ -685,8 +685,17 @@ quint32 CwxSender::takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept
                                                expectedEpoch, candidate);
     }
 #endif
-    // Deliberately absent: full-word CAS clearing FLAGS ONLY, retaining
-    // matching live binding, returning captured flags for checkpoint work.
+    const quint64 pendingMask = quint64{kRemotePauseRequest} | quint64{kRemoteCancelRequest};
+    while (static_cast<quint32>(candidate >> kRemoteEpochShift) == expectedEpoch) {
+        const quint32 requests = static_cast<quint32>(candidate & pendingMask);
+        if (requests == 0) { return 0; }
+        const quint64 drained = candidate & ~pendingMask;
+        if (m_remoteRequests.compare_exchange_weak(candidate, drained, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            return requests;
+        }
+        // Retry the ORIGINAL captured epoch; never drain a successor's word.
+    }
     return 0;
 }
 
