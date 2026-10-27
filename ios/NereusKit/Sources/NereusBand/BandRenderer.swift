@@ -1623,6 +1623,8 @@ public final class BandRenderer {
         uniforms.capacity = UInt32(stack.capacity)
         uniforms.count = UInt32(stack.count)
         uniforms.newestRow = UInt32(stack.storageRow(age: 0))
+        let mesh = StackedTrace.meshColumns(columns: stack.columns, rowSpan: rowSpan)
+        uniforms.meshColumns = UInt32(mesh)
         // Only the plot: the surface never reaches the strip or the waterfall.
         let width = min(Int(geometry.size.width), Int(target.width))
         let height = min(Int(geometry.size.height), Int(target.height))
@@ -1638,13 +1640,13 @@ public final class BandRenderer {
         encoder.setFragmentTexture(palette, index: 0)
         // The back's two layers, the rows that glide between, the front's
         // two layers; the shader leaves out the rows the stack does not hold.
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: mesh * 2,
                                instanceCount: StackedTrace.visibleRows + 2)
         // The ridge lines over the whole stack, one at each row's depth from
         // the front back, each in two layers.
         let lineDepths = min(stack.count, stack.capacity, StackedTrace.visibleRows)
         encoder.setRenderPipelineState(stackedLinePipeline)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: mesh * 2,
                                instanceCount: lineDepths * 2)
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(target.width), height: Int(target.height)))
     }
@@ -1839,7 +1841,7 @@ public final class BandRenderer {
 
 /// The 3D view's shader uniforms, laid out as `StackedUniforms` in
 /// `Band.metal`: nine four-float rows and two arrays of eight, then the
-/// viewport and four counts.
+/// viewport and five counts.
 struct StackedUniforms {
     typealias Eight = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                        SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -1860,6 +1862,7 @@ struct StackedUniforms {
     var capacity: UInt32 = 0
     var count: UInt32 = 0
     var newestRow: UInt32 = 0
+    var meshColumns: UInt32 = 0
 
     mutating func setShadows(_ bands: [SIMD4<Float>], cues colours: [SIMD4<Float>]) {
         func eight(_ list: [SIMD4<Float>]) -> Eight {

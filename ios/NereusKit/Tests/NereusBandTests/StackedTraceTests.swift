@@ -699,7 +699,8 @@ import Testing
 
     /// The height curve lifts the band just over the floor (0.6), each
     /// curtain's colour falls to 0.6 of the ridge's share at the floor,
-    /// the rows' ends fade over 8 pixels, and a row keeps 768 columns.
+    /// the rows' ends fade over 8 pixels, and a row keeps the desktop's 768
+    /// columns across the pan, so 2195 across the widest row.
     @Test func theSurfaceIsShapedLikeTheDesktops() {
         let geometry = Self.geometry()
         // Floor -126 (-120 less 3D Floor's 6), height range 100 dB.
@@ -716,11 +717,39 @@ import Testing
         #expect(StackedTraceGeometry.sideFade(pixels: 4) == 0.5)
         #expect(StackedTraceGeometry.sideFade(pixels: 8) == 1 && StackedTraceGeometry.sideFade(pixels: 30) == 1)
         #expect(StackedTrace.lineHalfWidthPixels == 1)
-        #expect(StackedTrace.maxColumns == 768)
+        #expect(StackedTrace.panColumns == 768)
+        #expect(StackedTrace.maxColumns == 2195, "768 across each of the widest row's 2.86 pans")
         var stack = StackedTraceHistory(smoothsRows: false)
         stack.append(frame: BandFixtures.frame(trace: [Float](repeating: -120, count: 400)),
                      coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000), wide: nil, time: 1)
-        #expect(stack.columns == 768, "400 samples across the pan, 1143 across the widest row, kept to 768")
+        #expect(stack.columns == 1143, "400 samples across the pan, one column a sample across the widest row")
+        stack.append(frame: BandFixtures.frame(trace: [Float](repeating: -120, count: 1320)),
+                     coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000), wide: nil, time: 2)
+        #expect(stack.columns == 2195, "1320 samples across the pan, kept to 768 columns across it")
+    }
+
+    /// The surface's mesh lays as many columns across a row's span as the
+    /// rows hold there: never fewer, so no stored column (no narrow
+    /// carrier) is stepped over, and no more, so a narrow span draws fewer.
+    @Test func theMeshStepsOverNoColumn() {
+        let columns = StackedTrace.maxColumns
+        #expect(StackedTrace.meshColumns(columns: columns, rowSpan: StackedTrace.widestRowSpan) == columns)
+        #expect(StackedTrace.meshColumns(columns: columns, rowSpan: 5) == columns)
+        #expect(StackedTrace.meshColumns(columns: columns, rowSpan: 1) == 769)
+        let classic = StackedTrace.rowSpan(spanPercent: 100, shape: .forAngle(50),
+                                           availableFactor: StackedTrace.widestRowSpan)
+        #expect(StackedTrace.meshColumns(columns: columns, rowSpan: classic) == 1281)
+        for columns in [2, 286, 769, 1143, 1886, 2195] {
+            for rowSpan in stride(from: 1.0, through: StackedTrace.widestRowSpan, by: 0.0625) {
+                let mesh = StackedTrace.meshColumns(columns: columns, rowSpan: rowSpan)
+                let meshStep = rowSpan / Double(mesh)
+                let columnStep = StackedTrace.widestRowSpan / Double(columns)
+                #expect(meshStep <= columnStep * (1 + 1e-9), "\(columns) columns, span \(rowSpan): \(mesh)")
+                #expect(mesh <= columns)
+            }
+        }
+        #expect(StackedTrace.meshColumns(columns: 0, rowSpan: 1) == 2)
+        #expect(StackedTrace.meshColumns(columns: 100, rowSpan: .nan) == 100)
     }
 
     /// Draws `stack` over a plain band at `glide`.

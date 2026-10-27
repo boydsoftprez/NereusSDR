@@ -142,6 +142,7 @@ struct StackedUniforms {
     uint capacity;
     uint count;
     uint newestRow;
+    uint meshColumns;     // the mesh's columns across the row span
 };
 
 struct StackedOut {
@@ -213,12 +214,12 @@ vertex StackedOut bandStackedVertex(uint vertexId [[vertex_id]], uint instance [
         opacity = age == 0 ? glide : 1.0;
     }
     uint row = (u.newestRow + u.capacity - min(age, u.capacity - 1)) % u.capacity;
-    uint column = min(vertexId / 2, u.columns - 1);
+    uint column = min(vertexId / 2, u.meshColumns - 1);
     bool top = (vertexId & 1) == 0;
     float4 window = windows.read(uint2(0, row));
     // Emit the current view's mesh and sample the retained frequency window,
     // so a source/view change keeps real channels and known overhang aligned.
-    float unit = 0.5 + ((float(column) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    float unit = 0.5 + ((float(column) + 0.5) / float(u.meshColumns) - 0.5) * u.look.w;
     float2 sampled = stackedSample(unit, window, row, u, rows);
     float dbm = sampled.x;
     float d = clamp(depth, 0.0, 1.0);
@@ -322,10 +323,10 @@ vertex StackedLineOut bandStackedLineVertex(uint vertexId [[vertex_id]], uint in
     bool newer = (instance & 1) == 1;
     uint age = newer ? place : place + 1;
     uint row = (u.newestRow + u.capacity - min(age, u.capacity - 1)) % u.capacity;
-    uint column = min(vertexId / 2, u.columns - 1);
+    uint column = min(vertexId / 2, u.meshColumns - 1);
     float depth = float(place) / u.view.w;
     float4 window = windows.read(uint2(0, row));
-    float unit = 0.5 + ((float(column) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    float unit = 0.5 + ((float(column) + 0.5) / float(u.meshColumns) - 0.5) * u.look.w;
     float2 sampled = stackedSample(unit, window, row, u, rows);
     float dbm = sampled.x;
     bool ok = age < shown && sampled.y > 0.5 && isfinite(dbm) && window.y > 0.0;
@@ -333,9 +334,9 @@ vertex StackedLineOut bandStackedLineVertex(uint vertexId [[vertex_id]], uint in
     // Across the ridge from its neighbours, so a steep flank's line is as
     // wide as a flat top's.
     uint left = column > 0 ? column - 1 : column;
-    uint right = min(column + 1, u.columns - 1);
-    float leftUnit = 0.5 + ((float(left) + 0.5) / float(u.columns) - 0.5) * u.look.w;
-    float rightUnit = 0.5 + ((float(right) + 0.5) / float(u.columns) - 0.5) * u.look.w;
+    uint right = min(column + 1, u.meshColumns - 1);
+    float leftUnit = 0.5 + ((float(left) + 0.5) / float(u.meshColumns) - 0.5) * u.look.w;
+    float rightUnit = 0.5 + ((float(right) + 0.5) / float(u.meshColumns) - 0.5) * u.look.w;
     float leftDbm = stackedSample(leftUnit, window, row, u, rows).x;
     float rightDbm = stackedSample(rightUnit, window, row, u, rows).x;
     float2 along = stackedRidgePoint(rightUnit, isfinite(rightDbm) ? rightDbm : dbm, ok, depth, u)

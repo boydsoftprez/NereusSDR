@@ -121,10 +121,31 @@ public enum StackedTrace {
     public static let shadowStrength = 0.42
     public static let shadowCueStrength = 0.36
 
-    /// The most samples one stored row keeps across its window: the
-    /// desktop's 768, here across the widest row, so about 270 across the
-    /// pan (the desktop keeps its 768 across the pan alone).
-    public static let maxColumns = 768
+    /// The most columns a stored row keeps across the pan: the desktop's
+    /// 768. The spectrum beside the pan keeps the same density, so the
+    /// noise floor and a narrow carrier read the same at every depth.
+    public static let panColumns = 768
+
+    /// The most samples one stored row keeps across its window:
+    /// ``panColumns`` across each pan's width of the widest row, 2195 in
+    /// all. With 768 across the whole widest row a pan had about 270, so
+    /// each column took the peak of about five samples where the desktop's
+    /// takes two or three, and the phone's noise floor read about 2 dB
+    /// higher and its narrow carriers wider (2026-10-26).
+    public static let maxColumns = Int((Double(panColumns) * widestRowSpan).rounded(.up))
+
+    /// The columns the surface's mesh lays across a row `rowSpan` pans
+    /// wide, for rows of `columns` across the widest row: as many as the
+    /// rows hold across that span, so each step along the mesh moves at most
+    /// one stored column and no column (no narrow carrier) is stepped over,
+    /// and no more, so a narrower span draws fewer vertices. At least 2.
+    public static func meshColumns(columns: Int, rowSpan: Double) -> Int {
+        guard columns > 0, rowSpan.isFinite, rowSpan > 0 else {
+            return max(columns, 2)
+        }
+        let across = (Double(columns) * min(rowSpan, widestRowSpan) / widestRowSpan - 1e-9).rounded(.up)
+        return min(max(Int(across), 2), max(columns, 2))
+    }
 
     /// The five settings' defaults and limits (the Core's V12 rows).
     public static let floorDefaultDb = 6
