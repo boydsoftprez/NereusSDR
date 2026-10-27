@@ -80,11 +80,11 @@ bench (section 8).
 
   | Bank | Byte | Bits | Field | Cite |
   | --- | --- | --- | --- | --- |
-  | 12 | C2 | 6 | reverse paddles | nP1:619-620 |
-  | 12 | C3 | 5:0 | keyer speed, WPM | nP1:628 |
-  | 12 | C3 | 7:6 | `00` straight, `01` iambic A, `10` iambic B | nP1:622-627 |
-  | 12 | C4 | 6:0 | weight | nP1:629 |
-  | 12 | C4 | 7 | strict spacing | nP1:629 |
+  | 12 | C2 | 6 | reverse paddles | nP1:618-628 |
+  | 12 | C3 | 5:0 | keyer speed, WPM | nP1:618-628 |
+  | 12 | C3 | 7:6 | `00` straight, `01` iambic A, `10` iambic B | nP1:618-628 |
+  | 12 | C4 | 6:0 | weight | nP1:618-628 |
+  | 12 | C4 | 7 | strict spacing | nP1:618-628 |
   | 13 | C1 | byte | CW enable (internal keyer) | nP1:633-635 |
   | 13 | C2 | byte | sidetone level | nP1:636 |
   | 13 | C3 | byte | RF delay (key-down to RF), ms | nP1:637 |
@@ -653,8 +653,9 @@ and to CWU otherwise; with `cwAutoModeReturn` it returns to the old mode
 
 R-CW-38. The radio sidetone level is 0 unless `cwSidetone` and `cwRadioSidetone`
 are on and RADIO is not muted (R-SPK-09 note: RADIO mute silences the
-radio's sidetone too); otherwise `round(monitorVolume * 100 * 1.27)` in Semi and QSK
-and `round(monitorVolume * 100 * 0.73)` in Off (`console.cs:13046-13089`;
+radio's sidetone too); otherwise, with `txaf = round(monitorVolume * 100)` as an
+integer 0 to 100, `(int)(txaf * 1.27)` in Semi and QSK and `(int)(txaf * 0.73)` in
+Off, truncated as Thetis does and clamped to 0..127 (`console.cs:13046-13089`;
 NereusSDR uses one level in QSK so the CW page has one slider). P2 byte 5 bit 4
 is set when the level is above 0. The frequency is the pitch.
 

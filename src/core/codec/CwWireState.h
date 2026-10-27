@@ -72,7 +72,8 @@ NEREUS_CORE_EXPORT int cwHangMs(CwBreakInMode mode, int breakInDelayMs, int keyU
 NEREUS_CORE_EXPORT int cwRfDelayMs(int keyDownMs, int speedWpm);
 
 // 0 unless sidetone, radioSidetone and !radioMuted all allow;
-// round(v*100*1.27) Semi/Qsk, round(v*100*0.73) Off, v clamped to 0..1.
+// txaf = round(v*100) with v clamped to 0..1; then (int)(txaf*1.27) in
+// Semi/Qsk and (int)(txaf*0.73) in Off, clamped to 0..127.
 // From Thetis console.cs:13046-13089 [v2.10.3.15]
 // Upstream comment preserved verbatim (console.cs:13048):
 //   //[2.10.3.6]MW0LGE changed to one location as code was everywhere previously

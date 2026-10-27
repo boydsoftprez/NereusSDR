@@ -23,9 +23,8 @@ namespace {
 // From Thetis console.cs:13065-13069 [v2.10.3.15]
 //   vol = (int)(txaf * 0.73);   // BreakIn.Manual
 //   vol = (int)(txaf * 1.27);   // otherwise
-// Kept as integer hundredths so the rounding is exact.
-constexpr int kSidetoneScaleBreakInHundredths = 127;
-constexpr int kSidetoneScaleManualHundredths = 73;
+constexpr double kSidetoneScaleBreakIn = 1.27;
+constexpr double kSidetoneScaleManual = 0.73;
 
 // From deskHPSDR old_protocol.c:2828 [@f3d857c]
 //   uint8_t rfmax = 900 / cw_keyer_speed;
@@ -70,12 +69,13 @@ int cwRadioSidetoneLevel(bool sidetone, bool radioSidetone, bool radioMuted,
     if (!sidetone || !radioSidetone || radioMuted) {
         return 0;
     }
-    // Thetis's txaf is the 0..100 TX AF level; NereusSDR's monitor volume is
-    // 0..1. The spec rounds where Thetis truncates (R-CW-38).
+    // Thetis's txaf is the integer 0..100 TX AF level; NereusSDR's monitor
+    // volume is 0..1, so it is rounded to that integer first. The product is
+    // then truncated, as Thetis's (int) cast does (R-CW-38).
     const int txaf = static_cast<int>(std::lround(std::clamp(monitorVolume, 0.0f, 1.0f) * 100.0f));
-    const int scale = (mode == CwBreakInMode::Off) ? kSidetoneScaleManualHundredths
-                                                   : kSidetoneScaleBreakInHundredths;
-    const int level = (txaf * scale + 50) / 100;
+    const double scale = (mode == CwBreakInMode::Off) ? kSidetoneScaleManual
+                                                      : kSidetoneScaleBreakIn;
+    const int level = static_cast<int>(txaf * scale);
     return std::clamp(level, 0, kCwWireSidetoneLevelMax);
 }
 

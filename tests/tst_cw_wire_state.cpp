@@ -121,11 +121,14 @@ private slots:
 
     void sidetoneLevel()
     {
-        // 63.5 rounds to 64.
-        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Semi, 0.5f), 64);
-        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Qsk, 0.5f), 64);
-        // 36.5 rounds to 37.
-        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Off, 0.5f), 37);
+        // Thetis truncates: (int)(50 * 1.27) = 63, (int)(50 * 0.73) = 36
+        // (console.cs:13065-13069 [v2.10.3.15]).
+        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Semi, 0.5f), 63);
+        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Qsk, 0.5f), 63);
+        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Off, 0.5f), 36);
+        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Off, 1.0f), 73);
+        // The monitor volume rounds to the integer txaf first: 0.506 is 51.
+        QCOMPARE(cwRadioSidetoneLevel(true, true, false, CwBreakInMode::Semi, 0.506f), 64);
         QCOMPARE(cwRadioSidetoneLevel(true, true, true, CwBreakInMode::Semi, 0.5f), 0);
         QCOMPARE(cwRadioSidetoneLevel(true, false, false, CwBreakInMode::Semi, 1.0f), 0);
         QCOMPARE(cwRadioSidetoneLevel(false, true, false, CwBreakInMode::Semi, 1.0f), 0);
