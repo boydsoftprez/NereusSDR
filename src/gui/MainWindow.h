@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Remote transmit hold then cut: m_txHeld and
+//               refreshTxStatusBadge(), so the TX badge reads "Held" while
+//               the Core holds a remote key's RF. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -288,6 +292,7 @@ namespace NereusSDR {
 enum class ToastSeverity : int;
 
 class RadioModel;
+class TxHeldIndicator;
 class MeterItem;
 class ContainerButtonDispatcher;
 class ConnectionPanel;
@@ -2058,6 +2063,11 @@ private:
     QPointer<class StatusToast> m_txInhibitToast;
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
+    // Remote transmit hold then cut: what the TX badge shows while the
+    // Core holds a remote key's RF ("Held"), and MOX otherwise. Painted
+    // by refreshTxStatusBadge(); a child of this window.
+    TxHeldIndicator* m_txHeld{nullptr};
+    void refreshTxStatusBadge();
     // Task 78: who holds transmit when it is another device (or the
     // radio), beside the TX badge in the safety group. Hidden otherwise.
     StatusBadge* m_txHolderChip{nullptr};

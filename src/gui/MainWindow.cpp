@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Remote transmit hold then cut: the TX badge reads "Held" in
+//               amber while the Core holds a remote key's RF, from the
+//               Core's own TransmitState on the Core window and the
+//               mirrored one on a remote window (TxHeldIndicator,
+//               refreshTxStatusBadge). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -1122,6 +1128,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
@@ -3073,6 +3080,11 @@ void MainWindow::refreshDesktopStationState()
         disconnect(m_desktopDevicesConnection);
         disconnect(m_desktopPresenceConnection);
         m_desktopBoundServer = server;
+        // Remote transmit hold then cut: the Core window's TX badge follows
+        // the hosted server's own TransmitState.
+        if (m_txHeld) {
+            m_txHeld->setTransmitState(server ? server->transmitState() : nullptr);
+        }
         // Slice control plan Task 10: the station device's requests go to
         // the server this window hosts now.
         if (m_hostingQuestionDialog) {
@@ -4453,6 +4465,9 @@ void MainWindow::ensureRemoteSession()
         }
         // iPhone app plan Task 39: the Core's transmit meters.
         wireRemoteTransmitMeters();
+        // Remote transmit hold then cut: the TX badge follows the Core's
+        // hold as this window's copy of txState reads it.
+        if (m_txHeld) { m_txHeld->setTransmitState(m_stationClient->transmitState()); }
         // iPhone app plan Task 25: the Core computer's VAX channels.
         wireRemoteStationVax();
         // iPhone app plan Task 78: several devices on one Core.
@@ -14152,21 +14167,27 @@ void MainWindow::buildStatusBar()
     safetyRow->addWidget(m_txHolderChip);
     hbox->addWidget(m_safetyGroup);
 
+    // Remote transmit hold then cut (decision 7): the TX badge reads
+    // "Held" in amber while the Core holds a remote key's RF. The
+    // indicator follows a TransmitState (the Core's own on the Core window,
+    // bound in refreshDesktopStationState; the mirrored one on a remote
+    // window, bound in ensureRemoteSession) and this window's MOX.
+    m_txHeld = new TxHeldIndicator(this);
+    connect(m_txHeld, &TxHeldIndicator::changed, this, &MainWindow::refreshTxStatusBadge);
+
     // Wire TX badge to MoxController. MoxController lives on m_radioModel;
     // both are created before buildStatusBar() runs.
     if (MoxController* mox = m_radioModel->moxController()) {
+        m_txHeld->setKeyed(mox->isMox());
         // Qt::UniqueConnection is not supported for lambda connects — this
         // connect runs once at construction so no deduplication is needed.
         connect(mox, &MoxController::moxStateChanged, this, [this](bool tx) {
+            m_txHeld->setKeyed(tx);
             // While inhibited the badge is showing the prohibition symbol and
             // must keep showing it; a MOX transition underneath must not
             // repaint over an active interlock.
             if (m_txInhibited) { return; }
-            m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
-            m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
-                                           : StatusBadge::Variant::Off);
-            m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
-                                           : tr("Receive (MOX off)"));
+            refreshTxStatusBadge();
         });
     }
 
@@ -14483,8 +14504,7 @@ void MainWindow::setTxInhibited(bool inhibited)
         // a property of transmit, so it belongs on the transmit indicator;
         // and the pill's abbreviation meant nothing to an operator who had
         // not read the source (bench report, 2026-08-03).
-        m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-prohibited.svg"));
-        m_txStatusBadge->setVariant(StatusBadge::Variant::Tx);
+        refreshTxStatusBadge();
         // The symbol says transmit is blocked; the toast says why, once, at
         // the moment it happens. Error severity because an interlock is
         // actively refusing the operator, which is what that level means.
@@ -14502,11 +14522,16 @@ void MainWindow::setTxInhibited(bool inhibited)
     }
     const bool tx = m_radioModel && m_radioModel->moxController()
                     && m_radioModel->moxController()->isMox();
-    m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
-    m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
-                                   : StatusBadge::Variant::Off);
-    m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
-                                   : tr("Receive (MOX off)"));
+    if (m_txHeld) { m_txHeld->setKeyed(tx); }
+    refreshTxStatusBadge();
+}
+
+// Remote transmit hold then cut (decision 7): the TX badge's look, from
+// the hold indicator and MOX; TX Inhibit's icon paints over every state.
+void MainWindow::refreshTxStatusBadge()
+{
+    if (!m_txStatusBadge || !m_txHeld) { return; }
+    m_txHeld->applyTo(m_txStatusBadge, m_txInhibited);
 }
 
 // ── Phase 23: TCI indicator update + Setup navigation ────────────────────────
