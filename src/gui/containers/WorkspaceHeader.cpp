@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (GUI M10): the header title
+//                 shortens anew after a font change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The source chip is a click target: it opens the source
@@ -313,6 +316,16 @@ protected:
     {
         QLabel::resizeEvent(event);
         refresh();
+    }
+    // A font set after construction (the workspace look's) changes the
+    // widths: ask again and shorten anew.
+    void changeEvent(QEvent* event) override
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange) {
+            updateGeometry();
+            refresh();
+        }
     }
 
 private:
