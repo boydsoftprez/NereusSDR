@@ -1,4 +1,12 @@
 #pragma once
+
+// Independently implemented from Thetis interface: this header declares
+// the NereusSDR editor's rows; the Thetis Setup ranges and their licence
+// are in LedItemEditor.cpp.
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I3): the marker above. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "BaseItemEditor.h"
 
 class QCheckBox;

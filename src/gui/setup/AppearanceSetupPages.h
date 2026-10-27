@@ -1,5 +1,13 @@
 #pragma once
 
+// Independently implemented from Thetis interface: this header declares
+// the NereusSDR Setup pages; the Thetis references and their licence are
+// in AppearanceSetupPages.cpp.
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I3): the marker above. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "gui/SetupPage.h"
 
 class QSlider;

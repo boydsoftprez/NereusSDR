@@ -2,6 +2,9 @@
 // tests/tst_signal_history.cpp — Task 3.3 Signal History Tests
 // =================================================================
 //
+// no-port-check: NereusSDR-original tests; the Thetis Setup range
+// (setup.designer.cs) is cited only as the fact a test checks.
+//
 // Test suite for HistoryGraphItem duration setting.
 // Verifies that setDurationMs() correctly configures the data buffer
 // and that MultimeterPage broadcasts to all HistoryGraphItem instances.
