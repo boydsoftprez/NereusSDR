@@ -129,20 +129,26 @@ import Testing
         #expect(abs(rise) < 0.05, "the columns that had wider windows sit \(rise) dB above the rest")
     }
 
-    /// The desktop keeps 768 columns across the pan; so does the phone, and
-    /// the Core's spectrum beside the pan at the same density. A line with
-    /// fewer samples than that gets one column a sample. 1320 is an iPhone
-    /// 18 Pro Max's line, one sample a pixel, and 660 the same at half detail.
-    @Test(arguments: [(1320, 768), (2000, 768), (660, 660), (400, 400)])
+    /// The desktop keeps 768 columns across the pan; so does the phone,
+    /// whatever the line's width (a column narrower than a sample takes the
+    /// one nearest its low edge), and its columns beside the pan run at the
+    /// same density. The Core's wide row is at most 768 samples across the
+    /// whole widest row (`SpectrumEndpoint::kMaxWideSamples`, which
+    /// MediaControlDecoder.swift:24 holds it to), about 269 a pan's width,
+    /// so beside the pan each wide sample fills about 2.9 columns. 1320 is
+    /// an iPhone 18 Pro Max's line, one sample a pixel, and 660 the same at
+    /// half detail.
+    @Test(arguments: [(1320, 768), (2000, 768), (660, 768), (400, 768)])
     func thePanHoldsTheDesktopsColumns(samples: Int, across: Int) throws {
         var history = StackedTraceHistory(smoothsRows: false)
         let wide = BandCoverage(centerHz: Self.coverage.centerHz, spanHz: Self.coverage.spanHz / 0.35)
-        let wideSamples = Int((Double(samples) / 0.35).rounded(.up))
+        let wideSamples = 768
         var frame = Self.frame([Float](repeating: -120, count: samples))
+        // Each wide sample its own level, so the columns show which they took.
         frame = DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: 1, producerTimestamp: 1,
                              isKeyframe: true, waterfallAdvance: true, minDbm: -160, maxDbm: 0,
                              traceDbm: frame.traceDbm, waterfallDbm: frame.waterfallDbm,
-                             wideDbm: [Float](repeating: -125, count: wideSamples))
+                             wideDbm: (0..<wideSamples).map { -125 - Float($0) / 1000 })
         history.append(frame: frame, coverage: Self.coverage, wide: wide, time: 0)
         let pan = Self.panColumns(history)
         #expect(abs(pan.count - across) <= 1, "\(pan.count) columns across the pan")
@@ -153,9 +159,12 @@ import Testing
         let beside = (0..<history.columns).filter { column in
             let middle = window.lowHz + (Double(column) + 0.5) * columnHz
             return middle >= Self.coverage.highHz && middle < Self.coverage.highHz + Self.coverage.spanHz / 2
-                && row[row.startIndex + column] == -125
+                && row[row.startIndex + column] <= -125
         }
         #expect(abs(beside.count - across / 2) <= 1, "\(beside.count) columns across half a pan's width beside it")
+        // About 134 wide samples (768 x 0.35 / 2) across those 384 columns.
+        let taken = Set(beside.map { row[row.startIndex + $0] })
+        #expect(abs(taken.count - 134) <= 2, "\(taken.count) wide samples across half a pan's width")
     }
 
     /// Where the columns line up with the desktop's (768 columns over the

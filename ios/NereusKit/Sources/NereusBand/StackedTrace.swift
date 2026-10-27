@@ -125,9 +125,14 @@ public enum StackedTrace {
     public static let shadowStrength = 0.42
     public static let shadowCueStrength = 0.36
 
-    /// The most columns a stored row keeps across the pan: the desktop's
-    /// 768. The spectrum beside the pan keeps the same density, so the
-    /// noise floor and a narrow carrier read the same at every depth.
+    /// The columns a stored row keeps across the pan: the desktop's 768.
+    /// The columns beside the pan run at the same density, but the Core's
+    /// spectrum there is at most 768 samples across the whole widest row
+    /// (`SpectrumEndpoint::kMaxWideSamples`), about 269 a pan's width, so
+    /// each of its samples fills about 2.9 columns. Beside the pan the
+    /// surface so reads coarser than across it, and the spread over three
+    /// columns there covers about one sample where the desktop's covers
+    /// three.
     public static let panColumns = 768
 
     /// The most samples one stored row keeps across its window:
