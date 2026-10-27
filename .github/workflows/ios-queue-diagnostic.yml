@@ -1,0 +1,193 @@
+# Bounded, temporary branch diagnostic for the two real event pumps.
+name: iOS queue diagnostic
+
+on:
+  push:
+    branches: [codex/ios-queue-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  queue-diagnostic:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Bind checkout and record sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/queue-diagnostic"
+          mkdir -p "$evidence"
+          {
+            printf 'event=%s\nref=%s\nsha=%s\nhead=%s\nrunner_os=%s\nrunner_arch=%s\nrunner_name=%s\n' \
+              "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" "$(git rev-parse HEAD)" \
+              "$RUNNER_OS" "$RUNNER_ARCH" "$RUNNER_NAME"
+            git status --short
+          } > "$evidence/identity.txt"
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_REF" = refs/heads/codex/ios-queue-proof
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          shasum -a 256 \
+            ios/NereusApp/App/AppModel.swift \
+            ios/NereusApp/App/SessionEventLanes.swift \
+            ios/NereusApp/Tests/SessionEventLanesTests.swift \
+            ios/NereusKit/Sources/NereusMedia/MediaControlClient.swift \
+            ios/NereusKit/Sources/NereusMirror/CommandClient.swift \
+            ios/NereusApp/Tests/TuneUnderLoadTests.swift \
+            ios/NereusApp/Band/BandModel.swift ios/NereusApp/Band/BandView.swift \
+            ios/NereusKit/Sources/NereusBand/BandRenderer.swift \
+            ios/NereusKit/Package.swift ios/project.yml \
+            ios/scripts/generate-project.sh ios/scripts/sim-settle.sh \
+            .github/workflows/ios.yml .github/workflows/ci.yml \
+            .github/workflows/ios-queue-diagnostic.yml > "$evidence/sources-before.sha256"
+
+      - name: Select Xcode 27
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$xcode" ]; then
+            echo 'This runner image has no Xcode 27' >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode"
+          { xcode-select -p; xcodebuild -version; swift --version; \
+            xcrun simctl list devices available | grep -E 'iPhone 17 |-- iOS'; } \
+            > "$RUNNER_TEMP/queue-diagnostic/toolchain.txt"
+
+      - name: Install XcodeGen and generate project
+        run: |
+          brew install xcodegen
+          ios/scripts/generate-project.sh
+
+      - name: Build app and tests before simulator boot
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/queue-diagnostic"
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath "$RUNNER_TEMP/queue-derived-data" \
+            -jobs 2 -parallel-testing-enabled NO build-for-testing \
+            2>&1 | tee "$evidence/build.log"
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > "$evidence/build.exit"
+          exit "$status"
+
+      - name: Boot and settle iPhone 17
+        run: ios/scripts/sim-settle.sh 'iPhone 17'
+
+      - name: Run the two real pump tests
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/queue-diagnostic"
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath "$RUNNER_TEMP/queue-derived-data" \
+            -resultBundlePath "$evidence/queue.xcresult" \
+            -jobs 2 -parallel-testing-enabled NO \
+            -only-testing:NereusSDRTests/SessionEventLanesTests/relevantEventsBackpressurePump \
+            -only-testing:NereusSDRTests/SessionEventLanesTests/mediaEventsBackpressurePump \
+            test-without-building 2>&1 | tee "$evidence/test.log"
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > "$evidence/test.exit"
+          exit "$status"
+
+      - name: Collect and conservatively classify evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/queue-diagnostic"
+          mkdir -p "$evidence"
+          printf '%s\n' \
+            'Inspect result metadata for command maximumPendingCount <= 64 and marker -42,' \
+            'and media maximumPendingCount <= 65 and marker -43. Two methods may report four issues.' \
+            'No failing assertion is classified automatically; inspect raw JSON and logs.' \
+            > "$evidence/inspection-notes.txt"
+          if [ -f "$evidence/sources-before.sha256" ]; then
+            shasum -a 256 -c "$evidence/sources-before.sha256" > "$evidence/sources-after-check.txt" 2>&1
+            printf '%s\n' "$?" > "$evidence/sources-after-check.exit"
+            # Recompute the same manifest for independent comparison.
+            sed 's/^[^ ]*  //' "$evidence/sources-before.sha256" | while IFS= read -r path; do
+              shasum -a 256 "$path"
+            done > "$evidence/sources-after.sha256" 2> "$evidence/sources-after-errors.txt"
+            git status --short > "$evidence/status-after.txt"
+          fi
+          if [ -d "$evidence/queue.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$evidence/queue.xcresult" > "$evidence/summary.json" 2> "$evidence/summary.error"
+            printf '%s\n' "$?" > "$evidence/summary.exit"
+            xcrun xcresulttool get test-results tests --path "$evidence/queue.xcresult" > "$evidence/tests.json" 2> "$evidence/tests.error"
+            printf '%s\n' "$?" > "$evidence/tests.exit"
+          fi
+          python3 - "$evidence" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          def read(name):
+              try:
+                  return (root / name).read_text().strip()
+              except OSError:
+                  return ''
+          def strings(value):
+              if isinstance(value, str):
+                  yield value
+              elif isinstance(value, list):
+                  for item in value:
+                      yield from strings(item)
+              elif isinstance(value, dict):
+                  for item in value.values():
+                      yield from strings(item)
+          result = 'INVALID / NEEDS INSPECTION: missing or unverified result evidence'
+          try:
+              summary = json.loads(read('summary.json'))
+              tests = json.loads(read('tests.json'))
+              values = list(strings(tests))
+              names = (
+                  ('relevantEventsBackpressurePump', 'relevant events backpressure the real pump and resume in order'),
+                  ('mediaEventsBackpressurePump', 'media events backpressure the real pump without dropping operations'),
+              )
+              found = [any(method in value or display in value for value in values)
+                       for method, display in names]
+              count = summary.get('totalTestCount')
+              details = f'totalTestCount={count!r}; identities={found}; test.exit={read("test.exit")!r}'
+              if (count == 2 and all(found) and read('build.exit') == '0'
+                      and read('test.exit') == '0' and read('summary.exit') == '0'
+                      and read('tests.exit') == '0' and read('sources-after-check.exit') == '0'):
+                  result = 'GREEN: both selected identities found, count 2, xcodebuild passed'
+              else:
+                  result = 'INVALID / NEEDS INSPECTION: ' + details
+          except (ValueError, TypeError, AttributeError):
+              pass
+          (root / 'classification.txt').write_text(result + '\n')
+          print(result)
+          PY
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-queue-diagnostic-${{ github.sha }}
+          path: ${{ runner.temp }}/queue-diagnostic/
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Require a valid passing result
+        if: always()
+        shell: bash
+        run: |
+          test "$(cat "$RUNNER_TEMP/queue-diagnostic/classification.txt" 2>/dev/null)" = \
+            'GREEN: both selected identities found, count 2, xcodebuild passed'
