@@ -9,8 +9,12 @@
 // Modification history (NereusSDR):
 //   2026-10-26 - commitWorkspace logs the refusals it makes itself (no
 //                 workspace adapter, a second singleton placement); the
-//                 store logs its own. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code.
+//                 store logs its own. A good reload that ends a state
+//                 refusing every save clears m_storageError and shows the
+//                 layout as read, so moves and resizes save again at once.
+//                 A refusal a caller shows in its own box (RefusalShownBy-
+//                 Caller) emits no workspaceError. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-16 - Bench fix (JJ's Rotor window created at (0,1337) on a
 //                 1512 x 982 screen): a floating window is given a place
 //                 where its header can be reached every time it is shown,
@@ -461,6 +465,14 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_arrange = new ContainerArrangeController(*store, this, this);
     m_storageError = store->loadError();
     connect(store, &ContainerWorkspaceStore::committed, this, [this] { reconcileWorkspace(m_store->snapshot()); });
+    connect(store, &ContainerWorkspaceStore::blockedChanged, this, [this](const QString& reason) {
+        if (!reason.isEmpty()) { return; }
+        // A good reload ended a state that refused every save. Saving resumes
+        // at once (geometry capture waits on m_storageError), from the layout
+        // as read rather than from what was on screen before it.
+        m_storageError.clear();
+        if (!m_reconciling && m_store) { reconcileWorkspace(m_store->snapshot()); }
+    });
     connect(registry, &ContainerContentRegistry::runtimeChanged, this, [this] {
         if (!m_reconciling && m_store) { reconcileWorkspace(m_store->snapshot()); }
     });
@@ -503,7 +515,10 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
     }
     recordHomes(saved);
     const CommitResult result = m_store->commit(saved, expectedRevision);
-    if (result.status != CommitStatus::Saved) { m_storageError = result.error; emit workspaceError(result.error); }
+    if (result.status != CommitStatus::Saved) {
+        m_storageError = result.error;
+        if (!m_refusalShownByCaller) { emit workspaceError(result.error); }
+    }
     else { m_storageError.clear(); }
     return result;
 }

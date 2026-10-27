@@ -9,8 +9,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26 - OK and Apply say why in a message box when a new or
-//                 duplicated container in the draft cannot be saved. J.J.
-//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 duplicated container in the draft cannot be saved, with
+//                 no toast on top of it. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
 //                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
@@ -279,6 +280,7 @@ mw0lge@grange-lane.co.uk
 #include <QSpinBox>
 #include <QMessageBox>
 #include <QSet>
+#include <optional>
 #include <QClipboard>
 #include <QApplication>
 
@@ -2220,7 +2222,10 @@ CommitResult ContainerSettingsDialog::applyDraftFromButton()
             if (!saved.contains(c.id)) { addsContainer = true; break; }
         }
     }
+    std::optional<ContainerManager::RefusalShownByCaller> boxShowsRefusal;
+    if (addsContainer && m_manager) { boxShowsRefusal.emplace(*m_manager); }
     const CommitResult result = applyDraft();
+    boxShowsRefusal.reset();
     if (result.status != CommitStatus::Saved && addsContainer) {
         // The status line under the list says it too, but a new container
         // the operator asked for is worth a box (JJ's bench, 2026-10-26).

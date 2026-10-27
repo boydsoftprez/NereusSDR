@@ -17,7 +17,8 @@
 //               "Container change not saved"; while every change is
 //               refused (the saved layout failed to load, or changed
 //               underneath) a notice stays up, says what to do, and goes
-//               when the layout is read again. J.J. Boyd (KG4VCF),
+//               when the layout is read again. A refused New Container
+//               shows the box alone, with no toast on top. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
@@ -12879,7 +12880,12 @@ void MainWindow::buildMenuBar()
         connect(newContAction, &QAction::triggered, this, [this]() {
             if (!m_containerManager) { return; }
 
-            ContainerWidget* c = m_containerManager->createContainer(1, DockMode::Floating);
+            ContainerWidget* c = nullptr;
+            {
+                // A refusal is shown in the box below, not also as a toast.
+                const ContainerManager::RefusalShownByCaller boxShowsRefusal(*m_containerManager);
+                c = m_containerManager->createContainer(1, DockMode::Floating);
+            }
             if (!c) {
                 // A refused save otherwise shows only as a toast that floating
                 // containers can cover (JJ's bench, 2026-10-26).

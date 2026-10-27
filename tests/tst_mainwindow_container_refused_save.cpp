@@ -11,9 +11,16 @@
 //                 "Container change not saved"; a saved change shows
 //                 nothing new. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - A refused New Container (menu or Container Settings)
+//                 shows the box alone, with no toast on top: a save that
+//                 fails on disk (settings folder read-only) is refused once
+//                 and says so only in the box. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QAction>
 #include <QApplication>
+#include <QFile>
+#include <QFileInfo>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QPushButton>
@@ -147,6 +154,25 @@ void checkTitle(const QString& title)
 #endif
 }
 
+// The settings folder made read-only for the life of this, so a save
+// fails on disk: a one-off refusal, not a state that refuses every save.
+class ReadOnlySettingsFolder {
+public:
+    ReadOnlySettingsFolder()
+        : m_folder(QFileInfo(AppSettings::instance().filePath()).absolutePath())
+        , m_before(QFile::permissions(m_folder))
+    {
+        QFile::setPermissions(m_folder, QFile::ReadOwner | QFile::ExeOwner);
+    }
+    ~ReadOnlySettingsFolder() { QFile::setPermissions(m_folder, m_before); }
+    ReadOnlySettingsFolder(const ReadOnlySettingsFolder&) = delete;
+    ReadOnlySettingsFolder& operator=(const ReadOnlySettingsFolder&) = delete;
+
+private:
+    QString m_folder;
+    QFileDevice::Permissions m_before;
+};
+
 void expectRefusal(const QString& status, const QString& reason)
 {
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
@@ -256,6 +282,66 @@ private slots:
         QCOMPARE(boxes.first().text,
                  QStringLiteral("The new container could not be saved: %1. %2").arg(kChanged, kWhatToDo));
         QCOMPARE(manager->allContainers().size(), before);
+        QCOMPARE(toasts(*window, kNotSaved).size(), 0);
+        window->close();
+    }
+
+    void aRefusedNewContainerShowsTheBoxAlone()
+    {
+        auto window = buildWindow();
+        auto* manager = window->findChild<ContainerManager*>();
+        QVERIFY(manager && manager->workspaceStore());
+        QAction* action = newContainerAction(*window);
+        QVERIFY(action);
+        const int before = manager->allContainers().size();
+        QList<ShownBox> boxes;
+        {
+            ReadOnlySettingsFolder readOnly;
+            boxes = boxesDuring([action] { action->trigger(); });
+        }
+        QCOMPARE(boxes.size(), 1);
+        checkTitle(boxes.first().title);
+        QVERIFY2(boxes.first().text.startsWith(QStringLiteral("The new container could not be saved: ")),
+                 qPrintable(boxes.first().text));
+        // A one-off refusal: the box says why and nothing about reloading.
+        QVERIFY2(!boxes.first().text.contains(kWhatToDo), qPrintable(boxes.first().text));
+        QCOMPARE(manager->allContainers().size(), before);
+        QCOMPARE(toasts(*window, kNotSaved).size(), 0);
+        QCOMPARE(toasts(*window, kReadOnly).size(), 0);
+        // The next save goes through.
+        QVERIFY(manager->createContainer(1, DockMode::Floating) != nullptr);
+        window->close();
+    }
+
+    void aRefusedNewInContainerSettingsShowsTheBoxAlone()
+    {
+        auto window = buildWindow();
+        auto* manager = window->findChild<ContainerManager*>();
+        QVERIFY(manager && manager->workspaceStore());
+        ContainerWorkspaceStore& store = *manager->workspaceStore();
+        ContainerWidget* existing = manager->container(store.snapshot().mainContainerId);
+        QVERIFY(existing);
+        ContainerSettingsDialog dialog(existing, window.get(), manager);
+        auto* create = dialog.findChild<QPushButton*>(QStringLiteral("createContainer"));
+        QVERIFY(create);
+        create->click();
+        QPushButton* apply = nullptr;
+        for (QPushButton* button : dialog.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("Apply")) {
+                apply = button;
+            }
+        }
+        QVERIFY(apply);
+        QList<ShownBox> boxes;
+        {
+            ReadOnlySettingsFolder readOnly;
+            boxes = boxesDuring([apply] { apply->click(); });
+        }
+        QCOMPARE(boxes.size(), 1);
+        QVERIFY2(boxes.first().text.startsWith(QStringLiteral("The new container could not be saved: ")),
+                 qPrintable(boxes.first().text));
+        QCOMPARE(toasts(*window, kNotSaved).size(), 0);
+        dialog.reject();
         window->close();
     }
 
