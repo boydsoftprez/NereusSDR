@@ -319,6 +319,7 @@ struct TuneUnderLoadTests {
         // Let the lines flow and the screen settle before the finger lands.
         try await Task.sleep(for: .seconds(2))
         let linesBefore = main.band.state.history.linesAppended
+        let costBefore = main.band.drawCost
         let busy = MainBusy()
         busy.start()
         let hops = MainHops()
@@ -345,6 +346,7 @@ struct TuneUnderLoadTests {
         hops.stop()
         let hopMs = hops.waitsMs
         let linesDrawn = Int(main.band.state.history.linesAppended &- linesBefore)
+        let cost = Self.cost(main.band.drawCost, since: costBefore, over: ended - began)
         answers.stop()
         lines.cancel()
         readings.cancel()
@@ -377,10 +379,42 @@ struct TuneUnderLoadTests {
             p90 \(String(format: "%.1f", percentile(busyMs, 0.9))) max \(String(format: "%.1f", busyMs.max() ?? 0)) ms; \
             main queue wait ms median \(String(format: "%.1f", percentile(hopMs, 0.5))) \
             p90 \(String(format: "%.1f", percentile(hopMs, 0.9))) max \(String(format: "%.1f", hopMs.max() ?? 0)); \
-            lines in \(linesDrawn)
+            lines in \(linesDrawn)\(cost)
             """)
         await model.disconnect()
         return run
+    }
+
+    /// The band's draws between two readings of its costs over `seconds`:
+    /// how many a second, what each cost the main thread on average, and
+    /// the main thread's drawing time per 60 Hz frame (empty when nothing
+    /// drew).
+    static func cost(_ after: BandModel.DrawCost, since before: BandModel.DrawCost, over seconds: Double) -> String {
+        let draws = after.draws - before.draws
+        let frames = after.linkFrames - before.linkFrames
+        guard draws > 0 || frames > 0, seconds > 0 else {
+            return ""
+        }
+        func each(_ value: Double, _ count: Int) -> String {
+            String(format: "%.2f", count > 0 ? value * 1_000 / Double(count) : 0)
+        }
+        let drawMs = after.drawSeconds - before.drawSeconds
+        let linkMs = after.linkSeconds - before.linkSeconds
+        let held = after.drawableWaitSeconds - before.drawableWaitSeconds
+            + after.frameWaitSeconds - before.frameWaitSeconds
+        // The link's frames, and the draws the view made on its own.
+        let outside = drawMs - (after.linkDrawSeconds - before.linkDrawSeconds)
+        let perFrame = (linkMs + outside) * 1_000 / (seconds * 60)
+        return "; draws \(draws) (\(String(format: "%.1f", Double(draws) / seconds))/s, link \(after.linkDraws - before.linkDraws), "
+            + "skipped \(after.skipped - before.skipped)), link frames \(frames); per draw ms: drawable wait "
+            + "\(each(after.drawableWaitSeconds - before.drawableWaitSeconds, draws)), prepare "
+            + "\(each(after.prepareSeconds - before.prepareSeconds, draws)), overlays "
+            + "\(each(after.overlaysSeconds - before.overlaysSeconds, draws)), frame wait "
+            + "\(each(after.frameWaitSeconds - before.frameWaitSeconds, draws)), encode "
+            + "\(each(after.encodeSeconds - before.encodeSeconds, draws)), whole \(each(drawMs, draws)); "
+            + "row clock per link frame \(each(after.advanceSeconds - before.advanceSeconds, frames)) ms; "
+            + "waiting \(String(format: "%.0f", held * 1_000)) ms; band on main per 16.7 ms frame "
+            + String(format: "%.2f", perFrame) + " ms"
     }
 
     private static func settle(seconds: Double, _ condition: () -> Bool) async -> Bool {

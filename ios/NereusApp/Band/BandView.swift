@@ -210,6 +210,13 @@ struct BandView: UIViewRepresentable {
         /// line or a change, in 3D when its cadence falls due. With nothing
         /// flowing for a few frames the link rests.
         fileprivate func step(_ link: CADisplayLink) {
+            #if DEBUG
+            let stepStart = CACurrentMediaTime()
+            defer {
+                model.drawCost.linkFrames += 1
+                model.drawCost.linkSeconds += CACurrentMediaTime() - stepStart
+            }
+            #endif
             guard let view, view.window != nil else {
                 link.isPaused = true
                 model.notePacing()
@@ -222,6 +229,9 @@ struct BandView: UIViewRepresentable {
             let now = link.timestamp
             let frame = max(link.targetTimestamp - link.timestamp, 0)
             let put = model.advanceLines(at: now, frameSeconds: frame)
+            #if DEBUG
+            model.drawCost.advanceSeconds += CACurrentMediaTime() - stepStart
+            #endif
             guard model.pacingLines else {
                 // The clock stopped (no line period, or the view went):
                 // back to drawing on demand.
@@ -242,6 +252,13 @@ struct BandView: UIViewRepresentable {
             if draws {
                 dirty = false
                 restingFrames = 0
+                #if DEBUG
+                let drawStart = CACurrentMediaTime()
+                defer {
+                    model.drawCost.linkDraws += 1
+                    model.drawCost.linkDrawSeconds += CACurrentMediaTime() - drawStart
+                }
+                #endif
                 view.draw()
             } else if dirty || flowing {
                 restingFrames = 0
@@ -267,11 +284,23 @@ struct BandView: UIViewRepresentable {
         }
 
         private func drawBand(in view: MTKView) {
+            #if DEBUG
+            let drawStart = CACurrentMediaTime()
+            #endif
             guard let renderer, let drawable = view.currentDrawable else {
                 return
             }
+            #if DEBUG
+            let prepareStart = CACurrentMediaTime()
+            model.drawCost.drawableWaitSeconds += prepareStart - drawStart
+            #endif
             let scale = view.contentScaleFactor
             let state = model.prepareToDraw(size: view.drawableSize, scale: scale)
+            #if DEBUG
+            let overlaysStart = CACurrentMediaTime()
+            model.drawCost.prepareSeconds += overlaysStart - prepareStart
+            #endif
+            let overlays = model.overlays(scale: scale)
             let stacked = model.drawsStack
             // What a 3D frame cost to draw, for the pacer (recommendation 3).
             var timing: (@Sendable (Double) -> Void)?
@@ -302,8 +331,10 @@ struct BandView: UIViewRepresentable {
                                         width: size.width, height: size.height)
             currentDrawKey = key
             model.drawingStarted(key)
+            let encodeStart = CACurrentMediaTime()
+            model.drawCost.overlaysSeconds += encodeStart - overlaysStart
             renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: state.frameExtras,
-                          overlays: model.overlays(scale: scale), into: drawable.texture, present: drawable,
+                          overlays: overlays, into: drawable.texture, present: drawable,
                           completed: { [weak model, weak trace] in
                               let finished = CACurrentMediaTime()
                               // The GPU has drawn it; the model notes it on the main queue.
@@ -314,9 +345,14 @@ struct BandView: UIViewRepresentable {
                                   }
                               }
                           }, drawTime: timed)
+            let drawEnd = CACurrentMediaTime()
+            model.drawCost.draws += 1
+            model.drawCost.frameWaitSeconds += renderer.lastFrameWaitSeconds
+            model.drawCost.encodeSeconds += drawEnd - encodeStart - renderer.lastFrameWaitSeconds
+            model.drawCost.drawSeconds += drawEnd - drawStart
             #else
             renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: state.frameExtras,
-                          overlays: model.overlays(scale: scale), into: drawable.texture, present: drawable,
+                          overlays: overlays, into: drawable.texture, present: drawable,
                           drawTime: timed)
             #endif
         }

@@ -218,6 +218,9 @@ public final class BandRenderer {
     static let framesInFlight = 3
     /// The extras last drawn, kept for frames that come without theirs.
     public private(set) var heldExtras: DisplayExtras?
+    /// How long the last draw waited for a frame in flight to finish, in
+    /// seconds: time the calling thread stood still.
+    public private(set) var lastFrameWaitSeconds = 0.0
 
     /// What a label layer's text depends on: when it is unchanged, the
     /// layer is not drawn again.
@@ -363,7 +366,9 @@ public final class BandRenderer {
             return nil
         }
         // At most three frames in flight, so a reused vertex buffer is free.
+        let waitStart = CFAbsoluteTimeGetCurrent()
         inFlight.wait()
+        lastFrameWaitSeconds = CFAbsoluteTimeGetCurrent() - waitStart
         guard let commandBuffer = queue.makeCommandBuffer() else {
             inFlight.signal()
             return nil
