@@ -29,7 +29,9 @@
 // 2026-10-26: the external-diversity fork's two legs stay paired through a
 // joining slice's barrier, which parks the worker rather than disconnecting
 // the fork; the binding is read after the barrier, not while the worker is
-// parked. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// parked; its legs are stamped ahead, so a slow re-rate under load cannot
+// start the worker's skip-to-catch-up and drop a packet. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QRegularExpression>
@@ -2609,9 +2611,16 @@ private slots:
         QMetaObject::invokeMethod(worker, [worker, a]() {
             worker->setExternalDiversityRoute(kDivId, a, kPrimaryDdc, kSecondaryDdc);
         }, Qt::BlockingQueuedConnection);
+        // Every leg is stamped a minute ahead, so the worker's input-delay
+        // bound (kDspInputDelayLimitMs, which skips input to catch up) never
+        // counts this test's waits, a slow re-rate under load included,
+        // against it: every packet fed must then be mixed. The bound has its
+        // own tests; this one is about pairing.
+        constexpr qint64 kAheadNs = 60LL * 1000 * 1000 * 1000;
         const auto feedLeg = [&model, divChunk](int ddc, int packet) {
             emit model.receiverManager()->hardwareIqDataStamped(
-                ddc, markedChunk(divChunk, packet), ReceiverManager::enqueueClockNs());
+                ddc, markedChunk(divChunk, packet),
+                ReceiverManager::enqueueClockNs() + kAheadNs);
         };
         const auto feedDiversity = [&feedLeg](int packet) {
             feedLeg(kPrimaryDdc, packet);

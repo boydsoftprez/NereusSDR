@@ -40,7 +40,9 @@
 //                bindings parks the worker (parkDspWorkerOnItsThread, the
 //                gate the receive lane's quiesce already used) for the
 //                re-rate, so a disconnect can no longer split the fork's two
-//                legs. A staged binding nothing delivered is warned about
+//                legs (its release a scope guard, so no way out of the
+//                barrier leaves the worker parked). A staged binding nothing
+//                delivered is warned about
 //                and delivered; an in-step binding dropped for a replaced
 //                worker is logged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
@@ -13865,6 +13867,13 @@ void RadioModel::applyStreamDspGeometry()
             // one queued after it waits for the new. Without a running
             // worker thread they are queued, as before.
             std::function<void()> release;
+            // Released on every way out of this block, after the reconnect
+            // below, so a later early return cannot leave the worker parked.
+            const auto letGo = qScopeGuard([&release]() {
+                if (release) {
+                    release();
+                }
+            });
             if (quiesce) {
                 release = parkDspWorkerOnItsThread(worker, applyOnWorker);
             } else if (worker != nullptr) {
@@ -13880,9 +13889,6 @@ void RadioModel::applyStreamDspGeometry()
                         worker, &RxDspWorker::processStampedIqBatch,
                         static_cast<Qt::ConnectionType>(Qt::QueuedConnection
                                                         | Qt::UniqueConnection));
-            }
-            if (release) {
-                release();
             }
         });
         return;
@@ -13954,6 +13960,13 @@ void RadioModel::applyStreamDspGeometry()
         }
     }
     std::function<void()> release;
+    // Released on every way out of this function, after the reconnect below,
+    // so a later early return cannot leave the worker parked.
+    const auto letGo = qScopeGuard([&release]() {
+        if (release) {
+            release();
+        }
+    });
     if (m_dspWorker) {
         const auto applyOnWorker = [w = m_dspWorker, thresholds, bindings]() {
             for (const auto& [st, inSize] : thresholds) {
@@ -14001,9 +14014,6 @@ void RadioModel::applyStreamDspGeometry()
         connect(m_receiverManager, &ReceiverManager::iqDataForReceiverStamped,
                 m_dspWorker, &RxDspWorker::processStampedIqBatch,
                 Qt::QueuedConnection);
-    }
-    if (release) {
-        release();
     }
 }
 
