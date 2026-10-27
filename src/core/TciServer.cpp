@@ -224,10 +224,12 @@ mw0lge@grange-lane.co.uk
 //                RemoteTciAudioStage::park/takeCarry), so a receiver
 //                restart or the lossless-to-Opus fallback drops nothing an
 //                app was owed. An app whose mailbox is full waits in the
-//                history instead of evicting a block (runnable, hasRoom);
-//                audio it loses to the history is counted when it is
-//                written over (skipOverwritten). J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code.
+//                history instead of evicting a block (runnable, hasRoom),
+//                for at most kMaxBehindNs, then moves
+//                on to the newest (skipTo); audio it loses is counted when
+//                it is written over (skipOverwritten), and the "cannot keep
+//                up" notice counts it in blocks (skippedBlocks). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 // --- From TciServer.cpp ---
 // no-port-check: AetherSDR-derived Longpath file.  Transport lifecycle
@@ -3023,12 +3025,10 @@ void RemoteTciAudioStage::push(Result result)
         [token = result.token](const ClientConfig& client) { return client.token == token; });
     if (found == m_config->clients.end() || result.revision != found->revision
         || result.receiverGeneration != m_config->receiverGeneration) { return; }
-    auto& queue = m_results[result.token];
-    if (queue.size() == kMaxFramesPerClient) {
-        queue.pop_front();
-        ++m_mailboxEvictions;
-    }
-    queue.push_back(std::move(result));
+    // The one run converting for this stage converts nothing for a client
+    // whose mailbox is full (RemoteTciAudioRun::runnable), so the mailbox
+    // holds at most kMaxFramesPerClient blocks without evicting any.
+    m_results[result.token].push_back(std::move(result));
 }
 
 bool RemoteTciAudioStage::popNext(Result* out)
@@ -3065,7 +3065,7 @@ RemoteTciAudioStage::Diagnostics RemoteTciAudioStage::diagnostics() const
             queued += int(queue.size());
         }
     }
-    return {m_historySkippedFrames.load(), m_mailboxEvictions.load(),
+    return {m_historySkippedFrames.load(), m_skippedBlocks.load(),
             m_socketBackpressureDrops.load(),
             m_serviceWallNs.load(), m_serviceCpuNs.load(), m_maxServiceWallNs.load(),
             m_maxQuantumWallNs.load(), m_serviceQuanta.load(),
@@ -3100,7 +3100,8 @@ void storeMax(std::atomic<quint64>& destination, quint64 value)
 
 class RemoteTciAudioRun final : public IRemotePcmWorkerStage::Run {
 public:
-    explicit RemoteTciAudioRun(RemoteTciAudioStage& owner) : m_owner(owner)
+    RemoteTciAudioRun(RemoteTciAudioStage& owner, RemoteTciAudioStage::Clock clock)
+        : m_owner(owner), m_clock(std::move(clock))
     {
         // The previous run of this generation ended (a receiver restart,
         // a new context, a decoder failure) with audio its clients had not
@@ -3141,9 +3142,21 @@ public:
         // A client waiting for room in its mailbox, or behind, loses what
         // this audio wrote over: counted now, while it waits, not when it
         // next converts. Its resampler is reset when it does (service).
+        // One the drain cannot keep up with moves on to the newest audio
+        // once it has been behind for kMaxBehindNs.
+        const qint64 now = m_clock();
         for (auto& [token, client] : m_clients) {
             Q_UNUSED(token);
-            if (!client.failed) { skipOverwritten(client); }
+            if (client.failed) { continue; }
+            skipOverwritten(client);
+            if (!caughtUp(client)) {
+                if (!client.behind) {
+                    client.behind = true;
+                    client.behindSinceNs = now;
+                } else if (now - client.behindSinceNs > RemoteTciAudioStage::kMaxBehindNs) {
+                    skipTo(client, m_written);
+                }
+            }
         }
     }
 
@@ -3269,6 +3282,10 @@ private:
         // History was skipped since the client last converted: its
         // resampler starts again before it converts on.
         bool skipped = false;
+        // Behind (a whole block or more to convert) since behindSinceNs on
+        // the run's clock; see appendPcm.
+        bool behind = false;
+        qint64 behindSinceNs = 0;
         std::unique_ptr<TciRxAudioResampler> resampler;
         std::vector<float> output;
     };
@@ -3317,17 +3334,34 @@ private:
         m_owner.park(std::move(carry));
     }
 
+    // Only a part block is left to convert.
+    bool caughtUp(const Client& client) const
+    {
+        return m_written - client.cursor < quint64(client.config.blockFrames);
+    }
+
     // Audio older than the history is gone: the client goes on from the
-    // oldest frame kept, its unfinished block dropped.
+    // oldest frame kept.
     void skipOverwritten(Client& client)
     {
         if (m_written - client.cursor <= RemoteTciAudioStage::kHistoryFrames) { return; }
-        const quint64 skipped = m_written - client.cursor - RemoteTciAudioStage::kHistoryFrames;
+        skipTo(client, m_written - RemoteTciAudioStage::kHistoryFrames);
+    }
+
+    // The client goes on from `cursor`, the audio before it and its
+    // unfinished block dropped and counted.
+    void skipTo(Client& client, quint64 cursor)
+    {
+        const quint64 skipped = cursor - client.cursor;
+        const quint64 blockFrames = quint64(std::max(1, client.config.blockFrames));
         m_owner.m_historySkippedFrames.fetch_add(skipped);
-        client.cursor = m_written - RemoteTciAudioStage::kHistoryFrames;
+        m_owner.m_skippedBlocks.fetch_add(
+            (skipped + quint64(client.blockInput) + blockFrames - 1) / blockFrames);
+        client.cursor = cursor;
         client.output.clear();
         client.blockInput = 0;
         client.skipped = true;
+        client.behind = false;
     }
 
     void service(Client& client)
@@ -3378,6 +3412,7 @@ private:
         }
         client.output.insert(client.output.end(), samples, samples + outSamples);
         client.cursor += quint64(frames);
+        if (caughtUp(client)) { client.behind = false; }
         client.blockInput += frames;
         if (client.blockInput == client.config.blockFrames) {
             RemoteTciAudioStage::Result result;
@@ -3396,6 +3431,7 @@ private:
     }
 
     RemoteTciAudioStage& m_owner;
+    const RemoteTciAudioStage::Clock m_clock;
     // What the previous run left, until this run's first reconciliation.
     RemoteTciAudioStage::Carry m_carry;
     std::shared_ptr<const RemoteTciAudioStage::ConfigSnapshot> m_config;
@@ -3409,7 +3445,24 @@ private:
 
 std::unique_ptr<IRemotePcmWorkerStage::Run> RemoteTciAudioStage::createRun()
 {
-    return std::make_unique<RemoteTciAudioRun>(*this);
+    Clock clock;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        clock = m_clock;
+    }
+    if (!clock) {
+        clock = [] {
+            return qint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        };
+    }
+    return std::make_unique<RemoteTciAudioRun>(*this, std::move(clock));
+}
+
+void RemoteTciAudioStage::setClockForTest(Clock clock)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_clock = std::move(clock);
 }
 
 int TciServer::liveRxAudioResamplersForTest()
@@ -3889,16 +3942,13 @@ void TciServer::drainRemoteAudio(
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
         if (!m_remoteStage[rx]) { continue; }
         const auto diagnostics = m_remoteStage[rx]->diagnostics();
-        if (diagnostics.mailboxEvictions < m_lastRemoteMailboxEvictions[rx]) {
-            m_lastRemoteMailboxEvictions[rx] = 0;
+        // Skipped audio counts in blocks, as the blocks the mailbox used to
+        // evict did, so the notice below keeps its sensitivity.
+        if (diagnostics.skippedBlocks < m_lastRemoteSkippedBlocks[rx]) {
+            m_lastRemoteSkippedBlocks[rx] = 0;
         }
-        if (diagnostics.historySkippedFrames < m_lastRemoteHistorySkips[rx]) {
-            m_lastRemoteHistorySkips[rx] = 0;
-        }
-        droppedThisTick += diagnostics.mailboxEvictions - m_lastRemoteMailboxEvictions[rx];
-        droppedThisTick += diagnostics.historySkippedFrames - m_lastRemoteHistorySkips[rx];
-        m_lastRemoteMailboxEvictions[rx] = diagnostics.mailboxEvictions;
-        m_lastRemoteHistorySkips[rx] = diagnostics.historySkippedFrames;
+        droppedThisTick += diagnostics.skippedBlocks - m_lastRemoteSkippedBlocks[rx];
+        m_lastRemoteSkippedBlocks[rx] = diagnostics.skippedBlocks;
     }
     // A rejected result consumes work too. Otherwise a refilling mailbox
     // can keep this UI tick in the loop without ever increasing sentFrames.

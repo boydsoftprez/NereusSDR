@@ -6,8 +6,10 @@
 //               (park/takeCarry), so a receiver restart or the
 //               lossless-to-Opus fallback drops no audio an app was owed;
 //               a client whose mailbox is full waits in the history
-//               (hasRoom) instead of evicting a block. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               (hasRoom) instead of evicting a block, for at most
+//               kMaxBehindNs; skipped audio is also
+//               counted in blocks (skippedBlocks). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 
 #include "core/session/media/IRemotePcmWorkerStage.h"
 
@@ -16,6 +18,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -28,6 +31,15 @@ public:
     static constexpr int kMaxClients = 8;
     static constexpr int kMaxFramesPerClient = 2;
     static constexpr int kMaxPayloadBytes = 131136;
+    // How long an app may stay behind (a whole block or more still to
+    // convert, normally waiting for room in its mailbox) before it moves
+    // on to the newest audio. A burst arrives faster than real time and
+    // the drain catches up with it in tens of milliseconds, so it loses
+    // nothing; an app the drain cannot keep up with falls at most this
+    // far behind, then hears current audio again.
+    static constexpr qint64 kMaxBehindNs = 250'000'000;
+    // Monotonic nanoseconds; steady_clock unless a test sets one.
+    using Clock = std::function<qint64()>;
 
     struct ClientConfig {
         quint64 token = 0;
@@ -52,7 +64,10 @@ public:
     };
     struct Diagnostics {
         quint64 historySkippedFrames = 0;
-        quint64 mailboxEvictions = 0;
+        // The same skipped audio in blocks of each app's size: what the
+        // server's "cannot keep up" notice counts, as it counted the
+        // blocks the mailbox used to evict.
+        quint64 skippedBlocks = 0;
         quint64 socketBackpressureDrops = 0;
         quint64 serviceWallNs = 0;
         quint64 serviceCpuNs = 0;
@@ -78,6 +93,9 @@ public:
     // was owed, and every app on the receiver keeps one stream.
     std::unique_ptr<IRemotePcmWorkerStage::Run> createRun() override;
     quint64 generation() const;
+    // Test-only: the clock later runs measure kMaxBehindNs on. No
+    // production caller.
+    void setClockForTest(Clock clock);
     // Ends every client's stream: what is queued, in flight or carried is
     // dropped, and the next run starts each client afresh.
     void invalidate();
@@ -118,9 +136,10 @@ private:
     std::shared_ptr<const ConfigSnapshot> m_config;
     std::map<quint64, std::deque<Result>> m_results;
     Carry m_carry;
+    Clock m_clock;
     quint64 m_nextDrainToken = 0;
     std::atomic<quint64> m_historySkippedFrames{0};
-    std::atomic<quint64> m_mailboxEvictions{0};
+    std::atomic<quint64> m_skippedBlocks{0};
     std::atomic<quint64> m_socketBackpressureDrops{0};
     std::atomic<quint64> m_serviceWallNs{0};
     std::atomic<quint64> m_serviceCpuNs{0};

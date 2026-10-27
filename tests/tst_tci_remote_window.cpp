@@ -99,8 +99,14 @@
 //                                    chance; alignedStart probes from the
 //                                    later app's first sound, not from its
 //                                    leading silence. The mailbox cases
-//                                    expect no evictions. AI-assisted via
-//                                    Anthropic Claude Code.
+//                                    expect no evictions, the notice case
+//                                    counts skipped blocks, and the
+//                                    eight-client case's waiting blocks
+//                                    come in the next run;
+//                                    remoteOverloadMovesAnAppOnToTheNewestAudio
+//                                    bounds how far behind an app the drain
+//                                    cannot keep up with falls. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -326,9 +332,9 @@ struct FakeReceiverSource {
     // Feeds `frames` of the ramp a 40 ms packet at a time. With
     // `caughtUp`, each next packet waits until it holds for the frames sent
     // so far (the app has every whole block they owe), not for wall time: a
-    // starved worker that ran several packets at once would push more
-    // blocks than the stage's per-client mailbox holds and evict one; a
-    // wait that times out says how many the stage evicted.
+    // starved worker that ran several packets at once would leave the app
+    // waiting for mailbox room, and one left behind long enough moves on to
+    // the newest audio; a wait that times out says how much it skipped.
     void deliverRamp(int sliceId, int firstFrame, int frames,
                      const std::function<bool(int framesSent)>& caughtUp = {})
     {
@@ -347,8 +353,8 @@ struct FakeReceiverSource {
             if (caughtUp) {
                 QTRY_VERIFY2_WITH_TIMEOUT(
                     caughtUp(sent + n),
-                    qPrintable(QStringLiteral("%1 frames sent, %2 mailbox evictions")
-                                   .arg(sent + n).arg(stage->diagnostics().mailboxEvictions)),
+                    qPrintable(QStringLiteral("%1 frames sent, %2 frames skipped")
+                                   .arg(sent + n).arg(stage->diagnostics().historySkippedFrames)),
                     5000);
             }
         }
@@ -583,7 +589,6 @@ private slots:
         // Three blocks per client: two queued each, the third waiting in
         // the history for room.
         QTRY_COMPARE_WITH_TIMEOUT(stage->diagnostics().queuedResults, 4, 3000);
-        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
         int sendCalls = 0;
         tci->drainRemoteAudio([&](QWebSocket*, const QByteArray&) -> qint64 {
             ++sendCalls;
@@ -616,11 +621,10 @@ private slots:
         tci->m_drainTimer->stop();
         const auto stage = core.workers.front()->stage;
         // Undrained, the app's mailbox fills and the rest of the audio
-        // waits in the history, until audio beyond what it holds is
-        // skipped: the drops the next tick counts.
+        // waits, until audio older than the history is skipped: the drops
+        // the next tick counts.
         core.deliverRamp(0, 0, RemoteTciAudioStage::kHistoryFrames + 300);
-        QTRY_VERIFY_WITH_TIMEOUT(stage->diagnostics().historySkippedFrames > 0, 3000);
-        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
+        QTRY_VERIFY_WITH_TIMEOUT(stage->diagnostics().skippedBlocks > 0, 3000);
         tci->m_remoteSaturationDrops = 99;
         connect(tci.get(), &TciServer::operatorNotice, &remote,
                 [&](const QString&, const QString&, bool) { tci.reset(); });
@@ -877,8 +881,8 @@ private slots:
         expectRamp(2, 280);
         run.reset();
         drain();
-        QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
         QCOMPARE(stage->diagnostics().historySkippedFrames, quint64{0});
+        QCOMPARE(stage->diagnostics().skippedBlocks, quint64{0});
 
         // invalidate() ends the streams: app 2's 20 carried frames go, and
         // its next block is the next run's first 70 frames, numbered afresh.
@@ -900,6 +904,82 @@ private slots:
         std::memcpy(&first, result.bytes.constData() + 64, sizeof(float));
         QCOMPARE(first, FakeReceiverSource::ramp(300));
         QVERIFY(!stage->popNext(&result));
+    }
+
+    // An app the drain cannot keep up with (here 100-frame blocks, 480 a
+    // second, drained 50 a second) waits for mailbox room only for
+    // kMaxBehindNs, then moves on to the newest audio: it never stands the
+    // whole history behind, and once the drain keeps up again it hears
+    // current audio. The stage's clock is the audio's, 20 ms a wake.
+    void remoteOverloadMovesAnAppOnToTheNewestAudio()
+    {
+        auto stage = std::make_shared<RemoteTciAudioStage>(0);
+        stage->publish({{1, 1, 48000, 2, 3, 100, 1.0f}});
+        constexpr int kChunk = 960;   // 20 ms of audio a wake
+        auto clockNs = std::make_shared<qint64>(0);
+        stage->setClockForTest([clockNs] { return *clockNs; });
+        // Frame k's left sample is k itself, so each block says where in
+        // the stream it is.
+        std::vector<float> pcm(std::size_t(kChunk) * 2);
+        quint64 written = 0;
+        quint64 heardUpTo = 0;   // one past the last frame the app has
+        const auto popOne = [&] {
+            RemoteTciAudioStage::Result result;
+            if (!stage->popNext(&result)) { return false; }
+            const int samples = int(readLe32(result.bytes, 20));
+            float last = 0.0f;
+            std::memcpy(&last, result.bytes.constData() + 64 + (samples - 2) * 4, sizeof(float));
+            heardUpTo = quint64(last) + 1;
+            return true;
+        };
+        auto run = stage->createRun();
+        run->reconcile();
+        const auto feed = [&] {
+            for (int i = 0; i < kChunk; ++i) {
+                pcm[std::size_t(2 * i)] = float(written + quint64(i));
+                pcm[std::size_t(2 * i + 1)] = -float(written + quint64(i));
+            }
+            *clockNs += 20'000'000;
+            run->appendPcm(pcm.data(), kChunk);
+            written += kChunk;
+            run->reconcile();
+            while (run->hasRunnableWork()) {
+                run->serviceUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1),
+                                  32);
+            }
+        };
+
+        // Four seconds of overload: one block taken per 20 ms wake.
+        quint64 maxBehind = 0;
+        for (int wake = 0; wake < 200; ++wake) {
+            feed();
+            if (popOne()) { maxBehind = std::max(maxBehind, written - heardUpTo); }
+        }
+        // Behind by at most the bound's audio, a wake's audio past it, and
+        // what the mailbox holds; never the 16384-frame history.
+        const quint64 bound = quint64(RemoteTciAudioStage::kMaxBehindNs / 1'000'000 * 48)
+            + 2 * kChunk
+            + quint64(RemoteTciAudioStage::kMaxFramesPerClient + 1) * 100;
+        QVERIFY2(maxBehind <= bound,
+                 qPrintable(QStringLiteral("the app fell %1 frames behind; at most %2")
+                                .arg(maxBehind).arg(bound)));
+        QVERIFY(stage->diagnostics().skippedBlocks > 0);
+
+        // The drain keeps up again: within a few wakes the app hears the
+        // audio of the wake, all but its unfinished block.
+        for (int wake = 0; wake < 10; ++wake) {
+            feed();
+            do {
+                while (popOne()) {}
+                while (run->hasRunnableWork()) {
+                    run->serviceUntil(std::chrono::steady_clock::now()
+                                      + std::chrono::seconds(1), 32);
+                }
+            } while (stage->diagnostics().queuedResults > 0);
+        }
+        QVERIFY2(written - heardUpTo < 100,
+                 qPrintable(QStringLiteral("%1 frames written, the app heard up to %2")
+                                .arg(written).arg(heardUpTo)));
     }
 
     void remoteWorkerRunFinalizesAfterDecoderFailure()
@@ -964,7 +1044,6 @@ private slots:
             // Each client converts two of its four blocks, all its mailbox
             // holds, and keeps the other two in the history (it used to
             // convert all four and evict the two oldest).
-            QCOMPARE(stage->diagnostics().mailboxEvictions, quint64{0});
             QCOMPARE(stage->diagnostics().liveWdspPairs, 0);
             QCOMPARE(stage->diagnostics().historySkippedFrames, quint64{0});
             RemoteTciAudioStage::Result result;
@@ -979,6 +1058,40 @@ private slots:
             totalBytes += receiverBytes;
         }
         QVERIFY(totalBytes <= 4'196'352);
+        // The blocks that waited are not lost: the next run converts them,
+        // again two per client at most, from the history the first left.
+        for (int rx = 0; rx < 2; ++rx) {
+            workers[rx] = std::thread([&, rx] {
+                auto run = stages[rx]->createRun();
+                run->reconcile();
+                while (run->hasRunnableWork()) {
+                    run->serviceUntil(std::chrono::steady_clock::now()
+                                      + std::chrono::microseconds(1800), 32);
+                }
+            });
+        }
+        for (auto& worker : workers) { worker.join(); }
+        for (const auto& stage : stages) {
+            QCOMPARE(stage->diagnostics().liveWdspPairs, 0);
+            QCOMPARE(stage->diagnostics().historySkippedFrames, quint64{0});
+            QCOMPARE(stage->diagnostics().skippedBlocks, quint64{0});
+            RemoteTciAudioStage::Result result;
+            int frames = 0;
+            quint64 receiverBytes = 0;
+            std::map<quint64, quint64> sequences;
+            while (stage->popNext(&result)) {
+                ++frames;
+                receiverBytes += quint64(result.bytes.size());
+                QVERIFY(result.sequence > sequences[result.token]);
+                sequences[result.token] = result.sequence;
+            }
+            QCOMPARE(frames, 16);
+            QVERIFY(receiverBytes <= 2'098'176);
+            for (const auto& [token, sequence] : sequences) {
+                Q_UNUSED(token);
+                QCOMPARE(sequence, quint64{4});
+            }
+        }
     }
 
     void ninthRemoteAudioClientIsRefusedUntilAPlaceIsReleased()
@@ -1732,9 +1845,9 @@ private slots:
             const int owed = (sent + kPacket) / kBlockInputFrames;
             QTRY_VERIFY2_WITH_TIMEOUT(
                 rxAudio(binary, 0).blocks >= owed,
-                qPrintable(QStringLiteral("%1 of %2 blocks, %3 mailbox evictions")
+                qPrintable(QStringLiteral("%1 of %2 blocks, %3 frames skipped")
                                .arg(rxAudio(binary, 0).blocks).arg(owed)
-                               .arg(stage->diagnostics().mailboxEvictions)),
+                               .arg(stage->diagnostics().historySkippedFrames)),
                 5000);
         }
         // Wait for the audio, not for a fixed 300 ms: 48000 frames in make 23
@@ -1742,16 +1855,16 @@ private slots:
         // been sent 300 ms after the last packet (20480 samples).
         QTRY_VERIFY2_WITH_TIMEOUT(
             rxAudio(binary, 0).samples.size() >= 2 * 11000,
-            qPrintable(QStringLiteral("%1 samples, %2 mailbox evictions")
+            qPrintable(QStringLiteral("%1 samples, %2 frames skipped")
                            .arg(rxAudio(binary, 0).samples.size())
-                           .arg(stage->diagnostics().mailboxEvictions)),
+                           .arg(stage->diagnostics().historySkippedFrames)),
             5000);
         const RxAudio audio = rxAudio(binary, 0);
         QCOMPARE(audio.channels, 2u);
         QVERIFY2(audio.samples.size() >= 2 * 11000,
-                 qPrintable(QStringLiteral("%1 samples, %2 mailbox evictions")
+                 qPrintable(QStringLiteral("%1 samples, %2 frames skipped")
                                 .arg(audio.samples.size())
-                                .arg(stage->diagnostics().mailboxEvictions)));
+                                .arg(stage->diagnostics().historySkippedFrames)));
         constexpr int kSkip = 600;
         const double leftLow = amplitudeAt(audio.samples, 2, 0, 440.0, 12000, kSkip);
         const double leftHigh = amplitudeAt(audio.samples, 2, 0, 1000.0, 12000, kSkip);

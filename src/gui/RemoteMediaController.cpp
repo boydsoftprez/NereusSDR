@@ -4,8 +4,9 @@
 //               fallback to Opus among them) and its restart no longer
 //               invalidate the slice's TCI stage, so apps keep every
 //               sample they were owed and all apps on a receiver hear one
-//               stream. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               stream; a context that stops the stream still does, so a
+//               reused slice id never starts with the old slice's audio.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -7502,7 +7503,11 @@ void RemoteMediaController::receiveReceiverAudioContext(const QJsonObject& paylo
     // the next one each app's unconverted audio and part block
     // (RemoteTciAudioStage::createRun). Invalidating here
     // dropped a different part block for each app, so two apps on one
-    // receiver stopped hearing one stream.
+    // receiver stopped hearing one stream. A context that stops the
+    // stream (its slice removed, no room, no encoder) ends the apps'
+    // streams: the Core reuses slice ids, and a later slice must not
+    // start with this one's audio.
+    if (!context.enabled) { stream.tciStage->invalidate(); }
     stream.receiver->stop();
     stream.ssrc = 0;
     stream.runningProfile.reset();

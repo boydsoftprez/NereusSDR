@@ -1090,8 +1090,7 @@ private:
     int m_nextRemoteDrainReceiver{0};
     quint64 m_socketBackpressureDrops{0};
     quint64 m_localBinaryBackpressureDrops{0};
-    std::array<quint64, kMaxTciRxSlices> m_lastRemoteMailboxEvictions{};
-    std::array<quint64, kMaxTciRxSlices> m_lastRemoteHistorySkips{};
+    std::array<quint64, kMaxTciRxSlices> m_lastRemoteSkippedBlocks{};
     quint64 m_remoteSaturationDrops{0};
     int m_remoteSaturationQuietTicks{0};
     bool m_remoteSaturationNotified{false};

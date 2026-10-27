@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-27  J.J. Boyd / KG4VCF  retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop:
+//                                    a TCI app on the retired stream hears
+//                                    none of the removed slice's audio on
+//                                    the reused id. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-24  J.J. Boyd / KG4VCF  Every model the cases build is an
 //                                    IsolatedRadioModel, so none starts a
 //                                    capture helper found beside the test
@@ -14067,7 +14072,9 @@ private slots:
     // reason, and the app plays silence: nothing asks again in a loop. A
     // slice id that never existed is answered once. When the Core brings
     // the slice id back, the waiting app is asked for once more, with a
-    // revision above every one sent for that id.
+    // revision above every one sent for that id. A TCI app on the stream
+    // hears none of the removed slice's audio on the reused id: the stop
+    // ends its stream, where a stream restart carries it on.
     void retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop()
     {
         Test::RemoteAudioSessionHarness h;
@@ -14090,9 +14097,23 @@ private slots:
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
 
-        remoteMedia.requestReceiverAudio(sliceB, &app);
+        const std::shared_ptr<RemoteTciAudioStage> tci =
+            remoteMedia.requestReceiverAudio(sliceB, &app);
+        QVERIFY(tci);
+        tci->publish({{1, 1, 48000, 2, 3, 2048, 1.0f}});
+        int tciFrames = 0;
+        const auto takeTci = [&tci, &tciFrames] {
+            RemoteTciAudioStage::Result result;
+            while (tci->popNext(&result)) {
+                tciFrames += int(qFromLittleEndian<quint32>(result.bytes.constData() + 20)) / 2;
+            }
+        };
         QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceB) >= 9600, 10000);
         QVERIFY(receivesIn(remoteMedia, sliceB, RemoteAudioProfile::Opus));
+        QTRY_VERIFY_WITH_TIMEOUT((takeTci(), tciFrames >= 4096), 5000);
+        // The TCI app stops taking its audio a while before the slice goes:
+        // its mailbox fills and the slice's audio waits in the stage.
+        QTest::qWait(300);
 
         // The slice goes away at the station.
         h.station.removeSlice(sliceB);
@@ -14133,8 +14154,15 @@ private slots:
         const int reused = h.station.addSlice();
         QCOMPARE(reused, sliceB);
         h.station.sliceById(reused)->setAudioPan(0.95);
-        QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceB) >= framesAtStop + 9600, 15000);
+        tciFrames = 0;
+        QTRY_VERIFY_WITH_TIMEOUT((takeTci(), app.frames(sliceB) >= framesAtStop + 9600), 15000);
         QVERIFY(receivesIn(remoteMedia, sliceB, RemoteAudioProfile::Opus));
+        // The TCI app heard no more than the new slice has sent: nothing of
+        // what waited for it when the old slice went.
+        takeTci();
+        QVERIFY2(tciFrames > 0 && tciFrames <= app.frames(sliceB) - framesAtStop,
+                 qPrintable(QStringLiteral("TCI app %1 frames, the new slice %2")
+                                .arg(tciFrames).arg(app.frames(sliceB) - framesAtStop)));
         const QList<QJsonObject> requests = receiverRequests(coreControls, sliceB);
         QCOMPARE(requests.size(), qsizetype(requestsAtStop + 1));
         for (qsizetype i = 1; i < requests.size(); ++i) {
