@@ -1,6 +1,15 @@
 // NereusSDR for iOS: the tab bar and the screen each tab opens
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the UI tests' record of the hold
+// PTT. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the swipe up from the tab bar, and
+// the swipes' pages on the Tools tab sliding in from the swipe's side.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the swipe up from the tab bar on an
+// iPad too. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+import NereusBand
 import SwiftUI
 
 /// The app's root: the connecting screens until a Core is connected (spec
@@ -18,6 +27,12 @@ struct RootView: View {
     @StateObject private var setupRouter: SetupRouter
     @StateObject private var toolsRouter = ToolsRouter()
     @StateObject private var txSettingsRouter = TxSettingsRouter()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A drag on the tab bar is the swipe up, or nothing of the swipes'.
+    @State private var tabBarSwiping: Bool?
+    @GestureState private var tabBarDragging = false
+    /// The Tools tab sliding in from a swipe's side.
+    @State private var toolsSlide = CGSize.zero
 
     /// `selection` is the tab shown first, Panadapter unless a test asks
     /// otherwise; `setupRouter` stands in for the Setup tab's stack (the tests').
@@ -118,6 +133,7 @@ struct RootView: View {
     private var tabs: some View {
         GeometryReader { proxy in
             let sideways = proxy.size.width > proxy.size.height
+            let iPad = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size).isIPad
             VStack(spacing: 0) {
                 ZStack {
                     ForEach(AppTab.allCases) { tab in
@@ -132,18 +148,35 @@ struct RootView: View {
                                         .padding(.trailing, 12)
                                 }
                             }
+                            .offset(tab == .tools ? toolsSlide : .zero)
                             .opacity(shown ? 1 : 0)
                             .allowsHitTesting(shown)
                             .accessibilityHidden(!shown)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                TabBar(selection: $selection, sideways: sideways,
-                       iPad: IPadLayout.arrangement(horizontal: widthClass, size: proxy.size).isIPad)
+                TabBar(selection: $selection, sideways: sideways, iPad: iPad)
                     // The Core's open question, over whichever tab is showing (D85).
                     .background(ConfirmationWindowAnchor(app: model))
+                    // Up from the tab bar, on the Panadapter tab (spec 11.3, S1); on an iPad
+                    // it widens the Roundtable applet (spec 11.4, S2).
+                    .simultaneousGesture(tabBarSwipe(on: selection == .panadapter))
+                    .onChange(of: tabBarDragging) { _, now in
+                        // A swipe cut short (the touch taken away) springs back.
+                        if !now, tabBarSwiping != nil {
+                            if tabBarSwiping == true {
+                                model.swipes.cancel(reduceMotion: reduceMotion)
+                            }
+                            tabBarSwiping = nil
+                        }
+                    }
             }
             .environment(\.uprightBandWidth, proxy.uprightBandWidth)
+            .onReceive(model.swipes.$opened) { opened in
+                if let opened, opened.target.opensTools {
+                    openTools(opened, size: proxy.size)
+                }
+            }
         }
         .background(ChromeColours.bar.ignoresSafeArea())
         .onAppear {
@@ -160,10 +193,88 @@ struct RootView: View {
                model.main.displayEditScope != setupRouter.displayScope {
                 model.main.displayEditScope = setupRouter.displayScope
             }
+            // The swipes work on the Panadapter tab only.
+            model.swipes.panadapterShown = tab == .panadapter
+            if tab != .panadapter {
+                model.swipes.cancel(reduceMotion: true)
+            }
         }
         .onDisappear {
             model.longSession.bandShown(false)
         }
+    }
+
+    /// The swipe up from the tab bar: an upward drag more up than across
+    /// begins it, and it follows the finger until it lifts.
+    private func tabBarSwipe(on: Bool) -> some Gesture {
+        DragGesture(minimumDistance: TuneGestures.dragThresholdPoints, coordinateSpace: .global)
+            .updating($tabBarDragging) { _, state, _ in
+                state = true
+            }
+            .onChanged { value in
+                let swipes = model.swipes
+                if tabBarSwiping == nil {
+                    tabBarSwiping = on && SwipeShortcuts.claims(.tabBar, translation: value.translation)
+                        && swipes.begin(.tabBar)
+                }
+                if tabBarSwiping == true {
+                    swipes.move(SwipeShortcuts.inward(.tabBar, value.translation))
+                }
+            }
+            .onEnded { value in
+                let swiping = tabBarSwiping == true
+                tabBarSwiping = nil
+                if swiping {
+                    model.swipes.end(distance: SwipeShortcuts.inward(.tabBar, value.translation),
+                                     predicted: SwipeShortcuts.inward(.tabBar, value.predictedEndTranslation),
+                                     reduceMotion: reduceMotion)
+                }
+            }
+    }
+
+    /// A swipe opened a page on the Tools tab: the tab shows it, sliding in
+    /// from the side the swipe came from.
+    private func openTools(_ opened: SwipeShortcutModel.Opened, size: CGSize) {
+        switch opened.target {
+        case .roundtableAll:
+            toolsRouter.openRoundtable()
+        case .spotHub:
+            toolsRouter.openSpotHub()
+        case .tools:
+            toolsRouter.openList()
+        case .off, .rxPanel, .txPanel, .roundtableMine:
+            return
+        }
+        model.swipes.finish()
+        guard !reduceMotion else {
+            selection = .tools
+            return
+        }
+        switch opened.origin.edge {
+        case .leading:
+            toolsSlide = CGSize(width: -size.width, height: 0)
+        case .trailing:
+            toolsSlide = CGSize(width: size.width, height: 0)
+        default:
+            toolsSlide = CGSize(width: 0, height: size.height)
+        }
+        selection = .tools
+        withAnimation(.easeOut(duration: 0.22)) {
+            toolsSlide = .zero
+        }
+    }
+
+    /// The UI tests' record of the hold PTT, in a debug build that asks for it.
+    @MainActor
+    private static var holdObserver: ((PttHold.Action) -> Void)? {
+        #if DEBUG
+        guard let log = UITestBand.holdLog else {
+            return nil
+        }
+        return { action in log.record(action) }
+        #else
+        return nil
+        #endif
     }
 
     @ViewBuilder
@@ -171,7 +282,8 @@ struct RootView: View {
         switch tab {
         case .panadapter:
             // More display options in Setup opens Setup's Display page (D79).
-            MainScreen(app: model, main: model.main, flow: flow, openSetup: {
+            MainScreen(app: model, main: model.main, flow: flow, holdObserver: Self.holdObserver,
+                       swipes: model.swipes, openSetup: {
                 Self.openDisplaySetup(setupRouter, app: model)
                 selection = .setup
             },
@@ -180,6 +292,17 @@ struct RootView: View {
                            toolsRouter.openPerformance()
                            selection = .tools
                        }, openTransmitSettings: { txSettingsRouter.openTransmit() })
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                if let log = UITestBand.holdLog {
+                    UITestHoldLog.Label(log: log)
+                }
+                if let log = UITestBand.keyLog {
+                    UITestKeyLog.Label(log: log)
+                        .offset(x: 2)
+                }
+            }
+            #endif
         case .setup:
             SetupTab(app: model, flow: flow, router: setupRouter)
                 // Setup's buttons that open another page (V15), as the root installs them.

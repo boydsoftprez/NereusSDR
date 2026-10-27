@@ -347,7 +347,7 @@ struct PttLatch: Equatable {
 /// meters and the column's note. A reference the screen holds without
 /// watching, so a flag's move redraws only the views that follow it.
 @MainActor
-final class PttHold: ObservableObject {
+final class PttLatchHold: ObservableObject {
     @Published private(set) var latch: PttLatch?
 
     func update(_ inputs: PttLatch.Inputs) {
@@ -397,7 +397,7 @@ struct BandButtonColumn: View {
     let onOpenPage: (String) -> Void
     let onOpen: (PanIdentity) -> Void
     /// Where the PTT is held while keyed (``PttLatch``), for the note to keep clear of.
-    var pttHold: PttHold?
+    var pttHold: PttLatchHold?
 
     /// The Core's words for the column's last refused request, shown for a moment.
     @State private var shownNote: String?
@@ -423,7 +423,7 @@ struct BandButtonColumn: View {
          openSetup: @escaping () -> Void,
          onSetupDefaults: @escaping (DisplayPillTab, PanIdentity) -> Void,
          onOpenPage: @escaping (String) -> Void, onOpen: @escaping (PanIdentity) -> Void,
-         pttHold: PttHold? = nil) {
+         pttHold: PttLatchHold? = nil) {
         self.pan = pan
         _open = open
         _folded = folded

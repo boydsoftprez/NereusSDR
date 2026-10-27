@@ -20,6 +20,18 @@
 //   2026-10-26: updateContainerWorkspaceNotice() and the notice it keeps
 //               up while every container change is refused. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: the Roundtable line on every flag:
+//               openRoundtableForSlice (Roundtable plan Task 14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: the Roundtable tags on every pan: wirePanRoundtableTags,
+//               refreshRoundtableTags and onRoundtableRoomClicked
+//               (Roundtable plan Task 14). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-24: m_roundtableApplet (Roundtable plan Task 13). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
+//               (Roundtable plan Task 12). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -355,6 +367,7 @@ class RemoteMediaController;
 class SpotHubDialog;
 class SpotBeamTurner;
 class FreeDVReporterDialog;
+class RoundtableFirstRunDialog;
 
 class RxDashboard;
 class StationBlock;
@@ -713,6 +726,10 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
+    /// Roundtable plan Task 14 (design 11.2): a pan's Roundtable tag, or a
+    /// row of its fold list, tunes the active slice to that room. A slot so
+    /// wirePanRoundtableTags can re-arm with Qt::UniqueConnection.
+    void onRoundtableRoomClicked(const QString& roomId);
     /// Phase 3F: repaint every pan's status overlay from the slice that pan
     /// is showing (its own activeSliceIndex), with the ADC chain resolved
     /// through RadioModel::sliceChainIndex so the CH tag agrees with the WIDE
@@ -812,6 +829,16 @@ private slots:
     /// The handlers below are SLOTS, not lambdas, so Qt::UniqueConnection is
     /// actually honoured on the re-arm.
     void wirePanNotchHandlers();
+
+    /// Roundtable plan Task 14: connect every pan's roundtableRoomClicked
+    /// (re-armed from PanadapterStack::countChanged, as the notch handlers).
+    void wirePanRoundtableTags();
+    /// Every pan's Roundtable tags from the Roundtable model, at most once
+    /// per event-loop pass however many of its signals arrive.
+    void scheduleRoundtableRefresh();
+    void refreshRoundtableTags();
+    // A flag's Roundtable line: activate its slice and show the panel.
+    void openRoundtableForSlice(int sliceId);
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
@@ -1064,6 +1091,10 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Roundtable plan Task 12: the first-run question ("Roundtable is
+    /// public") or the one-time note, when RoundtableFirstRunDialog says
+    /// this computer should show it. Not modal; one at a time.
+    void openRoundtableFirstRunIfNeeded();
     /// Rotor control plan Task 8: the window's one SpotBeamTurner (made on
     /// first use), behind every pan's spot menu, the Spot Hub and
     /// auto-turn. Its refusals are toasted.
@@ -1720,6 +1751,7 @@ private:
     QPointer<SpotHubDialog>        m_spotHubDialog;
     SpotBeamTurner*                m_spotBeamTurner{nullptr};  // Qt child; rotor plan Task 8
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
+    QPointer<RoundtableFirstRunDialog> m_roundtableFirstRun;  // Roundtable plan Task 12
 
     // Status bar widgets (double-height AetherSDR design, 46px)
     //
@@ -2263,6 +2295,8 @@ private:
     QPointer<class CatLogWindow> m_catLogWindow;
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
+    class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
+    bool m_roundtableRefreshPending{false};               // Roundtable plan Task 14
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

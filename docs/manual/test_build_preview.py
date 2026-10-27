@@ -61,14 +61,14 @@ class RendererTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(sentinel.read_text(), 'Existing home')
             pages = {p.relative_to(output).as_posix(): Page(p.read_text())
-                     for folder in ('manual', 'guides')
+                     for folder in ('manual', 'guides', 'roundtable')
                      for p in (output / folder).glob('*.html')}
             expected = {'manual/index.html'} | {
                 'manual/'+p.stem+'.html' for p in (ROOT / 'docs/manual').glob('[0-9][0-9]-*.md')
             } | {'guides/'+name+'.html' for name in (
-                'install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'contributing-with-ai', 'remote-access')}
+                'install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'contributing-with-ai', 'remote-access')} | {'roundtable/api.html'}
             self.assertEqual(set(pages), expected)
-            self.assertEqual(len(pages), 27)
+            self.assertEqual(len(pages), 28)
             for route, page in pages.items():
                 self.assertEqual(page.canonical, ['https://nereussdr.com/' + route])
                 self.assertEqual(page.styles, ['/assets/css/site.css', '/manual/manual.css'])
@@ -97,7 +97,7 @@ class RendererTest(unittest.TestCase):
             self.assertFalse((output / 'manual/site.css').exists())
             manifest_path = output / 'manual/source-map.json'
             manifest = json.loads(manifest_path.read_text())
-            self.assertEqual(len(manifest['pages']), 27)
+            self.assertEqual(len(manifest['pages']), 28)
             for kind in ('pages', 'images', 'downloads'):
                 for entry in manifest[kind]:
                     original = ROOT / entry['source']
@@ -109,6 +109,11 @@ class RendererTest(unittest.TestCase):
                         self.assertEqual(copied.read_bytes(), original.read_bytes())
             originals = {p.relative_to(ROOT).as_posix() for p in (ROOT / 'docs/manual/images').rglob('*') if p.is_file()}
             self.assertEqual({entry['source'] for entry in manifest['images']}, originals)
+            fixtures = ROOT / 'roundtable/conformance/v1'
+            published = output / 'roundtable/conformance/v1'
+            want = {p.relative_to(fixtures).as_posix(): p.read_bytes() for p in fixtures.rglob('*') if p.is_file()}
+            got = {p.relative_to(published).as_posix(): p.read_bytes() for p in published.rglob('*') if p.is_file()}
+            self.assertEqual(got, want)
             before = manifest_path.read_bytes()
             self.assertEqual(render(RENDERER, output, website=True).returncode, 0)
             self.assertEqual(before, manifest_path.read_bytes())
@@ -161,6 +166,10 @@ class RendererTest(unittest.TestCase):
             (guides / (name + '.md')).write_text('# Guide\n\n## Settings\n\n[manual](../manual/01-start.md?view=full#start-here)\n[notes](../manual/authoring.md)\n[code](../../src/?raw=1#part)\n[external](https://example.com/test.md?q=1#part)\n![image](../manual/images/picture.png)\n')
         (root / 'rendezvous').mkdir()
         (root / 'rendezvous/README.md').write_text('# Remote\n')
+        (root / 'docs/architecture').mkdir()
+        (root / 'docs/architecture/2026-10-23-roundtable-v1.md').write_text('# Roundtable\n\n[manifest](../../roundtable/conformance/v1/manifest.json)\n')
+        (root / 'roundtable/conformance/v1').mkdir(parents=True)
+        (root / 'roundtable/conformance/v1/manifest.json').write_text('{}\n')
         (root / 'src').mkdir()
         return manual / 'build_preview.py'
 
@@ -168,10 +177,22 @@ class RendererTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             script = self.fixture(directory)
             output = Path(directory) / 'site'
+            stale = output / 'roundtable/conformance/v1/removed.json'
+            stale.parent.mkdir(parents=True)
+            stale.write_text('{}')
             result = render(script, output, website=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            api = Page((output / 'roundtable/api.html').read_text())
+            self.assertIn('/roundtable/conformance/v1/manifest.json', api.links)
+            self.assertEqual((output / 'roundtable/conformance/v1/manifest.json').read_bytes(), b'{}\n')
+            self.assertFalse(stale.exists())
             manual = Page((output / 'manual/index.html').read_text())
             guide = Page((output / 'guides/tx-eq-cfc.html').read_text())
+            # The API page is in no menu (the public Roundtable page links it).
+            for page in ('manual/index.html', 'guides/tx-eq-cfc.html', 'roundtable/api.html'):
+                text = (output / page).read_text()
+                self.assertNotIn('<summary>Reference</summary>', text, page)
+                self.assertNotIn('/roundtable/api.html', Page(text).links, page)
             self.assertIn('/guides/tx-eq-cfc.html?q=1#settings', manual.links)
             self.assertIn('/manual/01-start.html?view=full#start-here', guide.links)
             self.assertIn('/manual/authoring.md', guide.links)

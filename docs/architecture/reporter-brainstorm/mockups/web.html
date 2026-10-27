@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable Public Page</title>
+<style>
+/* NereusSDR 2026.10.1 workspace look: src/gui/styles/WorkspacePalette.h on main */
+:root{
+  --app:#08080a;--panel:#0c0c0e;--raise:#111114;--btn:#1a1a1e;--bd:#2c2c31;--bd2:#1f1f23;--bd3:#3d3d41;
+  --t1:#dcdce1;--t2:#a6a6ac;--t3:#909096;--t4:#7e7e85;--muted:#58585e;--inset:#050507;
+  --selA:#2f5f92;--selB:#1e3d5f;--selBd:#3d78b0;--selTop:#4c88c1;--selTx:#dbe9f8;
+  --acc:#4a7ba8;--acc2:#5e8db8;--grn:#4caf6a;--amb:#d8a55f;--red:#c25a5c;--redbg:#3f2224;--redbd:#a86b6d;--cyan:#00b4d8;
+  --ui:system-ui,-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;--mono:"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#151518;color:var(--t1);font-family:var(--ui);font-size:13px}
+button{font:inherit;color:inherit}
+#chooser{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:10px 16px;border-bottom:1px solid #222;background:#1b1b1f;position:sticky;top:0;z-index:50}
+#chooser .lbl{color:#9a9aa6;font-size:11px;letter-spacing:.12em;margin-right:6px}
+#chooser button{background:#2a2a33;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;color:#ddd;font-size:13px}
+#chooser button.on{background:#1e3d5f;border-color:#3d78b0;color:#fff}
+#stage{display:flex;gap:24px;justify-content:center;align-items:flex-start;padding:18px 12px 30px}
+#notes{width:300px;font-size:13px;line-height:1.5;color:#c8c8ce;flex:none}
+#notes h2{font-size:15px;margin-bottom:8px;color:#fff}
+#notes p{margin-bottom:9px}#notes b{color:#fff}
+
+/* browser frame */
+.browser{width:1280px;height:840px;border-radius:12px;overflow:hidden;background:var(--app);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px #2a2a30;display:flex;flex-direction:column;flex:none}
+.bchrome{height:38px;flex:none;background:#202024;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid #000}
+.bchrome .dots{display:flex;gap:7px}.bchrome .dots i{width:12px;height:12px;border-radius:50%;background:#4a4a50;display:block}
+.bchrome .url{flex:1;max-width:560px;margin:0 auto;height:24px;border-radius:7px;background:#121215;color:#a6a6ac;font-size:12px;display:flex;align-items:center;padding:0 12px;gap:6px}
+.bchrome .url b{color:#dcdce1;font-weight:500}
+.page{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* top bar: title gradient as TitleBar */
+.top{height:48px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px 0 12px;background:linear-gradient(#26262b,#1c1c20 55%,#141417);border-bottom:1px solid var(--bd)}
+.brand{display:flex;align-items:center;gap:9px;font-size:15px;letter-spacing:.01em;white-space:nowrap}
+.brand img{width:24px;height:24px}
+.brand b{color:var(--cyan);font-weight:700}
+.brand .sep{width:1px;height:18px;background:var(--bd3)}
+.brand .rt{font-weight:600;color:var(--t1)}
+.live{display:flex;align-items:center;gap:10px;height:30px;padding:0 12px 0 10px;background:var(--inset);border-radius:3px;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--grn);white-space:nowrap}
+.live .dot{width:9px;height:9px;border-radius:50%;background:var(--grn);animation:blink 1.5s step-end infinite}
+.live .k{color:var(--t3);font-weight:500}
+@keyframes blink{50%{background:#408a58}}
+.fill{flex:1}
+.search{display:flex;align-items:center;gap:8px;width:330px;height:30px;background:var(--inset);border:1px solid var(--bd);border-radius:7px;padding:0 10px;color:var(--t3)}
+.search input{flex:1;background:none;border:none;outline:none;color:var(--t1);font:13px var(--ui)}
+.search input::placeholder{color:var(--t4)}
+.search kbd{font:11px var(--mono);color:var(--t4);border:1px solid var(--bd);border-radius:4px;padding:0 5px}
+.search.on{border-color:var(--selBd)}
+.btn{height:30px;display:inline-flex;align-items:center;gap:7px;padding:0 12px;border-radius:7px;background:linear-gradient(#222227,#1a1a1e);border:1px solid var(--bd);border-top-color:var(--bd3);color:var(--t2);cursor:pointer;white-space:nowrap}
+.btn:hover{color:var(--t1)}
+.glass{background:linear-gradient(var(--selA),var(--selB));border:1px solid var(--selBd);border-top-color:var(--selTop);color:var(--selTx)}
+
+/* band bar */
+.bands{flex:none;display:flex;align-items:stretch;gap:4px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--bd2)}
+.band{width:72px;flex:none;padding:5px 8px 6px;border-radius:7px;border:1px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.band:hover{background:#141417;border-color:var(--bd2)}
+.band .l{display:flex;justify-content:space-between;align-items:baseline}
+.band .n{font-weight:600;font-size:13px}
+.band .c{font-family:var(--mono);font-size:11px;color:var(--t3)}
+.band .act{height:3px;border-radius:2px;background:var(--bd);overflow:hidden;display:flex}
+.band .act i{display:block;background:var(--grn)}.band .act u{display:block;background:var(--amb)}
+.band.on{background:linear-gradient(var(--selA),var(--selB));border-color:var(--selBd);border-top-color:var(--selTop)}
+.band.on .n{color:var(--selTx)}.band.on .c{color:#b9cfe6}
+.band.dis{opacity:.4;cursor:default}.band.dis:hover{background:none;border-color:transparent}
+.band.all{width:78px}
+.bands .sp{flex:1}
+.filters{display:flex;align-items:center;gap:6px}
+.chip{height:26px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:7px;border:1px solid var(--bd);background:#141417;color:var(--t2);font-size:12px;cursor:pointer;white-space:nowrap}
+.chip.on{background:linear-gradient(var(--selA),var(--selB));border-color:var(--selBd);color:var(--selTx)}
+.chip .x{font-family:var(--mono);font-size:11px;color:var(--t3)}.chip.on .x{color:#b9cfe6}
+
+/* band map */
+.bmap{flex:none;height:74px;position:relative;background:var(--inset);border-bottom:1px solid var(--bd2);margin:0}
+.bmap .bin{position:absolute;left:36px;right:36px;top:0;bottom:0}
+.bmap .seg{position:absolute;top:0;bottom:18px;background:rgba(74,123,168,.07);border-left:1px dashed #22324a;border-right:1px dashed #22324a}
+.bmap .segl{position:absolute;top:4px;font-size:11px;color:#5d7895;transform:translateX(4px)}
+.bmap::after{content:"";position:absolute;left:0;right:0;bottom:18px;height:1px;background:var(--bd2)}
+.bmap .axis{position:absolute;left:0;right:0;bottom:0;height:18px;font-family:var(--mono);font-size:11px;color:var(--t4)}
+.bmap .axis span{position:absolute;top:2px;transform:translateX(-50%)}
+.mk{position:absolute;bottom:18px;width:9px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;cursor:pointer}
+.mk .stem{width:1px;background:#3d3d41}
+.mk:hover .stem{background:var(--t2)}
+.mk.sel .stem{background:var(--selTop);width:2px}
+.mk.sel .gl{box-shadow:0 0 0 3px rgba(61,120,176,.55)}
+
+/* glyphs: shape and color both carry the state */
+.gl{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block;position:relative}
+.gl.talk{background:var(--grn)}
+.gl.unk{border:2px solid var(--amb);background:transparent}
+.gl.unk::after{content:"";position:absolute;inset:2px;border-radius:50%;background:var(--amb)}
+.gl.dbl{background:repeating-linear-gradient(135deg,var(--red) 0 2px,#5a2a2c 2px 4px);border-radius:2px;transform:rotate(45deg) scale(.85)}
+.gl.quiet{border:1.5px solid var(--muted);background:transparent}
+.gl.you{background:var(--cyan)}
+
+/* main split */
+.main{flex:1;min-height:0;display:flex}
+.list{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--app)}
+.thead,.row{display:grid;grid-template-columns:118px 50px 176px 50px 52px 92px minmax(0,1fr) 40px;column-gap:10px;align-items:center;padding:0 14px 0 12px}
+.thead{height:28px;flex:none;font-size:11px;letter-spacing:.08em;color:var(--t4);font-weight:600;border-bottom:1px solid var(--bd2);background:var(--panel)}
+.thead .r,.row .r{text-align:right}
+.thead .sort{color:var(--t2)}
+.rows{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#2c2c31 transparent}
+.grp{position:sticky;top:0;z-index:2;height:28px;display:flex;align-items:center;gap:10px;padding:0 14px 0 12px;background:#0f0f12;border-bottom:1px solid var(--bd2);font-size:12px;color:var(--t2);cursor:pointer}
+.grp .bn{font-weight:700;color:var(--t1);font-size:13px}
+.grp .gc{font-family:var(--mono);font-size:11px;color:var(--t3)}
+.grp .gq{margin-left:auto;font-size:11px;color:var(--t4)}
+.grp .gq a{color:var(--acc2);cursor:pointer}
+.row{height:30px;border-bottom:1px solid #121215;cursor:pointer;font-size:13px;position:relative}
+.row:hover{background:#111114}
+.row.sel{background:linear-gradient(90deg,rgba(47,95,146,.55),rgba(30,61,95,.35));box-shadow:inset 2px 0 var(--selTop)}
+.row.sel .fq{color:var(--selTx)}
+.row.q{color:var(--t3)}.row.q .fq{color:var(--t3)}
+.fq{font-family:var(--mono);font-size:13px;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
+.fq i{font-style:normal;color:var(--t4)}
+.md{font-size:11px;color:var(--t3);font-weight:600;letter-spacing:.04em}
+.md.fdv{color:var(--acc2)}
+.who{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap}
+.who .c{font-family:var(--mono);font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.who .c.unk{color:var(--amb)}.who .c.dbl{color:#e08a8c}.who .c.qt{color:var(--t4);font-family:var(--ui);font-weight:400}
+.tm{font-family:var(--mono);font-size:12px;color:var(--t2)}
+.row.q .tm{color:var(--t4)}
+.hb{font-family:var(--mono);font-size:12px;color:var(--t2)}
+.strip{height:16px;display:flex;align-items:flex-end;gap:1px}
+.strip i{width:3px;background:var(--t4);border-radius:1px 1px 0 0;display:block}
+.strip i.a{background:var(--muted)}
+.row.sel .strip i{background:#b9cfe6}
+.strip.none{align-items:center}.strip.none::before{content:"";width:100%;height:1px;background:var(--bd2)}
+.lm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t2);font-size:12px}
+.lm b{font-family:var(--mono);color:var(--t1);font-weight:600;margin-right:6px;font-size:12px}
+.ago{font-family:var(--mono);font-size:11px;color:var(--t4)}
+mark{background:rgba(216,165,95,.28);color:inherit;border-radius:2px;padding:0 1px}
+.lfoot{flex:none;height:30px;display:flex;align-items:center;gap:14px;padding:0 14px;border-top:1px solid var(--bd2);background:var(--panel);font-size:12px;color:var(--t3)}
+.lfoot .k{display:flex;align-items:center;gap:6px}
+.lfoot .sp{flex:1}
+.lfoot .kb{display:flex;align-items:center;gap:4px;color:var(--t3)}
+.lfoot kbd,.kbhelp kbd,#notes kbd{font:11px var(--mono);color:var(--t2);border:1px solid var(--bd);border-radius:4px;padding:0 5px;background:var(--inset)}
+#rows:focus{outline:none}#rows:focus .row.sel{box-shadow:inset 2px 0 var(--selTop),inset 0 0 0 1px var(--selTop)}
+.rbody:focus{outline:none;box-shadow:inset 0 0 0 1px var(--selTop)}
+.turn:focus{outline:none;background:#16161a;box-shadow:inset 2px 0 var(--selTop)}
+
+/* room pane */
+.room{width:450px;flex:none;border-left:1px solid var(--bd);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.rhead{flex:none;padding:12px 16px 10px;border-bottom:1px solid var(--bd2);background:linear-gradient(#141417,var(--panel))}
+.rhead .l1{display:flex;align-items:center;gap:10px}
+.rhead .f{font-family:var(--mono);font-size:24px;color:var(--t1);font-variant-numeric:tabular-nums;background:var(--inset);border:1px solid var(--bd2);border-radius:5px;padding:1px 8px}
+.rhead .f i{font-style:normal;color:var(--t4)}
+.tag{font-size:11px;font-weight:600;color:var(--t2);border:1px solid var(--bd3);border-radius:4px;padding:1px 6px;letter-spacing:.04em}
+.rhead .lnk{margin-left:auto}
+.talker{display:flex;align-items:center;gap:10px;margin-top:12px}
+.talker .gl{width:14px;height:14px}
+.talker .c{font-family:var(--mono);font-size:22px;font-weight:700}
+.talker .s{font-size:12px;color:var(--t2);line-height:1.35}
+.names{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--t3)}
+.names .nm{font-family:var(--mono);color:var(--amb);border:1px solid #5a4528;background:#1c160e;border-radius:5px;padding:1px 7px}
+.names .nm span{color:var(--t3);margin-left:4px}
+.rbody{flex:1;overflow-y:auto;min-height:0;scrollbar-width:thin;scrollbar-color:#2c2c31 transparent}
+.cap{display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px 6px;font-size:11px;letter-spacing:.1em;color:var(--t3);font-weight:700}
+.cap span{letter-spacing:0;font-weight:400;color:var(--t4)}
+.rd{display:grid;grid-template-columns:96px 66px 50px 1fr 50px;gap:8px;align-items:center;height:25px;padding:0 16px;font-size:13px}
+.rd:hover{background:#111114}
+.rd .c{font-family:var(--mono);font-weight:700;white-space:nowrap}
+.rd .k,.rd .o{font-family:var(--mono);font-size:11px;color:var(--t3);text-align:right;white-space:nowrap}
+.rd .b{height:8px;background:var(--inset);border:1px solid var(--bd2);border-radius:2px;position:relative;overflow:hidden}
+.rd .b i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#2e6b42,var(--grn))}
+.rd .b u{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.08)}
+.rd.aw .b i{background:#3d3d41}
+.rd .v{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.away{font-family:var(--ui);font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--t3);border:1px solid var(--bd3);border-radius:3px;padding:0 3px;margin-left:5px;vertical-align:1px}
+.fn{margin:8px 16px 0;padding:8px 10px;border-radius:7px;background:#111114;border:1px solid var(--bd2);font-size:12px;color:var(--t3);line-height:1.45}
+.fn b{color:var(--t2);font-weight:600}
+.turn{display:grid;grid-template-columns:46px 16px 1fr 44px;gap:8px;align-items:center;height:27px;padding:0 16px;font-size:13px;cursor:pointer}
+.turn:hover{background:#111114}
+.turn .t,.turn .d{font-family:var(--mono);font-size:11px;color:var(--t4)}
+.turn .d{text-align:right}
+.turn .c{font-family:var(--mono);font-weight:600}
+.turn .x{color:var(--t3);font-size:12px;margin-left:6px}
+.msg{padding:8px 16px;border-top:1px solid #141417}
+.msg .h{display:flex;align-items:baseline;gap:8px;font-size:12px}
+.msg .h .c{font-family:var(--mono);font-weight:700}
+.msg .h .hr{font-size:11px;color:var(--t3);background:#141417;border:1px solid var(--bd2);border-radius:4px;padding:0 5px}
+.msg .h .hr.tx{color:#e3a3a5;border-color:#5a2a2c;background:var(--redbg)}
+.msg .h .t{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--t4)}
+.msg .x{margin-top:3px;font-size:13px;line-height:1.45;color:#cfcfd5}
+.msg.rm .x{color:var(--t4);font-style:italic}
+.ro{flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--bd);background:#0a0a0c;font-size:12px;color:var(--t3);line-height:1.4}
+.ro b{font-family:var(--mono);color:var(--t1);font-weight:600}
+.ro .btn{margin-left:auto;height:28px}
+
+/* phone */
+.phone{width:390px;height:844px;border-radius:44px;background:#000;padding:12px;box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 0 0 2px #333;flex:none}
+.phone .scr{width:366px;height:820px;border-radius:34px;overflow:hidden;background:var(--app);display:flex;flex-direction:column}
+.ph-sb{height:44px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:6px 26px 0;font-size:14px;font-weight:600}
+.ph-url{flex:none;margin:0 12px 6px;height:30px;border-radius:9px;background:#1b1b1f;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--t2)}
+.ph-top{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(#26262b,#141417);border-bottom:1px solid var(--bd)}
+.ph-top .live{height:24px;padding:0 8px;margin-left:auto}
+.ph-search{flex:none;margin:8px 12px 0}
+.ph-search .search{width:100%}
+.ph-bands{flex:none;display:flex;gap:6px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--bd2);scrollbar-width:none}
+.ph-bands .chip{height:30px}
+.prow{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;row-gap:3px;padding:9px 14px;border-bottom:1px solid #141417}
+.prow .fq{font-size:15px}
+.prow .who{justify-content:flex-start}
+.prow .hb{text-align:right}
+.prow .lm{grid-column:1/4}
+.prow.q{color:var(--t3)}
+.ph-back{display:flex;align-items:center;gap:8px;padding:10px 14px;color:var(--acc2);font-size:14px;border-bottom:1px solid var(--bd2);background:var(--panel)}
+.phone .rd{grid-template-columns:86px 58px 1fr 44px;padding:0 14px}
+.phone .rd .o{display:none}
+.phone .rhead{padding:10px 14px}
+.phone .rhead .f{font-size:20px}
+</style>
+</head>
+<body>
+<div id="chooser">
+  <span class="lbl">PUBLIC PAGE</span>
+  <button data-r="all">All bands</button>
+  <button data-r="band">40 m with band map</button>
+  <button data-r="unk">Unknown talker</button>
+  <button data-r="search">Search a callsign</button>
+  <button data-r="quiet">Quiet rooms shown</button>
+  <button data-r="phone">Phone</button>
+  <button data-r="phoneroom">Phone room</button>
+</div>
+<div id="stage"><div id="dev"></div>
+  <div id="notes">
+    <h2>Built for a couple hundred rooms</h2>
+    <p>Cards are gone. Each room is one <b>30 px row</b>, grouped by band, with the open room beside the list. A laptop screen shows about 20 rooms at once where the cards showed 6, and nothing is lost: talker, how long, how many hear them, their readings and the last message are all on the row.</p>
+    <p>The <b>band buttons</b> carry room counts and a small bar of how many are talking (green) or unknown (amber). Pick a band and a <b>band map</b> appears: every room at its spot on the band, the stem as tall as the number of stations hearing it. Click one to open it.</p>
+    <p><b>Quiet rooms fold away</b> under each band with a count, so a band with 50 rooms shows the 20 that are live.</p>
+    <p><b>Search</b> finds a callsign wherever it appears: talking, reading or posting. Type a frequency to jump to it.</p>
+    <p>The little strip on each row is <b>one bar per station's own reading</b>, nearest first. Never averaged, never ranked.</p>
+    <p><b>Keyboard:</b> <kbd>/</kbd> goes to search, the arrow keys move through the rooms and each one shows as you land on it, <kbd>Enter</kbd> goes into the room (its earlier turns are a list the arrows walk), and <kbd>Esc</kbd> steps back: room to list, then clears the search, then the band.</p>
+    <p>State has a <b>shape as well as a color</b>: filled dot talking, ringed dot unknown, striped diamond doubled, hollow ring quiet.</p>
+    <p>The look is the program's own 2026.10.1 workspace: its title bar, inset fields, borders and glass selection, as the website's simulated window now draws them.</p>
+  </div>
+</div>
+<script>
+const LOGO="data:image/png;base64,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";
+function rng(s){return()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff}}
+const R=rng(42);const pick=a=>a[Math.floor(R()*a.length)];
+const PFX=['K','W','N','KA','KB','KC','KD','KE','KG','KI','KJ','WA','WB','AA','AB','AC','AD','AE','AG','VE','G','DL','F','EA','I','JA','VK','PY','ZS','OH'];
+const L='ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+function call(){const p=pick(PFX);let s='';const n=p.length>1?2+Math.floor(R()*2):1+Math.floor(R()*3);for(let i=0;i<n;i++)s+=pick(L);return p+Math.floor(R()*10)+s}
+const MSG=['Good copy here, 5 by 7','QSB is rough tonight','Net starts at the top of the hour','Anyone hear the station at 59 over?','Thanks for the check in','Band is long, VK coming through','Running 100 watts to a dipole','Moving up 5 to get clear','Great audio on the new mic','Skip is short now','QRZ? I heard a weak one','Signing, 73 all','Who is the station with the hum?','Listening for the DX','Hearing you better than last night','Your signal dropped out just now','Antenna up 40 feet','Any traffic for the net?','Will be back after dinner','Pileup is thinning out'];
+const BANDS=[
+ {b:'160',lo:1.80e6,hi:2.0e6,ph:[1.843e6,2.0e6],n:8,md:'LSB'},
+ {b:'80',lo:3.5e6,hi:4.0e6,ph:[3.6e6,4.0e6],n:34,md:'LSB'},
+ {b:'60',lo:5.33e6,hi:5.41e6,ch:[5330500,5346500,5357000,5371500,5403500],n:5,md:'USB'},
+ {b:'40',lo:7.0e6,hi:7.3e6,ph:[7.125e6,7.3e6],n:46,md:'LSB'},
+ {b:'30',lo:10.1e6,hi:10.15e6,n:0,md:'USB'},
+ {b:'20',lo:14.0e6,hi:14.35e6,ph:[14.15e6,14.35e6],n:52,md:'USB'},
+ {b:'17',lo:18.068e6,hi:18.168e6,ph:[18.11e6,18.168e6],n:14,md:'USB'},
+ {b:'15',lo:21.0e6,hi:21.45e6,ph:[21.2e6,21.45e6],n:22,md:'USB'},
+ {b:'12',lo:24.89e6,hi:24.99e6,ph:[24.93e6,24.99e6],n:6,md:'USB'},
+ {b:'10',lo:28.0e6,hi:29.7e6,ph:[28.3e6,29.7e6],n:19,md:'USB'},
+ {b:'6',lo:50.0e6,hi:54.0e6,ph:[50.1e6,50.3e6],n:8,md:'USB'}];
+const ROOMS=[];
+function mkReads(n){const a=[];for(let i=0;i<n;i++){const km=Math.round(60+Math.pow(R(),1.6)*6800);a.push({c:call(),km,off:R()<.7?0:pick([-200,-100,100,150,300]),s:Math.max(1,Math.min(13,Math.round(12-km/700+R()*3-1))),aw:R()<.1})}return a.sort((x,y)=>x.km-y.km)}
+BANDS.forEach(B=>{
+  const used=new Set();
+  for(let i=0;i<B.n;i++){
+    let f;if(B.ch)f=B.ch[i];else{do{f=Math.round((B.ph[0]+R()*(B.ph[1]-B.ph[0]))/500)*500}while(used.has(Math.round(f/3000)));used.add(Math.round(f/3000))}
+    const r=R();const st=r<.42?'talk':r<.49?'unk':r<.52?'dbl':'quiet';
+    let md=B.md;if(f===3885000||f===7290000||(B.b==='10'&&f>29.0e6&&f<29.2e6))md='AM';if(B.b==='10'&&f>29.5e6)md='FM';if(R()<.06)md='FreeDV';
+    const n=st==='quiet'?0:2+Math.floor(Math.pow(R(),1.8)*16);
+    ROOMS.push({band:B.b,f,md,st,who:st==='talk'?call():st==='unk'?'?':st==='dbl'?call()+' + ?':'',secs:30+Math.floor(R()*290),qm:2+Math.floor(R()*27),n,reads:mkReads(n),last:{c:call(),x:pick(MSG),ago:1+Math.floor(R()*55)}});
+  }
+});
+// the rooms the earlier mockups follow
+function put(f,o){let r=ROOMS.find(x=>Math.abs(x.f-f)<1500&&x.band===o.band);if(!r){r={band:o.band,f,md:'LSB',reads:[]};ROOMS.push(r)}Object.assign(r,{f},o)}
+put(7185000,{band:'40',md:'LSB',st:'talk',who:'K4ABC',secs:75,n:9,reads:[['N4XYZ',215,-200,10],['K4QRS',593,100,9],['K0ABC',775,300,8],['AA5ABC',1121,300,7,1],['W5ABC',1179,0,8],['K2ABC',1318,0,6],['KC1ABC',1380,0,7],['KG4VCF',1579,0,8],['G0ABC',6773,0,4]].map(a=>({c:a[0],km:a[1],off:a[2],s:a[3],aw:!!a[4]})),last:{c:'K4ABC',x:'Fifteen more minutes, then I am off',ago:1}});
+put(7200000,{band:'40',md:'LSB',st:'unk',who:'?',secs:48,n:5,reads:mkReads(5),last:{c:'N3XYZ',x:'Anyone know who this is?',ago:2},names:[['W4XYZ',3],['K4QQ',1]]});
+put(7255500,{band:'40',md:'LSB',st:'dbl',who:'W8DXR + ?',secs:6,n:4,reads:mkReads(4),last:{c:'WA2PLE',x:'Doubled again',ago:1}});
+put(7177000,{band:'40',md:'FreeDV',st:'talk',who:'W8DXR',secs:140,n:6,reads:mkReads(6),last:{c:'K8EDV',x:'RADE decoding clean here',ago:3}});
+ROOMS.sort((a,b)=>a.f-b.f);
+const sTxt=s=>s>9?'S9+'+(s-9)*10:'S'+s;
+const fmt=f=>{const m=Math.floor(f/1e6),k=Math.floor(f/1e3)%1000,h=f%1000;return [m,String(k).padStart(3,'0'),String(h).padStart(3,'0')]};
+const fq=f=>{const p=fmt(f);return `${p[0]}.${p[1]}<i>.${p[2]}</i>`};
+const mmss=s=>Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+const S={v:'all',band:null,sel:7185000,q:'',quiet:false,sort:'f'};
+const room=f=>ROOMS.find(r=>r.f===f);
+const glyph=st=>`<span class="gl ${st}"></span>`;
+const hl=t=>S.q?t.replace(new RegExp('('+S.q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig'),'<mark>$1</mark>'):t;
+function matches(r){if(!S.q)return true;const q=S.q.toUpperCase();return fmt(r.f).join('.').startsWith(q)||r.who.toUpperCase().includes(q)||r.last.c.includes(q)||r.reads.some(x=>x.c.includes(q))}
+function whoCell(r){
+  if(r.st==='quiet')return `<span class="who">${glyph('quiet')}<span class="c qt">quiet ${r.qm} min</span></span>`;
+  return `<span class="who">${glyph(r.st)}<span class="c ${r.st==='unk'?'unk':r.st==='dbl'?'dbl':''}">${r.st==='unk'?'Unknown':hl(r.who)}</span></span>`}
+function strip(r){if(!r.reads.length)return '<span class="strip none"></span>';return `<span class="strip">${r.reads.slice(0,18).map(x=>`<i class="${x.aw?'a':''}" style="height:${3+x.s}px"></i>`).join('')}</span>`}
+function row(r){
+  const Q=S.q.toUpperCase();
+  const viaRead=S.q&&!r.who.toUpperCase().includes(Q)&&r.reads.find(x=>x.c.includes(Q));
+  return `<div class="row ${r.st==='quiet'?'q':''} ${S.sel===r.f?'sel':''}" data-f="${r.f}"><span class="fq">${fq(r.f)}</span><span class="md ${r.md==='FreeDV'?'fdv':''}">${r.md}</span>${whoCell(r)}<span class="tm r">${r.st==='quiet'?'':mmss(r.secs)}</span><span class="hb r">${r.n||''}</span>${strip(r)}<span class="lm">${viaRead?`<span style="color:var(--amb)">heard by ${hl(viaRead.c)} · ${sTxt(viaRead.s)}</span>`:`<b>${hl(r.last.c)}</b>${r.last.x}`}</span><span class="ago r">${r.last.ago}m</span></div>`}
+function visible(){return ROOMS.filter(r=>(!S.band||r.band===S.band)&&matches(r))}
+function listHtml(){
+  const vis=visible();let h='';
+  BANDS.forEach(B=>{
+    if(S.band&&B.b!==S.band)return;
+    let rs=vis.filter(r=>r.band===B.b);if(!rs.length)return;
+    const live=rs.filter(r=>r.st!=='quiet'),quiet=rs.length-live.length;
+    if(S.sort==='n')rs=[...rs].sort((a,b)=>b.n-a.n);
+    const show=S.quiet||S.q?rs:rs.filter(r=>r.st!=='quiet');
+    h+=`<section><div class="grp"><span class="bn">${B.b} m</span><span class="gc">${rs.length} rooms · ${live.filter(r=>r.st==='talk').length} talking</span>${quiet&&!S.q?`<span class="gq">${S.quiet?quiet+' quiet shown · <a data-act="quiet">Fold them</a>':quiet+' quiet folded · <a data-act="quiet">Show</a>'}</span>`:''}</div>`;
+    h+=show.map(row).join('')+'</section>';
+  });
+  if(!h)h=`<div style="padding:40px;text-align:center;color:var(--t3)">No room has ${S.q} in it right now.</div>`;
+  return h}
+function bandsHtml(){
+  const tot=ROOMS.length,talk=ROOMS.filter(r=>r.st==='talk').length;
+  let h=`<div class="band all ${!S.band?'on':''}" data-band=""><div class="l"><span class="n">All</span><span class="c">${tot}</span></div><div class="act"><i style="width:${talk/tot*100}%"></i></div></div>`;
+  BANDS.forEach(B=>{const rs=ROOMS.filter(r=>r.band===B.b),t=rs.filter(r=>r.st==='talk').length,u=rs.filter(r=>r.st==='unk'||r.st==='dbl').length;
+    h+=`<div class="band ${S.band===B.b?'on':''} ${rs.length?'':'dis'}" ${rs.length?`data-band="${B.b}"`:''} title="${rs.length?'':'No phone rooms on 30 m'}"><div class="l"><span class="n">${B.b}</span><span class="c">${rs.length}</span></div><div class="act">${rs.length?`<i style="width:${t/rs.length*100}%"></i><u style="width:${u/rs.length*100}%"></u>`:''}</div></div>`});
+  return h}
+function bmapHtml(){
+  const B=BANDS.find(x=>x.b===S.band);const x=f=>((f-B.lo)/(B.hi-B.lo)*100).toFixed(2)+'%';
+  let h=`<div class="bmap"><div class="bin">`;
+  if(B.ph)h+=`<div class="seg" style="left:${x(B.ph[0])};width:${((B.ph[1]-B.ph[0])/(B.hi-B.lo)*100).toFixed(2)}%"></div><span class="segl" style="left:${x(B.ph[0])}">Phone segment</span>`;
+  const step=(B.hi-B.lo)/6;h+=`<div class="axis">${[0,1,2,3,4,5,6].map(i=>`<span style="left:${(i/6*100).toFixed(2)}%">${((B.lo+i*step)/1e6).toFixed(3)}</span>`).join('')}</div>`;
+  ROOMS.filter(r=>r.band===S.band&&(S.quiet||r.st!=='quiet'||r.f===S.sel)).forEach(r=>{h+=`<div class="mk ${S.sel===r.f?'sel':''}" data-f="${r.f}" style="left:${x(r.f)}" title="${fmt(r.f).join('.')} ${r.who}">${glyph(r.st)}<span class="stem" style="height:${6+r.n*2.2}px"></span></div>`});
+  return h+`</div></div>`}
+function roomHtml(r,phone){
+  const p=fmt(r.f);
+  let h=`<div class="rhead"><div class="l1"><span class="f">${fq(r.f)}</span><span class="tag">${r.md}</span><span class="tag">${r.band} m</span>${phone?'':`<span class="btn lnk" title="roundtable.nereussdr.com/${p[0]}.${p[1]}">⧉ Copy link</span>`}</div>`;
+  if(r.st==='quiet')h+=`<div class="talker">${glyph('quiet')}<div><div class="c" style="color:var(--t3);font-family:var(--ui);font-size:17px;font-weight:600">Quiet</div><div class="s">Nobody has keyed for ${r.qm} min. Readings are only kept while someone is keyed.</div></div></div>`;
+  else h+=`<div class="talker">${glyph(r.st)}<div><div class="c" style="color:${r.st==='talk'?'var(--t1)':r.st==='unk'?'var(--amb)':'#e08a8c'}">${r.st==='unk'?'Unknown talker':r.who}</div><div class="s">${r.st==='talk'?'talking '+mmss(r.secs)+(r.md==='FreeDV'?' · callsign sent by FreeDV':' · on NereusSDR'):r.st==='unk'?'keyed '+mmss(r.secs)+' · not on NereusSDR':'two stations keyed at once for '+r.secs+' s'}</div></div></div>`;
+  if(r.names)h+=`<div class="names">Listeners have named this turn: ${r.names.map(n=>`<span class="nm">${n[0]}<span>${n[1]}</span></span>`).join('')}</div>`;
+  h+=`</div><div class="rbody" tabindex="-1" aria-label="Room">`;
+  if(r.st!=='quiet'){
+    h+=`<div class="cap">HOW EACH STATION HEARS ${r.st==='unk'?'THIS TALKER':r.st==='dbl'?'THE DOUBLE':r.who}<span>nearest first</span></div>`;
+    h+=r.reads.map(x=>`<div class="rd ${x.aw?'aw':''}"><span class="c">${hl(x.c)}${x.aw?'<span class="away">AWAY</span>':''}</span><span class="k">${x.km.toLocaleString()} km</span><span class="o">${x.off?(x.off>0?'+':'')+x.off+' Hz':'on'}</span><span class="b"><i style="width:${x.s/13*100}%"></i>${[1,3,5,7,9,11].map(t=>`<u style="left:${t/13*100}%"></u>`).join('')}</span><span class="v">${sTxt(x.s)}</span></div>`).join('');
+    h+=`<div class="fn"><b>Every number is one station's own raw S-meter reading.</b> Radios read differently, so they are never averaged or ranked. AWAY is a station's radio reporting with nobody at it.</div>`;
+  }
+  h+=`<div class="cap">EARLIER TURNS<span>last 30 minutes</span></div><div role="list" aria-label="Earlier turns">`;
+  h+=[['20:41','talk','W9ABC','on NereusSDR','2:10'],['20:39','unk','Unknown','named W4XYZ by 3','0:48'],['20:37','talk','N4XYZ','on NereusSDR','1:32'],['20:35','dbl','N3XYZ + ?','two at once','0:06'],['20:31','talk','K0ABC','on NereusSDR','3:44']].map(t=>`<div class="turn" role="listitem" tabindex="0"><span class="t">${t[0]}</span>${glyph(t[1])}<span><span class="c" style="${t[1]==='unk'?'color:var(--amb)':''}">${t[2]}</span><span class="x">${t[3]}</span></span><span class="d">${t[4]}</span></div>`).join('')+'</div>';
+  h+=`<div class="cap">MESSAGES<span>${r.f===7185000?'14 in the last hour':'last hour'}</span></div>
+   <div class="msg"><div class="h"><span class="c">K0ABC</span><span class="hr">hearing K4ABC · S8</span><span class="t">20:40</span></div><div class="x">Skip is long here, you are weak but solid.</div></div>
+   <div class="msg rm"><div class="h"><span class="c" style="color:var(--t4)">Removed</span><span class="t">20:41</span></div><div class="x">Message removed by a helper</div></div>
+   <div class="msg"><div class="h"><span class="c">${r.last.c}</span><span class="hr tx">transmitting</span><span class="t">20:42</span></div><div class="x">${r.last.x}</div></div>
+   <div style="height:12px"></div></div>
+   <div class="ro"><span>Read only. To post or name a turn, tune <b>${p[0]}.${p[1]}.${p[2].slice(0,2)}</b> in NereusSDR.</span><span class="btn glass">Get NereusSDR</span></div>`;
+  return h}
+function desktop(){
+  const r=room(S.sel)||ROOMS[0];const vis=visible();
+  return `<div class="browser"><div class="bchrome"><span class="dots"><i></i><i></i><i></i></span><span class="url">🔒 <b>roundtable.nereussdr.com</b>${S.band?'/'+S.band+'m':''}${S.q?'/?q='+S.q:''}</span></div>
+  <div class="page"><div class="top"><span class="brand"><img src="${LOGO}" alt=""><span>Nereus<b>SDR</b></span><span class="sep"></span><span class="rt">Roundtable</span></span>
+   <span class="live"><span class="dot"></span>LIVE<span class="k">${ROOMS.filter(r=>r.st!=='quiet').length} rooms on the air · ${ROOMS.reduce((a,r)=>a+r.n,0).toLocaleString()} stations reading</span></span>
+   <span class="fill"></span><label class="search ${S.q?'on':''}">⌕<input id="q" value="${S.q}" placeholder="Callsign or frequency"><kbd>/</kbd></label><span class="btn">⚿ Your station key</span></div>
+  <div class="bands">${bandsHtml()}<span class="sp"></span><div class="filters"><span class="chip ${S.quiet?'on':''}" data-act="quiet">Quiet rooms <span class="x">${ROOMS.filter(r=>r.st==='quiet').length}</span></span><span class="chip" data-act="sort">Sort: ${S.sort==='f'?'Frequency':'Most stations'} ▾</span></div></div>
+  ${S.band?bmapHtml():''}
+  <div class="main"><div class="list"><div class="thead"><span class="sort">FREQUENCY ▴</span><span>MODE</span><span>ON THE AIR</span><span class="r">TIME</span><span class="r">HEARD</span><span>READINGS</span><span>LAST MESSAGE</span><span class="r">AGO</span></div>
+   <div class="rows" id="rows" tabindex="0" role="listbox" aria-label="Rooms">${listHtml()}</div>
+   <div class="lfoot"><span>${vis.filter(r=>S.quiet||S.q||r.st!=='quiet').length} of ${vis.length} rooms shown</span><span class="kb"><kbd>↑</kbd><kbd>↓</kbd> rooms <kbd>Enter</kbd> read <kbd>/</kbd> search <kbd>Esc</kbd> back</span><span class="sp"></span><span class="k">${glyph('talk')}talking</span><span class="k">${glyph('unk')}unknown</span><span class="k">${glyph('dbl')}doubled</span><span class="k">${glyph('quiet')}quiet</span></div></div>
+   <div class="room">${roomHtml(r)}</div></div></div></div>`}
+function phone(){
+  const inRoom=S.v==='phoneroom';const r=room(S.sel);
+  let h=`<div class="phone"><div class="scr"><div class="ph-sb"><span>8:42</span><span>100%</span></div><div class="ph-url">🔒 roundtable.nereussdr.com</div>`;
+  if(inRoom)return h+`<div class="ph-back" data-act="phback">‹ All rooms</div><div class="room" style="width:auto;border:none;flex:1">${roomHtml(r,true)}</div></div></div>`;
+  h+=`<div class="ph-top"><span class="brand"><img src="${LOGO}" alt="" style="width:22px;height:22px"><span class="rt">Roundtable</span></span><span class="live"><span class="dot"></span>${ROOMS.filter(r=>r.st!=='quiet').length} live</span></div>
+   <div class="ph-search"><label class="search">⌕<input placeholder="Callsign or frequency"></label></div>
+   <div class="ph-bands"><span class="chip">All</span>${BANDS.filter(B=>B.n).map(B=>`<span class="chip ${B.b==='40'?'on':''}">${B.b} m <span class="x">${ROOMS.filter(r=>r.band===B.b).length}</span></span>`).join('')}</div>
+   <div class="rows" style="flex:1">`;
+  const rs=ROOMS.filter(r=>r.band==='40'),live=rs.filter(r=>r.st!=='quiet');
+  h+=`<div class="grp"><span class="bn">40 m</span><span class="gc">${rs.length} rooms · ${live.filter(r=>r.st==='talk').length} talking</span><span class="gq">${rs.length-live.length} quiet · <a>Show</a></span></div>`;
+  h+=live.map(r=>`<div class="prow" data-f="${r.f}" data-act="phroom"><span class="fq">${fq(r.f)}</span>${whoCell(r)}<span class="hb">${r.n} hear</span><span class="lm"><b>${r.last.c}</b>${r.last.x}</span></div>`).join('');
+  return h+`</div></div></div>`}
+function render(){
+  document.querySelectorAll('#chooser button').forEach(b=>b.classList.toggle('on',b.dataset.r===S.v));
+  const ph=S.v.startsWith('phone');
+  document.getElementById('dev').innerHTML=ph?phone():desktop();
+  const sel=document.querySelector('.row.sel');if(sel&&!ph){const rows=document.getElementById('rows');rows.scrollTop=Math.max(0,sel.offsetTop-rows.offsetTop-rows.clientHeight/2)}
+  const q=document.getElementById('q');if(q)q.oninput=e=>{S.q=e.target.value.trim();const pos=e.target.selectionStart;render();const n=document.getElementById('q');n.focus();n.setSelectionRange(pos,pos)};
+}
+function go(v){S.v=v;S.band=null;S.q='';S.quiet=false;S.sel=7185000;
+  if(v==='band')S.band='40';if(v==='unk'){S.band='40';S.sel=7200000}if(v==='search'){S.q='W8D';S.sel=7177000}if(v==='quiet'){S.quiet=true;S.band='40'}render()}
+document.addEventListener('click',e=>{
+  const c=e.target.closest('#chooser [data-r]');if(c)return go(c.dataset.r);
+  const b=e.target.closest('[data-band]');if(b){S.band=b.dataset.band||null;render();return}
+  const a=e.target.closest('[data-act]');
+  if(a&&a.dataset.act==='quiet'){S.quiet=!S.quiet;render();return}
+  if(a&&a.dataset.act==='sort'){S.sort=S.sort==='f'?'n':'f';render();return}
+  if(a&&a.dataset.act==='phback'){S.v='phone';render();return}
+  if(a&&a.dataset.act==='phroom'){S.sel=+a.dataset.f;S.v='phoneroom';render();return}
+  const f=e.target.closest('[data-f]');if(f){S.sel=+f.dataset.f;render()}
+});
+// Keyboard: / searches, the arrows move through the rooms (a list reads, so the room shows at
+// once), Enter goes into the room, Escape steps back: room to list, then the search, then the band.
+function focusRows(){const r=document.getElementById('rows');if(r)r.focus()}
+function moveSel(d){const vis=[...document.querySelectorAll('#rows .row')];if(!vis.length)return;let i=vis.findIndex(x=>x.classList.contains('sel'));i=i<0?0:Math.max(0,Math.min(vis.length-1,i+d));S.sel=+vis[i].dataset.f;render()}
+document.addEventListener('keydown',e=>{
+  if(S.v.startsWith('phone'))return;
+  const a=document.activeElement,inQ=a&&a.id==='q',inRoom=a&&a.closest&&a.closest('.room');
+  if(e.key==='/'&&!inQ){const q=document.getElementById('q');if(q){e.preventDefault();q.focus()}return}
+  if((e.key==='ArrowDown'||e.key==='ArrowUp')&&!inRoom){e.preventDefault();moveSel(e.key==='ArrowDown'?1:-1);if(inQ){const q=document.getElementById('q');q.focus();q.setSelectionRange(q.value.length,q.value.length)}else focusRows();return}
+  if((e.key==='ArrowDown'||e.key==='ArrowUp')&&inRoom&&a.classList.contains('turn')){e.preventDefault();const n=e.key==='ArrowDown'?a.nextElementSibling:a.previousElementSibling;if(n&&n.classList.contains('turn'))n.focus();return}
+  if(e.key==='Enter'&&!inRoom){e.preventDefault();if(inQ&&!document.querySelector('#rows .row.sel')){moveSel(0)}const b=document.querySelector('.room .rbody');if(b)b.focus();return}
+  if(e.key==='Escape'){e.preventDefault();if(inRoom){focusRows();return}if(S.q){S.q='';render();focusRows();return}if(S.band){S.band=null;render();focusRows();return}if(inQ)focusRows()}
+});
+go(location.hash.slice(1)||'all');
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "from": "server",
+  "to": "live",
+  "wire": {
+    "type": "error",
+    "code": "not-allowed",
+    "reason": "You can watch up to 4 frequencies at once.",
+    "about": "watch",
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

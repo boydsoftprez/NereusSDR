@@ -1,5 +1,10 @@
 // NereusSDR for iOS: the app's model of its Core: the session and everything fed from it
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the Roundtable model the screens
+// read, tied to this app's session. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the Panadapter tab's swipes, shared
+// by the tab bar and the band. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -80,6 +85,12 @@ final class AppModel: ObservableObject {
     lazy var diversity = DiversityModel(mirror: mirror, phone: phoneSettings, commands: commands,
         slices: main.slices, captureSender: { [route] in route.captureCommandSender() })
     lazy var coreLog = CoreLogModel(mirror: mirror, commands: commands, records: records)
+    /// Roundtable as the Core runs it (spec 11.3): one for the flag lines
+    /// and the sheet, tied to this app, so it stops reading as connected
+    /// once the app and its session are gone.
+    lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, owner: self)
+    /// The Panadapter tab's swipes (spec 11.3, S1): the band reads its edges, the root its tab bar.
+    lazy var swipes = SwipeShortcutModel(settings: phoneSettings)
     /// The speaker at the radio, as the Sound panel shows it: one level and
     /// mute the Core keeps for every window and phone (R-SPK-20).
     lazy var radioSpeaker = RadioSpeakerModel(mirror: mirror)

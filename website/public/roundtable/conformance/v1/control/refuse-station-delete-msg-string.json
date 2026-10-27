@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "delete",
+    "msg": "981"
+  },
+  "decodes": false
+}

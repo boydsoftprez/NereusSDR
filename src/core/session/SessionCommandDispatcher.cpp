@@ -331,6 +331,10 @@
 //                                    tx.twoTonePreset asks for the Core's
 //                                    coalesced settings save. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11: the thirteen
+//                                    roundtable.* verbs, read here and
+//                                    answered by the station server.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionCommandDispatcher.h"
@@ -679,6 +683,14 @@ bool findBoolArgument(const QList<MirrorUpdate>& arguments, const QByteArray& na
 //   station.forgetRadio    stationRadiosVersion 1 (requestStationRadio)
 //   freedv.setMessage, freedv.sendQsy, freedv.setHidden
 //                          stationFreedvVersion 1 (requestFreedv)
+//   roundtable.post, roundtable.delete, roundtable.name, roundtable.report,
+//   roundtable.read, roundtable.unread, roundtable.setHidden,
+//   roundtable.answerFirstRun, roundtable.mute, roundtable.unmute,
+//   roundtable.markMentionRead, roundtable.webSignIn,
+//   roundtable.deleteArchive
+//                          stationRoundtableVersion 1, to a peer whose hello
+//                          declared roundtable (requestRoundtable*;
+//                          StationServer answers them)
 //   nnr.*                  nnrControlAvailable(); nnr.tryAgain adds
 //                          kNnrLimitSessionProtocolMinor
 //   nnr.applyModelSelection dspAssetVersion 1 (requestApplyNnrModels)
@@ -928,6 +940,34 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"setRotorPresets", {arg("presets", kUtf8)}, "remoteRotorControlVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"refreshRotorPorts", {}, "remoteRotorControlVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+        // Roundtable connection. Ids travel as their decimal text.
+        {"roundtable.post", {arg("roomId", kUtf8), arg("text", kUtf8), arg("clientId", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.delete", {arg("messageId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.name", {arg("turnId", kUtf8), arg("name", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.report", {arg("kind", kUtf8), arg("target", kUtf8), arg("reason", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.read", {arg("roomId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.unread", {arg("roomId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.setHidden", {arg("hidden", kBool)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.answerFirstRun", {arg("live", kBool)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.mute", {arg("callsign", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.unmute", {arg("callsign", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.markMentionRead", {arg("upToMs", kInt)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.webSignIn", {}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.deleteArchive", {arg("confirm", kUtf8)}, "stationRoundtableVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's radio hardware (R-R3-46).
         {"requestIoBoardProbe", {}, "radioHardwareVersion", 2,
@@ -1703,6 +1743,19 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "freedv.setMessage" || invoke.commandVerb == "freedv.sendQsy"
                || invoke.commandVerb == "freedv.setHidden") {
         handleFreedv(invoke);
+    } else if (invoke.commandVerb == "roundtable.post" || invoke.commandVerb == "roundtable.delete"
+               || invoke.commandVerb == "roundtable.name"
+               || invoke.commandVerb == "roundtable.report"
+               || invoke.commandVerb == "roundtable.read"
+               || invoke.commandVerb == "roundtable.unread"
+               || invoke.commandVerb == "roundtable.setHidden"
+               || invoke.commandVerb == "roundtable.answerFirstRun"
+               || invoke.commandVerb == "roundtable.mute"
+               || invoke.commandVerb == "roundtable.unmute"
+               || invoke.commandVerb == "roundtable.markMentionRead"
+               || invoke.commandVerb == "roundtable.webSignIn"
+               || invoke.commandVerb == "roundtable.deleteArchive") {
+        handleRoundtable(invoke);
     } else if (invoke.commandVerb == "support.collect"
                || invoke.commandVerb == "support.setLogCategories") {
         handleSupport(invoke);
@@ -4965,6 +5018,67 @@ void SessionCommandDispatcher::handleFreedv(const SessionMessage& invoke)
         accepted = host->setFreedvHidden(on.toBool(), &reason);
     }
     emitResult(invoke.commandVerb, invoke.commandId, accepted, reason, {});
+}
+
+// Roundtable plan Task 11 (stationRoundtableVersion 1): each roundtable.*
+// verb's arguments, of the kinds its row lists, and nothing else; then the
+// station server answers it for the asking connection.
+void SessionCommandDispatcher::handleRoundtable(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto texts = [&invoke](std::initializer_list<QByteArray> names) {
+        if (!hasExactlyArguments(invoke.arguments, names)) {
+            return false;
+        }
+        QString value;
+        for (const QByteArray& name : names) {
+            if (!findUtf8Argument(invoke.arguments, name, &value)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool readable = false;
+    bool flag = false;
+    if (verb == "roundtable.post") {
+        readable = texts({"roomId", "text", "clientId"});
+    } else if (verb == "roundtable.delete") {
+        readable = texts({"messageId"});
+    } else if (verb == "roundtable.name") {
+        readable = texts({"turnId", "name"});
+    } else if (verb == "roundtable.report") {
+        readable = texts({"kind", "target", "reason"});
+    } else if (verb == "roundtable.read" || verb == "roundtable.unread") {
+        readable = texts({"roomId"});
+    } else if (verb == "roundtable.mute" || verb == "roundtable.unmute") {
+        readable = texts({"callsign"});
+    } else if (verb == "roundtable.deleteArchive") {
+        readable = texts({"confirm"});
+    } else if (verb == "roundtable.setHidden") {
+        readable = hasExactlyArguments(invoke.arguments, {"hidden"})
+            && findBoolArgument(invoke.arguments, "hidden", &flag);
+    } else if (verb == "roundtable.answerFirstRun") {
+        readable = hasExactlyArguments(invoke.arguments, {"live"})
+            && findBoolArgument(invoke.arguments, "live", &flag);
+    } else if (verb == "roundtable.markMentionRead") {
+        QVariant raw;
+        readable = hasExactlyArguments(invoke.arguments, {"upToMs"})
+            && hasWireKind(invoke.arguments, "upToMs", MirrorWireKind::Int64)
+            && findArgument(invoke.arguments, "upToMs", &raw)
+            && raw.typeId() == QMetaType::LongLong;
+    } else if (verb == "roundtable.webSignIn") {
+        readable = invoke.arguments.isEmpty();
+    }
+    if (!readable) {
+        emitResult(verb, invoke.commandId, false,
+                   QStringLiteral("The Core could not read this request."), {});
+        return;
+    }
+    if (m_roundtableAccess && m_roundtableAccess(invoke)) {
+        return;
+    }
+    emitResult(verb, invoke.commandId, false,
+               QStringLiteral("This Core does not run Roundtable."), {});
 }
 
 // R-R3-46 (parity Task 14, radioHardwareVersion 7): Pin Control on HL2

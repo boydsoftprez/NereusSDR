@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NereusSDR Reporter — your archive</title>
+<style>
+  :root{
+    --bg:#07070e; --panel:#0c0c16; --panel2:#111a26; --panel3:#16222f;
+    --line:#1e2b3a; --line2:#2c3f52;
+    --ink:#e8f2fb; --dim:#8aa8c0; --dim2:#5a7185;
+    --cyan:#00d4ff; --green:#5fff8a; --red:#ff4444; --amber:#ffb800; --violet:#b98cff;
+    --mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;
+    --body:system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:#000}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:13px;padding:14px;
+       background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px)}
+  #frame{width:1460px;margin:0 auto}
+
+  header{display:flex;align-items:center;gap:16px;padding-bottom:9px;border-bottom:1px solid var(--line);
+     margin-bottom:12px;white-space:nowrap}
+  h1{font-family:var(--mono);font-size:16px;letter-spacing:.2em;color:var(--cyan);font-weight:600;flex:none}
+  .tag{color:var(--dim2);font-family:var(--mono);font-size:10px;letter-spacing:.1em;flex:none}
+  .whoami{margin-left:auto;display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10px;
+     color:var(--dim2);letter-spacing:.1em;flex:none}
+  .idkey{display:flex;align-items:center;gap:6px;border:1px solid #2f5a3f;background:#0b2418;
+     border-radius:2px;padding:3px 9px;color:var(--green)}
+  .idkey b{font-size:11px;color:var(--ink);letter-spacing:.04em}
+
+  /* tab bar */
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--line);margin-bottom:12px}
+  .tab{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim2);padding:8px 18px;
+     border:1px solid transparent;border-bottom:none;cursor:pointer;position:relative;top:1px;
+     background:transparent}
+  .tab.on{color:var(--cyan);border-color:var(--line);background:var(--panel);
+     border-bottom:1px solid var(--panel)}
+  .tab .c{color:var(--dim2);font-size:9.5px;margin-left:5px}
+
+  /* day selector */
+  .days{display:flex;gap:5px;align-items:center;padding:0 0 10px}
+  .dchip{font-family:var(--mono);font-size:10px;padding:3px 9px;border:1px solid var(--line2);
+     border-radius:1px;color:var(--dim);cursor:pointer;white-space:nowrap}
+  .dchip.on{background:#0b3a48;border-color:var(--cyan);color:var(--cyan)}
+  .dchip.old{color:var(--dim2)}
+
+  .cols{display:grid;grid-template-columns:1fr 366px;gap:12px;align-items:start}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:2px}
+  .ph{display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--line);
+      background:linear-gradient(180deg,var(--panel3),var(--panel2))}
+  .ph h2{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--cyan);font-weight:600}
+  .ph .note{margin-left:auto;font-size:10px;color:var(--dim2);font-family:var(--mono)}
+  .ph .count{font-family:var(--mono);font-size:10px;color:var(--ink);background:#0b3a48;
+     border:1px solid var(--cyan);border-radius:1px;padding:1px 6px}
+
+  /* session: one contiguous period of being heard */
+  .sess{display:flex;align-items:stretch;border-bottom:1px solid #111823}
+  .sessbar{width:3px;flex:none}
+  .sessmain{flex:1;padding:7px 10px}
+  .sesshead{display:flex;align-items:baseline;gap:10px;margin-bottom:5px}
+  .sessband{font-family:var(--mono);font-size:12px;color:var(--cyan)}
+  .sessfreq{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .sesswhen{font-family:var(--mono);font-size:10px;color:var(--dim2);margin-left:auto}
+  .sessdur{font-family:var(--mono);font-size:10px;color:var(--green);border:1px solid #2f5a3f;
+     border-radius:1px;padding:0 5px}
+
+  table{width:100%;border-collapse:collapse}
+  th{font-family:var(--mono);font-size:9px;letter-spacing:.11em;color:var(--dim2);text-align:left;
+     padding:4px 9px;border-bottom:1px solid var(--line);font-weight:500;white-space:nowrap;
+     background:var(--panel2)}
+  td{padding:3px 9px;border-bottom:1px solid #0f1620;white-space:nowrap;font-size:11.5px}
+  tr:hover td{background:#0e1622}
+  .call{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+  .call.new{color:var(--green)}
+  .grid{font-family:var(--mono);font-size:10px;color:var(--dim2)}
+  .dist{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .dur{font-family:var(--mono);font-size:10px;color:var(--dim);text-align:right}
+  .segs{display:flex;gap:1px}
+  .seg{width:6px;height:11px;background:#131c26;border-radius:1px;display:block}
+  .seg.on.lo{background:var(--green)} .seg.on.mid{background:var(--amber)} .seg.on.hi{background:var(--red)}
+  .sval{font-family:var(--mono);font-size:10.5px;min-width:50px;text-align:right}
+  .sval.loud{color:var(--ink)} .sval.mid{color:var(--amber)} .sval.weak{color:var(--dim)}
+  .badge{display:inline-block;font-family:var(--mono);font-size:8px;letter-spacing:.08em;
+     border-radius:1px;padding:0 4px;border:1px solid}
+  .b-new{color:var(--green);border-color:#2f5a3f}
+  .b-dx{color:var(--cyan);border-color:#26506b}
+
+  /* hour histogram — how each band behaved across the session */
+  .hist{display:flex;align-items:flex-end;gap:2px;height:46px;padding:8px 10px 4px}
+  .hbar{flex:1;min-width:3px;background:#16324a;border-radius:1px 1px 0 0;display:block}
+  .hbar.hi{background:var(--green)}
+  .histax{display:flex;justify-content:space-between;padding:0 10px 7px;font-family:var(--mono);
+     font-size:8.5px;color:var(--dim2)}
+
+  .filters{display:flex;gap:5px;padding:7px 10px;border-bottom:1px solid var(--line);align-items:center}
+  .chip{font-family:var(--mono);font-size:10px;padding:2px 7px;border:1px solid var(--line2);border-radius:1px;
+     color:var(--dim);cursor:pointer;white-space:nowrap}
+  .chip.on{background:#0b3a48;border-color:var(--cyan);color:var(--cyan)}
+  .lbl{font-family:var(--mono);font-size:9px;color:var(--dim2);letter-spacing:.12em;margin:0 3px 0 6px}
+  .lbl:first-child{margin-left:0}
+
+  /* chat archive */
+  .cday{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--dim2);padding:6px 10px 4px;
+     background:#080e15;border-bottom:1px solid var(--line)}
+  .msg{padding:6px 10px;border-bottom:1px solid #0e1520}
+  .msg .hd{display:flex;align-items:baseline;gap:6px;margin-bottom:2px}
+  .msg .who{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+  .msg .g{font-family:var(--mono);font-size:9.5px;color:var(--dim2)}
+  .msg .t{font-family:var(--mono);font-size:9px;color:var(--dim2);margin-left:auto}
+  .msg .bd{font-size:12.5px;color:#d6e6f5;line-height:1.5}
+  .msg .bd code{font-family:var(--mono);font-size:11px;background:#0d1a24;padding:1px 4px;border-radius:1px;color:var(--green)}
+  .msg .bd strong{color:#fff;font-weight:600}
+  .msg .bd em{color:var(--dim);font-style:italic}
+  .msg.mine{background:#0a1018} .msg.mine .who{color:var(--green)}
+  .msg.sys{background:#0a0d14} .msg.sys .bd{color:var(--dim2);font-family:var(--mono);font-size:10px}
+  .locked{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0a0d14;
+     border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--dim2)}
+  .locked b{color:var(--green)}
+
+  .foot{margin-top:11px;padding:8px 11px;background:var(--panel);border:1px solid var(--line);
+     border-left:2px solid var(--amber);font-size:11.5px;color:var(--dim);line-height:1.55}
+  .foot b{color:var(--amber);font-weight:600}
+</style>
+</head>
+<body>
+<div id="frame">
+
+<header>
+  <h1>NEREUSSDR REPORTER</h1>
+  <span class="tag">your archive</span>
+  <div class="whoami">
+    <span class="idkey"><b>N0CALL</b> &middot; signed in as station</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <span class="tab on">RECEPTION REPORTS <span class="c">318</span></span>
+  <span class="tab">CHAT <span class="c">96</span></span>
+  <span class="tab">SESSIONS <span class="c">14</span></span>
+</div>
+
+<div class="days">
+  <span class="lbl">WHEN</span>
+  <span class="dchip on">TODAY &middot; 3 OCT</span>
+  <span class="dchip">YESTERDAY &middot; 2 OCT</span>
+  <span class="dchip old">1 OCT</span>
+  <span class="dchip old">30 SEP</span>
+  <span class="dchip old">29 SEP</span>
+  <span class="dchip old">28 SEP</span>
+  <span class="dchip old">earlier &hellip;</span>
+</div>
+
+<div class="cols">
+<div>
+
+  <div class="panel" style="margin-bottom:11px">
+    <div class="ph"><h2>SESSIONS TODAY</h2>
+      <span class="count">3 sessions</span>
+      <span class="note">each is one continuous period you were on the air</span></div>
+    <div class="filters">
+      <span class="lbl">BAND</span>
+      <span class="chip on">ANY</span><span class="chip">20m</span><span class="chip">40m</span>
+      <span class="chip">80m</span><span class="chip">15m</span>
+      <span class="lbl">MINIMUM DURATION</span>
+      <span class="chip on">ANY</span><span class="chip">&gt;1 min</span><span class="chip">&gt;10 min</span>
+    </div>
+
+    <!-- session 1 -->
+    <div class="sess">
+      <div class="sessbar" style="background:var(--green)"></div>
+      <div class="sessmain">
+        <div class="sesshead">
+          <span class="sessband">20m</span>
+          <span class="sessfreq">14.074.000 FT8 &rarr; 14.212.000 SSB</span>
+          <span class="sessdur">42 min</span>
+          <span class="sesswhen">13:05 &ndash; 13:47 UTC</span>
+        </div>
+        <table>
+          <thead><tr><th>HEARD BY</th><th>GRID</th><th>DISTANCE</th><th>MY SIGNAL</th>
+            <th>WATCHED</th><th>STATUS</th></tr></thead>
+          <tbody>
+            <tr><td><span class="call">VK3XYZ</span> <span class="badge b-dx">DX</span></td>
+              <td class="grid">QF22</td><td class="dist">11804 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on mid"></i></div><span class="sval loud">+18</span></div></td>
+              <td class="dur">38 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+            <tr><td><span class="call">JA1ABC</span> <span class="badge b-dx">DX</span></td>
+              <td class="grid">PM95</td><td class="dist">10512 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on mid"></i></div>
+                <span class="sval loud">+14</span></div></td>
+              <td class="dur">31 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+            <tr><td><span class="call">DL1ABC</span></td>
+              <td class="grid">JO62</td><td class="dist">6912 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on lo"></i><i class="seg on mid"></i><i class="seg on mid"></i></div>
+                <span class="sval loud">+06</span></div></td>
+              <td class="dur">22 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+            <tr><td><span class="call">W1AW</span></td>
+              <td class="grid">FN31pr</td><td class="dist">812 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on mid"></i></div>
+                <span class="sval mid">&minus;11</span></div></td>
+              <td class="dur">12 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+            <tr><td><span class="call">PY1ABC</span></td>
+              <td class="grid">GG66</td><td class="dist">7680 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on mid"></i></div>
+                <span class="sval weak">&minus;22</span></div></td>
+              <td class="dur">4 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- session 2 -->
+    <div class="sess">
+      <div class="sessbar" style="background:var(--amber)"></div>
+      <div class="sessmain">
+        <div class="sesshead">
+          <span class="sessband">40m</span>
+          <span class="sessfreq">7.074.000 FT8</span>
+          <span class="sessdur">18 min</span>
+          <span class="sesswhen">15:12 &ndash; 15:30 UTC</span>
+        </div>
+        <table>
+          <thead><tr><th>HEARD BY</th><th>GRID</th><th>DISTANCE</th><th>MY SIGNAL</th>
+            <th>WATCHED</th><th>STATUS</th></tr></thead>
+          <tbody>
+            <tr><td><span class="call">VK3XYZ</span></td>
+              <td class="grid">QF22</td><td class="dist">11804 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on lo"></i><i class="seg on mid"></i></div><span class="sval mid">&minus;02</span></div></td>
+              <td class="dur">17 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+            <tr><td><span class="call">G0ABC</span></td>
+              <td class="grid">IO91wm</td><td class="dist">5231 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on lo"></i>
+                <i class="seg on mid"></i></div><span class="sval mid">&minus;08</span></div></td>
+              <td class="dur">14 min</td><td>&nbsp;</td></tr>
+            <tr><td><span class="call">W1AW</span></td>
+              <td class="grid">FN31pr</td><td class="dist">812 km</td>
+              <td><div style="display:flex;gap:5px;align-items:center"><div class="segs">
+                <i class="seg on lo"></i><i class="seg on lo"></i><i class="seg on mid"></i></div>
+                <span class="sval weak">&minus;16</span></div></td>
+              <td class="dur">9 min</td><td><span class="badge b-new">NEW BAND</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- session 3 -->
+    <div class="sess">
+      <div class="sessbar" style="background:var(--line2)"></div>
+      <div class="sessmain">
+        <div class="sesshead">
+          <span class="sessband">20m</span>
+          <span class="sessfreq">14.240.000 SSB</span>
+          <span class="sessdur">3 min</span>
+          <span class="sesswhen">18:41 &ndash; 18:44 UTC</span>
+        </div>
+        <div style="padding:6px 0 4px;font-family:var(--mono);font-size:10px;color:var(--dim2)">
+          nobody reported this session &mdash; you were on the air but no station listening
+          attributed a signal to you
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>HOW MUCH YOU GOT OUT, BY HOUR</h2>
+      <span class="note">today &middot; bar height is stations hearing you</span></div>
+    <div class="hist">
+      <i class="hbar" style="height:0"></i><i class="hbar" style="height:0"></i>
+      <i class="hbar" style="height:12%"></i><i class="hbar" style="height:38%"></i>
+      <i class="hbar" style="height:71%"></i><i class="hbar" style="height:88%"></i>
+      <i class="hbar" style="height:64%"></i><i class="hbar" style="height:41%"></i>
+      <i class="hbar" style="height:19%"></i><i class="hbar" style="height:0"></i>
+      <i class="hbar" style="height:0"></i><i class="hbar" style="height:0"></i>
+      <i class="hbar" style="height:8%"></i><i class="hbar" style="height:29%"></i>
+      <i class="hbar" style="height:52%"></i><i class="hbar" style="height:44%"></i>
+      <i class="hbar" style="height:21%"></i><i class="hbar" style="height:6%"></i>
+      <i class="hbar" style="height:0"></i><i class="hbar" style="height:0"></i>
+      <i class="hbar" style="height:0"></i><i class="hbar" style="height:0"></i>
+      <i class="hbar" style="height:11%"></i><i class="hbar" style="height:26%"></i>
+    </div>
+    <div class="histax"><span>00</span><span>06</span><span>12</span><span>18</span><span>24 UTC</span></div>
+  </div>
+
+  <div class="foot">
+    <b>How long you were heard.</b> <b>WATCHED</b> is how long that station kept reporting you, which
+    is not the same as how long you transmitted &mdash; a station that loses you in a fade drops off the
+    list and comes back. The third session is kept deliberately: you were on the air and nobody got
+    you, and that is worth knowing as much as the sessions that worked.
+  </div>
+</div>
+
+<!-- chat archive -->
+<div class="panel">
+  <div class="ph"><h2>CHAT ARCHIVE</h2><span class="note">yours and theirs</span></div>
+  <div class="locked"><b>&#128274;</b> private &mdash; readable by the stations that took part</div>
+  <div class="cday">TODAY &middot; 14.212.000 SSB</div>
+  <div class="msg">
+    <div class="hd"><span class="who">VK3XYZ</span><span class="g">QF22 &middot; 11804 km</span>
+      <span class="t">13:06</span></div>
+    <div class="bd">Long path here and you're <strong>very</strong> strong. Try <em>5 W less</em> and
+      see if JA copies you &mdash; you were over here last week at that power.</div>
+  </div>
+  <div class="msg mine">
+    <div class="hd"><span class="who">N0CALL</span><span class="g">FN42</span><span class="t">13:07</span></div>
+    <div class="bd">Copy, turning back down now. QRM on <code>14.200</code> from the generator next
+      door, so I'm sitting at <code>14.212</code>.</div>
+  </div>
+  <div class="msg">
+    <div class="hd"><span class="who">JA1ABC</span><span class="g">PM95 &middot; 10512 km</span>
+      <span class="t">13:22</span></div>
+    <div class="bd">Your signal moved from <code>+02</code> to <code>+14</code> in ten minutes
+      &mdash; that's your ionosphere, not your radio. <em>Try 17m</em> now, we're wide open there.</div>
+  </div>
+  <div class="msg">
+    <div class="hd"><span class="who">W1AW</span><span class="g">FN31pr &middot; 812 km</span>
+      <span class="t">13:25</span></div>
+    <div class="bd">Fading at your end. Want me to pass to <code>JA1ABC</code>, who's waiting on
+      <strong>20m</strong> for you?</div>
+  </div>
+  <div class="msg sys"><div class="bd">N0CALL stopped transmitting &mdash; 14.212.000 closed</div></div>
+  <div class="cday">YESTERDAY &middot; 7.074.000 FT8</div>
+  <div class="msg">
+    <div class="hd"><span class="who">G0ABC</span><span class="g">IO91wm &middot; 5231 km</span>
+      <span class="t">2 OCT 19:40</span></div>
+    <div class="bd">Long path is open to you on 40m right now, you should work <strong>ZL3</strong>
+      if you want it.</div>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

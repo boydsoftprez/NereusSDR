@@ -1,0 +1,13 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "posted",
+    "clientId": "c3",
+    "ok": false,
+    "msg": null,
+    "code": "slow-down",
+    "reason": "Wait a little."
+  },
+  "decodes": true
+}

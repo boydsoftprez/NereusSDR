@@ -1,0 +1,1043 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable Placement</title>
+<style>
+:root{
+  --bg:#08080a; --applet:#0c0c0e; --hdr:#1c1c20; --btn:#1a1a1e; --btn2:#141417; --bd:#2c2c31; --bd2:#1f1f23;
+  --acc:#00b4d8; --rule:#3d3d41; --grn:#4caf6a; --grn2:#3f8f58; --amb:#d8a55f; --red:#c25a5c;
+  --txt:#dcdce1; --dim:#a6a6ac; --dim2:#7e7e85;
+  --mono:"SF Mono",Menlo,Consolas,monospace; --sans:-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#060609;color:var(--txt);font:600 12px var(--sans);overflow:hidden}
+button{font:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+
+/* mockup chooser, not part of the app */
+#chooser{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#1d1d20;border-bottom:1px solid #333}
+#chooser .lbl{color:#9c9ca0;font-size:11px;letter-spacing:.12em;margin-right:8px}
+#chooser button{background:#2c2c2f;border:1px solid #444;border-radius:6px;padding:5px 12px;cursor:pointer;color:#ddd}
+#chooser button.on{background:#2f5f92;border-color:var(--acc);color:#fff}
+#chooser .rec{font-size:9px;color:var(--grn);margin-left:6px;letter-spacing:.08em}
+
+/* macOS menu bar stand-in */
+#macbar{height:24px;display:flex;align-items:center;gap:18px;padding:0 14px;background:#2c2c2f;color:#e8e8ec;font-weight:500;font-size:13px;position:relative;z-index:50}
+#macbar .app{font-weight:700}
+#macbar .mi{cursor:default;padding:2px 6px;border-radius:4px}
+#macbar .mi.live{cursor:pointer}
+#macbar .mi.open{background:#3d6fd6}
+#toolsMenu{position:absolute;top:24px;background:#303033;border:1px solid #555;border-radius:6px;padding:4px;min-width:230px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none}
+#toolsMenu.show{display:block}
+#toolsMenu .it{padding:4px 10px;border-radius:4px;display:flex;justify-content:space-between}
+#toolsMenu .it.live{cursor:pointer}
+#toolsMenu .it.live:hover{background:#3d6fd6}
+#toolsMenu .it.off{color:#7b7b7f}
+#toolsMenu .sep{height:1px;background:#4b4b4e;margin:4px 0}
+
+/* app frame */
+#app{position:absolute;top:62px;left:0;right:0;bottom:0;background:var(--bg);display:flex;flex-direction:column}
+#topbar{height:30px;display:flex;align-items:center;padding:0 10px;gap:14px;border-bottom:1px solid #1a1a1d;flex:none}
+#topbar .net{color:#8fd6a8;font-size:11px}
+#topbar .ctr{flex:1;display:flex;justify-content:center;align-items:center;gap:14px}
+#topbar .dbadge{background:#1b3a5c;border:1px solid #2c5a8a;border-radius:6px;width:26px;height:22px;display:grid;place-items:center;color:#cfe}
+#topbar .name{color:var(--acc);font-size:14px}
+#topbar .clk{font-family:var(--mono);color:#d7d7db}
+#topbar .vol{display:flex;align-items:center;gap:6px;color:#aab}
+#topbar .vol .tr{width:90px;height:4px;background:#39393c;border-radius:2px;position:relative}
+#topbar .vol .tr i{position:absolute;left:0;top:0;bottom:0;background:#4a7ba8;border-radius:2px}
+#topbar .bulb{width:22px;height:22px;border-radius:5px;background:#27272a;border:1px solid #6a5a20;display:grid;place-items:center;color:#ffd84a}
+
+#main{flex:1;display:flex;min-height:0}
+#pan{flex:1;position:relative;min-width:0;overflow:hidden;cursor:crosshair}
+#pan canvas{position:absolute;left:0;display:block}
+#leftstack{position:absolute;left:6px;top:8px;display:flex;flex-direction:column;gap:5px;z-index:6}
+#leftstack button{width:66px;height:20px;background:var(--btn);border:1px solid var(--bd);border-radius:4px;font-size:11px;cursor:pointer}
+#leftstack button.on{border-color:var(--acc);color:var(--acc)}
+#bandPop{position:absolute;left:78px;top:76px;z-index:9;background:var(--applet);border:1px solid var(--bd);border-radius:5px;padding:6px;display:none;grid-template-columns:repeat(2,58px);gap:5px}
+#bandPop.show{display:grid}
+#bandPop button{height:22px;background:var(--btn);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-size:11px}
+#bandPop button.on{border-color:var(--acc);color:var(--acc)}
+#dbscale{position:absolute;right:0;width:40px;border-left:1px solid #262629;color:#959599;font-size:10px;font-family:var(--mono)}
+#dbscale span{position:absolute;right:6px}
+#chtx{position:absolute;top:8px;display:flex;gap:4px;z-index:5}
+#chtx span{border:1px solid #444;padding:1px 6px;font-family:var(--mono);font-size:10px;background:#111}
+#chtx .tx{background:#5a1c1c;border-color:#8a2c2c;color:#f0dcdc;padding:1px 18px}
+#plan{position:absolute;left:0;height:16px;display:flex;font-size:10px;font-weight:700}
+#plan div{display:flex;align-items:center;justify-content:center;border-right:1px solid #000;overflow:hidden;white-space:nowrap}
+#scale{position:absolute;left:0;height:22px;background:#161619;border-top:1px solid #262629;border-bottom:2px solid var(--rule)}
+#scale span{position:absolute;top:4px;transform:translateX(-50%);color:#f0d060;font-family:var(--mono);font-size:11px}
+#live{position:absolute;right:2px;font-size:10px;border:1px solid #556;padding:0 4px;color:#ccd;background:#232326}
+#wftime{position:absolute;right:0;width:40px;color:#959599;font-size:10px;font-family:var(--mono)}
+#wftime span{position:absolute;left:6px}
+#zoom{position:absolute;left:6px;display:flex;gap:4px;z-index:5}
+#zoom button{width:20px;height:18px;background:#242427;border:1px solid #464649;border-radius:4px;font-size:10px;cursor:pointer;padding:0}
+#zoom button.on{border-color:var(--acc);color:var(--acc)}
+
+/* slice */
+.sliceline{position:absolute;width:1px;background:var(--acc);pointer-events:none;z-index:3}
+.passband{position:absolute;background:rgba(0,180,216,.12);pointer-events:none;z-index:2}
+
+/* spot and roundtable labels */
+#labels{position:absolute;left:0;top:0;pointer-events:none;z-index:4}
+.spot{position:absolute;font-size:13px;font-weight:800;color:var(--acc);padding:1px 3px;white-space:nowrap;pointer-events:auto;cursor:pointer}
+.dot{position:absolute;border-left:1px dotted;opacity:.55;pointer-events:none}
+.rt{position:absolute;display:flex;align-items:center;gap:4px;height:19px;padding:0 5px 0 4px;border-radius:4px;background:rgba(8,12,22,.86);border:1px solid #39393c;font-size:12px;font-weight:800;white-space:nowrap;pointer-events:auto;cursor:pointer}
+.rt:hover{border-color:#8aa}
+.rt .ring{width:9px;height:9px;border-radius:50%;border:2px solid currentColor;display:inline-block;position:relative}
+.rt .ring:after{content:"";position:absolute;left:1.5px;top:1.5px;width:2px;height:2px;border-radius:50%;background:currentColor}
+.rt .cnt{font-family:var(--mono);font-size:10px;color:#c3c3c7;border:1px solid #47474a;border-radius:3px;padding:0 3px;line-height:12px}
+.rt.mine{border-color:var(--acc);box-shadow:0 0 0 1px rgba(0,180,216,.35)}
+.rt .tx{background:#c03030;color:#fff;font-size:8px;padding:0 3px;border-radius:2px}
+.st-talk{color:var(--grn)} .st-unknown{color:var(--amb)} .st-double{color:var(--red)} .st-quiet{color:#97979b} .st-you{color:var(--grn)}
+
+/* VFO flag */
+#vfo{position:absolute;top:2px;width:250px;background:rgba(6,10,18,.94);border:1px solid #2a3a4a;border-top:2px solid var(--acc);z-index:7;padding:4px 6px 4px;cursor:default}
+#vfo .tags{display:flex;gap:6px;align-items:center;font-size:11px}
+#vfo .tags .a1{color:#4aa8ff} #vfo .tags .a2{color:#ff6060} #vfo .tags .bw{color:var(--acc)}
+#vfo .tags .sp{flex:1}
+#vfo .tags .txb{border:1px solid #a33;color:#f88;padding:0 4px;font-size:10px}
+#vfo .tags .ab{background:var(--acc);color:#002;padding:0 5px;font-weight:800}
+#vfo .who{font-size:11px;color:#d7d7db;margin:2px 0}
+#vfo .fq{border:1px solid #48484b;border-radius:3px;text-align:right;padding:2px 8px;font-family:var(--mono);font-size:24px;color:var(--acc)}
+#vfo .sc{font-size:10px;color:#959599;margin:4px 0 1px 14px;word-spacing:6px}
+#vfo .bar{display:flex;align-items:center;gap:6px}
+#vfo .bar .b{flex:1;height:9px;background:#161619;border:1px solid #303033;position:relative}
+#vfo .bar .b i{position:absolute;left:0;top:0;bottom:0;background:#00b4d8}
+#vfo .bar .v{color:var(--grn);font-size:11px;width:58px;text-align:right}
+#vfo .btns{display:flex;justify-content:space-around;font-size:11px;color:#d7d7db;margin-top:4px;border-top:1px solid #262629;padding-top:3px}
+#vfo .rtline{font-size:10px;color:#aeaeb2;margin-top:3px;display:flex;align-items:center;gap:5px;cursor:pointer}
+#vfo .rtline:hover{color:#fff}
+
+/* right column */
+#col{width:330px;flex:none;border-left:1px solid #222225;overflow-y:auto;overflow-x:hidden;background:#0d0d10}
+#col::-webkit-scrollbar{width:6px} #col::-webkit-scrollbar-thumb{background:#343437;border-radius:3px}
+.ahdr{height:18px;display:flex;align-items:center;gap:6px;padding:0 6px;background:linear-gradient(#242427,#18181b);border-top:1px solid #343437;color:#b2b2b6;font-size:10px;letter-spacing:.14em;font-weight:800}
+.ahdr .grip{color:#606064;letter-spacing:0}
+.ahdr .atitle{flex:1}
+.ahdr .badge{letter-spacing:0;background:#2f5f92;color:#bfefff;border-radius:3px;padding:0 4px;font-family:var(--mono)}
+.ahdr .aicons{display:flex;gap:8px;color:#8a8a8e;letter-spacing:0}
+.ahdr .aclose{cursor:pointer} .ahdr .aclose:hover{color:#fff}
+.abody{background:var(--applet);padding:6px 8px}
+.mainpanel .abody{text-align:center;color:#959599;padding:2px}
+.cbtn{background:var(--btn);border:1px solid var(--bd);border-radius:4px;height:22px;font-size:11px;cursor:pointer}
+.cbtn.on{background:#38383b;border-color:#3f8f58;color:#efeff3}
+.cbtn.red{background:#6a1a1a;border-color:#c33;color:#fff}
+.row{display:flex;gap:4px;align-items:center;margin:3px 0}
+.slider{flex:1;height:3px;background:#39393c;position:relative;border-radius:2px}
+.slider:after{content:"";position:absolute;left:var(--p,50%);top:-5px;width:10px;height:12px;border-radius:3px;background:#a7a7ab;transform:translateX(-50%)}
+.sel{background:#1b1b1e;border:1px solid var(--bd);border-radius:3px;padding:2px 6px;display:flex;justify-content:space-between}
+.smallcap{font-size:9px;letter-spacing:.14em;color:var(--dim);font-weight:800}
+
+/* roundtable content */
+.rt-applet{display:flex;flex-direction:column;background:var(--applet)}
+.rt-applet .abody{flex:1;display:flex;flex-direction:column;min-height:0;padding:0}
+.rhead{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;white-space:nowrap}
+.rhead .f{font-family:var(--mono);color:var(--acc);font-size:15px}
+.rhead .m{font-size:10px;border:1px solid #48484b;padding:0 4px;border-radius:2px;color:#c3c3c7}
+.rhead .n{margin-left:auto;color:var(--dim);font-size:11px}
+.tagA{background:var(--acc);color:#002;padding:0 4px;font-weight:800;font-size:10px;border-radius:2px}
+.tagNot{color:var(--amb);border:1px solid #6b5426;padding:0 4px;font-size:9px;letter-spacing:.1em;border-radius:2px}
+.tunebtn{background:#2f5f92;border:1px solid var(--acc);color:#dff;border-radius:3px;padding:1px 7px;font-size:10px;cursor:pointer}
+.back{cursor:pointer;color:var(--acc);font-size:11px;padding:5px 8px;border-bottom:1px solid var(--bd2)}
+.back:hover{color:#fff}
+.talker{padding:6px 8px;border-bottom:1px solid var(--bd2)}
+.talker .big{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:17px;font-weight:800}
+.talker .txb{background:#c03030;color:#fff;font-family:var(--sans);font-size:9px;padding:1px 4px;border-radius:2px}
+.talker .dbl{background:#5a1616;border:1px solid var(--red);color:#f0dcdc;font-family:var(--sans);font-size:9px;padding:0 4px;letter-spacing:.1em}
+.talker .grid{font-size:11px;color:var(--dim)}
+.talker .sub{color:var(--dim);font-size:11px;margin-top:2px}
+.talker .names{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;align-items:center}
+.chip{background:#202023;border:1px solid #3f3f42;border-radius:10px;padding:1px 8px;font-family:var(--mono);font-size:11px;cursor:pointer}
+.chip:hover{border-color:var(--amb)}
+.chip.dis{opacity:.4;cursor:not-allowed}
+.namein{width:96px;background:#0f0f12;border:1px solid #3f3f42;border-radius:3px;color:var(--txt);font:600 11px var(--mono);padding:2px 5px}
+.namegiven{color:var(--amb);font-size:11px;margin-top:4px}
+.sec{padding:5px 8px 3px;display:flex;align-items:center;gap:6px}
+.sec .smallcap{flex:1}
+.sec .note{font-size:10px;color:var(--dim2)}
+.readings{overflow-y:auto;padding:0 8px 4px}
+.rt-applet .readings{max-height:168px;flex:none}
+.rt-applet.keyed .readings{max-height:none;flex:0 1 auto;min-height:140px}
+.txline{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--bd2);font-size:12px}
+.txline .txb{background:#c02020;color:#fff;font-size:11px;padding:0 4px;border-radius:2px;font-weight:700}
+.txline .f{font-family:var(--mono);color:var(--acc)}
+.txline .n{margin-left:auto;color:var(--dim)}
+.rd{display:grid;grid-template-columns:90px 50px 44px 1fr 40px;gap:4px;align-items:center;height:18px;font-size:11px;white-space:nowrap}
+.rd .c{font-family:var(--mono);font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd .k,.rd .o{color:var(--dim);font-family:var(--mono);font-size:10px;text-align:right}
+.rd .o.off{color:var(--amb)}
+.rd .b{height:8px;background:#161619;border:1px solid #29292c;position:relative}
+.rd .b i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#2f7a4a,#4caf6a)}
+.rd .b.str i{background:repeating-linear-gradient(135deg,#c25a5c 0 4px,#4a2224 4px 8px)}
+.rd .b.old i{background:linear-gradient(90deg,#2c5a78,#3d88b0)}
+.rd .v{font-family:var(--mono);font-size:11px;text-align:right}
+.rd.me{background:rgba(0,180,216,.08)}
+.rd .c.away{color:#959599}
+.awaytag{font-size:8px;border:1px solid #48484b;color:#a5a5a9;border-radius:2px;padding:0 2px;margin-left:3px;font-family:var(--sans);font-weight:700;letter-spacing:.04em;vertical-align:1px}
+.awaynote{font-size:10px;color:var(--dim);padding:3px 8px 5px;line-height:1.4}
+.rd.me .c{color:var(--acc)}
+.listeners{display:flex;flex-wrap:wrap;gap:4px;padding:2px 8px 6px}
+.listeners span{font-family:var(--mono);font-size:11px;background:#1a1a1d;border:1px solid #303033;border-radius:3px;padding:0 5px}
+.quietmsg{padding:6px 8px;color:var(--dim);font-size:11px}
+.turns{display:flex;gap:4px;overflow-x:auto;padding:2px 8px 6px;border-bottom:1px solid var(--bd2)}
+.turns::-webkit-scrollbar{height:4px} .turns::-webkit-scrollbar-thumb{background:#343437}
+.turn{flex:none;background:#1a1a1d;border:1px solid #303033;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;white-space:nowrap}
+.turn b{font-family:var(--mono)}
+.turn.sel{border-color:var(--acc);background:#1e3d5f}
+.turn.unk b{color:var(--amb)} .turn.dbl b{color:var(--red)} .turn.you b{color:var(--acc)}
+.turnbanner{margin:0 8px 4px;padding:3px 6px;background:#1e3d5f;border:1px solid #1f5a6e;border-radius:3px;font-size:10px;display:flex;justify-content:space-between}
+.turnbanner a{color:var(--acc);cursor:pointer}
+.msgs{flex:1;overflow-y:auto;padding:4px 8px;min-height:60px}
+.msg{padding:4px 0;border-bottom:1px solid #1c1c1f}
+.msg .h{display:flex;gap:6px;align-items:baseline;font-size:11px}
+.msg .h .c{font-family:var(--mono);font-weight:800;color:#e7e7eb}
+.msg .h .g{color:var(--dim2);font-size:10px}
+.msg .h .t{margin-left:auto;color:var(--dim2);font-family:var(--mono);font-size:10px}
+.msg .chipr{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#aeaeb2;background:#18181b;border:1px solid #2b2b2e;border-radius:3px;padding:0 4px;margin:2px 0}
+.msg .chipr i{display:inline-block;height:5px;background:#4caf6a;border-radius:1px}
+.msg .chipr.str i{background:repeating-linear-gradient(135deg,#c25a5c 0 3px,#4a2224 3px 6px)}
+.msg .chipr.txing{color:#f0dcdc;border-color:#a86b6d}
+.msg .x{font-size:12px;font-weight:500;color:#e1e1e5;line-height:1.35}
+.msg.me .h .c{color:var(--acc)}
+.msg .h .mm{cursor:pointer;color:#8a8a8e;padding:0 4px;border-radius:3px;font-weight:800;letter-spacing:.05em}
+.msg .h .mm:hover,.msg .h .mm.on{color:#fff;background:#28282b}
+.msgmenu{display:flex;gap:6px;margin:3px 0 2px}
+.msgmenu a{cursor:pointer;font-size:11px;border:1px solid #38383b;border-radius:3px;padding:1px 7px;color:#d7d7db;background:#18181b}
+.msgmenu a:hover{border-color:var(--acc);color:#fff}
+.msgmenu a.dis{opacity:.4;cursor:default}
+.msg.muted{font-size:11px;color:var(--dim2);font-style:italic}
+.msg.muted a,.msg .reported a{color:var(--acc);cursor:pointer;font-style:normal}
+.msg .reported{font-size:10px;color:var(--amb);margin-top:2px}
+.compose{border-top:1px solid var(--bd2);padding:6px 8px}
+.compose .r{display:flex;gap:5px}
+.compose input{flex:1;background:#0f0f12;border:1px solid #3f3f42;border-radius:3px;color:var(--txt);font:500 12px var(--sans);padding:4px 6px;min-width:0}
+.compose input:disabled{opacity:.45}
+.compose button{background:#2f5f92;border:1px solid var(--acc);border-radius:3px;font-size:11px;padding:0 10px;cursor:pointer}
+.compose button:disabled{opacity:.35;cursor:not-allowed;border-color:#48484b}
+.compose .hint{font-size:10px;color:var(--dim2);margin-top:3px}
+.elsewhere{border-top:1px solid var(--bd2);padding:5px 8px;font-size:10px;color:var(--dim);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.elsewhere b{cursor:pointer;color:#c3c3c7;font-family:var(--mono)}
+.elsewhere b:hover{color:var(--acc)}
+.empty{padding:10px 8px;color:var(--dim);font-size:11px;line-height:1.5}
+.empty .t{color:#e7e7eb;font-size:12px;margin-bottom:4px}
+
+/* frequency list (panel only + window) */
+.flist{overflow-y:auto;flex:1}
+.fband{display:flex;justify-content:space-between;padding:6px 8px 3px;background:#131316;border-bottom:1px solid var(--bd2)}
+.fband .bn{font-family:var(--mono);font-weight:800;color:#e7e7eb}
+.fband .bc{color:var(--dim2);font-size:10px}
+.frow{padding:4px 8px;border-bottom:1px solid #1a1a1d;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:1px 6px}
+.frow:hover{background:#1a1a1d}
+.frow.sel{background:#1e3d5f;box-shadow:inset 2px 0 0 var(--acc)}
+.frow .ff{font-family:var(--mono);color:var(--acc);font-size:13px;display:flex;gap:5px;align-items:center}
+.frow .ff .m{font-size:9px;border:1px solid #48484b;color:#c3c3c7;padding:0 3px;border-radius:2px;font-family:var(--sans)}
+.frow .cn{color:var(--dim);font-family:var(--mono);align-self:center}
+.frow .ss{font-size:11px}
+.unread{background:var(--acc);color:#002;border-radius:8px;padding:0 5px;font-size:9px;margin-left:4px}
+
+/* separate window */
+#win{position:fixed;width:1080px;height:600px;background:#0d0d10;border:1px solid #3c3c3f;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.75);z-index:40;display:none;flex-direction:column;overflow:hidden}
+#win.show{display:flex}
+#win .wt{height:28px;flex:none;background:linear-gradient(#363639,#2b2b2e);display:flex;align-items:center;padding:0 10px;gap:8px;cursor:move;color:#ddd;font-weight:600;font-size:13px}
+#win .wt .lights{display:flex;gap:7px}
+#win .wt .lights i{width:12px;height:12px;border-radius:50%;display:block}
+#win .wt .ttl{flex:1;text-align:center;margin-right:50px}
+#win .wb{flex:1;display:flex;min-height:0}
+#win .wl{width:250px;border-right:1px solid var(--bd2);display:flex;flex-direction:column}
+#win .wm{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--bd2)}
+#win .wr{width:320px;display:flex;flex-direction:column}
+#win .wm .readings{flex:1}
+#win .rd{grid-template-columns:80px 60px 50px 1fr 60px;height:22px;font-size:12px}
+#win .rd .b{height:10px}
+#win .rhead .f{font-size:22px}
+.colhdr{padding:6px 8px;font-size:10px;letter-spacing:.14em;color:var(--dim);font-weight:800;border-bottom:1px solid var(--bd2);display:flex;justify-content:space-between}
+
+/* popped-out Roundtable (option 1) */
+#pop{position:fixed;background:#0d0d10;border:1px solid #3c3c3f;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.75);z-index:45;display:none;flex-direction:column;overflow:hidden;min-width:300px;min-height:320px}
+#pop.show{display:flex}
+#pop .wt{height:28px;flex:none;background:linear-gradient(#363639,#2b2b2e);display:flex;align-items:center;padding:0 10px;gap:8px;cursor:move;color:#ddd;font-weight:600;font-size:13px}
+#pop .wt .lights{display:flex;gap:7px}
+#pop .wt .lights i{width:12px;height:12px;border-radius:50%;display:block}
+#pop .wt .ttl{flex:1;text-align:center}
+#pop .wt .shape{font-size:10px;font-weight:400;color:#9c9ca0;letter-spacing:.06em}
+#pop .wb{flex:1;display:flex;min-height:0}
+#pop .col1{display:flex;flex-direction:column;min-width:0;flex:1;overflow-y:auto}
+#pop .col1 .readings{max-height:220px;flex:none}
+#pop .wl{width:250px;flex:none;border-right:1px solid var(--bd2);display:flex;flex-direction:column}
+#pop .wm{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--bd2)}
+#pop .wm.solo{border-right:0;overflow-y:auto}
+#pop .wm.solo .readings{max-height:240px;flex:none}
+#pop .wm:not(.solo) .readings{flex:1}
+#pop .wr{width:320px;flex:none;display:flex;flex-direction:column}
+#pop .col1>*,#pop .wm.solo>*{flex:none}
+#pop .col1 .msgs,#pop .wm.solo .msgs{overflow:visible;flex:none;min-height:0}
+#pop .col1 .compose,#pop .wm.solo .compose{position:sticky;bottom:0;background:var(--applet);z-index:2}
+#pop.t-wide .rd,#pop.t-medium .rd{grid-template-columns:80px 60px 50px 1fr 60px;height:22px;font-size:12px}
+#pop.t-wide .rd .b,#pop.t-medium .rd .b{height:10px}
+#pop.t-wide .rhead .f{font-size:22px}
+#pop .sizer{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#556 50%,#556 58%,transparent 58%,transparent 70%,#556 70%,#556 78%,transparent 78%)}
+#pop .mine,.rt-applet .mine{padding:4px 8px;font-size:11px;border-bottom:1px solid var(--bd2);display:flex;justify-content:space-between;align-items:center;background:#151518}
+#pop .mine a,.rt-applet .mine a{color:var(--acc);cursor:pointer}
+.ahdr .apop{cursor:pointer} .ahdr .apop:hover{color:#fff}
+.poppedNote{padding:8px;color:var(--dim);font-size:11px;line-height:1.5}
+.poppedNote a{color:var(--acc);cursor:pointer}
+#chooser .sizes{margin-left:auto;display:none;gap:6px;align-items:center}
+#chooser .sizes.show{display:flex}
+#chooser .sizes button{padding:3px 9px;font-size:11px}
+
+/* bottom status bar */
+#status{height:40px;flex:none;border-top:1px solid #222225;display:flex;align-items:center;padding:0 10px;gap:12px;font-size:11px}
+#status .grp{display:flex;gap:6px;align-items:center}
+#status .pill{border:1px solid #38383b;padding:1px 6px;border-radius:3px;color:#9fd}
+#status .ctr{flex:1;display:flex;justify-content:center}
+#status .rad{border:1px solid #38383b;padding:2px 30px;text-align:center;line-height:1.2}
+#status .rad i{color:#9aa;font-style:italic;font-family:var(--mono);font-size:10px}
+#status .k{color:#959599;text-align:center;line-height:1.2;font-size:10px}
+#status .ovl{color:#444;border:1px solid #222;padding:2px 14px;letter-spacing:.1em;font-size:10px}
+#txbtn{background:#1c1c1f;border:1px solid #333;color:#666;padding:4px 12px;border-radius:3px;cursor:pointer}
+#txbtn.on{background:#c02020;border-color:#ff5050;color:#fff}
+#rtbtn{border:1px solid #38383b;padding:1px 6px;border-radius:3px;cursor:pointer;color:#aeaeb2}
+#rtbtn.on{border-color:var(--acc);color:var(--acc)}
+</style>
+</head>
+<body>
+
+<div id="chooser">
+  <span class="lbl">ROUNDTABLE PLACEMENT</span>
+  <button data-opt="1">1 · Panadapter + panel<span class="rec">RECOMMENDED</span></button>
+  <button data-opt="2">2 · Panel only</button>
+  <button data-opt="3">3 · Separate window</button>
+  <span class="sizes"><span class="lbl">POP-OUT SIZE</span><button data-size="narrow">Narrow</button><button data-size="medium">Medium</button><button data-size="wide">Wide</button><span class="lbl" style="margin-left:6px">or drag its corner</span></span>
+</div>
+
+<div id="macbar">
+  <span class="app"></span><span class="mi app">NereusSDR</span>
+  <span class="mi">File</span><span class="mi">View</span><span class="mi live" id="toolsMi">Tools</span><span class="mi">Window</span><span class="mi">Help</span>
+  <div id="toolsMenu"></div>
+</div>
+
+<div id="app">
+  <div id="topbar">
+    <span class="net">● ▲0.6 Mbps &nbsp;2 ms &nbsp;▼18.4 Mbps</span>
+    <div class="ctr"><span class="dbadge">D</span><span class="name">NereusSDR</span></div>
+    <span class="clk" id="clk">--:--:-- UTC</span>
+    <span class="vol">🔈 PC <span class="tr"><i style="width:88%"></i></span> 100</span>
+    <span class="vol" style="color:#667">RADIO <span class="tr"><i style="width:45%;background:#48484b"></i></span></span>
+    <span class="bulb">💡</span>
+  </div>
+  <div id="main">
+    <div id="pan">
+      <canvas id="spec"></canvas>
+      <canvas id="wf"></canvas>
+      <div id="labels"></div>
+      <div id="dbscale"></div>
+      <div id="chtx"><span>CH 0</span><span class="tx">TX</span></div>
+      <div id="plan"></div>
+      <div id="scale"><span id="live">LIVE</span></div>
+      <div id="wftime"></div>
+      <div id="zoom"><button data-z="S">S</button><button data-z="B">B</button><button data-z="-">-</button><button data-z="+">+</button></div>
+      <div id="leftstack">
+        <button>◀</button><button>+RX</button><button>+TNF</button><button id="bandBtn">BAND</button><button>Display</button><button>VAX</button><button>ATT</button>
+      </div>
+      <div id="bandPop"></div>
+      <div id="vfo"></div>
+    </div>
+    <div id="col"></div>
+  </div>
+  <div id="status">
+    <div class="grp"><span style="font-size:18px;color:#9ab">⌁</span><span class="k">CH 0<br><b id="stBand" style="color:#d7d7db">40m</b></span><span style="color:#959599">≡</span><span style="color:#556;text-decoration:line-through">TNF</span></div>
+    <div class="grp">RX <span class="tagA">A</span> You control ▾ <span class="pill" id="stMode">∿ LSB</span><span class="pill">⋀ 2.7k</span><span class="pill">M</span><span id="rtbtn" title="Roundtable">◉ RT</span></div>
+    <div class="ctr"><div class="rad">ANAN-G2<br><i>Saturn · v27</i></div></div>
+    <span class="k">CAT<br>Off</span><span class="k">TCI<br>Off</span><span class="k">CPU 7%</span><span class="ovl">OVERLOAD</span>
+    <button id="txbtn">● TX</button>
+  </div>
+</div>
+
+<div id="win"></div>
+<div id="pop"></div>
+
+<script>
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function rng(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;return()=>{s=(s*16807)%2147483647;return (s-1)/2147483646}}
+const R0=rng(99);
+function gridLL(g){g=g.toUpperCase();let lon=(g.charCodeAt(0)-65)*20-180+(+g[2])*2+1;let lat=(g.charCodeAt(1)-65)*10-90+(+g[3])+0.5;return[lat,lon]}
+function dist(a,b){const[l1,o1]=gridLL(a),[l2,o2]=gridLL(b);const r=Math.PI/180;const h=Math.sin((l2-l1)*r/2)**2+Math.cos(l1*r)*Math.cos(l2*r)*Math.sin((o2-o1)*r/2)**2;return Math.round(2*6371*Math.asin(Math.sqrt(h)))}
+function pathDbm(k,rnd){k=Math.max(k,60);return Math.max(-117,Math.min(-38,-60-17*Math.log10(k/100)+(rnd()-0.5)*14))}
+function sumDbm(a,b){return 10*Math.log10(10**(a/10)+10**(b/10))}
+function sText(d){const o=Math.round(d+73);if(o<1){return 'S'+Math.max(0,Math.min(9,Math.round(9-(-73-d)/6)))}return 'S9 +'+o}
+function sFrac(d){return Math.max(0.02,Math.min(1,(d+127)/100))}
+function fmtF(f){const hz=Math.round(f*1e6);const s=String(hz).padStart(7,'0');const mhz=s.slice(0,-6),k=s.slice(-6,-3),h=s.slice(-3);return mhz+'.'+k+'.'+h}
+function mmss(s){s=Math.max(0,Math.floor(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
+function utc(offMin=0){const d=new Date(Date.now()+offMin*60000);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')}
+function offTxt(hz){if(Math.abs(hz)<50)return 'on';return (hz>0?'+':'-')+Math.abs(Math.round(hz/100)*100)+' Hz'}
+function offPenalty(hz){return Math.max(0,(Math.abs(hz)-200)/120)}
+
+/* ---------- data ---------- */
+const YOU={call:'N0CALL',grid:'FN42'};
+const POOL=[['W9ABC','EN61'],['N3ABC','FM29'],['K0ABC','EM48'],['W1ABC','FN41'],['KD4ABC','FM17'],['VE3ABC','FN03'],['N8ABC','EN80'],['K5ABC','EM12'],['G0ABC','IO91'],['W3ABC','FM19'],['N2ABC','FN20'],['K4QRS','FM05'],['W5ABC','EM10'],['K2ABC','FN30'],['W7ABC','DN40'],['N6ABC','DM04'],['VE7ABC','CN89'],['KH6ABC','BL01'],['ZL2ABC','RE78'],['VK2ABC','QF56'],['N4XYZ','EM64'],['AA5ABC','EM15'],['KC1ABC','FN31'],['WB8ABC','EN82']];
+
+const BANDS={
+ '80M':{lo:3.800,hi:4.000,mode:'LSB',home:3.916,plan:[[3.800,3.850,'PHONE Extra','e'],[3.850,4.000,'PHONE General','g']]},
+ '40M':{lo:7.100,hi:7.300,mode:'LSB',home:7.185,plan:[[7.100,7.125,'DATA General','d'],[7.125,7.175,'PHONE Extra','e'],[7.175,7.300,'PHONE General','g']]},
+ '20M':{lo:14.150,hi:14.350,mode:'USB',home:14.205,plan:[[14.150,14.225,'PHONE Extra','e'],[14.225,14.350,'PHONE General','g']]},
+ '15M':{lo:21.200,hi:21.450,mode:'USB',home:21.280,plan:[[21.200,21.275,'PHONE Extra','e'],[21.275,21.450,'PHONE General','g']]},
+};
+const PLANCOL={d:'#6a1e2a',e:'#3d3d40',g:'#8a4a14'};
+const SPOTS=[{band:'40M',f:7.163,call:'EA8XYZ'},{band:'40M',f:7.2155,call:'PY2ABC'},{band:'20M',f:14.195,call:'9A1ABC'},{band:'15M',f:21.290,call:'ZS6ABC'},{band:'80M',f:3.873,call:'VP9ABC'}];
+const BACKGROUND=[{band:'40M',f:7.152,d:-96},{band:'40M',f:7.228,d:-101},{band:'40M',f:7.288,d:-104},{band:'20M',f:14.178,d:-99},{band:'20M',f:14.310,d:-97},{band:'80M',f:3.945,d:-98},{band:'15M',f:21.360,d:-102}];
+
+const ROOMS=[
+ {id:'a',band:'40M',f:7.185,state:'talk',talkers:[{call:'K4ABC',grid:'EM73',nr:true}],keyed:74,n:8,seed:11,
+  turns:[{m:-2,who:'W9ABC',grid:'EN61',nr:true},{m:-4,who:'K4ABC',grid:'EM73',nr:true},{m:-7,who:'N3ABC',grid:'FM29',by:['W9ABC']},{m:-10,who:null}],
+  msgs:[{call:'W9ABC',grid:'EN61',m:-6,hear:'K4ABC',s:-69,text:'Good signal into Chicago, K4ABC.'},
+        {call:'N3ABC',grid:'FM29',m:-4,hear:'W9ABC',s:-79,text:'W9ABC, some fading here but readable.'},
+        {call:'K0ABC',grid:'EM48',m:-3,hear:'K4ABC',s:-91,text:'Skip is long here, you are weak but solid.'},
+        {call:'K4ABC',grid:'EM73',m:-1,tx:true,text:'Thanks all. Fifteen more minutes, then I am off. N0CALL you are next.'}]},
+ {id:'b',band:'40M',f:7.200,state:'double',talkers:[{call:'K7ABC',grid:'CN87',nr:true},{call:'W0ABC',grid:'EN34',nr:true}],keyed:4,n:7,seed:23,
+  turns:[{m:-1,who:'K7ABC',grid:'CN87',nr:true},{m:-3,who:'W0ABC',grid:'EN34',nr:true}],
+  msgs:[{call:'N6ABC',grid:'DM04',m:-2,hear:'W0ABC',s:-77,text:'W0ABC, good copy in Los Angeles.'},
+        {call:'VE7ABC',grid:'CN89',m:-1,hear:'K7ABC',s:-69,text:'K7ABC loud here. Going back to you after W0ABC.'},
+        {call:'KH6ABC',grid:'BL01',m:0,hear:'K7ABC + W0ABC',s:-67,dbl:true,text:'You two just doubled. K7ABC go first, then W0ABC.'}]},
+ {id:'c',band:'40M',f:7.240,state:'unknown',talkers:[],hidden:'FM18',keyed:18,n:10,seed:37,names:[],used:['W4NET','KC3ABC','KC3ABD'],
+  turns:[{m:-1,who:'KC3ABC',grid:'FM19',by:['W3ABC']},{m:-2,who:'W4NET',grid:'FM06',by:['KD4ABC','K4QRS']},{m:-3,who:'N2XYZ',grid:'FN21',nr:true},{m:-4,who:null}],
+  msgs:[{call:'KD4ABC',grid:'FM17',m:-5,hear:'unknown',s:-62,text:'Net control today is W4NET.'},
+        {call:'W3ABC',grid:'FM19',m:-3,hear:'unknown',s:-63,text:'That was KC3ABC checking in. Named it.'},
+        {call:'N2ABC',grid:'FN20',m:-2,hear:'unknown',s:-79,text:'I copied KC3ABD, not ABC. Added mine too.'}]},
+ {id:'d',band:'40M',f:7.268,state:'quiet',talkers:[],quiet:360,last:'W2ABC',n:3,seed:41,turns:[{m:-6,who:'W2ABC',grid:'FN20',by:['K2ABC']}],msgs:[]},
+ {id:'e',band:'20M',f:14.212,state:'talk',talkers:[{call:'VK3XYZ',grid:'QF22',nr:true}],keyed:42,n:8,seed:53,
+  turns:[{m:-2,who:'N0CALL',grid:'FN42',nr:true,you:true},{m:-5,who:'VK3XYZ',grid:'QF22',nr:true}],
+  msgs:[{call:'G0ABC',grid:'IO91',m:-7,hear:'VK3XYZ',s:-96,text:'Short path fading here. Will try long path at 1730.'},
+        {call:'K5ABC',grid:'EM12',m:-5,hear:'VK3XYZ',s:-79,text:'@VK3XYZ I am next after N0CALL if you have time.'},
+        {call:'VK3XYZ',grid:'QF22',m:-3,tx:true,text:'Thanks all. Working the list: N0CALL, K5ABC, W6ABC.'}]},
+ {id:'f',band:'20M',f:14.240,state:'quiet',talkers:[],quiet:360,last:'W7ABC',n:3,seed:61,turns:[{m:-6,who:'W7ABC',grid:'DN40',nr:true}],msgs:[]},
+ {id:'g',band:'20M',f:14.258,state:'unknown',talkers:[],hidden:'EM79',keyed:31,n:4,seed:67,names:[],used:['K8DX'],turns:[{m:-1,who:null}],msgs:[]},
+ {id:'h',band:'20M',f:14.285,state:'talk',talkers:[{call:'W6ABC',grid:'DM04',nr:true}],keyed:12,n:5,seed:71,turns:[],msgs:[{call:'KH6ABC',grid:'BL01',m:-1,hear:'W6ABC',s:-73,text:'Solid copy in Honolulu.'}]},
+ {id:'i',band:'80M',f:3.916,state:'unknown',talkers:[],hidden:'FM05',keyed:22,n:10,seed:79,names:[],used:['W4NET','N4ABC','KC3ABC'],
+  turns:[{m:-1,who:'N4ABC',grid:'EM64',by:['K4QRS']},{m:-3,who:null}],
+  msgs:[{call:'K4QRS',grid:'FM05',m:-2,hear:'unknown',s:-65,text:'Listening on 80, will check in after this one.'}]},
+ {id:'j',band:'80M',f:3.860,state:'talk',talkers:[{call:'N4XYZ',grid:'EM64',nr:true}],keyed:63,n:4,seed:83,turns:[],msgs:[]},
+ {id:'k',band:'15M',f:21.300,state:'talk',talkers:[{call:'JA1ABC',grid:'PM95',nr:true}],keyed:20,n:6,seed:89,turns:[],msgs:[{call:'W6ABC',grid:'DM04',m:-1,hear:'JA1ABC',s:-85,text:'Long path is open to the west coast.'}]},
+];
+
+function readingFrom(r,s,rnd){ // dBm that station s reads for the room's current transmitter(s)
+  if(r.state==='talk')return pathDbm(dist(s.grid,r.talkers[0].grid),rnd)-offPenalty(s.off);
+  if(r.state==='unknown')return pathDbm(dist(s.grid,r.hidden),rnd)-offPenalty(s.off);
+  if(r.state==='double')return sumDbm(pathDbm(dist(s.grid,r.talkers[0].grid),rnd),pathDbm(dist(s.grid,r.talkers[1].grid),rnd))-offPenalty(s.off);
+  if(r.state==='you')return s.hy-offPenalty(s.off);
+  return null;
+}
+let MSGID=0;
+function buildRoom(r){
+  const rnd=rng(r.seed);
+  const skip=new Set([...(r.talkers||[]).map(t=>t.call),YOU.call]);
+  const pool=POOL.filter(p=>!skip.has(p[0]));
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]]}
+  const offs=[0,0,0,0,0,100,-200,300,0,-100];
+  r.st=pool.slice(0,r.n).map(([call,grid])=>({call,grid,off:offs[Math.floor(rnd()*offs.length)],hy:pathDbm(dist(grid,YOU.grid),rnd)}));
+  // a Core with nobody connected keeps reporting (decided 2026-10-20); mark about one station in four
+  r.st.forEach((x,i)=>{x.away=((x.call.charCodeAt(1)+x.call.charCodeAt(x.call.length-1)+r.seed+i)%4)===0});
+  r.rnd=rnd; r.names=r.names||[]; r.msgs=r.msgs||[]; r.unread=r.msgs.length?Math.min(r.msgs.length,3):0;
+  r.turns=(r.turns||[]).map(t=>({...t,time:utc(t.m),rd:r.st.map(s=>({call:s.call,grid:s.grid,off:s.off,away:s.away,v:t.who?pathDbm(dist(s.grid,t.grid),rnd)-offPenalty(s.off):pathDbm(300+rnd()*2000,rnd)}))}));
+  r.msgs=r.msgs.map(m=>({...m,time:utc(m.m),id:'m'+(++MSGID)}));
+  computeReadings(r);
+}
+function computeReadings(r){
+  for(const s of r.st)s.base=readingFrom(r,s,r.rnd);
+  const me={grid:YOU.grid,off:0};
+  r.youBase = r.state==='talk'?pathDbm(dist(YOU.grid,r.talkers[0].grid),r.rnd)
+            : r.state==='unknown'?pathDbm(dist(YOU.grid,r.hidden),r.rnd)
+            : r.state==='double'?sumDbm(pathDbm(dist(YOU.grid,r.talkers[0].grid),r.rnd),pathDbm(dist(YOU.grid,r.talkers[1].grid),r.rnd))
+            : null;
+}
+ROOMS.forEach(buildRoom);
+
+/* ---------- state ---------- */
+const S={muted:{},showMuted:{},reported:{},msgMenu:null,opt:1,band:'40M',slice:7.185,view:null,mox:false,rtShown:true,winOpen:true,winSel:'a',listSel:null,readBand:null,turnSel:{},drafts:{},nameDraft:{},sliceHold:{},menu:false,bandPop:false,zoomS:false,zoomB:false};
+const bandMem={'80M':3.916,'40M':7.185,'20M':14.205,'15M':21.280};
+function view(){if(!S.view){const b=BANDS[S.band];S.view={lo:b.lo,hi:b.hi}}return S.view}
+const roomsIn=b=>ROOMS.filter(r=>r.band===b);
+const isTuned=r=>r.band===S.band&&Math.abs(S.slice-r.f)*1e6<=1500;
+const myRoom=()=>ROOMS.find(isTuned)||null;
+const sliceOff=r=>Math.round((S.slice-r.f)*1e6);
+function myReading(r){if(!r||r.youBase==null||r.state==='you')return null;return r.youBase-offPenalty(sliceOff(r))}
+function stateText(r){
+  if(r.state==='talk')return `<span class="st-talk">● ${r.talkers[0].call} talking</span>`;
+  if(r.state==='you')return `<span class="st-you">● You are talking</span>`;
+  if(r.state==='unknown'){const n=r.names[0];return `<span class="st-unknown">${n?esc(n.name)+' (named)':'unknown talker'}</span>`}
+  if(r.state==='double')return `<span class="st-double">● ${r.talkers[0].call} + ${r.talkers[1].call} <b style="border:1px solid #c25a5c;padding:0 3px;font-size:9px">DOUBLED</b></span>`;
+  return `<span class="st-quiet">quiet ${Math.max(1,Math.round(r.quiet/60))} min</span>`;
+}
+function roomCount(r){return r.st.length+(isTuned(r)?1:0)}
+
+function tune(f,band){
+  if(band&&band!==S.band){bandMem[S.band]=S.slice;S.band=band;S.view=null}
+  S.slice=Math.round(f*1e4)/1e4;S.popSel=null;S.readBand=null;
+  const v=view();const span=v.hi-v.lo;
+  if(S.slice<v.lo||S.slice>v.hi){const b=BANDS[S.band];v.lo=Math.max(b.lo,S.slice-span/2);v.hi=v.lo+span}
+  const r=myRoom(); if(r){r.unread=0}
+  render();
+}
+function setBand(b){if(b===S.band){render();return}bandMem[S.band]=S.slice;S.band=b;S.view=null;S.slice=bandMem[b];const r=myRoom();if(r)r.unread=0;render()}
+
+/* ---------- MOX ---------- */
+function toggleMox(){
+  S.mox=!S.mox;
+  const r=myRoom();
+  if(S.mox){
+    if(r){
+      if(r.state==='talk'||r.state==='unknown'||r.state==='double'){
+        r.turns.unshift({time:utc(),who:r.state==='unknown'?(r.names[0]?r.names[0].name:null):r.state==='double'?null:r.talkers[0].call,
+          nr:r.state==='talk',by:r.state==='unknown'&&r.names[0]?[r.names[0].by]:null,dbl:r.state==='double',
+          dblWho:r.state==='double'?r.talkers.map(t=>t.call).join(' + '):null,
+          rd:r.st.map(s=>({call:s.call,grid:s.grid,off:s.off,away:s.away,v:s.base}))});
+      }
+      r.prev={state:r.state,talkers:r.talkers,keyed:r.keyed};
+      r.state='you';r.talkers=[{...YOU,nr:true}];r.keyed=0;r.names=[];computeReadings(r);
+      delete S.turnSel[r.id];
+    }
+  }else{
+    if(r&&r.state==='you'){
+      r.turns.unshift({time:utc(),who:YOU.call,nr:true,you:true,rd:r.st.map(s=>({call:s.call,grid:s.grid,off:s.off,away:s.away,v:s.base}))});
+      r.state='quiet';r.quiet=0;r.last=YOU.call;r.talkers=[];computeReadings(r);
+      const id=r.id;
+      setTimeout(()=>{const q=ROOMS.find(x=>x.id===id);if(q.state==='quiet'&&q.prev&&q.prev.state!=='quiet'){q.state=q.prev.state==='double'?'talk':q.prev.state;q.talkers=q.prev.state==='double'?[q.prev.talkers[0]]:q.prev.talkers;q.keyed=0;q.names=[];computeReadings(q);render()}},5000);
+    }
+  }
+  render();
+}
+
+/* ---------- roundtable content builders ---------- */
+function readingRows(r,big){
+  const sel=S.turnSel[r.id];
+  let rows,stripe=false,old=false,sortByDist=true,talkerGrid=null;
+  if(sel!=null&&r.turns[sel]){
+    const t=r.turns[sel];old=true;stripe=!!t.dbl;
+    rows=t.rd.map(x=>({...x}));talkerGrid=t.who&&t.grid?t.grid:null;sortByDist=!!talkerGrid;
+  }else{
+    if(r.state==='quiet')return null;
+    stripe=r.state==='double';
+    talkerGrid=r.state==='talk'?r.talkers[0].grid:r.state==='you'?YOU.grid:null;
+    sortByDist=!!talkerGrid;
+    rows=r.st.map(s=>({call:s.call,grid:s.grid,off:s.off,away:s.away,v:s.base}));
+    if(isTuned(r)&&r.state!=='you')rows.push({call:YOU.call,grid:YOU.grid,off:sliceOff(r),v:myReading(r),me:true});
+  }
+  rows.forEach(x=>x.km=talkerGrid?dist(x.grid,talkerGrid):null);
+  rows.sort((a,b)=>sortByDist?a.km-b.km:a.call.localeCompare(b.call));
+  return rows.map(x=>`<div class="rd${x.me?' me':''}"${x.away?' title="Nobody at the radio. Its Core keeps reporting what it hears."':''}><span class="c${x.away?' away':''}">${x.call}${x.me?' <span style="font-size:8px;color:#7fd">YOU</span>':''}${x.away?'<span class="awaytag">AWAY</span>':''}</span>
+    <span class="k">${x.km!=null?x.km.toLocaleString()+' km':x.grid}</span><span class="o${Math.abs(x.off)>=50?' off':''}">${offTxt(x.off)}</span>
+    <span class="b${stripe?' str':''}${old&&!stripe?' old':''}"><i ${old?'':'data-live="1"'} data-base="${x.v.toFixed(1)}" style="width:${(sFrac(x.v)*100).toFixed(1)}%"></i></span>
+    <span class="v" ${old?'':'data-livev="1"'} data-base="${x.v.toFixed(1)}">${sText(x.v)}</span></div>`).join('');
+}
+function talkerBlock(r){
+  const tuned=isTuned(r);
+  if(r.state==='talk'){const t=r.talkers[0];return `<div class="talker"><div class="smallcap">TALKING NOW</div>
+    <div class="big st-talk"><span class="txb">TX</span>${t.call}<span class="grid">${t.grid}</span></div>
+    <div class="sub">keyed <span data-keyed="${r.id}">${mmss(r.keyed)}</span> · on NereusSDR, so the server knows whose signal this is</div></div>`}
+  if(r.state==='you')return `<div class="talker"><div class="smallcap">YOU ARE TALKING</div>
+    <div class="big st-you"><span class="txb">TX</span>${YOU.call}<span class="grid">${YOU.grid}</span></div>
+    <div class="sub">keyed <span data-keyed="${r.id}">${mmss(r.keyed)}</span> · below is who is hearing you</div></div>`;
+  if(r.state==='double')return `<div class="talker"><div class="smallcap">TWO STATIONS TRANSMITTING AT ONCE</div>
+    <div class="big st-double"><span class="txb">TX</span>${r.talkers[0].call} <span style="color:#8a8a8e">+</span> <span class="txb">TX</span>${r.talkers[1].call}<span class="dbl">DOUBLED</span></div>
+    <div class="sub">for <span data-keyed="${r.id}">${mmss(r.keyed)}</span> · each meter reads both signals added together</div></div>`;
+  if(r.state==='unknown'){
+    const given=r.names.length?`<div class="namegiven">Named ${r.names.map(n=>`<b class="mono">${esc(n.name)}</b> by ${n.by===YOU.call?'you':n.by}`).join(', ')}</div>`:'';
+    const chips=(r.used||[]).map(n=>`<span class="chip${tuned?'':' dis'}" data-name="${n}" data-room="${r.id}" title="${tuned?'Name this turn '+n:'Tune a slice here to name a turn'}">${n}</span>`).join('');
+    return `<div class="talker"><div class="smallcap">TALKING NOW</div>
+    <div class="big st-unknown">? Unknown</div>
+    <div class="sub">not on NereusSDR · on air <span data-keyed="${r.id}">${mmss(r.keyed)}</span> · nobody knows who this is until a listener names the turn</div>
+    ${given}
+    <div class="names"><span class="smallcap" style="margin-right:2px">NAME THIS TURN</span>${chips}
+      <input class="namein" id="nm-${r.id}" placeholder="callsign" ${tuned?'':'disabled'} value="${esc(S.nameDraft[r.id]||'')}"><span class="chip${tuned?'':' dis'}" data-nameinput="${r.id}">NAME</span></div></div>`;
+  }
+  return `<div class="talker"><div class="smallcap">QUIET</div><div class="big st-quiet" style="font-size:14px">Nobody is talking</div>
+    <div class="sub">last turn ${r.last===YOU.call?'was yours':'by '+r.last}, <span data-quiet="${r.id}">${Math.max(0,Math.round(r.quiet/60))}</span> min ago</div></div>`;
+}
+function readingsBlock(r){
+  const sel=S.turnSel[r.id];const t=sel!=null?r.turns[sel]:null;
+  const rows=readingRows(r);
+  let title='';
+  if(t)title=`HOW EACH STATION HEARD ${t.dbl?esc(t.dblWho||'THE DOUBLE'):t.who?(t.you?'YOU':t.who):'THE UNKNOWN TALKER'}`;
+  else if(r.state==='you')title='WHO IS HEARING YOU';
+  else if(r.state==='talk')title='HOW EACH STATION HEARS '+r.talkers[0].call;
+  else if(r.state==='double')title='HOW EACH STATION HEARS BOTH';
+  else if(r.state==='unknown')title='HOW EACH STATION HEARS THE TALKER';
+  const note=(t&&t.who&&t.grid)||r.state==='talk'||r.state==='you'?'nearest to the talker first':'by callsign, talker location unknown';
+  const banner=t?`<div class="turnbanner"><span>Showing the ${t.time} turn</span><a data-live-back="${r.id}">Back to live</a></div>`:'';
+  if(rows===null){
+    return `<div class="sec"><span class="smallcap">LISTENING HERE</span><span class="note">${roomCount(r)} stations</span></div>
+      <div class="listeners">${r.st.map(s=>`<span${s.away?' style="color:#959599" title="Nobody at the radio"':''}>${s.call}${s.away?'<span class="awaytag">AWAY</span>':''}</span>`).join('')}${isTuned(r)?`<span style="color:var(--acc)">${YOU.call}</span>`:''}</div>`;
+  }
+  const awayN=(t?t.rd:r.st).filter(x=>x.away).length;
+  const awayNote=awayN?`<div class="awaynote"><span class="awaytag" style="margin:0 3px 0 0">AWAY</span>nobody at the radio. Its readings still count, but it can't post or name a turn.</div>`:'';
+  return `<div class="sec"><span class="smallcap">${title}</span><span class="note">${note}</span></div>${banner}<div class="readings">${rows}</div>${awayNote}`;
+}
+function turnsBlock(r){
+  if(!r.turns.length)return '';
+  const sel=S.turnSel[r.id];
+  return `<div class="sec" style="padding-top:4px"><span class="smallcap">EARLIER TURNS</span><span class="note">click one to see its readings</span></div>
+  <div class="turns">${r.turns.map((t,i)=>{
+    const cls=t.dbl?'dbl':t.you?'you':!t.who?'unk':'';
+    const who=t.dbl?esc(t.dblWho):t.you?'YOU':t.who?t.who:'?';
+    const by=t.by&&t.by.length?` <span style="color:#8a8a8e">named by ${t.by.join(', ')}</span>`:t.nr&&!t.you?' <span style="color:#3f8f58">on NereusSDR</span>':'';
+    return `<span class="turn ${cls}${sel===i?' sel':''}" data-turn="${i}" data-room="${r.id}">${t.time} <b>${who}</b>${by}</span>`}).join('')}</div>`;
+}
+function msgsBlock(r){
+  if(!r.msgs.length)return `<div class="msgs"><div class="quietmsg">No messages on ${fmtF(r.f)} yet.</div></div>`;
+  return `<div class="msgs" id="msgs-${r.id}">${r.msgs.map(m=>{
+    const chip=m.tx?`<span class="chipr txing">transmitting</span>`:m.hear?`<span class="chipr${m.dbl?' str':''}">hearing ${esc(m.hear)} · ${m.s!=null?sText(m.s):'no reading'} <i style="width:${m.s!=null?Math.round(sFrac(m.s)*30):0}px"></i></span>`:'';
+    const mine=m.call===YOU.call;
+    if(!mine&&S.muted[m.call]&&!S.showMuted[m.id])return `<div class="msg muted">Message from ${m.call} hidden, you muted this station. <a data-showmuted="${m.id}">Show</a> · <a data-unmute="${m.call}">Unmute ${m.call}</a></div>`;
+    const menuBtn=mine?'':`<span class="mm${S.msgMenu===m.id?' on':''}" data-msgmenu="${m.id}" title="Mute or report">⋯</span>`;
+    const rep=S.reported[m.id];
+    const menu=S.msgMenu===m.id?`<div class="msgmenu"><a data-mute="${m.call}">${S.muted[m.call]?'Unmute':'Mute'} ${m.call}</a><a data-report="${m.id}" class="${rep?'dis':''}">${rep?'Reported':'Report this message'}</a></div>`:'';
+    const repNote=rep?`<div class="reported">You reported this. It is in the review list.</div>`:'';
+    return `<div class="msg${mine?' me':''}"><div class="h"><span class="c">${m.call}</span><span class="g">${m.grid}</span><span class="t">${m.time}</span>${menuBtn}</div>${menu}${chip}<div class="x">${esc(m.text)}</div>${repNote}</div>`}).join('')}</div>`;
+}
+function composeBlock(r){
+  const tuned=isTuned(r);
+  let hint;
+  if(!tuned)hint=`Only stations tuned to ${fmtF(r.f)} can post. You can read everything.`;
+  else if(r.state==='you')hint='Sent as transmitting';
+  else {const d=myReading(r);const who=r.state==='talk'?r.talkers[0].call:r.state==='double'?r.talkers.map(t=>t.call).join(' + '):r.state==='unknown'?(r.names[0]?r.names[0].name:'unknown'):null;
+    hint=who?`Sent with your reading: hearing ${esc(who)} · ${sText(d)}`:'Sent with no reading, nobody is talking';}
+  return `<div class="compose"><div class="r"><input id="in-${r.id}" placeholder="${tuned?'Message '+fmtF(r.f):'Tune a slice to '+fmtF(r.f)+' to post here'}" ${tuned?'':'disabled'} value="${esc(S.drafts[r.id]||'')}"><button data-send="${r.id}" ${tuned?'':'disabled'}>SEND</button></div><div class="hint">${hint}</div></div>`;
+}
+function roomHead(r,opts={}){
+  const tuned=isTuned(r);
+  const tag=tuned?`<span class="tagA">A</span>`:`<span class="tagNot">NOT TUNED HERE</span>`;
+  const tb=!tuned?`<button class="tunebtn" data-tune="${r.id}">Tune A here</button>`:'';
+  return `<div class="rhead">${tag}<span class="f">${fmtF(r.f)}</span><span class="m">${BANDS[r.band].mode}</span>${tb}<span class="n">${roomCount(r)} stations${r.st.some(x=>x.away)?` · ${r.st.filter(x=>x.away).length} away`:''}</span></div>`;
+}
+// A list or link reads a frequency; only a panadapter tag (or Tune A here) tunes.
+function readRoom(){return (S.popSel&&ROOMS.find(q=>q.id===S.popSel))||myRoom()}
+function readBar(){
+  if(S.readBand)return `<div class="mine"><span>Reading ${S.readBand}, your slice is on ${fmtF(S.slice)}</span><a data-act="popmine">Back to my slice</a></div>`;
+  const r=readRoom(),mine=myRoom();
+  return r&&r!==mine?`<div class="mine"><span>Reading ${fmtF(r.f)}, your slice is on ${fmtF(S.slice)}</span><a data-act="popmine">Back to my slice</a></div>`:'';
+}
+function readBandList(){return `<div class="flist">${roomsIn(S.readBand).map(x=>frow(x,null)).join('')}</div>`}
+function elsewhere(){
+  const others=Object.keys(BANDS).filter(b=>b!==S.band).map(b=>({b,n:roomsIn(b).filter(r=>r.state!=='quiet').length})).filter(x=>x.n);
+  return `<div class="elsewhere"><span class="smallcap">BUSY ELSEWHERE</span>${others.map(x=>`<b data-readband="${x.b}" title="Read ${x.b} here without tuning">${x.b} ${x.n}</b>`).join('')}</div>`;
+}
+function freqList(selId){
+  let h='';
+  const order=['80M','40M','20M','15M'];
+  const mine=myRoom();
+  if(mine){h+=`<div class="fband"><span class="bn" style="color:var(--acc)">YOUR SLICE</span><span class="bc">A</span></div>`+frow(mine,selId,true)}
+  for(const b of order){const rs=roomsIn(b);if(!rs.length)continue;
+    const n=rs.reduce((a,r)=>a+roomCount(r),0);
+    h+=`<div class="fband"><span class="bn">${b}</span><span class="bc">${rs.length} ${rs.length===1?'frequency':'frequencies'} · ${n} stations</span></div>`+rs.map(r=>frow(r,selId)).join('')}
+  return h;
+}
+function frow(r,selId,pinned){
+  return `<div class="frow${r.id===selId?' sel':''}" data-open="${r.id}"><span class="ff">${fmtF(r.f)}<span class="m">${BANDS[r.band].mode}</span>${isTuned(r)?'<span class="tagA">YOU · A</span>':''}</span><span class="cn">${roomCount(r)}${r.unread&&!isTuned(r)?`<span class="unread">${r.unread}</span>`:''}</span><span class="ss">${stateText(r)}</span></div>`;
+}
+
+/* ---------- applets ---------- */
+function hdr(title,extra='',closeAct='',popAct=''){return `<div class="ahdr"><span class="grip">⋮⋮</span><span class="atitle">${title}</span>${extra}<span class="aicons"><span${popAct?` class="apop" data-act="${popAct}" title="Pop out into its own window"`:''}>↗</span><span>⋯</span><span class="aclose" ${closeAct?`data-act="${closeAct}"`:''}>×</span></span></div>`}
+function smeterSvg(d){
+  const f=d==null?0.05:sFrac(d);const ang=-50+f*100;
+  const ticks=['1','3','5','7','9','+20','+40','+60'].map((t,i)=>{const a=(-46+i*13.2)*Math.PI/180;const x=150+Math.sin(a)*86,y=130-Math.cos(a)*86;return `<text x="${x}" y="${y}" font-size="${i>4?11:12}" fill="${i>4?'#c22':'#222'}" text-anchor="middle" font-weight="700">${t}</text>`}).join('');
+  return `<svg viewBox="0 0 300 140" width="100%" style="display:block"><rect x="4" y="4" width="292" height="132" rx="14" fill="#e4e4e8" stroke="#c9a54a" stroke-width="6"/>
+  <text x="150" y="25" text-anchor="middle" font-size="12" fill="#333" letter-spacing="2" font-weight="700">SIGNAL STRENGTH</text>
+  <path d="M96 82 A76 76 0 0 1 204 82" fill="none" stroke="#333" stroke-width="1.5"/><path d="M174 58 A76 76 0 0 1 204 82" fill="none" stroke="#c22" stroke-width="3"/>${ticks}
+  <line id="needle" x1="150" y1="126" x2="${150+Math.sin(ang*Math.PI/180)*74}" y2="${126-Math.cos(ang*Math.PI/180)*74}" stroke="#222" stroke-width="2.5"/>
+  <circle cx="150" cy="126" r="7" fill="#222"/><text x="96" y="128" font-size="13" font-weight="700" fill="#222">${d==null?'S0':sText(d).replace(' ','')}</text><text x="170" y="128" font-size="12" fill="#222" id="smv">${d==null?'-121':Math.round(d)} dBm</text></svg>`;
+}
+function txLine(r){return `<div class="txline"><span class="txb">TX</span><b>${YOU.call}</b><span data-keyed="${r.id}">${mmss(r.keyed)}</span><span class="f">${fmtF(r.f)}</span><span class="n">hearing you: ${r.st.length}</span></div>`}
+// The S-Meter applet's transmit face, as SMeterWidget draws it today while keyed: forward power and SWR.
+function txMeterSvg(){
+  const w=55+Math.random()*12;const ang=-50+w;
+  const ticks=['0','25','50','75','100'].map((t,i)=>{const a=(-46+i*23)*Math.PI/180;const x=150+Math.sin(a)*86,y=130-Math.cos(a)*86;return `<text x="${x}" y="${y}" font-size="12" fill="#222" text-anchor="middle" font-weight="700">${t}</text>`}).join('');
+  return `<svg viewBox="0 0 300 140" width="100%" style="display:block"><rect x="4" y="4" width="292" height="132" rx="14" fill="#e4e4e8" stroke="#c9a54a" stroke-width="6"/>
+  <text x="150" y="25" text-anchor="middle" font-size="12" fill="#333" letter-spacing="2" font-weight="700">FORWARD POWER</text>
+  <path d="M96 82 A76 76 0 0 1 204 82" fill="none" stroke="#333" stroke-width="1.5"/>${ticks}
+  <line x1="150" y1="126" x2="${150+Math.sin(ang*Math.PI/180)*74}" y2="${126-Math.cos(ang*Math.PI/180)*74}" stroke="#222" stroke-width="2.5"/>
+  <circle cx="150" cy="126" r="7" fill="#222"/><text x="90" y="128" font-size="13" font-weight="700" fill="#222">${Math.round(w)} W</text><text x="172" y="128" font-size="12" fill="#222">SWR 1.3</text></svg>`;
+}
+function rxApplet(){
+  const fl=['5K','4.4K','3.8K','3.2K','2.9K','2.6K','2.3K','1.7K','1.1K','500'];
+  return `${hdr('RX')}<div class="abody">
+   <div class="row"><span class="tagA">A</span>🔓<span style="flex:1;text-align:center;color:var(--acc)">2.7K</span></div>
+   <div class="row"><span class="sel" style="flex:1"><span id="rxmode">${BANDS[S.band].mode}</span><span>▾</span></span></div>
+   <div class="row"><span style="color:var(--dim)">STEP:</span><span class="mono">◀ 100 Hz ▶</span><span class="slider" style="--p:60%"></span></div>
+   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">${fl.map(x=>`<button class="cbtn${x==='2.6K'?' on':''}" data-flt>${x}</button>`).join('')}<button class="cbtn">SQL</button><button class="cbtn">AGC</button></div>
+   <div class="row" style="margin-top:6px"><button class="cbtn" style="width:40px">RIT</button><span class="sel mono" style="flex:1">+0 Hz</span></div>
+   <div class="row"><button class="cbtn" style="width:40px">XIT</button><span class="sel mono" style="flex:1">+0 Hz</span></div></div>`;
+}
+function txApplet(){
+  return `${hdr('TX')}<div class="abody">
+   <div class="sel" style="justify-content:center">PC mic</div>
+   <div class="smallcap" style="text-align:center;margin-top:5px">RF PWR</div><div class="row mono" style="justify-content:space-between;color:var(--acc);font-size:10px"><span>0.0</span><span>3.3</span><span>6.7</span><span>10.0</span><span style="color:#f55">12.0</span></div>
+   <div class="row"><span style="color:var(--dim);width:70px">RF Power:</span><span class="slider" style="--p:50%"></span><span>50</span></div>
+   <div class="row"><span style="color:var(--dim);width:70px">Tune Pwr:</span><span class="slider" style="--p:50%"></span><span>50</span></div>
+   <div class="row"><button class="cbtn" style="flex:1">TUNE</button><button class="cbtn${S.mox?' red':''}" style="flex:1" data-act="mox">MOX</button></div>
+   <div class="row"><button class="cbtn on" style="flex:1">A</button></div>
+   <div class="row"><button class="cbtn">VOX</button><span class="slider" style="--p:40%"></span><button class="cbtn">MON</button><button class="cbtn on">SPEAKERS</button></div></div>`;
+}
+function rtApplet(h){
+  const r=myRoom();
+  let body='';
+  if(S.opt===1){
+    const rr=readRoom();
+    if(S.readBand){
+      body=readBar()+readBandList()+elsewhere();
+    }else if(rr){
+      // While you transmit, readings of you take the room: talker is one line, earlier turns wait (UX fix 3).
+      if(rr.state==='you'&&isTuned(rr))body=txLine(rr)+readingsBlock(rr)+msgsBlock(rr)+composeBlock(rr)+elsewhere();
+      else body=readBar()+roomHead(rr)+talkerBlock(rr)+readingsBlock(rr)+turnsBlock(rr)+msgsBlock(rr)+composeBlock(rr)+elsewhere();
+    }else{
+      const busy=roomsIn(S.band);
+      body=`<div class="rhead"><span class="tagA">A</span><span class="f">${fmtF(S.slice)}</span><span class="m">${BANDS[S.band].mode}</span></div>
+      <div class="empty"><div class="t">${S.mox?'You are transmitting, but nobody on Roundtable is tuned here to read you.':'Nobody on Roundtable is tuned here.'}</div>
+      Click a callsign on the panadapter to tune there, or one of these to read it.</div>
+      <div class="flist">${busy.map(x=>frow(x,null)).join('')}</div>${elsewhere()}`;
+    }
+  }else{ // opt 2
+    if(S.listSel){
+      const x=ROOMS.find(q=>q.id===S.listSel);
+      body=`<div class="back" data-back="1">‹ All frequencies</div>`+roomHead(x)+talkerBlock(x)+readingsBlock(x)+turnsBlock(x)+msgsBlock(x)+composeBlock(x);
+    }else{
+      body=`<div class="flist">${freqList(null)}</div>`;
+    }
+  }
+  const total=ROOMS.filter(q=>q.state!=='quiet').length;
+  const keyed=S.opt===1&&S.mox&&r&&r.state==='you'&&!S.readBand&&(!readRoom()||isTuned(readRoom()));
+  return `<div class="rt-applet${keyed?' keyed':''}" style="height:${h}px">${hdr('ROUNDTABLE',`<span class="badge">${total}</span>`,'close-rt',S.opt===1?'popout':'')}<div class="abody">${body}</div></div>`;
+}
+function renderCol(){
+  const col=$('#col');const H=col.clientHeight;
+  const myRd=myReading(myRoom());
+  let html=`<div class="mainpanel">${hdr('MAIN PANEL')}<div class="abody">≡</div></div>`;
+  html+=`<div>${hdr('S-METER')}<div class="abody" style="padding:4px 8px" id="smeter">${S.mox?txMeterSvg():smeterSvg(myRd)}</div></div>`;
+  if(S.opt===1&&S.popped){const total=ROOMS.filter(q=>q.state!=='quiet').length;html+=`<div>${hdr('ROUNDTABLE',`<span class="badge">${total}</span>`)}<div class="abody poppedNote">Roundtable is in its own window. <a data-act="popin">Put it back here</a></div></div>`}
+  else if(S.opt!==3&&S.rtShown){html+=rtApplet(Math.max(470,H-18-20-18-150));}
+  html+=`<div>${rxApplet()}</div><div>${txApplet()}</div>`;
+  col.innerHTML=html;
+}
+
+/* ---------- separate window ---------- */
+let winPos={x:null,y:null};
+function renderWin(){
+  const w=$('#win');
+  if(S.opt!==3||!S.winOpen){w.classList.remove('show');return}
+  w.classList.add('show');
+  if(winPos.x==null){winPos.x=Math.max(20,(innerWidth-1080)/2-120);winPos.y=150}
+  w.style.left=winPos.x+'px';w.style.top=winPos.y+'px';
+  const r=ROOMS.find(q=>q.id===S.winSel)||ROOMS[0];
+  w.innerHTML=`<div class="wt" id="wtitle"><span class="lights"><i style="background:#ff5f57;cursor:pointer" data-act="close-win" title="Close"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><span class="ttl">Roundtable</span></div>
+  <div class="wb">
+    <div class="wl"><div class="colhdr"><span>FREQUENCIES</span><span>${ROOMS.reduce((a,q)=>a+roomCount(q),0)} on air</span></div><div class="flist">${freqList(r.id)}</div></div>
+    <div class="wm">${roomHead(r)}${talkerBlock(r)}${readingsBlock(r)}${turnsBlock(r)}</div>
+    <div class="wr"><div class="colhdr"><span>MESSAGES</span><span class="mono">${fmtF(r.f)}</span></div>${msgsBlock(r)}${composeBlock(r)}</div>
+  </div>`;
+}
+
+/* ---------- popped-out Roundtable ---------- */
+let pop={x:null,y:null,w:420,h:620,full:false,prev:null};
+function popTier(){return pop.w<600?'narrow':pop.w<980?'medium':'wide'}
+function renderPop(){
+  const w=$('#pop');
+  const on=S.opt===1&&S.popped;
+  $('#chooser .sizes').classList.toggle('show',on);
+  if(!on){w.classList.remove('show');return}
+  if(pop.x==null){pop.x=Math.max(20,innerWidth-330-pop.w-40);pop.y=110}
+  w.style.left=pop.x+'px';w.style.top=pop.y+'px';w.style.width=pop.w+'px';w.style.height=pop.h+'px';
+  const tier=popTier();w.className='show t-'+tier;
+  document.querySelectorAll('#chooser .sizes [data-size]').forEach(b=>b.classList.toggle('on',b.dataset.size===tier));
+  const mine=myRoom();
+  const r=(S.popSel&&ROOMS.find(q=>q.id===S.popSel))||mine;
+  const viewingOther=r&&mine!==r;
+  const mineBar=viewingOther?`<div class="mine"><span>Reading ${fmtF(r.f)}, your slice is on ${fmtF(S.slice)}</span><a data-act="popmine">Back to my slice</a></div>`:'';
+  const shapes={narrow:'one column, like the panel',medium:'two columns',wide:'three columns, the separate window layout'};
+  const total=ROOMS.reduce((a,q)=>a+roomCount(q),0);
+  const list=`<div class="wl"><div class="colhdr"><span>FREQUENCIES</span><span>${total} on air</span></div><div class="flist">${freqList(r?r.id:null)}</div></div>`;
+  const empty=`<div class="rhead"><span class="tagA">A</span><span class="f">${fmtF(S.slice)}</span><span class="m">${BANDS[S.band].mode}</span></div>
+      <div class="empty"><div class="t">${S.mox?'You are transmitting, but nobody on Roundtable is tuned here to read you.':'Nobody on Roundtable is tuned here.'}</div>
+      ${tier==='narrow'?'Click a callsign on the panadapter to tune there, or one of these to read it.':'Click a callsign on the panadapter, or pick a frequency on the left.'}</div>`;
+  let body;
+  if(tier==='narrow'){
+    body=S.readBand?`<div class="col1">${readBar()}${readBandList()}${elsewhere()}</div>`:`<div class="col1">${mineBar}${r?roomHead(r)+talkerBlock(r)+readingsBlock(r)+turnsBlock(r)+msgsBlock(r)+composeBlock(r):empty+`<div class="flist">${roomsIn(S.band).map(x=>frow(x,null)).join('')}</div>`}${elsewhere()}</div>`;
+  }else if(tier==='medium'){
+    body=list+`<div class="wm solo">${mineBar}${r?roomHead(r)+talkerBlock(r)+readingsBlock(r)+turnsBlock(r)+msgsBlock(r)+composeBlock(r):empty}</div>`;
+  }else{
+    body=list+`<div class="wm">${mineBar}${r?roomHead(r)+talkerBlock(r)+readingsBlock(r)+turnsBlock(r):empty}</div>`
+      +(r?`<div class="wr"><div class="colhdr"><span>MESSAGES</span><span class="mono">${fmtF(r.f)}</span></div>${msgsBlock(r)}${composeBlock(r)}</div>`:'');
+  }
+  w.innerHTML=`<div class="wt" id="ptitle"><span class="lights"><i style="background:#ff5f57;cursor:pointer" data-act="popin" title="Close (puts it back in the column)"></i><i style="background:#febc2e"></i><i style="background:#28c840;cursor:pointer" data-act="popfull" title="Fill the screen"></i></span><span class="ttl">Roundtable</span><span class="shape">${Math.round(pop.w)} × ${Math.round(pop.h)} · ${shapes[tier]}</span></div>
+  <div class="wb">${body}</div><div class="sizer" id="psizer" title="Drag to resize"></div>`;
+}
+function setPopSize(k){
+  const sz={narrow:[420,620],medium:[820,600],wide:[1080,600]}[k];
+  pop.full=false;pop.w=Math.min(sz[0],innerWidth-40);pop.h=Math.min(sz[1],innerHeight-90);
+  pop.x=Math.max(20,Math.min(pop.x??20,innerWidth-pop.w-20));pop.y=Math.max(62,Math.min(pop.y??110,innerHeight-pop.h-10));render();
+}
+
+/* ---------- panadapter geometry ---------- */
+const G={};
+function layout(){
+  const pan=$('#pan');const W=pan.clientWidth,H=pan.clientHeight;
+  G.W=W-40;G.H=H;G.specH=Math.round(H*0.36);G.planY=G.specH;G.scaleY=G.specH+16;G.wfY=G.scaleY+22;G.wfH=H-G.wfY;
+  const dpr=1;
+  const spec=$('#spec'),wf=$('#wf');
+  spec.width=G.W;spec.height=G.specH;spec.style.top='0px';spec.style.width=G.W+'px';spec.style.height=G.specH+'px';
+  if(wf.width!==G.W||wf.height!==G.wfH){wf.width=G.W;wf.height=G.wfH}
+  wf.style.top=G.wfY+'px';wf.style.width=G.W+'px';wf.style.height=G.wfH+'px';
+  const db=$('#dbscale');db.style.top='0px';db.style.height=G.specH+'px';
+  db.innerHTML=[-50,-60,-70,-80,-90,-100,-110].map(v=>`<span style="top:${dbY(v)-6}px">${v}</span>`).join('');
+  $('#chtx').style.right='48px';
+  const pl=$('#plan');pl.style.top=G.planY+'px';pl.style.width=G.W+'px';
+  const sc=$('#scale');sc.style.top=G.scaleY+'px';sc.style.width=(G.W+40)+'px';
+  const wt=$('#wftime');wt.style.top=G.wfY+'px';wt.style.height=G.wfH+'px';
+  wt.innerHTML=['0s','5s','10s'].map((t,i)=>`<span style="top:${4+i*G.wfH*0.38}px">${t}</span>`).join('');
+  $('#zoom').style.top=(H-28)+'px';
+  $('#labels').style.width=G.W+'px';$('#labels').style.height=G.specH+'px';
+}
+const dbY=d=>Math.round((-40-d)/80*G.specH);
+const fx=f=>{const v=view();return (f-v.lo)/(v.hi-v.lo)*G.W};
+const xf=x=>{const v=view();return v.lo+x/G.W*(v.hi-v.lo)};
+
+function renderPanStatic(){
+  const v=view(),b=BANDS[S.band];
+  $('#plan').innerHTML=b.plan.map(([lo,hi,t,k])=>{const a=Math.max(lo,v.lo),z=Math.min(hi,v.hi);if(z<=a)return '';return `<div style="position:absolute;left:${fx(a)}px;width:${fx(z)-fx(a)}px;height:16px;background:${PLANCOL[k]}">${t}</div>`}).join('');
+  const span=v.hi-v.lo;const step=span>0.15?0.03:span>0.06?0.01:0.005;
+  let s='<span id="live" style="position:absolute;right:2px;top:3px;font-size:10px;border:1px solid #556;padding:0 4px;color:#ccd;background:#232326;transform:none">LIVE</span>';
+  for(let f=Math.ceil(v.lo/step)*step;f<v.hi;f+=step){const x=fx(f);if(x<30||x>G.W-30)continue;s+=`<span style="left:${x}px">${f.toFixed(span>0.06?2:3)}</span>`}
+  $('#scale').innerHTML=s;
+  // labels
+  const L=$('#labels');let h='';
+  const placed=[];const th=21,startY=Math.round(G.specH*0.50);
+  const place=(x,w)=>{let y=startY;let hit=true;while(hit){hit=false;for(const p of placed){if(x<p.x+p.w+2&&x+w+2>p.x&&y<p.y+th&&y+th>p.y){y=p.y+th+1;hit=true}}}placed.push({x,y,w});return y};
+  const items=[];
+  if(S.opt===1){for(const r of roomsIn(S.band)){const x=fx(r.f);if(x<0||x>G.W)continue;items.push({x,r})}}
+  for(const sp of SPOTS.filter(s=>s.band===S.band)){const x=fx(sp.f);if(x<0||x>G.W)continue;items.push({x,sp})}
+  items.sort((a,b)=>a.x-b.x);
+  for(const it of items){
+    if(it.r){const r=it.r;
+      let txt,cls;
+      if(r.state==='talk'){txt=`${r.talkers[0].call}`;cls='st-talk'}
+      else if(r.state==='you'){txt=`<span class="tx">TX</span>YOU`;cls='st-you'}
+      else if(r.state==='unknown'){txt=r.names[0]?esc(r.names[0].name)+'?':'UNKNOWN';cls='st-unknown'}
+      else if(r.state==='double'){txt=`${r.talkers[0].call}+${r.talkers[1].call}`;cls='st-double'}
+      else {txt='QUIET';cls='st-quiet'}
+      const w=30+txt.replace(/<[^>]+>/g,'').length*8.2+18;
+      const y=place(it.x-w/2,w);
+      const col=getComputedStyle(document.documentElement).getPropertyValue('--acc');
+      h+=`<div class="dot ${cls}" style="left:${it.x}px;top:${y+th-2}px;height:${G.specH-y-th+2}px;border-color:currentColor"></div>`;
+      h+=`<div class="rt ${cls}${isTuned(r)?' mine':''}" style="left:${it.x-w/2}px;top:${y}px" data-tune="${r.id}" title="${fmtF(r.f)} ${BANDS[r.band].mode} · ${roomCount(r)} stations · click to tune slice A here"><span class="ring"></span>${txt}<span class="cnt">${roomCount(r)}</span>${r.unread&&!isTuned(r)?`<span class="unread">${r.unread}</span>`:''}</div>`;
+    }else{const sp=it.sp;const w=sp.call.length*9+8;const y=place(it.x-w/2,w);
+      h+=`<div class="dot" style="left:${it.x}px;top:${y+16}px;height:${G.specH-y-16}px;border-color:var(--acc);color:var(--acc)"></div>`;
+      h+=`<div class="spot" style="left:${it.x-w/2}px;top:${y}px" data-spot="${sp.f}" title="Cluster spot · click to tune">${sp.call}</div>`;}
+  }
+  L.innerHTML=h;
+  // slice + passband in both panes
+  document.querySelectorAll('.sliceline,.passband').forEach(e=>e.remove());
+  const pan=$('#pan');const x=fx(S.slice);
+  const usb=BANDS[S.band].mode==='USB';const pb1=fx(S.slice+(usb?0.00015:-0.00285)),pb2=fx(S.slice+(usb?0.00285:-0.00015));
+  for(const [top,hh] of [[0,G.specH],[G.wfY,G.wfH]]){
+    const l=document.createElement('div');l.className='sliceline';l.style.cssText=`left:${x}px;top:${top}px;height:${hh}px`;pan.appendChild(l);
+    const p=document.createElement('div');p.className='passband';p.style.cssText=`left:${Math.min(pb1,pb2)}px;width:${Math.max(2,Math.abs(pb2-pb1))}px;top:${top}px;height:${hh}px`;pan.appendChild(p);
+  }
+  // vfo flag
+  const vfo=$('#vfo');const r=myRoom();const d=myReading(r);
+  const left=x+250+8>G.W?x-252:x+2;
+  vfo.style.left=left+'px';
+  const rtline=S.opt===1&&r?`<div class="rtline" data-scrollrt="1"><span class="ring" style="width:8px;height:8px;border:2px solid var(--grn);border-radius:50%;display:inline-block"></span>Roundtable · ${roomCount(r)} stations · ${r.state==='talk'?r.talkers[0].call+' talking':r.state==='you'?'you are talking':r.state==='unknown'?'unknown talker':r.state==='double'?'doubled':'quiet'}</div>`:'';
+  vfo.innerHTML=`<div class="tags"><span class="a1">ANT1</span><span class="a2">ANT1</span><span class="bw">2.7K</span><span class="sp"></span><span class="txb" style="${S.mox?'background:#c02020;color:#fff':''}">TX</span><span class="ab">A</span></div>
+   <div class="who">You control</div><div class="fq">${fmtF(S.slice)}</div>
+   <div class="sc">S1 3 5 7 9 +20 +40</div>
+   <div class="bar"><span class="b"><i id="vfobar" style="width:${(sFrac(d??-115)*100).toFixed(0)}%"></i></span><span class="v" id="vfov">${Math.round(d??-115)} dBm</span></div>
+   <div class="btns"><span>🔈</span><span>DSP</span><span>${BANDS[S.band].mode}</span><span>X/RIT</span><span>VAX</span></div>${rtline}`;
+  $('#stBand').textContent=S.band.toLowerCase();$('#stMode').textContent='∿ '+BANDS[S.band].mode;
+}
+
+/* ---------- live spectrum + waterfall ---------- */
+const voice={};
+function sigList(){
+  const out=[];const usb=BANDS[S.band].mode==='USB';
+  for(const r of roomsIn(S.band)){
+    if(['talk','unknown','double'].includes(r.state)&&r.youBase!=null){
+      const lvl=r.youBase-(isTuned(r)?0:0);
+      out.push({id:r.id,lo:r.f+(usb?0.0003:-0.0030),hi:r.f+(usb?0.0030:-0.0003),d:r.state==='double'?lvl-2:lvl,voice:true});
+      if(r.state==='double')out.push({id:r.id+'2',lo:r.f+(usb?0.0005:-0.0028),hi:r.f+(usb?0.0032:-0.0001),d:lvl-5,voice:true});
+    }
+  }
+  for(const b of BACKGROUND.filter(x=>x.band===S.band))out.push({id:'bg'+b.f,lo:b.f+(usb?0.0003:-0.003),hi:b.f+(usb?0.003:-0.0003),d:b.d,voice:true});
+  for(const s of SPOTS.filter(x=>x.band===S.band))out.push({id:'sp'+s.f,lo:s.f-0.00008,hi:s.f+0.00008,d:-92,voice:false});
+  return out;
+}
+let lastFrame=0;
+function frame(ts){
+  requestAnimationFrame(frame);
+  if(ts-lastFrame<55)return;lastFrame=ts;
+  draw(ts);
+}
+function draw(ts){
+  if(!(G.W>0)||!(G.wfH>0))return;
+  const W=G.W;const arr=new Float32Array(W);
+  for(let x=0;x<W;x++)arr[x]=-113+Math.random()*6+(Math.random()<0.02?4:0);
+  for(const s of sigList()){
+    let v=voice[s.id];if(!v){v=voice[s.id]={a:0,gap:0}}
+    if(s.voice){if(v.gap>0){v.gap--}else if(Math.random()<0.03){v.gap=2+Math.floor(Math.random()*5)}v.a+= (Math.random()-0.5)*4;v.a=Math.max(-8,Math.min(2,v.a))}
+    const lvl=s.d+(s.voice?(v.gap>0?-28:v.a):0);
+    const x1=fx(s.lo),x2=fx(s.hi);
+    for(let x=Math.max(0,Math.floor(x1)-2);x<=Math.min(W-1,Math.ceil(x2)+2);x++){
+      const inside=x>=x1&&x<=x2;let d=lvl-(inside?Math.random()*7+(s.voice?Math.abs(Math.sin(x*1.7+ts/300))*5:0):26);
+      arr[x]=Math.max(arr[x],d);
+    }
+  }
+  const sc=$('#spec').getContext('2d');const H=G.specH;
+  sc.clearRect(0,0,W,H);
+  sc.strokeStyle='#1c1c1f';sc.lineWidth=1;
+  for(let d=-50;d>=-110;d-=10){const y=dbY(d)+0.5;sc.beginPath();sc.moveTo(0,y);sc.lineTo(W,y);sc.stroke()}
+  const grad=sc.createLinearGradient(0,0,0,H);grad.addColorStop(0,'rgba(40,170,210,.55)');grad.addColorStop(1,'rgba(20,90,130,.25)');
+  sc.beginPath();sc.moveTo(0,H);for(let x=0;x<W;x++)sc.lineTo(x,Math.max(0,dbY(arr[x])));sc.lineTo(W,H);sc.closePath();sc.fillStyle=grad;sc.fill();
+  sc.beginPath();for(let x=0;x<W;x++){const y=Math.max(0,dbY(arr[x]));x?sc.lineTo(x,y):sc.moveTo(x,y)}sc.strokeStyle='#4cc8ec';sc.stroke();
+  const wf=$('#wf').getContext('2d');const WH=G.wfH;
+  wf.drawImage($('#wf'),0,0,W,WH-1,0,1,W,WH-1);
+  const row=wf.createImageData(W,1);
+  for(let x=0;x<W;x++){const c=wfc((arr[x]+136)/68);row.data[x*4]=c[0];row.data[x*4+1]=c[1];row.data[x*4+2]=c[2];row.data[x*4+3]=255}
+  wf.putImageData(row,0,0);
+}
+const STOPS=[[0,[6,14,70]],[0.3,[22,62,196]],[0.5,[24,110,226]],[0.62,[0,190,210]],[0.74,[40,220,90]],[0.86,[245,220,0]],[1,[230,40,30]]];
+function wfc(t){t=Math.max(0,Math.min(1,t));for(let i=1;i<STOPS.length;i++){if(t<=STOPS[i][0]){const[a,ca]=STOPS[i-1],[b,cb]=STOPS[i];const k=(t-a)/(b-a);return[ca[0]+(cb[0]-ca[0])*k,ca[1]+(cb[1]-ca[1])*k,ca[2]+(cb[2]-ca[2])*k]}}return STOPS[STOPS.length-1][1]}
+function seedWaterfall(){const wf=$('#wf').getContext('2d');wf.fillStyle='rgb(22,62,196)';wf.fillRect(0,0,G.W,G.wfH);for(let i=0;i<G.wfH;i++)draw(i*60)}
+
+/* ---------- top-level render ---------- */
+function renderMenu(){
+  const m=$('#toolsMenu');m.style.left=($('#toolsMi').offsetLeft)+'px';
+  const rtItem=S.opt===3?`<div class="it live" data-act="open-win">Roundtable…<span>⌘⇧R</span></div>`:`<div class="it live" data-act="toggle-rt">${S.rtShown?'✓ ':'   '}Roundtable panel<span>⌘⇧R</span></div>`;
+  m.innerHTML=`${rtItem}<div class="sep"></div><div class="it off" title="Not part of this mockup">Spot Hub…<span>⌘⇧S</span></div><div class="it off" title="Not part of this mockup">FreeDV Reporter…</div><div class="it off">Rotor…</div>`;
+  m.classList.toggle('show',S.menu);$('#toolsMi').classList.toggle('open',S.menu);
+}
+function render(){
+  const ae=document.activeElement;const aid=ae&&ae.id;const sel=ae&&ae.selectionStart;
+  const msgScroll={};document.querySelectorAll('.msgs').forEach(m=>{if(m.id)msgScroll[m.id]=m.scrollHeight-m.scrollTop-m.clientHeight<4?'bottom':m.scrollTop});
+  document.querySelectorAll('#chooser button').forEach(b=>b.classList.toggle('on',+b.dataset.opt===S.opt));
+  layout();renderPanStatic();renderCol();renderWin();renderPop();renderMenu();
+  $('#bandPop').innerHTML=Object.keys(BANDS).map(b=>`<button data-band="${b}" class="${b===S.band?'on':''}">${b}</button>`).join('');
+  $('#bandPop').classList.toggle('show',S.bandPop);$('#bandBtn').classList.toggle('on',S.bandPop);
+  $('#txbtn').classList.toggle('on',S.mox);
+  const rb=$('#rtbtn');rb.style.display=S.opt===3?'none':'';rb.classList.toggle('on',S.rtShown);
+  document.querySelectorAll('#zoom button').forEach(b=>b.classList.toggle('on',(b.dataset.z==='S'&&S.zoomS)||(b.dataset.z==='B'&&S.zoomB)));
+  document.querySelectorAll('.msgs').forEach(m=>{const v=msgScroll[m.id];if(v===undefined||v==='bottom')m.scrollTop=m.scrollHeight;else m.scrollTop=v});
+  if(aid){const e=document.getElementById(aid);if(e&&!e.disabled){e.focus();try{e.setSelectionRange(sel,sel)}catch(_){}}}
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-msgmenu],[data-mute],[data-unmute],[data-report],[data-showmuted],[data-opt],[data-size],[data-act],[data-tune],[data-spot],[data-band],[data-readband],[data-open],[data-back],[data-send],[data-turn],[data-live-back],[data-name],[data-nameinput],[data-z],[data-flt],[data-scrollrt],#toolsMi,#bandBtn,#txbtn,#rtbtn');
+  if(!t){if(S.menu||S.bandPop){S.menu=false;S.bandPop=false;render()}return}
+  const ds=t.dataset;
+  if(t.id==='toolsMi'){S.menu=!S.menu;renderMenu();return}
+  if(S.menu&&!t.closest('#toolsMenu')){S.menu=false}
+  if(t.id==='bandBtn'){S.bandPop=!S.bandPop;render();return}
+  if(t.id==='txbtn'){toggleMox();return}
+  if(t.id==='rtbtn'){S.rtShown=!S.rtShown;render();return}
+  if(ds.opt){S.opt=+ds.opt;S.listSel=null;S.popSel=null;S.menu=false;if(S.opt===3){S.winOpen=true;S.winSel=(myRoom()||roomsIn(S.band)[0]).id}render();return}
+  if(ds.msgmenu){S.msgMenu=S.msgMenu===ds.msgmenu?null:ds.msgmenu;render();return}
+  if(ds.mute){if(S.muted[ds.mute]){delete S.muted[ds.mute]}else{S.muted[ds.mute]=true}S.msgMenu=null;render();return}
+  if(ds.unmute){delete S.muted[ds.unmute];render();return}
+  if(ds.report){S.reported[ds.report]=true;S.msgMenu=null;render();return}
+  if(ds.showmuted){S.showMuted[ds.showmuted]=true;render();return}
+  if(ds.size){setPopSize(ds.size);return}
+  if(ds.act==='popout'){S.popped=true;S.popSel=null;render();return}
+  if(ds.act==='popin'){S.popped=false;S.popSel=null;render();return}
+  if(ds.act==='popmine'){S.popSel=null;S.readBand=null;render();return}
+  if(ds.act==='popfull'){if(pop.full&&pop.prev){Object.assign(pop,pop.prev);pop.full=false}else{pop.prev={x:pop.x,y:pop.y,w:pop.w,h:pop.h};pop.full=true;pop.x=0;pop.y=62;pop.w=innerWidth;pop.h=innerHeight-62}render();return}
+  if(ds.act==='mox'){toggleMox();return}
+  if(ds.act==='close-rt'){S.rtShown=false;render();return}
+  if(ds.act==='toggle-rt'){S.rtShown=!S.rtShown;S.menu=false;render();return}
+  if(ds.act==='open-win'){S.winOpen=true;S.menu=false;render();return}
+  if(ds.act==='close-win'){S.winOpen=false;render();return}
+  if(ds.tune){const r=ROOMS.find(q=>q.id===ds.tune);tune(r.f,r.band);if(S.opt===3)S.winSel=r.id;if(S.opt===2)S.listSel=r.id;render();e.stopPropagation();return}
+  if(ds.spot){tune(+ds.spot);e.stopPropagation();return}
+  if(ds.band){S.bandPop=false;setBand(ds.band);return} // the radio's own band button: it is a tuning control
+  if(ds.readband){S.readBand=ds.readband;S.popSel=null;render();return}
+  if(ds.open){const r=ROOMS.find(q=>q.id===ds.open);r.unread=0;if(S.opt===1){S.popSel=isTuned(r)?null:r.id;S.readBand=null;render();return}if(S.opt===3){S.winSel=r.id}else if(S.opt===2){S.listSel=r.id}else{tune(r.f,r.band);return}render();return}
+  if(ds.back){S.listSel=null;render();return}
+  if(ds.turn!=null){const id=ds.room;S.turnSel[id]=S.turnSel[id]===+ds.turn?undefined:+ds.turn;render();return}
+  if(ds.liveBack){delete S.turnSel[ds.liveBack];render();return}
+  if(ds.name){const r=ROOMS.find(q=>q.id===ds.room);if(!isTuned(r))return;nameTurn(r,ds.name);return}
+  if(ds.nameinput){const r=ROOMS.find(q=>q.id===ds.nameinput);if(!isTuned(r))return;const v=(S.nameDraft[r.id]||'').trim().toUpperCase();if(v){S.nameDraft[r.id]='';nameTurn(r,v)}return}
+  if(ds.send){send(ds.send);return}
+  if(ds.z){zoom(ds.z);return}
+  if(ds.flt!==undefined){t.parentElement.querySelectorAll('[data-flt]').forEach(b=>b.classList.remove('on'));t.classList.add('on');return}
+  if(ds.scrollrt){const a=document.querySelector('.rt-applet');if(a)a.scrollIntoView({behavior:'smooth',block:'start'});return}
+});
+function nameTurn(r,n){
+  if(r.names.some(x=>x.by===YOU.call)){r.names=r.names.filter(x=>x.by!==YOU.call)}
+  r.names.unshift({name:n,by:YOU.call});if(!r.used.includes(n))r.used.push(n);render();
+}
+function send(id){
+  const r=ROOMS.find(q=>q.id===id);const v=(S.drafts[id]||'').trim();if(!v||!isTuned(r))return;
+  const who=r.state==='talk'?r.talkers[0].call:r.state==='double'?r.talkers.map(t=>t.call).join(' + '):r.state==='unknown'?(r.names[0]?r.names[0].name:'unknown'):null;
+  r.msgs.push({id:'m'+(++MSGID),call:YOU.call,grid:YOU.grid,time:utc(),tx:r.state==='you',hear:r.state==='you'?null:who,s:r.state==='you'?null:myReading(r),dbl:r.state==='double',text:v});
+  S.drafts[id]='';render();
+  const m=document.getElementById('msgs-'+id);if(m)m.scrollTop=m.scrollHeight;
+}
+function zoom(z){
+  if(z==='S'){S.zoomS=!S.zoomS;render();return}
+  if(z==='B'){S.view=null;S.zoomB=!S.zoomB;render();return}
+  const v=view(),b=BANDS[S.band];let span=v.hi-v.lo;span=z==='+'?Math.max(0.02,span/2):Math.min(b.hi-b.lo,span*2);
+  let lo=S.slice-span/2;lo=Math.max(b.lo,Math.min(b.hi-span,lo));S.view={lo,hi:lo+span};render();
+}
+document.addEventListener('input',e=>{
+  const id=e.target.id||'';
+  if(id.startsWith('in-'))S.drafts[id.slice(3)]=e.target.value;
+  if(id.startsWith('nm-'))S.nameDraft[id.slice(3)]=e.target.value;
+});
+document.addEventListener('keydown',e=>{
+  const id=e.target.id||'';
+  if(e.key==='Enter'&&id.startsWith('in-'))send(id.slice(3));
+  if(e.key==='Enter'&&id.startsWith('nm-')){const r=ROOMS.find(q=>q.id===id.slice(3));const v=e.target.value.trim().toUpperCase();if(v){S.nameDraft[r.id]='';nameTurn(r,v)}}
+});
+// click-to-tune and wheel tuning on the panadapter
+$('#pan').addEventListener('click',e=>{
+  if(e.target.closest('#vfo,#leftstack,#bandPop,#zoom,.rt,.spot,#chtx'))return;
+  const rect=$('#pan').getBoundingClientRect();const x=e.clientX-rect.left;if(x>G.W)return;
+  const y=e.clientY-rect.top;if(y>G.planY&&y<G.wfY)return;
+  tune(Math.round(xf(x)*1e4)/1e4);
+});
+$('#pan').addEventListener('wheel',e=>{if(e.target.closest('#vfo,#leftstack'))return;e.preventDefault();tune(S.slice+(e.deltaY<0?0.0001:-0.0001))},{passive:false});
+// window drag
+let drag=null;
+document.addEventListener('mousedown',e=>{const t=e.target.closest('#wtitle');if(!t||e.target.dataset.act)return;drag={dx:e.clientX-winPos.x,dy:e.clientY-winPos.y};e.preventDefault()});
+document.addEventListener('mousemove',e=>{if(!drag)return;winPos.x=e.clientX-drag.dx;winPos.y=Math.max(62,e.clientY-drag.dy);const w=$('#win');w.style.left=winPos.x+'px';w.style.top=winPos.y+'px'});
+let pdrag=null,psize=null;
+document.addEventListener('mousedown',e=>{
+  if(e.target.id==='psizer'){psize={x:e.clientX,y:e.clientY,w:pop.w,h:pop.h};pop.full=false;e.preventDefault();return}
+  const t=e.target.closest('#ptitle');if(!t||e.target.dataset.act)return;pdrag={dx:e.clientX-pop.x,dy:e.clientY-pop.y};e.preventDefault()});
+let pRaf=0;
+document.addEventListener('mousemove',e=>{
+  if(pdrag){pop.x=e.clientX-pdrag.dx;pop.y=Math.max(62,e.clientY-pdrag.dy);const w=$('#pop');w.style.left=pop.x+'px';w.style.top=pop.y+'px'}
+  if(psize){pop.w=Math.max(300,psize.w+e.clientX-psize.x);pop.h=Math.max(320,psize.h+e.clientY-psize.y);if(!pRaf)pRaf=requestAnimationFrame(()=>{pRaf=0;renderPop()})}
+});
+document.addEventListener('mouseup',()=>{drag=null;pdrag=null;psize=null});
+window.addEventListener('resize',()=>{const w=G.W,h=G.wfH;render();if(w!==G.W||h!==G.wfH)seedWaterfall()});
+
+/* ---------- one-second tick ---------- */
+function tick(){
+  const d=new Date();$('#clk').textContent=d.toISOString().slice(11,19)+' UTC';
+  for(const r of ROOMS){if(['talk','unknown','double','you'].includes(r.state))r.keyed++;if(r.state==='quiet')r.quiet++}
+  document.querySelectorAll('[data-keyed]').forEach(e=>{const r=ROOMS.find(q=>q.id===e.dataset.keyed);e.textContent=mmss(r.keyed)});
+  document.querySelectorAll('[data-live]').forEach(e=>{const v=+e.dataset.base+(Math.random()-0.5)*4;e.style.width=(sFrac(v)*100).toFixed(1)+'%'});
+  document.querySelectorAll('[data-livev]').forEach(e=>{const v=+e.dataset.base+(Math.random()-0.5)*3;e.textContent=sText(v)});
+  const r=myRoom();const md=myReading(r);const v=(md??-115)+(Math.random()-0.5)*4;
+  const vb=$('#vfobar');if(vb){vb.style.width=(sFrac(v)*100).toFixed(0)+'%';$('#vfov').textContent=Math.round(v)+' dBm'}
+  const sm=$('#smeter');if(sm)sm.innerHTML=S.mox?txMeterSvg():smeterSvg(md==null?null:v);
+}
+
+{const hp=(location.hash||'').match(/^#1p(?:-(\w+))?/);if(hp){S.opt=1;S.popped=true;if(hp[1]){const sz={narrow:[420,620],medium:[820,600],wide:[1080,600]}[hp[1]];if(sz){pop.w=sz[0];pop.h=sz[1]}}}}
+{const h=(location.hash||'').match(/^#(\d)(?:-(\w))?/);if(h&&!/^#1p/.test(location.hash)){S.opt=+h[1];if(S.opt===2&&h[2])S.listSel=h[2];if(S.opt===3&&h[2])S.winSel=h[2]}}
+render();seedWaterfall();requestAnimationFrame(frame);tick();setInterval(tick,1000);
+if(location.hash==='#1-tx')setTimeout(toggleMox,60);
+</script>
+</body>
+</html>

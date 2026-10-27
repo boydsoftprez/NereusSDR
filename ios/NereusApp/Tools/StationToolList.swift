@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the Tools tab's list, in the desktop's order from the Core's catalogue, each marked where it runs
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 18, Roundtable's row after FreeDV
+// Reporter. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 
@@ -36,6 +39,7 @@ enum StationToolList {
         case performance
         case supportBundle
         case rotor
+        case roundtable
     }
 
     /// One row of the list.
@@ -176,6 +180,25 @@ enum StationToolList {
             entries.append(entry(rotor, tag: rotor.tag, reason: connected ? rotorOlderCoreReason : notConnectedReason))
         }
         return entries
+    }
+
+    // MARK: Roundtable
+
+    static let roundtableId = "roundtable"
+    static let roundtableTitle = "Roundtable"
+    static let roundtableDetail = "Who hears whom on every frequency, and messages"
+
+    /// The list with Roundtable's row after FreeDV Reporter (spec 11.3),
+    /// greyed with `reason` while the Core's Roundtable can't be reached.
+    /// Roundtable's page reads the Core's link, not its tool catalogue, so
+    /// the row is added here whatever the catalogue lists.
+    static func withRoundtable(_ entries: [Entry], reason: String?) -> [Entry] {
+        var next = entries.filter { $0.id != roundtableId }
+        let row = Entry(id: roundtableId, title: roundtableTitle, detail: reason ?? roundtableDetail, tag: .core,
+                        page: .roundtable, reason: reason)
+        let after = next.firstIndex { $0.id == "freedvReporter" } ?? next.firstIndex { $0.id == "spotHub" }
+        next.insert(row, at: after.map { $0 + 1 } ?? 0)
+        return next
     }
 
     private static func entry(_ tool: Known, tag: SetupTag, reason: String?) -> Entry {

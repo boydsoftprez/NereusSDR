@@ -1,0 +1,10 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "rooms",
+    "gen": 1,
+    "rooms": []
+  },
+  "decodes": true
+}

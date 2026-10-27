@@ -1,0 +1,71 @@
+# Caddy v2 site block for the NereusSDR Roundtable server.
+#
+# Installed as /etc/caddy/sites/roundtable.caddy by
+# roundtable/deploy/setup-server.sh, which writes the server's host name
+# (RT_HOST) in place of roundtable.nereussdr.com below and runs caddy
+# validate on the whole configuration before Caddy reloads. The website's
+# own /etc/caddy/Caddyfile (website/deploy/Caddyfile) pulls it in with its
+# line "import /etc/caddy/sites/*.caddy", so the website's setup script,
+# which installs its Caddyfile whole, keeps this site on every run. The
+# global options (HTTP/3 off, h1 and h2 only) are the website's; a site
+# file has none of its own.
+#
+# Caddy terminates TLS with a certificate it obtains and renews by itself
+# once DNS points the name at the server. It forwards the two WebSocket
+# paths, /v1/station and /v1/live, to the server's WebSocket listener
+# (loopback port 8720) and every other request to its HTTP listener
+# (loopback port 8721): the read API, the web pages and their forms.
+#
+# No access log is configured on purpose: the server keeps no client
+# address in any file or log, and neither does Caddy for this site. Caddy
+# still writes its own errors to the systemd journal (journalctl -u caddy).
+
+# Headers Caddy adds to every answer. The server sets its own
+# Content-Security-Policy, X-Content-Type-Options and Referrer-Policy for
+# the pages it serves, so they are not set here. Deleting the Server and
+# Via headers makes Caddy apply the whole block when the response is
+# written, and error responses are written by handle_errors, so it is
+# imported there as well.
+(roundtable_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		-Via
+	}
+}
+
+roundtable.nereussdr.com {
+	import roundtable_headers
+
+	# The WebSocket paths go to the WebSocket listener, WebSocket or not:
+	# it upgrades a WebSocket and refuses anything else itself. No matcher
+	# picks out WebSockets by their Upgrade header, because Caddy compares
+	# header values exactly and some clients send "Upgrade: WebSocket".
+	@websocket path /v1/station* /v1/live*
+	handle @websocket {
+		reverse_proxy 127.0.0.1:8720 [::1]:8720 {
+			lb_policy first
+			# X-Forwarded-For holds exactly one address: the client's as
+			# Caddy sees it. The server believes the last address in it
+			# only from a loopback peer (wire spec 9.1) and counts
+			# connections per address group from it.
+			header_up X-Forwarded-For {remote_host}
+			# A Caddy reload keeps open WebSockets for up to 5 minutes
+			# instead of cutting every station and viewer off at once.
+			stream_close_delay 5m
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8721 [::1]:8721 {
+			lb_policy first
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	handle_errors {
+		import roundtable_headers
+		respond "{err.status_code}
+" {err.status_code}
+	}
+}

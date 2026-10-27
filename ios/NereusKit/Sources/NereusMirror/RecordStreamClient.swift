@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the Core's record streams (its spots, its sources' consoles), subscribed and kept in step
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 16, a Roundtable room's stream holds 400. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -50,6 +52,11 @@ public final class RecordStreamClient: ObservableObject {
         "spotConsole:\(source)"
     }
 
+    /// Each Roundtable room as the Core sends it: `roundtableRoom:<room id>`.
+    public static let roundtableRoomStreamPrefix = "roundtableRoom:"
+    /// The most a Roundtable room's stream holds.
+    public static let roundtableRoomCapacity = 400
+
     /// The most a stream holds (link 7.7); an unknown stream keeps the spots' bound.
     public static func capacity(of stream: String) -> Int {
         if stream == FreeDVStation.streamName {
@@ -72,6 +79,10 @@ public final class RecordStreamClient: ObservableObject {
         }
         if stream == StationCat.logStream {
             return StationCat.logCapacity
+        }
+        if stream.hasPrefix(roundtableRoomStreamPrefix) {
+            // Each Roundtable room's stream holds 400; the band list keeps the spots' 500.
+            return roundtableRoomCapacity
         }
         return stream.hasPrefix("spotConsole:") ? 200 : 500
     }

@@ -5,6 +5,7 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app asks for Setup description 30 (General's Filters
 //   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: the app runs Roundtable's verbs fixture. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -32,7 +33,10 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 88)
+        #expect(fixtures.count == 89)
+        // Roundtable's thirteen verbs (stationRoundtableVersion 1), now the
+        // app declares roundtable 1.
+        #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -182,7 +186,8 @@ import Testing
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2])
+                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
+                                  "roundtable": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

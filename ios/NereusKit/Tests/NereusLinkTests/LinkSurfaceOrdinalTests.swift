@@ -1,5 +1,9 @@
 // NereusSDR for iOS: the positions of the Core's newest capabilities and radio properties in the link surface
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable capability and mirrored properties pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: merge of main: stationRoundtableVersion at 116, after displayCodecVersion; coreBuildInfo 117.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -17,7 +21,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 117)
+        #expect(capabilities.count == 118)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -68,7 +72,11 @@ import Testing
             // The display codec version (feature `displayCodec` 2, NSDC
             // v2) goes before the build info as well, which moves to 116.
             (115, "displayCodecVersion", "i64"),
-            (116, "coreBuildInfo", "utf8"),
+            // Roundtable (feature `roundtable` 1, which the phone
+            // declares) goes after it, before the build info, which moves
+            // to 117.
+            (116, "stationRoundtableVersion", "i64"),
+            (117, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -77,11 +85,49 @@ import Testing
         #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 117)
+        #expect((capabilities[115]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 118)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
             #expect(capabilities[entry.index]["kind"] as? String == entry.kind, "\(entry.name)")
+        }
+    }
+
+    /// Roundtable's mirrored object (feature `roundtable` 1, which the
+    /// phone declares): six read-only properties, and the two spot source
+    /// properties appended after FreeDV Reporter's, so no property the
+    /// phone reads moved.
+    @Test func roundtablePropertiesSitWhereTheSurfacePinsThem() throws {
+        let surface = try Self.surface()
+        let classes = try #require(surface["mirrorClasses"] as? [String: Any])
+        let state = try #require(classes["RoundtableState"] as? [String: Any])
+        let properties = try #require(state["properties"] as? [[String: Any]])
+        let expected: [(ordinal: Int, name: String, kind: String)] = [
+            (0, "linkState", "enum"),
+            (1, "linkSince", "i64"),
+            (2, "firstRunAnswered", "bool"),
+            (3, "hidden", "bool"),
+            (4, "mentionCounts", "utf8"),
+            (5, "sliceRooms", "utf8"),
+        ]
+        #expect(properties.count == expected.count)
+        for entry in expected {
+            let property = try #require(properties.first { $0["name"] as? String == entry.name })
+            #expect((property["ordinal"] as? NSNumber)?.intValue == entry.ordinal, "\(entry.name)")
+            #expect(property["kind"] as? String == entry.kind, "\(entry.name)")
+            #expect(property["direction"] as? String == "outbound", "\(entry.name)")
+        }
+        let linkState = try #require(properties.first { $0["name"] as? String == "linkState" })
+        #expect((linkState["enumValues"] as? [NSNumber])?.map(\.intValue) == [0, 1, 2, 3, 4, 5])
+        let host = try #require(classes["SpotSourceHost"] as? [String: Any])
+        let hostProperties = try #require(host["properties"] as? [[String: Any]])
+        #expect(hostProperties.count == 13)
+        for (ordinal, name) in [(10, "freedvReporterHidden"), (11, "roundtableState"), (12, "roundtableText")] {
+            let property = try #require(hostProperties.first { $0["name"] as? String == name })
+            #expect((property["ordinal"] as? NSNumber)?.intValue == ordinal, "\(name)")
+            #expect(property["direction"] as? String == "outbound", "\(name)")
         }
     }
 

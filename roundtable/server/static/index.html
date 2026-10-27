@@ -1,0 +1,46 @@
+<!doctype html>
+<!-- no-port-check: NereusSDR-original. The public page: every live room, read only. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roundtable</title>
+<link rel="icon" href="/nereus-64.png">
+<link rel="stylesheet" href="/roundtable.css">
+<script src="/roundtable.js" defer></script>
+</head>
+<body class="public" data-page="public">
+<div class="page">
+  <header class="top">
+    <a class="brand" href="/"><img src="/nereus-64.png" alt=""><span class="word">Nereus<b>SDR</b></span><span class="sep"></span><span class="rt">Roundtable</span></a>
+    <span class="live connecting" id="live" role="status" aria-live="polite"><span class="dot"></span><span id="live-state">Connecting</span><span class="k" id="live-k"></span></span>
+    <span class="fill"></span>
+    <label class="search" id="search-box"><span aria-hidden="true">&#8981;</span><span class="sr">Search</span><input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Callsign or frequency"><kbd>/</kbd></label>
+    <a class="btn keybtn" href="https://nereussdr.com/roundtable/api.html">Roundtable protocol</a>
+    <a class="btn keybtn" href="/key">Your station key</a>
+  </header>
+  <nav class="bands connecting" id="bands" aria-label="Bands">
+    <div id="band-buttons" class="filters-bands"></div>
+    <span class="sp"></span>
+    <div class="filters">
+      <button class="chip" id="quiet-chip" type="button">Quiet rooms <span class="x" id="quiet-count">0</span></button>
+      <label class="chip sortchip">Sort: <select id="sort" aria-label="Sort rooms">
+        <option value="f">Frequency</option>
+        <option value="n">Most stations</option>
+        <option value="t">Newest activity</option>
+      </select></label>
+    </div>
+  </nav>
+  <div class="bmap hidden" id="bmap" aria-label="Band map"></div>
+  <div class="main">
+    <section class="list" aria-label="Rooms">
+      <div class="thead"><span>FREQUENCY</span><span>MODE</span><span>ON THE AIR</span><span class="r">TIME</span><span class="r">HEARD</span><span>READINGS</span><span>LAST MESSAGE</span><span class="r">AGO</span></div>
+      <div class="rows" id="rows" tabindex="0" role="listbox" aria-label="Rooms"></div>
+      <div class="lfoot"><span id="shown"></span><span class="kb"><kbd>&#8593;</kbd><kbd>&#8595;</kbd> rooms <kbd>Enter</kbd> read <kbd>/</kbd> search <kbd>Esc</kbd> back</span><span class="sp"></span><span class="legend k"><span class="gl talking"></span>talking</span><span class="legend k"><span class="gl unknown"></span>unknown</span><span class="legend k"><span class="gl doubled"></span>doubled</span><span class="legend k"><span class="gl quiet"></span>quiet</span></div>
+    </section>
+    <section class="room" id="room" aria-label="Room"></section>
+  </div>
+</div>
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable Settings</title>
+<style>
+/* Workspace look tokens, from origin/main src/gui/styles/WorkspacePalette.h */
+:root{
+  --app:#08080a; --panel:#0c0c0e; --inset:#050507; --btn:#1a1a1e; --btnH:#26262b;
+  --bd:#2c2c31; --bdS:#1f1f23; --bdM:#3d3d41;
+  --txt:#dcdce1; --sec:#a6a6ac; --ter:#909096; --scale:#7e7e85;
+  --selT:#2f5f92; --selB:#1e3d5f; --selBd:#3d78b0; --selTx:#dbe9f8; --blue:#3576e0;
+  --amb:#d8a55f; --ambBg:#33280f; --ambBd:#6b5426; --grn:#4caf6a; --grnT:#6fa384; --red:#c25a5c; --redBg:#3f2224; --redBd:#a86b6d;
+  --acc:#00b4d8;
+  --mono:Menlo,"DejaVu Sans Mono",monospace; --sans:-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--txt);font:400 13px var(--sans);overflow:hidden}
+#chooser{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#1c1c20;border-bottom:1px solid #333;font-weight:600}
+#chooser .lbl{color:#9a9aa6;font-size:11px;letter-spacing:.12em;margin-right:8px}
+#chooser button{background:#2a2a2e;border:1px solid #444;border-radius:6px;padding:5px 12px;cursor:pointer;color:#ddd;font:600 12px var(--sans)}
+#chooser button.on{background:var(--selT);border-color:var(--selBd);color:#fff}
+#stage{position:absolute;top:38px;left:0;right:0;bottom:0;display:flex;gap:16px;padding:16px;background:#111114}
+#win{width:780px;flex:none;background:var(--app);border:1px solid #3a3a3f;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.75);display:flex;flex-direction:column;overflow:hidden}
+.wt{height:28px;flex:none;background:linear-gradient(#26262b,#1c1c20 50%,#141417);border-bottom:1px solid #0d0d0f;display:flex;align-items:center;padding:0 10px;gap:8px;color:#c4c4ca;font-weight:600;font-size:13px}
+.wt .lights{display:flex;gap:7px}.wt .lights i{width:12px;height:12px;border-radius:50%;display:block}
+.wt .t{flex:1;text-align:center;margin-right:50px}
+#notes{width:300px;flex:none;background:#0e0e10;border:1px solid #2c2c31;border-radius:8px;padding:12px 14px;overflow:auto;line-height:1.45;color:var(--sec)}
+#notes h3{margin:0 0 6px;font-size:12px;color:var(--txt);letter-spacing:.08em}
+#notes p{margin:0 0 9px;font-size:12px}
+#notes b{color:var(--txt)}
+/* Spot Hub tabs */
+.tabs{display:flex;gap:3px;padding:6px 6px 0;flex:none;align-items:flex-end}
+.tab{padding:6px 12px;border:1px solid var(--bd);border-bottom:none;border-radius:8px 8px 0 0;background:linear-gradient(#18181b,#111113);color:var(--sec);font-size:13px;white-space:nowrap}
+.tab.on{background:linear-gradient(var(--selT),var(--selB));border-color:var(--selBd);color:var(--selTx)}
+.tab.new::after{content:"NEW";font-size:8px;font-weight:800;letter-spacing:.06em;background:var(--acc);color:#002;border-radius:2px;padding:0 3px;margin-left:5px;vertical-align:2px}
+.tabs .arr{margin-left:auto;display:flex;gap:2px}
+.tabs .arr span{width:16px;height:24px;border:1px solid var(--bd);border-radius:3px;background:var(--btn);color:var(--sec);font-size:9px;display:grid;place-items:center}
+.pane{flex:1;margin:0 6px 6px;border:1px solid var(--bd);border-radius:0 8px 8px 8px;background:#0a0a0c;padding:6px 10px 12px;overflow-y:auto}
+.warn{color:var(--txt);margin:4px 2px 8px;line-height:1.4}
+.warn b.a{color:var(--amb)}
+.gt{margin:10px 2px 4px;font-size:14px;color:var(--txt)}
+.gt.bold{font-weight:700;display:flex;align-items:center}
+.gt .r{margin-left:auto;font-weight:400;font-size:12px;color:var(--ter)}
+.box{border:1px solid var(--bdS);border-radius:3px;background:#0b0b0d;padding:10px 12px}
+.line{display:flex;align-items:center;gap:10px;margin:4px 0;min-height:28px}
+.line .k{color:var(--txt)}
+.line .v{color:var(--sec)}
+.line .sp{flex:1}
+.help{color:var(--ter);font-size:12px;line-height:1.4;margin:0 0 6px 27px}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 14px;border:1px solid var(--bd);border-radius:7px;background:linear-gradient(#222227,#141417);color:var(--txt);font-weight:600;cursor:pointer;white-space:nowrap}
+.btn:hover{background:linear-gradient(#2a2a30,#18181b)}
+.btn.sq{border-radius:2px;font-weight:400;background:#141417}
+.btn.big{min-width:150px}
+.btn.danger{border-color:var(--redBd);background:var(--redBg);color:#f0dcdc}
+.cb{display:flex;align-items:center;gap:10px;margin:6px 0;cursor:pointer;color:var(--txt)}
+.cb i{width:17px;height:17px;border-radius:4px;border:1px solid #4a4a50;background:#0b0b0d;flex:none;display:grid;place-items:center;font-style:normal;font-size:12px;color:#fff}
+.cb.on i{background:#2f5f92;border-color:#3d78b0}
+.cb.on i::after{content:"✓"}
+.cb.dis{opacity:.45;cursor:default}
+.combo{display:inline-flex;align-items:center;gap:12px;border:1px solid var(--bdM);border-radius:3px;background:var(--btn);padding:4px 8px;color:var(--txt);cursor:pointer}
+.combo::after{content:"▾";color:var(--sec);font-size:11px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:0}
+.preview{margin:4px 0 4px 27px;padding:6px 8px;background:var(--inset);border:1px solid #232329;border-radius:3px}
+.preview .cap{font-size:9px;letter-spacing:.18em;color:var(--scale);font-weight:700;margin-bottom:3px}
+.rd{display:grid;grid-template-columns:90px 50px 1fr 50px;gap:6px;align-items:center;height:18px;font-size:11px}
+.rd .c{font-family:var(--mono);font-weight:700;color:var(--acc)}
+.rd .k{color:var(--ter);font-family:var(--mono);font-size:10px;text-align:right}
+.rd .b{height:8px;background:#101014;border:1px solid #232329;position:relative}
+.rd .b i{position:absolute;left:0;top:0;bottom:0;background:var(--grn)}
+.rd .vv{font-family:var(--mono);text-align:right}
+.list{border:1px solid var(--bdS);background:#0b0b0d;min-height:90px}
+.list .it{display:flex;align-items:center;gap:10px;padding:5px 10px;border-bottom:1px solid #151518}
+.list .it .c{font-family:var(--mono);font-weight:700;width:90px}
+.list .it .w{color:var(--ter);font-size:12px;flex:1}
+.list .it a{color:var(--sec);cursor:pointer;border:1px solid var(--bd);border-radius:5px;padding:1px 8px;font-size:12px;background:var(--btn)}
+.list .empty{color:var(--ter);padding:10px}
+.confirm{margin-top:8px;padding:10px;border:1px solid var(--redBd);background:#1e1012;border-radius:3px;line-height:1.4}
+.confirm .r{display:flex;gap:8px;margin-top:8px}
+.scope{font-size:11px;color:var(--ter);margin:2px 2px 0}
+</style>
+</head>
+<body>
+<div id="chooser">
+  <span class="lbl">ROUNDTABLE TAB</span>
+  <button data-r="on">Running</button>
+  <button data-r="hidden">Station hidden</button>
+  <button data-r="offline">Server unreachable</button>
+  <button data-r="noid">No identity</button>
+  <button data-r="delete">Delete archive</button>
+</div>
+<div id="stage">
+  <div id="win">
+    <div class="wt"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><div class="t">Spot Hub</div></div>
+    <div class="tabs"><span class="tab">Settings</span><span class="tab">Cluster</span><span class="tab">RBN</span><span class="tab">POTA</span><span class="tab">FreeDV</span><span class="tab">PSK Reporter</span><span class="tab on new">Roundtable</span><span class="arr"><span>◀</span><span>▶</span></span></div>
+    <div class="pane" id="pane"></div>
+  </div>
+  <div id="notes">
+    <h3>WHAT THIS IS</h3>
+    <p>Roundtable's settings as a Spot Hub tab, beside FreeDV and PSK Reporter, in the same layout: a server group with Auto-Start and Start, then the same "Hide my station" wording FreeDV uses.</p>
+    <p>The first two groups are <b>set on the Core</b>, so the phone sees the same. Preferences are <b>this computer</b> only.</p>
+    <p><b>Hide my station</b> is the one hide switch. Hidden means nothing about you leaves the Core. You can still read every room. The preview shows how others see you.</p>
+    <p>The <b>mute list</b> lives on the Core so a station muted here is muted on the phone too.</p>
+    <p>New, for your veto: <b>Delete my archive</b>, the <b>away</b> choice (keep reporting is the default, as decided), and <b>highlight messages that name me</b>.</p>
+  </div>
+</div>
+<script>
+const S={st:'on',auto:true,hide:false,away:0,tags:0,hl:true,snd:false,miles:false,muted:[['N9JNK','muted Oct 20'],['KD9QRT','muted Oct 18'],['W2LOUD','muted Oct 2']],del:false};
+const cb=(k,label,dis)=>`<div class="cb ${S[k]?'on':''} ${dis?'dis':''}" ${dis?'':`data-cb="${k}"`}><i></i>${label}</div>`;
+function render(){
+  const cur=S.del?'delete':S.st==='on'&&S.hide?'hidden':S.st;
+  document.querySelectorAll('#chooser button').forEach(b=>b.classList.toggle('on',b.dataset.r===cur));
+  const noid=S.st==='noid', off=S.st==='offline', running=!noid&&S.auto;
+  let h='';
+  if(noid)h+=`<div class="warn"><b class="a">No identity set.</b> Go to the <b>Settings</b> tab and fill in your callsign and grid square before starting Roundtable.</div>`;
+  const status=!running?'<span class="dot" style="background:#58585e"></span>Stopped':off?'<span class="dot" style="background:var(--amb)"></span>Can\'t reach the server, trying again (last connected 20:41)':S.hide?'<span class="dot" style="background:#7e7e85"></span>Reading only, your station is hidden':'<span class="dot" style="background:var(--grn)"></span>Connected as KG4VCF · 1,284 stations on';
+  h+=`<div class="gt">Roundtable</div><div class="box">
+    <div class="line"><span class="k">Server:</span><span class="v">roundtable.nereussdr.com</span><span class="sp"></span><span class="btn sq">Open public page</span></div>
+    <div class="line"><span class="btn sq" data-act="auto">Auto-Start: ${S.auto?'ON':'OFF'}</span><span class="sp"></span><span class="v">${status}</span><span class="sp"></span><span class="btn big" data-act="auto">${running?'Stop':'Start'}</span></div>
+    <div class="scope">Runs on the Core with your radio, so readings keep going when no screen is open.</div></div>`;
+  h+=`<div class="gt">Your station</div><div class="box">
+    ${cb('hide','Hide my station from Roundtable',noid)}
+    <div class="help">While hidden, nothing about you leaves the Core: no callsign, no readings, no messages. You can still read every room, but you can't post or name a turn, and your archive records nothing.</div>
+    <div class="preview"><div class="cap">HOW OTHERS SEE YOU RIGHT NOW IN THE 7.185 ROOM</div>${S.hide||!running?`<div style="color:var(--ter);font-size:12px;font-style:italic">You don't appear. The room shows 8 stations instead of 9.</div>`:`<div class="rd"><span class="c">KG4VCF</span><span class="k">on</span><span class="b"><i style="width:72%"></i></span><span class="vv">S9</span></div>`}</div>
+    <div class="line" style="margin-top:8px"><span class="k">When nobody is at the radio:</span><span class="combo" data-act="away">${['Keep reporting, marked AWAY','Stop reporting'][S.away]}</span></div>
+    <div class="scope">Set on the Core. Your phone shows the same.</div></div>`;
+  h+=`<div class="gt">Preferences</div><div class="box">
+    <div class="line"><span class="k">Tags on the panadapter:</span><span class="combo" data-act="tags">${['Every room','Rooms with messages','Off'][S.tags]}</span></div>
+    ${cb('hl','Highlight messages that name my callsign')}
+    <div class="help">The Roundtable line on the VFO flag shows a count until you read them.</div>
+    ${cb('snd','Play a sound for those (never while transmitting)',!S.hl)}
+    ${cb('miles','Display distances in miles')}
+    <div class="scope">This computer only.</div></div>`;
+  h+=`<div class="gt bold">Muted Stations<span class="r">Their messages are hidden for you. Their readings still show.</span></div>
+    <div class="list">${S.muted.length?S.muted.map(m=>`<div class="it"><span class="c">${m[0]}</span><span class="w">${m[1]}</span><a data-un="${m[0]}">Unmute</a></div>`).join(''):'<div class="empty">Nobody muted. Mute from any message\'s ⋯ menu.</div>'}</div>`;
+  h+=`<div class="gt">Your Archive</div><div class="box">
+    <div class="line"><span class="v">412 sessions since Oct 2026. Sessions and readings are kept for good; message text for one year.</span></div>
+    <div class="line"><span class="btn">Open Archive</span><span class="btn">Export CSV</span><span class="sp"></span><span class="btn danger" data-act="del">Delete My Archive…</span></div>
+    ${S.del?`<div class="confirm"><b>Delete all 412 sessions?</b> Every session and reading of you is removed from the server, and your past messages show as "Message removed". This can't be undone. New sessions start recording again unless you also hide your station.<div class="r"><span class="btn danger">Delete Everything</span><span class="btn" data-act="nodel">Cancel</span></div></div>`:''}</div>`;
+  document.getElementById('pane').innerHTML=h;
+}
+document.addEventListener('click',e=>{
+  const c=e.target.closest('#chooser [data-r]');
+  if(c){const r=c.dataset.r;S.del=false;S.hide=false;S.auto=true;if(r==='hidden'){S.st='on';S.hide=true}else if(r==='delete'){S.st='on';S.del=true}else S.st=r;render();return}
+  const k=e.target.closest('[data-cb]');if(k){S[k.dataset.cb]=!S[k.dataset.cb];render();return}
+  const u=e.target.closest('[data-un]');if(u){S.muted=S.muted.filter(x=>x[0]!==u.dataset.un);render();return}
+  const a=e.target.closest('[data-act]');if(!a)return;const t=a.dataset.act;
+  if(t==='auto')S.auto=!S.auto;if(t==='away')S.away^=1;if(t==='tags')S.tags=(S.tags+1)%3;if(t==='del')S.del=true;if(t==='nodel')S.del=false;render();
+});
+const hs=location.hash.slice(1);if(hs==='hidden')S.hide=true;else if(hs==='delete')S.del=true;else if(hs)S.st=hs;
+render();
+</script>
+</body>
+</html>

@@ -16,6 +16,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - setArrangeController installs no pop-out override: the
+//                container's Pop Out is the pop-out container for every
+//                applet (JJ, PR 657). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-24 - An applet's own pop-out window (AppletWidget::
+//                createFloatingWindow) floats and docks through the panel
+//                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-24 - Managed workspace: the arrange controller's pop-out
+//                override, kPanelProperty and the own window's restore at
+//                launch (Roundtable plan Task 13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -59,7 +71,15 @@ class AppletPanelWidget : public QWidget {
     Q_OBJECT
 public:
     explicit AppletPanelWidget(QWidget* parent = nullptr);
+    // The container's Pop Out (the controller's popOut) gives every applet
+    // a pop-out container; an applet's own window (AppletWidget::
+    // createFloatingWindow) opens from its own control, through floatApplet.
     void setArrangeController(ContainerArrangeController* controller);
+
+    // The property naming an applet's panel (a QPointer<QObject>), set by addApplet
+    // and insertApplet: a container that hosts the applet reparents it, so
+    // an ancestor search does not find the panel in a managed workspace.
+    static constexpr const char* kPanelProperty = "nereusAppletPanel";
     void setManagedWorkspace(bool managed) { m_managedWorkspace = managed; }
 
     // Set a header widget (e.g., MeterWidget) that stays visible above
@@ -140,6 +160,14 @@ private:
     QList<AppletWidget*> m_applets;
     QMap<AppletWidget*, QWidget*> m_wrappers;  // applet → wrapper widget
     QMap<AppletWidget*, AppletFloatingWindow*> m_floating;  // applet → window
+    // Applets popped out into a window of their own (createFloatingWindow),
+    // and the connection that hears each one dock.
+    QMap<AppletWidget*, QPointer<QWidget>> m_ownWindows;
+    QMap<AppletWidget*, QMetaObject::Connection> m_ownDocked;
+    void forgetOwnWindow(AppletWidget* applet);
+    // Opens the applet's own window and tracks it; false when it has none.
+    bool floatOwnWindow(AppletWidget* applet);
+    void restoreOwnWindow(AppletWidget* applet);
     QMap<AppletWidget*, bool> m_wantVisible;   // last setAppletVisible() request
     QWidget* makeFloatButton(AppletWidget* applet);
     void restoreFloatState(AppletWidget* applet);

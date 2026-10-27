@@ -10042,6 +10042,95 @@ nereus_add_test(tst_record_stream EXTRA_LABELS session)
 # refusals, a remote window's forwarding, a spot record's fields and the
 # listeners' settings scope. Loopback ports only.
 nereus_add_test(tst_spot_source_host EXTRA_LABELS session)
+# Roundtable plan Task 10 (R-RT-1): the Core's runner of the Roundtable
+# conformance suite (roundtable/conformance/v1/): control fixtures and the
+# crypto vectors.
+nereus_add_test(tst_roundtable_wire)
+target_compile_definitions(tst_roundtable_wire PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 10 (R-RT-6): a slice's signal-present decision.
+nereus_add_test(tst_roundtable_signal_floor)
+# Roundtable plan Task 10 (R-RT-6, R-RT-12 to R-RT-14): the Core's
+# Roundtable connection against a fake server on the loopback, with fake
+# clocks. No network beyond 127.0.0.1.
+nereus_add_test(tst_roundtable_client)
+target_compile_definitions(tst_roundtable_client PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 11: RoundtableModel holds the same rooms fed from the
+# Core's own client (Everything) and from the Core's record streams (a
+# window), and sends a window's actions over the link.
+nereus_add_test(tst_roundtable_model)
+# Roundtable plan Task 12 (R-RT-14, R-RT-16): the Spot Hub's Roundtable tab
+# writes the Core's Roundtable/* settings through RoundtableModel and shows
+# the Core's values; Hide, Unmute, Archive and Delete my archive go through
+# the model's actions; the first-run sheet's words, its switch and the
+# one-time note; and, against a fake Roundtable server on 127.0.0.1, nothing
+# about the station before Go live.
+nereus_add_test(tst_roundtable_spothub)
+target_compile_definitions(tst_roundtable_spothub PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 13 (design 11.1, 11.2 Panel): the room panel the
+# applet and the pop-out show: its order, readings, earlier turns and Name,
+# the read bar, keyed, the connection line, drafts, the counter, Not sent,
+# the message menus, the mute fold, the pills and the keyboard.
+nereus_add_test(tst_roundtable_panel)
+# PR 657 container bugs: the Roundtable applet as a container item like any
+# other in the real MainWindow, workspace look on: Move to a new container
+# applies, a drag drops, the container Pop Out is the pop-out container (its
+# own window stays on its own arrow), the container snaps, and a rooms
+# refresh leaves the saved workspace alone (offscreen).
+nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
+# Roundtable plan Task 14: the Roundtable tags on a panadapter: where they
+# go, which fold into +N (your room and rooms that name you never do, a
+# lone neighbor moves aside, folds widen only when the tags don't fit),
+# the tags a model gives, and how each link state shows them.
+nereus_add_test(tst_roundtable_tag_layout)
+# Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
+# who talks, @N, "N hear you" while keyed, the link state when not live,
+# its fit at the flag's width, the fold, and a click asking for the panel.
+nereus_add_test(tst_roundtable_flag_line)
+# Roundtable plan Task 15: one operator's whole Roundtable session in a real
+# MainWindow against a fake Roundtable server on 127.0.0.1: first run, Go
+# live, a tag, readings, a post, a mention read on two windows, the pop-out
+# list, keyed, a named turn, hidden and the Archive link; in the Everything
+# placement and again in a remote window of a Core, with the same screens.
+nereus_add_test(tst_roundtable_desktop_flow
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_desktop_flow PRIVATE NEREUS_BUILD_TESTS
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 11: Roundtable on the station link: the
+# stationRoundtableVersion capability and `roundtable` object only for a
+# peer that declared roundtable, the thirteen verbs, the room streams and
+# their sweep, and two remote windows sharing the Core's answers. The
+# Core's client is mostly fed its views directly; one test signs it in to a
+# fake Roundtable server on 127.0.0.1.
+nereus_add_test(tst_station_roundtable_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_station_roundtable_link PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 20 (R-RT-24, R-RT-26's software half): end to end
+# against the real Roundtable server, started as `NEREUS_TEST_PYTHON -m
+# nereus_roundtable` (above; python3 then python on PATH when CMake found
+# none) on free 127.0.0.1 ports with a temporary database, and
+# three in-process Cores on one frequency: a reading in the talker's room
+# within 2 s, the turn's credit, an unknown turn named, AWAY refused, and
+# the archive through the web sign-in link. Skips with the reason when no
+# Python is found or it lacks websockets or cryptography. REALTIME: the 2 s window is
+# measured on the wall clock.
+nereus_add_test(tst_roundtable_e2e REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_e2e PRIVATE
+    NEREUS_ROUNDTABLE_SERVER_DIR="${CMAKE_SOURCE_DIR}/roundtable/server"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# With no usable Python the whole test skips in initTestCase and exits 0;
+# ctest reports that as Skipped, not Passed, so a run that tested nothing
+# says so (the Windows combined build f run "passed" in 0.1 s).
+if(TEST tst_roundtable_e2e)
+    set_tests_properties(tst_roundtable_e2e PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIP +: TstRoundtableE2e::initTestCase\\(\\)")
+endif()
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.

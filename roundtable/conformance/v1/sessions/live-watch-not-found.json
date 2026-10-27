@@ -1,0 +1,61 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "live"
+    },
+    {
+      "from": "live",
+      "role": "scripted",
+      "message": {
+        "type": "watchBand",
+        "band": "all"
+      }
+    },
+    {
+      "from": "server",
+      "to": "live",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": []
+      }
+    },
+    {
+      "from": "live",
+      "role": "scripted",
+      "message": {
+        "type": "watch",
+        "room": "usb-14212000"
+      }
+    },
+    {
+      "from": "server",
+      "to": "live",
+      "message": {
+        "type": "error",
+        "code": "not-found",
+        "reason": "That room, turn or message is not here.",
+        "about": "watch",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "live",
+      "role": "scripted",
+      "message": {
+        "type": "post",
+        "room": "usb-14212000",
+        "text": "hi",
+        "clientId": "c1"
+      }
+    },
+    {
+      "expectClosed": "live",
+      "code": 4002
+    }
+  ]
+}

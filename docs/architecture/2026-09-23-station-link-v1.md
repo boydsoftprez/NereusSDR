@@ -40,6 +40,7 @@ maintained there:
 | Notch control (the `notches` object and the `notch.*` commands) | [2026-09-23-remote-notch-control-v1.md](2026-09-23-remote-notch-control-v1.md) |
 | Accessory control (the `tuner`, `amplifier`, `rfkit`, `stationTci`, `accessoryData` and `accessorySettings` objects, the 4O3A, RF-Kit, station TCI, accessory record and device settings commands and refusals) | [2026-09-23-remote-accessory-control-v1.md](2026-09-23-remote-accessory-control-v1.md) |
 | Rotor control (the `rotor` object, the seven rotor commands and their refusals, bearings on spots) | [2026-10-07-remote-rotor-control-v1.md](2026-10-07-remote-rotor-control-v1.md) |
+| Roundtable (the Core's Roundtable connection, its rooms and what a window may do there) | [2026-10-23-roundtable-design.md](2026-10-23-roundtable-design.md), section 10.3 |
 
 The design authority behind all of them is the
 [remote daemon architecture design](2026-07-28-remote-daemon-architecture-design.md),
@@ -1073,6 +1074,17 @@ sees exactly the wire it was built for, with no `meterReadingNs`, and a
 change to it alone sends that peer no slice delta. The station does not
 declare it; the desktop's remote window does. The phone app does not.
 
+**`roundtable` 1** (Roundtable plan Task 11): the client shows the Core's
+Roundtable. A peer at agreed minor 11 that declares it, on a Core that runs
+Roundtable, is sent `stationRoundtableVersion` (section 6.3), the
+`roundtable` object (section 7.1), may subscribe to the `roundtableRooms`
+and `roundtableRoom:<id>` streams (section 7.7) and may send the
+`roundtable.*` verbs (section 9.1). A peer that does not declare it sees
+exactly the wire it was built for: no entry, no object, no stream, no
+verb, no `Roundtable/` setting (section 8) and no `roundtableState` or
+`roundtableText` on `spotSources`. The station does not declare it; the
+desktop's remote window does.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1271,6 +1283,7 @@ table.
 | `waveformVersion` | 1 |
 | `rxMeterStampsVersion` | 1 |
 | `displayCodecVersion` | 2 |
+| `stationRoundtableVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2445,6 +2458,19 @@ then version 2 (the
 peer that did not declare the feature, or any peer of a Core whose setting
 is off, is sent no entry, and a `start` carrying the field is refused.
 
+**The Core's Roundtable.** A client at agreed minor 11 that declared
+`roundtable` 1 is sent `stationRoundtableVersion`, an `i64`, 1, after
+`displayCodecVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`, only on a Core that runs Roundtable. At
+1 the client is sent the read-only `roundtable` object (section 7.1), may
+subscribe to the `roundtableRooms` and `roundtableRoom:<id>` record streams
+(section 7.7) and may send the thirteen `roundtable.*` verbs (section 9.1).
+A peer that did not declare the feature, or a Core that does not run
+Roundtable, sends no entry; such a peer is sent no object, a subscribe to
+either stream is refused, and so is each verb ("Update this app to use
+Roundtable on this Core." when the Core runs Roundtable, otherwise "This
+Core cannot share Roundtable with this app.").
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2490,7 +2516,9 @@ for a peer that declared `spectrumPicture` while media is available;
 available on a Core that is not itself a remote client;
 `rxMeterStampsVersion` only for a peer that declared `rxMeterStamps`;
 `displayCodecVersion` only for a peer that declared `displayCodec` 2 while
-media is available and the Core's `RemoteDisplayCodecV2` setting is on. A
+media is available and the Core's `RemoteDisplayCodecV2` setting is on;
+`stationRoundtableVersion` only for a peer that declared `roundtable` on a
+Core that runs Roundtable. A
 client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
@@ -2695,7 +2723,8 @@ older window sees only the values it was built for.
 | 114 | `waveformVersion` | `i64` |
 | 115 | `rxMeterStampsVersion` | `i64` |
 | 116 | `displayCodecVersion` | `i64` |
-| 117 | `coreBuildInfo` | `utf8` |
+| 117 | `stationRoundtableVersion` | `i64` |
+| 118 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3037,6 +3066,17 @@ An enum property lists the values its domain allows.
 | 24 | `presets` | `utf8` | outbound |  |
 | 25 | `fault` | `utf8` | outbound |  |
 
+**RoundtableState** (6 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `linkState` | `enum` | outbound | 0, 1, 2, 3, 4, 5 |
+| 1 | `linkSince` | `i64` | outbound |  |
+| 2 | `firstRunAnswered` | `bool` | outbound |  |
+| 3 | `hidden` | `bool` | outbound |  |
+| 4 | `mentionCounts` | `utf8` | outbound |  |
+| 5 | `sliceRooms` | `utf8` | outbound |  |
+
 **SetupDescription** (12 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
@@ -3247,7 +3287,7 @@ An enum property lists the values its domain allows.
 | 153 | `radeReason` | `utf8` | outbound |  |
 | 154 | `meterReadingNs` | `i64` | outbound |  |
 
-**SpotSourceHost** (11 properties)
+**SpotSourceHost** (13 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3262,6 +3302,8 @@ An enum property lists the values its domain allows.
 | 8 | `freedvReporterState` | `utf8` | outbound |  |
 | 9 | `freedvReporterText` | `utf8` | outbound |  |
 | 10 | `freedvReporterHidden` | `bool` | outbound |  |
+| 11 | `roundtableState` | `utf8` | outbound |  |
+| 12 | `roundtableText` | `utf8` | outbound |  |
 
 **StationCatModel** (7 properties)
 
@@ -3577,6 +3619,7 @@ destroyed during the session.
 | `accessoryData` | `AccessoryDataModel` |
 | `accessorySettings` | `AccessorySettingsModel` |
 | `rotor` | `RotorModel` |
+| `roundtable` | `RoundtableState` |
 | `devices` | `StationDevicesFacade` |
 | `connectedDevices` | `ConnectedDevicesFacade` |
 | `txState` | `TransmitState` |
@@ -3594,6 +3637,21 @@ destroyed during the session.
 
 Notes on the keys:
 
+- **`roundtable`** (`RoundtableState`, `stationRoundtableVersion` 1). The
+  Core's Roundtable connection, read-only (a write is refused; the
+  `roundtable.*` verbs change it), sent only to a peer at agreed minor 11
+  that declared `roundtable` 1 on a Core that runs Roundtable. `linkState`
+  is the connection's state (`RoundtableClient::LinkState`: 0 off, 1
+  connecting, 2 live, 3 reconnecting, 4 offline, 5 hidden), `linkSince` when it entered that state (Unix
+  milliseconds), `firstRunAnswered` whether the station has answered the
+  first-run question (on any device), `hidden` whether Hide my station is
+  on, `mentionCounts` a JSON object of room id to the mentions not yet read
+  there, and `sliceRooms` a JSON object of slice id to the room the slice
+  is in. A window shows these as they come and keeps no copy when the
+  session ends. The `spotSources` object's `roundtableState` and
+  `roundtableText` (`SpotSourceHost`, the Spot Hub's Roundtable row) are
+  likewise sent only to such a peer: another peer's schema, snapshot and
+  deltas leave them out, and a delta that changed only them is not sent.
 - **`pan:<i>`.** The station watches every panadapter its model holds, but
   no code path in `nereusd` adds one: panadapters live in the window, and
   the Core's spectrum travels on display endpoints (media control). A real
@@ -5768,6 +5826,8 @@ the Core keeps:
 | `vaxLevels` | 1 | With `vaxVersion` 1: the VAX meters of the computer the Core runs on, one record, `id` `"0"`: `ch1Level` to `ch4Level` and `txLevel` (numbers, 0 to 1, each rounded to a thousandth, as the applet's meters read them: `AudioEngine::vaxRxLevel` and `vaxTxLevel`) and `atMs` (number, the Core's clock in milliseconds when it read them). The Core reads the meters 5 times a second, only while at least one peer subscribes (a device with its VAX tool open), and sends a record only when a meter moved |
 | `txAmModulation` | 1 | With `txModMonitorVersion` 1: the AM Mod Monitor's readings of the transmit I/Q the Core sends its radio (its TX tap, `AmModulationAnalyzer`), one record, `id` `0`, present only while the radio is keyed in AM, SAM or DSB (the transmit slice's mode) and a peer subscribes: `atMs` (number, the Core's clock in ms since the epoch when it read them), `posPeakPct` and `negPeakPct` (numbers, the positive and negative peak modulation in percent since the Core's previous record: the largest of the reads it merged), `posHoldPct` and `negHoldPct` (numbers, the peaks held 1.5 s, then falling as the Core's analyzer lets them fall), `carrierLevel` (number, the carrier in linear envelope units, 0 to 1 at the radio's full scale), `carrierDbfs` (number, that in dB, -120 with no carrier), `carrierPresent`, `carrierLow` and `carrierHigh` (booleans: a carrier is measured, below 0.05, above 0.98), `scopeRateHz` (number, the rate of the scope's points) and `scopePctTenths` (string: the envelope trace, oldest first, each point's percent modulation in tenths as a little-endian int16, in base64; at most 512 points, a longer trace reduced by keeping the largest-magnitude point of each group). Asymmetry is `posHoldPct` minus `negHoldPct` |
 | `txAmModulationFeedback` | 1 | With `txModMonitorVersion` 1: the same record for the PureSignal feedback receiver (the PA's output as the radio samples it), on the receiver `ModMon/FbStream` names (section 8.1); present under the same rule, and measured only while PureSignal's feedback runs on the Core's radio |
+| `roundtableRooms` | 500 | With `stationRoundtableVersion` 1: one Roundtable room in the band list, `id` the room id: `record` (string, `room`) and the room's summary as Roundtable's band list carries it ([Roundtable version 1](2026-10-23-roundtable-v1.md)) |
+| `roundtableRoom:<id>` | 400 | With `stationRoundtableVersion` 1: one room in view, a record per part, its kind in `record` (a turn has a `kind` of its own): `member:<ref>` a member (`seq` its place in joining order), `reading:<ref>` that member's latest reading (`ref` the member), `turn:<id>` a turn (`end` null while it is open), `name:<turn id>:<name>` a name heard in a turn (`turn`, `name`, `count`), `message:<id>` a message (the last 50) |
 
 A peer asks with `records.subscribe {stream, backlog}` (section 9.1); the
 Core answers, then sends at once a `record.batch` with `reset` true
@@ -5830,6 +5890,19 @@ ends. A reset of a console stream (each subscribe's backlog) replaces that
 console in the Spot Hub rather than adding to it, so a reconnect never
 repeats the backlog; a `spots` reset replaces only the Core's spots.
 
+**Roundtable's streams** (`stationRoundtableVersion` 1). The Core keeps
+`roundtableRooms` while it runs Roundtable, and a `roundtableRoom:<id>` for
+each room one of its slices is in and each room a device reads
+(`roundtable.read`, section 9.1). It creates the room's stream before it
+answers `roundtable.read`, so a subscribe after the answer gets the room's
+records, and removes a stream when no slice is in the room and no device
+has read it for 10 minutes. A subscribe from a peer that did not declare
+`roundtable` 1 is refused (section 6.3). A window subscribes to
+`roundtableRooms` (backlog 500) once its snapshot is complete, and to the
+room stream of each room its slices are in and of the room it reads
+(backlog 400), again on every reconnect; it leaves a room's stream when it
+no longer needs it and drops all of them when the session ends.
+
 A window subscribes to `coreLog` (backlog 200) only while its Support
 dialog or its Setup > Diagnostics > Logs page is showing, again on every
 reconnect while one is, and leaves it when the last one closes: the
@@ -5866,6 +5939,10 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 1. exact key (exception) | `FreeDvReporter/DistanceMiles` | operatorLocal |
 | 1. exact key (exception) | `FreeDvReporter/DirectionAsCardinal` | operatorLocal |
 | 1. exact key (exception) | `FreeDvReporter/FrequencyAsKhz` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/EarlierTurnsShown` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/PanelOpensOn` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/FirstRunSeen` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/WindowGeometry` | operatorLocal |
 | 2. prefix | `hardware/` | station |
 | 2. prefix | `Slice` | station |
 | 2. prefix | `Vfo` | station |
@@ -5878,6 +5955,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 2. prefix | `Pota` | station |
 | 2. prefix | `PskReporter` | station |
 | 2. prefix | `FreeDv` | station |
+| 2. prefix | `Roundtable` | station |
 | 2. prefix | `User/` | station |
 | 2. prefix | `Notch` | station |
 | 2. prefix | `DspOptions` | station |
@@ -5948,6 +6026,27 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `ExtendedTxAllowed` | operatorLocal |
 
 <!-- /surface -->
+
+**Roundtable's keys** (Roundtable plan Task 11). `Roundtable/` is
+station-scoped: the Core keeps `Roundtable/AutoStart`, `AwayChoice`,
+`HighlightMentions` (default `"True"`), `Callsign`, `GridSquare`,
+`FirstRunAnswer` (`""`, `"Live"` or `"Hidden"`), `Hidden`, `MuteList`
+(comma-separated base callsigns) and `MentionsSeenMs`, so a first-run
+answer, Hide my station, a mute or a mention read on one device holds on
+every device. Four are each device's own (operatorLocal):
+`Roundtable/EarlierTurnsShown`, `Roundtable/PanelOpensOn`,
+`Roundtable/FirstRunSeen` (Roundtable plan Task 12: this device has asked
+the first-run question, or shown the one-time note that another device
+answered it) and `Roundtable/WindowGeometry` (Roundtable plan Task 13: the
+size and screen of this device's Roundtable window). `FirstRunAnswer`, `Hidden`,
+`MuteList` and `MentionsSeenMs` are the Core's own answers: a
+`settings.write` or `settings.remove` of any of them (in any letter case)
+is refused with "This Core changes its Roundtable choices only through
+Roundtable.", and they change only through the `roundtable.*` verbs
+(section 9.1). A Core whose `FirstRunAnswer` is `"Hidden"` and whose
+`Hidden` key is missing stays hidden; only `Hidden` `"False"` takes it
+live. A peer that did not declare `roundtable` 1 is sent no `Roundtable/`
+key, in its settings snapshot or as a change.
 
 ### 8.1 Snapshot and write-through
 
@@ -6278,6 +6377,19 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `disconnectRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
 | `setRotorPresets` | `presets` utf8 | `remoteRotorControlVersion` | 1 | 11 |
 | `refreshRotorPorts` | none | `remoteRotorControlVersion` | 1 | 11 |
+| `roundtable.post` | `roomId` utf8, `text` utf8, `clientId` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.delete` | `messageId` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.name` | `turnId` utf8, `name` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.report` | `kind` utf8, `target` utf8, `reason` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.read` | `roomId` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.unread` | `roomId` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.setHidden` | `hidden` bool | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.answerFirstRun` | `live` bool | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.mute` | `callsign` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.unmute` | `callsign` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.markMentionRead` | `upToMs` i64 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.webSignIn` | none | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.deleteArchive` | `confirm` utf8 | `stationRoundtableVersion` | 1 | 11 |
 | `requestIoBoardProbe` | none | `radioHardwareVersion` | 2 | 11 |
 | `setAlexRxAntenna` | `band` i64, `antenna` i64, `rxOnly` bool | `radioHardwareVersion` | 3 | 11 |
 | `setAlexRxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64, `rxOnly` bool | `radioAntennaRowsVersion` | 1 | 11 |
@@ -6810,6 +6922,29 @@ These command groups need a sentence beyond the table:
   shared setting. A session ending ends the turn button it was holding.
   The arguments and reasons are in
   [remote rotor control version 1](2026-10-07-remote-rotor-control-v1.md).
+- **Roundtable** (`stationRoundtableVersion` 1). The thirteen
+  `roundtable.*` verbs go to the Core's Roundtable, from a peer at agreed
+  minor 11 that declared `roundtable` 1 on a Core that runs it (otherwise
+  "Update this app to use Roundtable on this Core." or "This Core cannot
+  share Roundtable with this app."). `roundtable.post` answers when
+  Roundtable does, with `messageId` (utf8) on success, or after 30 s with
+  "Roundtable did not answer. Try again shortly."; a second post with the
+  same `clientId` on the same connection while the first waits is refused.
+  The Core sends Roundtable a `clientId` of its own for each post, so two
+  connections that happen to use the same `clientId` each get their own
+  answer. `roundtable.webSignIn`
+  answers the same way, with `link` (utf8). `roundtable.read` answers with
+  `stream` (utf8), the room's stream name, which exists before the answer
+  (section 7.7); a room Roundtable has not got is refused ("Roundtable has
+  no room there right now."). `roundtable.unread` ends this device's read
+  of the room. `roundtable.setHidden`, `roundtable.answerFirstRun`,
+  `roundtable.mute`, `roundtable.unmute` and `roundtable.markMentionRead`
+  change the Core's Roundtable settings (section 8) and the `roundtable`
+  object, so every device sees them. `roundtable.delete`,
+  `roundtable.name`, `roundtable.report` and `roundtable.deleteArchive` go
+  to Roundtable and are refused while it is not connected. None keys
+  anything. A request whose arguments cannot be read is refused ("The Core
+  could not read this request.").
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core

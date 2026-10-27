@@ -1,0 +1,11 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "hello",
+    "v": 1,
+    "software": "Example Logger",
+    "softwareVersion": "3.1",
+    "key": "PdannQztcmMlX3RvsEqWxU-D1N_uzo7MRmRIN_OO-gc"
+  },
+  "decodes": true
+}

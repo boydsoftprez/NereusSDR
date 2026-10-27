@@ -1,5 +1,19 @@
 // NereusSDR for iOS: the main screen for listening: the toolbar, the band edge to edge, the RX panel and the sound notice
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the Roundtable line on each flag and
+// the Roundtable sheet over the band, with the hold PTT and the dial strip.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, Roundtable's tags on the band and the
+// swipes from its edges, the panels following the finger from the swipe's
+// side. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the iPad's Roundtable applet in the
+// column: the flag line scrolls to it, the tab bar's swipe widens it, the
+// phone's sheet with the column hidden, and the first run as a form sheet.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the swipes' model is a @StateObject, made
+// once when the screen makes its own. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -39,6 +53,19 @@ import SwiftUI
 /// ``PanStack`` (R-IOS-59, DC9): each pan with its own band, column, pill
 /// and band menu, the toolbar following the pan last touched. The PTT,
 /// the keyed meters, the panels and the sheets stay over the whole stack.
+///
+/// A flag's Roundtable line opens the Roundtable sheet over the band (spec
+/// 11.3): half height, full height, below the keyed gauges while keyed,
+/// and above a 92-point strip with PTT and the dial when a dial is on.
+/// While it is open PTT is press and hold, and closing it lets go.
+///
+/// On a phone, a swipe in from the band's left or right edge, or up from
+/// the tab bar, opens what Setup maps it to (spec 11.3, S1): the RX or TX
+/// panel follow the finger in from the swipe's side and spring back from a
+/// short drag; the Roundtable sheet opens as the flag line opens it. A
+/// swipe back on the dimmed band, or a tap there, closes a panel. Nothing
+/// swipes while a sheet or panel is up, and the TX panel opened by a swipe
+/// never keys: opening it sends nothing.
 struct MainScreen: View {
     @ObservedObject var app: AppModel
     @ObservedObject var main: MainScreenModel
@@ -46,6 +73,7 @@ struct MainScreen: View {
     @ObservedObject private var transmit: TransmitModel
     /// The iPad's open pans.
     @ObservedObject private var panStack: PanStackModel
+    @ObservedObject private var roundtable: RoundtableModel
     /// The connection's covers over the band: the link lost, the radio off,
     /// the phone offline, and back on the air. Nil where no flow runs (tests).
     let flow: ConnectionFlow?
@@ -89,7 +117,32 @@ struct MainScreen: View {
     /// Where the PTT was when transmitting began, held until unkey
     /// (``PttLatch``). Held, not watched: only the views that place the PTT
     /// redraw as it changes.
-    @State private var pttHold = PttHold()
+    @State private var pttHold = PttLatchHold()
+    /// The Roundtable sheet, open at this height, or closed.
+    @State private var roundtableSheet: RoundtableSheet.Detent?
+    /// Where the keyed gauges end on the band, while keyed.
+    @State private var gaugesFoot: CGFloat?
+    @State private var firstRunNoteSeen: Bool
+    /// The arrangement the screen took last (an iPad's column, or not).
+    @State private var layoutNow: IPadLayout = .phone
+    /// The applet column widened to Roundtable's room list plus the room.
+    @State private var roundtableWide = false
+    /// Bumped to scroll the column to the Roundtable applet.
+    @State private var appletScrollRequest = 0
+    /// The first-run question in a form sheet (an iPad).
+    @State private var firstRunForm = false
+    /// Told each press and release of the hold PTT (the UI tests' record).
+    private let holdObserver: ((PttHold.Action) -> Void)?
+    /// The Panadapter tab's swipes, shared with the root's tab bar.
+    @StateObject private var swipes: SwipeShortcutModel
+    /// The swipes act here (the phone's root); off in pictures and tests that host the screen alone.
+    private let swipesOn: Bool
+    /// Where each panel sits and the side it slid in from: the toolbar's
+    /// sides unless a swipe opened it from the other.
+    @State private var rxPanelSide = HorizontalEdge.leading
+    @State private var rxPanelEntry = Edge.leading
+    @State private var txPanelSide = HorizontalEdge.trailing
+    @State private var txPanelEntry = Edge.trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
 
@@ -98,6 +151,8 @@ struct MainScreen: View {
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
          txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
          columnShown: Bool = true, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
+         roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
+         swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
@@ -105,6 +160,14 @@ struct MainScreen: View {
         transmit = main.transmit
         panStack = main.panStack
         _columnPan = State(initialValue: columnPan)
+        roundtable = app.roundtable
+        _roundtableSheet = State(initialValue: roundtableSheet)
+        _roundtableWide = State(initialValue: roundtableWide)
+        _firstRunNoteSeen = State(initialValue: app.phoneSettings.roundtableFirstRunNoteSeen)
+        self.holdObserver = holdObserver
+        // Made once for this screen when the root shares none (pictures, tests).
+        _swipes = StateObject(wrappedValue: swipes ?? SwipeShortcutModel(settings: app.phoneSettings))
+        swipesOn = swipes != nil
         _txPanelOpen = State(initialValue: txPanelOpen)
         self.flow = flow
         self.openSetup = openSetup
@@ -140,7 +203,8 @@ struct MainScreen: View {
                         HStack(spacing: 0) {
                             band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
-                                AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                                AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
                         }
@@ -158,6 +222,30 @@ struct MainScreen: View {
             }
             .onAppear { main.setBandSideways(sideways) }
             .onChange(of: sideways) { main.setBandSideways(sideways) }
+            .onChange(of: layout, initial: true) { _, now in layoutNow = now }
+        }
+        .environment(\.roundtableInColumn, appletInColumn)
+        .onChange(of: appletInColumn) { _, inColumn in
+            if inColumn {
+                // The applet shows the room: the phone's sheet gives way to it.
+                roundtableSheet = nil
+            } else {
+                roundtableWide = false
+            }
+        }
+        .onChange(of: roundtable.askingFirstRun) { _, asking in
+            if !asking {
+                firstRunForm = false
+            }
+        }
+        .sheet(isPresented: $firstRunForm) {
+            // On an iPad the first-run question is a form sheet in the middle of the screen (spec 11.4).
+            RoundtableFirstRunSheet(roundtable: roundtable, callsign: app.freedv.callsign,
+                                    grid: app.freedv.gridSquare) {
+                firstRunForm = false
+                setFirstRunNoteSeen(true)
+            }
+            .background(RoundtableColours.ground)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
         // Diversity..., from a flag's more menu.
@@ -165,6 +253,32 @@ struct MainScreen: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: rxPanelOpen)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: txPanelOpen)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: columnShown)
+        .onAppear {
+            swipes.attach(tuning: main.tuning, flagControls: main.flagControls)
+        }
+        .onChange(of: panelsUp, initial: true) { _, up in
+            if swipesOn {
+                swipes.panelsUp = up
+            }
+        }
+        .onChange(of: swipes.opened) { _, opened in
+            if swipesOn, let opened {
+                open(opened)
+            }
+        }
+        .onChange(of: rxPanelOpen) { _, open in
+            if !open {
+                // Closed, the panel goes back to the toolbar's side.
+                rxPanelSide = .leading
+                rxPanelEntry = .leading
+            }
+        }
+        .onChange(of: txPanelOpen) { _, open in
+            if !open {
+                txPanelSide = .trailing
+                txPanelEntry = .trailing
+            }
+        }
     }
 
     private func toolbar(sideways: Bool, layout: IPadLayout) -> some View {
@@ -187,7 +301,8 @@ struct MainScreen: View {
                                    showsStrip: main.band.settings.bandPlanStrip,
                                    spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                    avoid: avoid, movedPtt: movedPtt, heldPtt: heldPtt,
-                                   leadingInset: leadingInset, trailingInset: trailingInset, dialKind: dialKind)
+                                   leadingInset: leadingInset, trailingInset: trailingInset, dialKind: dialKind,
+                                   gaugesFoot: { foot in gaugesFoot = foot })
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
         } else {
@@ -199,6 +314,10 @@ struct MainScreen: View {
     /// column at its top-left (the iPad, and the phone held sideways); the
     /// PTT and the keyed meters then keep just right of what it has out.
     private func band(sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat, column: Bool) -> some View {
+        let rxDrag = panelDrag(.rxPanel)
+        let txDrag = panelDrag(.txPanel)
+        let rxSide = rxDrag.map { Self.side($0.origin) } ?? rxPanelSide
+        let txSide = txDrag.map { Self.side($0.origin) } ?? txPanelSide
         let pttHome = PttButton.frame(bandSize: bandSize, leadingInset: sideways ? leadingInset : 0)
         let boxes = column ? columnBoxes : []
         let pttAt = BandColumnLayout.pttFrame(home: pttHome, avoid: boxes)
@@ -224,14 +343,15 @@ struct MainScreen: View {
         let columnWidth = BandColumnLayout.columnWidth(
             columns: columnFolded || stacked ? 1 : BandColumnLayout.columns(bandHeight: bandSize.height))
         return ZStack(alignment: .topLeading) {
+            // The swipes act on every layout; on an iPad both edges start Off (spec 11.4, S2).
             if stacked {
                 PanStack(stack: panStack) { pan in
                     stackedPan(pan, sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                               trailingInset: sideways ? trailingInset : 0)
+                               trailingInset: sideways ? trailingInset : 0, foot: pan == footPan)
                 }
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                           trailingInset: sideways ? trailingInset : 0)
+                           trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn)
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -281,20 +401,26 @@ struct MainScreen: View {
                                  }, pttHold: pttHold)
                     .environment(\.displayPeek, $displayPeek)
             }
-            // This one holds the PTT's place while keyed; the one above reads it.
-            PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
-                     maxX: pttMaxX, hold: pttHold, updatesHold: true) { placed, _ in
-                // Moved by an offset, not by its leading padding: padding
-                // past the safe area's width made the band wider than it was
-                // offered, which narrowed the band, moved the flags and so
-                // moved the PTT back, without end (DialShotTests on a Pro Max
-                // sideways with the thumbwheel). An offset leaves the band's
-                // size alone.
-                PttButton(transmit: transmit, linkUp: app.connection == .connected)
-                    .offset(x: placed.minX - pttHome.minX)
-                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
-                    .padding(.bottom, PttButton.bottomInset)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            if roundtableSheet == nil || dialStrip {
+                // With the Roundtable sheet open and a dial on, PTT stays here, in the strip, press and hold.
+                // This one holds the PTT's place while keyed; the one above reads it.
+                PttPlace(flags: pttFlags, flagsTop: pttFlagsTop, home: pttHome, boxes: boxes, keyed: keyed,
+                         maxX: pttMaxX, hold: pttHold, updatesHold: true) { placed, _ in
+                    // Moved by an offset, not by its leading padding: padding
+                    // past the safe area's width made the band wider than it was
+                    // offered, which narrowed the band, moved the flags and so
+                    // moved the PTT back, without end (DialShotTests on a Pro Max
+                    // sideways with the thumbwheel). An offset leaves the band's
+                    // size alone.
+                    PttButton(transmit: transmit, linkUp: pttLinkUp,
+                              mode: roundtableSheet == nil ? .tap : .hold(diameter: PttButton.diameter),
+                              holdObserver: holdObserver)
+                        .offset(x: placed.minX - pttHome.minX)
+                        .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
+                        .padding(.bottom, roundtableSheet == nil ? PttButton.bottomInset
+                                 : (DialLayer.stripHeight - PttButton.diameter) / 2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
             }
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
@@ -310,50 +436,100 @@ struct MainScreen: View {
                                   sheet = .display
                               })
             }
+            if let detent = roundtableSheet {
+                GeometryReader { proxy in
+                    let place = Self.roundtablePlace(bandHeight: proxy.size.height, detent: detent,
+                                                     gaugesFoot: transmit.ptt.transmitting ? gaugesFoot : nil,
+                                                     dialStrip: dialStrip)
+                    RoundtableSheet(roundtable: roundtable, transmit: transmit, slices: main.slices,
+                                    detent: Binding(get: { roundtableSheet ?? .half },
+                                                    set: { roundtableSheet = $0 }),
+                                    dialOn: dialStrip, linkUp: pttLinkUp,
+                                    stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
+                                    firstRunNoteSeen: firstRunNoteSeenBinding,
+                                    close: closeRoundtable, holdObserver: holdObserver,
+                                    askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil)
+                        .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
+                        .frame(height: place.height)
+                        .padding(.leading, sideways ? leadingInset : 0)
+                        .offset(y: place.top)
+                        .frame(maxWidth: .infinity, alignment: sideways ? .trailing : .center)
+                }
+                .padding(.trailing, sideways ? trailingInset : 0)
+                .transition(.move(edge: .bottom))
+            }
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
             }
-            if rxPanelOpen || txPanelOpen {
+            if rxPanelOpen || txPanelOpen || rxDrag != nil || txDrag != nil {
+                let drag = rxDrag ?? txDrag
+                let closeSide = txPanelOpen || txDrag != nil ? txSide : rxSide
                 ChromeColours.scrim
                     .contentShape(Rectangle())
                     .onTapGesture {
                         rxPanelOpen = false
                         txPanelOpen = false
                     }
+                    // A swipe back toward the panel's side closes it too.
+                    .simultaneousGesture(DragGesture(minimumDistance: TuneGestures.dragThresholdPoints)
+                        .onEnded { value in
+                            if Self.swipesBack(value.translation, panelSide: closeSide) {
+                                rxPanelOpen = false
+                                txPanelOpen = false
+                            }
+                        })
+                    .opacity(drag.map { min(1, $0.distance / TxPanel.width) } ?? 1)
                     .transition(.opacity)
                     .accessibilityLabel(txPanelOpen ? "Close the TX panel" : "Close the RX panel")
                     .accessibilityAddTraits(.isButton)
             }
-            if txPanelOpen {
+            if txPanelOpen || txDrag != nil {
+                // Opening this panel, by its button or a swipe, sends nothing: it never keys.
                 HStack(spacing: 0) {
-                    Spacer(minLength: 0)
+                    if txSide == .trailing {
+                        Spacer(minLength: 0)
+                    }
                     TxPanel(transmit: transmit, accessories: main.accessories, micLevel: main.micLevel, modes: main.modes, meters: main.band.catalog?.meters, openRadio: {
                         txPanelOpen = false
                         openRadio()
                     }, modMonitor: main.modMonitor, take: main.take, openSettings: openTransmitSettings)
-                        .padding(.trailing, sideways ? trailingInset : 0)
+                        .padding(txSide == .trailing ? .trailing : .leading,
+                                 sideways ? (txSide == .trailing ? trailingInset : leadingInset) : 0)
                         .background(ChromeColours.panel)
-                        .overlay(alignment: .leading) {
+                        .overlay(alignment: txSide == .trailing ? .leading : .trailing) {
                             Rectangle().fill(ChromeColours.panelEdge).frame(width: 1)
                         }
                         .shadow(color: .black.opacity(0.6), radius: 14)
+                    if txSide == .leading {
+                        Spacer(minLength: 0)
+                    }
                 }
                 // Keep the pinned keys and scroll body in the same moving drawer geometry.
                 .geometryGroup()
-                .transition(.move(edge: .trailing))
+                .offset(x: Self.followOffset(txDrag, side: txSide,
+                                             width: TxPanel.width + (sideways ? max(leadingInset, trailingInset) : 0)))
+                .transition(.move(edge: txPanelEntry))
             }
-            if rxPanelOpen {
+            if rxPanelOpen || rxDrag != nil {
                 HStack(spacing: 0) {
+                    if rxSide == .trailing {
+                        Spacer(minLength: 0)
+                    }
                     RxPanel(model: main.rx, sliceColour: main.sliceColour)
-                        .padding(.leading, sideways ? leadingInset : 0)
+                        .padding(rxSide == .leading ? .leading : .trailing,
+                                 sideways ? (rxSide == .leading ? leadingInset : trailingInset) : 0)
                         .background(ChromeColours.panel)
-                        .overlay(alignment: .trailing) {
+                        .overlay(alignment: rxSide == .leading ? .trailing : .leading) {
                             Rectangle().fill(ChromeColours.panelEdge).frame(width: 1)
                         }
                         .shadow(color: .black.opacity(0.6), radius: 14)
-                    Spacer(minLength: 0)
+                    if rxSide == .leading {
+                        Spacer(minLength: 0)
+                    }
                 }
-                .transition(.move(edge: .leading))
+                .offset(x: Self.followOffset(rxDrag, side: rxSide,
+                                             width: RxPanel.width + (sideways ? max(leadingInset, trailingInset) : 0)))
+                .transition(.move(edge: rxPanelEntry))
             }
             // With the column, Display is its pill, never the drop sheet.
             if let sheet, !(column && sheet == .display) {
@@ -378,8 +554,9 @@ struct MainScreen: View {
         .onPreferenceChange(BandColumnFrameKey.self) { columnBoxes = $0 }
         .clipped()
         .ignoresSafeArea(edges: sideways ? .horizontal : [])
-        // A sheet or a panel opening closes the band menu and the column's menu.
-        .onChange(of: sheet != nil || rxPanelOpen || txPanelOpen) { _, covered in
+        // A sheet or a panel opening closes the band menu and the column's menu
+        // (the Roundtable sheet is one of the sheets).
+        .onChange(of: sheet != nil || rxPanelOpen || txPanelOpen || roundtableSheet != nil) { _, covered in
             if covered {
                 bandMenu = nil
                 columnMenu = nil
@@ -438,6 +615,13 @@ struct MainScreen: View {
             }
             foldedPans.formIntersection(open)
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
+        .onChange(of: roundtableSheet == nil) { _, closed in
+            if closed {
+                // Closing the sheet lets go of a held PTT.
+                transmit.releaseHeldPtt()
+            }
+        }
     }
 
     /// The pill beside the column in place of the drop sheet: on the iPad
@@ -457,7 +641,7 @@ struct MainScreen: View {
     /// One pan in the stack: its band, its column with its menus and pill,
     /// and the band menu a hold on its empty band opens.
     private func stackedPan(_ pan: PanIdentity, sideways: Bool, leadingInset: CGFloat,
-                            trailingInset: CGFloat) -> some View {
+                            trailingInset: CGFloat, foot: Bool) -> some View {
         let controls = main.controls(for: pan)
         let open = Binding<BandColumnMenu?>(get: { columnPan == pan ? columnMenu : nil }, set: { menu in
             if menu != nil {
@@ -488,7 +672,7 @@ struct MainScreen: View {
         })
         return ZStack(alignment: .topLeading) {
             bandLayers(controls, sideways: sideways, leadingInset: leadingInset, trailingInset: trailingInset,
-                       menuBinding: menu)
+                       swipesHere: swipesOn, foot: foot, menuBinding: menu)
             BandButtonColumn(pan: pan, open: open, folded: folded, main: main, displayTab: $displayTab,
                              leadingInset: leadingInset, trailingInset: trailingInset,
                              openSetup: {
@@ -523,21 +707,198 @@ struct MainScreen: View {
         .modifier(PanDiversitySheet(pan: pan, controls: controls.flagControls, app: app))
     }
 
+    // MARK: Roundtable
+
+    /// The sheet's widest sideways, as the drop sheets'.
+    static let roundtableSidewaysWidth: CGFloat = 546
+    /// Half height: the sheet's top this far down the band (the board's).
+    static let roundtableHalfTop: CGFloat = 0.48
+    /// Its gap below the keyed gauges.
+    static let roundtableBelowGauges: CGFloat = 8
+
+    /// Where the sheet sits on a band `bandHeight` tall: half or full,
+    /// below the keyed gauges while keyed, and above the dial's strip.
+    static func roundtablePlace(bandHeight: CGFloat, detent: RoundtableSheet.Detent, gaugesFoot: CGFloat?,
+                                dialStrip: Bool) -> (top: CGFloat, height: CGFloat) {
+        var top: CGFloat = detent == .full ? 0 : (bandHeight * roundtableHalfTop).rounded()
+        if let gaugesFoot {
+            // Keyed: the gauges stay, and the sheet drops below them.
+            top = max(top, gaugesFoot + roundtableBelowGauges)
+        }
+        let bottom = bandHeight - (dialStrip ? DialLayer.stripHeight : 0)
+        return (top, max(0, bottom - top))
+    }
+
+    /// A dial is on that keeps the strip under the open sheet: the
+    /// waterfall knob or the thumbwheel (the sheet knob rises over the band).
+    private var dialStrip: Bool {
+        guard roundtableSheet != nil else {
+            return false
+        }
+        return Self.keepsStrip(app.phoneSettings.dialKind)
+    }
+
+    static func keepsStrip(_ kind: DialKind) -> Bool {
+        kind == .waterfallKnob || kind == .thumbwheel
+    }
+
+    private var pttLinkUp: Bool {
+        app.connection == .connected || holdObserver != nil
+    }
+
+    /// Each slice's Roundtable line, by its flag.
+    private var roundtableLines: [Int: RoundtableFlagLine] {
+        var lines: [Int: RoundtableFlagLine] = [:]
+        for entry in main.slices.entries {
+            if let line = RoundtableFlagLine.line(roundtable, sliceId: Int64(entry.id)) {
+                lines[entry.id] = line
+            }
+        }
+        return lines
+    }
+
+    private func openRoundtable(_ sliceId: Int) {
+        sheet = nil
+        rxPanelOpen = false
+        txPanelOpen = false
+        main.slices.activate(sliceId)
+        roundtable.activeSliceId = Int64(sliceId)
+        if appletInColumn {
+            // On an iPad with the column showing, the line scrolls the column to the applet (spec 11.4).
+            appletScrollRequest += 1
+            return
+        }
+        roundtableSheet = .half
+    }
+
+    /// The Roundtable applet shows in the iPad's applet column.
+    private var appletInColumn: Bool {
+        layoutNow == .column && columnShown && roundtable.available
+    }
+
+    private var firstRunNoteSeenBinding: Binding<Bool> {
+        Binding(get: { firstRunNoteSeen }, set: { seen in setFirstRunNoteSeen(seen) })
+    }
+
+    private func setFirstRunNoteSeen(_ seen: Bool) {
+        firstRunNoteSeen = seen
+        app.phoneSettings.roundtableFirstRunNoteSeen = seen
+    }
+
+    private var appletConfig: RoundtableAppletConfig {
+        RoundtableAppletConfig(roundtable: roundtable, settings: app.phoneSettings,
+                               stationCallsign: app.freedv.callsign,
+                               wide: Binding(get: { roundtableWide }, set: { wide in
+                                   withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                                       roundtableWide = wide
+                                   }
+                               }),
+                               scrollRequest: appletScrollRequest,
+                               firstRunNoteSeen: firstRunNoteSeenBinding,
+                               askFirstRun: { firstRunForm = true })
+    }
+
+    private func closeRoundtable() {
+        roundtableSheet = nil
+        transmit.releaseHeldPtt()
+    }
+
+    // MARK: Swipes
+
+    /// A sheet or panel is up: no swipe opens anything.
+    private var panelsUp: Bool {
+        sheet != nil || rxPanelOpen || txPanelOpen || soundPanelOpen || roundtableSheet != nil
+    }
+
+    /// The swipe under the finger, when it brings in `target` from a band edge.
+    private func panelDrag(_ target: SwipeTarget) -> SwipeShortcutModel.Drag? {
+        guard swipesOn, let drag = swipes.drag, drag.target == target, drag.origin != .tabBar else {
+            return nil
+        }
+        return drag
+    }
+
+    static func side(_ origin: SwipeOrigin) -> HorizontalEdge {
+        origin == .rightEdge ? .trailing : .leading
+    }
+
+    /// A panel following a swipe: its hidden part off the side it comes
+    /// from, `width` across in all, as far in as the finger.
+    static func followOffset(_ drag: SwipeShortcutModel.Drag?, side: HorizontalEdge, width: CGFloat) -> CGFloat {
+        guard let drag else {
+            return 0
+        }
+        let hidden = max(0, width - drag.distance)
+        return side == .leading ? -hidden : hidden
+    }
+
+    /// A drag on the dimmed band that heads back toward the panel's side.
+    static func swipesBack(_ translation: CGSize, panelSide: HorizontalEdge) -> Bool {
+        let toward = panelSide == .leading ? -translation.width : translation.width
+        return toward >= SwipeShortcuts.openDistance / 2 && toward > abs(translation.height)
+    }
+
+    /// A swipe let go far enough: its page opens, from the swipe's side.
+    /// The TX panel only shows; nothing is sent, so it never keys.
+    private func open(_ opened: SwipeShortcutModel.Opened) {
+        guard !opened.target.opensTools else {
+            return
+        }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+            switch opened.target {
+            case .rxPanel:
+                rxPanelSide = Self.side(opened.origin)
+                rxPanelEntry = opened.origin.edge == .bottom ? .bottom
+                    : rxPanelSide == .leading ? .leading : .trailing
+                txPanelOpen = false
+                rxPanelOpen = true
+            case .txPanel:
+                txPanelSide = opened.origin == .leftEdge ? .leading : .trailing
+                txPanelEntry = opened.origin.edge == .bottom ? .bottom
+                    : txPanelSide == .leading ? .leading : .trailing
+                rxPanelOpen = false
+                txPanelOpen = true
+            case .roundtableMine:
+                if appletInColumn {
+                    // On an iPad the same swipe widens the applet and puts it back (spec 11.4, S2).
+                    roundtableWide.toggle()
+                } else {
+                    // As the flag line opens it: half height, for the active slice.
+                    openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
+                }
+            case .off, .roundtableAll, .spotHub, .tools:
+                break
+            }
+            swipes.finish()
+        }
+    }
+
     /// The band itself: the trace, waterfall, scales, band-plan strip,
     /// flags, markers, zoom and the tuning dial, if one is chosen. Under a
     /// cover it fades almost away, and a cover coming up closes an open
-    /// drop sheet.
+    /// drop sheet. `foot` is the pan at the foot of the band (the only one
+    /// but for the iPad's stacked pans): the Roundtable sheet's dial strip
+    /// is its.
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
+                            swipesHere: Bool, foot: Bool = true,
                             menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
         let first = controls.pan == .first
+        let strip = dialStrip && foot
         let layers = ZStack(alignment: .topLeading) {
             BandView(model: band)
             // The sound-only marks sit over the band and beneath every
             // control on it, so one scrolling down passes under the dial.
             BandAwayMarks(band: band)
+            if strip {
+                // The strip under the Roundtable sheet that keeps PTT and the dial.
+                RoundtableColours.ground
+                    .frame(height: DialLayer.stripHeight)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+            }
             BandGestureLayer(band: band, slices: slices, settings: app.phoneSettings, tuning: controls.tuning,
                              keyed: transmit.ptt.transmitting, txFilterHz: transmit.txFilterHz,
                              onAirSliceId: transmit.radioOnAirSliceId, txZeroLineSliceId: transmit.txZeroLineSliceId,
@@ -550,7 +911,12 @@ struct MainScreen: View {
                              firstKeyRefused: BandSlicesModel.refusedForTransmitChoice(transmit.ptt),
                              flagControls: controls.flagControls,
                              transmitReason: BandGestureLayer.transmitReason(transmit, take: main.take),
-                             take: main.take, bandMenu: menuBinding ?? $bandMenu)
+                             take: main.take, bandMenu: menuBinding ?? $bandMenu,
+                             // Roundtable reads Pan 1's slices, as its sheet does.
+                             roundtableLines: first ? roundtableLines : [:],
+                             openRoundtable: first ? { id in openRoundtable(id) } : nil,
+                             dialStrip: strip, roundtable: first ? roundtable : nil,
+                             swipes: swipesHere ? swipes : nil)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
@@ -641,7 +1007,7 @@ private struct PttPlace<Content: View>: View {
     let boxes: [CGRect]
     var keyed = false
     var maxX: CGFloat = .infinity
-    @ObservedObject var hold: PttHold
+    @ObservedObject var hold: PttLatchHold
     var updatesHold = false
     /// The PTT's frame, and whether it is held away from DC15's keyed place.
     @ViewBuilder let content: (CGRect, Bool) -> Content

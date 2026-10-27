@@ -1,5 +1,7 @@
 // NereusSDR for iOS: a fake Core in the same process, played from the link's conformance suite
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 16, the fake Core's Roundtable hooks. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -293,6 +295,8 @@ public final class FakeStation: @unchecked Sendable {
     let audioQualityState = AudioQualityState()
     /// FreeDV Reporter's list, console and state (FakeStation+FreeDV.swift).
     let freedvState = FreeDVState()
+    /// Roundtable's rooms, streams and verbs (``Additions/roundtable``, FakeStation+Roundtable.swift).
+    let roundtableState = RoundtableFakeState()
     /// The TCI server and its apps (``Additions/stationTci``, FakeStation+StationTools.swift).
     let stationToolsState = StationToolsState()
     /// The Core's CAT (``Additions/stationCat``, FakeStation+StationCat.swift).
@@ -851,6 +855,12 @@ public final class FakeStation: @unchecked Sendable {
             }
             set(name, value)
         }
+        for (name, value) in roundtableCapabilityVersions(additions) where !removed.contains(name) {
+            // The rooms ride the record streams (at least version 1).
+            let streams = properties.first { $0["name"] as? String == "recordStreamVersion" }?["value"] as? Int
+            set("recordStreamVersion", max(1, streams ?? 0))
+            set(name, value)
+        }
         for (name, value) in Self.stationCatCapabilityVersions(additions) where !removed.contains(name) {
             // The CAT log rides the record streams (at least version 1).
             let streams = properties.first { $0["name"] as? String == "recordStreamVersion" }?["value"] as? Int
@@ -1008,6 +1018,9 @@ public final class FakeStation: @unchecked Sendable {
             return replies
         }
         if let replies = vaxReplies(invoke) {
+            return replies
+        }
+        if let replies = roundtableReplies(invoke) {
             return replies
         }
         if let replies = freedvReplies(invoke) {

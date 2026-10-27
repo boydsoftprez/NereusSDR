@@ -93,6 +93,26 @@
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 15: a flag's Roundtable line asks the
+//               first-run question once, as the Spot Hub tab does. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 14: every flag shows its slice's
+//               Roundtable line, and a click on it shows the panel on that
+//               slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-10-24: Roundtable plan Task 14: every pan shows the Roundtable
+//               tags (refreshRoundtableTags, coalesced), and a tag click
+//               tunes the active slice through the Roundtable applet.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 13: the Roundtable applet in the right
+//               column, following the active slice; its Settings open the
+//               Spot Hub on the Roundtable tab. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 12: the Spot Hub gets the Roundtable
+//               model (its Roundtable tab), Start / Stop go to the spot
+//               source host, and opening the tab asks the first-run
+//               question once (openRoundtableFirstRunIfNeeded).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: A remote window's slice access changes reach the container
 //               instruments (sliceAccessChanged, watchSliceAccess). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1412,6 +1432,7 @@ warren@wpratt.com
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
+#include "gui/roundtable/RoundtableFirstRunDialog.h"
 #include "core/SpotSourceHost.h"
 #include "core/station/StationRadios.h"
 #include "gui/setup/ThisCorePage.h"
@@ -1452,6 +1473,7 @@ warren@wpratt.com
 #include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
 #include "applets/RotorApplet.h"
+#include "applets/RoundtableApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -1540,6 +1562,7 @@ warren@wpratt.com
 #include <QProgressDialog>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QTabWidget>
 #include <QTimer>
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
@@ -5707,6 +5730,11 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // selected nothing at all.
     connect(newFlag, &VfoWidget::sliceActivationRequested, this,
             [this](int sliceId) { selectSliceForWindow(sliceId); });
+    // Roundtable plan Task 14 (design 11.2): the flag's Roundtable line
+    // opens the panel on this slice; the line itself follows the model.
+    connect(newFlag, &VfoWidget::roundtableLineClicked, this,
+            [this, sliceIndex]() { openRoundtableForSlice(sliceIndex); });
+    scheduleRoundtableRefresh();
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
     connect(newFlag, &VfoWidget::antennaChangeRequested, this,
@@ -6679,6 +6707,73 @@ void MainWindow::refreshPanNotchMinWidth()
                 Qt::UniqueConnection);
         sw->setNotchMinWidthHz(ch->minNotchWidthHz());
     }
+}
+
+void MainWindow::wirePanRoundtableTags()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        SpectrumWidget* sw = applet->spectrumWidget();
+        if (!sw) { continue; }
+        connect(sw, &SpectrumWidget::roundtableRoomClicked,
+                this, &MainWindow::onRoundtableRoomClicked,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::scheduleRoundtableRefresh()
+{
+    if (m_roundtableRefreshPending) { return; }
+    m_roundtableRefreshPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_roundtableRefreshPending = false;
+        refreshRoundtableTags();
+    });
+}
+
+void MainWindow::refreshRoundtableTags()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    const RoundtableModel* roundtable = m_radioModel->roundtableModel();
+    QList<int> sliceIds;
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (slice) { sliceIds.append(slice->sliceIndex()); }
+    }
+    const QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds);
+    const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+        if (sw) { sw->setRoundtableTags(tags, display); }
+    }
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (it.value()) { it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key())); }
+    }
+}
+
+void MainWindow::openRoundtableForSlice(int sliceId)
+{
+    selectSliceForWindow(sliceId);
+    if (!m_roundtableApplet) { return; }
+    if (m_roundtableApplet->isPoppedOut()) {
+        if (QWidget* window = m_roundtableApplet->floatingWindow()) {
+            window->show();
+            window->raise();
+            window->activateWindow();
+        }
+        openRoundtableFirstRunIfNeeded();
+        return;
+    }
+    if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
+    m_roundtableApplet->raise();
+    // Roundtable plan Task 15 (design 11.2 First run): opening Roundtable
+    // from a flag asks the first-run question too, as the Spot Hub tab does.
+    openRoundtableFirstRunIfNeeded();
+}
+
+void MainWindow::onRoundtableRoomClicked(const QString& roomId)
+{
+    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(roomId); }
 }
 
 void MainWindow::wirePanNotchHandlers()
@@ -8800,6 +8895,8 @@ void MainWindow::buildUI()
         wirePanStatusOverlayTriggers();
         wirePanBadgeHandlers();
         wirePanNotchHandlers();
+        wirePanRoundtableTags();
+        scheduleRoundtableRefresh();
         ensureOverlayPanels();
         refreshPanStatusOverlays();
         refreshPanNotchMarkers();
@@ -8905,6 +9002,7 @@ void MainWindow::buildUI()
     wirePanStatusOverlayTriggers();
     wirePanBadgeHandlers();
     wirePanNotchHandlers();
+    wirePanRoundtableTags();
     // Seed pan-0 with whatever NotchModel::restoreFromSettings() already
     // loaded in the RadioModel constructor. The layout restore below fires
     // countChanged and re-runs both of these for the pans it creates.
@@ -11697,6 +11795,40 @@ void MainWindow::populateDefaultMeter()
     m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
     panel->addApplet(m_rotorApplet);
 
+    // Roundtable plan Task 13 (design 11.2 Panel): the Roundtable applet,
+    // following the active slice. Its Settings open the Spot Hub on the
+    // Roundtable tab.
+    m_roundtableApplet = new RoundtableApplet(m_radioModel);
+    panel->addApplet(m_roundtableApplet);
+    // Roundtable plan Task 14 (design 11.2): the tags on every pan follow
+    // the band list, the link, the slices' rooms and mentions of you.
+    if (RoundtableModel* roundtable = m_radioModel->roundtableModel()) {
+        connect(roundtable, &RoundtableModel::roomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::roomChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+    }
+    connect(m_radioModel, &RadioModel::sliceAdded, this, &MainWindow::scheduleRoundtableRefresh);
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, &MainWindow::scheduleRoundtableRefresh);
+    scheduleRoundtableRefresh();
+    connect(m_roundtableApplet, &RoundtableApplet::settingsRequested, this, [this]() {
+        openSpotHub();
+        if (!m_spotHubDialog) {
+            return;
+        }
+        auto* tabs = m_spotHubDialog->findChild<QTabWidget*>();
+        auto* page = m_spotHubDialog->findChild<QWidget*>(QStringLiteral("roundtableTab"));
+        if (tabs == nullptr || page == nullptr) {
+            return;
+        }
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->widget(i) == page || tabs->widget(i)->isAncestorOf(page)) {
+                tabs->setCurrentIndex(i);
+            }
+        }
+    });
+
     // The tuner's scale follows actual OPERATE state from either amplifier,
     // including the Core's mirrored devices in a remote window.
     if (m_tunerApplet) {
@@ -11911,6 +12043,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
+    m_appletsById[QStringLiteral("Roundtable")] = m_roundtableApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
 #ifdef HAVE_WEBSOCKETS
@@ -11966,6 +12099,9 @@ void MainWindow::populateDefaultMeter()
     // no rotor it stays, greyed with the reason (disabled, never hidden).
     m_appletVis->registerApplet(QStringLiteral("Rotor"),
                                 QStringLiteral("Rotor"),        true);
+    // Roundtable plan Task 13: shown by default (design 11.2 Panel).
+    m_appletVis->registerApplet(QStringLiteral("Roundtable"),
+                                QStringLiteral("Roundtable"),   true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
@@ -18031,6 +18167,7 @@ void MainWindow::refreshSpotHubAvailability()
         m_spotHubDialog->setStationSettingsAvailable(true, QString());
         m_spotHubDialog->setStationSourcesAvailable(true, QString());
         m_spotHubDialog->setStationFreedvAvailable(true, QString());
+        m_spotHubDialog->setStationRoundtableAvailable(true, QString());
         return;
     }
     const bool settings = stationSettingsAvailable();
@@ -18042,6 +18179,25 @@ void MainWindow::refreshSpotHubAvailability()
     const bool freedv = m_stationClient != nullptr && m_stationClient->stationFreedvAvailable();
     m_spotHubDialog->setStationFreedvAvailable(
         freedv, IStationLink::stationFreedvUnavailableReason());
+    // Roundtable plan Task 12: Roundtable is the Core's.
+    const bool roundtable = m_stationClient != nullptr && m_stationClient->roundtableAvailable();
+    m_spotHubDialog->setStationRoundtableAvailable(
+        roundtable, IStationLink::roundtableUnavailableReason());
+}
+
+void MainWindow::openRoundtableFirstRunIfNeeded()
+{
+    // Roundtable plan Task 12 (design 11.2, D25): asked once per station;
+    // another device's answer gives this computer a one-time note.
+    RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (m_roundtableFirstRun || !RoundtableFirstRunDialog::shouldShow(model)) {
+        return;
+    }
+    QWidget* parent = m_spotHubDialog ? static_cast<QWidget*>(m_spotHubDialog.data())
+                                      : static_cast<QWidget*>(this);
+    m_roundtableFirstRun = new RoundtableFirstRunDialog(model, parent);
+    m_roundtableFirstRun->setAttribute(Qt::WA_DeleteOnClose);
+    m_roundtableFirstRun->open();
 }
 
 void MainWindow::refreshFreedvReporterAvailability()
@@ -19404,7 +19560,8 @@ void MainWindow::openSpotHub()
             m_radioModel->spotModel(),
             m_radioModel->spotTableModel(),
             m_radioModel->dxccColorProvider(),
-            this);
+            this,
+            m_radioModel->roundtableModel());
         // Bridge spotsClearedAll (Display tab's "Clear All Spots" button)
         // to SpotModel::clear so the global QShortcut and the dialog
         // button share one truth-source.
@@ -19511,8 +19668,18 @@ void MainWindow::openSpotHub()
                     &SpotSourceHost::startPskReporter);
             connect(hub, &SpotHubDialog::pskStopRequested, host,
                     &SpotSourceHost::stopPskReporter);
+            // Roundtable plan Task 12: Roundtable's Start and Stop, the
+            // Core's in a remote window.
+            connect(hub, &SpotHubDialog::roundtableStartRequested, host,
+                    &SpotSourceHost::startRoundtable);
+            connect(hub, &SpotHubDialog::roundtableStopRequested, host,
+                    &SpotSourceHost::stopRoundtable);
             hub->setSourceHost(host);
         }
+        // Roundtable plan Task 12 (design 11.2 First run): the first time
+        // the station opens Roundtable, "Roundtable is public".
+        connect(m_spotHubDialog.data(), &SpotHubDialog::roundtableOpened, this,
+                &MainWindow::openRoundtableFirstRunIfNeeded);
         refreshSpotHubAvailability();
 
         // 2026-05-12 bench fix: Save & Propagate writes User/GridSquare

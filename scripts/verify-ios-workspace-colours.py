@@ -139,6 +139,7 @@ KEPT_RADII: Dict[str, str] = {
     "cfc-bars": "the CFC bars' greyed meter place (W11)",
     "eq-plot": "a label drawn inside the TX EQ plot (W11)",
     "spot-label": "spot labels on the spectrum (W11: spectrum drawing)",
+    "roundtable-tag": "Roundtable room tags on the spectrum, drawn like spot labels (W11: spectrum drawing)",
     "swatch": "slice color swatch (W11)",
     "icon": "the app icon clip (W11)",
     "illustration": "the station picture, an illustration (W11)",

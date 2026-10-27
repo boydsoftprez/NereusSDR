@@ -1,5 +1,13 @@
 // NereusSDR for iOS: transmit on the main screen: the PTT, the TX panel's controls and the keyed view's readings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, PTT press and hold while the
+// Roundtable sheet is open. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the UI tests' record of every ask to
+// key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave, unkeyFromHold: a quick tap on the hold
+// PTT takes off a key it does not hold. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 import Combine
 import Foundation
@@ -609,12 +617,26 @@ final class TransmitModel: ObservableObject {
         }
         await controller.logicalSessionChanged(owner)
         await controller.linkChanged(up: up)
+        if !up {
+            // The link went: a hold's press ends with it, and never keys again by itself.
+            releaseHeldPtt()
+        }
     }
 
     // MARK: The operator
 
+    #if DEBUG
+    /// Told each ask to key (PTT, MOX, the hold PTT, TUNE, the tuner's
+    /// TUNE), before anything decides whether it may: the UI tests' record
+    /// that opening the TX panel by a swipe asks nothing.
+    var keyObserver: ((String) -> Void)?
+    #endif
+
     /// The PTT, and the TX panel's MOX.
     func tapPtt() {
+        #if DEBUG
+        keyObserver?("tap")
+        #endif
         guard offered else {
             heldNote = Self.noRemoteTransmitText
             return
@@ -640,8 +662,102 @@ final class TransmitModel: ObservableObject {
         Task { await controller.tap(trigger: TransmitVerb.screenTrigger) }
     }
 
+    // MARK: Press and hold (the Roundtable sheet's PTT)
+
+    /// A press of the hold PTT owns the key: its release, or anything that
+    /// ends the press (the sheet closing, the app leaving the screen, the
+    /// link going), unkeys it.
+    @Published private(set) var holding = false
+    /// The hold's sends, in order: a release waits for its press, so a
+    /// quick press and release can never leave the radio keyed.
+    private var holdChain: Task<Void, Never>?
+
+    /// The hold PTT pressed long enough (spec 11.3, U2): keys when nothing
+    /// of this device's is keyed; a key already on (a tap's) becomes the
+    /// hold's, so letting go unkeys it. Never toggles: a press while a key
+    /// is on its way keys nothing more.
+    func holdPtt() {
+        #if DEBUG
+        keyObserver?("hold")
+        #endif
+        guard offered else {
+            heldNote = Self.noRemoteTransmitText
+            return
+        }
+        switch ptt.state {
+        case .heldElsewhere, .waiting:
+            heldNote = permission?.reason
+            return
+        default:
+            heldNote = nil
+        }
+        guard !holding else {
+            return
+        }
+        holding = true
+        let controller = controller
+        let previous = holdChain
+        holdChain = Task {
+            await previous?.value
+            switch await controller.state {
+            case .idle, .refused:
+                await controller.tap(trigger: TransmitVerb.screenTrigger)
+            default:
+                break
+            }
+        }
+    }
+
+    /// The hold PTT let go, its touch cancelled, or the press ended by the
+    /// sheet, the scene or the link: unkeys the hold's key, after its press
+    /// has reached the PTT. Nothing while no press holds the key.
+    func releaseHeldPtt() {
+        guard holding else {
+            return
+        }
+        stopAfterHold()
+    }
+
+    /// A quick tap on the hold PTT while this device's key is on (a tap's,
+    /// TUNE's, or the hold's own under VoiceOver): unkeys it, after any
+    /// press still on its way, whether or not a press holds it. The sheet's
+    /// PTT is then never one that cannot take a key off.
+    func unkeyFromHold() {
+        stopAfterHold()
+    }
+
+    /// Ends the hold and stops this device's key behind the hold's sends.
+    private func stopAfterHold() {
+        holding = false
+        let controller = controller
+        let owner = microphoneOwner
+        let authority = CommandSendPermit(parents: [localStopAuthority])
+        let previous = holdChain
+        holdChain = Task {
+            await previous?.value
+            await controller.stopAll(owner: owner, authority: authority)
+        }
+    }
+
+    /// The app's scene changed: a held PTT lets go once the scene is not
+    /// active (it lost focus to Control Center, the app switcher or a
+    /// call, or left the screen).
+    func sceneChanged(active: Bool) {
+        if !active {
+            releaseHeldPtt()
+        }
+    }
+
+    /// Waits for the hold's sends to reach the PTT (the tests).
+    func settleHold() async {
+        await holdChain?.value
+    }
+
     /// The TX panel's TUNE.
     func toggleTune() {
+        #if DEBUG
+        keyObserver?("tune")
+        #endif
         let controller = controller
         let operation = Task { await controller.toggleTune() }
         #if DEBUG
@@ -655,6 +771,9 @@ final class TransmitModel: ObservableObject {
     /// it too. Greyed with ``tunerTuneReason`` it starts nothing; this
     /// phone's own tune always ends.
     func toggleTunerTune() {
+        #if DEBUG
+        keyObserver?("tunerTune")
+        #endif
         guard tunerTuneReason == nil else {
             return
         }

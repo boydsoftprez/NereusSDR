@@ -1,0 +1,18 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "presence",
+    "callsign": "KG4VCF",
+    "grid": "EM73",
+    "slices": [
+      {
+        "id": 0,
+        "hz": 14212000,
+        "mode": "USB",
+        "filterHz": 2700,
+        "keyed": false
+      }
+    ]
+  },
+  "decodes": false
+}

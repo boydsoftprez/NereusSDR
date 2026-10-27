@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "resync",
+    "room": "usb-14212000"
+  },
+  "decodes": true
+}

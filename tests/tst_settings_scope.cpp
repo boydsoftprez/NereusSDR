@@ -101,6 +101,14 @@
 // the sabotage-and-revert proof in the task report for a transcript
 // isolating (b)'s own failure message using exactly this two-key
 // population (audio/DspRate).
+//
+// Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 11: the Roundtable/ rows. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 12: Roundtable/FirstRunSeen. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 13: Roundtable/WindowGeometry. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QDir>
 #include <QDirIterator>
@@ -641,6 +649,21 @@ private slots:
             << QStringLiteral("TciLogWindowGeometry") << int(SettingsScope::OperatorLocal);
         QTest::newRow("hardware/oc/pennyExtCtrl is Station (oc is a literal segment, not a MAC)")
             << QStringLiteral("hardware/oc/pennyExtCtrl") << int(SettingsScope::Station);
+        // Roundtable plan Task 11 (design 10.1, 10.3): the Core runs
+        // Roundtable and keeps its settings; two panel preferences stay
+        // each window's.
+        QTest::newRow("Roundtable/Callsign is Station (the Core's Roundtable)")
+            << QStringLiteral("Roundtable/Callsign") << int(SettingsScope::Station);
+        QTest::newRow("Roundtable/FirstRunAnswer is Station (the Core's Roundtable)")
+            << QStringLiteral("Roundtable/FirstRunAnswer") << int(SettingsScope::Station);
+        QTest::newRow("Roundtable/EarlierTurnsShown is OperatorLocal (a panel preference)")
+            << QStringLiteral("Roundtable/EarlierTurnsShown") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Roundtable/PanelOpensOn is OperatorLocal (a panel preference)")
+            << QStringLiteral("Roundtable/PanelOpensOn") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Roundtable/FirstRunSeen is OperatorLocal (this computer asked)")
+            << QStringLiteral("Roundtable/FirstRunSeen") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Roundtable/WindowGeometry is OperatorLocal (this computer's window)")
+            << QStringLiteral("Roundtable/WindowGeometry") << int(SettingsScope::OperatorLocal);
 
         // The other three FftPoolConfig knobs (MainWindow.cpp:1512's "the
         // four display AppSettings-sourced knobs"). MainWindow.cpp is

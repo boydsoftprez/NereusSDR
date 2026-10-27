@@ -1,10 +1,19 @@
 // NereusSDR for iOS: the settings this phone keeps for itself, in UserDefaults
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the first-run note shown once on
+// this phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the Panadapter tab's three swipes and
+// their reset. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the iPad's swipe defaults (both edges
+// Off) and where the Roundtable applet sits in its column. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
 import NereusBand
 import NereusMedia
+import UIKit
 
 /// The settings Setup marks This phone: kept on the phone in `UserDefaults`,
 /// never sent to the Core. Each screen task adds its own settings here as
@@ -15,9 +24,13 @@ final class PhoneSettings: ObservableObject {
     static let keyPrefix = "phone."
 
     private let defaults: UserDefaults
+    /// This device is an iPad: some defaults differ (the swipes' edges).
+    /// Each device keeps its own store, so its choices stay its own.
+    let isPad: Bool
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, isPad: Bool? = nil) {
         self.defaults = defaults
+        self.isPad = isPad ?? (UIDevice.current.userInterfaceIdiom == .pad)
     }
 
     func bool(_ key: String, default fallback: Bool) -> Bool {
@@ -282,6 +295,91 @@ final class PhoneSettings: ObservableObject {
     static let cellularModeKey = "data.cellularMode"
     static let cellularWarningKey = "data.cellularWarning"
     static let cellularNoteShownKey = "data.cellularNoteShown"
+
+    // MARK: Roundtable (spec 11.2)
+
+    /// The note that the station answered Roundtable's first question on
+    /// another device was shown on this phone.
+    var roundtableFirstRunNoteSeen: Bool {
+        get { bool(Self.roundtableFirstRunNoteSeenKey, default: false) }
+        set { setBool(newValue, for: Self.roundtableFirstRunNoteSeenKey) }
+    }
+
+    static let roundtableFirstRunNoteSeenKey = "roundtable.firstRunNoteSeen"
+
+    /// Where the Roundtable applet sits among the iPad column's applets,
+    /// counted from the top: second, under the S-meter, unless the grip
+    /// moved it (spec 11.4). Out of range reads as the nearest end.
+    var roundtableAppletPosition: Int {
+        get { AppletOrder.clamped(integer(Self.roundtableAppletPositionKey, default: AppletOrder.roundtableDefault)) }
+        set { setInteger(AppletOrder.clamped(newValue), for: Self.roundtableAppletPositionKey) }
+    }
+
+    static let roundtableAppletPositionKey = "applets.roundtablePosition"
+
+    // MARK: Swipes on the panadapter (Setup, General, Navigation; spec 11.3, S1)
+
+    /// What a swipe in from the band's left edge opens: the RX panel unless
+    /// changed (Off on an iPad).
+    var swipeLeftEdge: SwipeTarget {
+        get { swipeTarget(.leftEdge) }
+        set { setSwipeTarget(newValue, for: .leftEdge) }
+    }
+
+    /// What a swipe in from the band's right edge opens: the TX panel unless
+    /// changed (Off on an iPad).
+    var swipeRightEdge: SwipeTarget {
+        get { swipeTarget(.rightEdge) }
+        set { setSwipeTarget(newValue, for: .rightEdge) }
+    }
+
+    /// What a swipe up from the tab bar opens: Roundtable on my frequency unless changed.
+    var swipeUpTabBar: SwipeTarget {
+        get { swipeTarget(.tabBar) }
+        set { setSwipeTarget(newValue, for: .tabBar) }
+    }
+
+    func swipeTarget(_ origin: SwipeOrigin) -> SwipeTarget {
+        SwipeTarget(rawValue: string(Self.swipeKey(origin), default: ""))
+            ?? SwipeShortcuts.defaultTarget(origin, iPad: isPad)
+    }
+
+    func setSwipeTarget(_ target: SwipeTarget, for origin: SwipeOrigin) {
+        setString(target.rawValue, for: Self.swipeKey(origin))
+    }
+
+    /// A swipe maps to something other than its default.
+    var swipesChanged: Bool {
+        SwipeOrigin.allCases.contains { swipeTarget($0) != SwipeShortcuts.defaultTarget($0, iPad: isPad) }
+    }
+
+    /// The defaults Reset brings back, in Setup's words and order.
+    var swipeDefaultsText: String {
+        SwipeOrigin.allCases.map { SwipeShortcuts.defaultTarget($0, iPad: isPad).title }.joined(separator: ", ")
+    }
+
+    /// Back to this device's defaults: RX panel, TX panel and Roundtable on
+    /// my frequency on a phone; Off, Off and Roundtable on an iPad.
+    func resetSwipes() {
+        for origin in SwipeOrigin.allCases {
+            reset(Self.swipeKey(origin))
+        }
+    }
+
+    static let swipeLeftEdgeKey = "swipe.leftEdge"
+    static let swipeRightEdgeKey = "swipe.rightEdge"
+    static let swipeUpTabBarKey = "swipe.upTabBar"
+
+    static func swipeKey(_ origin: SwipeOrigin) -> String {
+        switch origin {
+        case .leftEdge:
+            return swipeLeftEdgeKey
+        case .rightEdge:
+            return swipeRightEdgeKey
+        case .tabBar:
+            return swipeUpTabBarKey
+        }
+    }
 
     /// Keeps a value without telling the screens: for counters that change
     /// every few seconds and that only their owner reads.

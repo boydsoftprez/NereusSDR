@@ -1,5 +1,10 @@
 // NereusSDR for iOS: what sits over the band: the flags and tags, the touches that pan, tune and zoom, the zoom buttons
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, each flag's Roundtable line and the
+// dial's strip under the Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, Roundtable's tags along the foot of
+// the spectrum and the swipes' edge zones. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -94,11 +99,30 @@ struct BandGestureLayer: View {
     /// leaves the band without the hold (the flag pictures). While the menu
     /// is open the band's taps and drags do nothing.
     var bandMenu: Binding<BandMenuAnchor?>?
+    /// Each slice's Roundtable line, by slice id (spec 11.3); a slice not
+    /// here draws none.
+    var roundtableLines: [Int: RoundtableFlagLine] = [:]
+    /// A Roundtable line's tap, with its slice.
+    var openRoundtable: ((Int) -> Void)?
+    /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
+    /// strip under it, the knob drawn smaller (spec 11.3).
+    var dialStrip = false
+    /// Roundtable, whose rooms are tags along the foot of the spectrum
+    /// (spec 11.3); nil draws none.
+    var roundtable: RoundtableModel?
+    /// The Panadapter tab's swipes: a drag that starts in an edge zone and
+    /// heads in is the swipe, not the band's; nil leaves the edges to the band.
+    var swipes: SwipeShortcutModel?
     @Environment(\.uprightBandWidth) private var uprightWidth
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// The drag under way, if any (what it moves is settled where it began).
     @State private var dragger = BandDrag()
+    /// What the drag under way is: not yet known, a swipe, or the band's.
+    @State private var dragKind = DragKind.undecided
+    /// A drag is under way; a cancelled one ends here without its onEnded.
+    @GestureState private var dragging = false
     @State private var pinching = false
     /// The band when the pinch began.
     @State private var pinchStart: BandGeometry?
@@ -123,7 +147,7 @@ struct BandGestureLayer: View {
                 GeometryReader { proxy in
                     if let axes = band.pointGeometry(size: proxy.size) {
                         DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
-                                  sideways: sideways, trailingInset: trailingInset)
+                                  sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
                     }
                 }
             }
@@ -155,7 +179,9 @@ struct BandGestureLayer: View {
         let entries = shown.flags
         let large = large
         let jumped = slices.jumped
-        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large)) },
+        let lines = roundtableLines
+        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large,
+                                                                                  roundtable: lines[$0.id] != nil)) },
                                   uniquingKeysWith: { first, _ in first })
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
@@ -266,6 +292,20 @@ struct BandGestureLayer: View {
                 // Spots start under the flags, which draw over them (D13).
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
             }
+            if let roundtable {
+                // 8 points above the band plan, clear of every flag and folded tag.
+                RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },
+                                   geometryWidth: geometry.size.width, lowHz: geometry.lowHz,
+                                   hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
+                                   top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
+                                   tickFoot: layout.strip.minY,
+                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect), keyed: keyed,
+                                   sliceLetter: slices.active?.slice.letter ?? "A") { room in
+                    // As the sheet's Tune here: the active slice to the room, then back to its own room.
+                    slices.tap(to: Double(room.hz))
+                    Task { await roundtable.backToSlice() }
+                }
+            }
             if let flagControls {
                 // Behind the flags: a tap outside them closes an open menu or panel.
                 FlagPopoverCatcher(controls: flagControls)
@@ -282,9 +322,12 @@ struct BandGestureLayer: View {
             if let flagControls, let store = flagControls.store {
                 WideChipLayer(store: store, controls: flagControls, rect: chipRect, large: large)
             }
-            ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
-                        zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
-                .offset(x: zoomAt.x, y: zoomAt.y)
+            if !dialStrip {
+                // Under the Roundtable sheet zoom waits with the band; the strip keeps PTT and the dial only.
+                ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
+                            zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
+                    .offset(x: zoomAt.x, y: zoomAt.y)
+            }
             if let tuning {
                 // Over the flags: a tap outside the step menu closes it, and a drag there moves the band.
                 StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
@@ -292,6 +335,15 @@ struct BandGestureLayer: View {
             }
         }
         .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: placements))
+        .onChange(of: dragging) { _, now in
+            // A drag cancelled before it ended: its swipe springs back.
+            if !now, dragKind != .undecided {
+                if dragKind == .swipe {
+                    swipes?.cancel(reduceMotion: reduceMotion)
+                }
+                dragKind = .undecided
+            }
+        }
         .overlay(alignment: .topLeading) {
             // Over the band's drag, not inside it: a drag that starts in an
             // open menu or panel (a slider, a scroll) is that control's
@@ -417,7 +469,12 @@ struct BandGestureLayer: View {
                         antennasOpen: controls?.isOpen(.antennas(id)) ?? false,
                         openTab: controls?.openTab(id),
                         bypassOn: controls?.bypassOn ?? false,
-                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } })
+                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } },
+                        roundtable: roundtableLines[id],
+                        openRoundtable: openRoundtable.map { open in {
+                            controls?.close()
+                            open(id)
+                        } })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -539,9 +596,21 @@ struct BandGestureLayer: View {
     private func drag(layout: BandLayout, geometry: BandGeometry, entries: [BandSlicesModel.Entry],
                       placements: [FlagPlacement]) -> some Gesture {
         DragGesture(minimumDistance: TuneGestures.dragThresholdPoints)
+            .updating($dragging) { _, state, _ in
+                state = true
+            }
             .onChanged { value in
                 // While the band menu is open the finger that opened it moves nothing.
                 guard !pinching, !menuOpen || dragger.target != nil else {
+                    return
+                }
+                if dragKind == .undecided {
+                    dragKind = swipeBegins(value, layout: layout) ? .swipe : .band
+                }
+                if dragKind == .swipe {
+                    if let origin = swipes?.drag?.origin {
+                        swipes?.move(SwipeShortcuts.inward(origin, value.translation))
+                    }
                     return
                 }
                 dragger.changed(from: value.startLocation, translation: value.translation.width,
@@ -551,7 +620,17 @@ struct BandGestureLayer: View {
                 // The frequency under the finger, for the cursor readout.
                 band.cursorHz = geometry.hz(forX: Double(value.location.x))
             }
-            .onEnded { _ in
+            .onEnded { value in
+                let kind = dragKind
+                dragKind = .undecided
+                if kind == .swipe {
+                    if let swipes, let origin = swipes.drag?.origin {
+                        swipes.end(distance: SwipeShortcuts.inward(origin, value.translation),
+                                   predicted: SwipeShortcuts.inward(origin, value.predictedEndTranslation),
+                                   reduceMotion: reduceMotion)
+                    }
+                    return
+                }
                 dragger.ended(slices: slices)
                 band.cursorHz = nil
             }
@@ -571,6 +650,32 @@ struct BandGestureLayer: View {
             return false
         }
         bandMenu?.wrappedValue = BandMenuAnchor(point: point, frequencyHz: geometry.hz(forX: Double(point.x)))
+        return true
+    }
+
+    /// What a drag is, settled as it first moves.
+    private enum DragKind {
+        case undecided
+        case swipe
+        case band
+    }
+
+    /// A drag that starts in a live edge zone and heads in begins its
+    /// swipe; any other is the band's (spec 11.3: 18 points at each edge,
+    /// ending above PTT; Off gives the edge back to the band).
+    private func swipeBegins(_ value: DragGesture.Value, layout: BandLayout) -> Bool {
+        guard let swipes else {
+            return false
+        }
+        let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
+            - SwipeShortcuts.aboveControls
+        guard let origin = SwipeShortcuts.edgeOrigin(start: value.startLocation, bandSize: layout.size,
+                                                     zoneFoot: foot, leadingInset: leadingInset,
+                                                     trailingInset: trailingInset),
+              SwipeShortcuts.claims(origin, translation: value.translation), swipes.begin(origin) else {
+            return false
+        }
+        swipes.move(SwipeShortcuts.inward(origin, value.translation))
         return true
     }
 

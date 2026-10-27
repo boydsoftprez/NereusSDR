@@ -236,6 +236,10 @@
 //   2026-10-22: the capture declares radioAntennaRows 2, so the Core's
 //               RX-only checkbox sums (0..5) are captured unnarrowed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11: the capture declares roundtable,
+//               so stationRoundtableVersion and the `roundtable` object
+//               (RoundtableState) are captured. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -321,6 +325,7 @@
 #include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
+#include "core/roundtable/RoundtableState.h"
 #include "models/TransmitModel.h"
 #include "models/TunerModel.h"
 
@@ -782,7 +787,11 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"rxMeterStamps", 1},
                                   // NSDC v2: displayCodecVersion and the
                                   // start's declaration.
-                                  {"displayCodec", 2}})));
+                                  {"displayCodec", 2},
+                                  // Roundtable plan Task 11:
+                                  // stationRoundtableVersion and
+                                  // `roundtable`.
+                                  {"roundtable", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -889,6 +898,8 @@ QJsonArray captureCapabilities()
     caps.rxMeterStampsVersion = 1;
     // NSDC v2: sent to a peer that declared displayCodec 2.
     caps.displayCodecVersion = 2;
+    // Roundtable plan Task 11: sent to a peer that declared roundtable.
+    caps.stationRoundtableVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
@@ -2065,7 +2076,8 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &TransmitState::staticMetaObject,
             &StationVax::staticMetaObject,
             &PaProfilesFacade::staticMetaObject,
-            &RotorLink::RotorModel::staticMetaObject};
+            &RotorLink::RotorModel::staticMetaObject,
+            &RoundtableState::staticMetaObject};
 }
 
 QJsonObject LinkSurface::capture()

@@ -585,6 +585,11 @@
 //   2026-10-22: a typed Core name's addresses raced in dialStation
 //               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-24: Roundtable plan Task 11: declares roundtable 1; the
+//               `roundtable` object, the roundtableRooms and room streams
+//               for RoundtableModel, and the thirteen roundtable.* requests
+//               and their answers. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -638,6 +643,9 @@
 #include "models/AccessoryDataModel.h"
 #include "models/RotorModel.h"
 #include "models/AccessorySettingsModel.h"
+#include "models/RoundtableModel.h"
+#include "core/roundtable/RoundtableState.h"
+#include "core/session/RecordStream.h"
 
 #include <QAuthenticator>
 #include <QHostAddress>
@@ -975,6 +983,16 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         // PA Gain page's on-the-air lock) hear it through the model.
         connect(this, &StationClient::transmitTakeAvailabilityChanged, radioModel,
                 &RadioModel::reportTransmitHolderChanged);
+        // Roundtable plan Task 11: the window's Roundtable screens act
+        // through this link and read the Core's `roundtable` object; the
+        // slices' rooms are followed as the Core places them.
+        if (radioModel->role() == RadioModel::Role::Remote
+            && radioModel->roundtableModel() != nullptr
+            && radioModel->roundtableState() != nullptr) {
+            radioModel->roundtableModel()->attachStation(this, radioModel->roundtableState());
+            connect(radioModel->roundtableState(), &RoundtableState::stateChanged, this,
+                    &StationClient::syncRoundtableStreams);
+        }
     }
 
     // iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): this
@@ -1004,6 +1022,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // Core's CAT (the `stationCat` object, the `catLog` stream and its four
     // commands; stationCatVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("stationCat"), 1);
+    // Roundtable plan Task 11: this window shows the Core's Roundtable (the
+    // `roundtable` object, its room streams and the roundtable.* verbs;
+    // stationRoundtableVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("roundtable"), 1);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -1388,6 +1410,11 @@ StationClient::~StationClient()
     // the reverse order (model destroyed first) needs no special case.
     if (!m_radioModel.isNull()) {
         m_radioModel->detachStation();
+        // Roundtable plan Task 11: likewise the Roundtable screens' link.
+        if (m_radioModel->role() == RadioModel::Role::Remote
+            && m_radioModel->roundtableModel() != nullptr) {
+            m_radioModel->roundtableModel()->detach();
+        }
     }
 }
 
@@ -2588,7 +2615,20 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         // Parity Task 22: the Core's log and bundle wait for the next
         // session.
         m_radioModel->noteStationSupportAvailabilityChanged();
+        // Roundtable plan Task 11: the Core's Roundtable and its rooms leave
+        // this window until the next snapshot sends them again.
+        if (m_radioModel->role() == RadioModel::Role::Remote) {
+            if (RoundtableState* roundtable = m_radioModel->roundtableState()) {
+                roundtable->clearStationValues();
+            }
+            if (RoundtableModel* rooms = m_radioModel->roundtableModel()) {
+                rooms->clearStationRooms();
+            }
+        }
     }
+    m_roundtableStreams.clear();
+    m_roundtableReadStream.clear();
+    m_roundtableCommands.clear();
     // R-IOS-13 / R-R3-49: that session's Mod Monitor subscription ended
     // with it; the window's choice of source stays for the next.
     m_modMonitorStream.clear();
@@ -3119,6 +3159,26 @@ void StationClient::onTransportText(const QByteArray& wire)
                            MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
                                         QVariant(static_cast<qlonglong>(m_catLogBacklog))}});
         }
+        // Roundtable plan Task 11: the Core's band list, the rooms its
+        // slices are in, and the room this window reads (read again, since
+        // the Core forgot this window's reading with the last session).
+        if (m_sessionPurpose == SessionPurpose::Ordinary && roundtableAvailable()
+            && !m_radioModel.isNull() && m_radioModel->roundtableModel() != nullptr) {
+            m_roundtableStreams.clear();
+            m_roundtableReadStream.clear();
+            m_radioModel->roundtableModel()->clearStationRooms();
+            invokeCommand("records.subscribe",
+                          {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
+                                        QVariant(QString::fromLatin1(RoundtableModel::kRoomsStream))},
+                           MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                        QVariant(static_cast<qlonglong>(
+                                            RoundtableModel::kRoomsCapacity))}});
+            syncRoundtableStreams();
+            const QString reading = m_radioModel->roundtableModel()->readingRoomId();
+            if (!reading.isEmpty()) {
+                requestRoundtableRead(reading);
+            }
+        }
         // Parity Task 22 (R-R3-49): the Core's log follows again for the
         // viewers that hold it, and the support controls learn the session.
         if (!m_radioModel.isNull()) {
@@ -3240,6 +3300,16 @@ void StationClient::onTransportText(const QByteArray& wire)
                     emit cfcCompressionReceived(
                         bins, static_cast<qint64>(u.fields.value(QStringLiteral("atMs")).toDouble()));
                 }
+            }
+            break;
+        }
+        // Roundtable plan Task 11: the band list and the rooms in view.
+        if (message.recordBatch.stream == QLatin1String(RoundtableModel::kRoomsStream)
+            || message.recordBatch.stream.startsWith(
+                QLatin1String(RoundtableModel::kRoomStreamPrefix))) {
+            if (roundtableAvailable() && !m_radioModel.isNull()
+                && m_radioModel->roundtableModel() != nullptr) {
+                m_radioModel->roundtableModel()->applyRecordBatch(message.recordBatch);
             }
             break;
         }
@@ -4024,6 +4094,20 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         } else {
             m_objects.remove(key);
             m_outboundMirror->unwatch(key);
+        }
+    }
+
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read only; never written back. Against a Core
+    // that does not offer it the key is not held.
+    if (RoundtableState* roundtable = m_radioModel->roundtableState();
+        roundtable != nullptr && m_radioModel->role() == RadioModel::Role::Remote) {
+        if (m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+            && m_capabilities.stationRoundtableVersion >= 1) {
+            m_objects.insert(QByteArrayLiteral("roundtable"), roundtable);
+        } else {
+            m_objects.remove(QByteArrayLiteral("roundtable"));
+            roundtable->clearStationValues();
         }
     }
 
@@ -5345,6 +5429,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
     if (className == "RotorModel") {
         auto* rotor = qobject_cast<RotorLink::RotorModel*>(target);
         return rotor != nullptr && rotor->applyStationValue(propertyName, native);
+    }
+    // Roundtable plan Task 11: a plain state apply; changes only by the
+    // roundtable.* verbs.
+    if (className == "RoundtableState") {
+        auto* roundtable = qobject_cast<RoundtableState*>(target);
+        return roundtable != nullptr && roundtable->applyStationValue(propertyName, native);
     }
     if (className != "SliceModel") {
         return false;
@@ -7280,6 +7370,218 @@ StationClient::CommandOutcome StationClient::requestRotorPresets(const QString& 
                        QStringLiteral("the rotor presets"));
 }
 
+// Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+// Roundtable. A Core that did not offer it is not asked; the window says
+// why. Each answer goes to RoundtableModel (handleRoundtableResult).
+StationClient::CommandOutcome StationClient::sendRoundtableCommand(
+    const QByteArray& verb, const QList<MirrorUpdate>& arguments, const QString& clientId,
+    const QString& roomId)
+{
+    if (!roundtableAvailable()) {
+        return { false, IStationLink::roundtableUnavailableReason() };
+    }
+    const quint32 id = invokeCommand(verb, arguments);
+    if (id == 0) {
+        return { false, RoundtableState::notConnectedReason() };
+    }
+    const QByteArray name = verb.mid(verb.indexOf('.') + 1);
+    m_roundtableCommands.insert(id, RoundtableCommand{ QString::fromLatin1(name), clientId,
+                                                       roomId });
+    return { true, QString() };
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtablePost(const QString& roomId,
+                                                                   const QString& text,
+                                                                   const QString& clientId)
+{
+    return sendRoundtableCommand("roundtable.post",
+                                 { stringArgument("roomId", roomId),
+                                   stringArgument("text", text),
+                                   stringArgument("clientId", clientId) },
+                                 clientId);
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableDelete(const QString& messageId)
+{
+    return sendRoundtableCommand("roundtable.delete", { stringArgument("messageId", messageId) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableName(const QString& turnId,
+                                                                   const QString& name)
+{
+    return sendRoundtableCommand("roundtable.name",
+                                 { stringArgument("turnId", turnId),
+                                   stringArgument("name", name) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableReport(const QString& kind,
+                                                                     const QString& target,
+                                                                     const QString& reason)
+{
+    return sendRoundtableCommand("roundtable.report",
+                                 { stringArgument("kind", kind),
+                                   stringArgument("target", target),
+                                   stringArgument("reason", reason) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableRead(const QString& roomId)
+{
+    return sendRoundtableCommand("roundtable.read", { stringArgument("roomId", roomId) },
+                                 QString(), roomId);
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableUnread(const QString& roomId)
+{
+    const CommandOutcome outcome =
+        sendRoundtableCommand("roundtable.unread", { stringArgument("roomId", roomId) },
+                              QString(), roomId);
+    // The room's stream stops following now, unless a slice is in it.
+    if (m_roundtableReadStream == RoundtableModel::roomStreamName(roomId)) {
+        m_roundtableReadStream.clear();
+        syncRoundtableStreams();
+    }
+    return outcome;
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableSetHidden(bool hidden)
+{
+    return sendRoundtableCommand("roundtable.setHidden", { boolArgument("hidden", hidden) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableAnswerFirstRun(bool live)
+{
+    return sendRoundtableCommand("roundtable.answerFirstRun", { boolArgument("live", live) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableMute(const QString& callsign)
+{
+    return sendRoundtableCommand("roundtable.mute", { stringArgument("callsign", callsign) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableUnmute(const QString& callsign)
+{
+    return sendRoundtableCommand("roundtable.unmute", { stringArgument("callsign", callsign) });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableMarkMentionRead(qint64 upToMs)
+{
+    return sendRoundtableCommand("roundtable.markMentionRead",
+                                 { MirrorUpdate{ 0, "upToMs", MirrorWireKind::Int64,
+                                                 QVariant(static_cast<qlonglong>(upToMs)) } });
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableWebSignIn()
+{
+    return sendRoundtableCommand("roundtable.webSignIn", {});
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableDeleteArchive(
+    const QString& confirm)
+{
+    return sendRoundtableCommand("roundtable.deleteArchive",
+                                 { stringArgument("confirm", confirm) });
+}
+
+void StationClient::followRoundtableStream(const QString& stream, bool follow)
+{
+    QList<MirrorUpdate> arguments{
+        MirrorUpdate{ 0, "stream", MirrorWireKind::Utf8, QVariant(stream) } };
+    if (follow) {
+        arguments.append(MirrorUpdate{ 0, "backlog", MirrorWireKind::Int64,
+                                       QVariant(static_cast<qlonglong>(
+                                           RoundtableModel::kRoomCapacity)) });
+    }
+    invokeCommand(follow ? "records.subscribe" : "records.unsubscribe", arguments);
+}
+
+// The room streams this window follows: each room one of the Core's slices
+// is in (the `roundtable` object's sliceRooms) and the room it reads. A room
+// no longer followed leaves the window's view.
+void StationClient::syncRoundtableStreams()
+{
+    if (m_sessionPurpose != SessionPurpose::Ordinary || !roundtableAvailable()
+        || m_radioModel.isNull() || m_radioModel->roundtableState() == nullptr) {
+        return;
+    }
+    QSet<QString> wanted;
+    const QJsonObject slices = m_radioModel->roundtableState()->sliceRoomsObject();
+    for (auto it = slices.constBegin(); it != slices.constEnd(); ++it) {
+        const QString roomId = it.value().toString();
+        if (!roomId.isEmpty()) {
+            wanted.insert(RoundtableModel::roomStreamName(roomId));
+        }
+    }
+    if (!m_roundtableReadStream.isEmpty()) {
+        wanted.insert(m_roundtableReadStream);
+    }
+    const QSet<QString> followed = m_roundtableStreams;
+    for (const QString& stream : followed) {
+        if (!wanted.contains(stream)) {
+            m_roundtableStreams.remove(stream);
+            followRoundtableStream(stream, false);
+            if (RoundtableModel* rooms = m_radioModel->roundtableModel()) {
+                RecordBatch gone;
+                gone.stream = stream;
+                gone.reset = true;
+                rooms->applyRecordBatch(gone);
+            }
+        }
+    }
+    for (const QString& stream : wanted) {
+        if (!m_roundtableStreams.contains(stream)) {
+            m_roundtableStreams.insert(stream);
+            followRoundtableStream(stream, true);
+        }
+    }
+}
+
+bool StationClient::handleRoundtableResult(const SessionMessage& message)
+{
+    if (!message.commandVerb.startsWith("roundtable.")) {
+        return false;
+    }
+    const RoundtableCommand command = m_roundtableCommands.take(message.commandId);
+    RoundtableModel* rooms = m_radioModel.isNull() ? nullptr : m_radioModel->roundtableModel();
+    if (rooms == nullptr) {
+        return true;
+    }
+    const QString verb = QString::fromLatin1(message.commandVerb.mid(message.commandVerb.indexOf('.') + 1));
+    const auto value = [&message](const QByteArray& name) {
+        for (const MirrorUpdate& update : message.updates) {
+            if (update.name == name && update.kind == MirrorWireKind::Utf8) {
+                return update.value.toString();
+            }
+        }
+        return QString();
+    };
+    if (verb == QLatin1String("post")) {
+        rooms->applyPostResult(command.clientId, message.accepted,
+                               message.accepted ? value("messageId") : message.reason);
+        return true;
+    }
+    if (!message.accepted) {
+        rooms->applyRefusal(verb, message.reason);
+        return true;
+    }
+    if (verb == QLatin1String("webSignIn")) {
+        const QUrl link(value("link"));
+        if (link.isValid() && !link.isEmpty()) {
+            rooms->applyWebLink(link);
+        }
+        return true;
+    }
+    if (verb == QLatin1String("read")) {
+        const QString stream = value("stream");
+        // Only the room the window still reads; a later read replaced it.
+        if (!stream.isEmpty() && rooms->readingRoomId() == command.roomId
+            && stream == RoundtableModel::roomStreamName(command.roomId)) {
+            m_roundtableReadStream = stream;
+            syncRoundtableStreams();
+        }
+    }
+    return true;
+}
+
 // R-R3-47 / R-R3-22 (remotePgxlControlVersion 3, remoteTgxlControlVersion
 // 1): the amp's and tuner's own settings. A Core that did not offer them is
 // not asked; the window says why.
@@ -8096,6 +8398,11 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     if (message.commandVerb == "tx.keepalive") {
         return;
     }
+    // Roundtable plan Task 11: the roundtable.* answers go to the window's
+    // Roundtable screens (RoundtableModel), none to the generic routes.
+    if (handleRoundtableResult(message)) {
+        return;
+    }
     // iPhone app plan Task 29 (link section 21.2): the ticket this window
     // asked for to move the session. Never logged beyond the outcome.
     if (message.commandVerb == "session.pathTicket") {
@@ -8580,6 +8887,14 @@ bool StationClient::rotorControlAvailable() const
 {
     return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
         && m_capabilities.remoteRotorControlVersion >= 1;
+}
+
+bool StationClient::roundtableAvailable() const
+{
+    // Roundtable plan Task 11: a Core that offers stationRoundtableVersion 1
+    // (it declares roundtable).
+    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && m_capabilities.stationRoundtableVersion >= 1;
 }
 
 bool StationClient::pgxlDeviceSettingsAvailable() const

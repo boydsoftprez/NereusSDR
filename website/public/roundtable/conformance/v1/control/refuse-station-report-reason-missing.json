@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "report",
+    "target": "message",
+    "msg": 975
+  },
+  "decodes": false
+}

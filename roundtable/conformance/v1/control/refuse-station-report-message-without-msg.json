@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "report",
+    "target": "message",
+    "turn": 4407,
+    "reason": "spam"
+  },
+  "decodes": false
+}

@@ -1,0 +1,12 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "error",
+    "code": "rate",
+    "reason": "Too many at once. Try again in a moment.",
+    "about": "presence",
+    "retryAfterMs": 420
+  },
+  "decodes": true
+}

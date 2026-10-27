@@ -585,6 +585,12 @@
       "output_sha256": "9d0a3ba9927db52236430c75aebb924f9d948d98ad44175f814e0a2ce0b841ac",
       "sha256": "f4956766f7bc56030faa8044ce2fed7b36cb396e0058f68b430cfd92d9f368fd",
       "source": "rendezvous/README.md"
+    },
+    {
+      "output": "roundtable/api.html",
+      "output_sha256": "0bb0d9ba712f571ef762babfd6cc3bd5fe7b772994028443532779d4b6654659",
+      "sha256": "14ac528b20b070ee2dab6babdb891ed860b9ae0623682546a4a39ce573475216",
+      "source": "docs/architecture/2026-10-23-roundtable-v1.md"
     }
   ]
 }

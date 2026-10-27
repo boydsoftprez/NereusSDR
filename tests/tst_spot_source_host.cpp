@@ -41,10 +41,15 @@
 //   2026-10-08: the spot record's bearingDeg (rotor control plan Task
 //               4a). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-24: Roundtable plan Task 10: Roundtable as the last station
+//               source, its properties last, Roundtable/AutoStart, the
+//               callsign it signs in with and the ones it refuses. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
 
+#include <QMetaProperty>
 #include <QSignalSpy>
 
 #include "OperatorWording.h"
@@ -55,6 +60,7 @@
 #include "core/SpotCollectorClient.h"
 #include "core/SpotSourceHost.h"
 #include "core/WsjtxClient.h"
+#include "core/roundtable/RoundtableClient.h"
 #include "core/settings/SettingsScope.h"
 #include "models/Band.h"
 #include "models/SpotModeResolver.h"
@@ -365,6 +371,110 @@ private slots:
         QCOMPARE(SpotSourceHost::spotRecordFields(spot, nullptr).value("band").toInt(), 11);
         spot.rxFreqMhz = 50.313;
         QCOMPARE(SpotSourceHost::spotRecordFields(spot, nullptr).value("band").toInt(), 10);
+    }
+
+    // ── Roundtable (Roundtable plan Task 10) ────────────────────────────
+
+    void roundtablesPropertiesComeLast()
+    {
+        // No older peer's property ordinals move.
+        const QMetaObject& meta = SpotSourceHost::staticMetaObject;
+        const int count = meta.propertyCount();
+        QVERIFY(count >= 3);
+        QCOMPARE(QByteArray(meta.property(count - 1).name()), QByteArray("roundtableText"));
+        QCOMPARE(QByteArray(meta.property(count - 2).name()), QByteArray("roundtableState"));
+        QCOMPARE(QByteArray(meta.property(count - 3).name()), QByteArray("freedvReporterHidden"));
+    }
+
+    void roundtableIsTheLastStationSource()
+    {
+        QCOMPARE(SpotSourceHost::stationSources(),
+                 (QStringList{SpotSourceHost::kDxCluster, SpotSourceHost::kRbn,
+                              SpotSourceHost::kPota, SpotSourceHost::kFreedvReporter,
+                              SpotSourceHost::kPskReporter, QStringLiteral("roundtable")}));
+        QCOMPARE(SpotSourceHost::kRoundtable, QStringLiteral("roundtable"));
+        // A Core's record streams for an older peer are unchanged.
+        QVERIFY(!SpotSourceHost::recordStreamSources().contains(SpotSourceHost::kRoundtable));
+    }
+
+    void roundtableAutoStartFalseKeepsItOff()
+    {
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF"));
+        settings.setValue(QStringLiteral("Roundtable/AutoStart"), QStringLiteral("False"));
+        Sources s;
+        RoundtableClient roundtable;
+        roundtable.setServerUrl(QUrl(QStringLiteral("ws://127.0.0.1:18393/v1/station")));
+        s.host.setRoundtableClient(&roundtable);
+        s.host.restoreAutoStart(SpotSourceHost::Placement::Everything);
+        s.host.restoreAutoStart(SpotSourceHost::Placement::StationSources);
+        QTest::qWait(200);
+        QCOMPARE(roundtable.linkState(), RoundtableClient::LinkState::Off);
+        QCOMPARE(s.host.roundtableState(), SpotSourceHost::kOff);
+    }
+
+    void roundtableStartsByDefaultOnTheStationPlacements()
+    {
+        AppSettings::instance().setValue(QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF"));
+        for (const auto placement : {SpotSourceHost::Placement::Everything,
+                                     SpotSourceHost::Placement::StationSources}) {
+            Sources s;
+            RoundtableClient roundtable;
+            // A port nothing listens on: the client tries and waits to retry.
+            roundtable.setServerUrl(QUrl(QStringLiteral("ws://127.0.0.1:18393/v1/station")));
+            s.host.setRoundtableClient(&roundtable);
+            s.host.restoreAutoStart(placement);
+            QTRY_VERIFY_WITH_TIMEOUT(roundtable.linkState() != RoundtableClient::LinkState::Off, 5000);
+            QCOMPARE(s.host.roundtableState(), SpotSourceHost::kConnecting);
+            QVERIFY(!s.host.roundtableText().isEmpty());
+            QString reason;
+            QVERIFY(s.host.disconnectSource(SpotSourceHost::kRoundtable, &reason));
+            QCOMPARE(roundtable.linkState(), RoundtableClient::LinkState::Off);
+            QCOMPARE(s.host.roundtableState(), SpotSourceHost::kOff);
+        }
+        // A remote window runs no Roundtable of its own.
+        Sources s;
+        RoundtableClient roundtable;
+        roundtable.setServerUrl(QUrl(QStringLiteral("ws://127.0.0.1:18393/v1/station")));
+        s.host.setRoundtableClient(&roundtable);
+        s.host.restoreAutoStart(SpotSourceHost::Placement::WindowSources);
+        QTest::qWait(200);
+        QCOMPARE(roundtable.linkState(), RoundtableClient::LinkState::Off);
+    }
+
+    void roundtableSignsInWithItsOwnCallsignFirst()
+    {
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("StationCallsign"), QStringLiteral("W4XYZ"));
+        QCOMPARE(SpotSourceHost::roundtableCallsign(), QStringLiteral("W4XYZ"));
+        settings.setValue(QStringLiteral("User/Callsign"), QStringLiteral("K4ABC"));
+        QCOMPARE(SpotSourceHost::roundtableCallsign(), QStringLiteral("K4ABC"));
+        settings.setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral(" KG4VCF "));
+        QCOMPARE(SpotSourceHost::roundtableCallsign(), QStringLiteral("KG4VCF"));
+        settings.setValue(QStringLiteral("User/GridSquare"), QStringLiteral("EM73"));
+        QCOMPARE(SpotSourceHost::roundtableGridSquare(), QStringLiteral("EM73"));
+        settings.setValue(QStringLiteral("Roundtable/GridSquare"), QStringLiteral("FN31pr"));
+        QCOMPARE(SpotSourceHost::roundtableGridSquare(), QStringLiteral("FN31pr"));
+    }
+
+    void roundtableRefusesACallsignTheServerWould()
+    {
+        Sources s;
+        RoundtableClient roundtable;
+        roundtable.setServerUrl(QUrl(QStringLiteral("ws://127.0.0.1:18393/v1/station")));
+        s.host.setRoundtableClient(&roundtable);
+        QString reason;
+        QVERIFY(!s.host.connectSource(SpotSourceHost::kRoundtable, &reason));
+        QCOMPARE(reason, QStringLiteral("Enter your callsign in Spot Hub first."));
+        QCOMPARE(s.host.roundtableText(), reason);
+
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4//VCF"));
+        QVERIFY(!s.host.connectSource(SpotSourceHost::kRoundtable, &reason));
+        QVERIFY2(reason.contains(QStringLiteral("KG4//VCF")), qPrintable(reason));
+        QCOMPARE(s.host.roundtableState(), SpotSourceHost::kOff);
+        QCOMPARE(s.host.roundtableText(), reason);
+        QTest::qWait(200);
+        QCOMPARE(roundtable.linkState(), RoundtableClient::LinkState::Off);
     }
 
     void theListenersAreThisComputersAndTheRestTheCores()

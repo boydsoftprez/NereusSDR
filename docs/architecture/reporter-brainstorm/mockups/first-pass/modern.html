@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NereusSDR Reporter</title>
+<style>
+/* ============================================================
+   ONE set of rules, themed. Real palette from
+   src/gui/StyleConstants.h: app #0f0f1a, panel #0a0a18,
+   accent #00b4d8, text #c8d8e8. Light theme is a modern
+   inversion of the same hues, not a different design.
+   ============================================================ */
+:root{
+  --mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;
+  --body:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --r:7px; --gap:12px;
+  /* dark = the app's own palette */
+  --bg:#0a0a18; --surf:#0f0f1a; --surf2:#141426; --surf3:#1b1b30;
+  --line:#1e2e3e; --line2:#2a3a4e; --line3:#35485e;
+  --ink:#c8d8e8; --ink2:#8090a0; --ink3:#607080; --ink4:#405060;
+  --acc:#00b4d8; --accd:#0a3a46; --acct:#00e5ff;
+  --good:#00ff88; --warn:#ffb800; --bad:#ff5566;
+  --goodbg:#00301f; --warnbg:#3a2a00; --badbg:#3a1018;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.35);
+  --glow:0 0 0 1px rgba(0,180,216,.35),0 0 18px rgba(0,180,216,.14);
+}
+html[data-theme=light]{
+  --bg:#f4f6f9; --surf:#ffffff; --surf2:#fbfcfe; --surf3:#eef2f7;
+  --line:#dfe5ec; --line2:#cbd5e0; --line3:#b6c2d0;
+  --ink:#12212e; --ink2:#4a5b6b; --ink3:#6b7c8c; --ink4:#93a3b3;
+  --acc:#0077a8; --accd:#d6f0f8; --acct:#0077a8;
+  --good:#00874f; --warn:#a06a00; --bad:#c02b3c;
+  --goodbg:#dff5e9; --warnbg:#fdf1d8; --badbg:#fbe4e8;
+  --shadow:0 1px 2px rgba(16,32,48,.06),0 8px 24px rgba(16,32,48,.08);
+  --glow:0 0 0 1px rgba(0,119,168,.30),0 0 16px rgba(0,119,168,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:13px;
+  -webkit-font-smoothing:antialiased;padding:16px}
+#frame{width:1400px;margin:0 auto}
+
+/* ── top bar ── */
+.top{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:9px}
+.mark{width:24px;height:24px;border-radius:5px;background:linear-gradient(140deg,var(--acc),var(--acct));
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;
+  font-weight:700;color:#04121a;box-shadow:var(--glow)}
+.brand h1{font-family:var(--mono);font-size:14px;font-weight:650;letter-spacing:.13em;color:var(--ink)}
+.brand .sub{font-family:var(--mono);font-size:10px;color:var(--ink3);letter-spacing:.06em}
+.pill{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.09em;color:var(--ink2);background:var(--surf);border:1px solid var(--line);
+  border-radius:99px;padding:4px 11px}
+.live i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--good);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.pill b{color:var(--ink);font-weight:650}
+.tgl{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--ink2);
+  letter-spacing:.08em;margin-left:auto}
+.tgl .seg{display:flex;background:var(--surf2);border:1px solid var(--line);border-radius:99px;padding:2px}
+.tgl .seg span{font-family:var(--mono);font-size:9.5px;padding:3px 11px;border-radius:99px;
+  color:var(--ink3);letter-spacing:.08em;cursor:pointer}
+.tgl .seg span.on{background:var(--surf);color:var(--ink);box-shadow:var(--shadow)}
+.themeBtn{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink2);
+  background:var(--surf);border:1px solid var(--line);border-radius:99px;padding:5px 13px;cursor:pointer}
+.themeBtn:hover{border-color:var(--acc);color:var(--acc)}
+
+/* ── cards ── */
+.card{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);margin-bottom:var(--gap);overflow:hidden}
+.ch{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line);
+  background:var(--surf2)}
+.ch h2{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;color:var(--ink);
+  font-weight:650;text-transform:uppercase}
+.ch .n{font-family:var(--mono);font-size:9.5px;color:var(--acc);background:var(--accd);
+  border-radius:99px;padding:2px 8px;font-weight:600}
+.ch .r{margin-left:auto;font-size:10px;color:var(--ink3);font-family:var(--mono)}
+
+/* the identity card: you, first */
+.ident{display:flex;align-items:center;gap:0;padding:0;flex-wrap:nowrap}
+.icell{padding:13px 20px;border-right:1px solid var(--line)}
+.icell:last-child{border-right:none}
+.ik{font-family:var(--mono);font-size:8.5px;letter-spacing:.15em;color:var(--ink3);
+  text-transform:uppercase;margin-bottom:4px}
+.iv{font-family:var(--mono);font-size:15px;color:var(--ink)}
+.iv.hi{font-size:25px;font-weight:650;color:var(--acc);letter-spacing:.02em}
+.iv small{font-size:11px;color:var(--ink3);font-weight:400}
+.heard{display:flex;gap:3px}
+.heard i{width:14px;height:26px;border-radius:2px;background:var(--surf3);display:block}
+.heard i.q4{background:var(--bad);box-shadow:0 0 8px color-mix(in srgb,var(--bad) 45%,transparent)}
+.heard i.q3{background:var(--good)}
+.heard i.q2{background:color-mix(in srgb,var(--good) 55%,var(--surf3))}
+.heard i.q1{background:color-mix(in srgb,var(--good) 28%,var(--surf3))}
+.heard i.me{background:var(--surf3);border:1px dashed var(--line3)}
+
+/* segmented meter */
+.meter{display:flex;gap:2px;align-items:center}
+.meter i{width:7px;height:15px;border-radius:1.5px;background:var(--surf3);display:block}
+.meter i.lo{background:var(--good)} .meter i.mid{background:var(--warn)} .meter i.hi{background:var(--bad)}
+.meter i.pk{box-shadow:0 0 0 1.5px var(--ink)}
+.mval{font-family:var(--mono);font-size:11.5px;margin-left:8px;white-space:nowrap}
+.mval.loud{color:var(--ink);font-weight:600}
+.mval.m{color:var(--warn)} .mval.w{color:var(--ink3)}
+
+.cols{display:grid;grid-template-columns:1fr 348px;gap:var(--gap);align-items:start}
+
+/* tables */
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--ink3);text-align:left;
+  padding:7px 14px;font-weight:500;white-space:nowrap;border-bottom:1px solid var(--line);
+  text-transform:uppercase}
+td{padding:8px 14px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:12.5px}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surf2)}
+.call{font-family:var(--mono);font-size:12.5px;color:var(--ink);font-weight:600}
+.grid{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+.dist{font-family:var(--mono);font-size:11.5px;color:var(--ink2)}
+.seen{font-family:var(--mono);font-size:10.5px;color:var(--ink3);text-align:right}
+.tag{display:inline-block;font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;
+  border-radius:3px;padding:1.5px 6px;font-weight:600;vertical-align:1px}
+.t-new{color:var(--good);background:var(--goodbg)}
+.t-dx{color:var(--acc);background:var(--accd)}
+.t-lo{color:var(--ink3);background:var(--surf3)}
+
+/* filters as real segmented chips */
+.bar{display:flex;align-items:center;gap:7px;padding:9px 14px;border-bottom:1px solid var(--line);
+  background:var(--surf2);flex-wrap:wrap}
+.fk{font-family:var(--mono);font-size:8.5px;letter-spacing:.13em;color:var(--ink3);
+  text-transform:uppercase;margin-right:1px}
+.fchip{font-family:var(--mono);font-size:10.5px;padding:4px 11px;border-radius:99px;
+  border:1px solid var(--line2);color:var(--ink2);cursor:pointer;background:var(--surf)}
+.fchip.on{background:var(--accd);border-color:var(--acc);color:var(--acc);font-weight:600}
+
+/* matrix */
+.mx{border-collapse:separate;border-spacing:3px;padding:11px 14px}
+.mx th{background:none;border:none;padding:0 0 2px;font-size:8.5px;color:var(--ink3);
+  text-align:center;width:30px}
+.mx td{padding:0;border:none;background:none;width:30px;height:15px}
+.cell{display:block;width:28px;height:14px;border-radius:2px;background:var(--surf3);
+  opacity:.35}
+.cell.q1{background:color-mix(in srgb,var(--good) 26%,var(--surf3))}
+.cell.q2{background:color-mix(in srgb,var(--good) 50%,var(--surf3))}
+.cell.q3{background:var(--good)} .cell.q4{background:var(--bad)}
+.mx .sp{font-family:var(--mono);font-size:10.5px;color:var(--ink2);text-align:right;
+  padding-right:9px;white-space:nowrap;background:none;border:none;width:1px}
+
+/* chat */
+.chat{display:flex;flex-direction:column}
+.cband{padding:9px 14px;background:var(--surf2);border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:10px;color:var(--ink3)}
+.cband b{color:var(--acc)}
+.scroll{padding:2px 0}
+.msg{padding:9px 14px;border-bottom:1px solid var(--line)}
+.msg .hd{display:flex;align-items:baseline;gap:7px;margin-bottom:3px}
+.msg .who{font-family:var(--mono);font-size:12px;color:var(--acc);font-weight:600}
+.msg .g{font-family:var(--mono);font-size:9.5px;color:var(--ink3)}
+.msg .sig{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--ink3)}
+.msg .bd{font-size:12.5px;color:var(--ink);line-height:1.55}
+.msg .bd code{font-family:var(--mono);font-size:11px;background:var(--surf3);padding:1.5px 5px;
+  border-radius:3px;color:var(--good)}
+.msg .bd strong{font-weight:650} .msg .bd em{color:var(--ink2)}
+.msg.heardme{background:color-mix(in srgb,var(--good) 7%,var(--surf));
+  border-left:2px solid var(--good)}
+.msg.heardme .who{color:var(--good)}
+.comp{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line);background:var(--surf2)}
+.comp input{flex:1;background:var(--surf);border:1px solid var(--line2);border-radius:var(--r);
+  color:var(--ink);padding:8px 11px;font-family:var(--body);font-size:12.5px;outline:none}
+.comp input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accd)}
+.comp button{background:var(--acc);border:none;color:#04121a;border-radius:var(--r);
+  padding:8px 17px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  font-weight:700;cursor:pointer}
+
+.note{padding:11px 15px;border-radius:var(--r);background:var(--surf);border:1px solid var(--line);
+  border-left:2px solid var(--warn);font-size:11.5px;color:var(--ink2);line-height:1.6;
+  box-shadow:var(--shadow)}
+.note b{color:var(--warn);font-weight:650}
+</style>
+</head>
+<body>
+<div id="frame">
+
+<div class="top">
+  <div class="brand">
+    <div class="mark">N</div>
+    <div>
+      <h1>REPORTER</h1>
+      <div class="sub">who is hearing you</div>
+    </div>
+  </div>
+  <span class="pill live"><i></i>LIVE</span>
+  <span class="pill">HEARD BY <b>7</b></span>
+  <span class="pill">BEST <b>+18 dB</b></span>
+  <div class="tgl">
+    <div class="seg"><span class="on">LIVE</span><span>ARCHIVE</span></div>
+    <span class="themeBtn" id="tb">LIGHT</span>
+  </div>
+</div>
+
+<!-- identity: you, always first -->
+<div class="card ident">
+  <div class="icell">
+    <div class="ik">You</div>
+    <div class="iv hi">N0CALL</div>
+  </div>
+  <div class="icell">
+    <div class="ik">Grid</div>
+    <div class="iv">FN42</div>
+  </div>
+  <div class="icell">
+    <div class="ik">On air</div>
+    <div class="iv">14.212.000 <small>SSB 20m</small></div>
+  </div>
+  <div class="icell">
+    <div class="ik">Hearing you now</div>
+    <div class="heard">
+      <i class="q4"></i><i class="q4"></i><i class="q3"></i><i class="q3"></i>
+      <i class="q2"></i><i class="q2"></i><i class="q1"></i><i class="me"></i>
+    </div>
+  </div>
+  <div class="icell">
+    <div class="ik">Longest path</div>
+    <div class="iv">11 804 <small>km</small></div>
+  </div>
+</div>
+
+<div class="cols">
+<div>
+
+  <div class="card">
+    <div class="ch"><h2>Who is hearing you</h2><span class="n">7</span>
+      <span class="r">loudest first &middot; each report is that station's reading of your signal</span></div>
+    <div class="bar">
+      <span class="fk">Band</span>
+      <span class="fchip on">Any</span><span class="fchip">20m</span><span class="fchip">40m</span>
+      <span class="fchip">80m</span><span class="fchip">15m</span>
+      <span class="fk" style="margin-left:8px">Quality</span>
+      <span class="fchip on">All</span><span class="fchip">Loud +10</span>
+      <span class="fchip">Good</span><span class="fchip">Weak</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Heard by</th><th>Grid</th><th>Distance</th><th>My signal there</th><th>New</th><th>Seen</th>
+      </tr></thead>
+      <tbody>
+        <tr><td><span class="call">VK3XYZ</span> <span class="tag t-dx">DX</span></td>
+          <td class="grid">QF22</td><td class="dist">11 804 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><i class="mid pk"></i><span class="mval loud">S9 +18</span></div></td>
+          <td><span class="tag t-new">Band</span></td><td class="seen">3s</td></tr>
+        <tr><td><span class="call">JA1ABC</span> <span class="tag t-dx">DX</span></td>
+          <td class="grid">PM95</td><td class="dist">10 512 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><i class="mid pk"></i><span class="mval loud">S8 +14</span></div></td>
+          <td><span class="tag t-new">Band</span></td><td class="seen">5s</td></tr>
+        <tr><td><span class="call">DL1ABC</span> <span class="tag t-dx">DX</span></td>
+          <td class="grid">JO62</td><td class="dist">6 912 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="mid"></i><i class="mid"></i><i class="mid pk"></i><span class="mval loud">S7 +06</span></div></td>
+          <td><span class="tag t-new">Country</span></td><td class="seen">6s</td></tr>
+        <tr><td><span class="call">G0ABC</span></td>
+          <td class="grid">IO91wm</td><td class="dist">5 231 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="mid"></i><i class="mid"></i><i class="mid pk"></i><span class="mval m">S5 &minus;04</span></div></td>
+          <td><span class="tag t-new">Band</span></td><td class="seen">4s</td></tr>
+        <tr><td><span class="call">W1AW</span></td>
+          <td class="grid">FN31pr</td><td class="dist">812 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i>
+            <i class="mid pk"></i><span class="mval m">S3 &minus;11</span></div></td>
+          <td><span class="tag t-new">Country</span></td><td class="seen">2s</td></tr>
+        <tr><td><span class="call">K5ABC</span></td>
+          <td class="grid">EM12</td><td class="dist">1 789 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><span class="mval w">S1 &minus;18</span></div></td>
+          <td><span class="tag t-new">Band</span></td><td class="seen">4s</td></tr>
+        <tr><td><span class="call">PY1ABC</span></td>
+          <td class="grid">GG66</td><td class="dist">7 680 km</td>
+          <td><div class="meter"><i class="lo"></i><i class="lo"></i><i class="mid"></i><span class="mval w">S1 &minus;22</span></div></td>
+          <td><span class="tag t-new">Band</span></td><td class="seen">11s</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="ch"><h2>Your signal by band</h2>
+      <span class="r">rows: who hears you &middot; columns: bands</span></div>
+    <table class="mx">
+      <thead><tr><th></th><th>160</th><th>80</th><th>40</th><th>30</th><th>20</th>
+        <th>17</th><th>15</th><th>12</th><th>10</th><th>6</th></tr></thead>
+      <tbody>
+        <tr><td class="sp">VK3XYZ QF22</td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell q2"></i></td><td><i class="cell q3"></i></td><td><i class="cell q4"></i></td>
+          <td><i class="cell q3"></i></td><td><i class="cell q2"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">JA1ABC PM95</td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell q1"></i></td><td><i class="cell q2"></i></td><td><i class="cell q4"></i></td>
+          <td><i class="cell q3"></i></td><td><i class="cell q3"></i></td><td><i class="cell q1"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">DL1ABC JO62</td><td><i class="cell"></i></td><td><i class="cell q1"></i></td>
+          <td><i class="cell q3"></i></td><td><i class="cell q3"></i></td><td><i class="cell q3"></i></td>
+          <td><i class="cell q2"></i></td><td><i class="cell q2"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">PY1ABC GG66</td><td><i class="cell"></i></td><td><i class="cell q1"></i></td>
+          <td><i class="cell q2"></i></td><td><i class="cell q1"></i></td><td><i class="cell q2"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">W1AW FN31pr</td><td><i class="cell q1"></i></td><td><i class="cell q2"></i></td>
+          <td><i class="cell q3"></i></td><td><i class="cell q3"></i></td><td><i class="cell q2"></i></td>
+          <td><i class="cell q1"></i></td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">K5ABC EM12</td><td><i class="cell"></i></td><td><i class="cell q1"></i></td>
+          <td><i class="cell q2"></i></td><td><i class="cell q2"></i></td><td><i class="cell q1"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+        <tr><td class="sp">G0ABC IO91wm</td><td><i class="cell"></i></td><td><i class="cell q2"></i></td>
+          <td><i class="cell q3"></i></td><td><i class="cell q3"></i></td><td><i class="cell q2"></i></td>
+          <td><i class="cell q1"></i></td><td><i class="cell"></i></td><td><i class="cell"></i></td>
+          <td><i class="cell"></i></td><td><i class="cell"></i></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <b>What a report means.</b> Every row is one station telling you what <em>your</em> signal
+    reads on <em>its</em> meter &mdash; never the other way round, so a loud report from 11 804 km
+    means a far station is hearing you well. Two stations are two different radios, so
+    <b>an S9 from VK3XYZ and an S7 from G0ABC are not comparable</b>. Read across a row to compare
+    propagation to one station across bands; read down the list to see who is getting you.
+  </div>
+</div>
+
+<div class="card chat">
+  <div class="ch"><h2>Chat</h2><span class="r">with the stations hearing you</span></div>
+  <div class="cband"><b>7</b> stations can hear you on <b>14.212.000</b> &mdash; talk to them</div>
+  <div class="scroll">
+    <div class="msg heardme">
+      <div class="hd"><span class="who">VK3XYZ</span><span class="g">QF22 &middot; 11 804 km</span>
+        <span class="sig">reads you S9 +18</span></div>
+      <div class="bd">Long path and you're <strong>very</strong> strong. Try <em>5 W less</em> and
+        see if JA copies you &mdash; you were over here last week at that power.</div>
+    </div>
+    <div class="msg">
+      <div class="hd"><span class="who">W1AW</span><span class="g">FN31pr &middot; 812 km</span>
+        <span class="sig">reads you S3</span></div>
+      <div class="bd">Fading at your end. Want me to pass to <code>JA1ABC</code>, who's waiting on
+        <strong>20m</strong> for you?</div>
+    </div>
+    <div class="msg">
+      <div class="hd"><span class="who">JA1ABC</span><span class="g">PM95 &middot; 10 512 km</span>
+        <span class="sig">reads you S8 +14</span></div>
+      <div class="bd">Your signal moved from <code>+02</code> to <code>+14</code> in ten minutes
+        &mdash; that's your ionosphere, not your radio. <em>Try 17m</em> now, we're wide open.</div>
+    </div>
+    <div class="msg">
+      <div class="hd"><span class="who">DL1ABC</span><span class="g">JO62 &middot; 6 912 km</span>
+        <span class="sig">reads you S7</span></div>
+      <div class="bd">Good report, thanks. Pse <code>QSL</code> for the test on 40m last night.</div>
+    </div>
+  </div>
+  <div class="comp">
+    <input type="text" placeholder="say something to the stations hearing you&hellip;">
+    <button>SEND</button>
+  </div>
+</div>
+</div>
+
+</div>
+<script>
+document.getElementById('tb').addEventListener('click',function(){
+  var l=document.documentElement;
+  var dark=l.getAttribute('data-theme')!=='light';
+  l.setAttribute('data-theme',dark?'light':'dark');
+  this.textContent=dark?'DARK':'LIGHT';
+});
+</script>
+</body>
+</html>

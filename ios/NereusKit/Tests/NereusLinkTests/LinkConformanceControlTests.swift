@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the link's control fixtures, decoded and written again by the app's codec
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable's thirteen verbs pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -80,7 +82,8 @@ import Testing
     @Test func integratedCommandsKeepTheirTypedMetadata() throws {
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
-        #expect(commands.count == 172)
+        // Roundtable adds its thirteen roundtable.* verbs.
+        #expect(commands.count == 185)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -94,6 +97,19 @@ import Testing
              ["requestId", "channel", "command"], ["i64", "i64", "utf8"]),
             ("refreshStationCatDevices", "stationCatVersion", 1, [], []),
             ("refreshRotorPorts", "remoteRotorControlVersion", 1, [], []),
+            ("roundtable.post", "stationRoundtableVersion", 1, ["roomId", "text", "clientId"], ["utf8", "utf8", "utf8"]),
+            ("roundtable.delete", "stationRoundtableVersion", 1, ["messageId"], ["utf8"]),
+            ("roundtable.name", "stationRoundtableVersion", 1, ["turnId", "name"], ["utf8", "utf8"]),
+            ("roundtable.report", "stationRoundtableVersion", 1, ["kind", "target", "reason"], ["utf8", "utf8", "utf8"]),
+            ("roundtable.read", "stationRoundtableVersion", 1, ["roomId"], ["utf8"]),
+            ("roundtable.unread", "stationRoundtableVersion", 1, ["roomId"], ["utf8"]),
+            ("roundtable.setHidden", "stationRoundtableVersion", 1, ["hidden"], ["bool"]),
+            ("roundtable.answerFirstRun", "stationRoundtableVersion", 1, ["live"], ["bool"]),
+            ("roundtable.mute", "stationRoundtableVersion", 1, ["callsign"], ["utf8"]),
+            ("roundtable.unmute", "stationRoundtableVersion", 1, ["callsign"], ["utf8"]),
+            ("roundtable.markMentionRead", "stationRoundtableVersion", 1, ["upToMs"], ["i64"]),
+            ("roundtable.webSignIn", "stationRoundtableVersion", 1, [], []),
+            ("roundtable.deleteArchive", "stationRoundtableVersion", 1, ["confirm"], ["utf8"]),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })

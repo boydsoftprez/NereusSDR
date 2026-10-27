@@ -1242,6 +1242,13 @@ set(CORE_SOURCES
     src/core/FreeDVReporterClient.cpp
     src/core/FreeDVRadeReporterBridge.cpp
     src/core/PskReporterClient.cpp
+    # Roundtable plan Task 10 (R-RT-1, R-RT-6, R-RT-12 to R-RT-14): the
+    # Core's Roundtable wire, signal floor and connection.
+    src/core/roundtable/RoundtableWire.cpp
+    src/core/roundtable/RoundtableSignalFloor.cpp
+    src/core/roundtable/RoundtableClient.cpp
+    # Roundtable plan Task 11: the link's `roundtable` object.
+    src/core/roundtable/RoundtableState.cpp
     # Parity Task 19 (R-IOS-25): starts and stops the spot sources, locally
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp
@@ -1281,6 +1288,7 @@ set(CORE_SOURCES
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
     src/models/RotorModel.cpp
+    src/models/RoundtableModel.cpp
     src/models/SpotBeamTurner.cpp
     src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
@@ -1978,6 +1986,14 @@ set(GUI_SOURCES
     src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
+    src/gui/roundtable/RoundtableFirstRunDialog.cpp
+    src/gui/roundtable/RoundtableFirstRunDialog.h
+    src/gui/roundtable/RoundtablePanel.cpp
+    src/gui/roundtable/RoundtablePanel.h
+    src/gui/roundtable/RoundtableTagLayout.cpp
+    src/gui/roundtable/RoundtableTagLayout.h
+    src/gui/roundtable/RoundtableWindow.cpp
+    src/gui/roundtable/RoundtableWindow.h
     src/gui/QtCocoaAccessibleTableCache.cpp
     src/gui/QtCocoaAccessibleTableCache.h
     src/gui/FreeDVReporterDialog.cpp
@@ -2246,6 +2262,7 @@ set(GUI_SOURCES
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/RotorApplet.cpp
+    src/gui/applets/RoundtableApplet.cpp
     src/gui/applets/AmpApplet.cpp
     src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp

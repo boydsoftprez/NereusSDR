@@ -17,6 +17,16 @@
 //                dspLoadTickForTest runs one tick of that timer.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: roundtableState() (the link's
+//                `roundtable` object) and roundtableModel() (what the
+//                Roundtable screens bind to), in every placement.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 10 (R-RT-12): roundtableClient(), the
+//                Core's Roundtable connection on a model that runs its own
+//                radio, fed its slices, meters, keying, key and at radio
+//                here and started by SpotSourceHost. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
 //                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
 //                Core's setting LimitFiltersToSidebands, applied to every
@@ -916,6 +926,8 @@ namespace NereusSDR { class VoltsAmpsLog; }
 namespace NereusSDR {
 
 class AppSettings;
+class RoundtableClient;
+class StationIdentity;
 class StationServer;
 class StationSliceOwnershipPolicy;
 class SessionTransport;
@@ -1033,6 +1045,8 @@ class StationPgxlController;
 class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
+class RoundtableState;
+class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
@@ -3814,6 +3828,17 @@ public:
     PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
     // Parity Task 19 (R-IOS-25): the spot sources' starts and stops.
     SpotSourceHost*       spotSourceHost()      const { return m_spotSourceHost.get(); }
+    // Roundtable plan Task 10 (R-RT-12): the Core's Roundtable connection
+    // on a model that runs its own radio (a Core, an Everything desktop);
+    // null in a remote window.
+    RoundtableClient*     roundtableClient()    const { return m_roundtable.get(); }
+    // Roundtable plan Task 11: the `roundtable` object (bound to the
+    // client on a model that runs its own radio, the Core's values in a
+    // remote window) and the model the Roundtable screens bind to (fed by
+    // the client here, by StationClient in a remote window). Non-null from
+    // construction; Qt children.
+    RoundtableState*      roundtableState()     const { return m_roundtableState; }
+    RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -9131,6 +9156,21 @@ private:
     // above (all but FreeDV Reporter), locally and on the Core; the
     // mirrored `spotSources` object.
     std::unique_ptr<SpotSourceHost>       m_spotSourceHost;
+    // Roundtable plan Task 10 (R-RT-12): the Roundtable connection (Role::
+    // Local only), started and followed by m_spotSourceHost; the key it
+    // signs in with when no station server holds one (an Everything
+    // desktop with Remote Access off), loaded from the settings profile
+    // directory only when a station connection first needs it; and whether
+    // this model is the Core's (restoreStationSpotSources), where someone
+    // is at the radio while a device session is live.
+    std::unique_ptr<RoundtableClient>     m_roundtable;
+    std::unique_ptr<StationIdentity>      m_roundtableIdentity;
+    bool                                  m_roundtableOnCore = false;
+    void wireRoundtable();
+    void pushRoundtableSlices();
+    void pushRoundtableMeter();
+    void updateRoundtableAtRadio();
+    const StationIdentity* roundtableIdentity();
     // Parity Task 19: in a remote window, the Core's spot ids (the `spots`
     // stream's record ids) and the SpotModel index each is shown under,
     // beside this window's own WSJT-X and SpotCollector spots.
@@ -9248,6 +9288,9 @@ private:
     StationRotorController* m_stationRotor{nullptr};
     // Rotor control plan Task 4b: see rotorModel(); Qt child.
     RotorLink::RotorModel*  m_rotorModel{nullptr};
+    // Roundtable plan Task 11: see roundtableState(), roundtableModel().
+    RoundtableState*        m_roundtableState{nullptr};
+    RoundtableModel*        m_roundtableModel{nullptr};
     // Rotor control plan Task 6: see lastRotorCommandId().
     quint32 m_lastRotorCommandId{0};
     // Final review I3: the open rotor setup views, and (on a remote Core)

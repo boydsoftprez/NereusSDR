@@ -226,6 +226,9 @@
 //                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableState, all Outbound;
+//                 SpotSourceHost's roundtableState and roundtableText.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
 //                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1017,6 +1020,15 @@ const MirrorPolicy::Entry kEntries[] = {
     { "RotorModel", "presets", MirrorDirection::Outbound },
     { "RotorModel", "fault", MirrorDirection::Outbound },
 
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read-only; the roundtable.* verbs change it.
+    { "RoundtableState", "linkState", MirrorDirection::Outbound },
+    { "RoundtableState", "linkSince", MirrorDirection::Outbound },
+    { "RoundtableState", "firstRunAnswered", MirrorDirection::Outbound },
+    { "RoundtableState", "hidden", MirrorDirection::Outbound },
+    { "RoundtableState", "mentionCounts", MirrorDirection::Outbound },
+    { "RoundtableState", "sliceRooms", MirrorDirection::Outbound },
+
     // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired
     // devices, label, claim, token and key backup, read-only. A device
     // changes them only through devices.revoke, station.rename,
@@ -1067,6 +1079,10 @@ const MirrorPolicy::Entry kEntries[] = {
     { "SpotSourceHost", "freedvReporterHidden", MirrorDirection::Outbound },
     { "SpotSourceHost", "pskReporterState", MirrorDirection::Outbound },
     { "SpotSourceHost", "pskReporterText", MirrorDirection::Outbound },
+    // Roundtable plan Task 11: the Spot Hub's Roundtable row, only to a
+    // peer that declared roundtable 1 (StationServer kPeerOnlyProperties).
+    { "SpotSourceHost", "roundtableState", MirrorDirection::Outbound },
+    { "SpotSourceHost", "roundtableText", MirrorDirection::Outbound },
 
     // iPhone app Task 71 (R-IOS-02, sessionHolderVersion 1): who is on the
     // Core, read-only. It changes only as devices come, go, go away and act.

@@ -1,9 +1,17 @@
 // NereusSDR for iOS: a debug build's stand-in for the Core's band and one slice, for the UI tests of touches on the band
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, a Roundtable room on slice A and the
+// hold PTT's record for the UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the record of every ask to key, for
+// the swipes' never-key tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the hold record names a quick tap's
+// unkey. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
 import Foundation
+import SwiftUI
 import NereusLink
 import NereusMedia
 import NereusMirror
@@ -69,6 +77,15 @@ enum UITestBand {
             nil
         }
     }
+
+    /// Beside ``argument``: a Core running Roundtable, live, with slice A
+    /// in a room of four, a talker on the air and a message naming you.
+    /// PTT takes presses with no Core, and each press and release the hold
+    /// PTT makes is written in ``UITestHoldLog``.
+    static let roundtableArgument = "-NereusRoundtableFixture"
+    /// With ``roundtableArgument``: the station has not answered Roundtable's first question.
+    static let roundtableFirstRunArgument = "-NereusRoundtableFirstRun"
+    static let roundtableRoomId = "lsb-7236400"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's
@@ -97,6 +114,7 @@ enum UITestBand {
         let display = environment[displayEnvironment].flatMap { path in
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
+        let roundtable = arguments.contains(roundtableArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.properties.count == 1, let entry = write.properties.first,
                   write.key == "slice:0" && entry.name == "afGain"
@@ -126,7 +144,8 @@ enum UITestBand {
                                value: .i64(PanSheetModel.notchAtSliceVersion))] : [])
           + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
                         .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : [])
-          + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : []))))
+          + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : [])
+          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(1))] : []))))
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -202,6 +221,18 @@ enum UITestBand {
                 .init(ordinal: 18, name: "holderDeviceId", value: .utf8("")),
             ])))
         }
+        if roundtable {
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RoundtableModel.objectKey,
+                                                               className: "RoundtableState", properties: [
+                .init(ordinal: 0, name: "linkState", value: .enumeration(2)),
+                .init(ordinal: 1, name: "linkSince", value: .i64(now - 600_000)),
+                .init(ordinal: 2, name: "firstRunAnswered", value: .bool(!arguments.contains(roundtableFirstRunArgument))),
+                .init(ordinal: 3, name: "hidden", value: .bool(false)),
+                .init(ordinal: 4, name: "mentionCounts", value: .utf8(#"{"\#(roundtableRoomId)":1}"#)),
+                .init(ordinal: 5, name: "sliceRooms", value: .utf8(#"{"0":"\#(roundtableRoomId)"}"#)),
+            ])))
+        }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
         if bandMenu || keyed {
@@ -209,6 +240,20 @@ enum UITestBand {
         }
         if keyed {
             app.useBandFixtureLinkUpForTransmit()
+        }
+        if roundtable {
+            holdLog = UITestHoldLog()
+            let keys = UITestKeyLog()
+            keyLog = keys
+            app.main.transmit.keyObserver = { [weak keys] ask in keys?.record(ask) }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            // The model wants the band list and slice A's room once it reads the object.
+            _ = app.roundtable
+            app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomsStream, generation: 1, reset: true,
+                                                      upserts: [roundtableSummary(now: now)], removes: []))
+            app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomStreamName(roundtableRoomId),
+                                                      generation: 1, reset: true,
+                                                      upserts: roundtableRecords(now: now), removes: []))
         }
         if arguments.contains(spotsArgument) {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
@@ -372,6 +417,72 @@ enum UITestBand {
         ])
     }
 
+    /// The hold PTT's record while ``roundtableArgument`` is on, else nil.
+    @MainActor static var holdLog: UITestHoldLog?
+    /// With ``roundtableArgument``: every ask to key, for the swipes' never-key tests.
+    @MainActor static var keyLog: UITestKeyLog?
+
+    /// Slice A's room on the band list: four stations, K4ABC talking.
+    private static func roundtableSummary(now: Int64) -> LinkMessage.RecordBatch.Record {
+        LinkMessage.RecordBatch.Record(id: roundtableRoomId, fields: [
+            "record": .string("room"), "id": .string(roundtableRoomId), "band": .string("40m"),
+            "family": .string("lsb"), "hz": .number(7_236_400), "state": .string("talking"),
+            "talkers": .array([.string("K4ABC")]), "members": .number(4), "messages": .number(2),
+            "last": .number(Double(now)), "folded": .bool(false), "start": .null, "heard": .number(3),
+            "readings": .array([]), "lastMessage": .null, "ended": .null,
+        ])
+    }
+
+    /// Slice A's room: K4ABC on the air, three readings of it, you, an
+    /// earlier turn, and two messages, the newer naming you.
+    private static func roundtableRecords(now: Int64) -> [LinkMessage.RecordBatch.Record] {
+        func member(_ ref: String, _ callsign: String, km: Double?, offset: Double, seq: Int64,
+                    you: Bool = false) -> LinkMessage.RecordBatch.Record {
+            .init(id: "member:\(ref)", fields: [
+                "record": .string("member"), "ref": .string(ref), "callsign": .string(callsign), "nth": .number(1),
+                "grid": .string("EM73"), "km": km.map(LinkJSON.number) ?? .null, "offsetHz": .number(offset),
+                "joining": .bool(false), "away": .bool(false), "keyed": .bool(false),
+                "software": .string("NereusSDR"), "softwareVersion": .string("26.10.3"), "you": .bool(you),
+                "seq": .number(Double(seq)),
+            ])
+        }
+        func reading(_ ref: String, _ dbm: Double, ageMs: Int64) -> LinkMessage.RecordBatch.Record {
+            .init(id: "reading:\(ref)", fields: [
+                "record": .string("reading"), "ref": .string(ref), "dbm": .number(dbm),
+                "t": .number(Double(now - ageMs)), "present": .bool(true), "turn": .number(12),
+            ])
+        }
+        func message(_ id: Int64, _ callsign: String, _ text: String, ageMs: Int64) -> LinkMessage.RecordBatch.Record {
+            .init(id: "message:\(id)", fields: [
+                "record": .string("message"), "id": .number(Double(id)), "ref": .null, "callsign": .string(callsign),
+                "nth": .number(1), "t": .number(Double(now - ageMs)), "state": .string("shown"),
+                "text": .string(text), "dbm": .null,
+            ])
+        }
+        return [
+            member("k/1", "K4ABC", km: nil, offset: 0, seq: 0),
+            member("n/2", "N4XYZ", km: 215, offset: 0, seq: 1),
+            reading("n/2", -43, ageMs: 3_000),
+            member("q/3", "K4QRS", km: 593, offset: -20, seq: 2),
+            reading("q/3", -55, ageMs: 1_000),
+            member("y/4", "KG4VCF", km: 340, offset: 0, seq: 3, you: true),
+            reading("y/4", -61, ageMs: 1_000),
+            .init(id: "turn:12", fields: [
+                "record": .string("turn"), "id": .number(12), "kind": .string("talking"),
+                "talkers": .array([.object(["ref": .string("k/1"), "callsign": .string("K4ABC"), "nth": .number(1)])]),
+                "start": .number(Double(now - 78_000)), "end": .null, "ending": .bool(false), "heard": .number(3),
+                "mine": .null,
+            ]),
+            .init(id: "turn:11", fields: [
+                "record": .string("turn"), "id": .number(11), "kind": .string("talking"), "talkers": .array([]),
+                "start": .number(Double(now - 200_000)), "end": .number(Double(now - 140_000)),
+                "ending": .bool(false), "heard": .number(2), "mine": .null,
+            ]),
+            message(21, "N4XYZ", "good copy all", ageMs: 90_000),
+            message(22, "K4QRS", "KG4VCF you are S9 here", ageMs: 30_000),
+        ]
+    }
+
     /// The catalogue's JSON from a conformance-suite session file: the
     /// `json` property of its `catalog` message.
     private static func catalogueJSON(path: String) -> String? {
@@ -388,6 +499,61 @@ enum UITestBand {
             return json
         }
         return nil
+    }
+}
+
+/// The hold PTT's presses and releases, for the UI tests to read: shown as
+/// the label of a tiny element, `pttHoldLog`, at the band's corner.
+@MainActor
+final class UITestHoldLog: ObservableObject {
+    @Published private(set) var actions: [String] = []
+
+    func record(_ action: PttHold.Action) {
+        switch action {
+        case .press:
+            actions.append("press")
+        case .release:
+            actions.append("release")
+        case .unkey:
+            actions.append("unkey")
+        }
+    }
+
+    /// The tiny element that carries the record.
+    struct Label: View {
+        @ObservedObject var log: UITestHoldLog
+
+        var body: some View {
+            Text(log.actions.isEmpty ? "none" : log.actions.joined(separator: ","))
+                .font(.system(size: 1))
+                .foregroundStyle(Color.clear)
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("pttHoldLog")
+                .allowsHitTesting(false)
+        }
+    }
+}
+/// Every ask to key (PTT, MOX, the hold PTT, TUNE), for the UI tests to
+/// read: the label of a tiny element, `pttKeyLog`, at the band's corner.
+@MainActor
+final class UITestKeyLog: ObservableObject {
+    @Published private(set) var asks: [String] = []
+
+    func record(_ ask: String) {
+        asks.append(ask)
+    }
+
+    struct Label: View {
+        @ObservedObject var log: UITestKeyLog
+
+        var body: some View {
+            Text(log.asks.isEmpty ? "none" : log.asks.joined(separator: ","))
+                .font(.system(size: 1))
+                .foregroundStyle(Color.clear)
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("pttKeyLog")
+                .allowsHitTesting(false)
+        }
     }
 }
 #endif

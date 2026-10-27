@@ -27,6 +27,28 @@
 //                dspLoadTickForTest runs one real tick, and nothing on a
 //                model with no load sampler (Role::Remote). J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Claude Code.
+//   2026-10-24 - Roundtable plan Task 15: the slices' rooms are placed on
+//                the next turn of the event loop, so a window that tunes
+//                into a room is told it is in it. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 12: a window's Core setting changes
+//                reach RoundtableModel (noteSettingChanged), so the Spot
+//                Hub's Roundtable tab shows the Core's values.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: the `roundtable` object
+//                (RoundtableState) bound to the client with the Core's
+//                Roundtable/* answers, told the slices, and the
+//                RoundtableModel fed from the client. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 10 (R-RT-12): a model that runs its
+//                own radio owns the RoundtableClient and hands it to
+//                SpotSourceHost; its slices (active first, the keyed one
+//                from the TX-bound slice and MOX), meters, key (the station
+//                server's, else the settings profile directory's) and at
+//                radio (on the Core, a live device session) are fed here.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
 //                setting (Setup's "Limit filter edges to sidebands", Thetis
 //                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
@@ -1787,6 +1809,8 @@ mw0lge@grange-lane.co.uk
 #include "core/FreeDVRadeReporterBridge.h"
 #include "core/PskReporterClient.h"
 #include "core/SpotSourceHost.h"
+#include "core/roundtable/RoundtableClient.h"
+#include "core/security/StationIdentity.h"
 #include "core/session/RecordStream.h"
 #include "core/DxccColorProvider.h"
 #include "core/DxSpot.h"
@@ -1843,6 +1867,8 @@ mw0lge@grange-lane.co.uk
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
+#include "models/RoundtableModel.h"
+#include "core/roundtable/RoundtableState.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3717,6 +3743,11 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_stationTciModel = new StationTciModel(this);
     // Rotor control plan Task 4b: the Core's rotor (`rotor`).
     m_rotorModel = new RotorLink::RotorModel(this);
+    // Roundtable plan Task 11: the `roundtable` object and the Roundtable
+    // screens' model, in every placement (wireRoundtable binds them here;
+    // StationClient feeds them in a remote window).
+    m_roundtableState = new RoundtableState(this);
+    m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -4726,6 +4757,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // (SpotSourceHost::setFreedvStationList, from freedv-gui).
     if (m_role == Role::Local) {
         m_spotSourceHost->setFreedvStationList(m_freeDvStationModel.get());
+    }
+    // Roundtable plan Task 10 (R-RT-12): Roundtable runs where the radio
+    // is (the Core, or a window running its own radio), never in a remote
+    // window; SpotSourceHost starts it from the Roundtable/* settings.
+    if (m_role == Role::Local) {
+        wireRoundtable();
     }
 
     // ── Phase 3R-bridge: RADE Path B (sync-only) rx_report upload ─────────
@@ -6038,8 +6075,200 @@ void RadioModel::restoreSpotClientAutoStartState()
 
 void RadioModel::restoreStationSpotSources()
 {
+    // Roundtable plan Task 10: this is the Core, so someone is at the radio
+    // only while a device session is live (design 8.3), not always as on
+    // an Everything desktop. Before the restore, so Roundtable starts with
+    // the right answer.
+    if (m_roundtable) {
+        m_roundtableOnCore = true;
+        if (m_diversityStationServer && m_diversityStationServer->deviceSessions() != nullptr) {
+            connect(m_diversityStationServer->deviceSessions(), &DeviceSessionRegistry::changed, this,
+                    &RadioModel::updateRoundtableAtRadio, Qt::UniqueConnection);
+        }
+        updateRoundtableAtRadio();
+    }
     // Parity Task 19 (R-IOS-25): the Core's own settings; no window needed.
     m_spotSourceHost->restoreAutoStart(SpotSourceHost::Placement::StationSources);
+}
+
+// Roundtable plan Task 10 (wire spec 5.2 and 6.1): the mode a slice
+// reports; empty for a mode Roundtable has no room family for.
+static QString roundtableModeOf(DSPMode mode)
+{
+    switch (mode) {
+    case DSPMode::LSB:
+        return QStringLiteral("LSB");
+    case DSPMode::USB:
+        return QStringLiteral("USB");
+    case DSPMode::DIGL:
+        return QStringLiteral("DIGL");
+    case DSPMode::DIGU:
+        return QStringLiteral("DIGU");
+    case DSPMode::AM:
+        return QStringLiteral("AM");
+    case DSPMode::SAM:
+        return QStringLiteral("SAM");
+    case DSPMode::FM:
+        return QStringLiteral("FM");
+    case DSPMode::CWL:
+        return QStringLiteral("CWL");
+    case DSPMode::CWU:
+        return QStringLiteral("CWU");
+    case DSPMode::RADE_U:
+    case DSPMode::RADE2_U:
+        return QStringLiteral("FDVU");
+    case DSPMode::RADE_L:
+    case DSPMode::RADE2_L:
+        return QStringLiteral("FDVL");
+    case DSPMode::DSB:
+    case DSPMode::SPEC:
+    case DSPMode::DRM:
+        break;
+    }
+    return {};
+}
+
+void RadioModel::wireRoundtable()
+{
+    m_roundtable = std::make_unique<RoundtableClient>();
+    // The key is asked for only when a station connection opens, so an
+    // Everything desktop makes no key file until it goes live.
+    m_roundtable->setIdentityProvider([this]() { return roundtableIdentity(); });
+    m_spotSourceHost->setRoundtableClient(m_roundtable.get());
+    // Roundtable plan Task 11: the Roundtable/* answers fed to the client
+    // (read only until the first-run question is answered, D25), and the
+    // screens fed from it. A station server binds the state again to the
+    // settings its windows write through.
+    m_roundtableState->bindClient(m_roundtable.get(), &AppSettings::instance());
+    m_roundtableModel->attachLocal(m_roundtable.get(), m_roundtableState);
+
+    // Slices: what each listens to, active first, and which one is keyed.
+    const auto watch = [this](SliceModel* slice) {
+        if (slice == nullptr) {
+            return;
+        }
+        connect(slice, &SliceModel::frequencyChanged, this, &RadioModel::pushRoundtableSlices,
+                Qt::UniqueConnection);
+        connect(slice, &SliceModel::dspModeChanged, this, &RadioModel::pushRoundtableSlices,
+                Qt::UniqueConnection);
+        connect(slice, &SliceModel::filterChanged, this, &RadioModel::pushRoundtableSlices,
+                Qt::UniqueConnection);
+        connect(slice, &SliceModel::txSliceChanged, this, &RadioModel::pushRoundtableSlices,
+                Qt::UniqueConnection);
+        connect(slice, &SliceModel::meterReadingNsChanged, this, &RadioModel::pushRoundtableMeter,
+                Qt::UniqueConnection);
+    };
+    for (SliceModel* slice : slices()) {
+        watch(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watch](int) {
+        for (SliceModel* slice : slices()) {
+            watch(slice);
+        }
+        pushRoundtableSlices();
+    });
+    connect(this, &RadioModel::sliceRemoved, this, &RadioModel::pushRoundtableSlices);
+    connect(this, &RadioModel::activeSliceChanged, this, &RadioModel::pushRoundtableSlices);
+    connect(this, &RadioModel::txSliceSelected, this, &RadioModel::pushRoundtableSlices);
+    if (m_moxController != nullptr) {
+        connect(m_moxController, &MoxController::moxStateChanged, this,
+                &RadioModel::pushRoundtableSlices);
+    }
+    pushRoundtableSlices();
+    updateRoundtableAtRadio();
+}
+
+void RadioModel::pushRoundtableSlices()
+{
+    if (!m_roundtable) {
+        return;
+    }
+    SliceModel* active = activeSlice();
+    SliceModel* keyedSlice = (m_moxController != nullptr && m_moxController->isMox()) ? txBoundSlice() : nullptr;
+    QList<RoundtableSliceState> states;
+    const auto add = [&states, keyedSlice](SliceModel* slice) {
+        RoundtableSliceState state;
+        state.id = slice->sliceIndex();
+        state.hz = std::llround(slice->frequency());
+        state.mode = roundtableModeOf(slice->dspMode());
+        state.filterHz = qAbs(slice->filterHigh() - slice->filterLow());
+        state.keyed = slice == keyedSlice;
+        states.append(state);
+    };
+    if (active != nullptr) {
+        add(active);
+    }
+    for (SliceModel* slice : slices()) {
+        if (slice != nullptr && slice != active) {
+            add(slice);
+        }
+    }
+    m_roundtable->setSlices(states);
+    // Roundtable plan Task 11: and which room each is in (`sliceRooms`).
+    // Roundtable plan Task 15: placed on the next turn of the event loop,
+    // not inside this call. A window's tune reaches here while the Core
+    // applies that window's write, and the mirror withholds every change
+    // made during a write from the writer's own view (StateMirror, ruling
+    // 5.7), so the window that tuned into a room would never learn it is
+    // in it.
+    QMetaObject::invokeMethod(
+        m_roundtableState,
+        [state = m_roundtableState, states]() { state->setSlices(states); },
+        Qt::QueuedConnection);
+}
+
+void RadioModel::pushRoundtableMeter()
+{
+    auto* slice = qobject_cast<SliceModel*>(sender());
+    if (!m_roundtable || slice == nullptr) {
+        return;
+    }
+    m_roundtable->pushMeter(slice->sliceIndex(), slice->signalStrengthDbm(), slice->meterReadingNs());
+}
+
+void RadioModel::updateRoundtableAtRadio()
+{
+    if (!m_roundtable) {
+        return;
+    }
+    // An Everything desktop: the operator is at it. The Core: while any
+    // signed-in device session is live (listening or transmitting), not
+    // while every device is away or none is there.
+    bool atRadio = true;
+    if (m_roundtableOnCore) {
+        atRadio = false;
+        const DeviceSessionRegistry* sessions =
+            m_diversityStationServer ? m_diversityStationServer->deviceSessions() : nullptr;
+        if (sessions != nullptr) {
+            for (const DeviceSessionRegistry::Entry& entry : sessions->entries()) {
+                if (entry.state == DeviceSessionRegistry::State::Listening) {
+                    atRadio = true;
+                    break;
+                }
+            }
+        }
+    }
+    m_roundtable->setAtRadio(atRadio);
+}
+
+const StationIdentity* RadioModel::roundtableIdentity()
+{
+    // The Core's, or Remote Access's on a desktop: the key StationServer
+    // loaded, so the Roundtable id is the station's one id.
+    if (m_diversityStationServer && m_diversityStationServer->stationIdentity().isValid()) {
+        return &m_diversityStationServer->stationIdentity();
+    }
+    // An Everything desktop with Remote Access off: the same file Remote
+    // Access loads (the settings profile directory), never another.
+    if (!m_roundtableIdentity) {
+        m_roundtableIdentity = std::make_unique<StationIdentity>(StationIdentity::loadOrCreate(
+            RoundtableClient::profileDirectoryFor(AppSettings::instance().filePath())));
+        if (!m_roundtableIdentity->isValid()) {
+            qCWarning(lcConnection) << "Roundtable: the station key could not be loaded:"
+                                    << m_roundtableIdentity->lastError();
+        }
+    }
+    return m_roundtableIdentity.get();
 }
 
 bool RadioModel::isConnected() const
@@ -11112,6 +11341,11 @@ void RadioModel::reportStationSettingChanged(const QString& key)
         // Parity ruling C12: the Core's per-band grid reaches this window's
         // pans (empty key: a whole snapshot).
         applyPanGridSetting(key);
+        // Roundtable plan Task 12: the Core's Roundtable/ settings reach the
+        // Roundtable screens.
+        if (m_roundtableModel != nullptr) {
+            m_roundtableModel->noteSettingChanged(key);
+        }
         emit stationSettingChanged(key);
     }
 }

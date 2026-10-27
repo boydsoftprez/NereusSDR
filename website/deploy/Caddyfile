@@ -21,6 +21,10 @@
 	}
 }
 
+# Other sites on this server, each installed by its own setup script
+# (roundtable/deploy/setup-server.sh writes roundtable.caddy there).
+import /etc/caddy/sites/*.caddy
+
 # Response headers for the site. Deleting the Server header makes Caddy
 # apply the whole block when the response is written, and error responses
 # are written by the handle_errors routes, so this block is imported there

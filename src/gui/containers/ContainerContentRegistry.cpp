@@ -67,6 +67,9 @@
 //   2026-10-25 - makeEntry applies MeterItem::applyNewItemDefaults() to new
 //                 items. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
+//                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
@@ -253,7 +256,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -444,6 +447,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:amp"), QStringLiteral("4O3A Power Genius"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:tuner"), QStringLiteral("4O3A Tuner Genius"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:roundtable"), QStringLiteral("Roundtable"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:RfKit"), QStringLiteral("RF-Kit RF2K-S"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), ContentGroup::Panels, true);
     for (auto& descriptor : result) {

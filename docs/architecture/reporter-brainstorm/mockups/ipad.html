@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable iPad</title>
+<style>
+/* iPad app look, from docs/manual/images/ipad-applet-column-original.png on main */
+:root{
+  --bg:#06080d;--panel:#0b0e16;--card:#121824;--bd:#263040;--bd2:#1c2533;--hdr:#141b27;
+  --tx:#e8eef4;--dim:#8e9aa8;--dim2:#6b7785;--acc:#22b8ea;--blue:#0a74d0;--btn:#16202e;
+  --grn:#2fd07a;--amb:#f2b53a;--red:#ff5050;--mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#0d0f14;color:var(--tx);font-family:var(--sans);min-height:100%}
+#chooser{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:10px 16px;border-bottom:1px solid #222;background:#15161b;position:sticky;top:0;z-index:50}
+#chooser .lbl{color:#9a9aa6;font-size:11px;letter-spacing:.12em;margin-right:6px}
+#chooser button{background:#2a2a33;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;color:#ddd;font-size:13px}
+#chooser button.on{background:#0d5a6e;border-color:var(--acc);color:#fff}
+#stage{display:flex;gap:24px;justify-content:center;align-items:flex-start;padding:18px 12px 30px}
+#notes{width:300px;font-size:13px;line-height:1.5;color:#c8d0d8;flex:none}
+#notes h2{font-size:15px;margin-bottom:8px;color:#fff}
+#notes p{margin-bottom:9px}
+#notes b{color:#fff}
+.ipad{width:1180px;height:885px;border-radius:38px;background:#1a1b20;padding:14px;box-shadow:0 30px 80px rgba(0,0,0,.7),inset 0 0 0 2px #333;flex:none}
+.screen{position:relative;width:1152px;height:857px;border-radius:24px;overflow:hidden;background:var(--bg)}
+/* top bar */
+.sbar{position:absolute;top:0;left:0;right:0;height:26px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:13px;font-weight:600}
+.top{position:absolute;top:26px;left:0;right:0;height:40px;display:flex;align-items:center;gap:22px;padding:0 18px;font-size:16px;border-bottom:1px solid var(--bd2)}
+.top .a{display:inline-block;background:#3a4452;color:#cfd8e0;border-radius:4px;padding:0 5px;font-size:12px;font-weight:800;margin-left:4px}
+.top .sp{flex:1}
+.top .ic{width:34px;height:30px;border-radius:7px;border:1px solid #2c3646;background:#121a26;display:grid;place-items:center;color:var(--acc);font-size:15px;cursor:pointer}
+.top .ic.on{background:#0d3b54;border-color:var(--acc)}
+/* pan */
+.pan{position:absolute;top:66px;left:0;bottom:74px;overflow:hidden}
+.pan canvas{position:absolute;left:0}
+.dbs{position:absolute;top:0;right:4px;font-family:var(--mono);font-size:11px;color:#c8d0d8}
+.dbs span{position:absolute;right:0}
+.plan{position:absolute;left:0;right:0;height:13px;background:#8a4a14;font-size:9px;text-align:center;color:#fff;line-height:13px}
+.scale{position:absolute;left:0;right:0;height:18px;background:#05070b;font-family:var(--mono);font-size:12px;color:#ffe066}
+.scale span{position:absolute;top:2px;transform:translateX(-50%)}
+.sliceline{position:absolute;top:0;bottom:0;width:2px;background:var(--acc);opacity:.85;z-index:5}
+.passband{position:absolute;top:0;background:rgba(34,184,234,.16);z-index:4}
+.flag{position:absolute;top:10px;width:226px;background:rgba(8,12,20,.94);border:1px solid #2b3a4c;border-radius:5px;padding:5px 7px;z-index:12;font-size:11px}
+.flag .r1{display:flex;gap:6px;align-items:center}
+.flag .a1{color:#5aa8ff;font-weight:700}.flag .a2{color:#ff6060;font-weight:700}.flag .bw{color:var(--acc);font-weight:700}
+.flag .txb{margin-left:auto;border:1px solid #ff5050;color:#ff8080;border-radius:2px;padding:0 3px;font-weight:700}
+.flag .txb.on{background:#c02020;color:#fff}
+.flag .ab{background:var(--acc);color:#002;border-radius:2px;padding:0 4px;font-weight:800}
+.flag .fq{font-family:var(--mono);font-size:25px;color:var(--acc);text-align:right;border:1px solid #2b3a4c;border-radius:3px;margin:3px 0;padding:0 4px;background:#060a10}
+.flag .rtline{margin-top:4px;padding:6px 0 1px;border-top:1px solid #22303f;display:flex;align-items:center;gap:5px;color:#cfe;cursor:pointer;white-space:nowrap}
+.flag .rtline .chev{margin-left:auto;color:var(--acc);font-size:15px}
+.flag .cnt{background:var(--acc);color:#002;border-radius:8px;padding:0 5px;font-size:10px;font-weight:800}
+.rt{position:absolute;z-index:10;display:flex;align-items:center;gap:4px;background:rgba(6,10,16,.88);border:1px solid currentColor;border-radius:5px;padding:4px 7px;font-family:var(--mono);font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;transform:translateX(-50%)}
+.rt .cnt{border:1px solid currentColor;border-radius:3px;padding:0 3px;font-size:10px}
+.rt.mine{box-shadow:0 0 0 2px rgba(34,184,234,.6)}
+.g{color:var(--grn)}.u{color:var(--amb)}.d{color:var(--red)}.q{color:#8e9aa8}.y{color:var(--acc)}
+.ptt{position:absolute;left:24px;bottom:24px;width:96px;height:96px;border-radius:50%;background:radial-gradient(#5a1a1a,#3a0f0f);border:2px solid #b04040;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;font-size:22px;color:#ff9090;z-index:20;cursor:pointer}
+.ptt small{font-size:12px;font-weight:500;color:#e0a0a0}
+.ptt.on{background:#d02020;border-color:#ff7070;color:#fff}.ptt.on small{color:#fff}
+/* column */
+.col{position:absolute;top:66px;right:0;bottom:74px;border-left:1px solid var(--bd);background:var(--panel);display:flex;flex-direction:column;overflow:hidden}
+.ah{height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--hdr);border-bottom:1px solid var(--bd2);font-size:14px;font-weight:600;color:#cfd8e0}
+.ah .h{color:#5f6b79;letter-spacing:-2px}
+.ah .r{margin-left:auto;display:flex;gap:6px}
+.ah .r span{border:1px solid #2c3646;border-radius:6px;padding:1px 8px;font-size:12px;color:var(--acc);cursor:pointer;background:#121a26}
+.smeter{height:118px;flex:none;margin:8px 10px;border-radius:12px;background:linear-gradient(#f3ead2,#e2d4ae);border:5px solid #b8902f;position:relative;color:#222;text-align:center;font-weight:800;letter-spacing:.12em;font-size:13px;padding-top:8px}
+.smeter i{position:absolute;left:50%;bottom:14px;width:2px;height:70px;background:#222;transform-origin:bottom;transform:rotate(22deg)}
+.smeter b{position:absolute;left:50%;bottom:8px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#222}
+.rtbody{flex:1;display:flex;min-height:0}
+.rlist{width:250px;flex:none;border-right:1px solid var(--bd2);overflow-y:auto}
+.room{flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto}
+.room>*{flex:none}
+.fb{padding:6px 10px 3px;font-size:11px;color:var(--dim2);letter-spacing:.1em;font-weight:700;background:#0c1220}
+.fr{padding:8px 10px;border-bottom:1px solid #141c28;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.fr.sel{background:#0d2a36}
+.fr.mine{box-shadow:inset 3px 0 var(--acc)}
+.fr .ff{font-family:var(--mono);font-size:15px;color:#dfe8f0}
+.fr .n{font-size:12px;color:var(--dim);text-align:right}
+.fr .w{font-size:12px;font-family:var(--mono);font-weight:700}
+.fr .last{grid-column:1/3;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rh{display:flex;align-items:center;gap:8px;padding:8px 10px 4px}
+.rh .f{font-family:var(--mono);font-size:18px;color:var(--acc)}
+.rh .m{font-size:11px;border:1px solid #3a4a5a;color:#b8c4d0;padding:0 4px;border-radius:3px}
+.rh .s{margin-left:auto;font-size:12px;color:var(--dim)}
+.reading{margin:0 10px 6px;padding:7px 9px;background:#0d2a36;border:1px solid #1f5a6e;border-radius:6px;font-size:12px;display:flex;align-items:center;gap:8px}
+.reading a{margin-left:auto;color:var(--acc);cursor:pointer}
+.talk{display:flex;align-items:center;gap:8px;padding:4px 10px 8px}
+.talk .who{font-family:var(--mono);font-size:22px;font-weight:800}
+.talk .st{font-size:12px;color:var(--dim);line-height:1.3}
+.talk .tx{background:#c02020;color:#fff;font-size:10px;font-weight:800;border-radius:3px;padding:1px 4px}
+.cap{font-size:10px;letter-spacing:.14em;color:var(--dim);font-weight:700;padding:6px 10px 3px;display:flex;justify-content:space-between}
+.cap span{letter-spacing:0;font-weight:500;color:var(--dim2)}
+.rd{display:grid;grid-template-columns:92px 54px 52px 1fr 52px;gap:6px;align-items:center;height:24px;font-size:13px;padding:0 10px}
+.rd .c{font-family:var(--mono);font-weight:800;white-space:nowrap;overflow:hidden}
+.rd .k,.rd .o{color:var(--dim);font-family:var(--mono);font-size:11px;text-align:right}
+.rd .b{height:9px;background:#0d1622;border:1px solid #1c2a3a;position:relative}
+.rd .b i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#118a5a,#2fd07a)}
+.rd .v{font-family:var(--mono);text-align:right}
+.rd.me{background:rgba(34,184,234,.1)}.rd.me .c{color:var(--acc)}
+.away{font-size:8px;border:1px solid #3a4a5a;color:#9aa6b2;border-radius:2px;padding:0 2px;margin-left:3px;font-family:var(--sans);vertical-align:2px}
+.turns{display:flex;flex-direction:column;padding:0 10px}
+.turn{display:grid;grid-template-columns:44px 1fr 50px;gap:6px;font-size:12px;padding:4px 0;border-bottom:1px solid #141c28;cursor:pointer}
+.turn .t,.turn .l{font-family:var(--mono);color:var(--dim);font-size:11px}
+.turn .l{text-align:right}
+.turn b{font-family:var(--mono)}
+.turn .nm{color:var(--acc);font-size:11px;margin-left:4px}
+.msgs{padding:0 10px}
+.msg{padding:6px 0;border-bottom:1px solid #141c28}
+.msg .h{display:flex;gap:6px;align-items:baseline;font-size:12px}
+.msg .h .c{font-family:var(--mono);font-weight:800}
+.msg .h .t{margin-left:auto;color:var(--dim2);font-family:var(--mono);font-size:11px}
+.msg .h .mm{color:var(--dim);font-weight:800}
+.msg .chipr{font-size:10px;color:#9fb0c0;background:#101826;border:1px solid #1f2c3c;border-radius:3px;padding:0 4px}
+.msg .x{font-size:14px;line-height:1.35;color:#d8e2ea}
+.msg.ment{background:rgba(34,184,234,.08);border-left:3px solid var(--acc);padding-left:7px;margin-left:-10px}
+.compose{flex:none;border-top:1px solid var(--bd2);padding:8px 10px;display:flex;gap:8px;align-items:center;background:var(--panel)}
+.compose input{flex:1;background:#0a0f18;border:1px solid #2e4054;border-radius:8px;color:var(--tx);font:15px var(--sans);padding:8px 10px}
+.compose button{background:var(--blue);border:none;border-radius:8px;padding:8px 14px;font-weight:700;color:#fff}
+.compose .k{font-size:11px;color:var(--dim2);white-space:nowrap}
+.tabbar{position:absolute;left:0;right:0;bottom:0;height:74px;background:#0e1118;border-top:1px solid #1f2633;display:flex;justify-content:center;gap:110px;padding-top:10px}
+.tab{display:flex;align-items:center;gap:8px;font-size:15px;color:#9aa4b0}
+.tab.on{color:var(--acc)}
+.tab i{width:28px;height:24px;border:1.5px solid currentColor;border-radius:5px;display:block}
+.hint{position:absolute;z-index:30;background:#0d3b54;border:1px solid var(--acc);border-radius:8px;padding:6px 10px;font-size:12px;color:#dff}
+</style>
+</head>
+<body>
+<div id="chooser">
+  <span class="lbl">IPAD</span>
+  <button data-r="col">Roundtable applet in the column</button>
+  <button data-r="wide">Column widened: list + room</button>
+  <button data-r="other">Reading another frequency</button>
+  <button data-r="tx">You transmitting</button>
+</div>
+<div id="stage">
+  <div class="ipad"><div class="screen" id="scr"></div></div>
+  <div id="notes">
+    <h2>iPad: the desktop's panel, in the applet column</h2>
+    <p>The iPad already has the desktop's right-hand applet column (S-Meter, RX, TX). Roundtable is <b>one more applet</b> in it, following the active slice, as on the desktop.</p>
+    <p><b>Widen</b> (the ⇔ in its header) gives the column the room the desktop pop-out gets at its medium size: the frequency list on the left, the room on the right. Picking another frequency reads it without tuning, with "Back to my slice". Tapping a tag on the panadapter tunes there.</p>
+    <p>The VFO flag's Roundtable line scrolls the column to the applet, with an unread count for messages that name you.</p>
+    <p>With the column hidden, the iPad uses the iPhone's half-height sheet.</p>
+    <p>From the review, already in here: readings keep the <b>offset</b> column, earlier turns are a <b>vertical list</b> you can name from after the talker stops, <b>you</b> are cyan, and while you transmit the talker block shrinks so readings of you get the space. Readings are listed nearest first, never by strength.</p>
+    <p>A hardware keyboard sends with Return.</p>
+  </div>
+</div>
+<script>
+function rng(s){return()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff}}
+const ROOMS=[
+ {f:'7.185.000',m:'LSB',k:'g',who:'K4ABC',n:9,last:['K4ABC','Fifteen more minutes, then I am off'],band:'40M'},
+ {f:'7.200.000',m:'LSB',k:'u',who:'?',n:5,last:['N3XYZ','Anyone know who this is?'],band:'40M'},
+ {f:'7.255.500',m:'LSB',k:'d',who:'W8DXR + ?',n:4,last:['WA2PLE','Doubled again'],band:'40M'},
+ {f:'7.160.000',m:'LSB',k:'q',who:'Quiet',n:3,last:['N2DOC','Net at 0100'],band:'40M'},
+ {f:'14.286.000',m:'USB',k:'g',who:'VE3RTX',n:12,last:['W1GHZ','Wide open to EU'],band:'20M'},
+ {f:'14.230.000',m:'USB',k:'q',who:'Quiet',n:3,last:['KD9QRT','SSTV at the top of the hour'],band:'20M'},
+];
+const ST=[['N4XYZ',215,-200,82],['K4QRS',593,100,70],['K0ABC',775,300,60],['AA5ABC',1121,300,52,1],['W5ABC',1179,0,58],['K2ABC',1318,0,48],['KC1ABC',1380,0,55],['KG4VCF',1579,0,64,0,1],['G0ABC',6773,0,34]];
+const S={v:'col',sel:0,tx:false};
+const sU=p=>{const s=Math.round(p/100*12);return s>9?'S9+'+(s-9)*10:'S'+Math.max(1,s)};
+function readings(r,txing){
+  // you only appear in readings of the frequency your slice is on
+  const list=txing||r!==ROOMS[0]?ST.filter(x=>!x[5]):ST;
+  return list.map(x=>`<div class="rd ${x[5]?'me':''}"><span class="c">${x[0]}${x[4]?'<span class="away">AWAY</span>':''}</span><span class="k">${x[1].toLocaleString()} km</span><span class="o">${x[2]?(x[2]>0?'+':'')+x[2]+' Hz':'on'}</span><span class="b"><i style="width:${x[3]}%"></i></span><span class="v">${sU(x[3])}</span></div>`).join('');
+}
+function roomHtml(i,reading){
+  const r=ROOMS[i], txing=S.tx&&i===0;
+  let h=`<div class="rh"><span class="f">${r.f}</span><span class="m">${r.m}</span><span class="s">${r.n} stations · 1 away</span></div>`;
+  if(reading)h+=`<div class="reading">Reading ${r.f}. Your slice is still on 7.185.000.<a data-act="back">Back to my slice</a></div>`;
+  if(txing){h+=`<div class="talk"><span class="tx">TX</span><span class="who y">You</span><span class="st">keyed 0:42. Every station's reading of you:</span></div>`}
+  else h+=`<div class="talk"><span class="who ${r.k}">${r.who}</span><span class="st">${r.k==='g'?'talking 1:15, on NereusSDR':r.k==='u'?'unknown talker. <a style="color:var(--acc)">Name this turn</a>':r.k==='d'?'two keyed at once':'nobody keyed for 4 min'}</span></div>`;
+  h+=`<div class="cap">${txing?'HOW EACH STATION HEARS YOU':'HOW EACH STATION HEARS '+r.who}<span>nearest first</span></div>${readings(r,txing)}`;
+  if(!txing){
+    h+=`<div class="cap">EARLIER TURNS<span>tap one to see its readings</span></div><div class="turns">${[['20:41','W9ABC','on NereusSDR','2:10','g'],['20:39','?','','0:48','u',1],['20:37','KG4VCF','you','1:32','y'],['20:35','N3XYZ + ?','two at once','0:06','d']].map(t=>`<div class="turn"><span class="t">${t[0]}</span><span><b class="${t[4]}">${t[1]}</b> <span style="color:var(--dim)">${t[2]}</span>${t[5]?'<span class="nm">Name this turn</span>':''}</span><span class="l">${t[3]}</span></div>`).join('')}</div>`;
+  }
+  h+=`<div class="cap">MESSAGES<span></span></div><div class="msgs">
+   <div class="msg"><div class="h"><span class="c">K0ABC</span><span class="chipr">hearing K4ABC · S6</span><span class="t">20:40</span><span class="mm">⋯</span></div><div class="x">Skip is long here, you are weak but solid.</div></div>
+   <div class="msg ment"><div class="h"><span class="c">K4ABC</span><span class="chipr" style="color:#ffb0b0;border-color:#6a2020">transmitting</span><span class="t">20:42</span><span class="mm">⋯</span></div><div class="x">Thanks all. Fifteen more minutes, then I am off. <b style="color:var(--acc)">KG4VCF</b> you are next.</div></div></div>`;
+  return h;
+}
+function compose(i){const r=ROOMS[i];const can=i===0;
+  return `<div class="compose"><input ${can?'':'disabled'} placeholder="${can?'Message '+r.f:'Tune here to post'}"><button ${can?'':'style="opacity:.4"'}>Send</button><span class="k">${can?'Return sends':''}</span></div>`}
+function flist(){let h='',b='';ROOMS.forEach((r,i)=>{if(r.band!==b){b=r.band;h+=`<div class="fb">${b}</div>`}
+  h+=`<div class="fr ${S.sel===i?'sel':''} ${i===0?'mine':''}" data-sel="${i}"><span class="ff">${r.f}</span><span class="n">${r.n}</span><span class="w ${r.k}">${r.who}</span><span></span><span class="last">${r.last[0]}: ${r.last[1]}</span></div>`});return h}
+// pan spans 7.085 to 7.295 MHz so the scale labels sit at (i+.5)/7
+const PX=f=>(f-7085000)/210000, PW=2700/210000;
+function drawPan(c,w,h){
+  const g=c.getContext('2d');c.width=w;c.height=h;const sh=Math.round(h*.36);const r=rng(7);
+  g.fillStyle='#06080d';g.fillRect(0,0,w,sh);
+  g.strokeStyle='rgba(120,140,160,.15)';for(let y=0;y<sh;y+=sh/6){g.beginPath();g.moveTo(0,y);g.lineTo(w,y);g.stroke()}
+  // signals sit on the room frequencies (PX), plus one with no room
+  const peaks=[[PX(7185000),.62],[PX(7200000),.48],[PX(7255500),.66],[PX(7122000),.3]];
+  g.beginPath();g.moveTo(0,sh);
+  for(let x=0;x<w;x++){let v=sh*.84+r()*sh*.06;peaks.forEach(p=>{const d=Math.abs(x/w-p[0])*w;if(d<12)v-=p[1]*sh*Math.pow(1-d/12,1.6)});g.lineTo(x,v)}
+  g.lineTo(w,sh);g.closePath();g.fillStyle='rgba(34,184,234,.28)';g.fill();g.strokeStyle='#48c8f0';g.lineWidth=1;g.stroke();
+  // waterfall: dark noise floor, speech as soft bursty traces
+  const wy=sh+31,wh=h-wy,im=g.createImageData(w,wh);
+  const on=peaks.map((p,k)=>{const a=[];let s=r()<.5;for(let y=0;y<wh;y++){if(r()<.03)s=!s;a.push(s||k===0&&y<120)}return a});
+  const cmap=v=>v<.35?[4,8+v*60,40+v*150]:v<.6?[0,40+(v-.35)*500,120+(v-.35)*400]:v<.8?[(v-.6)*900,170+(v-.6)*300,220]:[230,230,120+(1-v)*400];
+  for(let y=0;y<wh;y++)for(let x=0;x<w;x++){let v=.12+r()*.12;peaks.forEach((p,k)=>{const d=Math.abs(x/w-p[0])*w;if(d<9&&on[k][y])v+=p[1]*.95*Math.exp(-d*d/18)*(.8+r()*.3)});
+    const c=cmap(Math.min(v,1)),i=(y*w+x)*4;im.data[i]=c[0];im.data[i+1]=c[1];im.data[i+2]=c[2];im.data[i+3]=255}
+  g.putImageData(im,0,wy);return sh;
+}
+function render(){
+  document.querySelectorAll('#chooser button').forEach(b=>b.classList.toggle('on',b.dataset.r===S.v));
+  const wide=S.v==='wide'||S.v==='other', colW=wide?640:360, panW=1152-colW;
+  const reading=S.v==='other'&&S.sel!==0;
+  let h=`<div class="sbar"><span>8:42 PM  Tue Oct 20</span><span>100%</span></div>
+   <div class="top"><b>NereusSDR</b><span>Slice <span class="a">A</span></span><span>Pan 1</span><span>Display</span><span class="sp"></span><span class="ic on" title="Applet column">▥</span></div>
+   <div class="pan" style="width:${panW}px"><canvas id="pc"></canvas><div id="ov"></div>
+   <div class="ptt ${S.tx?'on':''}" data-act="ptt">PTT<small>${S.tx?'On air':'Hold'}</small></div></div>
+   <div class="col" style="width:${colW}px">`;
+  if(!wide)h+=`<div class="ah"><span class="h">|||</span>S-Meter</div><div class="smeter">SIGNAL STRENGTH<i></i><b></b></div>`;
+  h+=`<div class="ah"><span class="h">|||</span>Roundtable<span class="r"><span data-act="${wide?'narrow':'widen'}">${wide?'⇔ Narrow':'⇔ Widen'}</span></span></div><div class="rtbody">`;
+  if(wide)h+=`<div class="rlist">${flist()}</div>`;
+  h+=`<div class="room">${roomHtml(wide?S.sel:0,reading)}</div></div>${compose(wide?S.sel:0)}</div>
+   <div class="tabbar"><span class="tab on"><i></i>Panadapter</span><span class="tab"><i></i>Modes</span><span class="tab"><i></i>Tools</span><span class="tab"><i></i>Radio</span><span class="tab"><i></i>Setup</span></div>`;
+  document.getElementById('scr').innerHTML=h;
+  const pan=document.querySelector('.pan'),ph=pan.clientHeight,c=document.getElementById('pc');const sh=drawPan(c,panW,ph);
+  const xOf=f=>({'7.185.000':PX(7185000),'7.200.000':PX(7200000),'7.255.500':PX(7255500),'7.160.000':PX(7160000)})[f];
+  const sx=PX(7185000)*panW;
+  let ov=`<div class="dbs">${[-60,-70,-80,-90,-100,-110].map((d,i)=>`<span style="top:${i*sh/6+2}px">${d}</span>`).join('')}</div>
+    <div class="plan" style="top:${sh}px">PHONE General</div><div class="scale" style="top:${sh+13}px">${['7.10','7.13','7.16','7.19','7.22','7.25','7.28'].map((t,i)=>`<span style="left:${(i+.5)/7*100}%">${t}</span>`).join('')}</div>
+    <div class="passband" style="left:${sx-PW*panW}px;width:${PW*panW}px;height:${sh}px"></div><div class="sliceline" style="left:${sx}px"></div>
+    <div class="flag" style="left:${sx-PW*panW-234}px"><div class="r1"><span class="a1">ANT1</span><span class="a2">ANT1</span><span class="bw">2.7K</span><span class="txb ${S.tx?'on':''}">TX</span><span class="ab">A</span></div><div class="fq">7.185.000</div>
+    <div class="rtline" data-act="col"><span style="color:var(--grn)">●</span>Roundtable · 9 · ${S.tx?'you':'K4ABC'}<span class="cnt">1</span><span class="chev">›</span></div></div>`;
+  ROOMS.filter(r=>xOf(r.f)!==undefined&&r.f!=='7.185.000').forEach((r,j)=>{ov+=`<div class="rt ${r.k}" style="left:${xOf(r.f)*panW}px;top:${sh*.46+(j%2)*32}px" data-sel="${ROOMS.indexOf(r)}">● ${r.who}<span class="cnt">${r.n}</span></div>`});
+  document.getElementById('ov').innerHTML=ov;
+}
+document.addEventListener('click',e=>{
+  const c=e.target.closest('#chooser [data-r]');if(c){S.v=c.dataset.r;S.tx=S.v==='tx';S.sel=S.v==='other'?4:0;render();return}
+  const s=e.target.closest('[data-sel]');if(s){const i=+s.dataset.sel;if(s.classList.contains('rt')){S.sel=0;S.v=S.v==='wide'||S.v==='other'?'wide':S.v}else{S.sel=i;S.v=i===0?'wide':'other'}render();return}
+  const a=e.target.closest('[data-act]');if(!a)return;const k=a.dataset.act;
+  if(k==='widen')S.v='wide';if(k==='narrow'){S.v='col';S.sel=0}if(k==='back'){S.sel=0;S.v='wide'}if(k==='ptt'){S.tx=!S.tx;if(S.tx&&S.v!=='wide')S.v='tx';else if(!S.tx&&S.v==='tx')S.v='col'}
+  render();
+});
+const hs=location.hash.slice(1);if(hs){S.v=hs;S.tx=hs==='tx';S.sel=hs==='other'?4:0}
+render();
+</script>
+</body>
+</html>

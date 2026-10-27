@@ -1,5 +1,8 @@
 // NereusSDR for iOS: where the chosen tuning dial sits on the band, and its step menu
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the knob drawn at 76 points in the
+// strip under the Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -22,7 +25,15 @@ struct DialLayer: View {
     /// Sideways, the phone's rounded edge on the right, which the knob and
     /// the wheel keep inside.
     var trailingInset: CGFloat = 0
+    /// The Roundtable sheet is up: the knob is drawn at ``stripKnobDiameter``
+    /// in the strip under the sheet (spec 11.3); the thumbwheel already sits there.
+    var strip = false
     @Environment(\.uprightBandWidth) private var uprightWidth
+
+    /// The strip under the Roundtable sheet that keeps PTT and the dial.
+    static let stripHeight: CGFloat = 92
+    /// The knob's size in that strip.
+    static let stripKnobDiameter: CGFloat = 76
 
     // The board's places (`.knob--wf`, `.twheel`, `.has-knob .zoom`,
     // `.has-twheel .zoom`, `.scr--land`), from the waterfall's edges.
@@ -41,11 +52,14 @@ struct DialLayer: View {
         case .off:
             EmptyView()
         case .waterfallKnob:
-            let frame = Self.knobFrame(waterfall: layout.waterfall, sideways: sideways, trailingInset: trailingInset)
+            let frame = strip
+                ? Self.stripKnobFrame(bandSize: layout.size, trailingInset: trailingInset)
+                : Self.knobFrame(waterfall: layout.waterfall, sideways: sideways, trailingInset: trailingInset)
             ZStack(alignment: .topLeading) {
                 WaterfallKnob(tuning: tuning, slices: slices, settings: settings,
-                              metrics: WaterfallKnob.metrics(sideways: sideways,
-                                                             waterfallHeight: layout.waterfall.height))
+                              metrics: strip
+                                ? Knob.Metrics.waterfall.scaled(Self.stripKnobDiameter / Knob.Metrics.waterfall.diameter)
+                                : WaterfallKnob.metrics(sideways: sideways, waterfallHeight: layout.waterfall.height))
                     .offset(x: frame.minX, y: frame.minY)
                 menu(above: frame)
             }
@@ -95,6 +109,14 @@ struct DialLayer: View {
     }
 
     // MARK: Places
+
+    /// The knob in the strip under the Roundtable sheet: at the right, in the strip's middle.
+    static func stripKnobFrame(bandSize: CGSize, trailingInset: CGFloat = 0) -> CGRect {
+        let diameter = stripKnobDiameter
+        return CGRect(x: bandSize.width - trailingInset - rightInset - diameter,
+                      y: bandSize.height - stripHeight + (stripHeight - diameter) / 2,
+                      width: diameter, height: diameter)
+    }
 
     /// The knob at the bottom right of the waterfall.
     static func knobFrame(waterfall: CGRect, sideways: Bool, trailingInset: CGFloat = 0) -> CGRect {

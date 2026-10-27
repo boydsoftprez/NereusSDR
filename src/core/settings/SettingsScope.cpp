@@ -192,6 +192,20 @@
 //   2026-10-15 - RemoteRigctld/ is OperatorLocal: a remote window's own
 //                rigctld. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: Roundtable/ is the Core's
+//                (Station); Roundtable/EarlierTurnsShown and
+//                Roundtable/PanelOpensOn stay each window's. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11 fix round: the four Roundtable
+//                keys the verbs change are model-owned. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 12: Roundtable/FirstRunSeen (this
+//                computer has asked the first-run question or shown its
+//                one-time note) stays each window's. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 13: Roundtable/WindowGeometry (the
+//                pop-out window's size and screen) stays each computer's.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - LimitFiltersToSidebands is Station scope. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -303,6 +317,20 @@ const Rule kExceptions[] = {
     { "FreeDvReporter/DistanceMiles", SettingsScope::OperatorLocal },
     { "FreeDvReporter/DirectionAsCardinal", SettingsScope::OperatorLocal },
     { "FreeDvReporter/FrequencyAsKhz", SettingsScope::OperatorLocal },
+
+    // Roundtable plan Task 11 (design 10.3): how many earlier turns a
+    // Roundtable panel shows and what it opens on are each window's own
+    // preferences; every other Roundtable/ key is the Core's (prefix rule
+    // below).
+    { "Roundtable/EarlierTurnsShown", SettingsScope::OperatorLocal },
+    { "Roundtable/PanelOpensOn", SettingsScope::OperatorLocal },
+    // Roundtable plan Task 12 (design 11.2): whether this computer has
+    // asked the first-run question or shown the one-time note that another
+    // device answered it. The answer itself is the Core's.
+    { "Roundtable/FirstRunSeen", SettingsScope::OperatorLocal },
+    // Roundtable plan Task 13 (design 11.2): where this computer's
+    // Roundtable window sits and how big it is.
+    { "Roundtable/WindowGeometry", SettingsScope::OperatorLocal },
 };
 
 // ---- 2. Prefixes ---------------------------------------------------------
@@ -441,6 +469,12 @@ const Rule kPrefixes[] = {
     { "Pota", SettingsScope::Station },
     { "PskReporter", SettingsScope::Station },
     { "FreeDv", SettingsScope::Station }, // FreeDvReporter/* and FreeDvSpot*
+    // Roundtable plan Task 11 (design 10.1, 10.3): the Core runs Roundtable
+    // and keeps its settings (Roundtable/AutoStart, AwayChoice,
+    // HighlightMentions, Callsign, GridSquare, FirstRunAnswer, Hidden,
+    // MuteList, MentionsSeenMs), so every device on the station sees the
+    // same (U5, U6).
+    { "Roundtable", SettingsScope::Station },
     // Parity Task 19 (R-IOS-25; remote design section 6.4): WSJT-X and
     // SpotCollector listen for programs on the computer they run on, so
     // each window runs its own and keeps its own settings (addresses,
@@ -748,6 +782,22 @@ bool isCoreOwnedIdentitySettingsKey(QStringView rawKey)
                == 0;
 }
 
+bool isCoreOwnedRoundtableSettingsKey(QStringView rawKey)
+{
+    static constexpr const char* kKeys[] = {
+        "Roundtable/FirstRunAnswer",
+        "Roundtable/Hidden",
+        "Roundtable/MuteList",
+        "Roundtable/MentionsSeenMs",
+    };
+    for (const char* key : kKeys) {
+        if (rawKey.compare(QLatin1String(key), Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isModelOwnedDspSettingsKey(QStringView rawKey)
 {
     const QString key = rawKey.toString().toLower();
@@ -757,6 +807,12 @@ bool isModelOwnedDspSettingsKey(QStringView rawKey)
     // iPhone app Task 13 (R-IOS-08): the Core's name and its key backup
     // acknowledgement change only through their commands.
     if (isCoreOwnedIdentitySettingsKey(rawKey)) {
+        return true;
+    }
+    // Roundtable plan Task 11: what the roundtable.* verbs change, so the
+    // first-run answer stays once-only and Hide my station is the
+    // operator's.
+    if (isCoreOwnedRoundtableSettingsKey(rawKey)) {
         return true;
     }
     // R-R3-21 / R-R3-09: the Core owns the notch list. An older app's
@@ -819,6 +875,9 @@ QString modelOwnedSettingsRefusal(QStringView rawKey)
     }
     if (rawKey.compare(QLatin1String("StationLabel"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("This Core keeps its own name. Update this app to rename it.");
+    }
+    if (isCoreOwnedRoundtableSettingsKey(rawKey)) {
+        return QStringLiteral("This Core changes its Roundtable choices only through Roundtable.");
     }
     return QStringLiteral("The Core changes these settings only through their own controls.");
 }
