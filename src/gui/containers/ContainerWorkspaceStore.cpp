@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original transactional client presentation store.
 // Modification history (NereusSDR):
+//   2026-10-27 - Notify consumers after every successful load. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26 - Every refused commit is logged with its status and
 //                 reason, and the two states that refuse every commit
 //                 until a reload (a load error, or the saved bytes changed
@@ -64,6 +66,7 @@ DocumentResult ContainerWorkspaceStore::load()
     m_loadedPresent = present;
     m_loadError.clear();
     setBlockedReason({});
+    emit loaded();
     return result;
 }
 

@@ -1,6 +1,8 @@
 #pragma once
 // no-port-check: NereusSDR-original transactional client presentation store.
 // Modification history (NereusSDR):
+//   2026-10-27 - Notify consumers on every successful workspace load.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-08 - Workspace preview only: workspaceKey(), the preview's own
@@ -35,6 +37,8 @@ public:
     QString blockedReason() const { return m_blockedReason; }
 signals:
     void committed(quint64 revision);
+    // The workspace was loaded successfully and snapshot() is current.
+    void loaded();
     // blockedReason() changed; empty when commits can be saved again.
     void blockedChanged(const QString& reason);
 private:

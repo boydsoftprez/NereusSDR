@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - Recover storage errors and reconcile on every successful
+//                 reload. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26 - commitWorkspace logs the refusals it makes itself (no
 //                 workspace adapter, a second singleton placement); the
 //                 store logs its own. A good reload that ends a state
@@ -465,8 +467,7 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_arrange = new ContainerArrangeController(*store, this, this);
     m_storageError = store->loadError();
     connect(store, &ContainerWorkspaceStore::committed, this, [this] { reconcileWorkspace(m_store->snapshot()); });
-    connect(store, &ContainerWorkspaceStore::blockedChanged, this, [this](const QString& reason) {
-        if (!reason.isEmpty()) { return; }
+    connect(store, &ContainerWorkspaceStore::loaded, this, [this] {
         // A good reload ended a state that refused every save. Saving resumes
         // at once (geometry capture waits on m_storageError), from the layout
         // as read rather than from what was on screen before it.

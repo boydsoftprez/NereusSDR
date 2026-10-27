@@ -16,6 +16,9 @@
 //                 fails on disk (settings folder read-only) is refused once
 //                 and says so only in the box. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - A successful reload clears a one-off disk save error even
+//                 when the store was never blocked. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 #include <QtTest/QtTest>
 #include <QAction>
 #include <QApplication>
@@ -413,6 +416,32 @@ private slots:
         QCOMPARE(shown.size(), 1);
         QCOMPARE(shown.first()->message(), QStringLiteral("Container change not saved: Workspace revision changed"));
         QCOMPARE(toasts(*window, kReadOnly).size(), 0);
+        window->close();
+    }
+
+    void reloadClearsOneOffDiskSaveError()
+    {
+        auto window = buildWindow();
+        auto* manager = window->findChild<ContainerManager*>();
+        QVERIFY(manager && manager->workspaceStore());
+        ContainerWorkspaceStore& store = *manager->workspaceStore();
+        const WorkspaceDocument document = store.snapshot();
+        QSignalSpy errors(manager, &ContainerManager::workspaceError);
+        QVERIFY(errors.isValid());
+        {
+            ReadOnlySettingsFolder readOnly;
+            QCOMPARE(manager->commitWorkspace(document, document.revision).status, CommitStatus::StorageError);
+        }
+        QVERIFY(!manager->storageError().isEmpty());
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(errors.first().first().toString(), manager->storageError());
+        QVERIFY(store.blockedReason().isEmpty());
+
+        // No manager commit may clear the error before this assertion.
+        QVERIFY(store.load().ok);
+        QVERIFY(store.blockedReason().isEmpty());
+        QVERIFY(manager->storageError().isEmpty());
+        QCOMPARE(errors.size(), 1);
         window->close();
     }
 
