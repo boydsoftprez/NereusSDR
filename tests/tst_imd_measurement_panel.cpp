@@ -80,6 +80,9 @@ int inkPixels(const QImage& image, const QColor& ink) {
     }
     return count;
 }
+// A new frame changes label text, and Qt lays the panel out again on a posted
+// LayoutRequest. A capture taken before that request runs shows the old heights.
+void settleLayouts() { QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); }
 QString textOf(QWidget& widget, const char* name) { return widget.findChild<QLabel*>(QString::fromLatin1(name))->text(); }
 }
 class TestImdMeasurementPanel : public QObject {
@@ -103,6 +106,90 @@ private slots:
                     QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ImdReading%1_%2").arg(i).arg(j))->text(), QStringLiteral("–"));
                 }
             }
+        }
+    }
+    void toneSeparationReadsMeasuredFundamentals()
+    {
+        ImdMeasurementFrame measured;
+        measured.status = ImdStatus::Valid;
+        measured.context.firstSampleHz = 14190000.0;
+        measured.context.sampleStepHz = 1.0;
+        measured.peaks[0] = ImdPeakReading{9400, 14199400.0, -22.0f, std::nullopt};
+        measured.peaks[1] = ImdPeakReading{10600, 14200600.0, -24.0f, 0.0f};
+        for (auto presentation : {ImdMeasurementPanel::Presentation::Inspector, ImdMeasurementPanel::Presentation::Window}) {
+            ImdMeasurementPanel panel;
+            panel.setPresentation(presentation);
+            panel.setFrame(measured);
+            QLabel* label = panel.findChild<QLabel*>(QStringLiteral("ImdToneSeparation"));
+            QVERIFY(label);
+            QVERIFY(label->isVisibleTo(&panel));
+            QCOMPARE(label->text(), QStringLiteral("Tone separation  1.200 kHz"));
+        }
+        ImdMeasurementPanel rail;
+        rail.setPresentation(ImdMeasurementPanel::Presentation::Rail);
+        rail.setFrame(measured);
+        QLabel* railLabel = rail.findChild<QLabel*>(QStringLiteral("ImdToneSeparation"));
+        QVERIFY(railLabel);
+        QVERIFY(!railLabel->isVisibleTo(&rail));
+
+        ImdMeasurementPanel panel;
+        panel.setPresentation(ImdMeasurementPanel::Presentation::Inspector);
+        ImdMeasurementFrame lowerOnly;
+        lowerOnly.status = ImdStatus::FundamentalsUnresolved;
+        lowerOnly.peaks[0] = measured.peaks[0];
+        panel.setFrame(lowerOnly);
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  – kHz"));
+        ImdMeasurementFrame expectedOnly;
+        expectedOnly.status = ImdStatus::ProductsMissing;
+        expectedOnly.expectedFrequencyHz[0] = 14199400.0;
+        expectedOnly.expectedFrequencyHz[1] = 14200600.0;
+        panel.setFrame(expectedOnly);
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  – kHz"));
+        // Thetis truncates the edge and each offset, not each whole frequency. Edge
+        // 14190000.6 Hz, offsets 9400.95 and 10600.05 Hz: the Thetis form reads
+        // 10600 - 9400 = 1.200; truncating each whole frequency gives
+        // 14200600 - 14199401 = 1.199, and no truncation 1199.1 = 1.199.
+        ImdMeasurementFrame fractional;
+        fractional.status = ImdStatus::Valid;
+        fractional.context.firstSampleHz = 14190000.6;
+        fractional.context.sampleStepHz = 0.05;
+        fractional.peaks[0] = ImdPeakReading{188019, 14190000.6 + 188019 * 0.05, -22.0f, std::nullopt};
+        fractional.peaks[1] = ImdPeakReading{212001, 14190000.6 + 212001 * 0.05, -24.0f, 0.0f};
+        panel.setFrame(fractional);
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  1.200 kHz"));
+        // Both tones measured is enough: missing or off-view products keep the reading.
+        for (ImdStatus status : {ImdStatus::ProductsMissing, ImdStatus::ProductsOutsideView}) {
+            ImdMeasurementFrame partial = measured;
+            partial.status = status;
+            panel.setFrame(partial);
+            QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  1.200 kHz"));
+        }
+    }
+    void inspectorSelectionKeepsItsWrappedHeight()
+    {
+        PanadapterApplet pan(QStringLiteral("Synthetic RF fixture · no hardware"));
+        pan.resize(736, 760);
+        SpectrumWidget* spectrum = pan.spectrumWidget();
+        configure(*spectrum);
+        spectrum->setImdInspectorVisible(true);
+        spectrum->setImdGuidesVisible(true);
+        pan.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&pan));
+        QTest::qWait(40);
+        ImdSpectrumTestAccess::seedVisiblePixels(*spectrum, pixels(spectrum->width()));
+        settleLayouts();
+        ImdMeasurementPanel* inspector = pan.imdInspector();
+        QVERIFY(inspector->isVisible());
+        QLabel* selection = inspector->findChild<QLabel*>(QStringLiteral("ImdSelection"));
+        QVERIFY(selection);
+        QVERIFY(selection->text().contains(QStringLiteral("Measured peak")));
+        QVERIFY2(selection->height() >= selection->heightForWidth(selection->width()),
+                 qPrintable(QStringLiteral("selection %1 px tall, needs %2 at width %3")
+                     .arg(selection->height()).arg(selection->heightForWidth(selection->width())).arg(selection->width())));
+        for (int index = 0; index < 6; ++index) {
+            QPushButton* button = inspector->findChild<QPushButton*>(QStringLiteral("ImdProduct%1").arg(index));
+            QVERIFY(button);
+            QVERIFY2(!button->geometry().intersects(selection->geometry()), qPrintable(button->text()));
         }
     }
     void railCloseRequestsMeasurementVisibilityClear()
@@ -362,13 +449,23 @@ private slots:
         pan.show();
         QVERIFY(QTest::qWaitForWindowExposed(&pan));
         QTest::qWait(40);
-        QVector<float> input = pixels(spectrum->width());
-        if (condition == 1) { input[qRound(.875 * (input.size() - 1))] = -120; }
-        if (condition == 2) { // Actual resolved fundamentals ground expected fifth products outside the visible grid.
-            input.fill(-120); input[qRound(.2 * (input.size()-1))] = -22; input[qRound(.8 * (input.size()-1))] = -24;
+        // The new readings relayout the rail and inspector, which can resize the
+        // spectrum and retire the frame seeded at the old size: seed again until
+        // the layout holds still, so captures show settled geometry.
+        for (int pass = 0; pass < 4; ++pass) {
+            const QSize seededAt = spectrum->size();
+            QVector<float> input = pixels(spectrum->width());
+            if (condition == 1) { input[qRound(.875 * (input.size() - 1))] = -120; }
+            if (condition == 2) { // Actual resolved fundamentals ground expected fifth products outside the visible grid.
+                input.fill(-120); input[qRound(.2 * (input.size()-1))] = -22; input[qRound(.8 * (input.size()-1))] = -24;
+            }
+            ImdSpectrumTestAccess::seedVisiblePixels(*spectrum, input);
+            settleLayouts();
+            QCoreApplication::processEvents();
+            if (spectrum->size() == seededAt) { break; }
         }
-        ImdSpectrumTestAccess::seedVisiblePixels(*spectrum, input);
         if (condition == 3) { spectrum->setTestingIMD(false); }
+        settleLayouts();
         QCOMPARE(pan.width(), width);
         QVERIFY(pan.imdRail()->geometry().bottom() < spectrum->geometry().top());
         if (inspector) {

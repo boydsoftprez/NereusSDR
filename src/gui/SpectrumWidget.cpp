@@ -26,6 +26,9 @@
 //                 the Roundtable room tags along the foot of the spectrum,
 //                 drawn in both paint paths, a tag click and the +N fold
 //                 list (Roundtable plan Task 14).
+//   2026-10-25  J.J. Boyd (KG4VCF), Claude Code: the waterfall's
+//                 correction marks take the workspace ok and warn status
+//                 colors; the classic look draws the same ink as before.
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
 //                 remote pan's warm-up holds for an NSDC v2 frame whose
 //                 trace was carried (traceCarried) and keeps the start's
@@ -8572,8 +8575,14 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
             const std::optional<qreal> rowY = imdEventY(
                 event.rowSequence, m_imdWaterfallGlideRows);
             if (!rowY) { continue; }
+            // Classic look ink, unchanged; the workspace look takes the status roles.
+            constexpr QColor kCorrectionAppliedInk(100, 210, 170);
+            constexpr QColor kCorrectionOffInk(220, 165, 110);
+            constexpr int kCorrectionMarkAlpha = 190;
             QColor marker = event.correctionsApplied
-                ? QColor(100, 210, 170, 190) : QColor(220, 165, 110, 190);
+                ? WorkspacePreview::statusColour(kCorrectionAppliedInk, "ok")
+                : WorkspacePreview::statusColour(kCorrectionOffInk, "warn");
+            marker.setAlpha(kCorrectionMarkAlpha);
             p.setPen(QPen(marker, 1.0));
             p.drawLine(QPointF(wfRect.left(), wfRect.top() + *rowY),
                        QPointF(wfRect.right(), wfRect.top() + *rowY));

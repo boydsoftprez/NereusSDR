@@ -530,6 +530,8 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | src/gui/ImdOverlay.cpp | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Peak detection/search/EMA/format implementation; independent product presence and static cached formatting retain source geometry/formulas. |
 | src/gui/ImdMeasurementPresenter.cpp | Project Files/Source/Console/display.cs | 5223 [v2.10.3.15] | port | thetis-samphire | Trigger constant for GUI cached acceptance; search/EMA remain in ImdOverlay. GUI status/freshness policy is NereusSDR-original. |
 | src/gui/ImdMeasurementPresenter.h | Project Files/Source/Console/display.cs | paired implementation trigger at 5223 [v2.10.3.15] | port | thetis-samphire | Original GUI cached-frame API paired with the implementation derivative; exact notice preserved on both siblings. |
+| src/gui/ImdMeasurementPanel.cpp | Project Files/Source/Console/display.cs | 5569-5575; 5652; 5695 [v2.10.3.15] | port | thetis-samphire | Tone separation reading: the f0 diff value (whole-Hz tone frequencies built as a truncated edge plus a truncated offset, upper minus lower over 1000) and its three-decimal kHz format, from the measured peaks only, shown whenever both tones are measured. The rest of the inspector is NereusSDR-original presentation. |
+| src/gui/ImdMeasurementPanel.h | Project Files/Source/Console/display.cs | paired implementation f0 diff at 5569-5575; 5652; 5695 [v2.10.3.15] | port | thetis-samphire | Original inspector API paired with the implementation derivative; exact notice preserved on both siblings. |
 
 ## Files derived from mi0bot/Thetis-HL2
 

@@ -6,15 +6,20 @@
 //                 row handed over early and put in before its trace is
 //                 accepted takes the event on the frame where the source
 //                 turns eligible (remoteEarlyRowTakesTheEdgeAsEligibilityTurnsOn).
+//   2026-10-25  J.J. Boyd (KG4VCF), Claude Code: correction marks keep
+//                 their classic ink and take the workspace status roles
+//                 (correctionMarksTakeStatusRoles).
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/PureSignalViewStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "core/AppSettings.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "support/ImdSpectrumTestAccess.h"
 #include "NativeWindowFrames.h"
 #include <QDir>
 #include <QPainter>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <cmath>
@@ -80,6 +85,38 @@ static int markerInkPixels(const QImage& image, const QColor& ink)
         }
     }
     return pixels;
+}
+
+// The pixel a 1 px pen of `ink` leaves on `background`, as the CPU painter blends it.
+static QColor blendedInk(const QColor& background, const QColor& ink)
+{
+    QImage pixel(1, 1, QImage::Format_ARGB32_Premultiplied);
+    pixel.fill(background);
+    QPainter painter(&pixel);
+    painter.setPen(QPen(ink, 1.0));
+    painter.drawPoint(0, 0);
+    painter.end();
+    return pixel.pixelColor(0, 0);
+}
+
+static bool closeTo(const QColor& a, const QColor& b, int tolerance)
+{
+    return std::abs(a.red() - b.red()) <= tolerance && std::abs(a.green() - b.green()) <= tolerance
+        && std::abs(a.blue() - b.blue()) <= tolerance;
+}
+
+// True when a row within a pixel of `y` in column `x` carries `ink` over the
+// waterfall a few rows above it, each channel within `tolerance`.
+static bool markDrawn(const QImage& image, int x, qreal y, const QColor& ink, int tolerance)
+{
+    const QColor background = image.pixelColor(x, qRound(y) - 4);
+    const QColor expected = blendedInk(background, ink);
+    for (int row = qFloor(y) - 1; row <= qCeil(y) + 1; ++row) {
+        if (row >= 0 && row < image.height() && closeTo(image.pixelColor(x, row), expected, tolerance)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 class TestImdWaterfallAnnotations : public QObject {
@@ -319,6 +356,76 @@ private slots:
         QVERIFY(widget.imdMeasurementFrame().context.sourceEligible);
         QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().size(), 1);
         QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().first().rowSequence, earlyRow);
+    }
+    void correctionMarksTakeStatusRoles()
+    {
+        constexpr QColor kAppliedInk(100, 210, 170);
+        constexpr QColor kOffInk(220, 165, 110);
+        // A failed check returns early; the later slots still get the classic look.
+        const auto restoreClassic = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        // The workspace look first; the classic pass proves the old ink is unchanged.
+        for (const bool workspace : {true, false}) {
+            WorkspacePreview::setEnabledForTest(workspace);
+            SpectrumWidget widget;
+            widget.resize(640, 240);
+            widget.setWaterfallTickerPausedForTest(true);
+            widget.setWfAgcEnabled(false);
+            widget.setWfLowThreshold(-130.0f);
+            widget.setWfHighThreshold(-50.0f);
+            widget.setWfOpacity(100);
+            widget.setDbmScaleVisible(false);
+            widget.setSampleRate(192000.0);
+            widget.setDdcCenterFrequency(14200000.0);
+            widget.setDisplayWindowPreservingHistory(14200000.0, 48000.0);
+            widget.setDisplayDuplex(true);
+            widget.setMoxOverlay(true);
+            widget.setTestingIMD(true);
+            widget.setShowIMDMeasurements(true);
+            widget.setImdGuidesVisible(false);
+            widget.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&widget));
+            ImdSpectrumTestAccess::seedVisiblePixels(widget, QVector<float>(640, -120.0f));
+            QVERIFY(widget.imdMeasurementFrame().context.sourceEligible);
+            const QVector<float> row(640, -45.0f);
+            for (int i = 0; i < 12; ++i) { widget.pushWaterfallRowForTest(row); }
+            widget.queueImdCorrectionEdge(true);
+            widget.pushImdReceiverRowForTest(row);
+            const quint64 applied = widget.imdWaterfallAnnotationsForTest().events().last().rowSequence;
+            for (int i = 0; i < 30; ++i) { widget.pushWaterfallRowForTest(row); }
+            widget.queueImdCorrectionEdge(false);
+            widget.pushImdReceiverRowForTest(row);
+            const quint64 off = widget.imdWaterfallAnnotationsForTest().events().last().rowSequence;
+            for (int i = 0; i < 12; ++i) { widget.pushWaterfallRowForTest(row); }
+            const auto appliedY = widget.imdEventYForTest(applied, 0.0);
+            const auto offY = widget.imdEventYForTest(off, 0.0);
+            QVERIFY(appliedY && offY);
+            const QImage frame = ImdWaterfallTestAccess::cpuFrame(widget);
+            const QRect wf = widget.waterfallRectForTest();
+            const qreal dpr = frame.width() / qreal(widget.width());
+            const int x = qRound((wf.right() - 10) * dpr);
+            // Classic: the drawn pixel must be exactly the pre-change RGBA blended
+            // over the waterfall. Workspace: the status role ink, within 2 per channel.
+            QColor appliedInk(100, 210, 170, 190);
+            QColor offInk(220, 165, 110, 190);
+            int tolerance = 0;
+            if (workspace) {
+                appliedInk = WorkspacePreview::roleColour(kAppliedInk, "live");
+                offInk = WorkspacePreview::roleColour(kOffInk, "measured");
+                appliedInk.setAlpha(190);
+                offInk.setAlpha(190);
+                QVERIFY(appliedInk.rgb() != kAppliedInk.rgb());
+                QVERIFY(offInk.rgb() != kOffInk.rgb());
+                tolerance = 2;
+            }
+            QVERIFY2(markDrawn(frame, x, (wf.top() + *appliedY) * dpr, appliedInk, tolerance), workspace ? "workspace applied" : "classic applied");
+            QVERIFY2(markDrawn(frame, x, (wf.top() + *offY) * dpr, offInk, tolerance), workspace ? "workspace off" : "classic off");
+            const QString evidence = QString::fromUtf8(qgetenv("NEREUS_IMD_EVIDENCE"));
+            if (!evidence.isEmpty()) {
+                QVERIFY(QDir().mkpath(evidence));
+                QVERIFY(frame.save(evidence + QStringLiteral("/correction-marks-%1.png")
+                    .arg(workspace ? QStringLiteral("workspace") : QStringLiteral("classic"))));
+            }
+        }
     }
     void nativeGpuWrapPauseRewindGlideCapture()
     {
