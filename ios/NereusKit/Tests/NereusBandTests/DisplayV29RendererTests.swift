@@ -89,8 +89,15 @@ import Testing
         #expect(state.stack.count == 0)
         state.receive(frame: frame(3), manualLevels: levels)
         #expect(state.stack.count == 1 && state.history.count == 3)
-        let row = try #require(state.stack.row(age: 0))
-        #expect(row.contains(-40) && row.contains(-35))
+        // Each spike, smoothed as the row goes in (half its own level and a
+        // quarter of each -125 or -130 neighbour), still stands in the row.
+        let pan = BandCoverage(centerHz: 7_200_000, spanHz: 40_000)
+        func level(_ hz: Double) -> Float {
+            state.stack.sample(age: 0, frequencyHz: hz, view: pan, currentFloor: -200).dbm
+        }
+        let exactSpike = 7_190_200.0 // exact sample 25 of 100 across the pan
+        let wideSpike = 7_155_250.0 // wide sample 10 of 200 across 100 kHz
+        #expect(level(exactSpike) > -90 && level(wideSpike) > -90)
         state.waterfallHeld = true
         state.receive(frame: frame(4, spike: true), manualLevels: levels)
         state.waterfallHeld = false
@@ -98,8 +105,7 @@ import Testing
         state.receive(frame: frame(6), manualLevels: levels)
         #expect(state.stack.count == 1) // Held ticks do not enter a fold.
         state.receive(frame: frame(7), manualLevels: levels)
-        let next = try #require(state.stack.row(age: 0))
-        #expect(!next.contains(-40) && !next.contains(-35))
+        #expect(level(exactSpike) < -95 && level(wideSpike) < -95)
     }
 
     @Test func matchUsesVisibleRowsAndSourceReplacementDropsOnlyAnIncompleteFold() throws {

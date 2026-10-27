@@ -149,9 +149,7 @@ struct RootView: View {
                                 }
                             }
                             .offset(tab == .tools ? toolsSlide : .zero)
-                            .opacity(shown ? 1 : 0)
-                            .allowsHitTesting(shown)
-                            .accessibilityHidden(!shown)
+                            .tabShown(shown)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

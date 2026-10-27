@@ -54,6 +54,8 @@ enum ShotWait {
 
     /// The current revision completed on the same view and drawable size,
     /// whether the feed advanced it or was deliberately held while keyed.
+    /// Lines fed are in first: on screen they wait for the band's row
+    /// clock, which puts them in over the next frames.
     static func bandShown(_ band: BandModel, in window: UIWindow, after ready: BandDrawing,
                           seconds: Double = 30) async -> Bool {
         let fed = band.revision
@@ -64,10 +66,11 @@ enum ShotWait {
                   let size = drawablePixels(of: view),
                   let owner = view.delegate as? BandView.Coordinator,
                   owner.currentDrawKey == ready.key,
-                  size.width == ready.width, size.height == ready.height else {
+                  size.width == ready.width, size.height == ready.height,
+                  band.state.linesWaiting == 0 else {
                 return false
             }
-            return band.presentedDraws[ready.key].map { $0 >= fed } ?? false
+            return band.presentedDraws[ready.key].map { $0 >= max(fed, band.revision) } ?? false
         }
     }
 

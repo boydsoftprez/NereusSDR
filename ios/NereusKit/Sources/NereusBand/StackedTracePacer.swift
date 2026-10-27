@@ -161,6 +161,83 @@ public struct StackedDrawThrottle: Equatable, Sendable {
     }
 }
 
+/// The band's draws while its lines flow on the row clock: one on every
+/// screen frame that falls due, `interval` after the last was due, so the
+/// draws keep a steady cadence on the display link's frames and each draw
+/// shows the lines the clock put in since the one before (2026-10-26).
+///
+/// A frame within half a frame of the due time is due: the display link's
+/// frame times are exact multiples of its frame, and a cadence of two
+/// frames then draws on every second frame without drifting. A frame half a
+/// frame or more past the due time (the link was resting) starts the
+/// cadence again from itself.
+public struct FrameDrawCadence: Equatable, Sendable {
+    private var lastDue: Double?
+
+    public init() {}
+
+    /// Whether the frame at `now` (seconds) of `frame` length draws, at
+    /// least `interval` seconds after the last due draw; a draw is counted.
+    public mutating func take(at now: Double, interval: Double, frame: Double) -> Bool {
+        let half = max(frame, 0) / 2
+        guard let last = lastDue else {
+            lastDue = now
+            return true
+        }
+        let due = last + max(interval, 0)
+        guard now + half >= due else {
+            return false
+        }
+        lastDue = now - due < half ? due : now
+        return true
+    }
+
+    /// Forgets the last draw: the next frame draws.
+    public mutating func reset() {
+        lastDue = nil
+    }
+}
+
+/// Which of the display link's frames the band draws while its lines flow
+/// on the row clock (2026-10-26).
+///
+/// In 2D each line moves the waterfall a whole line with no glide, so a
+/// line must show on the frame the clock put it in: the band draws on every
+/// frame that puts a line in. Only the lines wait for the clock: the
+/// spectrum trace, and a change the screens show (a spot, a marker, the
+/// grid following the floor), draw on the next frame, as they did before
+/// the clock. A draw between lines shows no new line, so the lines stay
+/// even. Drawing the trace on a cadence of the lines instead held each
+/// trace for the next line's frame: 19 ms from its arrival on average, up
+/// to 33 ms, against 8 ms and 16.7 ms on the next frame (2026-10-26).
+///
+/// In 3D the stack glides by the clock on every drawn frame and takes the
+/// trace's place, so the band draws on the cadence while it is changed or
+/// lines flow.
+public struct BandLineDraws: Equatable, Sendable {
+    private var cadence = FrameDrawCadence()
+
+    public init() {}
+
+    /// Whether the link's frame at `now` (seconds) of `frame` length draws.
+    /// `interval` is the least time between 3D cadence draws (2D draws on
+    /// no cadence), `linesPut` the lines the clock put in on this frame,
+    /// `dirty` whether the band changed since it last drew (any change,
+    /// the screens' too), `flowing` whether lines flow.
+    public mutating func draws(at now: Double, frame: Double, interval: Double, stacked: Bool, linesPut: Int,
+                               dirty: Bool, flowing: Bool) -> Bool {
+        if stacked {
+            return (dirty || flowing) && cadence.take(at: now, interval: interval, frame: frame)
+        }
+        return linesPut > 0 || dirty
+    }
+
+    /// The link woke: the next frame draws.
+    public mutating func reset() {
+        cadence.reset()
+    }
+}
+
 /// Why a pan that has 3D chosen shows 2D, and the words it says.
 public enum StackedTraceHold: Equatable, Sendable {
     /// The Core offers no 3D view (below description 12, or its 3D gate).

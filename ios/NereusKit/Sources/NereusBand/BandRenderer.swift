@@ -79,8 +79,6 @@ public final class BandRenderer {
     static let stackScaleBackground = SIMD4<Float>(10.0 / 255, 10.0 / 255, 24.0 / 255, 220.0 / 255)
     static let stackScaleEdge = SIMD4<Float>(48.0 / 255, 64.0 / 255, 80.0 / 255, 1)
     static let stackScaleTick = SIMD4<Float>(80.0 / 255, 112.0 / 255, 128.0 / 255, 1)
-    /// The ridge line along each row's top, in points.
-    static let stackRidgePoints: CGFloat = 1
     static let spotColour = SIMD4<Float>(1, 1, 1, 1)
     /// The extras' line width, in points. The trace's is the pan's
     /// setting (``BandDisplaySettings/traceWidthPixels(scale:)``).
@@ -156,6 +154,7 @@ public final class BandRenderer {
     private let labelPipeline: any MTLRenderPipelineState
     private let waterfallPipeline: any MTLRenderPipelineState
     private let stackedPipeline: any MTLRenderPipelineState
+    private let stackedLinePipeline: any MTLRenderPipelineState
 
     /// The 3D view's rows: levels in dBm, and each row's window from
     /// ``stackReferenceHz`` and its span.
@@ -318,6 +317,7 @@ public final class BandRenderer {
         labelPipeline = try pipeline("bandRectVertex", "bandLabelFragment")
         waterfallPipeline = try pipeline("bandRectVertex", "bandWaterfallFragment")
         stackedPipeline = try pipeline("bandStackedVertex", "bandStackedFragment")
+        stackedLinePipeline = try pipeline("bandStackedLineVertex", "bandStackedLineFragment")
     }
 
     /// The compiled shaders, one library a device. The source compiles the
@@ -1487,8 +1487,8 @@ public final class BandRenderer {
         }
     }
 
-    /// Uploads the rows the renderer has not seen, all of them after the
-    /// rows' width changed.
+    /// Uploads the rows the renderer has not seen, all of them in one copy
+    /// after the stack started over.
     private func syncStack(_ stack: StackedTraceHistory, referenceHz: Double) {
         guard stack.columns > 0, stack.count > 0 else {
             return
@@ -1511,38 +1511,71 @@ public final class BandRenderer {
         guard let texture = stackTexture else {
             return
         }
-        let fresh = uploadAll ? UInt64(stack.count) : min(stack.rowsAppended &- uploadedRows, UInt64(stack.capacity))
+        if uploadAll {
+            // A texture made this frame: no frame in flight reads it.
+            Self.uploadWhole(stack, referenceHz: stackReferenceHz, to: texture, windows: stackWindows)
+            uploadedRows = stack.rowsAppended
+            return
+        }
+        let fresh = min(stack.rowsAppended &- uploadedRows, UInt64(stack.capacity))
+        let rowFloats = stack.columns * 2
         for age in 0..<Int(min(fresh, UInt64(stack.count))) {
             let row = stack.storageRow(age: age)
-            var window = SIMD4<Float>(0, 0, 0, 0)
-            if let coverage = stack.window(storageRow: row), coverage.spanHz > 0 {
-                window = SIMD4(Float(coverage.lowHz - stackReferenceHz), Float(coverage.spanHz),
-                    stack.quiet(age: age) ?? 0, stack.quiet(age: age) == nil ? 0 : 1)
+            let window = Self.stackWindow(stack, age: age, referenceHz: stackReferenceHz)
+            // A row a frame still in flight may be drawing: the copy goes
+            // through this frame's command buffer, after those frames.
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: rowFloats) { packed in
+                stack.pack(storageRow: row, into: packed)
+                rowUploads.add(UnsafeRawBufferPointer(packed), to: texture, row: row, width: stack.columns, device: device)
             }
-            if uploadAll {
-                // A texture made this frame: no frame in flight reads it.
-                stack.packedStorageLine(row).withUnsafeBytes { raw in
-                    if let base = raw.baseAddress {
-                        texture.replace(region: MTLRegionMake2D(0, row, stack.columns, 1), mipmapLevel: 0,
-                                        withBytes: base, bytesPerRow: stack.columns * 2 * MemoryLayout<Float>.stride)
-                    }
-                }
-                stackWindows?.replace(region: MTLRegionMake2D(0, row, 1, 1), mipmapLevel: 0, withBytes: &window,
-                                      bytesPerRow: MemoryLayout<SIMD4<Float>>.stride)
-            } else {
-                // A row a frame still in flight may be drawing: the copy goes
-                // through this frame's command buffer, after those frames.
-                stack.packedStorageLine(row).withUnsafeBytes { raw in
-                    rowUploads.add(raw, to: texture, row: row, width: stack.columns, device: device)
-                }
-                if let stackWindows {
-                    withUnsafeBytes(of: window) { raw in
-                        rowUploads.add(raw, to: stackWindows, row: row, width: 1, device: device)
-                    }
+            if let stackWindows {
+                withUnsafeBytes(of: window) { raw in
+                    rowUploads.add(raw, to: stackWindows, row: row, width: 1, device: device)
                 }
             }
         }
         uploadedRows = stack.rowsAppended
+    }
+
+    /// The window texel of the row `age` rows old: its low edge from
+    /// `referenceHz` and its span, its quiet level and whether it has one.
+    static func stackWindow(_ stack: StackedTraceHistory, age: Int, referenceHz: Double) -> SIMD4<Float> {
+        guard let coverage = stack.window(age: age), coverage.spanHz > 0 else {
+            return SIMD4(0, 0, 0, 0)
+        }
+        let quiet = stack.quiet(age: age)
+        return SIMD4(Float(coverage.lowHz - referenceHz), Float(coverage.spanHz), quiet ?? 0, quiet == nil ? 0 : 1)
+    }
+
+    /// Writes every row of `stack` and its windows into textures made this
+    /// frame, one copy each: no frame in flight reads them. The rows not
+    /// held go in too; the shader never draws them.
+    static func uploadWhole(_ stack: StackedTraceHistory, referenceHz: Double, to texture: any MTLTexture,
+                            windows windowTexture: (any MTLTexture)?) {
+        let columns = stack.columns
+        let rows = stack.capacity
+        guard stack.count > 0, columns > 0, texture.width == columns, texture.height == rows else {
+            return
+        }
+        stack.packedStorage().withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                texture.replace(region: MTLRegionMake2D(0, 0, columns, rows), mipmapLevel: 0, withBytes: base,
+                                bytesPerRow: columns * 2 * MemoryLayout<Float>.stride)
+            }
+        }
+        guard let windowTexture else {
+            return
+        }
+        var windows = [SIMD4<Float>](repeating: SIMD4(0, 0, 0, 0), count: rows)
+        for age in 0..<stack.count {
+            windows[stack.storageRow(age: age)] = stackWindow(stack, age: age, referenceHz: referenceHz)
+        }
+        windows.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                windowTexture.replace(region: MTLRegionMake2D(0, 0, 1, rows), mipmapLevel: 0, withBytes: base,
+                                      bytesPerRow: MemoryLayout<SIMD4<Float>>.stride)
+            }
+        }
     }
 
     /// Copies the rows staged this frame into their textures, in a blit
@@ -1576,7 +1609,9 @@ public final class BandRenderer {
         blit.endEncoding()
     }
 
-    /// The stacked trace over the spectrum's plot, oldest row first.
+    /// The stacked trace over the spectrum's plot, oldest row first, each
+    /// row a curtain to the floor, the newest growing in at the front as
+    /// the glide runs.
     private func drawStack(_ stack: StackedTraceHistory, overlay: StackedTraceOverlay, geometry: StackedTraceGeometry,
                            settings: BandDisplaySettings, markers: [SliceMarkers.Marker], view: BandCoverage,
                            scale: CGFloat, target: CGSize, encoder: any MTLRenderCommandEncoder,
@@ -1594,10 +1629,21 @@ public final class BandRenderer {
                                 Float(geometry.colourRangeDb), Float(geometry.gamma))
         let rowSpan = StackedTrace.rowSpan(spanPercent: settings.threeDSpan, shape: geometry.shape,
                                            availableFactor: overlay.availableSpanFactor)
-        uniforms.look = SIMD4(Float(StackedTrace.haze), Float(StackedTrace.fillShare),
-                              Float(max(1, Self.stackRidgePoints * scale)), Float(rowSpan))
-        uniforms.view = SIMD4(Float(view.lowHz - stackReferenceHz), Float(view.spanHz),
-                              Float(min(max(overlay.glide, 0), 1)), Float(StackedTrace.visibleRows))
+        uniforms.look = SIMD4(Float(StackedTrace.haze), Float(StackedTrace.curtainFootColour),
+                              Float(StackedTrace.lineHalfWidthPixels), Float(rowSpan))
+        uniforms.view = SIMD4(Float(view.lowHz - stackReferenceHz), Float(view.spanHz), 0,
+                              Float(StackedTrace.visibleRows))
+        // The glide's depths and opacities, and the lines' and the ends'
+        // constants, from StackedTraceGeometry and StackedTrace: the
+        // numbers the tests check are the ones the shader draws with.
+        let glide = min(max(overlay.glide, 0), 1)
+        uniforms.glides = SIMD4(Float(glide), Float(StackedTraceGeometry.frontOpacity(glide: glide)),
+                                Float(StackedTraceGeometry.backOpacity(glide: glide)),
+                                Float(StackedTraceGeometry.backDepth))
+        uniforms.line = SIMD4(Float(StackedTrace.lineGrey), Float(StackedTrace.lineGreyFarShare),
+                              Float(StackedTrace.lineFarStrength), Float(StackedTrace.lineNearExtra))
+        uniforms.lineFloor = SIMD4(Float(StackedTrace.lineOverFloorShare), Float(StackedTrace.lineFloorSpan),
+                                   Float(StackedTrace.sideFadePixels), Float(StackedTrace.lineEdgeSoftening))
         var shadows = Array(repeating: SIMD4<Float>(0, 0, 0, 0), count: StackedUniforms.shadowSlots)
         var cues = shadows
         var passbands = 0
@@ -1621,6 +1667,8 @@ public final class BandRenderer {
         uniforms.capacity = UInt32(stack.capacity)
         uniforms.count = UInt32(stack.count)
         uniforms.newestRow = UInt32(stack.storageRow(age: 0))
+        let mesh = StackedTrace.meshColumns(columns: stack.columns, rowSpan: rowSpan)
+        uniforms.meshColumns = UInt32(mesh)
         // Only the plot: the surface never reaches the strip or the waterfall.
         let width = min(Int(geometry.size.width), Int(target.width))
         let height = min(Int(geometry.size.height), Int(target.height))
@@ -1634,8 +1682,16 @@ public final class BandRenderer {
         encoder.setVertexTexture(rows, index: 0)
         encoder.setVertexTexture(windows, index: 1)
         encoder.setFragmentTexture(palette, index: 0)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: stack.columns * 2,
-                               instanceCount: min(stack.count, stack.capacity))
+        // The back's two layers, the rows that glide between, the front's
+        // two layers; the shader leaves out the rows the stack does not hold.
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: mesh * 2,
+                               instanceCount: StackedTrace.visibleRows + 2)
+        // The ridge lines over the whole stack, one at each row's depth from
+        // the front back, each in two layers.
+        let lineDepths = min(stack.count, stack.capacity, StackedTrace.visibleRows)
+        encoder.setRenderPipelineState(stackedLinePipeline)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: mesh * 2,
+                               instanceCount: lineDepths * 2)
         encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(target.width), height: Int(target.height)))
     }
 
@@ -1828,8 +1884,8 @@ public final class BandRenderer {
 }
 
 /// The 3D view's shader uniforms, laid out as `StackedUniforms` in
-/// `Band.metal`: nine four-float rows and two arrays of eight, then the
-/// viewport and four counts.
+/// `Band.metal`: two four-float rows, two arrays of eight, eight more rows,
+/// then the viewport and five counts.
 struct StackedUniforms {
     typealias Eight = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                        SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -1845,11 +1901,15 @@ struct StackedUniforms {
     var look = SIMD4<Float>(0, 0, 0, 0)
     var view = SIMD4<Float>(0, 0, 0, 0)
     var shadowMeta = SIMD4<Float>(0, 0, 0, 0)
+    var glides = SIMD4<Float>(0, 0, 0, 0)
+    var line = SIMD4<Float>(0, 0, 0, 0)
+    var lineFloor = SIMD4<Float>(0, 0, 0, 0)
     var viewport = SIMD2<Float>(0, 0)
     var columns: UInt32 = 0
     var capacity: UInt32 = 0
     var count: UInt32 = 0
     var newestRow: UInt32 = 0
+    var meshColumns: UInt32 = 0
 
     mutating func setShadows(_ bands: [SIMD4<Float>], cues colours: [SIMD4<Float>]) {
         func eight(_ list: [SIMD4<Float>]) -> Eight {
