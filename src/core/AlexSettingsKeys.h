@@ -22,6 +22,8 @@
 //                Anthropic Claude Code.  Extracted from the slug table
 //                in AntennaAlexAlex1Tab so SettingsHygiene (core) can
 //                use the same strings without depending on src/gui/.
+//   2026-10-26 - kBpf2GndOnTx, "Gnd BPF2 on Tx" (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 // =================================================================
 
 #include <array>
@@ -99,5 +101,11 @@ inline constexpr const char* kAlex1LpfPrefix = "alex/lpf";
 // Thetis chkLPFBypass ("6m/ByPass on RX", console.cs LPFBypass): the 6 m
 // low-pass while receiving, whatever the frequency. Default False.
 inline constexpr const char* kLpfBypass = "alex/master/lpfBypass";
+
+// Thetis chkBPF2Gnd ("Gnd BPF2 on Tx", console.cs BPF2Gnd): ground the BPF2
+// input while transmitting (P2 Alex1 bit 8). Default False. Shown on Setup's
+// Antenna Control tab; kept with the Alex master switches because the Core
+// applies it with them (RadioModel::applyAlexHpfSwitchSettings).
+inline constexpr const char* kBpf2GndOnTx = "alex/master/bpf2GndOnTx";
 
 } // namespace NereusSDR::alexKeys

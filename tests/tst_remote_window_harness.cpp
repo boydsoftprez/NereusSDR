@@ -1705,7 +1705,7 @@ private slots:
         // R-R3-46 fix wave (radioHardwareVersion 3): the HL2 I/O board tab
         // shows the Core's board, whose readings arrive on the Core after a
         // probe. (4 since the filter policy verb, R-R3-46 / R-R3-21.)
-        QCOMPARE(h.client()->capabilities().radioHardwareVersion, 13);
+        QCOMPARE(h.client()->capabilities().radioHardwareVersion, 14);
         auto* ioTab = hardware->findChild<Hl2IoBoardTab*>();
         QVERIFY(ioTab);
         const auto statusText = [ioTab]() {

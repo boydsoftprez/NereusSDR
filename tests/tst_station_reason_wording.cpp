@@ -2081,6 +2081,9 @@ const QList<AppSideReason>& appSideReasons()
         // radioHardwareVersion 13: HL2 Options' Swap audio channels.
         {"src/core/session/IStationLink.h", "hl2SwapAudioUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
+        // radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx".
+        {"src/core/session/IStationLink.h", "bpf2GndOnTxUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
         // iPhone app plan Task 25: This Core's device list on a Core that
         // does not offer device administration to this window.
         {"src/core/session/IStationLink.h", "deviceAdminUnavailableReason",

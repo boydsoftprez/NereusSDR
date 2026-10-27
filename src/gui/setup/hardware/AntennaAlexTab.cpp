@@ -52,6 +52,9 @@
 //                area (SetupFit::scrollingTab), so the sub-tab strip stays at
 //                the top. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Antenna Control's "Gnd BPF2 on Tx": restored per MAC on
+//                populate and its remote availability forwarded (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -219,6 +222,7 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
     m_lastMac = info.macAddress;
     m_alex1Tab->restoreSettings(info.macAddress);
     m_alex2FiltersTab->restoreSettings(info.macAddress);
+    m_antennaControlTab->restoreBpf2GndOnTx(info.macAddress);
 }
 
 // ── setTransmitPermitted (R-R3-46) ────────────────────────────────────────────
@@ -248,6 +252,11 @@ void AntennaAlexTab::setHpfRowsAvailable(bool available, const QString& reason)
 void AntennaAlexTab::setLpfRowsAvailable(bool available, const QString& reason)
 {
     m_alex1Tab->setLpfRowsAvailable(available, reason);
+}
+
+void AntennaAlexTab::setBpf2GndOnTxAvailable(bool available, const QString& reason)
+{
+    m_antennaControlTab->setBpf2GndOnTxAvailable(available, reason);
 }
 
 // ── restoreSettings ───────────────────────────────────────────────────────────

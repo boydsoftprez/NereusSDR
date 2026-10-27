@@ -33,6 +33,8 @@
 //                and 6m/ByPass on RX select the low-pass as Thetis's
 //                setAlexLPF does (radioHardwareVersion 10). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setBpf2GndOnTxAvailable (J.J. Boyd KG4VCF, AI-assisted:
+//                Claude Code).
 // =================================================================
 
 //=================================================================
@@ -124,6 +126,9 @@ public:
     void setHpfRowsAvailable(bool available, const QString& reason);
     // radioHardwareVersion 10: see AntennaAlexAlex1Tab::setLpfRowsAvailable.
     void setLpfRowsAvailable(bool available, const QString& reason);
+    // radioHardwareVersion 14: see
+    // AntennaAlexAntennaControlTab::setBpf2GndOnTxAvailable.
+    void setBpf2GndOnTxAvailable(bool available, const QString& reason);
 
 signals:
     void settingChanged(const QString& key, const QVariant& value);

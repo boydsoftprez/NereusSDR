@@ -2735,6 +2735,12 @@ nereus_add_test(tst_shared_input_filters)
 nereus_add_test(tst_p1_band_outputs_follow_tx_slice)
 nereus_add_test(tst_p2_band_outputs_and_rx_lpf)
 nereus_add_test(tst_hpf_bypass_on_tx)
+# Anvelina filter/OC plan Task 5: "Gnd BPF2 on Tx" (Thetis chkBPF2Gnd)
+# grounds the BPF2 input while keyed (P2 Alex1 bit 8), taken at the TX
+# edge, shown where Thetis shows it, saved per MAC, applied on a Core from
+# a remote window (radioHardwareVersion 14). NereusSDR-original test.
+nereus_add_test(tst_bpf2_gnd_on_tx)
+target_compile_definitions(tst_bpf2_gnd_on_tx PRIVATE NEREUS_BUILD_TESTS)
 # Plan Task 14 fix wave (R-R3-49): the Alex tab's other high-pass switches
 # (HPF Bypass on PureSignal feedback, HPF Bypass, Disable 6m LNA on TX / RX)
 # reach the wire as Thetis's setAlexHPF / setBPF1ForOrionIISaturn apply them

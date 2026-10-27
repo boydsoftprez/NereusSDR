@@ -57,6 +57,9 @@
 //                on its own (SetupFit::scrollingTab), so the tab strip stays
 //                at the top and one wide tab no longer widens the others.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx"
+//                in a remote window (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
 // =================================================================
 
 //=================================================================
@@ -510,6 +513,11 @@ void HardwarePage::applyTransmitHardwareGates()
         m_antennaAlexTab->setLpfRowsAvailable(
             !m_remote || (link != nullptr && link->radioHardwareAvailable(10)),
             IStationLink::alexLpfRowsUnavailableReason());
+        // radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx". No
+        // on-air rule: Thetis's chkBPF2Gnd_CheckedChanged has no MOX check.
+        m_antennaAlexTab->setBpf2GndOnTxAvailable(
+            !m_remote || (link != nullptr && link->radioHardwareAvailable(14)),
+            IStationLink::bpf2GndOnTxUnavailableReason());
     }
     // radioHardwareVersion 11: HL2 Options' clock options (Enable CL2, CL2
     // frequency, External 10 MHz), which the Core sends to its radio. No

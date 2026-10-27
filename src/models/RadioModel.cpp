@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - "Gnd BPF2 on Tx" (alex/master/bpf2GndOnTx): applied to the
+//                connection with the Alex switches and reloaded on a Core
+//                when a window writes it (J.J. Boyd KG4VCF, AI-assisted:
+//                Claude Code).
 //   2026-10-26 - AnvelinaDxOutputs: the Anvelina DX open collector outputs,
 //                loaded per MAC beside the OC matrix, handed to the
 //                connection (setOcExtrasByte) and applied on a Core at once,
@@ -33744,11 +33748,15 @@ void RadioModel::scheduleRemoteHardwareApply(const QString& key)
                                Qt::CaseInsensitive) == 0
                || rest.startsWith(QLatin1String("alex/lpf/"), Qt::CaseInsensitive)
                || rest.compare(QLatin1String(alexKeys::kLpfBypass),
+                               Qt::CaseInsensitive) == 0
+               || rest.compare(QLatin1String(alexKeys::kBpf2GndOnTx),
                                Qt::CaseInsensitive) == 0) {
         // Plan Task 14 and its fix wave: the Alex tab's high-pass switches,
         // applied to the connection. radioHardwareVersion 8: and its
         // receive filter rows (savedAlexHpfEdges). radioHardwareVersion 10:
         // and its low-pass rows and 6m/ByPass on RX (savedAlexLpfEdges).
+        // radioHardwareVersion 14: and "Gnd BPF2 on Tx"
+        // (alexKeys::kBpf2GndOnTx).
         reload = QStringLiteral("alex");
     } else {
         return;
@@ -33978,9 +33986,15 @@ void RadioModel::applyAlexHpfSwitchSettings()
     m_alexLpfEdges = lpfEdges;
     const bool lpfBypass = flag(alexKeys::kLpfBypass, "False")
         && codec::alex::lpfBypassAvailable(m_hardwareProfile.model);
+    // "Gnd BPF2 on Tx" (Antenna Control's box, saved with the Alex
+    // switches). Default False, the box Thetis's designer leaves unticked.
+    // The connection takes it at the next TX edge; kept whatever the model,
+    // as Thetis's hidden box still sets console.BPF2Gnd.
+    const bool bpf2GndOnTx = flag(alexKeys::kBpf2GndOnTx, "False");
     RadioConnection* conn = m_connection;
     QMetaObject::invokeMethod(conn, [conn, onTx, onPs, bypass, lnaOffRx, lnaOffTx, edges,
-                                     lpfEdges, lpfBypass]() {
+                                     lpfEdges, lpfBypass, bpf2GndOnTx]() {
+        conn->setBpf2GndOnTx(bpf2GndOnTx);
         conn->setHpfBypassOnTx(onTx);
         conn->setHpfBypassOnPs(onPs);
         conn->setAlexHpfBypass(bypass);

@@ -7,6 +7,8 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: "Gnd BPF2 on Tx" (setBpf2GndOnTx, bpf2GndOnTx). J.J. Boyd
+//               (KG4VCF), AI-assisted: Claude Code.
 //   2026-10-26: The Anvelina DX open collector byte (setOcExtrasByte,
 //               ocExtrasByte, onOcExtrasChanged). J.J. Boyd (KG4VCF),
 //               AI-assisted: Claude Code.
@@ -634,6 +636,13 @@ public slots:
     /// P1 and P2 read it when they compose the high-pass word.
     virtual void setHpfBypassOnTx(bool on) { m_hpfBypassOnTx = on; }
     bool hpfBypassOnTx() const noexcept { return m_hpfBypassOnTx; }
+
+    /// "Gnd BPF2 on Tx" (Setup > Hardware Config > Antenna / ALEX, Thetis
+    /// chkBPF2Gnd, console.cs BPF2Gnd). Stored only: the P2 connection
+    /// takes it at the next TX edge (P2RadioConnection::setMox) and grounds
+    /// the BPF2 input (Alex1 bit 8) for that key. Default false.
+    void setBpf2GndOnTx(bool on) { m_bpf2GndOnTx = on; }
+    bool bpf2GndOnTx() const noexcept { return m_bpf2GndOnTx; }
 
     /// The Alex tab's high-pass switches as the high-pass word applies them
     /// (codec::alex::applyAlex1HpfSwitches). Plan Task 14 fix wave.
@@ -1617,6 +1626,10 @@ protected:
     // "HPF Bypass on TX" (setHpfBypassOnTx). Written and read on the
     // connection thread.
     bool m_hpfBypassOnTx{false};
+
+    // "Gnd BPF2 on Tx" (setBpf2GndOnTx). Written and read on the connection
+    // thread.
+    bool m_bpf2GndOnTx{false};
 
     // "HPF Bypass" (setAlexHpfBypass). Written and read on the connection
     // thread.

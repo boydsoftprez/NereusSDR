@@ -18,6 +18,8 @@
 //   2026-10-26 - ocExtrasByte and kDxWireMask: the Anvelina PRO3 DX open
 //                collector outputs (J.J. Boyd KG4VCF, AI-assisted: Claude
 //                Code).
+//   2026-10-26 - bpf2GndOnTx: "Gnd BPF2 on Tx", P2 Alex1 bit 8 while keyed
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 #pragma once
@@ -333,6 +335,15 @@ struct CodecContext {
     //       prbpfilter->_TR_Relay = bit & 0x1;
     //   prbpfilter->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS
     bool    txPaDisabled{false};
+
+    // "Gnd BPF2 on Tx" (Setup > Hardware Config > Antenna / ALEX, Thetis
+    // chkBPF2Gnd): ground the BPF2 input while keyed, P2 Alex1 bit 8
+    // (_rx2_gnd). The codec sets the bit only while ctx.mox is true; the
+    // P2 connection fills this with the value taken at the TX edge, as
+    // Thetis's HdwMOXChanged reads bpf2_gnd only then (P2RadioConnection::
+    // setMox). Default false, as a fresh Thetis install (setup.cs:2867
+    // [v2.10.3.15] pushes the unticked box at start-up).
+    bool    bpf2GndOnTx{false};
 
     // P1 mic-jack boost bit — bank 10 (C0=0x12) C2 bit 0 (0x01).
     // Polarity: 1 = boost on (no inversion).

@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - "Gnd BPF2 on Tx": setMox takes the box at the TX edge and
+//                buildCodecContext hands it to Alex1 bit 8, as Thetis's
+//                HdwMOXChanged does (console.cs:29091 [v2.10.3.15]) (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - High-priority byte 1397 carries the Anvelina DX open
 //                collector outputs (ctx.ocExtrasByte); a change sends the
 //                packet at once, as SetOCExtraBits does (J.J. Boyd KG4VCF,
@@ -1651,6 +1655,22 @@ void P2RadioConnection::setMox(bool enabled)
         m_txIqPrimePending.store(true, std::memory_order_release);
         // R-IOS-13, R-R3-42: the send path's counters run per key.
         resetTxSendStats();
+        // "Gnd BPF2 on Tx" is read at the TX edge only, so a change made
+        // while keyed reaches the wire at the next key, as in Thetis:
+        //   From Thetis console.cs:29084-29091 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29140-29147 [@567a7ec]
+        //     private void HdwMOXChanged(bool tx, double freq)
+        //     {
+        //         if (tx)
+        //         { ...
+        //             if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+        //   and on the RX edge, unconditionally:
+        //   From Thetis console.cs:29170 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29226 [@567a7ec]
+        //     NetworkIO.SetBPF2Gnd(0);
+        // The codec sets Alex1 bit 8 only while m_mox is true, which is
+        // that clear.
+        m_bpf2GndKeyed = m_bpf2GndOnTx;
     } else if (m_txMicSource != nullptr) {
         // TX diagnostics lane: the pump's wakes are timed during the key.
         m_txMicSource->wakeWatch().end();
@@ -4391,6 +4411,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     }
     ctx.p2TxPa           = m_tx[0].pa;
     ctx.txPaDisabled     = m_tx[0].pa != 0;  // "Disable HF PA": the T/R relay (buildAlex0)
+    ctx.bpf2GndOnTx      = m_bpf2GndKeyed;   // "Gnd BPF2 on Tx" as taken at the TX edge (setMox)
     ctx.p2TxSamplingRate = m_tx[0].samplingRate;
     ctx.p2TxPhaseShift   = m_tx[0].phaseShift;
 

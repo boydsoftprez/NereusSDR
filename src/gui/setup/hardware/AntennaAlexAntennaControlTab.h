@@ -28,6 +28,8 @@
 //                Thetis (processRxOnlyCheckBox), so a band can go back to
 //                none. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - "Gnd BPF2 on Tx" (chkBPF2Gnd) in the TX-bypass strip,
+//                saved per MAC (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -147,6 +149,17 @@ public:
     // when not. It never waits for the radio to leave the air, as in
     // Thetis. A local window's is always live.
 
+    // "Gnd BPF2 on Tx" (Thetis chkBPF2Gnd) is saved per radio under
+    // hardware/<mac>/alex/master/bpf2GndOnTx (alexKeys::kBpf2GndOnTx), as
+    // the Alex-1 Filters tab saves its switches; AntennaAlexTab::populate
+    // hands the radio's MAC here. Before a MAC is known the box shows the
+    // default (unticked) and saves nothing.
+    void restoreBpf2GndOnTx(const QString& macAddress);
+    // radioHardwareVersion 14: a remote window changes the box only on a
+    // Core that applies it, disabled with `reason` otherwise. Always
+    // available locally.
+    void setBpf2GndOnTxAvailable(bool available, const QString& reason);
+
 #ifdef NEREUS_BUILD_TESTS
     QRadioButton* rxButtonForTest(Band band, int ant) const;
     QCheckBox* rxOnlyButtonForTest(Band band, int ant) const;
@@ -158,6 +171,7 @@ public:
     QCheckBox* ext1OutOnTxForTest() const { return m_chkExt1OutOnTx; }
     QCheckBox* ext2OutOnTxForTest() const { return m_chkExt2OutOnTx; }
     QCheckBox* rxOutOverrideForTest() const { return m_chkRxOutOverride; }
+    QCheckBox* bpf2GndOnTxForTest() const { return m_chkBpf2GndOnTx; }
     QWidget* txGridForTest() const { return m_txGridGroup; }
 #endif
 
@@ -252,6 +266,9 @@ private:
     QCheckBox* m_chkExt2OutOnTx   {nullptr};  // "Ext 2 on TX"
     QCheckBox* m_chkRxOutOverride {nullptr};  // "Disable RX Bypass relay"
     QCheckBox* m_chkUseTxAntForRx {nullptr};  // "Use TX antenna for RX"
+    QCheckBox* m_chkBpf2GndOnTx   {nullptr};  // "Gnd BPF2 on Tx" (chkBPF2Gnd)
+    // The radio "Gnd BPF2 on Tx" is saved for (restoreBpf2GndOnTx).
+    QString m_bpf2GndMac;
 };
 
 } // namespace NereusSDR
