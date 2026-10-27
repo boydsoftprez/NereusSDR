@@ -12,10 +12,15 @@
 //              the bound is MoxController's remaining walk; a stale queued
 //              replay is ignored; releasePttClaim for an idle serial pin.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26 - Stop All TX drops a held TX in every phase of the walk; a TX
+//              during a stop's walk is refused with no reply; the time held
+//              is kept for the stall warning; hasHeldTxForTest.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "core/NereusCoreExport.h"
 #include "core/MoxController.h"
 #include "core/SliceOwnership.h"
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
@@ -41,6 +46,9 @@ public:
     // to receive (TxToRxInFlight, TxToRxFlush) is held, and true is returned.
     // At Rx, replayAtRx runs the caller's whole command again for the same
     // session, so the held request meets every check a fresh one would.
+    // During a stop's walk (Stop All TX, the time-out, the unkey gate's
+    // emergency stop) it is refused, nothing keys, and true is returned:
+    // the reply is a TX set's, nothing, as Thetis gives.
     // Otherwise this is requestTransmit above.
     bool requestTransmit(quint64 sessionId, int sliceId, CatTransmitKind kind,
                          std::function<void()> replayAtRx);
@@ -52,10 +60,14 @@ public:
     // FOR TESTING ONLY: the held TX's bound
     // (MoxController::txToRxRemainingMaxMs at hold time).
     void setHeldTxTimeoutMsForTest(int ms);
+    // FOR TESTING ONLY: a TX is held for the end of the walk back to receive.
+    bool hasHeldTxForTest() const { return m_heldSession != 0; }
 private:
     bool idle() const;
     bool targetValid() const;
     void retire(bool releaseOwned);
+    bool inReleaseWalk() const;
+    bool inStopWalk() const;
     bool mayHold() const;
     void dropHeld(const char* reason);
     void runHeld(quint64 serial);
@@ -75,6 +87,7 @@ private:
     quint64 m_heldSerial{0};
     std::function<void()> m_heldReplay;
     QTimer m_heldTimer;
+    QElapsedTimer m_heldSince;
     bool m_replaying{false};
 };
 } // namespace NereusSDR

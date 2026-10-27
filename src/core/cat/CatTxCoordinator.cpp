@@ -11,6 +11,11 @@
 //              drops it; a replay queued by an earlier walk is ignored; an
 //              idle serial pin keeps it.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26 - Every Stop All TX drops a held TX, also one in the walk's
+//              ptt_out phase or at Rx before the replay (stopAllTxRequested);
+//              a TX during a stop's walk is refused with no reply, as Thetis
+//              answers a TX set; the stall warning gives the time held.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatTxCoordinator.h"
 #include "core/LogCategories.h"
 #include "core/TwoToneController.h"
@@ -42,7 +47,7 @@ CatTxCoordinator::CatTxCoordinator(RadioModel& model) : QObject(&model), m_model
             return;
         }
         qCWarning(lcCat) << "held CAT TX dropped: the return to receive stalled after"
-                         << m_heldTimer.interval() << "ms";
+                         << m_heldSince.elapsed() << "ms";
         m_heldSession = 0; m_heldReplay = {};
     });
     connect(model.moxController(), &MoxController::stateChanged, this, [this](MoxState state) {
@@ -60,6 +65,10 @@ CatTxCoordinator::CatTxCoordinator(RadioModel& model) : QObject(&model), m_model
     // PollPTT from keying a CAT PTT level until it is released
     // (console.cs:25479-25492 [v2.10.3.15]).
     connect(&model, &RadioModel::transmitStopBegan, this, [this] { dropHeld("transmit was stopped"); });
+    // Stop All TX also stops nothing when it lands in the walk's ptt_out
+    // phase (TxToRxFlush) or at Rx before the replay runs; it still drops
+    // a held TX.
+    connect(&model, &RadioModel::stopAllTxRequested, this, [this] { dropHeld("Stop All TX"); });
     connect(model.moxController(), &MoxController::requestAccepted, this,
         [this](const KeyerIdentity& requester, quint64 generation, bool requestedOn) {
             // Another keyer took transmit while a TX was held: it keeps it.
@@ -128,17 +137,25 @@ bool CatTxCoordinator::requestTxSelection(quint64 id, int sliceId)
         && m_model->txSliceArbiter()->txBoundSliceId() == sliceId
         && m_model->moxController()->acceptedRequestGeneration() == before;
 }
-bool CatTxCoordinator::mayHold() const
+bool CatTxCoordinator::inReleaseWalk() const
 {
     if (!m_model || m_tag || m_requestInFlight || m_releasing || m_replaying) { return false; }
     const MoxState state = m_model->moxController()->state();
-    // Never during a stop's walk, nor while Stop All TX's latch waits.
     return m_model->ownsLocalDsp() && m_model->isConnected()
         && (state == MoxState::TxToRxInFlight || state == MoxState::TxToRxFlush)
         && !m_model->moxController()->isMox()
-        && !m_model->transmitStopHeld()
-        && !m_model->moxController()->isStopAllTxLatched()
         && m_model->txSliceArbiter()->pendingHandoffSliceId() < 0;
+}
+bool CatTxCoordinator::inStopWalk() const
+{
+    // A stop's walk, or Stop All TX's latch waiting.
+    return inReleaseWalk()
+        && (m_model->transmitStopHeld() || m_model->moxController()->isStopAllTxLatched());
+}
+bool CatTxCoordinator::mayHold() const
+{
+    // Never during a stop's walk, nor while Stop All TX's latch waits.
+    return inReleaseWalk() && !inStopWalk();
 }
 void CatTxCoordinator::dropHeld(const char* reason)
 {
@@ -167,9 +184,19 @@ bool CatTxCoordinator::requestTransmit(quint64 id, int sliceId, CatTransmitKind 
         // walk's bound runs from the first one held.
         m_heldSession = id; m_heldReplay = std::move(replayAtRx); ++m_heldSerial;
         if (!m_heldTimer.isActive()) {
+            m_heldSince.start();
             m_heldTimer.start(m_heldTimeoutForTestMs >= 0 ? m_heldTimeoutForTestMs
                 : m_model->moxController()->txToRxRemainingMaxMs());
         }
+        return true;
+    }
+    if (id && kind == CatTransmitKind::Ptt && replayAtRx && inStopWalk()) {
+        // Refused, and nothing keys: Thetis's _stop_all_tx keeps PollPTT
+        // from keying (console.cs:25479-25492 [v2.10.3.15]). The reply is a
+        // TX set's, nothing, as Thetis's TX() returns ""
+        // (CAT/CATCommands.cs:970-975 [v2.10.3.15]).
+        dropHeld("a newer request");
+        qCDebug(lcCat) << "CAT TX refused: transmit was stopped";
         return true;
     }
     return requestTransmit(id, sliceId, kind);

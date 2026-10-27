@@ -747,6 +747,10 @@
 //                held during the walk back to receive is dropped by any
 //                stop and never keys after one. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26 - stopAllTxRequested(), emitted by every stopAllTx, so a
+//                Stop All TX that finds nothing to stop still drops a held
+//                CAT TX. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6350,6 +6354,12 @@ signals:
     // TUNE and two-tone and long before transmitStopped. A CAT TX held for
     // the end of the walk back to receive is dropped here.
     void transmitStopBegan();
+    // stopAllTx was called, whether or not anything was keyed or releasing:
+    // emitted first, before its early return. A Stop All TX in the last
+    // phase of a walk back to receive (TxToRxFlush) or at Rx before a held
+    // CAT TX's replay stops nothing, so it emits no transmitStopBegan; a
+    // CAT TX held for the end of that walk is dropped here.
+    void stopAllTxRequested();
     // iPhone app plan Task 38: the Core stopped a transmission for a
     // reason of its own (lastTransmitStopReason()); emitted after
     // transmitStopped.
