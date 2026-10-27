@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48): declares remoteCw 1 and
+//               cwSettings 1, routes the cw.* results to the remote
+//               transmit client and remoteCwAvailable. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: declares
 //                                    displayCodec 2. AI-assisted via
 //                                    Anthropic Claude Code.
@@ -984,6 +988,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // window transmits through the Core (link section 18.6), so its hello
     // says so and the Core answers with txPermitted and remoteTxVersion.
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
+    // CW transmit (R-CW-48): the cw.* verbs (remoteCwVersion) and the CW
+    // settings on `transmit` (transmitSettingsVersion 16).
+    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("cwSettings"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("waveform"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("audioQuality"), 1);
@@ -7572,6 +7580,11 @@ bool StationClient::remoteTransmitAvailable() const
         && m_agreedMinor >= kRadioIdentitySessionProtocolMinor && m_capabilities.remoteTxVersion >= 1;
 }
 
+bool StationClient::remoteCwAvailable() const
+{
+    return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 1;
+}
+
 bool StationClient::directWatchReady() const
 {
     return !m_watchIsRelay && m_directWatch != nullptr && m_directWatch->isReady()
@@ -8028,6 +8041,7 @@ void StationClient::refreshRemoteTransmit()
 {
     if (m_remoteTransmit != nullptr) {
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
+        m_remoteTransmit->setCwAvailable(remoteCwAvailable());
         m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }
@@ -8179,7 +8193,9 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     }
     if (message.commandVerb == "tx.key" || message.commandVerb == "tx.unkey"
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
-        || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource") {
+        || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource"
+        || message.commandVerb == "cw.send" || message.commandVerb == "cw.memory"
+        || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key") {
         const QPointer<StationClient> self(this);
         if (m_remoteTransmit != nullptr) {
             m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,

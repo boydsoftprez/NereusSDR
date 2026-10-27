@@ -256,6 +256,9 @@
 //   2026-10-26 - CW transmit, kTransmitSettingsCwVersion (16): the CW
 //                settings on `transmit` (R-CW-03). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): the cw.* verbs,
+//               last in the remoteTx block for a peer that declared
+//               remoteCw 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -865,6 +868,18 @@ struct StationCapabilities {
     /// compressionPeakDb, eqPeakDb, levelerPeakDb, cfcPeakDb), read with
     /// the other meters.
     int txReadingsVersion = 0;
+    /// CW transmit (R-CW-49): 1 means the Core takes cw.send {text},
+    /// cw.memory {number}, cw.stop {} and cw.key {down} from the device
+    /// that holds transmit, runs them on its CWX sender behind its keying
+    /// gate, and answers a refusal as a transmit refusal (link section
+    /// 18.3). A held cw.key is released 3 s after its last press, at once
+    /// when the link drops, and by every transmit cut. Sent after
+    /// remoteTxVersion, last in its block, and only to a peer whose hello
+    /// declared remoteCw 1 as well (remoteCwEntry); any other peer is sent
+    /// no entry and reads 0, and a window then shows its CWX sending
+    /// controls disabled with the update reason.
+    bool remoteCwEntry = false;
+    int remoteCwVersion = 0;
 
     /// Whether the DAEMON currently holds a live radio connection. A
     /// client that authenticated against a daemon whose radio is powered

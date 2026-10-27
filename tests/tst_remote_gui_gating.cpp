@@ -49,6 +49,10 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-49): a receive-only session's
+//               CWX Send, Stop, Key and memories are disabled with the
+//               Core's reason, never hidden, and its CWX settings stay
+//               live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - CW transmit, CWX built: the DSP > CW groups show in a
 //                 connected remote window (R-CW-46). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
@@ -285,6 +289,7 @@
 #include "gui/StationStartupSelection.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/applets/AmpApplet.h"
+#include "gui/applets/CwxApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/RadeApplet.h"
 #include "gui/applets/Rf2ksApplet.h"
@@ -4810,6 +4815,21 @@ private slots:
             QTRY_VERIFY(proc->isEnabled());
             QVERIFY(!vox->isEnabled());
             QCOMPARE(vox->toolTip(), remoteReason);
+            // CW transmit (R-CW-49): the Core takes CW from this window
+            // (remoteCwVersion 1) but this session may not transmit, so
+            // CWX's requests are disabled with the Core's words, never
+            // hidden; its speed and repeat are version-16 settings, live.
+            auto* const cwx = window->findChild<CwxApplet*>();
+            QVERIFY(cwx != nullptr);
+            QVERIFY(client->remoteCwAvailable());
+            for (const char* name : {"cwxSend", "cwxStop", "cwxKey", "cwxKeyboard", "cwxMemory1"}) {
+                QPushButton* const b = cwx->findChild<QPushButton*>(QString::fromLatin1(name));
+                QVERIFY2(b != nullptr, name);
+                QVERIFY2(!b->isEnabled(), name);
+                QVERIFY2(!b->isHidden(), name);
+            }
+            QCOMPARE(cwx->findChild<QPushButton*>(QStringLiteral("cwxSend"))->toolTip(), remoteReason);
+            QTRY_VERIFY(cwx->findChild<QSlider*>(QStringLiteral("cwxSpeedSlider"))->isEnabled());
             MoxController* const coreMox = station.moxController();
             QVERIFY(coreMox != nullptr);
             coreMox->setMoxCheck({});

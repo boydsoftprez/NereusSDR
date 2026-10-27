@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): a remote
+//               window's CWX applet sends through the Core's CWX sender,
+//               gated on remoteCwVersion and the transmit holder, and the
+//               TX applet's MON in CW waits for the CW settings. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the CWX applet constructed and registered
 //               (Tools > CWX, the status-bar CWX label, CAT ZZKO's applet
 //               host, R-CW-44), the CW passband drawn from the CW pitch
@@ -4368,6 +4373,8 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        // CW transmit (R-CW-49): the CWX applet hears the Core's refusals.
+        bindRemoteCwx();
         connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
                 this, [this]() { applyRemoteRoleGating(); });
         // iPhone app Task 18 (R-IOS-08): this computer's own device key.
@@ -11371,8 +11378,10 @@ void MainWindow::populateDefaultMeter()
         showToast(words, ToastSeverity::Warning, 4000);
     });
     if (m_radioModel->role() == RadioModel::Role::Remote) {
-        // The Core's sender is not reachable from a remote window yet.
+        // R-CW-49: until the Core says it takes CW (remoteCwVersion),
+        // applyRemoteRoleGating keeps the requests disabled with the reason.
         m_cwxApplet->setSendPermitted(false, cwxRemoteSendReason());
+        bindRemoteCwx();
     }
 
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
@@ -16703,6 +16712,26 @@ QString MainWindow::cwxRemoteSendReason()
     return QStringLiteral("Sending CW from a remote window needs a newer Core.");
 }
 
+void MainWindow::bindRemoteCwx()
+{
+    if (m_cwxApplet == nullptr || m_radioModel == nullptr
+        || m_radioModel->role() != RadioModel::Role::Remote) {
+        return;
+    }
+    if (!m_cwxApplet->hasRemoteSender()) {
+        // Each request goes through the Core's CWX sender.
+        m_cwxApplet->setRemoteSender(CwxApplet::remoteSenderFor(
+            [this]() -> RemoteTransmitClient* {
+                return m_stationClient != nullptr ? m_stationClient->remoteTransmit() : nullptr;
+            },
+            cwxRemoteSendReason()));
+    }
+    if (m_stationClient != nullptr && m_stationClient->remoteTransmit() != nullptr) {
+        connect(m_stationClient->remoteTransmit(), &RemoteTransmitClient::cwRefused, m_cwxApplet,
+                &CwxApplet::showRefusal, Qt::UniqueConnection);
+    }
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
@@ -18073,6 +18102,28 @@ void MainWindow::applyRemoteRoleGating()
     if (m_cwxApplet) {
         m_cwxApplet->setCwxSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
                                              settingsReasonAt(kTransmitSettingsCwVersion));
+        // R-CW-49: Send, Stop, Key, the memories and KB to CW go to the
+        // Core's CWX sender, which takes them from the device that holds
+        // transmit. Disabled with the reason, never hidden.
+        bool cwSend = true;
+        QString cwSendReason;
+        if (m_stationClient == nullptr || !m_stationClient->remoteCwAvailable()) {
+            cwSend = false;
+            cwSendReason = cwxRemoteSendReason();
+        } else if (!transmitPermitted) {
+            cwSend = false;
+            cwSendReason = transmitReason;
+        } else if (m_stationClient->knowsTransmitHolder()
+                   && !m_stationClient->holdsTransmitHere()) {
+            cwSend = false;
+            cwSendReason = holderReason.isEmpty() ? TxRefusals::notHolder().text : holderReason;
+        }
+        m_cwxApplet->setSendPermitted(cwSend, cwSendReason);
+    }
+    // R-CW-48: in CW the TX applet's MON is cwSidetone, a version-16 setting.
+    if (m_txApplet) {
+        m_txApplet->setCwSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                           settingsReasonAt(kTransmitSettingsCwVersion));
     }
     // R-R3-44: the VAX applet's TX row (VAX as the microphone).
     if (m_vaxApplet) {

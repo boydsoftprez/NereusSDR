@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): the window's
+//               CWX applet sends, stops and keys through the Core's CWX
+//               sender, a Core without remoteCwVersion sends nothing, and
+//               every CW setting round-trips through the mirror. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-04: Regression coverage for unkeyed PC preview demand, the actual
 //               Phone/CW gauge, source lifecycle and pre-key PCM discard.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -131,6 +136,8 @@
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/CwTypes.h"
+#include "core/CwxSender.h"
 #include "core/IAudioBus.h"
 #include "core/MoxController.h"
 #include "core/PgxlConnection.h"
@@ -156,7 +163,10 @@
 #include "gui/RemoteMediaController.h"
 #include "gui/RemoteTransmitForwarder.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/CwxApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
+#include <QMetaProperty>
+#include <QTextEdit>
 #include "gui/setup/AudioTxInputPage.h"
 #include "gui/styles/AppTheme.h"
 #include <QRadioButton>
@@ -171,6 +181,7 @@
 #include "models/TransmitModel.h"
 #include "OperatorWording.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "fakes/QuietRadioConnection.h"
 
 using namespace NereusSDR;
 
@@ -2181,6 +2192,188 @@ private slots:
                                     QStringLiteral("The radio did not confirm it stopped transmitting."),
                                     QStringLiteral("This computer holds transmit.")}) {
             QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+        }
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // ---- CW transmit (R-CW-48, R-CW-49) -----------------------------------
+
+    // The window's CWX applet sends, stops and keys through the Core's CWX
+    // sender (cw.send, cw.stop, cw.key, three copies each), for the window
+    // that holds transmit; a window that does not is told, in the Core's
+    // words, to take it. The window's own sender never runs.
+    void theWindowsCwxSendsThroughTheCoresSender()
+    {
+        Test::QuietRadioConnection conn;
+        Test::RemoteAudioSessionHarness h;
+        const auto detach = qScopeGuard([&h] {
+            if (CwxSender* cwx = h.station.cwxSender()) {
+                cwx->stop();
+            }
+            h.station.injectConnectionForTest(nullptr);
+        });
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.station.injectConnectionForTest(&conn);
+        h.station.wireCwKeyerConnectionForTest();
+        h.station.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        h.station.transmitModel().setCwxSpeed(CwxSender::kMinWpm);
+        h.station.sliceById(h.sliceA)->setDspMode(DSPMode::CWU);
+        h.station.sliceById(h.sliceA)->setFrequency(14050000.0);
+        h.connectSession();
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QTRY_VERIFY(h.client.remoteCwAvailable());
+        QCOMPARE(h.client.capabilities().remoteCwVersion, 1);
+        const QByteArray device = h.windowKey->fingerprint();
+        CwxSender* const coreCwx = h.station.cwxSender();
+        QVERIFY(coreCwx != nullptr);
+
+        CwxApplet applet(&h.remote);
+        applet.setRemoteSender(CwxApplet::remoteSenderFor(
+            [&h]() { return h.client.remoteTransmit(); },
+            QStringLiteral("Sending CW from a remote window needs a newer Core.")));
+        connect(h.client.remoteTransmit(), &RemoteTransmitClient::cwRefused, &applet,
+                &CwxApplet::showRefusal);
+        applet.resize(320, 480);
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet));
+        auto* const text = applet.findChild<QTextEdit*>(QStringLiteral("cwxText"));
+        auto* const send = applet.findChild<QPushButton*>(QStringLiteral("cwxSend"));
+        auto* const stop = applet.findChild<QPushButton*>(QStringLiteral("cwxStop"));
+        auto* const key = applet.findChild<QPushButton*>(QStringLiteral("cwxKey"));
+        QVERIFY(text && send && stop && key);
+
+        // Not holding transmit: the Core asks for a take.
+        text->setPlainText(QStringLiteral("CQ"));
+        send->click();
+        QTRY_COMPARE(applet.lastRefusalForTest(), TxRefusals::notHolder().text);
+        QVERIFY(!coreCwx->isSending());
+
+        QVERIFY(h.client.requestTakeTransmit(false, 0, false) != 0);
+        QTRY_VERIFY(h.server.transmitHolder()->isHeldBy(device));
+        send->click();
+        QTRY_VERIFY(coreCwx->isSending() || coreCwx->queuedCharacters() > 0);
+        QCOMPARE(h.station.cwxSendingFor(), device);
+        const QList<QJsonObject> sends = commandsOf(h.stationLink, QStringLiteral("cw.send"));
+        QCOMPARE(sends.size(), 2 * RemoteTransmitClient::kCopies);
+        QVERIFY(sentAsCopies(sends));
+        QCOMPARE(argument(sends.last(), QStringLiteral("text")).toString(), QStringLiteral("CQ"));
+
+        stop->click();
+        QTRY_VERIFY(!coreCwx->isSending());
+        QCOMPARE(coreCwx->queuedCharacters(), 0);
+        QVERIFY(sentAsCopies(commandsOf(h.stationLink, QStringLiteral("cw.stop"))));
+
+        // The Key: down while it is held, up at its release.
+        QTest::mousePress(key, Qt::LeftButton, {}, key->rect().center());
+        QTRY_VERIFY(coreCwx->isKeyHeld());
+        QVERIFY(key->isChecked());
+        QTest::mouseRelease(key, Qt::LeftButton, {}, key->rect().center());
+        QTRY_VERIFY(!coreCwx->isKeyHeld());
+        QVERIFY(!key->isChecked());
+        const QList<QJsonObject> keys = commandsOf(h.stationLink, QStringLiteral("cw.key"));
+        QCOMPARE(keys.size(), 2 * RemoteTransmitClient::kCopies);
+        QVERIFY(sentAsCopies(keys));
+        QVERIFY(argument(keys.first(), QStringLiteral("down")).toBool());
+        QVERIFY(!argument(keys.last(), QStringLiteral("down")).toBool());
+
+        // The window's own CWX sender never ran.
+        if (CwxSender* const local = h.remote.cwxSender()) {
+            QVERIFY(!local->isSending());
+            QVERIFY(!local->isKeyHeld());
+        }
+        QVERIFY(!h.remote.moxController()->isMox());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A Core without remoteCwVersion takes no CW from the window: nothing
+    // goes, and the applet says the Core needs updating.
+    void aCoreWithoutRemoteCwSendsNothing()
+    {
+        Test::RemoteAudioSessionHarness h;
+        h.hideRemoteCw = true;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.connectSession();
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(h.client.remoteTransmitAvailable());
+        QVERIFY(!h.client.remoteCwAvailable());
+        const QString newer = QStringLiteral("Sending CW from a remote window needs a newer Core.");
+        CwxApplet applet(&h.remote);
+        applet.setRemoteSender(
+            CwxApplet::remoteSenderFor([&h]() { return h.client.remoteTransmit(); }, newer));
+        auto* const text = applet.findChild<QTextEdit*>(QStringLiteral("cwxText"));
+        auto* const send = applet.findChild<QPushButton*>(QStringLiteral("cwxSend"));
+        QVERIFY(text && send);
+        text->setPlainText(QStringLiteral("CQ"));
+        send->click();
+        QCOMPARE(applet.lastRefusalForTest(), newer);
+        QVERIFY(OperatorWording::isPlain(newer));
+        QTest::qWait(100);
+        QVERIFY(commandsOf(h.stationLink, QStringLiteral("cw.send")).isEmpty());
+        QVERIFY(commandsOf(h.stationLink, QStringLiteral("cw.stop")).isEmpty());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Every CW setting (transmitSettingsVersion 16) round-trips through the
+    // mirror: the window's change reaches the Core, and the Core's reaches
+    // the window. The Core here has no radio connection, so a serial port
+    // name opens nothing.
+    void everyCwSettingRoundTripsThroughTheMirror()
+    {
+        Test::RemoteAudioSessionHarness h;
+        h.connectSession();
+        QTRY_VERIFY(h.client.isHandshakeComplete());
+        QVERIFY(h.client.transmitSettingsAvailable(kTransmitSettingsCwVersion));
+        const QStringList names{
+            QStringLiteral("cwKeyerSpeed"), QStringLiteral("cwKeyerMode"),
+            QStringLiteral("cwKeyerWeight"), QStringLiteral("cwReversePaddles"),
+            QStringLiteral("cwStrictSpacing"), QStringLiteral("cwBreakInMode"),
+            QStringLiteral("cwBreakInDelayMs"), QStringLiteral("cwKeyDownDelayMs"),
+            QStringLiteral("cwKeyUpDelayMs"), QStringLiteral("cwSidetone"),
+            QStringLiteral("cwRadioSidetone"), QStringLiteral("cwComputerSidetone"),
+            QStringLiteral("cwAutoModeSwitch"), QStringLiteral("cwAutoModeReturn"),
+            QStringLiteral("cwAutoModeReturnMs"), QStringLiteral("cwSerialPort"),
+            QStringLiteral("cwSerialPaddles"), QStringLiteral("cwSerialKeyLine"),
+            QStringLiteral("cwSerialPttLine"), QStringLiteral("cwxSpeed"),
+            QStringLiteral("cwxRepeat"), QStringLiteral("cwxRepeatDelayS"),
+            QStringLiteral("cwxMemory1"), QStringLiteral("cwxMemory2"),
+            QStringLiteral("cwxMemory3"), QStringLiteral("cwxMemory4"),
+            QStringLiteral("cwxMemory5"), QStringLiteral("cwxMemory6"),
+            QStringLiteral("cwxMemory7"), QStringLiteral("cwxMemory8")};
+        QCOMPARE(names.size(), 30);
+        TransmitModel& window = h.remote.transmitModel();
+        TransmitModel& core = h.station.transmitModel();
+        const QMetaObject* meta = window.metaObject();
+        // A different value the setter keeps: the next integer (or the one
+        // before, or 10 away), the other boolean, other text.
+        const auto changed = [](TransmitModel& model, const QMetaProperty& property) {
+            const QVariant before = property.read(&model);
+            if (before.typeId() == QMetaType::Bool) {
+                property.write(&model, !before.toBool());
+            } else if (before.typeId() == QMetaType::QString) {
+                property.write(&model, before.toString() + QStringLiteral("CQ"));
+            } else {
+                // cwAutoModeReturnMs rounds to 10 ms, so a step of 10 too.
+                for (const int step : {1, -1, 10, -10}) {
+                    property.write(&model, before.toInt() + step);
+                    if (property.read(&model) != before) {
+                        break;
+                    }
+                }
+            }
+            return property.read(&model);
+        };
+        for (const QString& name : names) {
+            const int index = meta->indexOfProperty(name.toLatin1().constData());
+            QVERIFY2(index >= 0, qPrintable(name));
+            const QMetaProperty property = meta->property(index);
+            const QVariant before = property.read(&window);
+            const QVariant wanted = changed(window, property);
+            QVERIFY2(wanted != before, qPrintable(name));
+            QTRY_VERIFY2(property.read(&core) == wanted, qPrintable(name));
+            const QVariant back = changed(core, property);
+            QTRY_VERIFY2(property.read(&window) == back, qPrintable(name));
         }
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }

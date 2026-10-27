@@ -84,6 +84,9 @@
 //               microphone line follows a program key that arrives or ends
 //               under the screen key (the key down does not move then).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): sendCwText,
+//               sendCwMemory, stopCw, setCwKey, setCwAvailable and
+//               cwRefused. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -203,6 +206,19 @@ public:
     /// is over: the next press asks it on again, and its keepalives stop.
     void tunerTuneEnded();
 
+    // ---- CW transmit (R-CW-48): the Core's CWX sender ----
+    /// The Core told this window remoteCwVersion 1 or later.
+    void setCwAvailable(bool available) { m_cwAvailable = available; }
+    /// The cw.* verbs can go now (remote transmit and remoteCwVersion).
+    bool cwAvailable() const { return m_available && m_cwAvailable; }
+    /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
+    /// {down}, each kCopies times under one id. They return the id, or 0
+    /// when nothing could be sent. A refusal arrives as cwRefused.
+    quint32 sendCwText(const QString& text);
+    quint32 sendCwMemory(int number);
+    quint32 stopCw();
+    quint32 setCwKey(bool down);
+
     // ---- A program through this window's TCI server ("tci") ----
     /// programAudio: the program's trx carried ",tci", so its own audio
     /// follows on the TX audio stream.
@@ -265,6 +281,8 @@ signals:
     void programAudioKeyChanged(bool programAudio);
     void holdsTransmitChanged(bool holds);
     void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
+    /// CW transmit (R-CW-48): the Core refused a cw.* request, in its words.
+    void cwRefused(const QString& reason, const QString& code, const QString& fix);
 
 private:
     enum class Phase { Idle, Waiting, On };
@@ -276,7 +294,7 @@ private:
         /// A program key asked with ",tci": it brings its own audio.
         bool programAudio{false};
     };
-    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource };
+    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw };
     struct Pending {
         Kind kind;
         QByteArray verb;
@@ -301,6 +319,7 @@ private:
     QString m_micSourceReason;
     Sender m_sender;
     bool m_available{false};
+    bool m_cwAvailable{false};
     Key m_screen;
     Key m_program;
     std::function<void(const Answer&)> m_programAnswer;

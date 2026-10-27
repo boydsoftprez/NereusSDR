@@ -85,6 +85,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send,
+//                                    cw.memory, cw.stop and cw.key, read
+//                                    here and answered by the Core's
+//                                    TransmitAccess::cw. AI-assisted via
+//                                    Claude Code.
 //   2026-09-29  J.J. Boyd / KG4VCF  Level Cal: startLevelCalibration and
 //                                    cancelLevelCalibration. AI-assisted via
 //                                    Anthropic Claude Code.
@@ -441,6 +446,17 @@ public:
     /// Task 36: the answer comes through the reply, at once or later (a key
     /// waiting for its microphone buffer); a later one is emitted then, and
     /// the Core routes it by verb and id to the session that asked.
+    /// CW transmit (R-CW-49): a cw.* request, its arguments read.
+    struct CwRequest {
+        enum class Kind { Send, Memory, Stop, Key };
+        Kind kind{Kind::Stop};
+        /// cw.send's text.
+        QString text;
+        /// cw.memory's number (the sender refuses one outside 1 to 8).
+        int number{0};
+        /// cw.key's down.
+        bool down{false};
+    };
     struct TransmitAccess {
         std::function<SessionMessage(const SessionMessage&, const QString&, const QByteArray&,
                                      std::optional<RemoteMicSource>)> micSource;
@@ -482,6 +498,14 @@ public:
         /// PA profile verbs on the air (RadioModel::paOnAirEditRefusal).
         /// Unset, no requester holds it.
         std::function<bool(const QByteArray& requester)> holdsTransmit;
+        /// CW transmit (R-CW-49): cw.send, cw.memory, cw.stop and cw.key
+        /// from `requester` on the session `owner`, its arguments read.
+        /// Returns the command.result to send (the Core's rules: the
+        /// session's gate, the holder, the CWX sender and the copies).
+        /// Unset, every one is refused stationReceiveOnly.
+        std::function<SessionMessage(const SessionMessage& invoke, const QString& owner,
+                                     const QByteArray& requester, const CwRequest& request)>
+            cw;
     };
     void setTransmitAccess(TransmitAccess access) { m_transmitAccess = std::move(access); }
     /// iPhone app Task 74 (R-IOS-30): the Core's confirm step, which
@@ -739,6 +763,8 @@ private:
     // Task 35: tx.key, tx.unkey, tx.tune, tx.twoTone.
     void handleTxMicSource(const NereusSDR::SessionMessage& invoke);
     void handleTxKeying(const NereusSDR::SessionMessage& invoke);
+    // CW transmit (R-CW-49): cw.send, cw.memory, cw.stop, cw.key.
+    void handleCw(const NereusSDR::SessionMessage& invoke);
     TransmitAccess m_transmitAccess;
     struct PendingPureSignalCommand {
         quint32 commandId;

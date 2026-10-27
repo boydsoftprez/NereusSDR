@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-49): bindRemoteCwx(), the
+//               remote window's CWX applet on the Core's CWX sender. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the CWX applet's status label, showCwxApplet()
 //               and cwxRemoteSendReason(). J.J. Boyd (KG4VCF), AI-assisted
 //               via Claude Code.
@@ -2236,6 +2239,9 @@ private:
     // CW transmit (R-CW-44): Tools > CWX, the status-bar label and ZZKO.
     void showCwxApplet(bool shown);
     static QString cwxRemoteSendReason();
+    // CW transmit (R-CW-49): a remote window's CWX applet sends through the
+    // Core (cw.send, cw.memory, cw.stop, cw.key) and shows its refusals.
+    void bindRemoteCwx();
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
     QPointer<class CatLogWindow> m_catLogWindow;

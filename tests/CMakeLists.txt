@@ -1077,6 +1077,12 @@ nereus_add_test(tst_cwx_sender REALTIME)
 # keyer timings run on the wall clock (3 s watchdog), hence REALTIME.
 nereus_add_test(tst_tci_cw REALTIME)
 
+# CW transmit Task 14 (R-CW-48, R-CW-49): the remote CW verbs (cw.send,
+# cw.memory, cw.stop, cw.key) on a test Core with a fake connection, the
+# remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
+# watchdog runs on the wall clock, hence REALTIME.
+nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+
 # CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
 # injected line source (paddles, the key and PTT lines, the gate, stops,
 # the cut, fresh edges, the thread's join) and its RadioModel wiring (port

@@ -1463,6 +1463,12 @@
 //                CWX sender's own key (CWX, the TCI key and the serial
 //                straight key; never the paddle). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): requestCwxFor runs a
+//                remote device's CWX request with that device as the one the
+//                holder rule (setCwxHolderRefusal) is asked for; another
+//                device taking transmit aborts only what is sent for someone
+//                else; stopCwxFor ends a device's request with its session.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -32717,7 +32723,9 @@ void RadioModel::wireCwxSender()
             || (tx->dspMode() != DSPMode::CWL && tx->dspMode() != DSPMode::CWU)) {
             return QString::fromLatin1(kCwxNotCwText);
         }
-        const QString holder = otherDeviceHoldsRefusal();
+        // R-CW-49: the holder rule for the device the request is for (the
+        // station's own, or a remote device's through requestCwxFor).
+        const QString holder = cwxHolderRefusal(m_cwxRequestDevice);
         if (!holder.isEmpty()) {
             return holder;
         }
@@ -32725,6 +32733,9 @@ void RadioModel::wireCwxSender()
             const QString text = m_cwKeyerController->refusal().text;
             return text.isEmpty() ? QString::fromLatin1(safety::kCwGateNotCwText) : text;
         }
+        // Taken (unless there is nothing to send): the sender now runs for
+        // this device.
+        m_cwxSendingFor = m_cwxRequestDevice;
         return QString();
     });
 
@@ -32766,12 +32777,77 @@ void RadioModel::wireCwxSender()
         connect(m_moxController, &MoxController::moxStateChanged, cwx, &CwxSender::setMoxActive);
         cwx->setMoxActive(m_moxController->isMox());
     }
-    // Another device taking transmit aborts.
+    // Another device taking transmit aborts. R-CW-49: another than the one
+    // the sender runs for, a remote device included.
     connect(this, &RadioModel::transmitHolderChanged, cwx, [this, cwx]() {
-        if (!otherDeviceHoldsRefusal().isEmpty()) {
+        if (!cwxHolderRefusal(m_cwxSendingFor).isEmpty()) {
             cwx->stop();
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-49): a remote device's CWX request on a Core.
+// NereusSDR-original. The Core's session server has already asked the
+// session's gate and the holder; here the sender asks its own request gate
+// with `device` as the one the holder rule is for, so the device that holds
+// transmit may send, and what the sender runs for it is not aborted by its
+// own hold. The refusal words come back from the sender's refused signal,
+// which it emits on this thread before the call returns.
+// ---------------------------------------------------------------------------
+QString RadioModel::cwxHolderRefusal(const QByteArray& device) const
+{
+    if (m_cwxHolderRefusal) {
+        return m_cwxHolderRefusal(device);
+    }
+    return device.isEmpty() ? otherDeviceHoldsRefusal() : QString();
+}
+
+TxRefusal RadioModel::requestCwxFor(const QByteArray& device,
+                                    const std::function<bool(CwxSender& sender)>& request)
+{
+    CwxSender* const cwx = m_cwxSender.get();
+    if (cwx == nullptr || !request) {
+        return TxRefusals::notReady();
+    }
+    QString words;
+    const QMetaObject::Connection heard = connect(
+        cwx, &CwxSender::refused, this, [&words](const QString& refused) { words = refused; },
+        Qt::DirectConnection);
+    m_cwxRequestDevice = device;
+    const bool taken = request(*cwx);
+    m_cwxRequestDevice.clear();
+    disconnect(heard);
+    if (taken && words.isEmpty()) {
+        return {};
+    }
+    if (words.isEmpty()) {
+        words = QString::fromLatin1(kCwxNothingToSendText);
+    }
+    if (m_cwKeyerController && !m_cwKeyerController->keyerAllowed()
+        && m_cwKeyerController->refusal().text == words) {
+        return m_cwKeyerController->refusal();
+    }
+    if (const QString holder = cwxHolderRefusal(device); !holder.isEmpty() && holder == words) {
+        return TxRefusal{QByteArray(TxRefusals::kOtherDeviceHolds), words,
+                         QByteArray(TxRefusals::kFixTakeTransmit)};
+    }
+    // Not CW, nothing to send, an empty memory or no such memory: the
+    // keyer is not ready for this request (the gate's not-CW refusal's code).
+    return TxRefusal{QByteArray(TxRefusals::kNotReady), words, QByteArray()};
+}
+
+bool RadioModel::cwxActiveFor(const QByteArray& device) const
+{
+    return m_cwxSender && !device.isEmpty() && m_cwxSendingFor == device
+        && (m_cwxSender->isSending() || m_cwxSender->isKeyHeld());
+}
+
+void RadioModel::stopCwxFor(const QByteArray& device)
+{
+    if (cwxActiveFor(device)) {
+        m_cwxSender->stop();
+    }
 }
 
 // ---------------------------------------------------------------------------

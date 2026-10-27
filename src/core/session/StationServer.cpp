@@ -231,6 +231,13 @@
 //               on `transmit`, R-CW-03), and a window's CWPitch write
 //               reaches the Core's RadioModel::cwPitchHz (R-CW-02). J.J.
 //               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): cw.send,
+//               cw.memory, cw.stop and cw.key through the Core's CWX sender
+//               for the device that holds transmit, remoteCwVersion 1 to a
+//               peer that declared remoteCw 1, the CW settings only to a
+//               peer that declared cwSettings 1, and a device's CWX ending
+//               with its link. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -1094,6 +1101,7 @@
 #include "core/session/RxOnlyLinkFit.h"
 
 #include "core/TxSliceArbiter.h"
+#include "core/CwxSender.h"
 #include "core/Hl2OptionsModel.h"
 #include "core/session/DataChannelTransport.h"
 #include "core/session/RelayLeg.h"
@@ -1704,6 +1712,39 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"RadioModel", "radio", false, "coreSpeakerDetails", "coreSpeaker"},
     // The CFC dialog's band editor (transmitSettingsVersion 15).
     {"TransmitModel", "transmit", false, "cfcProfile", "cfcProfile"},
+    // CW transmit (R-CW-03, R-CW-48): the CW settings (transmitSettingsVersion
+    // 16), so an older app's transmit schema, snapshot and deltas keep their
+    // bytes.
+    {"TransmitModel", "transmit", false, "cwKeyerSpeed", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyerMode", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyerWeight", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwReversePaddles", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwStrictSpacing", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwBreakInMode", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwBreakInDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyDownDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyUpDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwRadioSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwComputerSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeSwitch", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeReturn", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeReturnMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPort", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPaddles", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialKeyLine", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPttLine", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxSpeed", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxRepeat", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxRepeatDelayS", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory1", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory2", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory3", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory4", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory5", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory6", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory7", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory8", "cwSettings"},
 };
 
 // Phone wire batch: record fields that go only to a peer at
@@ -1904,6 +1945,23 @@ constexpr const char* kCoreSpeakerWriteReason =
 constexpr const char* kTuneDriveSourceFeature = "tuneDriveSource";
 constexpr const char* kTuneDriveSourceWriteReason =
     "Update this app to change TUNE's drive source on this Core.";
+
+// CW transmit (R-CW-48): why a write of transmit's CW settings is refused
+// from a peer that did not declare cwSettings 1. Such a peer is never sent
+// them, so only a misbehaving one gets here.
+constexpr const char* kCwSettingsFeature = "cwSettings";
+constexpr const char* kCwSettingsWriteReason =
+    "Update this app to change the CW settings on this Core.";
+
+bool isCwSettingsProperty(const QByteArray& name)
+{
+    for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
+        if (name == entry.property && qstrcmp(entry.feature, kCwSettingsFeature) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool isCoreSpeakerProperty(const QByteArray& name)
 {
@@ -2800,6 +2858,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // holder as its own key would, and VOX stays armed.
                 request.deviceId = m_radioModel->remoteVoxDevice();
             }
+            // CW transmit (R-CW-49): the radio's CW key while the Core's CWX
+            // sender runs for the device that holds transmit (its cw.send,
+            // cw.memory or cw.key) is that device's key, as VOX is above.
+            if (keyer.isStation() && source == PttMode::Cw && m_radioModel
+                && m_transmitHolder->state() == TransmitHolder::State::Held) {
+                if (const auto holder = m_transmitHolder->holder();
+                    holder && m_radioModel->cwxActiveFor(holder->deviceId)) {
+                    request.deviceId = holder->deviceId;
+                }
+            }
             // iPhone app plan Task 77 (rulings 8.8, 8.9; D52 as D58 amended
             // it): a press of the radio's own PTT (its mic or a footswitch)
             // while another device holds transmit, keyed or not, away
@@ -2938,9 +3006,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 const auto holder = m_transmitHolder->holder();
                 // Task 35 (ruling 8.4): a VOX key is the holder's.
                 const KeyerIdentity& keyer = mox->currentKeyer();
+                // CW transmit (R-CW-49): so is the radio's CW key while the
+                // CWX sender runs for the holder.
                 const bool holdersKey = holder
                     && (keyer.deviceId == holder->deviceId
-                        || (keyer.isStation() && keyer.source == PttMode::Vox));
+                        || (keyer.isStation() && keyer.source == PttMode::Vox)
+                        || (keyer.isStation() && keyer.source == PttMode::Cw && m_radioModel
+                            && m_radioModel->cwxActiveFor(holder->deviceId)));
                 if (holdersKey && mox->isMox()) {
                     m_transmitHolder->setKeyed(true);
                 }
@@ -2984,6 +3056,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         m_radioModel->setOtherDeviceHoldsRefusal([this]() {
             const std::optional<TransmitHolder::Holder> holder = m_transmitHolder->holder();
             if (!holder || holder->deviceId == KeyerIdentity::kStationDeviceId) {
+                return QString();
+            }
+            return TxRefusals::otherDeviceHolds(holder->name).text;
+        });
+        // CW transmit (R-CW-49): the CWX sender's holder rule, for the
+        // device a request is for (empty: the station's own window).
+        m_radioModel->setCwxHolderRefusal([this](const QByteArray& device) {
+            const std::optional<TransmitHolder::Holder> holder = m_transmitHolder->holder();
+            if (!holder) {
+                // A remote device sends CW only while it holds transmit, so
+                // its CWX ends when it lets transmit go.
+                return device.isEmpty() ? QString() : TxRefusals::notHolder().text;
+            }
+            const QByteArray asking = device.isEmpty()
+                ? QByteArray(KeyerIdentity::kStationDeviceId) : device;
+            if (holder->deviceId == asking) {
                 return QString();
             }
             return TxRefusals::otherDeviceHolds(holder->name).text;
@@ -4253,6 +4341,97 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             takeTransmit(m_dispatchingTransport, invoke, holderEpoch, shownKeyed,
                          std::move(reply));
         };
+        // CW transmit (R-CW-48, R-CW-49): cw.send, cw.memory, cw.stop and
+        // cw.key, through the Core's CWX sender and its keying gate. Each
+        // copy of a request (the window sends three under one id) gets the
+        // first answer, and the sender acts once.
+        access.cw = [this](const SessionMessage& invoke, const QString& owner,
+                           const QByteArray& requester,
+                           const SessionCommandDispatcher::CwRequest& request) {
+            using Kind = SessionCommandDispatcher::CwRequest::Kind;
+            const QByteArray encoded = SessionMessages::encode(invoke);
+            const auto cache = m_cwReplies.value(owner);
+            const auto prior = cache.constFind(invoke.commandId);
+            if (prior != cache.cend()) {
+                return prior->first == encoded ? prior->second
+                    : SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
+                        QStringLiteral("The Core could not read this request."), {});
+            }
+            const auto peer = m_peers.constFind(m_dispatchingTransport);
+            const bool ready = peer != m_peers.cend() && peer->authenticated
+                && peer->snapshotComplete && peer->sessionDeviceId == requester
+                && sessionOwner(peer->sessionId) == owner && !requester.isEmpty()
+                && m_radioModel && m_radioModel->cwxSender() != nullptr && m_transmitHolder;
+            if (!ready) {
+                return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
+                                                       false, TxRefusals::notReady().text, {});
+            }
+            const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
+                || (request.kind == Kind::Key && request.down);
+            TxRefusal refusal;
+            if (engages) {
+                // The session's own gate first, then the holder's: sending
+                // CW is the holder's, as tx.setTxSlice is, and with transmit
+                // unheld the device is asked to take it first.
+                const TxDecision decision = txDecisionFor(m_dispatchingTransport);
+                if (!decision.permitted) {
+                    refusal = decision.refusal;
+                } else if (!m_transmitHolder->isHeldBy(requester)) {
+                    refusal = m_transmitHolder->keyRefusalFor(requester);
+                    if (refusal.isEmpty()) {
+                        refusal = TxRefusals::notHolder();
+                    }
+                }
+                if (refusal.isEmpty()) {
+                    const auto start = [&request](CwxSender& sender) {
+                        switch (request.kind) {
+                        case Kind::Send:
+                            return sender.sendText(request.text);
+                        case Kind::Memory:
+                            return sender.sendMemory(request.number);
+                        case Kind::Key:
+                            sender.setKeyHeld(true);
+                            return sender.isKeyHeld();
+                        case Kind::Stop:
+                            break;
+                        }
+                        return false;
+                    };
+                    refusal = m_radioModel->requestCwxFor(requester, start);
+                }
+            } else {
+                // A release (cw.stop, cw.key up) is always taken: it ends
+                // only what the sender runs for this device, so it never
+                // touches another device's CW or the station's own.
+                if (m_radioModel->cwxSendingFor() == requester) {
+                    if (request.kind == Kind::Stop) {
+                        m_radioModel->stopCwxFor(requester);
+                    } else {
+                        m_radioModel->cwxSender()->setKeyHeld(false);
+                    }
+                }
+            }
+            QList<MirrorUpdate> values;
+            if (!refusal.isEmpty()) {
+                values.append({0, "refusalCode", MirrorWireKind::Utf8, QString::fromUtf8(refusal.code)});
+                values.append({0, "refusalFix", MirrorWireKind::Utf8, QString::fromUtf8(refusal.fix)});
+            }
+            const auto result = SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
+                                                                refusal.isEmpty(), refusal.text, {},
+                                                                values);
+            auto& replies = m_cwReplies[owner];
+            while (replies.size() >= kRememberedCwCommands) {
+                auto oldest = replies.begin();
+                for (auto at = replies.begin(); at != replies.end(); ++at) {
+                    if (at.key() < oldest.key()) {
+                        oldest = at;
+                    }
+                }
+                replies.erase(oldest);
+            }
+            replies.insert(invoke.commandId, {encoded, result});
+            return result;
+        };
         m_dispatcher->setTransmitAccess(std::move(access));
     }
     if (radioModel) {
@@ -4428,6 +4607,7 @@ StationServer::~StationServer()
         // Task 77 fix round 2: the amplifier's pending-key probe asks it too.
         m_radioModel->setAmpKeyPendingProbe({});
         m_radioModel->setOtherDeviceHoldsRefusal({});
+        m_radioModel->setCwxHolderRefusal({});
     }
     // Parity Task 32: MON back on the Core's own outputs, as without a
     // station server.
@@ -5478,6 +5658,7 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
     }
     if (!owner.isEmpty()) {
         m_micSourceReplies.remove(owner);
+        m_cwReplies.remove(owner);
         if (m_radioModel) { m_radioModel->forgetRemoteMicSession(owner); }
         m_dispatcher->endSessionOwner(owner);
         if (!self) { return; }
@@ -5531,6 +5712,11 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
             m_radioModel->cancelTgxlAutotuneFor(
                 sessionDevice,
                 RadioModel::tunerTuneEndedReason(RadioModel::TunerTuneEnd::LinkLost));
+            if (!self) { return; }
+            // CW transmit (R-CW-49): CWX text or a held Key the device asked
+            // for ends with its session, at once rather than at the Key's
+            // 3 s watchdog.
+            m_radioModel->stopCwxFor(sessionDevice);
             if (!self) { return; }
         }
         if (leaving || sessionDevice.startsWith("token:")) {
@@ -5833,6 +6019,14 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
         // A source command id belongs to this authenticated session's exact
         // request, including its verb. Reusing it must never key the radio.
         if (const auto cache = m_micSourceReplies.value(sessionOwner(it->sessionId));
+            cache.contains(message.commandId)
+            && cache.value(message.commandId).first != SessionMessages::encode(message)) {
+            send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                false, QStringLiteral("The Core could not read this request."), {}));
+            break;
+        }
+        // CW transmit (R-CW-49): a cw.* command id is held the same way.
+        if (const auto cache = m_cwReplies.value(sessionOwner(it->sessionId));
             cache.contains(message.commandId)
             && cache.value(message.commandId).first != SessionMessages::encode(message)) {
             send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
@@ -6240,6 +6434,18 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,
                 TxRefusals::appCannotTransmit().text, {}));
+            break;
+        }
+        // CW transmit (R-CW-48): the cw.* verbs came with remoteCwVersion 1,
+        // for a peer at minor 11 whose hello declared remoteTx and remoteCw.
+        if ((message.commandVerb == "cw.send" || message.commandVerb == "cw.memory"
+             || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key")
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 1))) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                QStringLiteral("Update this app to send CW through this Core."), {}));
             break;
         }
         // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA profile verbs, to a
@@ -6822,6 +7028,11 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             // send ring's length.
             if (!stopText.isEmpty() && m_radioModel) {
                 m_radioModel->stopAllTx(stopText);
+                if (!self) { return; }
+            }
+            if (m_radioModel) {
+                // CW transmit (R-CW-49): the older session's CWX ends too.
+                m_radioModel->stopCwxFor(device.deviceId);
                 if (!self) { return; }
             }
             m_transmitHolder->holderDropped(device.deviceId,
@@ -8407,6 +8618,11 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
         if (radioWrite && isRadioSpeakerProperty(update.name)
             && !peerGetsFeatureProperties(transport, QByteArrayLiteral("radioSpeaker"))) {
             refusals.insert(update.name, QString::fromLatin1(kRadioSpeakerWriteReason));
+            continue;
+        }
+        if (transmitObjectWrite && isCwSettingsProperty(update.name)
+            && !peerGetsFeatureProperties(transport, QByteArray(kCwSettingsFeature))) {
+            refusals.insert(update.name, QString::fromLatin1(kCwSettingsWriteReason));
             continue;
         }
         if (radioWrite && isCoreSpeakerProperty(update.name) && !peerGetsCoreSpeaker(transport)) {
@@ -14086,6 +14302,12 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
                 caps.txStateVersion = txStateVersion();
                 // Parity Task 33: the transmit readings, right after it.
                 caps.txReadingsVersion = txReadingsVersion();
+                // CW transmit (R-CW-48): the cw.* verbs, for a peer that
+                // declared remoteCw 1, right after the readings.
+                if (peerDeclares(transport, QByteArrayLiteral("remoteCw"), 1)) {
+                    caps.remoteCwEntry = true;
+                    caps.remoteCwVersion = remoteCwVersion();
+                }
             }
             const HardwareProfile& profile = m_radioModel->hardwareProfile();
             caps.hpsdrModel = profile.caps != nullptr ? profile.model : HPSDRModel::FIRST;

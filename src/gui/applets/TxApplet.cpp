@@ -284,6 +284,10 @@
 //               the transmit gates do. AI-assisted via Anthropic Claude Code.
 //   2026-10-26: CW transmit, the MOX tooltip in CWL and CWU is the normal
 //               one (R-CW-05). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): in CW, MON (cwSidetone)
+//               is gated on the CW settings (transmitSettingsVersion 16)
+//               with their reason. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1591,6 +1595,8 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     applyCwLock();
     applyReceiveOnlyLock();
     showMonitorForMode();
+    // CW transmit (R-CW-48): MON's gate follows what it writes.
+    applyMonitorChainGate();
 }
 
 // ---------------------------------------------------------------------------
@@ -2231,11 +2237,36 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
     }
     applyCwLock();
     applyReceiveOnlyLock();
-    for (QWidget* control : monitorChainControls()) {
-        gateTransmitControl(control, permitted, reason);
-    }
+    applyMonitorChainGate();
     // Parity Task 32: the MON output pair also needs a Core that sends MON.
     applyMonitorOutputGate();
+}
+
+void TxApplet::setCwSettingsPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_cwSettingsPermitted = permitted;
+    m_cwSettingsReason = unavailableReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : unavailableReason;
+    applyMonitorChainGate();
+}
+
+// CW transmit (R-CW-48): in CW, MON writes cwSidetone, which came with
+// transmitSettingsVersion 16; outside CW it writes monEnabled (version 2).
+// The level is monitorVolume in both, on the chain gate.
+void TxApplet::applyMonitorChainGate()
+{
+    const bool chain = m_transmitChainSettingsPermitted;
+    const QString chainReason = m_transmitChainSettingsReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : m_transmitChainSettingsReason;
+    const bool mon = chain && (!m_cwMode || m_cwSettingsPermitted);
+    const QString monReason = !chain ? chainReason : m_cwSettingsReason;
+    // allMonitorSections skips a copy that is gone.
+    for (const TxMonitorSection* s : allMonitorSections()) {
+        gateTransmitControl(s->monButton(), mon, monReason);
+        gateTransmitControl(s->volumeSlider(), chain, chainReason);
+    }
 }
 
 // Remote-window parity Task 32 (R-IOS-13, R-R3-49): where MON plays is this

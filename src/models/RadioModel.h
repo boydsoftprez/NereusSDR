@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit, remote CW (R-CW-49): requestCwxFor,
+//                stopCwxFor, cwxSendingFor, cwxActiveFor and
+//                setCwxHolderRefusal, so the Core's CWX sender runs a
+//                remote device's request with that device's holder rule.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - CW transmit, the serial key reader (R-CW-04, R-CW-36) and
 //                the auto mode switch (R-CW-37): cwSerialKeyInput,
 //                cwSerialKeyRefusal and their test seams. J.J. Boyd
@@ -933,6 +938,7 @@
 #include "core/safety/BandPlanGuard.h"
 #include "core/safety/TxTimeOutTimer.h"
 #include "core/safety/TransmitCutLine.h"
+#include "core/safety/TxRefusal.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -2928,6 +2934,31 @@ public:
     /// taking transmit, every stop, a transmit cut's catch-up and the
     /// connection going away abort it. Never null.
     CwxSender* cwxSender() const { return m_cwxSender.get(); }
+    /// CW transmit (R-CW-49): a remote device's CWX request on a Core
+    /// (cw.send, cw.memory, cw.key), run by the CWX sender with `device`
+    /// as the one the holder rule is asked for (setCwxHolderRefusal):
+    /// `request` makes the sender's call and returns its result. Empty
+    /// when it was taken; otherwise the transmit refusal: the keyer gate's
+    /// own, otherDeviceHolds for the holder rule's words, notReady for the
+    /// sender's other words (not CW, nothing to send, an empty memory).
+    TxRefusal requestCwxFor(const QByteArray& device,
+                            const std::function<bool(CwxSender& sender)>& request);
+    /// A device's session ended (its link dropped, it left): what the
+    /// sender runs for it stops at once, the Key released.
+    void stopCwxFor(const QByteArray& device);
+    /// The device whose request the sender took last: empty for the
+    /// station's own (this window's applet, CAT, TCI, the serial key).
+    QByteArray cwxSendingFor() const { return m_cwxSendingFor; }
+    /// The sender is sending, or holding the Key, for `device` now.
+    bool cwxActiveFor(const QByteArray& device) const;
+    /// The holder rule for a CWX request (R-CW-33, R-CW-49): the words
+    /// when transmit is held by someone other than `device` (empty: the
+    /// station's own), empty when it may send. The Core's session server
+    /// installs it; unset, the station's own requests read
+    /// otherDeviceHoldsRefusal() and a device's read empty.
+    using CwxHolderRefusalFn = std::function<QString(const QByteArray& device)>;
+    void setCwxHolderRefusal(CwxHolderRefusalFn probe) { m_cwxHolderRefusal = std::move(probe); }
+    QString cwxHolderRefusal(const QByteArray& device) const;
     /// CW transmit (R-CW-04, R-CW-36): the serial key reader on
     /// TransmitModel::cwSerialPort, reading while a connection is up and
     /// the port is named and not CAT's. Never null.
@@ -9909,6 +9940,12 @@ private:
     void syncCwxKeyLine();
     // Reset first in the destructor, before the keyer controller.
     std::unique_ptr<CwxSender> m_cwxSender;
+    // CW transmit (R-CW-49): the device a request is asked for while
+    // requestCwxFor runs (empty: the station's own), the one whose request
+    // the sender took last, and the Core's holder rule.
+    QByteArray m_cwxRequestDevice;
+    QByteArray m_cwxSendingFor;
+    CwxHolderRefusalFn m_cwxHolderRefusal;
     // ── CW transmit: the serial key reader (R-CW-04, R-CW-36) ─────────────
     // Made after the CWX sender (its straight key keys through it); its
     // settings, the keyer gate and the PTT line. `input` null: the

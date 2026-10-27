@@ -580,6 +580,11 @@
 //   2026-10-15: re-review wording: onTransmitCutOffMain doc says why a
 //               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): remoteCwVersion 1 for a
+//               peer that declared remoteTx and remoteCw; the cw.* verbs'
+//               answers remembered per session (their copies); the CW
+//               settings on `transmit` only to a peer that declared
+//               cwSettings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1582,6 +1587,10 @@ public:
     /// taking transmit, the transmitter's settings held by the holder, and
     /// `tx.tunerTune`, the Tuner Genius autotune.
     int remoteTxVersion() const { return 2; }
+    /// CW transmit (R-CW-49): 1: cw.send, cw.memory, cw.stop and cw.key
+    /// from the device that holds transmit, on the Core's CWX sender, for a
+    /// peer at minor 11 whose hello declared remoteTx 1 and remoteCw 1.
+    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 1; }
     /// Task 35: keying from a remote device; null without a Local model.
     RemoteKeying* remoteKeying() const { return m_remoteKeying.get(); }
     /// Task 37 (R-IOS-13; remote design section 12.1): the transmit
@@ -2841,6 +2850,10 @@ private:
     // it is owed once its result has been sent (a self-revoke, or a token
     // session retiring the token).
     QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_micSourceReplies;
+    // CW transmit (R-CW-49): each session's cw.* answers by command id, so
+    // the copies of one command are answered alike and the Core acts once.
+    QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_cwReplies;
+    static constexpr int kRememberedCwCommands = 32;
     QPointer<SessionTransport> m_dispatchingTransport;
     InvokeFrame* m_invokeFrame = nullptr;
     QByteArray m_certSha256;

@@ -25,10 +25,15 @@
 //                 edit, Rpt and its delay, KB to CW, sent and current
 //                 characters; the NYI overlays removed. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): setRemoteSender, so a
+//                 remote window's Send, memories, Stop, Key and KB to CW go
+//                 to the Core's CWX sender, and showRefusal. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "CwxApplet.h"
 #include "core/CwxSender.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -45,6 +50,7 @@
 #include <QSlider>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -237,10 +243,13 @@ void CwxApplet::buildUI()
 
 void CwxApplet::wireSender()
 {
+    // CW transmit (R-CW-49): the remote Key, lit from the press, dark at
+    // the release, a refusal, or the Core's 3 s watchdog.
+    m_remoteKeyWatchdog = new QTimer(this);
+    m_remoteKeyWatchdog->setSingleShot(true);
+    m_remoteKeyWatchdog->setInterval(CwxSender::kKeyWatchdogMs);
+    connect(m_remoteKeyWatchdog, &QTimer::timeout, this, [this]() { setRemoteKeyDown(false); });
     CwxSender* const cwx = sender();
-    if (cwx == nullptr) {
-        return;
-    }
     // The Key holds the key while it is pressed; the sender drops a hold
     // whose release never comes 3 s after the press.
     connect(m_keyBtn, &QPushButton::pressed, this, [this, cwx]() {
@@ -248,24 +257,125 @@ void CwxApplet::wireSender()
             return;
         }
         m_lastRefusal.clear();
+        if (hasRemoteSender()) {
+            const QString words = m_remote.setKey ? m_remote.setKey(true) : QString();
+            if (!words.isEmpty()) {
+                setRemoteKeyDown(false);
+                refuse(words);
+                return;
+            }
+            setRemoteKeyDown(true);
+            return;
+        }
+        if (cwx == nullptr) {
+            return;
+        }
         cwx->setKeyHeld(true);
         if (!m_lastRefusal.isEmpty()) {
             refuse(m_lastRefusal);
         }
     });
-    connect(m_keyBtn, &QPushButton::released, this, [cwx]() { cwx->setKeyHeld(false); });
+    connect(m_keyBtn, &QPushButton::released, this, [this, cwx]() {
+        if (hasRemoteSender()) {
+            if (m_remoteKeyDown && m_remote.setKey) {
+                m_remote.setKey(false);
+            }
+            setRemoteKeyDown(false);
+            return;
+        }
+        if (cwx != nullptr) {
+            cwx->setKeyHeld(false);
+        }
+    });
     // The button's lit state is the sender's, not the click's.
     connect(m_keyBtn, &QPushButton::toggled, this, [this, cwx](bool) {
         const QSignalBlocker block(m_keyBtn);
-        m_keyBtn->setChecked(cwx->isKeyHeld());
+        m_keyBtn->setChecked(hasRemoteSender() ? m_remoteKeyDown
+                                               : cwx != nullptr && cwx->isKeyHeld());
     });
+    if (cwx == nullptr) {
+        return;
+    }
     connect(cwx, &CwxSender::keyHeldChanged, this, [this](bool held) {
+        if (hasRemoteSender()) {
+            return;
+        }
         const QSignalBlocker block(m_keyBtn);
         m_keyBtn->setChecked(held);
     });
-    connect(cwx, &CwxSender::characterStarted, this, &CwxApplet::onCharacterStarted);
-    connect(cwx, &CwxSender::sendingChanged, this, &CwxApplet::onSendingChanged);
+    connect(cwx, &CwxSender::characterStarted, this, [this](int index) {
+        if (!hasRemoteSender()) {
+            onCharacterStarted(index);
+        }
+    });
+    connect(cwx, &CwxSender::sendingChanged, this, [this](bool sending) {
+        if (!hasRemoteSender()) {
+            onSendingChanged(sending);
+        }
+    });
     connect(cwx, &CwxSender::refused, this, [this](const QString& words) { m_lastRefusal = words; });
+}
+
+void CwxApplet::setRemoteSender(RemoteSender remote)
+{
+    m_remote = std::move(remote);
+    clearMarks();
+    setRemoteKeyDown(false);
+}
+
+CwxApplet::RemoteSender CwxApplet::remoteSenderFor(std::function<RemoteTransmitClient*()> client,
+                                                   const QString& newerCoreReason)
+{
+    const auto request = [client = std::move(client), newerCoreReason](
+                             const std::function<quint32(RemoteTransmitClient&)>& call) {
+        RemoteTransmitClient* const transmit = client ? client() : nullptr;
+        if (transmit == nullptr || !transmit->available()) {
+            return QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
+        }
+        if (!transmit->cwAvailable()) {
+            return newerCoreReason;
+        }
+        return call(*transmit) != 0 ? QString()
+                                    : QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
+    };
+    RemoteSender remote;
+    remote.sendText = [request](const QString& text) {
+        return request([&text](RemoteTransmitClient& c) { return c.sendCwText(text); });
+    };
+    remote.sendMemory = [request](int number) {
+        return request([number](RemoteTransmitClient& c) { return c.sendCwMemory(number); });
+    };
+    remote.stop = [request]() {
+        return request([](RemoteTransmitClient& c) { return c.stopCw(); });
+    };
+    remote.setKey = [request](bool down) {
+        return request([down](RemoteTransmitClient& c) { return c.setCwKey(down); });
+    };
+    return remote;
+}
+
+void CwxApplet::setRemoteKeyDown(bool down)
+{
+    m_remoteKeyDown = down;
+    if (m_remoteKeyWatchdog != nullptr) {
+        if (down) {
+            m_remoteKeyWatchdog->start();
+        } else {
+            m_remoteKeyWatchdog->stop();
+        }
+    }
+    if (hasRemoteSender()) {
+        const QSignalBlocker block(m_keyBtn);
+        m_keyBtn->setChecked(down);
+    }
+}
+
+void CwxApplet::showRefusal(const QString& words)
+{
+    if (hasRemoteSender()) {
+        setRemoteKeyDown(false);
+    }
+    refuse(words);
 }
 
 void CwxApplet::wireModel()
@@ -353,7 +463,13 @@ void CwxApplet::setSendPermitted(bool permitted, const QString& reason)
 {
     m_sendPermitted = permitted;
     m_sendReason = permitted ? QString() : reason;
-    if (!permitted) {
+    if (!permitted && hasRemoteSender()) {
+        // The Core ends a device's CWX itself when it may no longer send
+        // (another device takes transmit, its link drops); a stop from
+        // here would only be refused with the same news.
+        setRemoteKeyDown(false);
+        clearMarks();
+    } else if (!permitted) {
         stopSending();
     }
     applyPermissions();
@@ -451,6 +567,19 @@ void CwxApplet::send()
         const QSignalBlocker block(m_sendBtn);
         m_sendBtn->setChecked(m_sending);
     }
+    if (hasRemoteSender()) {
+        if (!m_sendPermitted || m_kbCwBtn->isChecked()) {
+            return;
+        }
+        // Send starts the text over at the Core too: what it has left
+        // stops first (the link keeps the order).
+        QString words = m_remote.stop ? m_remote.stop() : QString();
+        if (words.isEmpty()) {
+            words = m_remote.sendText(m_textEdit->toPlainText());
+        }
+        refuse(words);
+        return;
+    }
     CwxSender* const cwx = sender();
     if (cwx == nullptr || !m_sendPermitted || m_kbCwBtn->isChecked()) {
         return;
@@ -475,11 +604,25 @@ void CwxApplet::send()
 void CwxApplet::sendMemory(int number)
 {
     CwxSender* const cwx = sender();
-    if (cwx == nullptr || !m_sendPermitted) {
+    if ((cwx == nullptr && !hasRemoteSender()) || !m_sendPermitted) {
         return;
     }
     const QString text = memoryText(number);
     m_lastRefusal.clear();
+    if (hasRemoteSender()) {
+        // The Core sends its own copy of the memory (the mirrored text).
+        if (const QString words = m_remote.sendMemory ? m_remote.sendMemory(number) : QString();
+            !words.isEmpty()) {
+            refuse(words);
+            return;
+        }
+        clearMarks();
+        m_editingText = true;
+        m_textEdit->setPlainText(text);
+        m_editingText = false;
+        m_kbLength = static_cast<int>(text.length());
+        return;
+    }
     if (!cwx->sendMemory(number)) {
         refuse(m_lastRefusal);
         return;
@@ -499,7 +642,12 @@ void CwxApplet::sendMemory(int number)
 
 void CwxApplet::stopSending()
 {
-    if (CwxSender* const cwx = sender()) {
+    if (hasRemoteSender()) {
+        if (m_remote.stop) {
+            refuse(m_remote.stop());
+        }
+        setRemoteKeyDown(false);
+    } else if (CwxSender* const cwx = sender()) {
         cwx->stop();
     }
     clearMarks();
@@ -523,6 +671,10 @@ void CwxApplet::onTextChanged()
         return;
     }
     const QString added = text.mid(previous);
+    if (hasRemoteSender()) {
+        refuse(m_remote.sendText(added));
+        return;
+    }
     CwxSender* const cwx = sender();
     if (cwx == nullptr) {
         return;

@@ -61,6 +61,8 @@
 //               not only while one waits: the TCI server and the remote
 //               window's rigctld share this one program key. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): the cw.* verbs and
+//               cwRefused. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -269,6 +271,7 @@ void RemoteTransmitClient::setAvailable(bool available)
 void RemoteTransmitClient::retireSession()
 {
     m_available = false;
+    m_cwAvailable = false;
     // The Core unkeys a device whose link drops and never keys it
     // again by itself; nothing here survives.
     // Task 37: a new link starts its keepalives from 1.
@@ -323,6 +326,28 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
         }
     }
     return id;
+}
+
+// CW transmit (R-CW-48): the Core's CWX sender for this window. The Core
+// answers every copy alike and acts once; a refusal is cwRefused.
+quint32 RemoteTransmitClient::sendCwText(const QString& text)
+{
+    return cwAvailable() ? send("cw.send", {utf8Argument("text", text)}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::sendCwMemory(int number)
+{
+    return cwAvailable() ? send("cw.memory", {int64Argument("number", number)}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::stopCw()
+{
+    return cwAvailable() ? send("cw.stop", {}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::setCwKey(bool down)
+{
+    return cwAvailable() ? send("cw.key", {boolArgument("down", down)}, Kind::Cw) : 0;
 }
 
 void RemoteTransmitClient::setScreenKey(bool down)
@@ -643,6 +668,11 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
                                        << (accepted ? "accepted" : "refused:") << reason;
 
     switch (kind) {
+    case Kind::Cw:
+        if (!accepted) {
+            emit cwRefused(shown, code, fix);
+        }
+        return;
     case Kind::MicSource: {
         m_micSourcePending = false;
         const bool valid = values.size() == 1 && values.first().ordinal == 0

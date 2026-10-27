@@ -376,6 +376,11 @@
         },
         {
             "kind": "i64",
+            "name": "remoteCwVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
             "name": "mediaTunnelVersion",
             "value": 1
         },
@@ -2092,6 +2097,53 @@
             "capabilityVersion": 2,
             "minMinor": 11,
             "verb": "tx.tunerTune"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "text",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.send"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "number",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.memory"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.stop"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "down",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.key"
         },
         {
             "arguments": [

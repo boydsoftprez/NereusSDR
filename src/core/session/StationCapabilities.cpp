@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): after
+//               txReadingsVersion, last in the remoteTx block, only for a
+//               peer that declared remoteCw. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
 //               rxMeterStampsVersion and before coreBuildInfo, for a peer
 //               that declared displayCodec 2. J.J. Boyd (KG4VCF),
@@ -423,6 +427,11 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
             // compression stream), right after txStateVersion and only with
             // it.
             updates.append(intEntry("txReadingsVersion", txReadingsVersion));
+            // CW transmit (R-CW-49): the cw.* verbs, last in the block, only
+            // for a peer that declared remoteCw.
+            if (remoteCwEntry) {
+                updates.append(intEntry("remoteCwVersion", remoteCwVersion));
+            }
         }
         // Task 29 step 2b (R-IOS-16): unpublished media-floor entries
         // follow every previously emitted minor-11 field.
@@ -981,6 +990,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "txWatchPathVersion"
                    || u.name == "txStateVersion"
                    || u.name == "txReadingsVersion"
+                   || u.name == "remoteCwVersion"
                    || u.name == "waveformVersion"
                    || u.name == "remoteIqVersion"
                    || u.name == "miniDisplayVersion"
@@ -1083,6 +1093,9 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.txStateVersion = version;
                 } else if (u.name == "txReadingsVersion") {
                     caps.txReadingsVersion = version;
+                } else if (u.name == "remoteCwVersion") {
+                    caps.remoteCwEntry = true;
+                    caps.remoteCwVersion = version;
                 } else if (u.name == "remoteTgxlControlVersion") {
                     caps.remoteTgxlControlVersion = version;
                 } else if (u.name == "transmitSettingsVersion") {
