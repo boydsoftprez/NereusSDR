@@ -532,8 +532,9 @@ follow a PTT status in CW.
 
 R-CW-20. **[TX]** QSK ignores every PTT source (radio, CAT, TCI, VOX, serial;
 `console.cs:25470`) and never enters MOX. It is offered only when all hold,
-checked in this order: not HL2; P2 connection (D3); Orion or Orion MkII board
-with firmware 17 or later, or Saturn or SaturnMKII (D2); the TX slice's TX
+checked in this order: not HL2; Orion, Orion MkII, Saturn or SaturnMKII board
+(D2); P2 connection (D3), else "QSK needs newer radio firmware."; Orion or
+Orion MkII firmware 17 or later (D2); the TX slice's TX
 antenna equals its RX antenna; not a transverter band; no armed amplifier
 interlock (D16). Otherwise it shows greyed with the first failing reason. The rule re-runs on an antenna
 or band change; if QSK stops being allowed while selected, NereusSDR falls back

@@ -25,6 +25,10 @@
 //               Claude Code.
 //   2026-10-26: CW transmit, leaving CW with QSK selected lands on Off.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F4: QSK's reasons check the
+//               board before the protocol, and the protocol reason reads
+//               "QSK needs newer radio firmware.". J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -501,7 +505,10 @@ private slots:
             int firmware;
             const char* reason;
         } cases[] = {
-            {ProtocolVersion::Protocol1, HPSDRHW::Hermes, 30, kCwQskNeedsP2Reason},
+            // F4: the board before the protocol.
+            {ProtocolVersion::Protocol1, HPSDRHW::Hermes, 30, kCwQskBoardReason},
+            {ProtocolVersion::Protocol1, HPSDRHW::OrionMKII, 30, kCwQskNeedsP2Reason},
+            {ProtocolVersion::Protocol1, HPSDRHW::Saturn, 30, kCwQskNeedsP2Reason},
             // M4: the HL2 is told it by name, not the protocol reason.
             {ProtocolVersion::Protocol1, HPSDRHW::HermesLite, 72, kCwQskHl2Reason},
             {ProtocolVersion::Protocol2, HPSDRHW::Angelia, 30, kCwQskBoardReason},
@@ -529,13 +536,9 @@ private slots:
                 QVERIFY(!k->wireState().qskTxAttenuation);
             }
             if (!k->qskAvailable()) {
-                // The brief's P2 sentence names "protocol", a word the
-                // internal-term list holds; it is used as written and the
-                // term is the only one allowed here.
+                // F4: every reason is plain, the protocol one included.
                 const QString term = OperatorWording::internalTermIn(k->qskUnavailableReason());
-                QVERIFY2(term.isEmpty()
-                             || (c.reason == kCwQskNeedsP2Reason
-                                 && term.compare(QStringLiteral("protocol"), Qt::CaseInsensitive) == 0),
+                QVERIFY2(term.isEmpty(),
                          qPrintable(k->qskUnavailableReason() + QStringLiteral(" / ") + term));
             }
         }

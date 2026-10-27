@@ -525,13 +525,14 @@ case is a must-pass.
   };
   ```
 
-  QSK availability is exactly R-CW-20's list: not HL2; P2 connection; board Orion or
-  OrionMKII with `RadioInfo::firmwareVersion >= 17`, or Saturn or SaturnMKII; TX antenna
+  QSK availability is exactly R-CW-20's list: not HL2; board Orion or OrionMKII, or
+  Saturn or SaturnMKII; P2 connection; Orion or OrionMKII with
+  `RadioInfo::firmwareVersion >= 17`; TX antenna
   equals RX antenna for the TX slice; not a transverter band (always true while
   transverters are unbuilt, and the check is written against the transverter state so it
   applies when they land); no armed amplifier interlock. Reasons, in that order:
-  "The Hermes Lite 2 can't do QSK.", "QSK needs a radio on the newer network protocol.",
-  "This radio can't do QSK.", "QSK needs radio firmware 1.7 or later.", "QSK needs the
+  "The Hermes Lite 2 can't do QSK.", "This radio can't do QSK.",
+  "QSK needs newer radio firmware.", "QSK needs radio firmware 1.7 or later.", "QSK needs the
   same antenna for receive and transmit.", "QSK is off on transverter bands.", and the
   R-CW-22 sentence. (HL2 comes first so an HL2, a Protocol 1 radio, is told it by name.)
 

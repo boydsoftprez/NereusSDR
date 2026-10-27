@@ -22,6 +22,9 @@
 // 2026-10-26: CW transmit, the CW page, the DSP > CW transmit groups and the
 // TX applet in CW are swept (Task 12). J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
+// 2026-10-27: CW transmit final fix wave F4: the QSK protocol reason is
+// plain now, so its exemption is gone. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -850,11 +853,7 @@ private slots:
             }
             shown.removeAll(QString());
             QVERIFY2(shown.size() >= floor, qPrintable(QString::number(shown.size())));
-            for (QString text : shown) {
-                // Known conflict, reported to the plan's controller: the
-                // plan's R-CW-20 reason names the protocol. It is the
-                // keyer controller's text, checked here once it is reworded.
-                text.remove(QLatin1String(kCwQskNeedsP2Reason));
+            for (const QString& text : shown) {
                 if (text.trimmed().isEmpty()) { continue; }
                 QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
                 QVERIFY2(!text.contains(QChar(0x2014)), qPrintable(text));

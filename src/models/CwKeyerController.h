@@ -25,6 +25,10 @@
 //   2026-10-26: CW transmit, radioKeyStatusChanged for the CW page's KEY
 //               and TX lamps (R-CW-41). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-27: CW transmit final fix wave F4: QSK's reasons check the
+//               board before the protocol, and the protocol reason reads
+//               "QSK needs newer radio firmware.". J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -45,11 +49,13 @@ namespace NereusSDR {
 class RadioModel;
 class SliceModel;
 
-// R-CW-20: why QSK is not offered, in the order the rule checks them
-// (the Hermes Lite 2 first, so an HL2 is told it by name; kCwQskHl2Reason).
-inline constexpr char kCwQskNeedsP2Reason[] =
-    "QSK needs a radio on the newer network protocol.";
+// R-CW-20: why QSK is not offered. The rule checks the Hermes Lite 2 first
+// (so an HL2 is told it by name; kCwQskHl2Reason), then the board, then the
+// connection's protocol (final fix wave F4: worded for the operator, who
+// changes it with newer firmware), then the firmware version, antenna,
+// transverter and interlock.
 inline constexpr char kCwQskBoardReason[] = "This radio can't do QSK.";
+inline constexpr char kCwQskNeedsP2Reason[] = "QSK needs newer radio firmware.";
 inline constexpr char kCwQskFirmwareReason[] = "QSK needs radio firmware 1.7 or later.";
 inline constexpr char kCwQskAntennaReason[] =
     "QSK needs the same antenna for receive and transmit.";

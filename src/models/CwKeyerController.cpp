@@ -13,6 +13,10 @@
 //   2026-10-26: CW transmit, the keyer is refused while TUNE from CW runs
 //               the TX channel in LSB or USB (R-CW-30, D6). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F4: QSK's reasons check the
+//               board before the protocol, and the protocol reason reads
+//               "QSK needs newer radio firmware.". J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/CwKeyerController.h"
@@ -225,19 +229,21 @@ QString CwKeyerController::qskReasonNow(bool armed) const
 {
     // R-CW-20, in its order. Early fix wave M4: the Hermes Lite 2 first, so
     // an HL2 (a Protocol 1 radio) is told it by name rather than the
-    // protocol or board reason.
+    // protocol or board reason. Final fix wave F4: the board before the
+    // protocol, so a radio that can never do QSK is told so, and an Orion
+    // or Saturn on the older protocol is told newer firmware brings it.
     const RadioInfo& info = m_radio.currentRadioInfo();
     const HPSDRHW board = info.boardType;
     if (board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly) {
         return QString::fromLatin1(kCwQskHl2Reason);
     }
-    if (info.protocol != ProtocolVersion::Protocol2) {
-        return QString::fromLatin1(kCwQskNeedsP2Reason);
-    }
     const bool orion = board == HPSDRHW::Orion || board == HPSDRHW::OrionMKII;
     const bool saturn = board == HPSDRHW::Saturn || board == HPSDRHW::SaturnMKII;
     if (!orion && !saturn) {
         return QString::fromLatin1(kCwQskBoardReason);
+    }
+    if (info.protocol != ProtocolVersion::Protocol2) {
+        return QString::fromLatin1(kCwQskNeedsP2Reason);
     }
     if (orion && info.firmwareVersion < kCwQskMinOrionFirmware) {
         return QString::fromLatin1(kCwQskFirmwareReason);
