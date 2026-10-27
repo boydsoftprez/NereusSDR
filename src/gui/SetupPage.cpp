@@ -64,6 +64,8 @@
 //                 row that fits side by side without a scroll bar is side
 //                 by side whatever was shown before. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - Fit slider-row labels to their styled text as ordinary
+//                 rows do. J.J. Boyd (KG4VCF), AI-assisted via Codex.
 // =================================================================
 
 #include "SetupPage.h"
@@ -1315,7 +1317,7 @@ QHBoxLayout* SetupPage::addLabeledSlider(QLayout* parent, const QString& label,
 
         auto* lbl = new QLabel(label);
         lbl->setStyleSheet(kLabelStyle);
-        lbl->setFixedWidth(150);
+        SetupFit::widthAtLeast(lbl, 150);
         row->addWidget(lbl);
         row->addWidget(slider, 1);
         row->addWidget(valueLabel);
