@@ -40,6 +40,10 @@ jobs:
             ios/NereusApp/Tests/SessionEventLanesTests.swift \
             ios/NereusKit/Sources/NereusMedia/MediaControlClient.swift \
             ios/NereusKit/Sources/NereusMirror/CommandClient.swift \
+            ios/NereusKit/Sources/NereusKitTesting/FakeStation.swift \
+            ios/NereusKit/Sources/NereusKitTesting/FakeStationConnection.swift \
+            ios/NereusKit/Sources/NereusLink/StationSession.swift \
+            ios/NereusKit/Sources/NereusMirror/MirrorStore.swift \
             ios/NereusApp/Tests/TuneUnderLoadTests.swift \
             ios/NereusApp/Band/BandModel.swift ios/NereusApp/Band/BandView.swift \
             ios/NereusKit/Sources/NereusBand/BandRenderer.swift \
@@ -223,17 +227,40 @@ jobs:
                       yield value
                       for item in value.values():
                           yield from nodes(item)
-              results = {identifier: [node.get('result') for node in nodes(tests)
+              method_nodes = [node for node in nodes(tests)
+                              if node.get('nodeType') == 'Test Case']
+              results = {identifier: [node.get('result') for node in method_nodes
                                       if node.get('nodeIdentifier') == identifier]
                          for identifier in expected}
-              identities_passed = (len(expected) == 10
-                                   and all(values and all(value == 'Passed' for value in values)
-                                           for values in results.values()))
+              identities_passed = (len(expected) == 10 and len(method_nodes) == 10
+                                   and all(values == ['Passed'] for values in results.values()))
+              reconnect = [node for node in method_nodes
+                           if node.get('nodeIdentifier') == 'SessionEventLanesTests/heldOldLaneFencesReconnect(media:)']
+              arguments = [node for node in nodes(tests) if node.get('nodeType') == 'Arguments']
+              reconnect_arguments = ([node for node in reconnect[0].get('children', [])
+                                      if node.get('nodeType') == 'Arguments']
+                                     if len(reconnect) == 1 else [])
+              argument_urls = [node.get('nodeIdentifierURL', '') for node in reconnect_arguments]
+              reconnect_cases_passed = (len(arguments) == 2 and len(reconnect_arguments) == 2
+                                        and {node.get('name') for node in reconnect_arguments} == {'false', 'true'}
+                                        and all(node.get('result') == 'Passed' for node in reconnect_arguments)
+                                        and len(set(argument_urls)) == 2
+                                        and all(url.startswith('test://com.apple.xcode/NereusSDR/NereusSDRTests/SessionEventLanesTests/heldOldLaneFencesReconnect(media:)?args=')
+                                                for url in argument_urls))
+              effective_cases = sum(max(1, len([child for child in node.get('children', [])
+                                              if child.get('nodeType') == 'Arguments']))
+                                    for node in method_nodes)
+              configurations = summary.get('devicesAndConfigurations', [])
+              device_cases_passed = (len(configurations) == 1
+                                     and configurations[0].get('passedTests') == 11
+                                     and all(configurations[0].get(key) == 0
+                                             for key in ('failedTests', 'skippedTests', 'expectedFailures')))
               count = summary.get('totalTestCount')
-              details = f'totalTestCount={count!r}; methodResults={results!r}; test.exit={read("test.exit")!r}'
-              if (count == 11 and summary.get('passedTests') == 11
+              details = f'totalTestCount={count!r}; methodResults={results!r}; reconnectCases={reconnect_cases_passed}; effectiveCases={effective_cases}; deviceCases={device_cases_passed}; test.exit={read("test.exit")!r}'
+              if (count == 10 and summary.get('passedTests') == 10
                       and summary.get('failedTests') == 0 and summary.get('skippedTests') == 0
                       and summary.get('expectedFailures') == 0 and identities_passed
+                      and reconnect_cases_passed and effective_cases == 11 and device_cases_passed
                       and read('build.exit') == '0' and read('enumeration.exit') == '0'
                       and read('enumeration-validation.txt') == 'VALID: exactly ten existing suite method identities'
                       and read('test.exit') == '0' and read('summary.exit') == '0'

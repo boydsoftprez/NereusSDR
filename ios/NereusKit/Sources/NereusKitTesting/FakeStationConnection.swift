@@ -17,6 +17,9 @@ final class FakeStationConnection: LinkTransport, @unchecked Sendable {
 
     private enum Queued {
         case event(LinkTransportEvent)
+        #if DEBUG
+        case observedEvent(LinkTransportEvent, @Sendable (FakeStation.DeliveryPointForTesting) -> Void)
+        #endif
         /// Resumes once every event queued before it has been handled.
         case marker(CheckedContinuation<Void, Never>)
     }
@@ -41,6 +44,12 @@ final class FakeStationConnection: LinkTransport, @unchecked Sendable {
                 switch item {
                 case .event(let event):
                     await onEvent(event)
+                #if DEBUG
+                case .observedEvent(let event, let observe):
+                    observe(.callbackEnter)
+                    await onEvent(event)
+                    observe(.callbackExit)
+                #endif
                 case .marker(let continuation):
                     continuation.resume()
                 }
@@ -117,6 +126,16 @@ final class FakeStationConnection: LinkTransport, @unchecked Sendable {
             self.station?.connectionChanged()
         }
     }
+
+    #if DEBUG
+    func deliverObservedNow(_ text: String,
+                            observe: @escaping @Sendable (FakeStation.DeliveryPointForTesting) -> Void) async {
+        enqueue(.observedEvent(.text(text), observe))
+        // The consumer may enter before enqueue returns; retain both actual times.
+        observe(.enqueueReturned)
+        await drained()
+    }
+    #endif
 
     func deliverNow(_ text: String) async {
         enqueue(.event(.text(text)))

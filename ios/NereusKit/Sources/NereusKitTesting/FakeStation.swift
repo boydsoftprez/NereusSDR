@@ -214,6 +214,20 @@ public final class FakeStation: @unchecked Sendable {
     public let additions: Additions
 
     private let steps: [Step]
+    #if DEBUG
+    public enum DeliveryPointForTesting: String, Sendable {
+        case generated, encoded, enqueueReturned, callbackEnter, callbackExit, drainReturned
+    }
+    private var deliveryObservationForTesting: (@Sendable (LinkMessage, DeliveryPointForTesting) -> Void)?
+
+    /// Synchronous observations only; invoked outside the fake's lock.
+    public func observeDeliveryForTesting(
+        _ observer: (@Sendable (LinkMessage, DeliveryPointForTesting) -> Void)?
+    ) {
+        lock.withLock { deliveryObservationForTesting = observer }
+    }
+    #endif
+
     let lock = NSLock()
     private var connections: [FakeStationConnection] = []
     private var received: [LinkMessage] = []
@@ -1549,6 +1563,17 @@ public final class FakeStation: @unchecked Sendable {
     /// the session has handled it.
     public func deliver(_ message: LinkMessage) async {
         noteCatalogue(message)
+        #if DEBUG
+        if let observer = lock.withLock({ deliveryObservationForTesting }),
+           let connection = lock.withLock({ connections.last }) {
+            observer(message, .generated)
+            let text = LinkCodec.encode(message)
+            observer(message, .encoded)
+            await connection.deliverObservedNow(text) { observer(message, $0) }
+            observer(message, .drainReturned)
+            return
+        }
+        #endif
         await lock.withLock { connections.last }?.deliverNow(LinkCodec.encode(message))
     }
 

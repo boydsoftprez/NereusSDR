@@ -183,6 +183,16 @@ public actor StationSession {
     private var mediaTunnelReceiver: (@Sendable (Data) -> Void)?
     var mediaTunnelReceiverOwner: UUID? { mediaTunnelOwner }
     #if DEBUG
+    private var messageDecodedForTesting: (@Sendable (LinkMessage) -> Void)?
+    private var eventPublishedForTesting: (@Sendable (Event) -> Void)?
+
+    /// Installs instance-scoped synchronous probes; never adds a suspension to receive.
+    public func observeQueueForTesting(decoded: (@Sendable (LinkMessage) -> Void)?,
+                                       published: (@Sendable (Event) -> Void)?) {
+        messageDecodedForTesting = decoded
+        eventPublishedForTesting = published
+    }
+
     private var afterCommandHandoffForTesting: (@Sendable (LinkMessage) async -> Void)?
 
     /// Holds after synchronous transport enqueue but before this actor returns.
@@ -1024,6 +1034,9 @@ public actor StationSession {
             // programming mistake reaches this.
             assertionFailure("a StationSession was given a pairing trust")
             Self.logger.warning("A session was given a pairing trust; nothing was dialled")
+            #if DEBUG
+            eventPublishedForTesting?(.refused(Refusal(.authentication(Self.signInFailedText))))
+            #endif
             eventSink.yield(.refused(Refusal(.authentication(Self.signInFailedText))))
             setState(.stopped)
             return
@@ -1032,6 +1045,9 @@ public actor StationSession {
             // The device key signs only for a Core whose key and binding
             // the session checks first (section 3.4).
             Self.logger.warning("A device key sign-in needs an identity trust; nothing was dialled")
+            #if DEBUG
+            eventPublishedForTesting?(.refused(Refusal(.authentication(Self.signInFailedText))))
+            #endif
             eventSink.yield(.refused(Refusal(.authentication(Self.signInFailedText))))
             setState(.stopped)
             return
@@ -1055,6 +1071,9 @@ public actor StationSession {
             selection = nil
             selectionTask = nil
             if let failure = error as? LinkTransportError, failure == .certificateMismatch {
+                #if DEBUG
+                eventPublishedForTesting?(.refused(Self.identityChangedRefusal))
+                #endif
                 eventSink.yield(.refused(Self.identityChangedRefusal))
                 finishSelectionFailure(retry: false)
             } else {
@@ -1249,6 +1268,9 @@ public actor StationSession {
             Self.logger.info("Ignoring a message from the Core the app cannot read: \(String(describing: error), privacy: .private)")
             return
         }
+        #if DEBUG
+        messageDecodedForTesting?(message)
+        #endif
         guard attempt?.identityVerified == true || message.kind == .hello || message.kind == .sessionEnd else {
             // Before a paired Core has proved itself, only its hello or an
             // end is read; it sends nothing else before auth.result (5.1).
@@ -1275,6 +1297,9 @@ public actor StationSession {
             let retryable = end.retryable ?? false
             finish(gen, refusal: Refusal(.ended(Self.endedBeforeCheckText, retryable: retryable)), retry: retryable)
         case .sessionEnd(let end):
+            #if DEBUG
+            eventPublishedForTesting?(.message(message))
+            #endif
             eventSink.yield(.message(message))
             let retryable = end.retryable ?? false
             Self.logger.info("The Core ended the session (\(end.code ?? "no code", privacy: .public)): \(end.reason, privacy: .private)")
@@ -1296,6 +1321,9 @@ public actor StationSession {
                 }
             }
             attempt?.heldQuestion = held
+            #if DEBUG
+            eventPublishedForTesting?(.message(message))
+            #endif
             eventSink.yield(.message(message))
         case .capabilities(let capabilities):
             if attempt?.heldQuestion != nil {
@@ -1306,6 +1334,9 @@ public actor StationSession {
             }
             attempt?.mediaOffered = Self.offersMedia(capabilities, agreedMinor: agreedMinor ?? 0)
             attempt?.controlSwitchOffered = Self.offersControlSwitch(capabilities, agreedMinor: agreedMinor ?? 0)
+            #if DEBUG
+            eventPublishedForTesting?(.message(message))
+            #endif
             eventSink.yield(.message(message))
             // Media withdrawn while the schedule waited for it: the session
             // no longer uses media, so it is up now.
@@ -1323,6 +1354,9 @@ public actor StationSession {
                     finish(gen, refusal: nil, retry: true)
                     return
                 }
+                #if DEBUG
+                eventPublishedForTesting?(.message(message))
+                #endif
                 eventSink.yield(.message(message))
                 attempt?.phase = .ready
                 connectDeadlineArm &+= 1
@@ -1337,6 +1371,9 @@ public actor StationSession {
                 setState(.ready)
             }
         default:
+            #if DEBUG
+            eventPublishedForTesting?(.message(message))
+            #endif
             eventSink.yield(.message(message))
         }
     }
@@ -1372,6 +1409,9 @@ public actor StationSession {
             }
             attempt?.identityVerified = true
         }
+        #if DEBUG
+        eventPublishedForTesting?(.message(.hello(hello)))
+        #endif
         eventSink.yield(.message(.hello(hello)))
         let ours = LinkVersionPolicy.supportedMajors
         let theirs = hello.supportedMajors
@@ -1429,6 +1469,9 @@ public actor StationSession {
             Self.logger.info("Ignoring a sign-in answer the app did not wait for")
             return
         }
+        #if DEBUG
+        eventPublishedForTesting?(.message(.authResult(result)))
+        #endif
         eventSink.yield(.message(.authResult(result)))
         if result.accepted {
             Self.logger.notice("Signed in to the Core")
@@ -1607,6 +1650,9 @@ public actor StationSession {
         diagnosticPingsAwaitingPong = 0
         diagnosticRoundTrip = nil
         if let refusal {
+            #if DEBUG
+            eventPublishedForTesting?(.refused(refusal))
+            #endif
             eventSink.yield(.refused(refusal))
         }
         guard retry, let delay = policy.nextDelay() else {
@@ -1637,6 +1683,9 @@ public actor StationSession {
             return
         }
         state = next
+        #if DEBUG
+        eventPublishedForTesting?(.stateChanged(next))
+        #endif
         eventSink.yield(.stateChanged(next))
     }
 }

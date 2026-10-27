@@ -34,6 +34,13 @@ import os
 /// goes to lateAnswers.
 @MainActor
 public final class MirrorStore: ObservableObject {
+    #if DEBUG
+    public enum ResultPointForTesting: String, Sendable {
+        case entered, heldSettleDone, mergeDone, willResume, didResume
+    }
+    public var resultObservationForTesting: (@Sendable (UInt32, ResultPointForTesting) -> Void)?
+    #endif
+
     /// Sends one message to the Core.
     public typealias Sender = @Sendable (LinkMessage) async throws -> Void
     public typealias BoundSender = @Sendable (LinkMessage, CommandSendPermit) async throws -> Void
@@ -161,6 +168,9 @@ public final class MirrorStore: ObservableObject {
         let onLateOutcome: (@MainActor (PropertyWriteOutcome) -> Void)?
         var deadline: (any LinkTimer)?
         let deadlineAuthority: CommandSendPermit?
+        #if DEBUG
+        var resultWriteIdForTesting: UInt32?
+        #endif
     }
 
     /// The operator's value for one property, shown from the touch until the
@@ -512,6 +522,11 @@ public final class MirrorStore: ObservableObject {
                                                   byResult: byResult, sequence: nextSequence, resolve: continuation,
                                                   held: holding, edit: admittedEdit,
                                                   onLateOutcome: onLateOutcome, deadline: nil, deadlineAuthority: deadlineAuthority)
+            #if DEBUG
+            if resultObservationForTesting != nil {
+                pendingWrites[writeId]?.resultWriteIdForTesting = writeId
+            }
+            #endif
             if holding {
                 pendingWrites[writeId]?.deadline = clock.schedule(after: Self.answerDeadline) { [weak self] in
                     await self?.deadlinePassed(writeId)
@@ -657,6 +672,9 @@ public final class MirrorStore: ObservableObject {
     }
 
     private func applyResult(_ result: LinkMessage.PropertyResult) {
+        #if DEBUG
+        resultObservationForTesting?(result.writeId, .entered)
+        #endif
         guard let pending = pendingWrites[result.writeId], pending.byResult, pending.key == result.key else {
             Self.logger.info("Ignoring an answer to a write this app is not waiting for")
             return
@@ -694,8 +712,14 @@ public final class MirrorStore: ObservableObject {
         if holds[result.key]?[pending.property] != nil {
             shown[pending.property] = nil
             settle(pending, writeId: result.writeId, outcome: outcome)
+            #if DEBUG
+            resultObservationForTesting?(result.writeId, .heldSettleDone)
+            #endif
         }
         objectsByKey[result.key]?.merge(shown)
+        #if DEBUG
+        resultObservationForTesting?(result.writeId, .mergeDone)
+        #endif
         finish(pending, outcome)
     }
 
@@ -756,7 +780,17 @@ public final class MirrorStore: ObservableObject {
     private func finish(_ pending: PendingWrite, _ outcome: PropertyWriteOutcome) {
         let current = isCurrent(pending)
         if let resolve = pending.resolve {
+            #if DEBUG
+            if let writeId = pending.resultWriteIdForTesting {
+                resultObservationForTesting?(writeId, .willResume)
+            }
+            #endif
             resolve.resume(returning: current ? outcome : outcome.superseded())
+            #if DEBUG
+            if let writeId = pending.resultWriteIdForTesting {
+                resultObservationForTesting?(writeId, .didResume)
+            }
+            #endif
         } else if current {
             pending.onLateOutcome?(outcome)
             lateAnswers.send(LateAnswer(key: pending.key, property: pending.property, outcome: outcome))
