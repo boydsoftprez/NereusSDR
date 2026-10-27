@@ -49,6 +49,11 @@
 //               not at the newest message up by its height (the readings,
 //               rebuilt every second). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: the button that opens Roundtable's own window shows a
+//               small window (OwnWindowButton) with the tooltip and
+//               accessible name "Open in its own window", so it is not
+//               taken for the container header's Pop Out arrow beside it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
@@ -85,6 +90,8 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStyle>
+#include <QStyleOptionToolButton>
+#include <QStylePainter>
 #include <QTimeZone>
 #include <QToolButton>
 #include <QUuid>
@@ -256,6 +263,62 @@ QString iconStyle()
                "QToolButton::menu-indicator { image: none; width: 0; }")
         .arg(dimColor(), brightColor(), role(Style::kBorder, "border"));
 }
+
+// The button that opens Roundtable's own OS window. It draws a small window
+// (an outline with a solid title bar) where the other header buttons draw a
+// glyph, so it is not taken for the container header's Pop Out arrow, which
+// makes a pop-out container instead. The app has no window icon or glyph to
+// reuse, and no font is sure to carry one. It keeps the arrow as its text
+// only so it measures exactly as the arrow button did; the text is never
+// painted, and the accessible name says what it does. Colors follow
+// iconStyle(): dim, bright under the pointer.
+class OwnWindowButton : public QToolButton
+{
+public:
+    explicit OwnWindowButton(QWidget* parent) : QToolButton(parent)
+    {
+        setText(QString(QChar(0x2197)));
+        setToolTip(QStringLiteral("Open in its own window"));
+        setAccessibleName(QStringLiteral("Open in its own window"));
+    }
+
+protected:
+    void paintEvent(QPaintEvent* /*event*/) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.text.clear();
+        painter.drawComplexControl(QStyle::CC_ToolButton, opt);
+
+        // The window: as wide as the arrow's cap height and a little less
+        // tall, centered in the button, on whole pixels.
+        const QFontMetrics fm(font());
+        const int w = std::max(8, fm.capHeight() + 1);
+        const int h = std::max(6, w - 2);
+        const int x = (width() - w) / 2;
+        const int y = (height() - h) / 2;
+        const bool hot = (opt.state & QStyle::State_MouseOver) != 0;
+        const QColor ink(hot ? brightColor() : dimColor());
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(ink);
+        painter.drawRect(x, y, w, 2);              // title bar
+        painter.drawRect(x, y + h - 1, w, 1);      // bottom
+        painter.drawRect(x, y, 1, h);              // left
+        painter.drawRect(x + w - 1, y, 1, h);      // right
+    }
+};
+
+QToolButton* makeOwnWindowButton(QWidget* parent)
+{
+    auto* button = new OwnWindowButton(parent);
+    button->setObjectName(QStringLiteral("roundtablePopBtn"));
+    button->setStyleSheet(iconStyle());
+    button->setFocusPolicy(Qt::ClickFocus);
+    return button;
+}
+
 QString inputStyle()
 {
     return QStringLiteral(
@@ -1335,12 +1398,7 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     row->addWidget(countLabel);
     m_countLabel = countLabel;
 
-    auto* pop = new QToolButton(body);
-    pop->setObjectName(QStringLiteral("roundtablePopBtn"));
-    pop->setText(QString(QChar(0x2197)));
-    pop->setToolTip(QStringLiteral("Pop out into its own window"));
-    pop->setStyleSheet(iconStyle());
-    pop->setFocusPolicy(Qt::ClickFocus);
+    QToolButton* pop = makeOwnWindowButton(body);
     pop->setVisible(!m_popped);
     connect(pop, &QToolButton::clicked, this, &RoundtablePanel::popOutRequested);
     row->addWidget(pop);
@@ -2686,12 +2744,7 @@ void RoundtablePanel::rebuildEmpty()
         head->addWidget(makeLabel(body, headerFrequency(m_sliceHz), accentColor(), 15, false, true));
     }
     head->addStretch(1);
-    auto* pop = new QToolButton(body);
-    pop->setObjectName(QStringLiteral("roundtablePopBtn"));
-    pop->setText(QString(QChar(0x2197)));
-    pop->setToolTip(QStringLiteral("Pop out into its own window"));
-    pop->setStyleSheet(iconStyle());
-    pop->setFocusPolicy(Qt::ClickFocus);
+    QToolButton* pop = makeOwnWindowButton(body);
     pop->setVisible(!m_popped);
     connect(pop, &QToolButton::clicked, this, &RoundtablePanel::popOutRequested);
     head->addWidget(pop);

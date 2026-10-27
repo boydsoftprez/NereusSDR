@@ -52,6 +52,11 @@
 //               Out gives Roundtable a pop-out container like every applet;
 //               its own window opens from its own arrow (JJ, PR 657).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: putItBackThroughTheAppletPanel and emptySliceOffersRooms:
+//               the own-window button's tooltip and accessible name are
+//               "Open in its own window", and its click still opens the
+//               own window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1574,6 +1579,14 @@ private slots:
         panel.show();
         settle();
         QVERIFY(panel.roomId().isEmpty());
+        // The empty view's own-window button is the same button.
+        int shown = 0;
+        for (QToolButton* own : panel.findChildren<QToolButton*>(QStringLiteral("roundtablePopBtn"))) {
+            QCOMPARE(own->toolTip(), QStringLiteral("Open in its own window"));
+            QCOMPARE(own->accessibleName(), QStringLiteral("Open in its own window"));
+            shown += own->isVisible() ? 1 : 0;
+        }
+        QCOMPARE(shown, 1);
         QCOMPARE(texts(&panel, QStringLiteral("roundtableEmptyTitle")),
                  QStringList{QStringLiteral("Nobody on Roundtable is tuned here.")});
         auto rooms = panel.findChildren<QPushButton*>(QStringLiteral("roundtableEmptyRoom"));
@@ -1903,7 +1916,16 @@ private slots:
         settle();
         RoundtablePanel* panel = applet->panel();
 
-        child<QToolButton>(panel, QStringLiteral("roundtablePopBtn"))->click();
+        // The own-window button says what it does, to the eye and to
+        // accessibility, so it is not taken for the container's Pop Out.
+        auto* own = child<QToolButton>(panel, QStringLiteral("roundtablePopBtn"));
+        QCOMPARE(own->toolTip(), QStringLiteral("Open in its own window"));
+        QCOMPARE(own->accessibleName(), QStringLiteral("Open in its own window"));
+        QAccessibleInterface* face = QAccessible::queryAccessibleInterface(own);
+        QVERIFY(face != nullptr);
+        QCOMPARE(face->text(QAccessible::Name), QStringLiteral("Open in its own window"));
+
+        own->click();
         settle();
         QVERIFY(host.isAppletFloating(applet));
         QVERIFY(applet->isPoppedOut());
