@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (settings M1): a saved power
+//                 limit above 5 kW loads as saved. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -71,6 +74,8 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "NeedleScalePwrItem.h"
+
+#include <cmath>
 #include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
@@ -331,7 +336,13 @@ bool NeedleScalePwrItem::deserialize(const QString& data)
     m_fontSize    = fontSize;
     m_fontBold    = fontBold;
     m_marks       = marks;
-    setMaxPower(maxPower);
+    // A saved rating keeps its value (an earlier build saved up to 10 kW);
+    // only the below-0.1 recovery applies on load.
+    if (std::isfinite(maxPower) && static_cast<double>(maxPower) >= kMinBarPowerLimitW) {
+        m_maxPower = maxPower;
+    } else {
+        setMaxPower(maxPower);
+    }
     m_darkMode    = darkMode;
     m_calibration = calibration;
 

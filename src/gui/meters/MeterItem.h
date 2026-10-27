@@ -1083,6 +1083,11 @@ public:
     // and history polyline — the single source of truth for "where on
     // the bar does this value sit".
     float valueToNormalizedX(double value) const;
+    // The calibration's (or the linear range's) position for `value`, with
+    // none of valueToNormalizedX()'s reading adjustments (the S9 offset,
+    // the power limit): where a fixed scale point such as the red
+    // threshold sits.
+    float calibratedX(double value) const;
 
     // Override setValue() for exponential smoothing
     // From Thetis MeterManager.cs — attack/decay smoothing

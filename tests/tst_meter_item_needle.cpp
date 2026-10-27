@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (meters M5, settings M1): saved
+//                 ratios load safely; a saved power limit above 5 kW
+//                 loads as saved. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - NEEDLE and NEEDLESCALEPWR building blocks: shadow, peak
 //                 hold and its colour, the history arc, ignore history, the
 //                 power limit, the saved record and the new-item defaults.
@@ -546,6 +550,48 @@ private slots:
         NeedleScalePwrItem s;
         QCOMPARE(s.maxPower(), 150.0f);
         QCOMPARE(s.fontBold(), true);
+    }
+
+    // A saved ratio that is blank or not a number loads as the default
+    // 0.3; others load within 0..1. A saved power limit above 5 kW (an
+    // earlier build allowed 10 kW) loads as saved.
+    void savedRatiosAndPowerLimitLoadSafely()
+    {
+        NeedleItem a;
+        a.setMaxPower(1234.5f);
+        a.setAttackRatio(0.125f);
+        a.setDecayRatio(0.375f);
+        QStringList parts = a.serialize().split(QLatin1Char('|'));
+        const int attack = parts.indexOf(QStringLiteral("0.125"));
+        QVERIFY(attack > 0);
+        QCOMPARE(parts[attack + 1], QStringLiteral("0.375"));
+        QCOMPARE(parts[attack - 1], QStringLiteral("1234.5"));
+
+        parts[attack - 1] = QStringLiteral("8000");
+        parts[attack] = QString();
+        parts[attack + 1] = QStringLiteral("nan");
+        NeedleItem blank;
+        QVERIFY(blank.deserialize(parts.join(QLatin1Char('|'))));
+        QCOMPARE(blank.attackRatio(), NeedleItem::kSmoothAlpha);
+        QCOMPARE(blank.decayRatio(), NeedleItem::kSmoothAlpha);
+        QCOMPARE(blank.maxPower(), 8000.0f);
+
+        parts[attack] = QStringLiteral("2");
+        parts[attack + 1] = QStringLiteral("-1");
+        NeedleItem outOfRange;
+        QVERIFY(outOfRange.deserialize(parts.join(QLatin1Char('|'))));
+        QCOMPARE(outOfRange.attackRatio(), 1.0f);
+        QCOMPARE(outOfRange.decayRatio(), 0.0f);
+
+        NeedleScalePwrItem scale;
+        scale.setMaxPower(1234.5f);
+        QStringList scaleParts = scale.serialize().split(QLatin1Char('|'));
+        const int power = scaleParts.indexOf(QStringLiteral("1234.5"));
+        QVERIFY(power > 0);
+        scaleParts[power] = QStringLiteral("8000");
+        NeedleScalePwrItem loaded;
+        QVERIFY(loaded.deserialize(scaleParts.join(QLatin1Char('|'))));
+        QCOMPARE(loaded.maxPower(), 8000.0f);
     }
 };
 

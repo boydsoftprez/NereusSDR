@@ -9,6 +9,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave: MeterItem records the colours
+//                 the user picked (I6); BarItem::calibratedX places the
+//                 red transition (meters M1); a needle's saved ratios and
+//                 power limit load safely (meters M5, settings M1);
+//                 ScaleItem resolves its inks once per paint (meters M6).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -936,10 +942,7 @@ float BarItem::valueToNormalizedX(double value) const
     // Empty calibration: fall back to linear minVal..maxVal mapping. This
     // preserves pre-A4 behavior for every Filled/Edge preset.
     if (m_scaleCalibration.isEmpty()) {
-        const double range = m_maxVal - m_minVal;
-        if (range <= 0.0) { return 0.0f; }
-        const double frac = std::clamp((value - m_minVal) / range, 0.0, 1.0);
-        return static_cast<float>(frac);
+        return calibratedX(value);
     }
 
     // A signal-strength reading on a slice at or above the S9 frequency is
@@ -952,6 +955,17 @@ float BarItem::valueToNormalizedX(double value) const
     if ((m_bindingId == MeterBinding::TxPower || m_bindingId == MeterBinding::TxReversePower)
         && m_powerLimit > 0.0) {
         value *= 100.0 / m_powerLimit;
+    }
+    return calibratedX(value);
+}
+
+float BarItem::calibratedX(double value) const
+{
+    if (m_scaleCalibration.isEmpty()) {
+        const double range = m_maxVal - m_minVal;
+        if (range <= 0.0) { return 0.0f; }
+        const double frac = std::clamp((value - m_minVal) / range, 0.0, 1.0);
+        return static_cast<float>(frac);
     }
 
     // Clamp below the first waypoint.
@@ -1256,7 +1270,9 @@ void BarItem::paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLiv
         ? m_maxVal : std::prev(m_scaleCalibration.constEnd()).key();
     if (m_redThreshold < scaleTop) {
         // From Thetis MeterManager.cs:37482 [v2.10.3.15]
-        fHighXPosTransition = x + (w * valueToNormalizedX(m_redThreshold));
+        // The fixed HighPoint position: the calibration alone, without the
+        // reading's S9 or power limit adjustments.
+        fHighXPosTransition = x + (w * calibratedX(m_redThreshold));
     }
 
     const auto fill = [&p, y, fBarHeight](float left, float width, const QColor& c) {
@@ -1612,6 +1628,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect rect = pixelRect(widgetW, widgetH);
     const double range = m_maxVal - m_minVal;
+    // The inks, resolved once per paint rather than per tick.
+    const QColor titleInk = ItemColourLook::effective("Scale.titleColour", m_titleColour, this);
+    const QColor lowInk = ItemColourLook::effective("Scale.lowColour", m_lowColour, this);
+    const QColor highInk = ItemColourLook::effective("Scale.highColour", m_highColour, this);
+    const QColor labelInk = ItemColourLook::effective("Scale.labelColor", m_labelColor, this);
+    const QColor tickInk = ItemColourLook::effective("Scale.tickColor", m_tickColor, this);
 
     // Phase B2 — ShowType centered title.
     // From Thetis MeterManager.cs:31879-31886. Thetis draws the title
@@ -1627,7 +1649,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             titleFont.setPixelSize(WorkspacePreview::readableTextPixelSize(titleHeight));
             titleFont.setBold(true);
             p.setFont(titleFont);
-            p.setPen(ItemColourLook::effective("Scale.titleColour", m_titleColour, this));
+            p.setPen(titleInk);
             const QRect titleRect(rect.left(),
                                   rect.top(),
                                   rect.width(),
@@ -1672,10 +1694,10 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
         const float fLineBaseY = ry + (rh * 0.85f);
 
         // Baseline horizontal line, split at end of low segment.
-        p.setPen(QPen(ItemColourLook::effective("Scale.lowColour", m_lowColour, this), 2));
+        p.setPen(QPen(lowInk, 2));
         p.drawLine(QPointF(rx, fLineBaseY),
                    QPointF(rx + lowSpan, fLineBaseY));
-        p.setPen(QPen(ItemColourLook::effective("Scale.highColour", m_highColour, this), 2));
+        p.setPen(QPen(highInk, 2));
         p.drawLine(QPointF(rx + lowSpan, fLineBaseY),
                    QPointF(rx + rw * 0.99f, fLineBaseY));
 
@@ -1721,13 +1743,13 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // (Thetis line 32373).
             const float shortX = rx + (static_cast<float>(i) * lowSpacing)
                                     - (lowSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, ItemColourLook::effective("Scale.lowColour", m_lowColour, this));
+            drawTick(shortX, /*isMajor*/ false, lowInk);
 
             const float longX = rx + (static_cast<float>(i) * lowSpacing);
-            drawTick(longX, /*isMajor*/ true, ItemColourLook::effective("Scale.lowColour", m_lowColour, this));
+            drawTick(longX, /*isMajor*/ true, lowInk);
 
             const int val = m_lowStartNumber + i * m_lowIncrement;
-            drawLabel(longX, QString::number(val), ItemColourLook::effective("Scale.labelColor", m_labelColor, this),
+            drawLabel(longX, QString::number(val), labelInk,
                       /*rightAligned*/ false);
         }
 
@@ -1736,16 +1758,16 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const float shortX = rx + lowSpan
                                + (static_cast<float>(i) * highSpacing)
                                - (highSpacing * 0.5f);
-            drawTick(shortX, /*isMajor*/ false, ItemColourLook::effective("Scale.highColour", m_highColour, this));
+            drawTick(shortX, /*isMajor*/ false, highInk);
 
             const float longX = rx + lowSpan
                               + (static_cast<float>(i) * highSpacing);
-            drawTick(longX, /*isMajor*/ true, ItemColourLook::effective("Scale.highColour", m_highColour, this));
+            drawTick(longX, /*isMajor*/ true, highInk);
 
             const int val = (m_highEndNumber - (m_highLongTicks * m_highIncrement))
                           + i * m_highIncrement;
             const bool isLast = (i == m_highLongTicks);
-            drawLabel(longX, QString::number(val), ItemColourLook::effective("Scale.labelColor", m_labelColor, this),
+            drawLabel(longX, QString::number(val), labelInk,
                       /*rightAligned*/ isLast);
         }
 
@@ -1771,12 +1793,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             const double frac = static_cast<double>(i) / (m_majorTicks - 1);
             const int x = rect.left() + static_cast<int>(frac * rect.width());
 
-            p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
+            p.setPen(tickInk);
             p.drawLine(x, rect.top(), x, rect.top() + rect.height() / 3);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(ItemColourLook::effective("Scale.labelColor", m_labelColor, this));
+            p.setPen(labelInk);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             int labelX = x - labelW / 2;
@@ -1801,7 +1823,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int mx = rect.left() + static_cast<int>(minorFrac * rect.width());
-                    p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
+                    p.setPen(tickInk);
                     p.drawLine(mx, rect.top(), mx, rect.top() + rect.height() / 6);
                 }
             }
@@ -1813,12 +1835,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // Top = maxVal, bottom = minVal for vertical orientation
             const int y = rect.top() + static_cast<int>((1.0 - frac) * rect.height());
 
-            p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
+            p.setPen(tickInk);
             p.drawLine(rect.right(), y, rect.right() - rect.width() / 3, y);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(ItemColourLook::effective("Scale.labelColor", m_labelColor, this));
+            p.setPen(labelInk);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             const int labelX = rect.right() - rect.width() / 3 - labelW - 2;
@@ -1830,7 +1852,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int my = rect.top() + static_cast<int>((1.0 - minorFrac) * rect.height());
-                    p.setPen(ItemColourLook::effective("Scale.tickColor", m_tickColor, this));
+                    p.setPen(tickInk);
                     p.drawLine(rect.right(), my, rect.right() - rect.width() / 6, my);
                 }
             }
@@ -3090,9 +3112,23 @@ bool NeedleItem::deserialize(const QString& data)
         m_lengthFactor    = parts[idx + 5].toFloat();
         m_direction       = static_cast<NeedleDirection>(parts[idx + 6].toInt());
         m_normaliseTo100W = (parts[idx + 7].toInt() != 0);
-        setMaxPower(parts[idx + 8].toFloat());
-        m_attackRatio     = parts[idx + 9].toFloat();
-        m_decayRatio      = parts[idx + 10].toFloat();
+        // A saved rating keeps its value (an earlier build saved up to
+        // 10 kW); only the below-0.1 recovery applies on load.
+        const float savedPower = parts[idx + 8].toFloat();
+        if (std::isfinite(savedPower) && static_cast<double>(savedPower) >= kMinBarPowerLimitW) {
+            m_maxPower = savedPower;
+        } else {
+            setMaxPower(savedPower);
+        }
+        // A blank or unreadable ratio takes the default; others stay in 0..1.
+        const auto savedRatio = [](const QString& field) {
+            bool ok = false;
+            const float ratio = field.toFloat(&ok);
+            if (!ok || !std::isfinite(ratio)) { return kSmoothAlpha; }
+            return std::clamp(ratio, 0.0f, 1.0f);
+        };
+        m_attackRatio     = savedRatio(parts[idx + 9]);
+        m_decayRatio      = savedRatio(parts[idx + 10]);
         idx += 11;
     }
 

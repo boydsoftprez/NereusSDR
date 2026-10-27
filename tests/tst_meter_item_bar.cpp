@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (meters M1): the red transition
+//                 takes the calibration only. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - BAR building block: Segments and Solid geometry, peak hold
 //                 marker on its own, peak value colour, power limit, ignore
 //                 history, a 32-field saved record and the new-item
@@ -647,6 +650,27 @@ private slots:
         QCOMPARE(img.pixelColor(100, 5), QColor(Qt::magenta));
         QCOMPARE(img.pixelColor(199, 5), QColor(Qt::magenta));
         QCOMPARE(img.pixelColor(50, 17), QColor(Qt::black));
+    }
+
+    // The red transition is the threshold's place on the calibration
+    // (Thetis HighPoint, MeterManager.cs:37482 [v2.10.3.15]); a power bar's
+    // limit scales the reading, not the transition.
+    void solid_redTransitionUsesTheCalibrationOnly()
+    {
+        QImage img(200, 20, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setBindingId(MeterBinding::TxPower);
+            b.addScaleCalibration(0.0, 0.0f);
+            b.addScaleCalibration(100.0, 1.0f);
+            b.setPowerLimit(50.0);
+            b.setRedThreshold(50.0);
+            fullBar(b, BarItem::BarStyle::Solid)->paint(p, img.width(), img.height());
+        }
+        QCOMPARE(img.pixelColor(50, 5), QColor(Qt::cyan));
+        QCOMPARE(img.pixelColor(150, 5), QColor(Qt::magenta));
     }
 
     void segments_switchToHighColourAboveTransition()
