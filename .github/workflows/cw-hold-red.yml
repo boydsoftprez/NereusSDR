@@ -1,15 +1,15 @@
-# REPORTS-ONLY DRAFT. Root review/publication/runtime GO required.
-name: CW hold pure-value expected RED
+# Focused positive verification; root-reviewed publication/runtime required.
+name: CW hold pure-value GREEN verification
 on:
   push:
     branches: [codex/remote-cw-hold-union]
 permissions:
   contents: read
 concurrency:
-  group: cw-hold-pure-red-${{ github.ref }}
+  group: cw-hold-pure-green-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  pure-value-red:
+  pure-value-green:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -30,18 +30,18 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-red-artifacts
+          mkdir -p cw-green-artifacts
           test "$GITHUB_EVENT_NAME" = push
           test "$GITHUB_REF" = refs/heads/codex/remote-cw-hold-union
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=no)"
           git merge-base --is-ancestor 8a334c2a55b7d09f024767c710706ac7e01cc841 HEAD
-          git show -s --format='%H%n%T%n%P' HEAD > cw-red-artifacts/source-identity.txt
-          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-red-artifacts/run-binding.txt
-          git diff --name-only 8a334c2a55b7d09f024767c710706ac7e01cc841 HEAD -z | xargs -0 -r sha256sum > cw-red-artifacts/reviewed-path-hashes.txt
-          uname -a > cw-red-artifacts/runner.txt
-          df -k . > cw-red-artifacts/disk-start.txt
-          uptime > cw-red-artifacts/load-start.txt
+          git show -s --format='%H%n%T%n%P' HEAD > cw-green-artifacts/source-identity.txt
+          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-green-artifacts/run-binding.txt
+          git diff --name-only 8a334c2a55b7d09f024767c710706ac7e01cc841 HEAD -z | xargs -0 -r sha256sum > cw-green-artifacts/reviewed-path-hashes.txt
+          uname -a > cw-green-artifacts/runner.txt
+          df -k . > cw-green-artifacts/disk-start.txt
+          uptime > cw-green-artifacts/load-start.txt
       - name: Restore dependency downloads
         uses: actions/cache/restore@v4
         with:
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
-          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-red-artifacts/dependencies.log
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-green-artifacts/dependencies.log
           git config --global --add include.path "$mirrors"
       - name: Install system dependencies
         run: |
@@ -83,7 +83,7 @@ jobs:
           modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
-      - name: Restore compiler cache without saving RED results
+      - name: Restore compiler cache without saving verification results
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.ccache
@@ -101,10 +101,10 @@ jobs:
       - name: Configure normal core with only focused test build requested
         run: |
           set -euo pipefail
-          cmake --version > cw-red-artifacts/tool-versions.txt
-          g++ --version >> cw-red-artifacts/tool-versions.txt
-          qmake -query QT_VERSION >> cw-red-artifacts/tool-versions.txt
-          cp cmake/NereusDependencyArchives.cmake cw-red-artifacts/
+          cmake --version > cw-green-artifacts/tool-versions.txt
+          g++ --version >> cw-green-artifacts/tool-versions.txt
+          qmake -query QT_VERSION >> cw-green-artifacts/tool-versions.txt
+          cp cmake/NereusDependencyArchives.cmake cw-green-artifacts/
           set +e
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
@@ -114,90 +114,81 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_TEST_SHARDS=0 -DNEREUS_TEST_SHARD=0 -DNEREUS_TESTS_OFFSCREEN=ON \
-            2>&1 | tee cw-red-artifacts/configure.log
+            2>&1 | tee cw-green-artifacts/configure.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-red-artifacts/configure.status
+          printf '%s\n' "$result" > cw-green-artifacts/configure.status
           test "$result" -eq 0
-          cp build/CMakeCache.txt cw-red-artifacts/
-          ninja -C build -t query tests/tst_remote_cw_safety > cw-red-artifacts/target-query.txt
-          ninja -C build -t commands tests/tst_remote_cw_safety > cw-red-artifacts/target-commands.txt
+          cp build/CMakeCache.txt cw-green-artifacts/
+          ninja -C build -t query tests/tst_remote_cw_safety > cw-green-artifacts/target-query.txt
+          ninja -C build -t commands tests/tst_remote_cw_safety > cw-green-artifacts/target-commands.txt
       - name: Build exact pure value target
         run: |
           set -euo pipefail
           set +e
-          nice -n 20 cmake --build build --target tst_remote_cw_safety --parallel 2 2>&1 | tee cw-red-artifacts/build.log
+          nice -n 20 cmake --build build --target tst_remote_cw_safety --parallel 2 2>&1 | tee cw-green-artifacts/build.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-red-artifacts/build.status
+          printf '%s\n' "$result" > cw-green-artifacts/build.status
           test "$result" -eq 0
-      - name: Observe and verify expected assertion RED
+      - name: Verify all pure-value cases pass
         run: |
           set -euo pipefail
           set +e
-          ctest --test-dir build -R '^tst_remote_cw_safety$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-red-artifacts/ctest-junit.xml" 2>&1 | tee cw-red-artifacts/ctest.log
+          ctest --test-dir build -R '^tst_remote_cw_safety$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-green-artifacts/ctest-junit.xml" 2>&1 | tee cw-green-artifacts/ctest.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-red-artifacts/ctest.status
+          printf '%s\n' "$result" > cw-green-artifacts/ctest.status
+          cp build/Testing/Temporary/LastTest.log cw-green-artifacts/LastTest.log
           python3 - <<'PY_GUARD'
           import collections, hashlib, json, pathlib, re, sys, xml.etree.ElementTree as ET
-          out = pathlib.Path("cw-red-artifacts")
-          expected = {'class': 'TestRemoteCwSafetyState', 'ctestName': 'tst_remote_cw_safety', 'expectedFailingQtCases': ['beginRecordsLiveUnheldEpoch', 'independentReasons(clear-link)', 'independentReasons(clear-mic)', 'independentReasons(clear-guard)', 'oldEpochCannotHoldOrRelease', 'invalidationBlocksRecoveryUntilFinish', 'physicalPressOnlyInvalidatesNetworkHold(no-hold)', 'physicalPressOnlyInvalidatesNetworkHold(mic-only)', 'physicalPressOnlyInvalidatesNetworkHold(link)', 'physicalPressOnlyInvalidatesNetworkHold(guard)', 'physicalPressOnlyInvalidatesNetworkHold(mic-and-link)', 'physicalObservationBeforeRecoveryPreventsRelease', 'recoveryBeforePhysicalObservationAddsNoTakeover', 'remainingNetworkReasonStillAllowsTakeover', 'finishedOldEpochCannotClearNew', 'currentFinishClearsInvalidatedEpoch', 'concurrentPhysicalAndRecoveryHaveOnlyLegalOutcomes'], 'expectedPassingQtCases': ['initTestCase', 'noActivityRejectsAllMutations', 'zeroEpochCannotCreateActivity', 'cleanupTestCase'], 'expectedCounts': {'failed': 17, 'passed': 4, 'skipped': 0}, 'status': 'SOURCE-PREDICTED ONLY; not executed', 'baseline': 'begin/finish no-op; mutation methods false; snapshot invalid zero; suppressesCw true', 'predictedFailureAssertions': {'beginRecordsLiveUnheldEpoch': {'line': 68, 'assertion': 'QCOMPARE(after.epoch, quint32{11});'}, 'independentReasons(clear-link)': {'line': 93, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'independentReasons(clear-mic)': {'line': 93, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'independentReasons(clear-guard)': {'line': 93, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'oldEpochCannotHoldOrRelease': {'line': 112, 'assertion': 'QVERIFY(state.setHold(12, TxChannel::RfHold::Guard));'}, 'invalidationBlocksRecoveryUntilFinish': {'line': 131, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'physicalPressOnlyInvalidatesNetworkHold(no-hold)': {'line': 162, 'assertion': 'QCOMPARE(state.snapshot().epoch, quint32{11});'}, 'physicalPressOnlyInvalidatesNetworkHold(mic-only)': {'line': 162, 'assertion': 'QCOMPARE(state.snapshot().epoch, quint32{11});'}, 'physicalPressOnlyInvalidatesNetworkHold(link)': {'line': 162, 'assertion': 'QCOMPARE(state.snapshot().epoch, quint32{11});'}, 'physicalPressOnlyInvalidatesNetworkHold(guard)': {'line': 162, 'assertion': 'QCOMPARE(state.snapshot().epoch, quint32{11});'}, 'physicalPressOnlyInvalidatesNetworkHold(mic-and-link)': {'line': 162, 'assertion': 'QCOMPARE(state.snapshot().epoch, quint32{11});'}, 'physicalObservationBeforeRecoveryPreventsRelease': {'line': 185, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'recoveryBeforePhysicalObservationAddsNoTakeover': {'line': 198, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'remainingNetworkReasonStillAllowsTakeover': {'line': 213, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}, 'finishedOldEpochCannotClearNew': {'line': 227, 'assertion': 'QVERIFY(state.invalidate(11));'}, 'currentFinishClearsInvalidatedEpoch': {'line': 246, 'assertion': 'QVERIFY(state.invalidate(11));'}, 'concurrentPhysicalAndRecoveryHaveOnlyLegalOutcomes': {'line': 263, 'assertion': 'QVERIFY(state.setHold(11, TxChannel::RfHold::Link));'}}, 'testSourceSha256': 'd44b0624e4e5d3233efdd39207f9054a7a0e76d2881b1aeec0b4f5bdc8fa915f'}
-          (out / "expected-behavioral-red.json").write_text(json.dumps(expected, indent=2) + "\n")
-          verdict = {"acceptedBehavioralRed": False, "scope": "pure value baseline only"}
+          out = pathlib.Path("cw-green-artifacts")
+          expected = {'class': 'TestRemoteCwSafetyState', 'ctestName': 'tst_remote_cw_safety', 'testSourceSha256': 'd44b0624e4e5d3233efdd39207f9054a7a0e76d2881b1aeec0b4f5bdc8fa915f', 'expectedPassingQtCases': ['initTestCase', 'noActivityRejectsAllMutations', 'zeroEpochCannotCreateActivity', 'beginRecordsLiveUnheldEpoch', 'independentReasons(clear-link)', 'independentReasons(clear-mic)', 'independentReasons(clear-guard)', 'oldEpochCannotHoldOrRelease', 'invalidationBlocksRecoveryUntilFinish', 'physicalPressOnlyInvalidatesNetworkHold(no-hold)', 'physicalPressOnlyInvalidatesNetworkHold(mic-only)', 'physicalPressOnlyInvalidatesNetworkHold(link)', 'physicalPressOnlyInvalidatesNetworkHold(guard)', 'physicalPressOnlyInvalidatesNetworkHold(mic-and-link)', 'physicalObservationBeforeRecoveryPreventsRelease', 'recoveryBeforePhysicalObservationAddsNoTakeover', 'remainingNetworkReasonStillAllowsTakeover', 'finishedOldEpochCannotClearNew', 'currentFinishClearsInvalidatedEpoch', 'concurrentPhysicalAndRecoveryHaveOnlyLegalOutcomes', 'cleanupTestCase'], 'expectedCounts': {'passed': 21, 'failed': 0, 'skipped': 0}, 'status': 'POSITIVE VERIFICATION CONTRACT; NOT EXECUTED', 'scope': 'pure safety value only; no bridge/sender/guard/physical/phone acceptance'}
+          (out / "expected-behavioral-green.json").write_text(json.dumps(expected, indent=2) + "\n")
+          verdict = {"acceptedPureValueGreen": False, "scope": expected["scope"]}
           try:
-              assert hashlib.sha256(pathlib.Path("tests/tst_remote_cw_safety.cpp").read_bytes()).hexdigest() == expected["testSourceSha256"], "unexpected test source hash"
-              assert (out / "configure.status").read_text().strip() == "0", "configure failed/missing"
-              assert (out / "build.status").read_text().strip() == "0", "build failed/missing"
-              assert (out / "ctest.status").read_text().strip() == "8", "ctest did not report failing test"
+              actual_test_sha = hashlib.sha256(pathlib.Path("tests/tst_remote_cw_safety.cpp").read_bytes()).hexdigest()
+              assert actual_test_sha == expected["testSourceSha256"], "unexpected frozen test source hash"
+              for phase in ("configure", "build", "ctest"):
+                  assert (out / (phase + ".status")).read_text().strip() == "0", phase + " failed or missing"
               root = ET.parse(out / "ctest-junit.xml").getroot()
               cases = list(root.iter("testcase"))
               assert len(cases) == 1 and cases[0].attrib.get("name") == expected["ctestName"], "wrong/absent test selection"
-              assert len(cases[0].findall("failure")) == 1, "expected one failing ctest wrapper"
-              assert not list(root.iter("skipped")), "skipped test"
-              text = (out / "ctest.log").read_text()
-              assert not re.search(r"QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*Timeout|Not Run|XFAIL|XPASS|SKIP\s*:", text, re.I), "non-assertion failure/skip"
-              pattern = r"^(PASS|FAIL!)\s*:\s*" + re.escape(expected["class"]) + r"::([^\n]+)$"
-              results = re.findall(pattern, text, flags=re.M)
-              # Qt FAIL lines include an assertion explanation after the case name.
-              actual_fail = []
-              actual_pass = []
-              for kind, line in results:
-                  match = re.match(r"([A-Za-z0-9_]+)\(([^)]*)\)", line)
-                  assert match, "malformed Qt result"
-                  name = match.group(1) + ("(" + match.group(2) + ")" if match.group(2) else "")
-                  (actual_fail if kind == "FAIL!" else actual_pass).append(name)
-              assert collections.Counter(actual_fail) == collections.Counter(expected["expectedFailingQtCases"]), "unexpected failure/pass/case count"
-              assert collections.Counter(actual_pass) == collections.Counter(expected["expectedPassingQtCases"]), "missing/extra passing control"
-              assert re.search(r"Totals:\s+4 passed, 17 failed, 0 skipped", text), "incomplete/wrong Qt totals"
-              # Baseline failures must point to the new unit test's actual assertions.
-              locations = re.findall(r"Loc: \[([^\]]+)\]", text)
-              assert len(locations) == 17 and all("tst_remote_cw_safety.cpp(" in line for line in locations), "wrong/missing assertion locations"
-              actual_lines = [int(re.search(r"tst_remote_cw_safety.cpp\((\d+)\)", loc).group(1)) for loc in locations]
-              wanted_lines = [entry["line"] for entry in expected["predictedFailureAssertions"].values()]
-              assert collections.Counter(actual_lines) == collections.Counter(wanted_lines), "wrong baseline assertion line"
-              verdict.update(acceptedBehavioralRed=True, actualFail=actual_fail, actualPass=actual_pass)
+              for tag in ("failure", "error", "skipped"):
+                  assert not list(root.iter(tag)), "JUnit " + tag
+              # CTest suppresses passing Qt output on stdout. Its actual LastTest.log
+              # is copied BEFORE this guard; do not manufacture PASS from quiet output.
+              text = (out / "LastTest.log").read_text()
+              assert re.search(r"Test:\s+" + re.escape(expected["ctestName"]), text), "wrong LastTest log"
+              assert not re.search(r"FAIL!|QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*Timeout|Not Run|XFAIL|XPASS|SKIP\s*:", text, re.I), "failure/skip/non-assertion termination"
+              pattern = r"^PASS\s*:\s*" + re.escape(expected["class"]) + r"::([A-Za-z0-9_]+)\(([^)]*)\)"
+              entries = re.findall(pattern, text, flags=re.M)
+              actual_pass = [name + ("(" + row + ")" if row else "") for name, row in entries]
+              assert collections.Counter(actual_pass) == collections.Counter(expected["expectedPassingQtCases"]), "missing/extra Qt case or data row"
+              assert re.search(r"Totals:\s+21 passed, 0 failed, 0 skipped", text), "wrong/incomplete Qt totals"
+              assert re.search(r"Test Passed\.", text), "CTest did not record passing execution"
+              verdict.update(acceptedPureValueGreen=True, actualPassingQtCases=actual_pass, frozenTestSha256=actual_test_sha)
           except Exception as error:
               verdict["rejection"] = str(error)
-          (out / "red-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+          (out / "green-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
           print(json.dumps(verdict, indent=2))
-          sys.exit(0 if verdict["acceptedBehavioralRed"] else 1)
+          sys.exit(0 if verdict["acceptedPureValueGreen"] else 1)
           PY_GUARD
       - name: Capture final diagnostics
         if: always()
         run: |
-          mkdir -p cw-red-artifacts
-          df -k . > cw-red-artifacts/disk-end.txt
-          uptime > cw-red-artifacts/load-end.txt
-          ccache -s > cw-red-artifacts/ccache-final.txt 2>&1 || true
-          cp build/CMakeCache.txt cw-red-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTest.log cw-red-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTestsFailed.log cw-red-artifacts/ 2>/dev/null || true
-      - name: Upload focused RED evidence
+          mkdir -p cw-green-artifacts
+          df -k . > cw-green-artifacts/disk-end.txt
+          uptime > cw-green-artifacts/load-end.txt
+          ccache -s > cw-green-artifacts/ccache-final.txt 2>&1 || true
+          cp build/CMakeCache.txt cw-green-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTest.log cw-green-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTestsFailed.log cw-green-artifacts/ 2>/dev/null || true
+      - name: Upload focused GREEN evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cw-pure-red-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cw-red-artifacts/
+          name: cw-pure-green-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cw-green-artifacts/
           retention-days: 7
           if-no-files-found: error
