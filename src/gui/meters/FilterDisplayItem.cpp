@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Contrast round: with the workspace look the item's own
+//                 background follows the meter background at its default.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1616,7 +1619,13 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
     if (!l.valid) { return; }
     p.save();
     p.setClipRect(l.itemRect, Qt::IntersectClip);
-    p.fillRect(QRectF(l.x, l.y, l.w, l.h), kThetisItemBackground);
+    // NereusSDR: with the workspace look the item's own background follows
+    // the meter background (the panel, or the container's user background)
+    // while that colour is at its default.
+    const QColor itemBackground = ItemColourLook::followsLook(QStringLiteral("FilterDisplay.meterBackColour"), m_meterBackColour)
+        ? ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this)
+        : kThetisItemBackground;
+    p.fillRect(QRectF(l.x, l.y, l.w, l.h), itemBackground);
     if (m_state.sliceIndex < 0) {
         // No slice delivered yet (or it closed): nothing to draw against.
         p.fillRect(l.itemRect, ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this));
@@ -1629,7 +1638,7 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
     const QColor extentTextColour = ItemColourLook::effective("FilterDisplay.textColour", m_textColour, this);
     const QColor extentColour = ItemColourLook::effective("FilterDisplay.extentsColour", m_extentsColour, this);
     const QColor snaplineColour = ItemColourLook::effective("FilterDisplay.snapLineColour", m_snapLineColour, this);
-    const QColor textOverlayColour = kThetisItemBackground; // same as the background
+    const QColor textOverlayColour = itemBackground; // same as the background
     const QColor filterLineColour = tx ? ItemColourLook::effective("FilterDisplay.edgesColourTX", m_edgesColourTX, this) : ItemColourLook::effective("FilterDisplay.edgesColourRX", m_edgesColourRX, this);
     const QColor filterLineFaded = withAlpha(filterLineColour, 128);
     const QColor filterLineHighlight = ItemColourLook::effective("FilterDisplay.edgeHighlightColour", m_edgeHighlightColour, this);

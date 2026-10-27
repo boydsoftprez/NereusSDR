@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Contrast round: with the workspace look the split-off text
+//                 and the RX/TX boxes take role pairs that read at 4.5:1.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -934,7 +937,11 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     if (s.index == 0) {
         const QRectF rectSplit = f.box(0.1, 0.03, 0.2, 0.43);
         p.fillRect(rectSplit, ItemColourLook::effective("VfoDisplay.splitBackColour", m_splitBackColour, this));
-        const QColor splitColor = m_split ? ItemColourLook::effective("VfoDisplay.splitColour", m_splitColour, this) : QColor(Qt::black);
+        // NereusSDR: with the workspace look the split-off text takes a
+        // tertiary text role (Thetis's black is unreadable on the
+        // workspace's dark box).
+        const QColor splitColor = m_split ? ItemColourLook::effective("VfoDisplay.splitColour", m_splitColour, this)
+                                          : ItemColourLook::derived("VfoDisplay.splitColour", m_splitColour, "text-tertiary", QColor(Qt::black));
         plotText(p, QStringLiteral("SPLIT"), rectSplit.x() + 0.015 * f.unit, rectSplit.y(),
                  fitted(base, QStringLiteral("SPLIT"), (0.1 - 0.015) * f.unit), splitColor);
     }
@@ -958,15 +965,28 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     const QFont boxFont = fitted(base, QStringLiteral("RX"), (0.048 - 0.005) * f.unit);
     //rx box VFOA
     // From Thetis MeterManager.cs:40360-40365 [v2.10.3.15]
+    // NereusSDR: with the workspace look the boxes take role pairs that
+    // read at 4.5:1 (lit RX: live on ok-bg; RX off: tertiary text on the
+    // raised face; TX transmitting: inset on tx; TX able to transmit: text
+    // on danger-bg; TX unable: tertiary text on the raised face) in place
+    // of the scaled colours and black text.
+    const auto rxLook = [&](const char* role, const QColor& classic) {
+        return ItemColourLook::derived("VfoDisplay.rxColour", m_rxColour, role, classic);
+    };
+    const auto txLook = [&](const char* role, const QColor& classic) {
+        return ItemColourLook::derived("VfoDisplay.txColour", m_txColour, role, classic);
+    };
     QRectF rct = f.box(0.1, 0.52, 0.148, 0.92);
-    p.fillRect(rct, rxOn ? cDimRx : cDimerRx);
-    plotText(p, QStringLiteral("RX"), rct.x() + 0.005 * f.unit, rct.y(), boxFont, rxOn ? cRx : QColor(Qt::black));
+    p.fillRect(rct, rxOn ? rxLook("ok-bg", cDimRx) : rxLook("raised-top", cDimerRx));
+    plotText(p, QStringLiteral("RX"), rct.x() + 0.005 * f.unit, rct.y(), boxFont,
+             rxOn ? cRx : rxLook("text-tertiary", QColor(Qt::black)));
 
     //tx box VFOA
     // From Thetis MeterManager.cs:40367-40372 [v2.10.3.15]
     rct = f.box(0.152, 0.52, 0.200, 0.92);
-    p.fillRect(rct, canTx ? cDimTx : cDimerTx);
-    plotText(p, QStringLiteral("TX"), rct.x() + 0.005 * f.unit, rct.y(), boxFont, txOn ? cTx : QColor(Qt::black));
+    p.fillRect(rct, txOn ? txLook("tx", cDimTx) : canTx ? txLook("danger-bg", cDimTx) : txLook("raised-top", cDimerTx));
+    plotText(p, QStringLiteral("TX"), rct.x() + 0.005 * f.unit, rct.y(), boxFont,
+             txOn ? txLook("inset", cTx) : canTx ? txLook("text", QColor(Qt::black)) : txLook("text-tertiary", QColor(Qt::black)));
 
     //filter VFOA
     // From Thetis MeterManager.cs:40393-40396 [v2.10.3.15]

@@ -10,6 +10,10 @@
 // Modification history (NereusSDR):
 //   2026-10-26 - Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Contrast round: the dial's pad, ring and off zones, the
+//                 off LED, the rotator beam, the button press and the filter
+//                 setting-on fill take roles that reach 3:1 / 4.5:1; derived().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/meters/ItemColourLook.h"
@@ -142,12 +146,12 @@ constexpr Row kRows[] = {
     // ── LED (LEDItem) ──────────────────────────────────────────────────
     // kLedThetisDefaults, From Thetis MeterManager.cs:20836-20839 [v2.10.3.15]
     {"Led.trueColour", kLedThetisDefaults.trueColour, "live", false, nullptr},
-    {"Led.falseColour", kLedThetisDefaults.falseColour, "border-muted", false, nullptr},
+    {"Led.falseColour", kLedThetisDefaults.falseColour, "text-scale", false, nullptr},
     {"Led.panelBackColour1", kLedThetisDefaults.panelBack1, "panel", true, nullptr},
     {"Led.panelBackColour2", kLedThetisDefaults.panelBack2, "panel", true, nullptr},
     // NereusSDR's earlier LED colours and its threshold colours (LEDItem.h)
     {"Led.trueColour", qRgb(0x00, 0xff, 0x88), "live", false, nullptr},
-    {"Led.falseColour", qRgb(0x40, 0x40, 0x40), "border-muted", false, nullptr},
+    {"Led.falseColour", qRgb(0x40, 0x40, 0x40), "text-scale", false, nullptr},
     {"Led.amberColour", qRgb(0xff, 0xb8, 0x00), "measured", false, nullptr},
     {"Led.redColour", qRgb(0xff, 0x44, 0x44), "tx", false, nullptr},
 
@@ -189,22 +193,22 @@ constexpr Row kRows[] = {
     // kDialThetisDefaults, From Thetis MeterManager.cs:16797-16807 [v2.10.3.15]
     {"Dial.textColour", kDialThetisDefaults.textColour, "text", false, nullptr},
     {"Dial.circleColour", kDialThetisDefaults.circleColour, "inset", false, nullptr},
-    {"Dial.padColour", kDialThetisDefaults.padColour, "raised-top", false, nullptr},
+    {"Dial.padColour", kDialThetisDefaults.padColour, "accent", false, nullptr},
     {"Dial.padPressedColour", kDialThetisDefaults.padPressedColour, "selected-top", false, nullptr},
     {"Dial.buttonOnColour", kDialThetisDefaults.buttonOnColour, "selected-top", false, nullptr},
-    {"Dial.buttonOffColour", kDialThetisDefaults.buttonOffColour, "button", false, nullptr},
+    {"Dial.buttonOffColour", kDialThetisDefaults.buttonOffColour, "panel", true, nullptr},
     {"Dial.buttonHighlightColour", kDialThetisDefaults.buttonHighlightColour, "button-hover", false, nullptr},
-    {"Dial.ringColour", kDialThetisDefaults.ringColour, "border", false, nullptr},
+    {"Dial.ringColour", kDialThetisDefaults.ringColour, "text-scale", false, nullptr},
     {"Dial.slowColour", kDialThetisDefaults.slowColour, "accent", false, nullptr},
     {"Dial.holdColour", kDialThetisDefaults.holdColour, "ok", false, nullptr},
     {"Dial.fastColour", kDialThetisDefaults.fastColour, "danger", false, nullptr},
     // NereusSDR's earlier dial colours (DialItem.h member initialisers)
     {"Dial.textColour", qRgb(0xc8, 0xd8, 0xe8), "text", false, nullptr},
     {"Dial.circleColour", qRgb(0x1a, 0x2a, 0x3a), "inset", false, nullptr},
-    {"Dial.padColour", qRgb(0x15, 0x20, 0x30), "raised-top", false, nullptr},
-    {"Dial.ringColour", qRgb(0x40, 0x50, 0x60), "border", false, nullptr},
+    {"Dial.padColour", qRgb(0x15, 0x20, 0x30), "accent", false, nullptr},
+    {"Dial.ringColour", qRgb(0x40, 0x50, 0x60), "text-scale", false, nullptr},
     {"Dial.buttonOnColour", qRgb(0x00, 0x70, 0xc0), "selected-top", false, nullptr},
-    {"Dial.buttonOffColour", qRgb(0x30, 0x40, 0x50), "button", false, nullptr},
+    {"Dial.buttonOffColour", qRgb(0x30, 0x40, 0x50), "panel", true, nullptr},
     {"Dial.buttonHighlightColour", qRgb(0x00, 0x90, 0xe0), "button-hover", false, nullptr},
     {"Dial.slowColour", qRgb(0x00, 0xff, 0x88), "ok", false, nullptr},
     {"Dial.holdColour", qRgb(0xff, 0xb8, 0x00), "measured", false, nullptr},
@@ -238,7 +242,7 @@ constexpr Row kRows[] = {
     {"FilterDisplay.notchHighlightColour", kFilterDisplayThetisDefaults.notchHighlightColour, "ok", false, nullptr},
     {"FilterDisplay.extentsColour", kFilterDisplayThetisDefaults.extentsColour, "text-scale", false, nullptr},
     {"FilterDisplay.snapLineColour", kFilterDisplayThetisDefaults.snapLineColour, "text-scale", false, nullptr},
-    {"FilterDisplay.settingOnColour", kFilterDisplayThetisDefaults.settingOnColour, "accent", false, nullptr},
+    {"FilterDisplay.settingOnColour", kFilterDisplayThetisDefaults.settingOnColour, "selected-top", false, nullptr},
     {"FilterDisplay.buttonHighlightColour", kFilterDisplayThetisDefaults.buttonHighlightColour, "button-hover", false, nullptr},
     // FilterDisplayItem.h m_dataFillColour, LimeGreen at alpha 0x40 (NereusSDR)
     {"FilterDisplay.dataFillColour", qRgba(0x32, 0xcd, 0x32, 0x40), "dsp-on", false, nullptr},
@@ -251,7 +255,7 @@ constexpr Row kRows[] = {
     {"Rotator.smallBlobColour", qRgb(0xff, 0xff, 0xff), "text", false, nullptr},
     {"Rotator.outerTextColour", qRgb(0x80, 0x80, 0x80), "text-secondary", false, nullptr},
     {"Rotator.arrowColour", qRgb(0xff, 0xff, 0xff), "text", false, nullptr},
-    {"Rotator.beamWidthColour", qRgb(0x40, 0x40, 0x40), "border-muted", false, nullptr},
+    {"Rotator.beamWidthColour", qRgb(0x40, 0x40, 0x40), "text-secondary", false, nullptr},
     {"Rotator.backgroundColour", qRgb(0x20, 0x20, 0x20), "panel", true, nullptr},
     // RotatorItem.h m_controlColour, LimeGreen
     {"Rotator.controlColour", qRgb(0x32, 0xcd, 0x32), "ok", false, nullptr},
@@ -295,7 +299,7 @@ constexpr Row kRows[] = {
     {"ButtonBox.fillColour", qRgb(0x1a, 0x2a, 0x3a), "raised-top", false, nullptr},
     {"ButtonBox.offColour", qRgb(0x1a, 0x2a, 0x3a), "raised-top", false, nullptr},
     {"ButtonBox.hoverColour", qRgb(0x20, 0x40, 0x60), "button-hover", false, nullptr},
-    {"ButtonBox.clickColour", qRgb(0x00, 0xb4, 0xd8), "accent", false, nullptr},
+    {"ButtonBox.clickColour", qRgb(0x00, 0xb4, 0xd8), "selected-top", false, nullptr},
     {"ButtonBox.borderColour", qRgb(0x20, 0x50, 0x70), "border", false, nullptr},
     {"ButtonBox.textColour", qRgb(0xc8, 0xd8, 0xe8), "text", false, nullptr},
     // The chosen button: blue (bands, modes, filters, steps, macros)
@@ -590,6 +594,14 @@ QColor effective(const char* field, const QColor& stored, const QObject* surface
         return stored;
     }
     return effective(QString::fromLatin1(field), stored, surface);
+}
+
+QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic)
+{
+    if (!followsLook(QString::fromLatin1(field), stored)) {
+        return classic;
+    }
+    return WorkspacePreview::roleColour(classic, role);
 }
 
 QString followsLookNote()

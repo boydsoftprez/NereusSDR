@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Contrast round: with the workspace look a disabled label
+//                 takes the tertiary text role. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1160,6 +1163,9 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     const int next = sliceStepEnabled() ? nextSlice() : -1;
     QColor dimText = ItemColourLook::effective("Dial.textColour", m_textColour, this);
     dimText.setAlphaF(ItemColourLook::effective("Dial.textColour", m_textColour, this).alphaF() * 0.5f);
+    // NereusSDR: with the workspace look a disabled label takes the
+    // tertiary text role, which reads at 4.5:1 and still reads as dimmer.
+    dimText = ItemColourLook::derived("Dial.textColour", m_textColour, "text-tertiary", dimText);
     const auto label = [&](int zone, const QString& text, int alignment, bool enabled) {
         p.setPen(enabled ? ItemColourLook::effective("Dial.textColour", m_textColour, this) : dimText);
         drawObjectText(p, zones[zone], text, size, alignment);

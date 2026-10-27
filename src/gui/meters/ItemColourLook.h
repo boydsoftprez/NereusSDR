@@ -27,6 +27,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26 - Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Contrast round: derived() for colours an item derives
+//                 (off-state text, badge fills). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -81,6 +84,11 @@ bool followsLook(const QString& field, const QColor& stored);
 // its widget) for a backdrop row; it finds the container's user background.
 QColor effective(const char* field, const QColor& stored, const QObject* surface = nullptr);
 QColor effective(const QString& field, const QColor& stored, const QObject* surface = nullptr);
+
+// A colour an item derives from a field rather than stores (an off
+// state's text, a badge's fill): `role`'s colour while `field` holding
+// `stored` follows the look, otherwise `classic`.
+QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic);
 
 // The editors' note for a field that follows the look.
 QString followsLookNote();
