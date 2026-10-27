@@ -3,7 +3,9 @@
 //   2026-10-27  J.J. Boyd / KG4VCF  retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop:
 //                                    a TCI app on the retired stream hears
 //                                    none of the removed slice's audio on
-//                                    the reused id. AI-assisted via
+//                                    the reused id: no more frames than the
+//                                    new slice sent, each block sample for
+//                                    sample the new slice's. AI-assisted via
 //                                    Anthropic Claude Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  Load findings from PR 654's CI.
 //                                    PacedRemoteAudio's speaker plays on the
@@ -353,6 +355,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <numbers>
@@ -14257,10 +14260,20 @@ private slots:
         QVERIFY(tci);
         tci->publish({{1, 1, 48000, 2, 3, 2048, 1.0f}});
         int tciFrames = 0;
-        const auto takeTci = [&tci, &tciFrames] {
+        bool keepTciBlocks = false;
+        QList<QVector<float>> tciBlocks;
+        const auto takeTci = [&tci, &tciFrames, &keepTciBlocks, &tciBlocks] {
             RemoteTciAudioStage::Result result;
             while (tci->popNext(&result)) {
-                tciFrames += int(qFromLittleEndian<quint32>(result.bytes.constData() + 20)) / 2;
+                const int samples =
+                    int(qFromLittleEndian<quint32>(result.bytes.constData() + 20));
+                tciFrames += samples / 2;
+                if (keepTciBlocks) {
+                    QVector<float> block(samples);
+                    std::memcpy(block.data(), result.bytes.constData() + 64,
+                                std::size_t(samples) * sizeof(float));
+                    tciBlocks.append(block);
+                }
             }
         };
         QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceB) >= 9600, 10000);
@@ -14310,6 +14323,7 @@ private slots:
         QCOMPARE(reused, sliceB);
         h.station.sliceById(reused)->setAudioPan(0.95);
         tciFrames = 0;
+        keepTciBlocks = true;
         QTRY_VERIFY_WITH_TIMEOUT((takeTci(), app.frames(sliceB) >= framesAtStop + 9600), 15000);
         QVERIFY(receivesIn(remoteMedia, sliceB, RemoteAudioProfile::Opus));
         // The TCI app heard no more than the new slice has sent: nothing of
@@ -14318,6 +14332,27 @@ private slots:
         QVERIFY2(tciFrames > 0 && tciFrames <= app.frames(sliceB) - framesAtStop,
                  qPrintable(QStringLiteral("TCI app %1 frames, the new slice %2")
                                 .arg(tciFrames).arg(app.frames(sliceB) - framesAtStop)));
+        // And each block it heard is the new slice's audio, sample for
+        // sample, in order: the app's sink gets the same PCM first.
+        const QVector<float> heard = app.audio(sliceB);
+        qsizetype from = qsizetype(framesAtStop) * 2;
+        for (qsizetype b = 0; b < tciBlocks.size(); ++b) {
+            const QVector<float>& block = tciBlocks.at(b);
+            qsizetype at = -1;
+            for (qsizetype i = from; i + block.size() <= heard.size(); i += 2) {
+                if (std::memcmp(heard.constData() + i, block.constData(),
+                                std::size_t(block.size()) * sizeof(float)) == 0) {
+                    at = i;
+                    break;
+                }
+            }
+            QVERIFY2(at >= 0,
+                     qPrintable(QStringLiteral("TCI block %1 of %2 (%3 frames) is not the new "
+                                               "slice's audio after frame %4")
+                                    .arg(b + 1).arg(tciBlocks.size())
+                                    .arg(block.size() / 2).arg(from / 2)));
+            from = at + block.size();
+        }
         const QList<QJsonObject> requests = receiverRequests(coreControls, sliceB);
         QCOMPARE(requests.size(), qsizetype(requestsAtStop + 1));
         for (qsizetype i = 1; i < requests.size(); ++i) {

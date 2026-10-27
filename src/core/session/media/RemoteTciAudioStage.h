@@ -7,7 +7,8 @@
 //               lossless-to-Opus fallback drops no audio an app was owed;
 //               a client whose mailbox is full waits in the history
 //               (hasRoom) instead of evicting a block, for at most
-//               kMaxBehindNs; skipped audio is also
+//               kMaxBehindNs, a wait a restart carries on rather than
+//               starting again; skipped audio is also
 //               counted in blocks (skippedBlocks). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 
@@ -115,6 +116,10 @@ private:
         quint64 sequence = 0;
         int blockInput = 0;
         int pendingFrames = 0;
+        // How long the client has been behind, so a restart does not
+        // reset the kMaxBehindNs bound for an app that stays behind.
+        bool behind = false;
+        qint64 behindSinceNs = 0;
         std::vector<float> output;
     };
     struct Carry {

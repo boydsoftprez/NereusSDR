@@ -225,8 +225,10 @@ mw0lge@grange-lane.co.uk
 //                restart or the lossless-to-Opus fallback drops nothing an
 //                app was owed. An app whose mailbox is full waits in the
 //                history instead of evicting a block (runnable, hasRoom),
-//                for at most kMaxBehindNs, then moves
-//                on to the newest (skipTo); audio it loses is counted when
+//                for at most kMaxBehindNs, a wait a restart carries on
+//                (ClientCarry::behindSinceNs), then moves
+//                on to the newest (skipTo); push() asserts the mailbox
+//                never passes kMaxFramesPerClient; audio it loses is counted when
 //                it is written over (skipOverwritten), and the "cannot keep
 //                up" notice counts it in blocks (skippedBlocks). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3028,7 +3030,9 @@ void RemoteTciAudioStage::push(Result result)
     // The one run converting for this stage converts nothing for a client
     // whose mailbox is full (RemoteTciAudioRun::runnable), so the mailbox
     // holds at most kMaxFramesPerClient blocks without evicting any.
-    m_results[result.token].push_back(std::move(result));
+    auto& mailbox = m_results[result.token];
+    Q_ASSERT(mailbox.size() < std::size_t(kMaxFramesPerClient));
+    mailbox.push_back(std::move(result));
 }
 
 bool RemoteTciAudioStage::popNext(Result* out)
@@ -3213,6 +3217,8 @@ public:
                 client.cursor = m_reconcileBase - quint64(carried->second.pendingFrames);
                 client.sequence = carried->second.sequence;
                 client.blockInput = carried->second.blockInput;
+                client.behind = carried->second.behind;
+                client.behindSinceNs = carried->second.behindSinceNs;
                 client.output.insert(client.output.end(), carried->second.output.begin(),
                                      carried->second.output.end());
             }
@@ -3321,6 +3327,8 @@ private:
             left.sequence = client.sequence;
             left.blockInput = client.blockInput;
             left.pendingFrames = int(m_written - client.cursor);
+            left.behind = client.behind;
+            left.behindSinceNs = client.behindSinceNs;
             left.output = std::move(client.output);
             carry.clients.emplace(token, std::move(left));
         }

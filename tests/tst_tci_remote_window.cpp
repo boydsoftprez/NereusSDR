@@ -105,7 +105,10 @@
 //                                    come in the next run;
 //                                    remoteOverloadMovesAnAppOnToTheNewestAudio
 //                                    bounds how far behind an app the drain
-//                                    cannot keep up with falls. AI-assisted
+//                                    cannot keep up with falls, also while
+//                                    the run restarts, and checks every
+//                                    block it hears is one stretch of the
+//                                    stream. AI-assisted
 //                                    via Anthropic Claude Code.
 // =================================================================
 
@@ -911,6 +914,9 @@ private slots:
     // kMaxBehindNs, then moves on to the newest audio: it never stands the
     // whole history behind, and once the drain keeps up again it hears
     // current audio. The stage's clock is the audio's, 20 ms a wake.
+    // Restarting the run does not start that wait again, and every block
+    // the app hears is one stretch of the stream: a skip never splices
+    // part of a block onto later audio.
     void remoteOverloadMovesAnAppOnToTheNewestAudio()
     {
         auto stage = std::make_shared<RemoteTciAudioStage>(0);
@@ -923,13 +929,28 @@ private slots:
         std::vector<float> pcm(std::size_t(kChunk) * 2);
         quint64 written = 0;
         quint64 heardUpTo = 0;   // one past the last frame the app has
+        int brokenBlocks = 0;
+        QString firstBroken;
         const auto popOne = [&] {
             RemoteTciAudioStage::Result result;
             if (!stage->popNext(&result)) { return false; }
             const int samples = int(readLe32(result.bytes, 20));
-            float last = 0.0f;
-            std::memcpy(&last, result.bytes.constData() + 64 + (samples - 2) * 4, sizeof(float));
-            heardUpTo = quint64(last) + 1;
+            std::vector<float> block(std::size_t(std::max(samples, 0)));
+            std::memcpy(block.data(), result.bytes.constData() + 64,
+                        block.size() * sizeof(float));
+            bool whole = samples == 200;
+            for (int i = 0; whole && i < samples / 2; ++i) {
+                whole = block[std::size_t(2 * i)] == block[0] + float(i)
+                    && block[std::size_t(2 * i + 1)] == -block[std::size_t(2 * i)];
+            }
+            if (!whole) {
+                if (brokenBlocks++ == 0) {
+                    firstBroken = QStringLiteral("block %1 has %2 samples from frame %3")
+                                      .arg(result.sequence).arg(samples).arg(block.empty()
+                                          ? -1.0 : double(block[0]));
+                }
+            }
+            if (samples >= 2) { heardUpTo = quint64(block[std::size_t(samples - 2)]) + 1; }
             return true;
         };
         auto run = stage->createRun();
@@ -949,9 +970,17 @@ private slots:
             }
         };
 
-        // Four seconds of overload: one block taken per 20 ms wake.
+        // Four seconds of overload: one block taken per 20 ms wake. In
+        // the last two the run restarts every 140 ms, sooner than
+        // kMaxBehindNs, so a restart that started the wait again would
+        // let the app fall the whole history behind.
         quint64 maxBehind = 0;
         for (int wake = 0; wake < 200; ++wake) {
+            if (wake >= 100 && wake % 7 == 0) {
+                run.reset();
+                run = stage->createRun();
+                run->reconcile();
+            }
             feed();
             if (popOne()) { maxBehind = std::max(maxBehind, written - heardUpTo); }
         }
@@ -964,6 +993,9 @@ private slots:
                  qPrintable(QStringLiteral("the app fell %1 frames behind; at most %2")
                                 .arg(maxBehind).arg(bound)));
         QVERIFY(stage->diagnostics().skippedBlocks > 0);
+        QVERIFY2(brokenBlocks == 0,
+                 qPrintable(QStringLiteral("%1 blocks were not one stretch of the stream; %2")
+                                .arg(brokenBlocks).arg(firstBroken)));
 
         // The drain keeps up again: within a few wakes the app hears the
         // audio of the wake, all but its unfinished block.
@@ -980,6 +1012,7 @@ private slots:
         QVERIFY2(written - heardUpTo < 100,
                  qPrintable(QStringLiteral("%1 frames written, the app heard up to %2")
                                 .arg(written).arg(heardUpTo)));
+        QCOMPARE(brokenBlocks, 0);
     }
 
     void remoteWorkerRunFinalizesAfterDecoderFailure()
