@@ -5,9 +5,11 @@
 //              AI-assisted via Anthropic Claude Code.
 // 2026-10-26 - Review fixes: any stop drops a held TX and no TX is held
 //              during a stop's walk; the bound is MoxController's
-//              remaining walk (txToRxRemainingMaxMs) on a precise timer; a
-//              walk that turns back to transmit drops it; a replay queued
-//              by an earlier walk is ignored; an idle serial pin keeps it.
+//              remaining walk (txToRxRemainingMaxMs) on a precise timer,
+//              armed again while the walk's phase timers run, so only a
+//              stalled walk drops it; a walk that turns back to transmit
+//              drops it; a replay queued by an earlier walk is ignored; an
+//              idle serial pin keeps it.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatTxCoordinator.h"
 #include "core/LogCategories.h"
@@ -23,14 +25,23 @@ CatTxCoordinator::CatTxCoordinator(RadioModel& model) : QObject(&model), m_model
 {
     // How long a TX held during the walk back to receive waits for Rx: the
     // longest the walk can still run on its own phase bounds when the TX
-    // is held (MoxController::txToRxRemainingMaxMs). Thetis has no such
-    // bound: its CATPTT level simply waits for PollPTT
-    // (console.cs:25476-25517 [v2.10.3.15]).
+    // is held (MoxController::txToRxRemainingMaxMs). When that runs out
+    // while one of the walk's phase timers still runs, the walk is late,
+    // not stuck (a timer that fires late under load): the bound is armed
+    // again from the walk that remains, with no margin added. Only a walk
+    // that has stalled, with no phase timer running short of Rx, drops the
+    // TX. Thetis has no such bound: its CATPTT level simply waits for
+    // PollPTT (console.cs:25476-25517 [v2.10.3.15]).
     m_heldTimer.setSingleShot(true);
     m_heldTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_heldTimer, &QTimer::timeout, this, [this] {
-        if (!m_heldSession) { return; }
-        qCWarning(lcCat) << "held CAT TX dropped: the return to receive took longer than"
+        if (!m_heldSession || !m_model) { return; }
+        const MoxController* mox = m_model->moxController();
+        if (mox->isTxToRxPhaseTimed()) {
+            m_heldTimer.start(mox->txToRxRemainingMaxMs());
+            return;
+        }
+        qCWarning(lcCat) << "held CAT TX dropped: the return to receive stalled after"
                          << m_heldTimer.interval() << "ms";
         m_heldSession = 0; m_heldReplay = {};
     });

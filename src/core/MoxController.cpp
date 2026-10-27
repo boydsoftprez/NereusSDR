@@ -220,9 +220,11 @@
 //   2026-10-14: onMicPttFromRadio asks the other-device hook only on a
 //               press edge. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
-//   2026-10-26: txToRxRemainingMaxMs, the walk's remaining phase bounds
-//               for a CAT TX held during it. J.J. Boyd (KG4VCF), with
-//               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26: txToRxRemainingMaxMs and isTxToRxPhaseTimed, the walk's
+//               remaining phase bounds and whether one is still timed, for
+//               a CAT TX held during it; stallTxToRxWalkForTest. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -523,22 +525,37 @@ bool MoxController::beginSendRingWait()
 // ---------------------------------------------------------------------------
 // txToRxRemainingMaxMs (2026-10-26). NereusSDR-original: the sum of the
 // walk's remaining phase bounds, read from the timers that enforce them.
+// Their intervals are the cited constants (kTxDrainTimeoutMs,
+// kKeyUpDelayMs, kPttOutDelayMs, kEndOfOverTailMaxMs) unless a test seam
+// changed them, and the send ring's ceiling is the ring's own length.
 // ---------------------------------------------------------------------------
 namespace {
-// Qt::TimerType: "Coarse timers try to keep accuracy within 5% of the
-// desired interval" (Qt 6 documentation). A phase on a coarse timer can
-// end that much after its interval.
-constexpr int kCoarseTimerLatePercent = 5;
-
 int phaseBoundMs(const QTimer& timer)
 {
-    const int interval = std::max(0, timer.interval());
-    if (timer.timerType() != Qt::CoarseTimer) {
-        return interval;
-    }
-    return interval + (interval * kCoarseTimerLatePercent + 99) / 100;
+    return std::max(0, timer.interval());
 }
 } // namespace
+
+bool MoxController::isTxToRxPhaseTimed() const
+{
+    if (m_state != MoxState::TxToRxInFlight && m_state != MoxState::TxToRxFlush) {
+        return false;
+    }
+    return m_endOfOverTailTimer.isActive() || m_txDrainTimeoutTimer.isActive()
+        || m_sendRingCeilingTimer.isActive() || m_keyUpDelayTimer.isActive()
+        || m_pttOutDelayTimer.isActive() || m_spaceDelayTimer.isActive();
+}
+
+void MoxController::stallTxToRxWalkForTest()
+{
+    m_endOfOverTailTimer.stop();
+    m_txDrainTimeoutTimer.stop();
+    m_sendRingPollTimer.stop();
+    m_sendRingCeilingTimer.stop();
+    m_keyUpDelayTimer.stop();
+    m_pttOutDelayTimer.stop();
+    m_spaceDelayTimer.stop();
+}
 
 int MoxController::txToRxRemainingMaxMs() const
 {
