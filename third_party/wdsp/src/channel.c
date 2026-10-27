@@ -58,7 +58,9 @@ warren@wpratt.com
 // the flush thread to finish before returning (dsplock.c WdspWaitDrainFlush,
 // which reports through dprintf every 2 s of waiting). A drain that
 // completes in time, or that starts on a channel already not exchanging,
-// returns as upstream does.
+// returns as upstream does. Between raising downflag and flushflag the drain
+// also calls dsplock.c's test-only drain hook (WdspTestDrainHook; off by
+// default, one pointer test).
 
 #include "comm.h"
 
