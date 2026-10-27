@@ -20,6 +20,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - Restore the verbatim console.cs G2E contributor notice.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26 - republishAlexAdcSlices: on the Anvelina Pro 3, input 2's
 //                band-pass follows Slice B (Thetis RX2 / VFO B) when no
 //                slice is on input 2, as Thetis's setAlex2HPF does (J.J.
@@ -1439,6 +1441,7 @@
 // Modifications for using the new database import function.  W2PA, 29 May 2017
 // Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
 // Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
