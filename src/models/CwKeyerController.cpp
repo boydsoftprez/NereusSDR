@@ -10,6 +10,9 @@
 //               Claude Code.
 //   2026-10-26: CW transmit early fix wave: C1, I2 and M4 (see the
 //               header). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the keyer is refused while TUNE from CW runs
+//               the TX channel in LSB or USB (R-CW-30, D6). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/CwKeyerController.h"
@@ -188,8 +191,13 @@ safety::CwKeyerGateInputs CwKeyerController::gateInputs() const
     safety::CwKeyerGateInputs in;
     const SliceModel* tx = m_radio.txBoundSlice();
     in.hasTxSlice = tx != nullptr;
+    // D6 (R-CW-30): TUNE from CW runs the TX channel in LSB or USB with the
+    // radio's keyer off, as Thetis does (CWFWKeyer = false with the TX DSP
+    // mode switched, console.cs:30111, 30117 [v2.10.3.15]; CWFWKeyer = true
+    // at TUN-off, console.cs:30170), so the keyer refuses while it runs.
     in.txSliceInCw = tx != nullptr
-        && (tx->dspMode() == DSPMode::CWL || tx->dspMode() == DSPMode::CWU);
+        && (tx->dspMode() == DSPMode::CWL || tx->dspMode() == DSPMode::CWU)
+        && !m_radio.tuneTxModeSwapped();
     if (in.hasTxSlice && in.txSliceInCw) {
         // The carrier alone (R-CW-05, Thetis console.cs:6778-6813
         // [v2.10.3.15]); BandPlanGuard ignores the filter for CW anyway.

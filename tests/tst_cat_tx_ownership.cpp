@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original CAT accepted-activation ownership tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-26: CW transmit, the TUNE mode-swap cut is seen on the TX channel's
+//   mode (D6). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #include "core/cat/CatTxCoordinator.h"
 #include "core/cat/CatService.h"
@@ -250,8 +252,10 @@ private slots:
             connect(&txm, &TransmitModel::powerChanged, &model,
                     [cutShort](int watts) { if (watts == 10) { cutShort(); } });
         } else {
-            connect(slice, &SliceModel::dspModeChanged, &model,
-                    [cutShort](DSPMode mode) { if (mode == DSPMode::USB) { cutShort(); } });
+            // CW transmit (D6): TUNE from CW switches only the TX channel's
+            // mode, so the swap is seen there, not on the slice.
+            connect(&model, &RadioModel::txModeAndBandpassPushed, &model,
+                    [cutShort](DSPMode mode, int, int) { if (mode == DSPMode::USB) { cutShort(); } });
         }
         CatTxCoordinator tx(model);
         tx.requestTransmit(1, 0, CatTransmitKind::Tune); pumpCat();

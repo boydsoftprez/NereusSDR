@@ -1434,6 +1434,13 @@
 //                filter on the new pitch keeping its width
 //                (SliceModel::recenterCwFilterOnPitch, R-CW-28, D8). J.J.
 //                Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, TUNE in CW (R-CW-30, D6, D7): the tune tone and
+//                its NCO compensation use the CW pitch latched at TUN-on;
+//                TUNE from CW changes only the TX channel's mode to LSB or
+//                USB (the slice stays in CW) and turns the radio's keyer
+//                off while it runs; the tune tone cites refreshed to
+//                console.cs:30082/30085 [v2.10.3.15] (R-CW-52). J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3134,7 +3141,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
         applyTxAntennaFromBoundSlice();
         if (m_moxController) {
             if (SliceModel* const bound = txBoundSlice()) {
-                m_moxController->onModeChanged(bound->dspMode());
+                m_moxController->onModeChanged(txChannelModeFor(bound));
             }
         }
     });
@@ -16864,9 +16871,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // slice must not disable or enable VOX by changing its demod mode.
     if (m_moxController) {
         connect(slice, &SliceModel::dspModeChanged, this,
-                [this, slice](DSPMode mode) {
+                [this, slice](DSPMode) {
             if (slice == txBoundSlice()) {
-                m_moxController->onModeChanged(mode);
+                // The TX channel's mode, as Thetis reads Audio.TXDSPMode
+                // (cmaster.cs:1039-1052): LSB or USB for TUNE from CW (D6).
+                m_moxController->onModeChanged(txChannelModeFor(slice));
             }
         });
     }
@@ -24118,7 +24127,9 @@ safety::BandPlanGuard::MoxCheckResult RadioModel::bandPlanCheckForTxSlice(bool i
     // carrier before CheckValidTXFreq at :29486. Use the same carrier
     // already sent to the TX chain, including XIT, for the safety gate.
     const auto freqHz = static_cast<std::int64_t>(txFrequencyForSlice(slice));
-    const DSPMode mode = slice->dspMode();
+    // The TX channel's mode, as Thetis passes radio.GetDSPTX(0).CurrentDSPMode
+    // (console.cs:29486 [v2.10.3.15]): LSB or USB for TUNE from CW (D6).
+    const DSPMode mode = txChannelModeFor(slice);
     const Band txBand = bandFromFrequency(static_cast<double>(freqHz));
 
     // From Thetis console.cs:29486 [v2.10.3.15]: chkTUN.Checked
@@ -26034,7 +26045,7 @@ void RadioModel::pushTxModeAndBandpass()
     if (!slice) {
         return;
     }
-    const DSPMode mode      = slice->dspMode();
+    const DSPMode mode      = txChannelModeFor(slice);
     const int     audioLow  = m_transmitModel.filterLow();
     const int     audioHigh = m_transmitModel.filterHigh();
 
@@ -30585,12 +30596,12 @@ int RadioModel::timeOutRemainingSeconds() const
 //   //MW0LGE_21j    [original inline comment from console.cs:30136]
 //
 // LSB-family helper: used for sign-selecting the tune-tone frequency.
-// Cite: console.cs:30024-30037 [v2.10.3.13] — switch on Audio.TXDSPMode.
+// Cite: console.cs:30076-30087 [v2.10.3.15] — switch on Audio.TXDSPMode.
 //   LSB, CWL, DIGL → -cw_pitch (negative side of baseband).
 //   All others     → +cw_pitch (positive side of baseband).
 static bool isLsbFamily(DSPMode mode) noexcept
 {
-    // From Thetis console.cs:30024-30037 [v2.10.3.13]:
+    // From Thetis console.cs:30078-30082 [v2.10.3.15]:
     //   case DSPMode.LSB:
     //   case DSPMode.CWL:
     //   case DSPMode.DIGL:
@@ -30598,12 +30609,22 @@ static bool isLsbFamily(DSPMode mode) noexcept
     return mode == DSPMode::LSB || mode == DSPMode::CWL || mode == DSPMode::DIGL;
 }
 
-// Existing Tune generator frequency, shared by its NCO compensation.
-// From Thetis console.cs:18211,30082-30085 [v2.10.3.15].
-static double signedTuneToneHz(DSPMode mode) noexcept
+// The Tune generator frequency, shared by its NCO compensation (R-CW-30):
+// plus or minus the CW pitch in every mode.
+// From Thetis console.cs:30082, 30085 [v2.10.3.15]:
+//   radio.GetDSPTX(0).TXPostGenToneFreq = -cw_pitch;
+//   radio.GetDSPTX(0).TXPostGenToneFreq = +cw_pitch;
+// cw_pitch is the station pitch (cwPitchHz, R-CW-02), latched at TUN-on
+// (m_tunePitchHz, D7).
+static double signedTuneToneHz(DSPMode mode, int pitchHz) noexcept
 {
-    constexpr double kCwPitch = 600.0;
-    return isLsbFamily(mode) ? -kCwPitch : +kCwPitch;
+    const double pitch = static_cast<double>(pitchHz);
+    return isLsbFamily(mode) ? -pitch : +pitch;
+}
+
+double RadioModel::tuneToneHzForTest() const noexcept
+{
+    return m_isTuning ? signedTuneToneHz(m_savedTxDspMode, m_tunePitchHz) : 0.0;
 }
 
 quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
@@ -30618,8 +30639,9 @@ quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
     // Retunes and delayed connect seeds must keep the same compensation
     // as setTune. Use the saved mode that chose the active generator tone.
     // From Thetis console.cs:31782-31783,31820-31868 [v2.10.3.15].
+    // R-CW-30: the pitch latched at TUN-on, not the current one.
     const qint64 adjustedHz = static_cast<qint64>(dialHz)
-        - static_cast<qint64>(signedTuneToneHz(m_savedTxDspMode));
+        - static_cast<qint64>(signedTuneToneHz(m_savedTxDspMode, m_tunePitchHz));
     return adjustedHz < 0 ? 0 : static_cast<quint64>(adjustedHz);
 }
 
@@ -30860,6 +30882,9 @@ void RadioModel::setTune(bool on)
         SliceModel* const txSlice = txBoundSlice();
         m_savedTxDspSliceId = txSlice ? txSlice->sliceIndex() : -1;
         m_savedTxDspMode = txSlice ? txSlice->dspMode() : DSPMode::USB;
+        // R-CW-30 (D7): the pitch this TUNE's tone and NCO compensation
+        // use; a pitch change during TUNE waits for the next TUNE.
+        m_tunePitchHz = m_cwPitchHz;
 
         // ── SAVE power slider value ────────────────────────────────────────────
         // From Thetis console.cs:30094-30096 [v2.10.3.15]:
@@ -30876,15 +30901,16 @@ void RadioModel::setTune(bool on)
         }
 
         // ── COMPUTE tune-tone frequency (sign-selected by current DSP mode) ────
-        // Cite: console.cs:30024-30037 [v2.10.3.13] — switch on Audio.TXDSPMode.
+        // Cite: console.cs:30076-30087 [v2.10.3.15] — switch on Audio.TXDSPMode.
         //   NB: in Thetis the tone-freq switch runs BEFORE the CW→LSB/USB swap,
         //   so the sign is based on the ORIGINAL mode (CWL → negative, CWU → positive).
         //   Because CWL is LSB-family and CWU is not, the pre-swap mode determines
         //   the correct sideband. This ordering is preserved here.
         //
-        // cw_pitch: from Thetis console.cs:18182 [v2.10.3.13] — private int cw_pitch = 600;
+        // cw_pitch: the station pitch, latched above (R-CW-30); Thetis's
+        // default is private int cw_pitch = 600; (console.cs:18211 [v2.10.3.15]).
         const DSPMode modeBeforeSwap = m_savedTxDspMode;
-        const double signedFreq = signedTuneToneHz(modeBeforeSwap);
+        const double signedFreq = signedTuneToneHz(modeBeforeSwap, m_tunePitchHz);
 
         // ── SET TUNE TONE ──────────────────────────────────────────────────────
         // Cite: console.cs:30038-30040 [v2.10.3.13]:
@@ -30908,10 +30934,30 @@ void RadioModel::setTune(bool on)
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         }
 
-        // ── CW→LSB/USB DSP MODE SWAP ───────────────────────────────────────────
-        // Cite: console.cs:30043-30070 [v2.10.3.13]:
-        //   switch (old_dsp_mode) { case CWL: ... TXDSPMode = LSB; break;
-        //                            case CWU: ... TXDSPMode = USB; break; }
+        // ── CW→LSB/USB TX DSP MODE SWAP ────────────────────────────────────────
+        // D6 (R-CW-30): only the TX channel's mode changes; the slice stays
+        // in CW, so its receive shift, filter and mode are untouched.
+        // From Thetis console.cs:30107-30121 [v2.10.3.15]:
+        //   old_dsp_mode = radio.GetDSPTX(0).CurrentDSPMode;                // save current mode
+        //   switch (old_dsp_mode)
+        //   {
+        //       case DSPMode.CWL:
+        //           CWFWKeyer = false;
+        //           Audio.CurrentAudioState1 = Audio.AudioState.DTTSP;      // for CAT, apparently
+        //           Audio.TXDSPMode = DSPMode.LSB;                          // set a non-CW mode of the same sex
+        //           radio.GetDSPTX(0).CurrentDSPMode = DSPMode.LSB;         // do that here too
+        //           break;
+        //       case DSPMode.CWU:
+        //           CWFWKeyer = false;
+        //           Audio.CurrentAudioState1 = Audio.AudioState.DTTSP;
+        //           Audio.TXDSPMode = DSPMode.USB;
+        //           radio.GetDSPTX(0).CurrentDSPMode = DSPMode.USB;
+        //           break;
+        //   }
+        // CWFWKeyer = false: the keyer controller turns the radio's keyer
+        // off while tuneTxModeSwapped() holds (on Protocol 1 an enabled keyer
+        // replaces the I/Q samples with key bits, which would carry no
+        // tone), and MoxController stops treating the TX channel as CW.
         if (txSlice) {
             DSPMode swappedMode = m_savedTxDspMode;
             switch (m_savedTxDspMode) {
@@ -30925,7 +30971,10 @@ void RadioModel::setTune(bool on)
                     break;  // no swap for SSB/AM/FM/DIGU/DIGL/etc.
             }
             if (swappedMode != m_savedTxDspMode) {
-                txSlice->setDspMode(swappedMode);
+                m_tuneTxDspMode = swappedMode;
+                pushTxModeAndBandpass();
+                if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+                refreshCwKeyingForTuneMode();
                 if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             }
         }
@@ -32225,18 +32274,24 @@ void RadioModel::completeTuneOff()
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
     }
 
-    // ── RESTORE DSP MODE if swapped ────────────────────────────────────────
-    // Cite: console.cs:30112-30122 [v2.10.3.13]:
-    //   switch (old_dsp_mode) { case CWL: case CWU:
-    //       radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode; ... }
-    if (SliceModel* const savedTxSlice =
-            sliceById(m_savedTxDspSliceId)) {
-        const bool wasSwapped = (m_savedTxDspMode == DSPMode::CWL ||
-                                 m_savedTxDspMode == DSPMode::CWU);
-        if (wasSwapped) {
-            savedTxSlice->setDspMode(m_savedTxDspMode);
-            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
-        }
+    // ── RESTORE TX DSP MODE if swapped ─────────────────────────────────────
+    // D6: the TX channel goes back to the slice's CW mode; the slice never
+    // left it. From Thetis console.cs:30164-30172 [v2.10.3.15]:
+    //   switch (old_dsp_mode)                                           // restore old mode if it was changed
+    //   {
+    //       case DSPMode.CWL:
+    //       case DSPMode.CWU:
+    //           radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode;
+    //           Audio.TXDSPMode = old_dsp_mode;
+    //           CWFWKeyer = true;
+    //           break;
+    //   }
+    if (m_tuneTxDspMode) {
+        m_tuneTxDspMode.reset();
+        pushTxModeAndBandpass();
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+        refreshCwKeyingForTuneMode();
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
     }
     m_savedTxDspSliceId = -1;
 
@@ -32695,7 +32750,10 @@ void RadioModel::syncCwKeying()
     // The controller re-evaluated inside the setter above (a direct
     // connection), so this is the mode in effect now.
     const CwBreakInMode effective = m_cwKeyerController->effectiveBreakInMode();
-    m_moxController->setCwModeActive(inCw);
+    // D6: TUNE from CW runs the TX channel in LSB or USB, so MoxController
+    // treats it as a voice key; the slice (and QSK's memory and receive
+    // changes) stays CW.
+    m_moxController->setCwModeActive(inCw && !tuneTxModeSwapped());
     m_moxController->setCwBreakInMode(effective);
     applyCwQskSideEffects(inCw && effective == CwBreakInMode::Qsk);
 
@@ -32720,6 +32778,37 @@ void RadioModel::syncCwKeying()
     }
     m_cwLastEffective = effective;
     m_cwLastSelected = selected;
+}
+
+// D6 (R-CW-30): the TX channel's mode for the transmit slice: the slice's
+// own, except while TUNE from CW runs it in LSB or USB with the slice left
+// in CW (Thetis radio.GetDSPTX(0).CurrentDSPMode, console.cs:30107-30121
+// [v2.10.3.15]).
+DSPMode RadioModel::txChannelModeFor(const SliceModel* slice) const
+{
+    if (m_tuneTxDspMode && slice != nullptr && slice->sliceIndex() == m_savedTxDspSliceId) {
+        return *m_tuneTxDspMode;
+    }
+    return slice != nullptr ? slice->dspMode() : DSPMode::USB;
+}
+
+// D6: the TX channel's TUNE mode changed (tuneTxModeSwapped). MoxController
+// hears the TX channel's mode for its VOX gate (Thetis Audio.TXDSPMode,
+// cmaster.cs:1039-1052 [v2.10.3.13]); the keyer controller has no change
+// signal for it, so it is asked to re-evaluate (the radio's keyer off while
+// TUNE holds the TX channel out of CW), then MoxController hears whether the
+// TX channel is CW.
+void RadioModel::refreshCwKeyingForTuneMode()
+{
+    if (m_moxController) {
+        if (SliceModel* const bound = txBoundSlice()) {
+            m_moxController->onModeChanged(txChannelModeFor(bound));
+        }
+    }
+    if (m_cwKeyerController) {
+        m_cwKeyerController->reevaluate();
+    }
+    syncCwKeying();
 }
 
 QString RadioModel::cwQskSettingsPrefix() const

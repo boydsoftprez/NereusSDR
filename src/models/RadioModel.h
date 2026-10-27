@@ -777,6 +777,10 @@
 //   2026-10-26: CW transmit, the cwPitchHz comment says a pitch change
 //                recenters the CW filters keeping their width (R-CW-28).
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, TUNE in CW: tuneTxModeSwapped, the latched
+//                tune pitch and the TX channel's TUNE mode (R-CW-30, D6),
+//                tuneToneHzForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3814,9 +3818,18 @@ public:
     quint64 txFrequencyForSlice(const SliceModel* slice) const;
 
     /// The radio NCO and TX analyzer's baseband origin. During Tune this
-    /// subtracts the existing signed tone from dial+XIT, so the tone lands
-    /// on txFrequencyForSlice(). Other transmit modes keep dial+XIT.
+    /// subtracts the signed tune tone (plus or minus the CW pitch latched
+    /// at TUN-on, R-CW-30) from dial+XIT, so the tone lands on
+    /// txFrequencyForSlice(). Other transmit modes keep dial+XIT.
     quint64 txNcoFrequencyForSlice(const SliceModel* slice) const;
+
+    /// D6 (R-CW-30): TUNE started from CWL or CWU runs the TX channel in LSB
+    /// or USB while the slice stays in CW. True from that switch until the
+    /// TUN-off completion puts the TX channel's mode back. While it holds,
+    /// the radio's keyer is off and MoxController does not treat the TX
+    /// channel as CW (Thetis CWFWKeyer = false with the TX DSP mode
+    /// switched, console.cs:30107-30121 [v2.10.3.15]).
+    bool tuneTxModeSwapped() const noexcept { return m_tuneTxDspMode.has_value(); }
 
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
@@ -5400,6 +5413,9 @@ public:
         m_tgxlSettleFiredObserverForTest = std::move(observer);
     }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
+    // R-CW-30: the signed tune tone frequency in Hz the TUN-on set (0 when
+    // TUNE is off), as handed to TxChannel::setTuneTone.
+    double tuneToneHzForTest() const noexcept;
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
@@ -8822,6 +8838,14 @@ private:
     // Stable slice identity paired with m_savedTxDspMode. Listening focus
     // may move while the asynchronous TUN-off sequence is settling.
     int m_savedTxDspSliceId{-1};
+    // R-CW-30 (D7): the CW pitch the tune tone and its NCO compensation
+    // use, latched at TUN-on, so a pitch change during TUNE moves neither
+    // until the next TUNE.
+    int m_tunePitchHz{kCwPitchDefaultHz};
+    // D6: the TX channel's mode while TUNE from CW runs it in LSB or USB
+    // (the slice stays in CW); empty otherwise. pushTxModeAndBandpass sends
+    // it in place of the saved slice's mode.
+    std::optional<DSPMode> m_tuneTxDspMode;
     //
     // m_savedPowerPct: power slider value (0-100) before the tune-power push.
     //   Cite: Thetis console.cs:30033 [v2.10.3.13] — PreviousPWR = ptbPWR.Value.
@@ -9794,6 +9818,8 @@ private:
     // effects and the break-in fallback notice. Runs on every keyer state
     // change.
     void syncCwKeying();
+    void refreshCwKeyingForTuneMode();
+    DSPMode txChannelModeFor(const SliceModel* slice) const;
     // R-CW-21: QSK's changes to the transmit slice's receiver, and their
     // undoing (also at load, when a restart finds QSK no longer on).
     void applyCwQskSideEffects(bool qsk);
