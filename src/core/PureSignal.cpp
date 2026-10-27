@@ -16,6 +16,8 @@
 //                 setPsActive wire (console.cs:29612-29616 [v2.10.3.15]),
 //                 shared by RadioModel and the tests. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - Add braces to the Auto-cal resume condition. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -318,6 +320,14 @@ void PureSignal::bindSettingsSignals()
         if (!m_operationalSettingsApplied || !m_tx
             || m_settingsHydrationDepth > 0) return;
         if (!run || canActuate()) m_tx->setPSRunCal(run ? 1 : 0);
+        // Auto-cal turned on while processing was paused was refused by
+        // startAutomaticCalibration(); start it now the pause is lifted.
+        // Thetis has no such pause: AutoCalEnabled always reaches
+        // PSEnabled=true and PSRunCal=true (PSForm.cs:235-251, 272-289,
+        // 644-649 [v2.10.3.15]).
+        if (run && !m_autoON) {
+            resumeAutomaticCalibrationPreference();
+        }
     });
     connect(m_settings, &PureSignalSettings::autoAttenuateChanged,
             this, &PureSignal::autoAttenuateChanged);
