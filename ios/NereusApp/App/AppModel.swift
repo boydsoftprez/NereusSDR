@@ -958,6 +958,10 @@ final class AppModel: ObservableObject {
                     break
                 }
                 if case .message(let message) = event, !Self.waitsOnEveryConsumer(message) {
+                    if lanes.commands.pendingCount >= Self.eventLaneHighWaterMark
+                        || lanes.media.pendingCount >= Self.eventLaneHighWaterMark {
+                        await lanes.drain()
+                    }
                     self.handleAtOnce(message, event: event, from: next, owner: owner, lanes: lanes)
                 } else {
                     // Everything before it has reached the command client
@@ -1088,6 +1092,12 @@ final class AppModel: ObservableObject {
 
     // MARK: Events
 
+    /// The pump is the only lane producer. Below this mark one message
+    /// adds at most one command item and two media items (silence and the
+    /// event), so the pending counts stay at most 64 and 65 respectively.
+    /// Readings below the mark need no suspension to check admission.
+    private static let eventLaneHighWaterMark = 64
+
     /// The lanes stop handing over a session's messages once it is no
     /// longer the app's, as ``handle(_:from:owner:lanes:)`` skips them.
     private func eventLanesFollowSession() {
@@ -1125,7 +1135,7 @@ final class AppModel: ObservableObject {
     /// transmit state: the mirror, the settings and the records take it now,
     /// and the command client and media control get it through their lanes
     /// when they read it. Same order as ``handle(_:from:owner:lanes:)``,
-    /// with no wait between messages.
+    /// with no wait between messages below the lanes' high-water mark.
     private func handleAtOnce(_ message: LinkMessage, event: StationSession.Event, from expected: StationSession,
                               owner: UInt64, lanes: SessionEventLanes) {
         guard session === expected, mediaOwner == owner else { return }
