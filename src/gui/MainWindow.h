@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CWX applet's status label, showCwxApplet()
+//               and cwxRemoteSendReason(). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -2229,6 +2232,10 @@ private:
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
+    QLabel*                 m_statusCwxLabel{nullptr};
+    // CW transmit (R-CW-44): Tools > CWX, the status-bar label and ZZKO.
+    void showCwxApplet(bool shown);
+    static QString cwxRemoteSendReason();
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
     QPointer<class CatLogWindow> m_catLogWindow;

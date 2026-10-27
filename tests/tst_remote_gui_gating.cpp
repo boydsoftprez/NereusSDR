@@ -49,6 +49,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit, CWX built: the DSP > CW groups show in a
+//                 connected remote window (R-CW-46). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 //   2026-10-26 - CW transmit, the DSP > CW groups (break-in, sidetone, key
 //                input, options) and the sidetone row disabled, never
 //                hidden, on an HL2. J.J. Boyd (KG4VCF), AI-assisted via
@@ -3258,13 +3261,15 @@ private slots:
             const char* page;
             const char* what;
             std::function<bool(QWidget*)> shown;
+            // Built (CW transmit, R-CW-46): shown in both passes.
+            bool built{false};
         };
         QList<Check> checks{
-            {"CW", "keyer group", named("cwKeyerGroup")},
-            {"CW", "break-in group", named("cwBreakInGroup")},
-            {"CW", "sidetone group", named("cwSidetoneGroup")},
-            {"CW", "key input group", named("cwSerialGroup")},
-            {"CW", "options group", named("cwOptionsGroup")},
+            {"CW", "keyer group", named("cwKeyerGroup"), true},
+            {"CW", "break-in group", named("cwBreakInGroup"), true},
+            {"CW", "sidetone group", named("cwSidetoneGroup"), true},
+            {"CW", "key input group", named("cwSerialGroup"), true},
+            {"CW", "options group", named("cwOptionsGroup"), true},
             {"CW", "peak filter bandwidth", text("Bandwidth")},
             {"CW", "peak filter gain", text("Gain")},
             {"AM/SAM", "synchronous AM group", named("samGroup")},
@@ -3319,7 +3324,7 @@ private slots:
                 QWidget* const page = dialog.realizedPageForTest(label);
                 QVERIFY2(page != nullptr, check.page);
                 QVERIFY2(!dialog.isPagePlaceholderForTest(label), check.page);
-                if (check.shown(page) != allBuilt) {
+                if (check.shown(page) != (allBuilt || check.built)) {
                     wrong << QStringLiteral("%1: %2").arg(label, QString::fromLatin1(check.what));
                 }
             }

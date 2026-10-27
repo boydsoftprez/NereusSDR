@@ -17,6 +17,8 @@
 // 2026-10-26: CW transmit, CW keys now, so "CW transmit is not available on
 // this Core" is no longer shown by BandPlanGuard or TxApplet. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CWX applet and the CWX refusal words read in
+// user words. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, the CW page, the DSP > CW transmit groups and the
 // TX applet in CW are swept (Task 12). J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
@@ -54,6 +56,8 @@
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/UnbuiltFeatures.h"
+#include "core/CwxSender.h"
+#include "gui/applets/CwxApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxFilterSection.h"
@@ -903,6 +907,17 @@ private slots:
             QVERIFY(w);
             check(*w, 1);
         }
+
+        // The CWX applet (R-CW-44), with its send and settings greyed by
+        // the remote window's reasons too.
+        CwxApplet cwx(&model);
+        check(cwx, 12);
+        cwx.setSendPermitted(false, QStringLiteral("Sending CW from a remote window needs a newer Core."));
+        cwx.setCwxSettingsPermitted(false);
+        check(cwx, 12);
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNotCwText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNothingToSendText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxMemoryEmptyText).arg(5)));
     }
 
     // Lane B carry (R-R3-40, R-R3-08, R-R3-37): the NNR step-back wording

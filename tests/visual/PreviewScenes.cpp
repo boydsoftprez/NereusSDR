@@ -222,6 +222,13 @@
 //                 Panel's entries above the TX applet hidden, so the whole
 //                 applet shows. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - CW transmit: cw-digital shows the real CWX applet and its
+//                 CW page with no "not built" plate; cw-transmit--semi,
+//                 --qsk-unavailable, --refused and --hl2 (and their
+//                 classic- pairs) pose the CW page, CWX and the TX applet
+//                 in CW as the approved mockup's right strip does;
+//                 dialog-setup-cw--scrolled steps DSP > CW.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -232,6 +239,7 @@
 #include "PreviewScenes.h"
 
 #include <QAction>
+#include <QTextEdit>
 #include <QApplication>
 #include <QColorDialog>
 #include <QDateTime>
@@ -354,6 +362,8 @@
 #include "gui/TitleBar.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/applets/CwxApplet.h"
+#include "core/CwTypes.h"
+#include "models/CwKeyerController.h"
 #include "gui/applets/DigitalApplet.h"
 #include "gui/applets/DvkApplet.h"
 #include "gui/applets/EqApplet.h"
@@ -3058,7 +3068,6 @@ constexpr int kFullStripStableSteps = 6;
 // are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
 // markers with no model, network or device access, so the preview builds
 // them standalone as container content, tagged exists-not-wired.
-constexpr auto kPreviewCwxType = "preview.cwx";
 constexpr auto kPreviewDvkType = "preview.dvk";
 constexpr auto kPreviewDigitalType = "preview.digital";
 constexpr auto kPreviewEqType = "preview.eq";
@@ -3113,8 +3122,6 @@ bool registerPreviewApplets(SceneContext& ctx)
                 return w;
             });
     };
-    add(kPreviewCwxType, QStringLiteral("CWX (not wired)"),
-        [](RadioModel* m, QWidget* p) -> QWidget* { return new CwxApplet(m, p); });
     add(kPreviewDvkType, QStringLiteral("DVK (not wired)"),
         [](RadioModel* m, QWidget* p) -> QWidget* { return new DvkApplet(m, p); });
     add(kPreviewDigitalType, QStringLiteral("Digital (not wired)"),
@@ -3122,8 +3129,9 @@ bool registerPreviewApplets(SceneContext& ctx)
     add(kPreviewEqType, QStringLiteral("EQ (not wired)"),
         [](RadioModel* m, QWidget* p) -> QWidget* { return new EqApplet(m, p); });
     ctx.notes.append(QStringLiteral(
-        "CwxApplet, DvkApplet, DigitalApplet and EqApplet: constructed standalone through preview "
-        "widget factories (MainWindow leaves them commented out); exists-not-wired"));
+        "DvkApplet, DigitalApplet and EqApplet: constructed standalone through preview "
+        "widget factories (MainWindow leaves them commented out); exists-not-wired. "
+        "The CWX applet is MainWindow's own (applet:cwx)"));
     return true;
 }
 
@@ -3357,11 +3365,11 @@ void sceneCwDigital(SceneContext& ctx)
         }
         if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
                 placeMain(d, DockEdge::Left);
-                takeFromMain(d, {QStringLiteral("applet:PHCW")});
+                takeFromMain(d, {QStringLiteral("applet:PHCW"), QStringLiteral("applet:cwx")});
                 d.containers.append(makeSceneContainer(
                     m, QStringLiteral("CW and Digital"), DockEdge::Right, ContentLayout::VerticalStack,
                     {{QStringLiteral("applet:PHCW"), {}},
-                     {QString::fromLatin1(kPreviewCwxType), {}},
+                     {QStringLiteral("applet:cwx"), {}},
                      {QString::fromLatin1(kPreviewDvkType), {}},
                      {QString::fromLatin1(kPreviewDigitalType), {}}}));
             })) {
@@ -3378,39 +3386,6 @@ void sceneCwDigital(SceneContext& ctx)
         // The Phone page's mic profile list reads MicProfileManager, as the
         // TX applet's profile selector does in tx-processing.
         txProfileSeed = seedTxProfiles(c);
-    }, [](SceneContext& c) {
-        // The CW page is not built in this build: showPage(1) falls back to
-        // the Phone page, so a plate says so above the applet's first row,
-        // in the applet's own layout, where it covers no control.
-        if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
-            return;
-        }
-        auto* phcw = c.window->findChild<PhoneCwApplet*>();
-        auto* root = qobject_cast<QBoxLayout*>(phcw->layout());
-        if (root == nullptr) {
-            c.failure = QStringLiteral("the Phone / CW applet has no box layout for the plate");
-            return;
-        }
-        QLabel* plate = addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
-                                               QStringLiteral("CW page: not built yet in NereusSDR"),
-                                               QStringLiteral("the Phone / CW applet's CW page is gated by "
-                                                              "UnbuiltFeature::Cwx; showPage(1) shows the "
-                                                              "Phone page"),
-                                               false);
-        auto* holder = new QWidget(phcw);
-        auto* box = new QVBoxLayout(holder);
-        box->setContentsMargins(kPlateGapPx, kPlateGapPx, kPlateGapPx, kPlateGapPx);
-        plate->setParent(holder);
-        plate->setMinimumWidth(0);
-        plate->setMaximumWidth(QWIDGETSIZE_MAX);
-        box->addWidget(plate);
-        root->insertWidget(0, holder);
-        plate->show();
-        holder->show();
-        pump(kFinalSettleMs);
-        c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
-                                      "its Phone page and a not-implemented plate sits above its first row, "
-                                      "in its own layout"));
     });
     if (!ctx.failure.isEmpty()) {
         return;
@@ -4535,6 +4510,147 @@ RadioInfo sampleRadio(const QString& name, const QString& mac, const QString& ip
     info.adcCount = RadioInfo::adcCountForBoard(board);
     info.maxReceivers = RadioInfo::maxReceiversForBoard(board);
     return info;
+}
+
+// ---- CW transmit (R-CW-44) ------------------------------------------------
+//
+// cw-transmit--<pose>: one pan, slice A 14.030 CWU 400..900 (pose c), and
+// the approved mockup's right strip, Phone / CW on its CW page above CWX
+// and the TX applet. classic-cw-transmit--<pose> is the same state with the
+// workspace look off: the classic panel, CWX shown through Tools > CWX.
+// Nothing connects or keys: the radio is posed with
+// RadioModel::setLastRadioInfoForTest (and setBoardForTest for the HL2),
+// which is what CwKeyerController reads for QSK.
+enum class CwTransmitPose { Semi, QskUnavailable, Refused, Hl2 };
+
+QString cwTransmitPoseName(CwTransmitPose pose)
+{
+    switch (pose) {
+    case CwTransmitPose::Semi: return QStringLiteral("semi");
+    case CwTransmitPose::QskUnavailable: return QStringLiteral("qsk-unavailable");
+    case CwTransmitPose::Refused: return QStringLiteral("refused");
+    case CwTransmitPose::Hl2: return QStringLiteral("hl2");
+    }
+    return QString();
+}
+
+void sceneCwTransmit(SceneContext& ctx, CwTransmitPose pose, bool look)
+{
+    ctx.provenance = provProposed();
+    const QString name = (look ? QString() : QStringLiteral("classic-"))
+        + QStringLiteral("cw-transmit--") + cwTransmitPoseName(pose);
+    PanPose a = fourRxPoses().at(2);
+    a.panId = panIdAt(0);
+    a.spectrum.panId = a.panId;
+    if (pose == CwTransmitPose::Refused) {
+        // Just above the top of 20 m: out of band, so the keyer refuses.
+        a.sliceHz = 14'352'000.0;
+    }
+    runWindowScene(ctx, {a}, 0, [pose, look](SceneContext& c) {
+        if (look) {
+            if (!registerPreviewApplets(c)) {
+                return;
+            }
+            if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
+                    placeMain(d, DockEdge::Left);
+                    takeFromMain(d, {QStringLiteral("applet:PHCW"), QStringLiteral("applet:cwx"),
+                                     QStringLiteral("applet:TX")});
+                    ContainerDocument strip = makeSceneContainer(
+                        m, QStringLiteral("CW"), DockEdge::Right, ContentLayout::VerticalStack,
+                        {{QStringLiteral("applet:PHCW"), {}},
+                         {QStringLiteral("applet:cwx"), {}},
+                         {QStringLiteral("applet:TX"), {}}});
+                    for (ContentEntry& e : strip.contents) {
+                        e.visible = true;
+                    }
+                    d.containers.append(strip);
+                })) {
+                return;
+            }
+        } else {
+            auto* show = c.window->findChild<QAction*>(QStringLiteral("cwxAction"));
+            if (show == nullptr || !show->isEnabled()) {
+                c.failure = QStringLiteral("no usable Tools > CWX action");
+                return;
+            }
+            show->trigger();
+        }
+        RadioInfo info = pose == CwTransmitPose::QskUnavailable
+            ? sampleRadio(QStringLiteral("Hermes"), QStringLiteral("00:1C:C0:4E:21:0B"),
+                          QStringLiteral("192.168.1.21"), HPSDRHW::Hermes, ProtocolVersion::Protocol1, 32)
+            : pose == CwTransmitPose::Hl2
+            ? sampleRadio(QStringLiteral("Hermes Lite 2"), QStringLiteral("00:1C:C0:4E:21:0C"),
+                          QStringLiteral("192.168.1.22"), HPSDRHW::HermesLite, ProtocolVersion::Protocol1, 73)
+            : sampleRadio(QStringLiteral("ANAN-7000DLE"), QStringLiteral("00:1C:C0:4E:21:0D"),
+                          QStringLiteral("192.168.1.23"), HPSDRHW::OrionMKII, ProtocolVersion::Protocol2, 22);
+        if (pose == CwTransmitPose::Hl2) {
+            c.model->setBoardForTest(HPSDRHW::HermesLite);
+        }
+        c.model->setLastRadioInfoForTest(info);
+        // QSK asked for where the radio cannot do it, so the page says why;
+        // Semi otherwise. Set twice so the keyer re-reads the posed radio.
+        const bool askQsk = pose == CwTransmitPose::QskUnavailable || pose == CwTransmitPose::Hl2;
+        TransmitModel& tx = c.model->transmitModel();
+        tx.setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
+        tx.setCwBreakInMode(static_cast<int>(askQsk ? CwBreakInMode::Qsk : CwBreakInMode::Semi));
+        auto* phcw = c.window->findChild<PhoneCwApplet*>();
+        auto* cwx = c.window->findChild<CwxApplet*>();
+        if (phcw == nullptr || cwx == nullptr) {
+            c.failure = QStringLiteral("no PhoneCwApplet or CwxApplet");
+            return;
+        }
+        phcw->showPage(1);
+        if (auto* text = cwx->findChild<QTextEdit*>(QStringLiteral("cwxText"))) {
+            text->setPlainText(QStringLiteral("CQ CQ DE KG4VCF KG4VCF K"));
+        }
+        CwKeyerController* keyer = c.model->cwKeyerController();
+        c.notes.append(QStringLiteral("%1; radio posed as %2 (RadioModel::setLastRadioInfoForTest%3); "
+                                      "break-in asked %4; keyer %5%6")
+                           .arg(look ? QStringLiteral("right strip Phone / CW (CW page), CWX, TX")
+                                     : QStringLiteral("classic panel, CWX shown through Tools > CWX"),
+                                info.name,
+                                pose == CwTransmitPose::Hl2 ? QStringLiteral(" and setBoardForTest") : QString(),
+                                askQsk ? QStringLiteral("QSK") : QStringLiteral("Semi"),
+                                keyer && keyer->keyerAllowed() ? QStringLiteral("allowed")
+                                                               : QStringLiteral("refused"),
+                                keyer && !keyer->keyerAllowed()
+                                    ? QStringLiteral(": ") + keyer->refusal().text : QString()));
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    if (auto* vox = ctx.window->findChild<QPushButton*>(QStringLiteral("TxVoxButton"))) {
+        ctx.notes.append(QStringLiteral("TX applet VOX %1: \"%2\"")
+                             .arg(vox->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"),
+                                  vox->toolTip()));
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, name);
+    if (look) {
+        captureStripsFull(ctx, name);
+    } else {
+        // The classic panel scrolls, so its three applets are grabbed whole
+        // as details of their own as well.
+        const QList<QPair<QString, QWidget*>> applets{
+            {QStringLiteral("phone-cw"), ctx.window->findChild<PhoneCwApplet*>()},
+            {QStringLiteral("cwx"), ctx.window->findChild<CwxApplet*>()},
+            {QStringLiteral("tx"), ctx.window->findChild<TxApplet*>()}};
+        for (const auto& [stem, widget] : applets) {
+            if (widget == nullptr) {
+                continue;
+            }
+            CapturedImage img;
+            img.name = name + QStringLiteral("--") + stem;
+            img.kind = QStringLiteral("detail");
+            img.image = grabWidget(widget);
+            img.logicalSize = widget->size();
+            img.dpr = img.image.devicePixelRatio();
+            img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(widget->metaObject()->className());
+            attachRegions(img, widget);
+            ctx.images.append(img);
+        }
+    }
+    annotateSlices(ctx);
 }
 
 QList<ConnectionTargetRow> sampleConnectionRows()
@@ -8337,6 +8453,14 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneCleanSpectrum(ctx); }, true});
     scenes.append({QStringLiteral("cw-digital"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneCwDigital(ctx); }, true});
+    for (CwTransmitPose pose : {CwTransmitPose::Semi, CwTransmitPose::QskUnavailable,
+                                CwTransmitPose::Refused, CwTransmitPose::Hl2}) {
+        const QString stem = QStringLiteral("cw-transmit--") + cwTransmitPoseName(pose);
+        scenes.append({stem, QStringLiteral("1"), false,
+                       [pose](SceneContext& ctx) { sceneCwTransmit(ctx, pose, true); }, true});
+        scenes.append({QStringLiteral("classic-") + stem, QStringLiteral("1"), false,
+                       [pose](SceneContext& ctx) { sceneCwTransmit(ctx, pose, false); }, false});
+    }
     scenes.append({QStringLiteral("tx-processing"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneTxProcessing(ctx); }, true});
     scenes.append({QStringLiteral("edit-add-content"), QStringLiteral("2v"), false,
@@ -8742,6 +8866,8 @@ QVector<SetupScrollSpec> setupScrollSpecs()
         {hardware, {hl2Oc}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
         {QStringLiteral("nr-anf"), {QStringLiteral("NNR")}},
+        // CW transmit: DSP > CW's five groups run past the dialog.
+        {QStringLiteral("cw"), {}},
     };
 }
 

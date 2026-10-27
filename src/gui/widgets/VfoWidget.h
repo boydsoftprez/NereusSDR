@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - CW transmit, mode() for the pan's CW passband origin
+//                 (R-CW-24). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21 - setFilterFromDrag, the pan's filter edge drag on this
 //                 flag's slice. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code (Claude Opus 5.5).
@@ -512,6 +514,9 @@ public:
     /// second flag disappears when not active."
     int filterLow()  const { return m_filterLowHz; }
     int filterHigh() const { return m_filterHighHz; }
+    /// R-CW-24: this flag's slice mode (setMode), for the pan's CW
+    /// passband origin.
+    DSPMode mode() const { return m_currentMode; }
 
     // --- RIT/XIT state setters (S1.8a — guarded against re-emit) ---
     void setRitEnabled(bool v);

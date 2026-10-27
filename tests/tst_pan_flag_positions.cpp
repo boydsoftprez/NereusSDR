@@ -44,6 +44,12 @@
 // rule, picked by JJ 2026-09-23). The colours are part of
 // sliceMarkerGeometry(), so they are pinned here with the rest of the
 // marker decision.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, a CW flag's passband is drawn from its dial
+//               plus the CW receive shift; its centre stays on the dial
+//               (R-CW-24, R-CW-45). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -649,8 +655,10 @@ private slots:
         QVERIFY(flagB);
         flagA->setFrequency(kSliceAHz);
         flagA->setFilter(kUsbLowHz, kUsbHighHz);
+        flagB->setMode(DSPMode::CWU);
         flagB->setFrequency(kSliceBHz);
         flagB->setFilter(kCwLowHz, kCwHighHz);
+        w.setCwPitchHz(600);
 
         // Pan-level state parked on A, the state that used to be the only
         // passband drawn.
@@ -661,10 +669,14 @@ private slots:
         QCOMPARE(geo.size(), 2);
 
         QCOMPARE(geo[0].centreHz, kSliceAHz);
+        QCOMPARE(geo[0].originHz, kSliceAHz);
         QCOMPARE(geo[0].filterLowHz, kUsbLowHz);
         QCOMPARE(geo[0].filterHighHz, kUsbHighHz);
 
+        // R-CW-24: the CWU slice's line stays on its dial, its passband is
+        // drawn one pitch below it.
         QCOMPARE(geo[1].centreHz, kSliceBHz);
+        QCOMPARE(geo[1].originHz, kSliceBHz - 600.0);
         QCOMPARE(geo[1].filterLowHz, kCwLowHz);
         QCOMPARE(geo[1].filterHighHz, kCwHighHz);
     }

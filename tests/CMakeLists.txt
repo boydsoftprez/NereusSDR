@@ -1056,6 +1056,14 @@ nereus_add_test(tst_cw_keyer_controller)
 # connection; nothing keys the radio.
 nereus_add_test(tst_cw_page)
 
+# CW transmit Task 13 (R-CW-44): the CWX applet on the CWX sender, and Tools >
+# CWX, the status label and CAT ZZKO in the window.
+nereus_add_test(tst_cwx_applet)
+
+# CW transmit Task 13 (R-CW-24, R-CW-45): passbands drawn from the passband
+# origin, the dial plus the CW receive shift.
+nereus_add_test(tst_passband_origin_drawing)
+
 # CW transmit Task 8 (R-CW-15, R-CW-31 to R-CW-33): the CWX sender's element
 # timing with an injected clock, its key line writes, the HL2 CWX PTT, the
 # Key watchdog, repeat and refusals; RadioModel's request gate, aborts and

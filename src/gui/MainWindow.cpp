@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CWX applet constructed and registered
+//               (Tools > CWX, the status-bar CWX label, CAT ZZKO's applet
+//               host, R-CW-44), the CW passband drawn from the CW pitch
+//               (R-CW-24, R-CW-45) and CWX built (R-CW-46). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the CW page and Setup > DSP > CW follow the
 //               remote window's CW settings gate (transmitSettingsVersion
 //               16, R-CW-03, R-CW-41, R-CW-43). J.J. Boyd (KG4VCF),
@@ -1307,6 +1312,7 @@ warren@wpratt.com
 #include "applets/ModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
+#include "core/CwxSender.h"
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
 #include "core/cat/CatService.h"
@@ -1403,6 +1409,7 @@ warren@wpratt.com
 #include <QMessageBox>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QScrollArea>
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
 #include <QPushButton>
@@ -2783,6 +2790,17 @@ void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry&
     }
 }
 
+// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
+// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
+// says; every other applet keeps its first-launch state.
+ContentEntry firstLaunchEntry(ContentEntry entry)
+{
+    if (entry.typeId == QLatin1String("applet:cwx")) {
+        entry.visible = false;
+    }
+    return entry;
+}
+
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
                                          StationClient* client)
 {
@@ -3586,6 +3604,7 @@ void MainWindow::refreshForeignMarkers()
             marker.centreHz = slice->frequency();
             marker.filterLowHz = slice->filterLow();
             marker.filterHighHz = slice->filterHigh();
+            marker.passbandOffsetHz = slice->cwShiftHz();  // R-CW-24
             marker.color = VfoWidget::sliceColor(marker.sliceId);
             marker.letter = slice->sliceLetter();
             if (const auto words = server->connectedDevices()->describe(subject)) {
@@ -3602,7 +3621,8 @@ void MainWindow::refreshForeignMarkers()
         // A marker for a slice the station device holds names no device;
         // its access entry says so, and the hosting desktop is named.
         markers = MultiDeviceController::foreignMarkers(*m_stationClient->remoteDevices(),
-                                                        m_stationClient->sliceAccess());
+                                                        m_stationClient->sliceAccess(),
+                                                        m_radioModel->cwPitchHz());
     }
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         if (applet && applet->spectrumWidget()) {
@@ -6814,6 +6834,14 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     });
     refreshForeignMarkers();
 
+    // R-CW-24: the pan draws a CW passband one pitch off the dial; it holds
+    // the station pitch so no drawer reads settings per frame.
+    sw->setCwPitchHz(m_radioModel->cwPitchHz());
+    connect(m_radioModel, &RadioModel::cwPitchChanged, sw, [this, sw](int hz) {
+        sw->setCwPitchHz(hz);
+        refreshForeignMarkers();
+    });
+
     configureSpectrumForPanForTest(sw, panId);
 
     // Rotor control plan Task 8: Turn beam on this pan's spot menu, and
@@ -9009,7 +9037,8 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                placeFirstLaunchApplet(c.contents, contentRegistry->makeEntry(descriptor.typeId));
+                placeFirstLaunchApplet(c.contents,
+                                       firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -10830,7 +10859,7 @@ void MainWindow::resetDefaultLayout()
                 for (int i=0;i<retained.size();++i) {
                     if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
                 }
-                if (!found) { entry=registry->makeEntry(descriptor.typeId); }
+                if (!found) { entry=firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
                 if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
                 placeFirstLaunchApplet(main.contents, entry);
             }
@@ -11334,6 +11363,18 @@ void MainWindow::populateDefaultMeter()
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
+    // CW transmit (R-CW-44): the CWX applet, on RadioModel's CWX sender.
+    // A refused request says why in a toast.
+    m_cwxApplet = new CwxApplet(m_radioModel, nullptr);
+    panel->addApplet(m_cwxApplet);
+    connect(m_cwxApplet, &CwxApplet::requestRefused, this, [this](const QString& words) {
+        showToast(words, ToastSeverity::Warning, 4000);
+    });
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        // The Core's sender is not reachable from a remote window yet.
+        m_cwxApplet->setSendPermitted(false, cwxRemoteSendReason());
+    }
+
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
     // Visibility is now managed by AppletVisibilityController below
     // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
@@ -11606,6 +11647,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
+    m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -11660,6 +11702,16 @@ void MainWindow::populateDefaultMeter()
     m_appletVis->registerApplet(QStringLiteral("Rotor"),
                                 QStringLiteral("Rotor"),        true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
+    // CWX: placed hidden, as Thetis's CWX form is closed until opened, so
+    // no other screen changes; Tools > CWX, the status-bar CWX label and
+    // CAT ZZKO show or hide it.
+    m_appletVis->registerApplet(QStringLiteral("Cwx"), QStringLiteral("CWX"), false);
+    // CAT ZZKO (R-CW-34) reads and sets whether the applet shows.
+    m_radioModel->setCwxAppletHost(
+        [this]() { return m_appletVis && m_appletVis->isVisible(QStringLiteral("Cwx")); },
+        [this](bool shown) {
+            if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Cwx"), shown); }
+        });
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
@@ -11785,7 +11837,7 @@ void MainWindow::populateDefaultMeter()
     //
     // m_digitalApplet    = new DigitalApplet(m_radioModel, nullptr);    // TODO 3-VAX
     // m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);  // TODO 3F (multi-RX)
-    // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
+    // CwxApplet: constructed with the CAT applet above (CW transmit, R-CW-44).
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
     // CAT is registered with the live applet host above.
 
@@ -13095,8 +13147,12 @@ void MainWindow::buildMenuBar()
 
     {
         QAction* cwxAction = toolsMenu->addAction(QStringLiteral("C&WX..."));
+        cwxAction->setObjectName(QStringLiteral("cwxAction"));
         cwxAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_X));
-        cwxAction->setEnabled(false);
+        cwxAction->setToolTip(QStringLiteral("Show the CWX applet"));
+        // CW transmit (R-CW-44): shows the CWX applet, as Thetis's Tools >
+        // CWX opens its form.
+        connect(cwxAction, &QAction::triggered, this, [this]() { showCwxApplet(true); });
         // R-R3-49: hidden until CWX is built.
         UnbuiltFeatures::hideUnlessBuilt(cwxAction, UnbuiltFeature::Cwx);
     }
@@ -13590,9 +13646,20 @@ void MainWindow::buildStatusBar()
     auto* cwxLabel = new QLabel(QStringLiteral("CWX"), barWidget);
     cwxLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
-    cwxLabel->setToolTip(QStringLiteral("CW keyer"));
+    cwxLabel->setToolTip(QStringLiteral("CWX: click to show or hide the CWX applet"));
     cwxLabel->setCursor(Qt::PointingHandCursor);
     cwxLabel->setObjectName(QStringLiteral("statusCwxLabel"));
+    // CW transmit (R-CW-44): a click shows or hides the CWX applet; the
+    // label lights while CWX sends.
+    cwxLabel->installEventFilter(this);
+    m_statusCwxLabel = cwxLabel;
+    if (CwxSender* cwx = m_radioModel ? m_radioModel->cwxSender() : nullptr) {
+        connect(cwx, &CwxSender::sendingChanged, cwxLabel, [cwxLabel](bool sending) {
+            cwxLabel->setStyleSheet(sending
+                ? QStringLiteral("QLabel { color: #00ff88; font-weight: bold; font-size: 11px; }")
+                : QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
+        });
+    }
 
     // DVK
     auto* dvkLabel = new QLabel(QStringLiteral("DVK"), barWidget);
@@ -16605,6 +16672,37 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     restackToasts();
 }
 
+// CW transmit (R-CW-44): shows or hides the CWX applet, where the operator
+// can reach its header when shown.
+void MainWindow::showCwxApplet(bool shown)
+{
+    if (m_appletVis == nullptr) { return; }
+    m_appletVis->setVisible(QStringLiteral("Cwx"), shown);
+    if (shown && m_containerManager) {
+        m_containerManager->bringAppletOnScreen(
+            ContainerContentRegistry::appletTypeForVisibilityId(QStringLiteral("Cwx")));
+    }
+    // A panel that scrolls (the classic applet panel) scrolls it into view
+    // once the layout has placed it.
+    if (shown && m_cwxApplet != nullptr) {
+        QPointer<QWidget> applet(m_cwxApplet);
+        QTimer::singleShot(0, this, [applet]() {
+            if (applet.isNull()) { return; }
+            for (QWidget* w = applet->parentWidget(); w != nullptr; w = w->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(w)) {
+                    area->ensureWidgetVisible(applet, 0, 0);
+                    return;
+                }
+            }
+        });
+    }
+}
+
+QString MainWindow::cwxRemoteSendReason()
+{
+    return QStringLiteral("Sending CW from a remote window needs a newer Core.");
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
@@ -16648,6 +16746,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // The indicator is a QWidget (not a QLabel) so we match by pointer identity.
     if (event->type() == QEvent::MouseButtonPress) {
         if (watched == m_catIndicator) { openCatSetupPage(); return true; }
+        if (watched == m_statusCwxLabel && m_appletVis) {
+            showCwxApplet(!m_appletVis->isVisible(QStringLiteral("Cwx")));
+            return true;
+        }
         if (watched == m_tciIndicator) {
             openTciSetupPage();
             return true;  // event consumed
@@ -17965,6 +18067,12 @@ void MainWindow::applyRemoteRoleGating()
         // transmitSettingsVersion 16.
         m_phoneCwApplet->setCwSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
                                                 settingsReasonAt(kTransmitSettingsCwVersion));
+    }
+    // CW transmit (R-CW-44): CWX's speed, repeat and memories are the same
+    // version-16 settings.
+    if (m_cwxApplet) {
+        m_cwxApplet->setCwxSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
+                                             settingsReasonAt(kTransmitSettingsCwVersion));
     }
     // R-R3-44: the VAX applet's TX row (VAX as the microphone).
     if (m_vaxApplet) {

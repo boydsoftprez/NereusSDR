@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, every passband drawer (the pan's passband
+//                 and filter edges, peak blobs, the passband peak, the
+//                 waterfall band, the 3D shadow bands, own, other and
+//                 foreign slice markers) and the filter-edge grab draw from
+//                 the passband origin, the dial plus the CW receive shift
+//                 (R-CW-24, R-CW-45). The VFO line and TX marker stay on
+//                 the dial. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
 //                 remote pan's warm-up holds for an NSDC v2 frame whose
 //                 trace was carried (traceCarried) and keeps the start's
@@ -3790,6 +3797,38 @@ void SpectrumWidget::setTxSampleRate(double hz)
     }
 }
 
+// R-CW-24: SliceModel::cwShiftHz() for `mode`: CWU listens one pitch below
+// the dial, CWL one above, so the baseband filter (centered on the pitch)
+// is drawn around the dial, the carrier.
+double SpectrumWidget::cwPassbandOffsetHz(DSPMode mode, int pitchHz)
+{
+    if (mode == DSPMode::CWU) {
+        return -static_cast<double>(pitchHz);
+    }
+    if (mode == DSPMode::CWL) {
+        return static_cast<double>(pitchHz);
+    }
+    return 0.0;
+}
+
+double SpectrumWidget::ownPassbandOriginHz() const
+{
+    return m_vfoHz + cwPassbandOffsetHz(m_txMode, m_cwPitchHz);
+}
+
+void SpectrumWidget::setCwPitchHz(int hz)
+{
+    if (hz == m_cwPitchHz) {
+        return;
+    }
+    m_cwPitchHz = hz;
+#ifdef NEREUS_GPU_SPECTRUM
+    markOverlayDirty();
+#else
+    update();
+#endif
+}
+
 void SpectrumWidget::setFilterOffset(int lowHz, int highHz)
 {
     m_filterLowHz = lowHz;
@@ -6900,7 +6939,7 @@ void SpectrumWidget::updateReducedSpectrumOverlays()
         if (m_peakBlobs.insideOnly() && m_bandwidthHz > 0.0) {
             std::tie(filterLowPx, filterHighPx) = passbandPixels(
                 n, m_centerHz, m_bandwidthHz,
-                m_vfoHz + m_filterLowHz, m_vfoHz + m_filterHighHz);
+                ownPassbandOriginHz() + m_filterLowHz, ownPassbandOriginHz() + m_filterHighHz);
         }
         m_peakBlobs.update(m_renderedPixels, filterLowPx, filterHighPx);
     }
@@ -7396,7 +7435,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
 // render and pushes the value into WdspEngine's MaxBin detector so the
 // analog S-meter reads what's visible on the spectrum.
 //
-// Hz range: [m_vfoHz + m_filterLowHz, m_vfoHz + m_filterHighHz]. For LSB
+// Hz range: [origin + m_filterLowHz, origin + m_filterHighHz], the origin
+// being m_vfoHz plus the CW receive shift in CW (R-CW-24). For LSB
 // the filter range is negative so the passband is below the VFO; for USB
 // positive so the passband is above. Either way the absolute Hz bounds
 // land inside the visible window when the operator is parked on a signal
@@ -7409,8 +7449,9 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
 // return -400 sentinel.
 double SpectrumWidget::peakDbmInSlicePassband() const
 {
-    return peakDbmInPassband(m_vfoHz + static_cast<double>(m_filterLowHz),
-                             m_vfoHz + static_cast<double>(m_filterHighHz));
+    const double origin = ownPassbandOriginHz();
+    return peakDbmInPassband(origin + static_cast<double>(m_filterLowHz),
+                             origin + static_cast<double>(m_filterHighHz));
 }
 
 double SpectrumWidget::peakDbmInPassband(double loHz, double hiHz) const
@@ -8443,10 +8484,11 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
 #endif
 
     // RX filter passband as a translucent vertical band spanning the
-    // waterfall height. Uses m_vfoHz + m_filterLowHz/m_filterHighHz.
+    // waterfall height. Uses the passband origin (m_vfoHz plus the CW
+    // receive shift, R-CW-24) + m_filterLowHz/m_filterHighHz.
     if (m_showRxFilterOnWaterfall && m_vfoHz > 0.0) {
-        const double loHz = m_vfoHz + m_filterLowHz;
-        const double hiHz = m_vfoHz + m_filterHighHz;
+        const double loHz = ownPassbandOriginHz() + m_filterLowHz;
+        const double hiHz = ownPassbandOriginHz() + m_filterHighHz;
         const int x1 = hzToX(loHz, wfRect);
         const int x2 = hzToX(hiHz, wfRect);
         if (x2 > x1) {
@@ -10528,8 +10570,8 @@ QVector<SpectrumWidget::DssShadowBand> SpectrumWidget::buildDssShadowBands() con
         if (out.size() >= kDssShadowSlices) {
             break;
         }
-        float low  = unitForHz(g.centreHz + g.filterLowHz);
-        float high = unitForHz(g.centreHz + g.filterHighHz);
+        float low  = unitForHz(g.originHz + g.filterLowHz);
+        float high = unitForHz(g.originHz + g.filterHighHz);
         if (low > high) {
             std::swap(low, high);
         }
@@ -11036,7 +11078,7 @@ SpectrumWidget::sliceMarkerGeometry() const
 {
     // [original inline comment from src/gui/SpectrumWidget.cpp:17450 [@9f81dc00]]
     // Draw inactive slices first, then active slice on top
-    const auto marker = [](double centreHz, int lowHz, int highHz,
+    const auto marker = [](double centreHz, double originHz, int lowHz, int highHz,
                            const VfoWidget* flag, int sliceIndex, bool active) {
         const QColor lineColor = active ? VfoWidget::sliceColor(sliceIndex)
                                         : VfoWidget::sliceDimColor(sliceIndex);
@@ -11052,7 +11094,7 @@ SpectrumWidget::sliceMarkerGeometry() const
         const QColor edgeColor = active ? VfoWidget::sliceColor(sliceIndex)
                                         : QColor(Style::kTextSecondary);
         return SliceMarkerGeometry{centreHz, lowHz, highHz, flag,
-                                   sliceIndex, active, lineColor, edgeColor};
+                                   sliceIndex, active, lineColor, edgeColor, originHz};
     };
 
     QVector<SliceMarkerGeometry> out;
@@ -11061,7 +11103,7 @@ SpectrumWidget::sliceMarkerGeometry() const
         if (m_ownSliceMarkerPresentationAllowed && m_vfoHz > 0.0) {
             // No flag to say which slice this is. Slice A, selected, is the
             // cyan this marker has always been drawn in.
-            out.append(marker(m_vfoHz, m_filterLowHz, m_filterHighHz,
+            out.append(marker(m_vfoHz, ownPassbandOriginHz(), m_filterLowHz, m_filterHighHz,
                               nullptr, 0, true));
         }
         return out;
@@ -11078,7 +11120,10 @@ SpectrumWidget::sliceMarkerGeometry() const
         if (!flag || !flag->stationPresentationAllowed() || flag->frequency() <= 0.0) {
             continue;
         }
-        const SliceMarkerGeometry g = marker(flag->frequency(), flag->filterLow(),
+        // R-CW-24: each flag's own mode decides its CW shift.
+        const double origin = flag->frequency()
+            + cwPassbandOffsetHz(flag->mode(), m_cwPitchHz);
+        const SliceMarkerGeometry g = marker(flag->frequency(), origin, flag->filterLow(),
                                              flag->filterHigh(), flag,
                                              flag->sliceIndex(),
                                              flag->isActiveSlice());
@@ -11175,8 +11220,9 @@ void SpectrumWidget::drawForeignMarkers(QPainter& p, const QRect& specRect, cons
             continue;
         }
         const int x = hzToX(m.centreHz, specRect);
-        int xLo = hzToX(m.centreHz + m.filterLowHz, specRect);
-        int xHi = hzToX(m.centreHz + m.filterHighHz, specRect);
+        const double origin = m.centreHz + m.passbandOffsetHz;  // R-CW-24
+        int xLo = hzToX(origin + m.filterLowHz, specRect);
+        int xHi = hzToX(origin + m.filterHighHz, specRect);
         if (xLo > xHi) {
             std::swap(xLo, xHi);
         }
@@ -11243,9 +11289,10 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
 {
     int vfoX = hzToX(g.centreHz, specRect);
 
-    // Filter passband rectangle
-    double loHz = g.centreHz + g.filterLowHz;
-    double hiHz = g.centreHz + g.filterHighHz;
+    // Filter passband rectangle, from the passband origin (R-CW-24); the
+    // VFO line stays on the dial.
+    double loHz = g.originHz + g.filterLowHz;
+    double hiHz = g.originHz + g.filterHighHz;
     int xLo = hzToX(loHz, specRect);
     int xHi = hzToX(hiHz, specRect);
     if (xLo > xHi) {
@@ -13291,8 +13338,8 @@ SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
     for (int i = markers.size() - 1; i >= 0; --i) {
         const SliceMarkerGeometry& g = markers[i];
         const int centerX = hzToX(g.centreHz, specRect);
-        const int loX = hzToX(g.centreHz + g.filterLowHz, specRect);
-        const int hiX = hzToX(g.centreHz + g.filterHighHz, specRect);
+        const int loX = hzToX(g.originHz + g.filterLowHz, specRect);
+        const int hiX = hzToX(g.originHz + g.filterHighHz, specRect);
         // The center line wins within its strip (2026-10-21): a filter edge
         // a pixel or two from the line (a 100 Hz low cut) would otherwise
         // turn every press on the line or its triangle into a resize.
