@@ -13,10 +13,17 @@
 //                target's reading, layer and trace 2 source; picked
 //                colours arrive with the settings. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - PR 677 review fix round 2: every type keeps the fields
+//                Thetis's ShowSubMarker and SubMarkerColour drive, and its
+//                own pick for them; a face that refuses the paste stays as
+//                it was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 
 #include <QtTest/QtTest>
 #include <QJsonArray>
 #include <QJsonObject>
+
+#include <memory>
 
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/meters/MeterPoller.h"  // MeterBinding
@@ -28,6 +35,14 @@
 #include "gui/meters/WebImageItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/SMeterPresetItem.h"
+#include "gui/meters/presets/ClockPresetItem.h"
+#include "gui/meters/presets/SignalTextPresetItem.h"
+#include "gui/meters/presets/VfoDisplayPresetItem.h"
+#include "gui/meters/ClockItem.h"
+#include "gui/meters/RotatorItem.h"
+#include "gui/meters/SignalTextItem.h"
+#include "gui/meters/TextOverlayItem.h"
+#include "gui/meters/VfoDisplayItem.h"
 
 using namespace NereusSDR;
 
@@ -50,6 +65,9 @@ private slots:
     void antennaKeepsItsButtons();
     void pasteKeepsReadingAndLayer();
     void pickedColoursArriveWithTheSettings();
+    void subMarkerFieldsStayTheTargets_data();
+    void subMarkerFieldsStayTheTargets();
+    void refusedFacePasteLeavesTargetUnchanged();
 };
 
 void TstContainerCopyPaste::compatibleBarsPaste()
@@ -321,6 +339,154 @@ void TstContainerCopyPaste::pickedColoursArriveWithTheSettings()
                                                        {QStringLiteral("BarPreset.barColor")}));
     QVERIFY(mic.colourUserSet(QStringLiteral("BarPreset.barColor")));
     QVERIFY(mic.colourUserSet(QStringLiteral("BarPreset.subColor")));
+}
+
+namespace {
+
+const QColor kOwn(0x12, 0x34, 0x56);
+const QColor kSource(0xab, 0xcd, 0xef);
+
+// Pastes source onto target with the source's picks.
+bool pasteOnto(const MeterItem& source, MeterItem& target, const QStringList& sourcePicks)
+{
+    return ContainerSettingsDialog::pasteItemSettings(source.serialize(), ContainerSettingsDialog::pasteTypeId(source),
+                                                      target, sourcePicks);
+}
+
+} // namespace
+
+void TstContainerCopyPaste::subMarkerFieldsStayTheTargets_data()
+{
+    QTest::addColumn<QString>("type");
+    for (const char* type : {"rotator", "led", "textOverlay", "vfoDisplay", "clock", "signalText",
+                             "signalTextFace", "vfoDisplayFace", "clockFace"}) {
+        QTest::newRow(type) << QString::fromLatin1(type);
+    }
+}
+
+// From Thetis setup.cs:27009-27015 [v2.10.3.15]: a source with no sub
+// indicators leaves the target's ShowSubMarker and SubMarkerColour, so on
+// every type the fields they drive stay the target's, and so does its pick
+// for the colour (the source's pick for it does not arrive). The other
+// settings, and their picks, arrive.
+void TstContainerCopyPaste::subMarkerFieldsStayTheTargets()
+{
+    QFETCH(QString, type);
+    if (type == QLatin1String("rotator")) {
+        RotatorItem source; source.setSmallBlobColour(kSource); source.setBigBlobColour(kSource);
+        RotatorItem target; target.setSmallBlobColour(kOwn);
+        QVERIFY(pasteOnto(source, target, {"Rotator.smallBlobColour", "Rotator.bigBlobColour"}));
+        QCOMPARE(target.smallBlobColour(), kOwn);
+        QCOMPARE(target.bigBlobColour(), kSource);
+        QVERIFY(!target.colourUserSet("Rotator.smallBlobColour"));
+        QVERIFY(target.colourUserSet("Rotator.bigBlobColour"));
+    } else if (type == QLatin1String("led")) {
+        LEDItem source; source.setShowBackPanel(false); source.setTrueColour(kSource);
+        LEDItem target; target.setShowBackPanel(true);
+        QVERIFY(pasteOnto(source, target, {}));
+        QCOMPARE(target.showBackPanel(), true);
+        QCOMPARE(target.trueColour(), kSource);
+    } else if (type == QLatin1String("textOverlay")) {
+        TextOverlayItem source; source.setTextBackColour1(kSource); source.setShowBackPanel(false);
+        source.setTextColour1(kSource);
+        TextOverlayItem target; target.setTextBackColour1(kOwn); target.setShowBackPanel(true);
+        QVERIFY(pasteOnto(source, target, {"TextOverlay.textBackColour1", "TextOverlay.textColour1"}));
+        QCOMPARE(target.textBackColour1(), kOwn);
+        QCOMPARE(target.showBackPanel(), true);
+        QCOMPARE(target.textColour1(), kSource);
+        QVERIFY(!target.colourUserSet("TextOverlay.textBackColour1"));
+        QVERIFY(target.colourUserSet("TextOverlay.textColour1"));
+    } else if (type == QLatin1String("vfoDisplay")) {
+        VfoDisplayItem source; source.setModeColour(kSource); source.setFrequencyColour(kSource);
+        VfoDisplayItem target; target.setModeColour(kOwn);
+        QVERIFY(pasteOnto(source, target, {"VfoDisplay.modeColour", "VfoDisplay.frequencyColour"}));
+        QCOMPARE(target.modeColour(), kOwn);
+        QCOMPARE(target.frequencyColour(), kSource);
+        QVERIFY(!target.colourUserSet("VfoDisplay.modeColour"));
+        QVERIFY(target.colourUserSet("VfoDisplay.frequencyColour"));
+    } else if (type == QLatin1String("clock")) {
+        ClockItem source(nullptr, false); source.setDateColour(kSource); source.setTimeColour(kSource);
+        ClockItem target(nullptr, false); target.setDateColour(kOwn);
+        QVERIFY(pasteOnto(source, target, {"Clock.dateColour", "Clock.timeColour"}));
+        QCOMPARE(target.dateColour(), kOwn);
+        QCOMPARE(target.timeColour(), kSource);
+        QVERIFY(!target.colourUserSet("Clock.dateColour"));
+        QVERIFY(target.colourUserSet("Clock.timeColour"));
+    } else if (type == QLatin1String("signalText")) {
+        SignalTextItem source; source.setSubMarkerColour(kSource); source.setShowSubMarker(false);
+        source.setTypeColour(kSource);
+        SignalTextItem target; target.setSubMarkerColour(kOwn); target.setShowSubMarker(true);
+        QVERIFY(pasteOnto(source, target, {"SignalText.subMarkerColour", "SignalText.typeColour"}));
+        QCOMPARE(target.subMarkerColour(), kOwn);
+        QCOMPARE(target.showSubMarker(), true);
+        QCOMPARE(target.typeColour(), kSource);
+        QVERIFY(!target.colourUserSet("SignalText.subMarkerColour"));
+        QVERIFY(target.colourUserSet("SignalText.typeColour"));
+    } else {
+        // The faces that hold a Signal text, a VFO display or a clock.
+        std::unique_ptr<CompositePresetItem> source;
+        std::unique_ptr<CompositePresetItem> target;
+        QJsonObject sourceSettings;
+        QJsonObject ownSettings;
+        QString keptPick;
+        QString arrivingKey;
+        QString arrivingPick;
+        const QString own = kOwn.name(QColor::HexArgb);
+        const QString from = kSource.name(QColor::HexArgb);
+        if (type == QLatin1String("signalTextFace")) {
+            source = std::make_unique<SignalTextPresetItem>();
+            target = std::make_unique<SignalTextPresetItem>();
+            sourceSettings = {{"showSubMarker", false}, {"subMarkerColor", from}, {"typeColor", from}};
+            ownSettings = {{"showSubMarker", true}, {"subMarkerColor", own}};
+            keptPick = QStringLiteral("SignalTextPreset.subMarkerColor");
+            arrivingKey = QStringLiteral("typeColor");
+            arrivingPick = QStringLiteral("SignalTextPreset.typeColor");
+        } else if (type == QLatin1String("vfoDisplayFace")) {
+            source = std::make_unique<VfoDisplayPresetItem>();
+            target = std::make_unique<VfoDisplayPresetItem>();
+            sourceSettings = {{"vfoModeColor", from}, {"vfoFrequencyColor", from}};
+            ownSettings = {{"vfoModeColor", own}};
+            keptPick = QStringLiteral("VfoDisplay.modeColour");
+            arrivingKey = QStringLiteral("vfoFrequencyColor");
+            arrivingPick = QStringLiteral("VfoDisplay.frequencyColour");
+        } else {
+            source = std::make_unique<ClockPresetItem>();
+            target = std::make_unique<ClockPresetItem>();
+            sourceSettings = {{"clockDateColor", from}, {"clockTimeColor", from}};
+            ownSettings = {{"clockDateColor", own}};
+            keptPick = QStringLiteral("Clock.dateColour");
+            arrivingKey = QStringLiteral("clockTimeColor");
+            arrivingPick = QStringLiteral("Clock.timeColour");
+        }
+        QVERIFY(source->applyConfiguration(sourceSettings));
+        QVERIFY(target->applyConfiguration(ownSettings));
+        const QJsonObject before = target->configuration();
+        QVERIFY(pasteOnto(*source, *target, {keptPick, arrivingPick}));
+        const QJsonObject after = target->configuration();
+        for (auto it = ownSettings.begin(); it != ownSettings.end(); ++it) {
+            QCOMPARE(after.value(it.key()), before.value(it.key()));
+        }
+        QCOMPARE(after.value(arrivingKey).toString(), from);
+        QVERIFY(!target->colourUserSet(keptPick));
+        QVERIFY(target->colourUserSet(arrivingPick));
+    }
+}
+
+// A face that refuses the pasted settings (here its own reading is out of
+// range, so the record with it is refused) is left exactly as it was.
+void TstContainerCopyPaste::refusedFacePasteLeavesTargetUnchanged()
+{
+    SignalTextPresetItem source;
+    QVERIFY(source.applyConfiguration({{"typeColor", "#ff010203"}}));
+    SignalTextPresetItem target;
+    target.setBindingId(2000000);
+    target.setZOrder(4);
+    const QString before = target.serialize();
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("the face refused the pasted settings")));
+    QVERIFY(!pasteOnto(source, target, {}));
+    QCOMPARE(target.serialize(), before);
+    QCOMPARE(target.zOrder(), 4);
 }
 
 QTEST_MAIN(TstContainerCopyPaste)

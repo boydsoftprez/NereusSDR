@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - PR 677 review fix round 2: a same-type paste keeps, on
+//                 every type, the fields Thetis's ShowSubMarker and
+//                 SubMarkerColour drive and the target's pick for them
+//                 (setup.cs:27009-27015 [v2.10.3.15]); a face pastes in
+//                 one step, so one that refuses the paste stays as it was.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I1, I2, settings M7, GUI M9):
 //                 paste ports Thetis's keep-current block
 //                 (btnMeterPasteSettings_Click, setup.cs:27001-27083
@@ -2294,15 +2300,96 @@ bool pasteBarSettings(const QString& copiedSerialized, bool sameType, BarPresetI
     return bar.deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)));
 }
 
-// A same-type paste of any other item: the whole record, then the
-// target's own values Thetis protects and its reading.
-//
-// Thetis also restores the target's ShowSubMarker and SubMarkerColour for
-// every type (setup.cs:27009-27015 [v2.10.3.15]); other types reuse those
-// two fields for other colours (an LED's back panel, a VFO's mode colour),
-// so NereusSDR keeps that rule for bars only.
-bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target)
+// A same-type paste of a face: the source's record with the target's own
+// reading (its channel readings and its trace 2 source too) and its
+// sub-marker fields (pasteSameTypeSettings below), applied in one step, so
+// a record the face refuses leaves the target as it was.
+bool pasteSameTypeFace(const QString& copiedSerialized, CompositePresetItem& face, QStringList& keptPicks)
 {
+    const QJsonDocument document = QJsonDocument::fromJson(copiedSerialized.toUtf8());
+    if (!document.isObject()) { return false; }
+    QJsonObject settings = document.object();
+    const QJsonObject ownFace = face.configuration();
+
+    // NereusSDR: the reading stays the target's.
+    settings.insert(QStringLiteral("bindingId"), ownFace.value(QStringLiteral("bindingId")));
+    const QJsonArray ownChannels = ownFace.value(QStringLiteral("channels")).toArray();
+    QJsonArray channels = settings.value(QStringLiteral("channels")).toArray();
+    const auto ownChannelBinding = [&](int i, QJsonObject channel) {
+        channel.insert(QStringLiteral("bindingId"), ownChannels[i].toObject().value(QStringLiteral("bindingId")));
+        return channel;
+    };
+    // A saved Signal history face carries trace 2 beside its one channel
+    // (CompositePresetItem::savedConfiguration).
+    const bool savedTrace2 = settings.value(QStringLiteral("trace2Channel")).isObject()
+        && channels.size() + 1 == ownChannels.size();
+    if (channels.size() == ownChannels.size() || savedTrace2) {
+        for (int i = 0; i < channels.size(); ++i) { channels[i] = ownChannelBinding(i, channels[i].toObject()); }
+        settings.insert(QStringLiteral("channels"), channels);
+        if (savedTrace2) {
+            settings.insert(QStringLiteral("trace2Channel"),
+                            ownChannelBinding(channels.size(), settings.value(QStringLiteral("trace2Channel")).toObject()));
+        }
+    }
+    if (face.typeId() == QLatin1String("meter.historyGraph")) {
+        settings.insert(QStringLiteral("trace2Context"), ownFace.contains(QStringLiteral("trace2Context"))
+                                                             ? ownFace.value(QStringLiteral("trace2Context"))
+                                                             : QJsonValue(QJsonValue::Null));
+    }
+
+    // From Thetis setup.cs:27009-27015 [v2.10.3.15]
+    // no sub indicators on the source, replace with current so we end up with no change on the paste
+    // The Signal text face's sub lines, the VFO face's mode colour and the
+    // clock face's date colour (the fields pasteSameTypeSettings lists).
+    const QString kind = ownFace.value(QStringLiteral("kind")).toString();
+    const struct { const char* key; QString pick; } kept[] = {
+        {"showSubMarker", QString()},
+        {"subMarkerColor", kind + QStringLiteral(".subMarkerColor")},
+        {"vfoModeColor", QStringLiteral("VfoDisplay.modeColour")},
+        {"clockDateColor", QStringLiteral("Clock.dateColour")},
+    };
+    for (const auto& k : kept) {
+        const QString key = QLatin1String(k.key);
+        if (!ownFace.contains(key)) { continue; }
+        settings.insert(key, ownFace.value(key));
+        if (!k.pick.isEmpty()) { keptPicks.append(k.pick); }
+    }
+
+    if (!face.deserialize(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)))) {
+        qCWarning(lcContainer) << "Paste settings: the face refused the pasted settings";
+        keptPicks.clear();
+        return false;
+    }
+    return true;
+}
+
+// A same-type paste of any other item: the whole record, then the
+// target's own values Thetis protects and its reading. keptPicks names the
+// colour fields the target kept, so their picks stay the target's.
+//
+// From Thetis setup.cs:27009-27015 [v2.10.3.15]: the target keeps its
+// ShowSubMarker and SubMarkerColour whenever the source has no sub
+// indicators. Only a needle group with a sub needle (MeterManager.cs:29099
+// [v2.10.3.15]) and a bar with a sub bar (MeterManager.cs:29339) set
+// SubIndicators, so for every type below the target always keeps the
+// fields those two settings drive (ApplySettingsForMeterGroup):
+//   ROTATOR       SubMarkerColour -> SmallBlobColour   (MeterManager.cs:27315)
+//   LED           ShowSubMarker   -> ShowBackPanel     (MeterManager.cs:27440)
+//   TEXT_OVERLAY  SubMarkerColour -> TextBackColour1   (MeterManager.cs:27530)
+//                 ShowSubMarker   -> ShowBackPanel     (MeterManager.cs:27537)
+//   VFO_DISPLAY   SubMarkerColour -> ModeColour        (MeterManager.cs:28054)
+//   CLOCK         SubMarkerColour -> DateColour        (MeterManager.cs:28140)
+//   SIGNAL_TEXT   SubMarkerColour -> HistoryColour     (MeterManager.cs:28178)
+//                 ShowSubMarker   -> ShowSubMarker     (MeterManager.cs:28190)
+// The faces that hold those items keep the same fields. A needle face's
+// other needles take SubMarkerColour (MeterManager.cs:27987), but a face of
+// the same type always has its sub needles, so Thetis pastes those.
+bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target, QStringList& keptPicks)
+{
+    keptPicks.clear();
+    auto* face = qobject_cast<CompositePresetItem*>(&target);
+    if (face) { return pasteSameTypeFace(copiedSerialized, *face, keptPicks); }
+
     // An LED and a web image keep their own guid, so their 4-character
     // ID stays (Thetis pastes settings into the target's item group,
     // keeping its ID).
@@ -2310,8 +2397,6 @@ bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target)
     auto* web = qobject_cast<WebImageItem*>(&target);
     const QUuid ownGuid = led ? led->guid() : (web ? web->guid() : QUuid());
     const int ownBinding = target.bindingId();
-    auto* face = qobject_cast<CompositePresetItem*>(&target);
-    const QJsonObject ownFace = face ? face->configuration() : QJsonObject{};
 
     auto* other = qobject_cast<OtherButtonItem*>(&target);
     QVector<short> ownMap;
@@ -2327,9 +2412,48 @@ bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target)
     const uint32_t ownVisibleBits = tuneStep ? tuneStep->visibleBits() : (antenna ? antenna->visibleBits() : 0u);
     const int ownActiveStep = tuneStep ? tuneStep->activeStep() : -1;
 
+    // The fields ShowSubMarker and SubMarkerColour drive (see above).
+    auto* rotator = qobject_cast<RotatorItem*>(&target);
+    auto* overlay = qobject_cast<TextOverlayItem*>(&target);
+    auto* vfo = qobject_cast<VfoDisplayItem*>(&target);
+    auto* clock = qobject_cast<ClockItem*>(&target);
+    auto* signalText = qobject_cast<SignalTextItem*>(&target);
+    const QColor ownSmallBlob = rotator ? rotator->smallBlobColour() : QColor();
+    const bool ownLedPanel = led ? led->showBackPanel() : false;
+    const QColor ownTextBack1 = overlay ? overlay->textBackColour1() : QColor();
+    const bool ownOverlayPanel = overlay ? overlay->showBackPanel() : false;
+    const QColor ownMode = vfo ? vfo->modeColour() : QColor();
+    const QColor ownDate = clock ? clock->dateColour() : QColor();
+    const QColor ownSubColour = signalText ? signalText->subMarkerColour() : QColor();
+    const bool ownShowSub = signalText ? signalText->showSubMarker() : false;
+
     if (!target.deserialize(copiedSerialized)) { return false; }
     if (led) { led->setGuid(ownGuid); }
     if (web) { web->setGuid(ownGuid); }
+
+    // no sub indicators on the source, replace with current so we end up with no change on the paste
+    // [original inline comment from setup.cs:27011]
+    // (none of these types has sub indicators, so the target always keeps them)
+    if (rotator) {
+        rotator->setSmallBlobColour(ownSmallBlob);
+        keptPicks.append(QStringLiteral("Rotator.smallBlobColour"));
+    } else if (led) {
+        led->setShowBackPanel(ownLedPanel);
+    } else if (overlay) {
+        overlay->setTextBackColour1(ownTextBack1);
+        overlay->setShowBackPanel(ownOverlayPanel);
+        keptPicks.append(QStringLiteral("TextOverlay.textBackColour1"));
+    } else if (vfo) {
+        vfo->setModeColour(ownMode);
+        keptPicks.append(QStringLiteral("VfoDisplay.modeColour"));
+    } else if (clock) {
+        clock->setDateColour(ownDate);
+        keptPicks.append(QStringLiteral("Clock.dateColour"));
+    } else if (signalText) {
+        signalText->setSubMarkerColour(ownSubColour);
+        signalText->setShowSubMarker(ownShowSub);
+        keptPicks.append(QStringLiteral("SignalText.subMarkerColour"));
+    }
 
     // From Thetis setup.cs:27017-27080 [v2.10.3.15]
     // VOICE_RECORD_PLAY_BUTTONS (setup.cs:27017-27041): NereusSDR's
@@ -2350,31 +2474,8 @@ bool pasteSameTypeSettings(const QString& copiedSerialized, MeterItem& target)
         antenna->setVisibleBits(ownVisibleBits);
     }
 
-    // NereusSDR: the reading stays the target's (a face's channel readings
-    // and its trace 2 source too).
-    if (face) {
-        QJsonObject keep{{QStringLiteral("bindingId"), ownFace.value(QStringLiteral("bindingId"))}};
-        const QJsonArray ownChannels = ownFace.value(QStringLiteral("channels")).toArray();
-        QJsonArray channels = face->configuration().value(QStringLiteral("channels")).toArray();
-        if (channels.size() == ownChannels.size()) {
-            for (int i = 0; i < channels.size(); ++i) {
-                QJsonObject channel = channels[i].toObject();
-                channel.insert(QStringLiteral("bindingId"), ownChannels[i].toObject().value(QStringLiteral("bindingId")));
-                channels[i] = channel;
-            }
-            keep.insert(QStringLiteral("channels"), channels);
-        }
-        if (face->typeId() == QLatin1String("meter.historyGraph")) {
-            keep.insert(QStringLiteral("trace2Context"), ownFace.contains(QStringLiteral("trace2Context"))
-                                                             ? ownFace.value(QStringLiteral("trace2Context"))
-                                                             : QJsonValue(QJsonValue::Null));
-        }
-        if (!face->applyConfiguration(keep)) {
-            qCWarning(lcContainer) << "Paste settings: the face did not keep its reading";
-        }
-    } else {
-        target.setBindingId(ownBinding);
-    }
+    // NereusSDR: the reading stays the target's.
+    target.setBindingId(ownBinding);
     return true;
 }
 
@@ -2390,20 +2491,22 @@ bool ContainerSettingsDialog::pasteItemSettings(const QString& copiedSerialized,
     if (copiedSerialized.isEmpty() || !canPasteSettings(fromTypeId, toTypeId)) { return false; }
     // NereusSDR: the item's layer stays the target's, as its place does.
     const int ownZOrder = target.zOrder();
-    const bool ownSubPicked = target.colourUserSet(QStringLiteral("BarPreset.subColor"));
-    bool keptSub = false;
+    const QStringList ownPicks = target.userColourFields();
+    QStringList keptPicks;
     bool pasted = false;
     if (auto* bar = qobject_cast<BarPresetItem*>(&target)) {
+        bool keptSub = false;
         pasted = pasteBarSettings(copiedSerialized, fromTypeId == toTypeId, *bar, keptSub);
+        if (keptSub) { keptPicks.append(QStringLiteral("BarPreset.subColor")); }
     } else if (fromTypeId == toTypeId) {
-        pasted = pasteSameTypeSettings(copiedSerialized, target);
+        pasted = pasteSameTypeSettings(copiedSerialized, target, keptPicks);
     }
     if (!pasted) { return false; }
     target.setZOrder(ownZOrder);
-    // The colours picked on the source arrive with them; a kept sub
-    // marker keeps the target's own pick.
+    // The colours picked on the source arrive with them; a field the
+    // target kept (its sub marker fields) keeps the target's own pick.
     target.setUserColourFields(copiedUserColours);
-    if (keptSub) { target.setColourUserSet(QStringLiteral("BarPreset.subColor"), ownSubPicked); }
+    for (const QString& field : keptPicks) { target.setColourUserSet(field, ownPicks.contains(field)); }
     return true;
 }
 
