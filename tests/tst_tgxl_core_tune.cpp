@@ -76,6 +76,12 @@
 //               case waits for the sweep's end before the press and
 //               records any key with a signal spy. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-27: PR 670 fix wave 3: the expiry ends the walk itself; the
+//               recall case waits for tuning=1 and the LAN answer instead
+//               of a fixed wait; the MOX button, a held PTT with a remote
+//               VOX armed, a press carrying the loan, a press after a take
+//               and the holder away during the tune. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1309,9 +1315,12 @@ private slots:
         QVERIFY(!core.server->hasTunerLoanForTest());
     }
 
-    // PR 670 fix wave (I2): the station's own MOX during the tune is the
-    // station's key: transmit stays with the station when the tune ends.
-    void stationMoxDuringTheTuneKeepsTransmit()
+    // PR 670 fix wave (I2): a station MOX key accepted on the tune's
+    // carrier (MoxController::setMox(true), as a local key that does not
+    // end the tune first) is the station's key: transmit stays with the
+    // station when the tune ends. The desktop's MOX button ends the tune
+    // first (theMoxButtonDuringTheTuneKeepsTransmit).
+    void aStationMoxKeyOnTheCarrierKeepsTransmit()
     {
         TuningCore core;
         allowTransmit(core);
@@ -1326,7 +1335,7 @@ private slots:
         TransmitHolder* holder = core.server->transmitHolder();
 
         tunerPressTakes(core, tuner);
-        mox->setMox(true);   // the desktop's MOX, on the tune's carrier
+        mox->setMox(true);   // a station MOX key, on the tune's carrier
         QVERIFY(!core.server->hasTunerLoanForTest());
         tunerLetsGo(tuner);
         QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
@@ -1368,6 +1377,189 @@ private slots:
         QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
         // Transmit never went back to A (and was taken again by the press).
         QCOMPARE(holder->epoch(), epoch);
+    }
+
+    // PR 670 fix wave 3: the desktop's MOX button during the tune
+    // (RadioModel::setMoxFromButton). Pressed on, it keys MOX on the tune's
+    // carrier (MoxController::onMoxButton); pressed off, it ends the tune
+    // (chkMOX_Click's else branch). The station keeps transmit.
+    void theMoxButtonDuringTheTuneKeepsTransmit()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+
+        tunerPressTakes(core, tuner);
+        const quint64 epoch = holder->epoch();
+        core.model->setMoxFromButton(true);
+        QTRY_VERIFY(!core.server->hasTunerLoanForTest());
+        core.model->setMoxFromButton(false);
+        tunerLetsGo(tuner);
+        QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTune());
+        QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
+        QCOMPARE(holder->epoch(), epoch);
+    }
+
+    // PR 670 fix wave 3: with a remote device's VOX armed (remoteVoxDevice),
+    // a station PTT held across the tune's end still keeps transmit with
+    // the station: only the VOX level is left out of the check.
+    void aHeldPttWithARemoteVoxArmedKeepsTransmit()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        LoopbackTransport* appB = core.signIn(b, kTransmitter);
+        QVERIFY(admitted(appA));
+        QVERIFY(admitted(appB));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+
+        tunerPressTakes(core, tuner);
+        const quint64 epoch = holder->epoch();
+        // B has VOX armed with its microphone line open.
+        core.model->openRemoteMicLine(b.key.fingerprint());
+        core.model->setRemoteMicVoxArmed(b.key.fingerprint(), true);
+        QCOMPARE(core.model->remoteVoxDevice(), b.key.fingerprint());
+        mox->onMicPttFromRadio(true);
+        tunerLetsGo(tuner);
+        QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
+        QTRY_VERIFY(!core.server->hasTunerLoanForTest());
+        QTRY_VERIFY(!core.model->isTune());
+        mox->onMicPttFromRadio(false);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QVERIFY(holder->isHeldBy(QByteArray(KeyerIdentity::kStationDeviceId)));
+        // Transmit never went back to A (and was taken again by the press).
+        QCOMPARE(holder->epoch(), epoch);
+    }
+
+    // PR 670 fix wave 3: a second press while the first one's give-back
+    // still waits carries what the first one found: transmit goes back to
+    // the device when the second tune ends.
+    void aPressBeforeTheGiveBackCarriesTheLoan()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+        const QByteArray station(KeyerIdentity::kStationDeviceId);
+
+        tunerPressTakes(core, tuner);
+        core.server->setTunerLoanHeldForTest(true);
+        tunerLetsGo(tuner);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTune());
+        QVERIFY(core.server->hasTunerLoanForTest());
+        QVERIFY(holder->isHeldBy(station));
+        // The second press finds the station holding from the first take.
+        tuner.push(QStringLiteral("S0|state tuning=1"));
+        tuner.lan.send(QStringLiteral("transmit tune on"));
+        QTRY_VERIFY(mox->isMox());
+        QVERIFY(holder->isHeldBy(station));
+        core.server->setTunerLoanHeldForTest(false);
+        tunerLetsGo(tuner);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
+        QVERIFY(!core.server->hasTunerLoanForTest());
+    }
+
+    // PR 670 fix wave 3: a second press after transmit changed hands while
+    // the first one's give-back waited starts afresh: what goes back is
+    // what the second press took (B's transmit), not the first one's.
+    void aPressAfterATakeStartsAFreshLoan()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        LoopbackTransport* appB = core.signIn(b, kTransmitter);
+        QVERIFY(admitted(appA));
+        QVERIFY(admitted(appB));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+
+        tunerPressTakes(core, tuner);
+        core.server->setTunerLoanHeldForTest(true);
+        tunerLetsGo(tuner);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.model->isTune());
+        QVERIFY(core.server->hasTunerLoanForTest());
+        // B takes transmit while the first give-back waits.
+        const qint64 epoch = qint64(holder->epoch());
+        QTRY_COMPARE(latest(appB->received(), QStringLiteral("txState"),
+                            QStringLiteral("holderEpoch")).toInteger(),
+                     epoch);
+        const MirrorUpdate shownUnkeyed{0, "shownKeyed", MirrorWireKind::Bool, QVariant(false)};
+        const QJsonObject take =
+            core.invoke(appB, "tx.take", {int64("holderEpoch", epoch), shownUnkeyed});
+        QVERIFY2(take.value(QStringLiteral("accepted")).toBool(),
+                 qPrintable(take.value(QStringLiteral("reason")).toString()));
+        QTRY_VERIFY(holder->isHeldBy(b.key.fingerprint()));
+        // The second press takes from B; its own loan goes back to B.
+        tunerPressTakes(core, tuner);
+        core.server->setTunerLoanHeldForTest(false);
+        tunerLetsGo(tuner);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(holder->isHeldBy(b.key.fingerprint()));
+        QVERIFY(!core.server->hasTunerLoanForTest());
+    }
+
+    // PR 670 fix wave 3: the device that held transmit goes away (its link
+    // drops) during the tune: transmit goes back to it, held away for its
+    // 180 s (ruling 8.15).
+    void theHolderAwayDuringTheTuneIsHeldAway()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        deviceHoldsAfterItsTune(core, tuner, appA);
+        MoxController* mox = core.model->moxController();
+        TransmitHolder* holder = core.server->transmitHolder();
+
+        tunerPressTakes(core, tuner);
+        appA->closeLink(QStringLiteral("lost"));
+        QTRY_VERIFY(core.server->deviceSessions()->entry(a.key.fingerprint()).has_value()
+                    && core.server->deviceSessions()->entry(a.key.fingerprint())->state
+                           == DeviceSessionRegistry::State::Away);
+        tunerLetsGo(tuner);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QTRY_VERIFY(!core.server->hasTunerLoanForTest());
+        QTRY_VERIFY(holder->isHeldBy(a.key.fingerprint()));
+        QVERIFY(holder->holder()->away);
     }
 
     // PR 670 fix wave (I2): a TCI program's refusal check asks the keying
@@ -1414,19 +1606,24 @@ private slots:
         MoxController* mox = core.model->moxController();
         TransmitHolder* holder = core.server->transmitHolder();
         const QByteArray station(KeyerIdentity::kStationDeviceId);
-        // The walk back to receive takes 8 s.
-        mox->setTimerIntervals(0, 0, 0, 0, 8000, 0);
+        // The walk back to receive does not end by itself (60 s); the test
+        // ends it once the expiry has been seen.
+        mox->setTimerIntervals(0, 0, 0, 0, 60000, 0);
 
         tunerPressTakes(core, tuner);
         QTest::ignoreMessage(QtWarningMsg,
                              "The tuner's tune ended, but the radio did not return to receive"
                              " within 5 s; transmit stays with the station");
         tunerLetsGo(tuner);
-        QTRY_VERIFY_WITH_TIMEOUT(!core.server->hasTunerLoanForTest(), 7500);
+        // 101 rechecks of 50 ms; generous for a loaded machine.
+        QTRY_VERIFY_WITH_TIMEOUT(!core.server->hasTunerLoanForTest(), 30000);
         QVERIFY(mox->state() != MoxState::Rx);
         QVERIFY(holder->isHeldBy(station));
-        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 6000);
-        QTest::qWait(100);   // a recheck would have run
+        // The radio reads receive at last (the running ptt-out timer is
+        // restarted at 0): with the loan gone, nothing goes back.
+        mox->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        QVERIFY(!core.server->hasTunerLoanForTest());
         QVERIFY(holder->isHeldBy(station));
     }
 
@@ -1511,8 +1708,11 @@ private slots:
         // at the end.
         QSignalSpy keys(mox, &MoxController::moxStateChanged);
         tuner.push(QStringLiteral("S0|state tuning=1"));
-        tuner.lan.send(QStringLiteral("transmit tune on"));
-        QTest::qWait(500);
+        QTRY_VERIFY(core.model->tunerModel()->isTuning());
+        // The Core answers each LAN line after it has handled it.
+        const int answer = tuner.lan.send(QStringLiteral("transmit tune on"));
+        QTRY_VERIFY(!tuner.lan.response(answer).isEmpty());
+        QTRY_VERIFY(!core.model->isTgxlAutotuneInProgress());
         QVERIFY(!mox->isMox());
         QCOMPARE(keys.count(), 0);
         QVERIFY(!core.model->isTune());

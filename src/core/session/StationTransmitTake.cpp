@@ -86,6 +86,10 @@
 //   2026-10-27: PR 670 fix wave 2: a test hold of the give-back
 //               (setTunerLoanHeldForTest). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-27: PR 670 fix wave 3: with a remote device's VOX armed, a
+//               held station mic, footswitch, CAT or TCI PTT still keeps
+//               transmit with the station; only the VOX level is left out.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -431,9 +435,12 @@ void StationServer::returnTunerLoan()
     // up (PollPTT skips a manual key, console.cs:25470 [v2.10.3.15]); held
     // when the tune ends, it keys as soon as TUN is off, so it is the
     // station's key: what the tune took stays. A remote device's VOX
-    // (remoteVoxDevice) is that device's, so the levels are not read then.
-    if (mox != nullptr && mox->anyPttSourceHeld()
-        && m_radioModel->remoteVoxDevice().isEmpty()) {
+    // (remoteVoxDevice) is that device's, so only the VOX level is left
+    // out then (PR 670 fix wave 3).
+    const bool stationVox = mox != nullptr && mox->isVoxPttHeld()
+        && m_radioModel->remoteVoxDevice().isEmpty();
+    if (mox != nullptr
+        && (mox->isMicPttHeld() || mox->isCatPttHeld() || mox->isTciPttHeld() || stationVox)) {
         dropTunerLoanForStationKey();
         return;
     }

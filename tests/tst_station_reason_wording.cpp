@@ -92,6 +92,10 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27  J.J. Boyd / KG4VCF  StationTransmitTake.cpp forwards
+//                                    sessionTransmitRefusal(it.key()), the
+//                                    tuner give-back's permission recheck.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX-only values 4 and 5 insert two of
 //                                    the SKU's receive-only names.
 //                                    AI tooling: Anthropic Claude Code.
@@ -1130,7 +1134,11 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("takenReason(takerName)"), QStringLiteral("refusal.text"),
           // The session's own transmit gate (StationTxGate, TxRefusal.cpp's
           // words).
-          QStringLiteral("sessionTransmitRefusal(transport)")}},
+          QStringLiteral("sessionTransmitRefusal(transport)"),
+          // TGXL tune lane (PR 670): the same gate, asked of the earlier
+          // holder's session before the tuner's tune gives transmit back
+          // (StationTxGate, TxRefusal.cpp's words; only logged).
+          QStringLiteral("sessionTransmitRefusal(it.key())")}},
         {"src/core/session/StationReceivers.cpp", {}, {}, 12,
          {QStringLiteral("anchorName"), QStringLiteral("names"), QStringLiteral("takerName"),
           QStringLiteral("name, letterWords"), QStringLiteral("number"),
