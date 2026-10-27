@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original property editor. Pairs with
 // NereusBandButtonItemEditor.h. Copies no Thetis source.
 // 2026-10-22 - Brian Sutton, AI-assisted via xAI Grok.
+// 2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is recorded
+//              as the user's. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//              Claude Code.
 
 #include "NereusBandButtonItemEditor.h"
 #include "gui/meters/ItemColourLook.h"
@@ -39,6 +42,7 @@ NereusBandButtonItemEditor::NereusBandButtonItemEditor(QWidget* parent)
             const QColor chosen = QColorDialog::getColor(
                 (band->*read)(), this, tip, QColorDialog::ShowAlphaChannel);
             if (!chosen.isValid()) { return; }
+            markColourPicked(field);
             (band->*write)(chosen);
             applySwatch(button, field, chosen);
             notifyChanged();

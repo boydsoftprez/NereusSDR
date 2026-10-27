@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): the colours an item's user
+//                 picked are saved under the userColours context key, only
+//                 when there is one.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I5): a composite's properties
 //                 are its savedConfiguration (a Signal history face keeps
 //                 trace 2 under trace2Channel). J.J. Boyd (KG4VCF),
@@ -91,6 +95,7 @@
 #include "gui/meters/WaveformMeterItem.h"
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "core/UnbuiltFeatureList.h"
 #include "gui/styles/WorkspacePreview.h"
 #include <QUuid>
@@ -584,6 +589,13 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (entry.context.contains(QLatin1String(ContentFade::kFadeOnRxKey))) { item->setFadeOnRx(entry.context.value(QLatin1String(ContentFade::kFadeOnRxKey)).toBool()); }
     if (entry.context.contains(QLatin1String(ContentFade::kFadeOnTxKey))) { item->setFadeOnTx(entry.context.value(QLatin1String(ContentFade::kFadeOnTxKey)).toBool()); }
     if (entry.context.contains(QStringLiteral("displayGroup"))) { item->setDisplayGroup(entry.context.value(QStringLiteral("displayGroup")).toInt()); }
+    // Colours the user picked (ItemColourLook::kUserColoursKey): no key (an
+    // item with no picks, or saved before picks were recorded) leaves none.
+    if (entry.context.contains(QLatin1String(ItemColourLook::kUserColoursKey))) {
+        QStringList picked;
+        for (const QJsonValue& field : entry.context.value(QLatin1String(ItemColourLook::kUserColoursKey)).toArray()) { picked.append(field.toString()); }
+        item->setUserColourFields(picked);
+    }
     // No key (a saved item from before the update interval): every poll.
     if (!face && !composite && !waveform && entry.context.contains(QStringLiteral("updateIntervalMs"))) { item->setUpdateIntervalMs(entry.context.value(QStringLiteral("updateIntervalMs")).toInt()); }
     // Raw legacy geometry is authoritative until capture supplies an explicit rect.
@@ -758,6 +770,11 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
         entry.context.insert(QLatin1String(ContentFade::kFadeOnTxKey),item.fadeOnTx());
     }
     entry.context.insert(QStringLiteral("displayGroup"),item.displayGroup());
+    // Written only while the item holds a picked colour, so an item with
+    // none saves exactly as before.
+    const QStringList picked=item.userColourFields();
+    if (picked.isEmpty()) { entry.context.remove(QLatin1String(ItemColourLook::kUserColoursKey)); }
+    else { entry.context.insert(QLatin1String(ItemColourLook::kUserColoursKey),QJsonArray::fromStringList(picked)); }
     if (!face && !composite && !waveform && item.updateIntervalMs() > 0) { entry.context.insert(QStringLiteral("updateIntervalMs"),item.updateIntervalMs()); }
     else { entry.context.remove(QStringLiteral("updateIntervalMs")); }
     return entry;

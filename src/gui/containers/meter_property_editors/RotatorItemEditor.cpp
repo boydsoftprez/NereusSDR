@@ -353,6 +353,7 @@ void RotatorItemEditor::buildTypeSpecific()
             const QColor chosen = QColorDialog::getColor(
                 Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
+                markColourPicked(field);
                 (r->*setter)(chosen);
                 applyBtnColor(btn, field, chosen);
                 notifyChanged();

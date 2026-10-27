@@ -1,3 +1,8 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is
+//                 recorded as the user's (markColourPicked). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "MagicEyeItemEditor.h"
 #include "gui/meters/ItemColourLook.h"
 #include "../../meters/MagicEyeItem.h"
@@ -64,7 +69,7 @@ void MagicEyeItemEditor::buildTypeSpecific()
         MagicEyeItem* x = qobject_cast<MagicEyeItem*>(m_item);
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->glowColor(), this);
-        if (chosen.isValid()) { x->setGlowColor(chosen); applyGlowColor(chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("MagicEye.glowColor")); x->setGlowColor(chosen); applyGlowColor(chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Glow color"), m_btnGlowColor);
 
@@ -166,6 +171,7 @@ void MagicEyeItemEditor::buildTypeSpecific()
                                                      QStringLiteral("History color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (!chosen.isValid()) { return; }
+        markColourPicked(QStringLiteral("MagicEye.historyColour"));
         x->setHistoryColour(chosen);
         ItemColourLook::paintSwatch(m_btnHistoryColour, QStringLiteral("MagicEye.historyColour"), chosen);
         notifyChanged();

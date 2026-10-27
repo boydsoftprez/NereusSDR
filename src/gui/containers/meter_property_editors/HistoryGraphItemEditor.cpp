@@ -123,6 +123,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->lineColor0(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("History.lineColor0"));
             x->setLineColor0(chosen);
             ItemColourLook::paintSwatch(m_btnLineColor0, QStringLiteral("History.lineColor0"), chosen);
             notifyChanged();
@@ -137,6 +138,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->lineColor1(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("History.lineColor1"));
             x->setLineColor1(chosen);
             ItemColourLook::paintSwatch(m_btnLineColor1, QStringLiteral("History.lineColor1"), chosen);
             notifyChanged();
@@ -274,6 +276,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
             if (!x) { return; }
             const QColor chosen = QColorDialog::getColor((x->*get)(), this);
             if (chosen.isValid()) {
+                markColourPicked(field);
                 (x->*set)(chosen);
                 ItemColourLook::paintSwatch(button, field, chosen);
                 notifyChanged();

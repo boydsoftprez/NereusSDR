@@ -941,7 +941,7 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
         // tertiary text role (Thetis's black is unreadable on the
         // workspace's dark box).
         const QColor splitColor = m_split ? ItemColourLook::effective("VfoDisplay.splitColour", m_splitColour, this)
-                                          : ItemColourLook::derived("VfoDisplay.splitColour", m_splitColour, "text-tertiary", QColor(Qt::black));
+                                          : ItemColourLook::derived("VfoDisplay.splitColour", m_splitColour, "text-tertiary", QColor(Qt::black), this);
         plotText(p, QStringLiteral("SPLIT"), rectSplit.x() + 0.015 * f.unit, rectSplit.y(),
                  fitted(base, QStringLiteral("SPLIT"), (0.1 - 0.015) * f.unit), splitColor);
     }
@@ -971,10 +971,10 @@ void VfoDisplayItem::paintThetisColumn(QPainter& p, const QRect& col, const VfoS
     // on danger-bg; TX unable: tertiary text on the raised face) in place
     // of the scaled colours and black text.
     const auto rxLook = [&](const char* role, const QColor& classic) {
-        return ItemColourLook::derived("VfoDisplay.rxColour", m_rxColour, role, classic);
+        return ItemColourLook::derived("VfoDisplay.rxColour", m_rxColour, role, classic, this);
     };
     const auto txLook = [&](const char* role, const QColor& classic) {
-        return ItemColourLook::derived("VfoDisplay.txColour", m_txColour, role, classic);
+        return ItemColourLook::derived("VfoDisplay.txColour", m_txColour, role, classic, this);
     };
     QRectF rct = f.box(0.1, 0.52, 0.148, 0.92);
     p.fillRect(rct, rxOn ? rxLook("ok-bg", cDimRx) : rxLook("raised-top", cDimerRx));

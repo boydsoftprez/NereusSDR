@@ -164,7 +164,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::white, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setTimeColour(chosen); applyBtnColor(m_btnTimeColour, QStringLiteral("Clock.timeColour"), chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Clock.timeColour")); c->setTimeColour(chosen); applyBtnColor(m_btnTimeColour, QStringLiteral("Clock.timeColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Time color"), m_btnTimeColour);
 
@@ -175,7 +175,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setDateColour(chosen); applyBtnColor(m_btnDateColour, QStringLiteral("Clock.dateColour"), chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Clock.dateColour")); c->setDateColour(chosen); applyBtnColor(m_btnDateColour, QStringLiteral("Clock.dateColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Date color"), m_btnDateColour);
 
@@ -187,7 +187,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             Qt::darkGray, this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setTypeTitleColour(chosen); applyBtnColor(m_btnTitleColour, QStringLiteral("Clock.typeTitleColour"), chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Clock.typeTitleColour")); c->setTypeTitleColour(chosen); applyBtnColor(m_btnTitleColour, QStringLiteral("Clock.typeTitleColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Title color"), m_btnTitleColour);
 
@@ -199,7 +199,7 @@ void ClockItemEditor::buildTypeSpecific()
         if (!c) { return; }
         const QColor chosen = QColorDialog::getColor(
             c->backColour(), this, QString(), QColorDialog::ShowAlphaChannel);
-        if (chosen.isValid()) { c->setBackColour(chosen); applyBtnColor(m_btnBackColour, QStringLiteral("Clock.backColour"), chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Clock.backColour")); c->setBackColour(chosen); applyBtnColor(m_btnBackColour, QStringLiteral("Clock.backColour"), chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Background color"), m_btnBackColour);
 }

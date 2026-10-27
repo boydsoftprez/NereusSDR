@@ -99,6 +99,7 @@ QPushButton* BarItemEditor::makeColourRow(const QString& label, const QString& f
         const QColor chosen = QColorDialog::getColor(get(*bar), this, label,
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(field);
             set(*bar, chosen);
             paintSwatch(button, field, chosen);
             notifyChanged();
@@ -338,6 +339,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Bar color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.barColor"));
             bar->setBarColor(chosen);
             ItemColourLook::paintSwatch(m_btnBarColor, QStringLiteral("Bar.barColor"), chosen);
             notifyChanged();
@@ -355,6 +357,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Bar red color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.barRedColor"));
             bar->setBarRedColor(chosen);
             ItemColourLook::paintSwatch(m_btnBarRedColor, QStringLiteral("Bar.barRedColor"), chosen);
             notifyChanged();
@@ -374,6 +377,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Edge background color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.edgeBackgroundColor"));
             bar->setEdgeBackgroundColor(chosen);
             ItemColourLook::paintSwatch(m_btnEdgeBg, QStringLiteral("Bar.edgeBackgroundColor"), chosen);
             notifyChanged();
@@ -390,6 +394,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Edge low color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.edgeLowColor"));
             bar->setEdgeLowColor(chosen);
             ItemColourLook::paintSwatch(m_btnEdgeLow, QStringLiteral("Bar.edgeLowColor"), chosen);
             notifyChanged();
@@ -406,6 +411,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Edge high color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.edgeHighColor"));
             bar->setEdgeHighColor(chosen);
             ItemColourLook::paintSwatch(m_btnEdgeHigh, QStringLiteral("Bar.edgeHighColor"), chosen);
             notifyChanged();
@@ -422,6 +428,7 @@ void BarItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Edge avg color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Bar.edgeAvgColor"));
             bar->setEdgeAvgColor(chosen);
             ItemColourLook::paintSwatch(m_btnEdgeAvg, QStringLiteral("Bar.edgeAvgColor"), chosen);
             notifyChanged();

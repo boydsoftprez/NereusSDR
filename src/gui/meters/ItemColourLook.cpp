@@ -14,6 +14,10 @@
 //                 off LED, the rotator beam, the button press and the filter
 //                 setting-on fill take roles that reach 3:1 / 4.5:1; derived().
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - PR 677 review fix wave (I6): a colour the user picked
+//                 stays as picked (userPicked()); swatches carry an
+//                 accessible name (GUI M5). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/meters/ItemColourLook.h"
@@ -566,13 +570,28 @@ bool listed(const QString& field, const QColor& stored)
     return defaultRow(field, stored) != nullptr;
 }
 
-bool followsLook(const QString& field, const QColor& stored)
+bool userPicked(const QString& field, const QObject* surface)
+{
+    // The item drawing the field, then the composite faces holding it.
+    for (const QObject* object = surface; object != nullptr; object = object->parent()) {
+        const auto* item = qobject_cast<const MeterItem*>(object);
+        if (item == nullptr) {
+            return false;
+        }
+        if (item->colourUserSet(field)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool followsLook(const QString& field, const QColor& stored, const QObject* surface)
 {
     if (!WorkspacePreview::enabled()) {
         return false;
     }
     const Row* row = defaultRow(field, stored);
-    return row != nullptr && row->role != nullptr;
+    return row != nullptr && row->role != nullptr && !userPicked(field, surface);
 }
 
 QColor effective(const QString& field, const QColor& stored, const QObject* surface)
@@ -582,6 +601,9 @@ QColor effective(const QString& field, const QColor& stored, const QObject* surf
     }
     if (!index().byField.contains(field)) {
         warnUnknown(field);
+        return stored;
+    }
+    if (userPicked(field, surface)) {
         return stored;
     }
     const Row* row = defaultRow(field, stored);
@@ -596,9 +618,10 @@ QColor effective(const char* field, const QColor& stored, const QObject* surface
     return effective(QString::fromLatin1(field), stored, surface);
 }
 
-QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic)
+QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic,
+               const QObject* surface)
 {
-    if (!followsLook(QString::fromLatin1(field), stored)) {
+    if (!followsLook(QString::fromLatin1(field), stored, surface)) {
         return classic;
     }
     return WorkspacePreview::roleColour(classic, role);
@@ -609,12 +632,27 @@ QString followsLookNote()
     return QStringLiteral("Follows the workspace look");
 }
 
-void paintSwatch(QPushButton* button, const QString& field, const QColor& stored)
+void paintSwatch(QPushButton* button, const QString& field, const QColor& stored,
+                 const QObject* surface)
 {
     if (button == nullptr) {
         return;
     }
-    const QColor shown = effective(field, stored);
+    if (surface == nullptr) {
+        // An item editor names the item its swatches are painted for.
+        for (const QObject* object = button; object != nullptr; object = object->parent()) {
+            const QVariant named = object->property(kSwatchSurfaceProperty);
+            if (named.isValid()) {
+                surface = named.value<QObject*>();
+                break;
+            }
+        }
+    }
+    // `surface` answers only which colours are picked; a backdrop swatch
+    // keeps showing the look's colour without the container's background.
+    const QColor shown = userPicked(field, surface) ? stored : effective(field, stored);
+    // A screen reader hears the colour, not an empty button.
+    button->setAccessibleName(QStringLiteral("Color %1").arg(shown.name(QColor::HexRgb)));
     // The sheet WorkspacePreview's live pass reads as a user colour swatch
     // (colourSwatchSheet()), so the shown colour is never translated again.
     button->setStyleSheet(QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
@@ -626,7 +664,7 @@ void paintSwatch(QPushButton* button, const QString& field, const QColor& stored
         button->setProperty(kBaseTip, button->toolTip());
     }
     const QString base = button->property(kBaseTip).toString();
-    if (!followsLook(field, stored)) {
+    if (!followsLook(field, stored, surface)) {
         button->setToolTip(base);
     } else if (base.isEmpty()) {
         button->setToolTip(followsLookNote());

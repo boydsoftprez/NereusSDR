@@ -156,6 +156,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->colour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.colour"));
             x->setColour(chosen);
             ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("SignalText.colour"), chosen);
             notifyChanged();
@@ -170,6 +171,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->peakValueColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.peakValueColour"));
             x->setPeakValueColour(chosen);
             ItemColourLook::paintSwatch(m_btnPeakColour, QStringLiteral("SignalText.peakValueColour"), chosen);
             notifyChanged();
@@ -184,6 +186,7 @@ void SignalTextItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->markerColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("SignalText.markerColour"));
             x->setMarkerColour(chosen);
             ItemColourLook::paintSwatch(m_btnMarkerColour, QStringLiteral("SignalText.markerColour"), chosen);
             notifyChanged();
@@ -240,6 +243,7 @@ void SignalTextItemEditor::buildTypeSpecific()
             const QColor chosen = QColorDialog::getColor((x->*get)(), this, label,
                                                          QColorDialog::ShowAlphaChannel);
             if (!chosen.isValid()) { return; }
+            markColourPicked(field);
             (x->*set)(chosen);
             ItemColourLook::paintSwatch(b, field, chosen);
             notifyChanged();

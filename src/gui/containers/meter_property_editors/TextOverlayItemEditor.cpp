@@ -347,6 +347,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->textColour1(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.textColour1"));
             x->setTextColour1(chosen);
             ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("TextOverlay.textColour1"), chosen);
             notifyChanged();
@@ -361,6 +362,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.textBackColour1"));
             x->setTextBackColour1(chosen);
             ItemColourLook::paintSwatch(m_btnBackColour1, QStringLiteral("TextOverlay.textBackColour1"), chosen);
             notifyChanged();
@@ -431,6 +433,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->textColour2(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.textColour2"));
             x->setTextColour2(chosen);
             ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("TextOverlay.textColour2"), chosen);
             notifyChanged();
@@ -445,6 +448,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.textBackColour2"));
             x->setTextBackColour2(chosen);
             ItemColourLook::paintSwatch(m_btnBackColour2, QStringLiteral("TextOverlay.textBackColour2"), chosen);
             notifyChanged();
@@ -571,6 +575,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.panelBackColour1"));
             x->setPanelBackColour1(chosen);
             ItemColourLook::paintSwatch(m_btnPanelBack1, QStringLiteral("TextOverlay.panelBackColour1"), chosen);
             notifyChanged();
@@ -585,6 +590,7 @@ void TextOverlayItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(Qt::darkGray, this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("TextOverlay.panelBackColour2"));
             x->setPanelBackColour2(chosen);
             ItemColourLook::paintSwatch(m_btnPanelBack2, QStringLiteral("TextOverlay.panelBackColour2"), chosen);
             notifyChanged();

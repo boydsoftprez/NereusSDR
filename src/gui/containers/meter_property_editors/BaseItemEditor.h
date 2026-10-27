@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): markColourPicked(). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
 //                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -164,6 +166,11 @@ protected:
 
     // Emit propertyChanged() unless we're in a programmatic update.
     void notifyChanged();
+
+    // Records `field` (an ItemColourLook field) as a colour the user picked
+    // on the bound item, so it stays as picked even when it equals a
+    // default. Every colour dialog pick calls it.
+    void markColourPicked(const QString& field);
 
     MeterItem*   m_item{nullptr};
     QFormLayout* m_form{nullptr};

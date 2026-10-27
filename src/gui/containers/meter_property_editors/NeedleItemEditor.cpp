@@ -308,6 +308,7 @@ void NeedleItemEditor::buildTypeSpecific()
             needle->needleColor(), this, QStringLiteral("Needle color"),
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.needleColor"));
             needle->setNeedleColor(chosen);
             ItemColourLook::paintSwatch(m_btnNeedleColor, QStringLiteral("Needle.needleColor"), chosen);
             notifyChanged();
@@ -390,6 +391,7 @@ void NeedleItemEditor::buildTypeSpecific()
             needle->peakHoldColour(), this, QStringLiteral("Peak hold color"),
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.peakHoldColour"));
             needle->setPeakHoldColour(chosen);
             ItemColourLook::paintSwatch(m_btnPeakHoldColor, QStringLiteral("Needle.peakHoldColour"), chosen);
             notifyChanged();
@@ -530,6 +532,7 @@ void NeedleItemEditor::buildTypeSpecific()
             needle->historyColor(), this, QStringLiteral("History color"),
             QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Needle.historyColor"));
             needle->setHistoryColor(chosen);
             ItemColourLook::paintSwatch(m_btnHistoryColor, QStringLiteral("Needle.historyColor"), chosen);
             notifyChanged();

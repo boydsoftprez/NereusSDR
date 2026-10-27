@@ -121,6 +121,7 @@ void SpacerItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 1"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Spacer.colour1"));
             spacer->setColour1(chosen);
             ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("Spacer.colour1"), chosen);
             notifyChanged();
@@ -138,6 +139,7 @@ void SpacerItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 2"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Spacer.colour2"));
             spacer->setColour2(chosen);
             ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("Spacer.colour2"), chosen);
             notifyChanged();

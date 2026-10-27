@@ -97,6 +97,7 @@ void DialItemEditor::buildTypeSpecific()
             const QColor chosen = QColorDialog::getColor(
                 (d->*getter)(), this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
+                markColourPicked(field);
                 (d->*setter)(chosen);
                 applyBtnColor(btn, field, chosen);
                 notifyChanged();

@@ -222,6 +222,7 @@ void NeedleScalePwrItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Low color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("PowerScale.lowColour"));
             nspi->setLowColour(chosen);
             ItemColourLook::paintSwatch(m_btnLowColour, QStringLiteral("PowerScale.lowColour"), chosen);
             notifyChanged();
@@ -238,6 +239,7 @@ void NeedleScalePwrItemEditor::buildTypeSpecific()
                                                      QStringLiteral("High color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("PowerScale.highColour"));
             nspi->setHighColour(chosen);
             ItemColourLook::paintSwatch(m_btnHighColour, QStringLiteral("PowerScale.highColour"), chosen);
             notifyChanged();

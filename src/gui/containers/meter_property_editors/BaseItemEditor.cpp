@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): markColourPicked() records a
+//                 colour dialog pick on the item; setItem() names the item
+//                 the editor's swatches are painted for. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - A wrapped row label is as tall as its lines painted
 //                 centred, which can take one pixel row more than QLabel's
 //                 own measure (Courier New on Linux). J.J. Boyd (KG4VCF),
@@ -96,6 +100,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/UnbuiltFeatures.h"
 
 #include "../../meters/MeterItem.h"
+#include "../../meters/ItemColourLook.h"
 #include "../../meters/ButtonBoxItem.h"
 #include "../../meters/FadeCoverItem.h"
 #include "../../meters/MeterPoller.h"
@@ -450,6 +455,8 @@ void BaseItemEditor::populateReadingCombo(QComboBox* combo)
 void BaseItemEditor::setItem(MeterItem* item)
 {
     m_item = item;
+    // The swatches below this editor ask this item which colours are picked.
+    setProperty(ItemColourLook::kSwatchSurfaceProperty, QVariant::fromValue<QObject*>(item));
     setEnabled(item != nullptr);
     if (!item) { return; }
     loadBaseFields();
@@ -534,6 +541,13 @@ void BaseItemEditor::addHeader(const QString& text)
     auto* hdr = new QLabel(text, this);
     hdr->setStyleSheet(kHeaderStyle);
     m_form->addRow(hdr);
+}
+
+void BaseItemEditor::markColourPicked(const QString& field)
+{
+    if (m_item != nullptr) {
+        m_item->setColourUserSet(field, true);
+    }
 }
 
 void BaseItemEditor::notifyChanged()

@@ -7,6 +7,13 @@
 // colour; records round-trip byte for byte; the editors' swatches show the
 // colour drawn and a pick stores the user's colour; every mapped role
 // reads against what it is drawn on (text 4.5:1, graphics 3:1).
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave: a pick of exactly a default stays
+//                 as picked and is saved beside the record (I6); records
+//                 include the entry context; the look off keeps every
+//                 row's classic colour (I9). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 
 #include <QtTest>
 #include <QApplication>
@@ -53,6 +60,7 @@ QByteArray recordOf(const ContainerContentRegistry& registry, const MeterItem& i
 {
     const ContentEntry captured = registry.captureMeterItem(item, prior);
     return QJsonDocument(captured.config).toJson(QJsonDocument::Compact)
+           + QByteArray("|") + QJsonDocument(captured.context).toJson(QJsonDocument::Compact)
            + QByteArray("|") + item.serialize().toUtf8();
 }
 
@@ -645,6 +653,74 @@ private slots:
             QCOMPARE(restored.serialize(), saved);
             QCOMPARE(restored.timeColour(), QColor(0x40, 0xa0, 0xff));
         }
+    }
+
+    // With the look off every row draws its classic colour.
+    void lookOffKeepsEveryClassicColour()
+    {
+        WorkspacePreview::setEnabledForTest(false);
+        for (const ItemColourLook::Row& row : ItemColourLook::rows()) {
+            const QColor classic = QColor::fromRgba(row.classic);
+            QVERIFY2(ItemColourLook::effective(row.field, classic) == classic, row.field);
+        }
+    }
+
+    // A colour picked in an editor stays as picked with the look on, even
+    // when it is exactly a default; the pick is saved beside the record and
+    // an entry saved without it (an older layout) follows the look.
+    void pickOfADefaultStaysAsPicked()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        ClockItem clock;
+        clock.applyNewItemDefaults();
+        const QColor classicTitle = clock.typeTitleColour();
+        QCOMPARE(ItemColourLook::effective("Clock.typeTitleColour", classicTitle, &clock), role("text-secondary"));
+        ClockItemEditor editor;
+        editor.setItem(&clock);
+        auto* swatch = editor.findChild<QPushButton*>(QStringLiteral("clockTitleColour"));
+        QVERIFY(swatch != nullptr);
+
+        bool answered = false;
+        QTimer timer;
+        timer.setInterval(20);
+        connect(&timer, &QTimer::timeout, this, [&]() {
+            if (auto* dialog = qobject_cast<QColorDialog*>(QApplication::activeModalWidget())) {
+                dialog->setCurrentColor(classicTitle);
+                dialog->accept();
+                answered = true;
+                timer.stop();
+            }
+        });
+        timer.start();
+        swatch->click();
+        QVERIFY(answered);
+        QCOMPARE(clock.typeTitleColour().rgba(), classicTitle.rgba());
+        QCOMPARE(ItemColourLook::effective("Clock.typeTitleColour", clock.typeTitleColour(), &clock),
+                 classicTitle);
+        QVERIFY2(swatch->styleSheet().contains(classicTitle.name(QColor::HexArgb)),
+                 qPrintable(swatch->styleSheet()));
+        QVERIFY(swatch->toolTip().isEmpty());
+
+        // Saved and restored: the pick holds; the record itself is unchanged.
+        ContainerContentRegistry registry;
+        const ContentEntry saved = registry.captureMeterItem(clock);
+        QVERIFY(saved.context.contains(QStringLiteral("userColours")));
+        std::unique_ptr<MeterItem> restored(registry.createMeterItem(saved, nullptr, ContentRenderMode::Validation));
+        QVERIFY(restored != nullptr);
+        QCOMPARE(ItemColourLook::effective("Clock.typeTitleColour", classicTitle, restored.get()), classicTitle);
+        QCOMPARE(registry.captureMeterItem(*restored, saved).context, saved.context);
+        ClockItem unpicked;
+        unpicked.applyNewItemDefaults();
+        QCOMPARE(restored->serialize(), unpicked.serialize());
+
+        // The same entry without the picks (saved before they were
+        // recorded) follows the look, and saves without the key.
+        ContentEntry older = saved;
+        older.context.remove(QStringLiteral("userColours"));
+        std::unique_ptr<MeterItem> loaded(registry.createMeterItem(older, nullptr, ContentRenderMode::Validation));
+        QVERIFY(loaded != nullptr);
+        QCOMPARE(ItemColourLook::effective("Clock.typeTitleColour", classicTitle, loaded.get()), role("text-secondary"));
+        QVERIFY(!registry.captureMeterItem(*loaded, older).context.contains(QStringLiteral("userColours")));
     }
 
     // The editor's swatch shows the colour drawn, with the note while the

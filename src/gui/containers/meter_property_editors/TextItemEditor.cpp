@@ -1,3 +1,8 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is
+//                 recorded as the user's (markColourPicked). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "TextItemEditor.h"
 #include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
@@ -81,7 +86,7 @@ void TextItemEditor::buildTypeSpecific()
         TextItem* x = qobject_cast<TextItem*>(m_item);
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->textColor(), this);
-        if (chosen.isValid()) { x->setTextColor(chosen); applyTextColor(chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Text.textColor")); x->setTextColor(chosen); applyTextColor(chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Text color"), m_btnTextColor);
 

@@ -1,5 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original draft content property adapter.
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): m_picking records a colour
+//                 dialog pick. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "ContainerContentRegistry.h"
 #include "gui/NereusGuiExport.h"
 #include <functional>
@@ -45,5 +49,7 @@ private:
     ContentEntry m_original, m_hydrated;
     QLabel* m_error=nullptr;
     bool m_loading=false, m_geometryLocked=false;
+    // True while a colour dialog pick is applied (property() records it).
+    bool m_picking=false;
 };
 }

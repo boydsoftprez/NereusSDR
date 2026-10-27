@@ -1622,7 +1622,7 @@ void FilterDisplayItem::paintThetis(QPainter& p, int widgetW, int widgetH)
     // NereusSDR: with the workspace look the item's own background follows
     // the meter background (the panel, or the container's user background)
     // while that colour is at its default.
-    const QColor itemBackground = ItemColourLook::followsLook(QStringLiteral("FilterDisplay.meterBackColour"), m_meterBackColour)
+    const QColor itemBackground = ItemColourLook::followsLook(QStringLiteral("FilterDisplay.meterBackColour"), m_meterBackColour, this)
         ? ItemColourLook::effective("FilterDisplay.meterBackColour", m_meterBackColour, this)
         : kThetisItemBackground;
     p.fillRect(QRectF(l.x, l.y, l.w, l.h), itemBackground);

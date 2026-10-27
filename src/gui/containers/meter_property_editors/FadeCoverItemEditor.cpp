@@ -1,3 +1,8 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is
+//                 recorded as the user's (markColourPicked). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "FadeCoverItemEditor.h"
 #include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
@@ -65,6 +70,7 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 1"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("FadeCover.colour1"));
             fade->setColour1(chosen);
             ItemColourLook::paintSwatch(m_btnColour1, QStringLiteral("FadeCover.colour1"), chosen);
             notifyChanged();
@@ -82,6 +88,7 @@ void FadeCoverItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Color 2"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("FadeCover.colour2"));
             fade->setColour2(chosen);
             ItemColourLook::paintSwatch(m_btnColour2, QStringLiteral("FadeCover.colour2"), chosen);
             notifyChanged();

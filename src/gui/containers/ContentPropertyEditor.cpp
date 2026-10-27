@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour the user sets is
+//                 recorded as picked (MeterItem::setColourUserSet); the
+//                 userColours key follows the other context keys. A fade
+//                 row a face refuses leaves the item and box unchanged
+//                 (GUI M3).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Colour swatches show the colour drawn and say when it
 //                 follows the workspace look (ItemColourLook::paintSwatch).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -198,6 +204,18 @@ void ContentPropertyEditor::publish()
 }
 bool ContentPropertyEditor::property(const QString& key,const QJsonValue& value,int channel)
 {
+    // A colour the user sets (picked, or typed as a new value) is recorded
+    // as picked, so it stays as set even when it equals a default; a blank
+    // one is not. Retyping the same text records nothing.
+    QString pickedField;
+    bool wasPicked=false;
+    if(m_item && (key.endsWith(QLatin1String("Color")) || key==QLatin1String("color"))) {
+        const QString field=lookFieldFor(m_item.get(),key,channel);
+        if(!field.isEmpty() && (m_picking || effectiveProperty(key,channel)!=value)) {
+            pickedField=field;wasPicked=m_item->colourUserSet(field);
+            m_item->setColourUserSet(field,QColor(value.toString()).isValid());
+        }
+    }
     QJsonObject change;
     if(channel>=0) {
         auto props=qobject_cast<CompositePresetItem*>(m_item.get())->configuration();
@@ -211,7 +229,11 @@ bool ContentPropertyEditor::property(const QString& key,const QJsonValue& value,
     if (auto* waveform = qobject_cast<WaveformMeterItem*>(m_item.get())) {
         accepted = waveform->applyConfiguration(change);
     }
-    if(!accepted) { if(m_error) {m_error->setText(tr("Value rejected: check the range, history duration or color."));} return false; }
+    if(!accepted) {
+        if(!pickedField.isEmpty()) {m_item->setColourUserSet(pickedField,wasPicked);}
+        if(m_error) {m_error->setText(tr("Value rejected: check the range, history duration or color."));}
+        return false;
+    }
     if(m_error) {m_error->clear();}
     captureRenderer();
     publish(); return true;
@@ -224,7 +246,7 @@ void ContentPropertyEditor::captureRenderer()
     // another axis changed during this editor selection.
     if(captured.config==m_hydrated.config) {captured.config=m_original.config;}
     if(captured.canvasRect==m_hydrated.canvasRect) {captured.canvasRect=m_original.canvasRect;}
-    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("mmioVariables"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup")}) {
+    for(const QString& key:{QStringLiteral("bindingId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable"),QStringLiteral("mmioVariables"),QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH"),QStringLiteral("onlyWhenRx"),QStringLiteral("onlyWhenTx"),QStringLiteral("displayGroup"),QString::fromLatin1(ItemColourLook::kUserColoursKey)}) {
         if(captured.context[key]==m_hydrated.context[key]) {
             if(m_original.context.contains(key)) {captured.context[key]=m_original.context[key];} else {captured.context.remove(key);}
         }
@@ -243,7 +265,7 @@ void ContentPropertyEditor::addFadeRows(QFormLayout* fields)
     const auto row=[this,fields](const QString& name,const QString& label,bool checked,bool receive) {
         auto* check=new QCheckBox(fields->parentWidget());check->setObjectName(name);check->setChecked(checked);
         fields->addRow(label,check);
-        connect(check,&QCheckBox::toggled,this,[this,receive](bool on) {
+        connect(check,&QCheckBox::toggled,this,[this,receive,check](bool on) {
             if(!m_item) {return;}
             auto* face=qobject_cast<CompositePresetItem*>(m_item.get());
             const bool explicitFade=m_item->hasExplicitFade();
@@ -251,11 +273,14 @@ void ContentPropertyEditor::addFadeRows(QFormLayout* fields)
             // Both flags are set, so the entry saves both keys.
             const bool otherRx=face && !explicitFade?faceConfig.value("fadeRx").toBool():m_item->fadeOnRx();
             const bool otherTx=face && !explicitFade?faceConfig.value("fadeTx").toBool():m_item->fadeOnTx();
+            // From now on the composite uses the animated veil, not its
+            // instant 25% fade. A face that refuses leaves the item and the
+            // box as they were.
+            if(face && !face->applyConfiguration(QJsonObject{{"fadeRx",false},{"fadeTx",false}})) {
+                const QSignalBlocker block(check);check->setChecked(!on);return;
+            }
             m_item->setFadeOnRx(receive?on:otherRx);
             m_item->setFadeOnTx(receive?otherTx:on);
-            // From now on the composite uses the animated veil, not its
-            // instant 25% fade.
-            if(face && !face->applyConfiguration(QJsonObject{{"fadeRx",false},{"fadeTx",false}})) {return;}
             captureRenderer();publish();
         });
     };
@@ -580,19 +605,25 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* swatch=new QPushButton(row);swatch->setAutoDefault(false);swatch->setFixedSize(40,18);
             swatch->setObjectName((channel<0?key:QString("channel%1_%2").arg(channel).arg(key))+QStringLiteral("Swatch"));layout->addWidget(swatch);
             const QString field=lookFieldFor(m_item.get(),key,channel);
-            const auto paintSwatch=[swatch,edit,field]{
+            const auto paintSwatch=[this,swatch,edit,field]{
                 const QColor stored(edit->text());
                 if(!stored.isValid() || field.isEmpty()) {
                     swatch->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: 1px solid #205070; }"));
                     swatch->setToolTip(edit->placeholderText());
                     return;
                 }
-                ItemColourLook::paintSwatch(swatch,field,stored);
+                ItemColourLook::paintSwatch(swatch,field,stored,m_item.get());
             };
             paintSwatch();
             connect(edit,&QLineEdit::editingFinished,this,paintSwatch);
             auto* choose=new QPushButton(tr("Choose…"),row);choose->setAutoDefault(false);layout->addWidget(choose);
-            const auto pick=[this,key,channel,edit,paintSwatch]{const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);if(color.isValid() && property(key,color.name(QColor::HexArgb),channel)) {edit->setText(color.name(QColor::HexArgb));paintSwatch();}};
+            const auto pick=[this,key,channel,edit,paintSwatch]{
+                const auto color=QColorDialog::getColor(QColor(edit->text()),this,tr("Choose color"),QColorDialog::ShowAlphaChannel);
+                if(!color.isValid()) {return;}
+                // A dialog pick is the user's even when it is the colour already stored.
+                m_picking=true;const bool accepted=property(key,color.name(QColor::HexArgb),channel);m_picking=false;
+                if(accepted) {edit->setText(color.name(QColor::HexArgb));paintSwatch();}
+            };
             connect(choose,&QPushButton::clicked,this,pick);connect(swatch,&QPushButton::clicked,this,pick);widget=row;
         }
         if(key=="bezelImage") {

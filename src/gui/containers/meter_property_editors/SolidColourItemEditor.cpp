@@ -1,3 +1,8 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): a colour dialog pick is
+//                 recorded as the user's (markColourPicked). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+
 #include "SolidColourItemEditor.h"
 #include "gui/meters/ItemColourLook.h"
 #include "../../meters/MeterItem.h"
@@ -37,6 +42,7 @@ void SolidColourItemEditor::buildTypeSpecific()
                                                      QStringLiteral("Fill color"),
                                                      QColorDialog::ShowAlphaChannel);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Solid.colour"));
             solid->setColour(chosen);
             ItemColourLook::paintSwatch(m_btnColour, QStringLiteral("Solid.colour"), chosen);
             notifyChanged();

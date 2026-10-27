@@ -418,6 +418,28 @@ void MeterItem::applyNewItemDefaults()
     setUpdateIntervalMs(kDefaultUpdateIntervalMs);
 }
 
+void MeterItem::setColourUserSet(const QString& field, bool picked)
+{
+    if (picked) {
+        m_userColours.insert(field);
+    } else {
+        m_userColours.remove(field);
+    }
+}
+
+QStringList MeterItem::userColourFields() const
+{
+    QStringList fields(m_userColours.cbegin(), m_userColours.cend());
+    fields.sort();
+    return fields;
+}
+
+void MeterItem::setUserColourFields(const QStringList& fields)
+{
+    m_userColours = QSet<QString>(fields.cbegin(), fields.cend());
+    m_userColours.remove(QString());
+}
+
 void MeterItem::setUpdateIntervalMs(int ms)
 {
     m_updateIntervalMs = ms > 0 ? ms : 0;

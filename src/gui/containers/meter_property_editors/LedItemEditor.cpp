@@ -302,6 +302,7 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->trueColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.trueColour"));
             x->setTrueColour(chosen);
             ItemColourLook::paintSwatch(m_btnTrueColour, QStringLiteral("Led.trueColour"), chosen);
             notifyChanged();
@@ -316,6 +317,7 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->falseColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.falseColour"));
             x->setFalseColour(chosen);
             ItemColourLook::paintSwatch(m_btnFalseColour, QStringLiteral("Led.falseColour"), chosen);
             notifyChanged();
@@ -340,6 +342,7 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->panelBackColour1(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.panelBackColour1"));
             x->setPanelBackColour1(chosen);
             ItemColourLook::paintSwatch(m_btnPanelBack1, QStringLiteral("Led.panelBackColour1"), chosen);
             notifyChanged();
@@ -354,6 +357,7 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->panelBackColour2(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.panelBackColour2"));
             x->setPanelBackColour2(chosen);
             ItemColourLook::paintSwatch(m_btnPanelBack2, QStringLiteral("Led.panelBackColour2"), chosen);
             notifyChanged();

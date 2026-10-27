@@ -15,12 +15,18 @@
 //   - the workspace look on (WorkspacePreview::enabled()) and the stored
 //     colour equal to one of the field's defaults: the role's colour, with
 //     the stored alpha;
-//   - any other stored colour (one the user picked): that colour;
+//   - any other stored colour, or one the user picked in an editor even
+//     when it equals a default (MeterItem::colourUserSet, asked of the
+//     item drawing it and of the composite face holding that item): that
+//     colour;
 //   - the look off: the stored colour.
 //
 // Records, serialization and the editors' stored values never change, so
 // a saved layout round-trips byte for byte and turning the look off brings
-// the classic colours back. A field whose default has no matching role
+// the classic colours back. The picks are saved beside the record, in the
+// entry context (kUserColoursKey), only when there is one. An item saved
+// without picks (every layout saved before they were recorded) treats a
+// colour equal to a default as the default. A field whose default has no matching role
 // keeps its classic colour; its row says why.
 //
 // =================================================================
@@ -30,6 +36,12 @@
 //   2026-10-26 - Contrast round: derived() for colours an item derives
 //                 (off-state text, badge fills). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - PR 677 review fix wave (I6): a colour the user picked
+//                 stays as picked even when it equals a default
+//                 (userPicked(), kUserColoursKey; surface arguments on
+//                 followsLook, derived and paintSwatch); swatches carry an
+//                 accessible name (GUI M5). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -76,19 +88,27 @@ const Row* defaultRow(const QString& field, const QColor& stored);
 // kept.
 bool listed(const QString& field, const QColor& stored);
 
-// True when the look is on and `stored` is a mapped default of `field`:
-// the item draws the role's colour.
-bool followsLook(const QString& field, const QColor& stored);
+// True when `surface` is an item that holds `field` as a colour the user
+// picked (MeterItem::colourUserSet), or sits in a composite face that
+// does (a VFO display or clock inside a face).
+bool userPicked(const QString& field, const QObject* surface);
+
+// True when the look is on and `stored` is a mapped default of `field`
+// that the user did not pick (`surface`, as for effective()): the item
+// draws the role's colour.
+bool followsLook(const QString& field, const QColor& stored, const QObject* surface = nullptr);
 
 // The colour drawn for `field` holding `stored`. `surface` is the item (or
-// its widget) for a backdrop row; it finds the container's user background.
+// its widget): a colour the item says the user picked is drawn as stored,
+// and for a backdrop row it finds the container's user background.
 QColor effective(const char* field, const QColor& stored, const QObject* surface = nullptr);
 QColor effective(const QString& field, const QColor& stored, const QObject* surface = nullptr);
 
 // A colour an item derives from a field rather than stores (an off
 // state's text, a badge's fill): `role`'s colour while `field` holding
 // `stored` follows the look, otherwise `classic`.
-QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic);
+QColor derived(const char* field, const QColor& stored, const char* role, const QColor& classic,
+               const QObject* surface = nullptr);
 
 // The editors' note for a field that follows the look.
 QString followsLookNote();
@@ -96,8 +116,11 @@ QString followsLookNote();
 // A container item editor's colour swatch: the effective colour, in the
 // swatch sheet WorkspacePreview recognises as a user colour (so the live
 // pass leaves it alone), and the note as its tool tip while the field
-// follows the look. The field's stored value is not touched.
-void paintSwatch(QPushButton* button, const QString& field, const QColor& stored);
+// follows the look. `surface` is the item edited (its picks count; when
+// null, the kSwatchSurfaceProperty an ancestor of `button` names). The
+// field's stored value is not touched.
+void paintSwatch(QPushButton* button, const QString& field, const QColor& stored,
+                 const QObject* surface = nullptr);
 
 // One colour field of an item and the colour it stores.
 struct FieldColour {
@@ -115,6 +138,15 @@ QVector<FieldColour> colourFieldsOf(const MeterItem& item);
 // not an item field but takes the same rows. The container's title bar and
 // border store no colour; they draw workspace roles already.
 inline constexpr auto kContainerBackground = "Container.background";
+
+// The entry context key that saves an item's picked colours: an array of
+// field names, written only when the item has a pick.
+inline constexpr auto kUserColoursKey = "userColours";
+
+// The dynamic property (a QObject*) an item editor sets on itself: the
+// item its swatches are painted for, so paintSwatch() without a surface
+// finds the item's picks.
+inline constexpr auto kSwatchSurfaceProperty = "nereusColourSurface";
 
 } // namespace ItemColourLook
 } // namespace NereusSDR

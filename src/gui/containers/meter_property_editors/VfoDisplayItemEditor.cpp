@@ -125,6 +125,7 @@ void VfoDisplayItemEditor::buildTypeSpecific()
             const QColor chosen = QColorDialog::getColor(
                 Qt::gray, this, QString(), QColorDialog::ShowAlphaChannel);
             if (chosen.isValid()) {
+                markColourPicked(field);
                 (v->*setter)(chosen);
                 applyBtnColor(btn, field, chosen);
                 notifyChanged();

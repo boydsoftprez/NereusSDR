@@ -1165,7 +1165,7 @@ void DialItem::paintThetis(QPainter& p, const CaptionLayout& layout, int widgetW
     dimText.setAlphaF(ItemColourLook::effective("Dial.textColour", m_textColour, this).alphaF() * 0.5f);
     // NereusSDR: with the workspace look a disabled label takes the
     // tertiary text role, which reads at 4.5:1 and still reads as dimmer.
-    dimText = ItemColourLook::derived("Dial.textColour", m_textColour, "text-tertiary", dimText);
+    dimText = ItemColourLook::derived("Dial.textColour", m_textColour, "text-tertiary", dimText, this);
     const auto label = [&](int zone, const QString& text, int alignment, bool enabled) {
         p.setPen(enabled ? ItemColourLook::effective("Dial.textColour", m_textColour, this) : dimText);
         drawObjectText(p, zones[zone], text, size, alignment);

@@ -200,7 +200,7 @@ void ScaleItemEditor::buildTypeSpecific()
         if (!scale) { return; }
         const QColor chosen = QColorDialog::getColor(scale->tickColor(), this,
                                                      QStringLiteral("Tick color"));
-        if (chosen.isValid()) { scale->setTickColor(chosen); applyTickBtn(chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Scale.tickColor")); scale->setTickColor(chosen); applyTickBtn(chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Tick color"), m_btnTickColor);
 
@@ -215,7 +215,7 @@ void ScaleItemEditor::buildTypeSpecific()
         if (!scale) { return; }
         const QColor chosen = QColorDialog::getColor(scale->labelColor(), this,
                                                      QStringLiteral("Label color"));
-        if (chosen.isValid()) { scale->setLabelColor(chosen); applyLabelBtn(chosen); notifyChanged(); }
+        if (chosen.isValid()) { markColourPicked(QStringLiteral("Scale.labelColor")); scale->setLabelColor(chosen); applyLabelBtn(chosen); notifyChanged(); }
     });
     addRow(QStringLiteral("Label color"), m_btnLabelColor);
 
@@ -254,6 +254,7 @@ void ScaleItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(scale->titleColour(), this,
                                                      QStringLiteral("Title color"));
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Scale.titleColour"));
             scale->setTitleColour(chosen);
             applyTitleBtn(chosen);
             notifyChanged();
@@ -279,6 +280,7 @@ void ScaleItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(scale->lowColour(), this,
                                                      QStringLiteral("Low color"));
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Scale.lowColour"));
             scale->setLowColour(chosen);
             applyBtn(m_btnLowColor, QStringLiteral("Scale.lowColour"), chosen);
             notifyChanged();
@@ -293,6 +295,7 @@ void ScaleItemEditor::buildTypeSpecific()
         const QColor chosen = QColorDialog::getColor(scale->highColour(), this,
                                                      QStringLiteral("High color"));
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Scale.highColour"));
             scale->setHighColour(chosen);
             applyBtn(m_btnHighColor, QStringLiteral("Scale.highColour"), chosen);
             notifyChanged();

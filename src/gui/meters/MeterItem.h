@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): setColourUserSet(),
+//                 colourUserSet() and userColourFields(): the colours the
+//                 user picked in an editor, so a pick equal to a default
+//                 stays as picked under the workspace look. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I10): a needle applies its saved
 //                 attack ratio rising and decay ratio falling, and draws
 //                 with its saved stroke width; one saved without them
@@ -308,6 +313,7 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QUuid>
 #include <QVariant>
 #include <cmath>
@@ -527,6 +533,22 @@ public:
     // ClearHistory): no history in the base.
     virtual void clearHistory() {}
 
+    // Colours the user picked in an editor, by ItemColourLook field name
+    // ("<Item>.<field>"). A picked colour is drawn as stored even when it
+    // equals a default the workspace look maps (ItemColourLook::effective
+    // asks the item, and the composite face holding it). Saved in the
+    // entry context (ItemColourLook::kUserColoursKey) only when not empty,
+    // so a record with no picks is unchanged; an item saved without the
+    // key has none.
+    void setColourUserSet(const QString& field, bool picked);
+    bool colourUserSet(const QString& field) const
+    {
+        return !m_userColours.isEmpty() && m_userColours.contains(field);
+    }
+    // Sorted, so a saved entry is stable.
+    QStringList userColourFields() const;
+    void setUserColourFields(const QStringList& fields);
+
     // Per-item update interval in ms; 0 (the value of a saved item without
     // one) takes every poll. MeterWidget::updateMeterValue asks
     // acceptsUpdate() before delivering a reading: true when the interval
@@ -726,6 +748,9 @@ protected:
     // From Thetis MeterManager.cs:6778 [v2.10.3.15] (_fadeValue = 255)
     int    m_fadeValue{255};
     qint64 m_lastFadeStepMs{-1};
+
+    // Colours the user picked (see public accessors above).
+    QSet<QString> m_userColours;
 
     // Update interval (see public accessors above); runtime only below.
     int    m_updateIntervalMs{0};
