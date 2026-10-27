@@ -9,6 +9,8 @@ scope](verification.md) before treating these instructions as release acceptance
 
 A Core serves multiple paired phones and computers, but receiver capacity is finite. Each device can have its own slices and can listen where its receiver assignment permits. The Core decides ownership and access. On the iPhone, a foreign slice is a read-only label until this phone takes control. Transmit ownership is separate from the active receive slice. Check the TX slice and holder independently, using the supported starting states in [phone transmit preparation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone).
 
+The Core keeps each paired device's slices for it when it leaves or the Core restarts. When the device signs in again, it gets the same letter with that slice's step, AGC and other saved settings, whether the Core runs headless or inside a desktop window. If another slice took the letter meanwhile, the device gets the lowest free letter with its own settings. A Core inside a desktop window gives the window's own slice the lowest letter no paired device has kept, so that window may start on **B** or later rather than **A**.
+
 ## Inspect shared administration from a desktop
 
 For a saved Core, open **File > Settings... > Cores > Your Cores**, select it,

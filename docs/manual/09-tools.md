@@ -48,6 +48,8 @@ On desktop, open **File > Settings... > CAT & Network > TCI Server** or **Tools 
 3. Read the displayed **Status**. Open the TCI log if a client cannot connect; use the logged connection or refusal detail to correct the listen address, port, firewall or client target.
 4. Configure the external client with the displayed host and port. Return to the TCI status/app applet and verify the client appears in **Clients**. A successful WebSocket connection does not mean that the client owns transmit control. In a remote window, a TCI program that keys with its own audio sends that audio, or silence, and never the microphone. Review the server options by their displayed labels: ExpertSDR3 protocol emulation, SunSDR2 PRO device emulation, CWL/CWU presented as CW, and sending initial state to new clients. On the phone, these options apply to apps connecting from that point onward and may be unavailable while on air.
 
+TCI refuses a connection that comes from a web page, so a page open in your browser cannot key the radio. Native TCI programs connect as usual. If a TCI program stops answering while it holds the key, NereusSDR releases the key after about 3 seconds, as if the program had disconnected.
+
 Before a TCI program requests transmit, confirm that the desktop window
 hosting its server holds the station’s **TXcontrol**, using the ordinary
 station transmit-holder indication. The external app does not become a

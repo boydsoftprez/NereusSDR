@@ -66,9 +66,9 @@ class RendererTest(unittest.TestCase):
             expected = {'manual/index.html'} | {
                 'manual/'+p.stem+'.html' for p in (ROOT / 'docs/manual').glob('[0-9][0-9]-*.md')
             } | {'guides/'+name+'.html' for name in (
-                'install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'contributing-with-ai', 'remote-access')} | {'roundtable/api.html'}
+                'install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'upgrading-to-2026.10.2', 'contributing-with-ai', 'remote-access')} | {'roundtable/api.html'}
             self.assertEqual(set(pages), expected)
-            self.assertEqual(len(pages), 28)
+            self.assertEqual(len(pages), 29)
             for route, page in pages.items():
                 self.assertEqual(page.canonical, ['https://nereussdr.com/' + route])
                 self.assertEqual(page.styles, ['/assets/css/site.css', '/manual/manual.css'])
@@ -97,7 +97,7 @@ class RendererTest(unittest.TestCase):
             self.assertFalse((output / 'manual/site.css').exists())
             manifest_path = output / 'manual/source-map.json'
             manifest = json.loads(manifest_path.read_text())
-            self.assertEqual(len(manifest['pages']), 28)
+            self.assertEqual(len(manifest['pages']), 29)
             for kind in ('pages', 'images', 'downloads'):
                 for entry in manifest[kind]:
                     original = ROOT / entry['source']
@@ -162,7 +162,7 @@ class RendererTest(unittest.TestCase):
         (manual / '01-start.md').write_text('# Start\n\n## Start here\n\n[here](#start-here)\n')
         guides = root / 'docs/guides'
         guides.mkdir()
-        for name in ('install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'contributing-with-ai'):
+        for name in ('install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'upgrading-to-2026.10.2', 'contributing-with-ai'):
             (guides / (name + '.md')).write_text('# Guide\n\n## Settings\n\n[manual](../manual/01-start.md?view=full#start-here)\n[notes](../manual/authoring.md)\n[code](../../src/?raw=1#part)\n[external](https://example.com/test.md?q=1#part)\n![image](../manual/images/picture.png)\n')
         (root / 'rendezvous').mkdir()
         (root / 'rendezvous/README.md').write_text('# Remote\n')

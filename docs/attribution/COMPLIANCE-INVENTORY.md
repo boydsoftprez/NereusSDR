@@ -668,6 +668,7 @@ Total tracked files: **7395**
 - `docs/guides/tx-eq-cfc.md`
 - `docs/guides/upgrading-to-2026.10.0.md`
 - `docs/guides/upgrading-to-2026.10.1.md`
+- `docs/guides/upgrading-to-2026.10.2.md`
 - `docs/images/nereussdr-v016-screenshot.jpg`
 - `docs/manual/01-desktop-connect.md`
 - `docs/manual/02-desktop-window.md`

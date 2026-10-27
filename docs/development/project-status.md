@@ -16,6 +16,15 @@ release, came before it. See the
 [2026.10.1 upgrade note](../guides/upgrading-to-2026.10.1.md).
 The release summary in [MASTER-PLAN.md](../MASTER-PLAN.md) records current scope.
 
+2026.10.2 is in progress on main. So far it adds the remote display codec v2
+(waterfall rows that stand alone), an evenly scrolling remote waterfall, remote
+RX meters held to their audio, receiver grab and flag drag tuning with steadier
+trackpad steps, TUNE following only the Setup drive source, SWR protection that
+lowers the drive, the ANAN-G2E's own PA gain table, the TX applet rows as
+container items, and the workspace look on the iPhone and iPad. The
+`[Unreleased]` section of the [changelog](../../CHANGELOG.md) lists every
+merged change.
+
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
 out of date; use current source and feature verification packets for those facts.
@@ -168,6 +177,15 @@ actually exercises RX2.
 | [2026-10-09-two-tone-single-setting-plan.md](docs/architecture/2026-10-09-two-tone-single-setting-plan.md) | Two-tone as one setting, and remote transmit edits saved on the Core | **Built**, released in 2026.10.1 |
 | [2026-10-10-container-arrange-design.md](docs/architecture/2026-10-10-container-arrange-design.md) | The workspace look: container headers, arranging, docking, pop-outs and workspace profiles | **Built**, released in 2026.10.1 |
 | [2026-10-10-container-arrange-plan.md](docs/architecture/2026-10-10-container-arrange-plan.md) | The workspace look: implementation plan | **Built**, released in 2026.10.1 |
+| [2026-10-18-flag-drag-and-trackpad-plan.md](docs/architecture/2026-10-18-flag-drag-and-trackpad-plan.md) | Receiver grab area across the whole passband, VFO flag drag to tune, and trackpad steps with no coasting | **Built and merged** (PR 594), for 2026.10.2 |
+| [remote-waterfall-in-step-plan.md](docs/architecture/remote-waterfall-in-step-plan.md) | A remote pan's waterfall rows on a steady grid locked to their due times | **Built and merged** (PR 598), for 2026.10.2 |
+| [2026-10-22-rx-meter-stamps.md](docs/architecture/2026-10-22-rx-meter-stamps.md) | Remote RX meter readings stamped on the Core and held to their audio in the window | **Built and merged** (PR 601), for 2026.10.2 |
+| [2026-10-22-display-codec-v2-intra-rows.md](docs/architecture/2026-10-22-display-codec-v2-intra-rows.md) | Display codec v2: every waterfall row and trace coded on its own, losslessly | **Approved** (2026-10-22); desktop and Core **built and merged** (PR 631) and the phone's decoder (PR 632), for 2026.10.2 |
+| [2026-10-22-display-codec-v2-plan.md](docs/architecture/2026-10-22-display-codec-v2-plan.md) | Display codec v2: implementation plan | Desktop and Core lanes **built and merged** (PR 631) and the phone lane (PR 632); removal of the keyframe-every-frame bench setting pending |
+| [tx-applet-section-split-design.md](docs/architecture/tx-applet-section-split-design.md) | The TX applet split into seven per-row section objects, no behavior change | **Built and merged** (PR 591), for 2026.10.2 |
+| [tx-applet-section-content-design.md](docs/architecture/tx-applet-section-content-design.md) | The TX applet's rows as container content, plus Frequency (Custom) | **Built and merged** (PRs 592, 597), for 2026.10.2 |
+| [2026-10-20-phone-workspace-look-design.md](docs/architecture/2026-10-20-phone-workspace-look-design.md) | The iPhone and iPad app in the desktop workspace look | **Built and merged** (PR 603), for 2026.10.2; on-device checks pending |
+| [2026-10-21-phone-workspace-look-plan.md](docs/architecture/2026-10-21-phone-workspace-look-plan.md) | The phone in the workspace look: implementation plan | **Built and merged** (PR 603), for 2026.10.2 |
 
 ## Phase 1 analysis docs (`docs/phase1/`)
 

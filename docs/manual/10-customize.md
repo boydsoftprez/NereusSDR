@@ -143,6 +143,41 @@ current committed state while retaining unrelated draft edits. Inspect the
 result and retry Apply. A storage/save failure leaves a reason and is not a
 successful commit; do not assume the preview is now the persisted layout.
 
+### Put TX applet rows or a large frequency readout in a container
+
+**Available** also lists the TX applet's rows as separate items: **TX
+Monitor** (MON, its outputs and volume), **TX Power** (the power and SWR
+gauges with the RF Power and Tune Power rows), **TX Filter** (the transmit
+filter cutoffs), **TX Chain** (LEV, EQ, CFC and the TX profile), **TX VOX**,
+**TX Processing** (2-TONE, PS-A, DUP and the SWR protection light) and **TX
+Keying** (TUNE, MOX and the transmit slice row). Add one to keep that row where
+you want it. Each copy shows and sets the same state as the TX applet's own
+row and follows the same transmit rules, so a grayed row in the applet is
+grayed in the container too. The TX applet itself keeps every row. A
+container's **TX Keying** has **Hide slice indicators**, which leaves only TUNE
+and MOX.
+
+The RX applet's rows are listed the same way: **RX Antennas**, **RX Mode**,
+**RX Step**, **RX Filter**, **RX Pan**, **RX Squelch**, **RX Attenuator**,
+**RX AGC**, **RX RIT** and **RX XIT**. Each acts on the same slice as the RX
+applet. A container's **RX Filter** has **Hide width label** and **Hide
+passband**, so it can show just the filter buttons, plus **Columns** (1 to 32)
+and the **Button text**, **Background top**, **Background bottom**, **Selected
+top** and **Selected bottom** colors for those buttons. The RX applet itself
+keeps every row.
+
+**Nereus Band Buttons**, under **Controls** in the add-item menu beside **Band
+Buttons**, draws the band buttons with the raised look of the PureSignal
+button. It has the same settings as **Band Buttons**, plus a **Nereus colours**
+group: **Button text**, **Background top**, **Background bottom**, **Selected
+top** and **Selected bottom**.
+
+**Frequency (Custom)** is a frequency readout you can size and style, beside
+the fixed **Frequency (Longpath)** item. Its properties are **Font size** (12
+to 160), **Fit font to the width**, **Font color**, **Center in the box**, and
+**A/B line: this slice** and **A/B line: other slice** to show or hide each
+slice line under the digits.
+
 ### Place, resize and layer objects on Canvas
 
 1. Select **Canvas**. The first explicit switch from **Vertical stack** uses
