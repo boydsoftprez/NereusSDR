@@ -48,6 +48,11 @@
 //               and the arrivals around them). Measurement only; nothing
 //               the buffer does changes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the no-audio check,
+//               scheduled from the same last packet and starvation
+//               generation as the starvation check; noAudio once per quiet
+//               period. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/media/RemoteMicReceiver.h"
@@ -1043,6 +1048,8 @@ void RemoteMicReceiver::stop()
     m_watching = false;
     ++m_starvationGeneration;
     m_starvationCheckPending = false;
+    m_noAudioCheckPending = false;
+    m_noAudioSignalled = false;
     const std::lock_guard<std::mutex> lock(m_lineLock);
     if (m_decoder->opus != nullptr) {
         opus_decoder_destroy(m_decoder->opus);
@@ -1151,6 +1158,9 @@ void RemoteMicReceiver::afterPacket(bool wroteAudio)
         m_starved = false;
         emit starved(false);
     }
+    // A packet ends the quiet period: the next one may signal no audio
+    // again. A pending no-audio check finds the newer packet and waits on.
+    m_noAudioSignalled = false;
     if (m_watching && !m_starvationCheckPending) {
         scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
     }
@@ -1342,6 +1352,8 @@ void RemoteMicReceiver::setWatching(bool watching)
     m_watching = watching;
     ++m_starvationGeneration;
     m_starvationCheckPending = false;
+    m_noAudioCheckPending = false;
+    m_noAudioSignalled = false;
     if (watching) {
         // Measured from the later of the last audio and the start of the
         // watch.
@@ -1383,11 +1395,48 @@ void RemoteMicReceiver::checkStarvation()
         if (!m_starved) {
             m_starved = true;
             qCInfo(lcAudio) << "Remote microphone: no audio for" << quiet << "ms while keyed";
+            if (!m_noAudioCheckPending && !m_noAudioSignalled) {
+                scheduleNoAudioCheck(static_cast<int>(RemoteMicConfig::kNoAudioCutMs - quiet));
+            }
             emit starved(true);
         }
         return;   // the next audio schedules the next check
     }
     scheduleStarvationCheck(static_cast<int>(RemoteMicConfig::kStarvationMs - quiet));
+}
+
+void RemoteMicReceiver::scheduleNoAudioCheck(int ms)
+{
+    m_noAudioCheckPending = true;
+    const quint64 generation = m_starvationGeneration;
+    QPointer<RemoteMicReceiver> self(this);
+    m_scheduler(std::max(1, ms), [self, generation]() {
+        if (self.isNull() || generation != self->m_starvationGeneration) {
+            return;
+        }
+        self->m_noAudioCheckPending = false;
+        self->checkNoAudio();
+    });
+}
+
+void RemoteMicReceiver::checkNoAudio()
+{
+    if (!m_watching || !isRunning() || m_noAudioSignalled) {
+        return;
+    }
+    const qint64 quiet = now() - m_lastAudioMs.load(std::memory_order_acquire);
+    if (quiet >= RemoteMicConfig::kNoAudioCutMs) {
+        m_noAudioSignalled = true;
+        qCWarning(lcAudio) << "Remote microphone: no audio packets for" << quiet
+                           << "ms while keyed";
+        emit noAudio();
+        return;   // the next audio starts the next quiet period
+    }
+    if (!m_starved) {
+        return;   // audio flows: the next starvation schedules the next check
+    }
+    // The line went quiet again after a packet: wait on from that packet.
+    scheduleNoAudioCheck(static_cast<int>(RemoteMicConfig::kNoAudioCutMs - quiet));
 }
 
 } // namespace NereusSDR

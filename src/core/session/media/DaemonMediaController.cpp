@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut: the microphone line's
+//               noAudio is forwarded as micNoAudio, beside starved.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
 //               setEncodedFrameObserverForTest and the observer) build only
 //               with NEREUS_BUILD_TESTS. J.J. Boyd (KG4VCF), AI-assisted
@@ -3311,6 +3314,13 @@ void DaemonMediaController::startMicLine(MediaPeer* peer)
         const auto displayHold = displayGuard();
         if (m_server && !m_micDeviceId.isEmpty()) {
             m_server->remoteMicStarved(m_micDeviceId, starved);
+        }
+    });
+    // Remote transmit hold then cut (2026-10-26): 10 s without audio
+    // packets while keyed, with the line's device.
+    connect(m_micReceiver.get(), &RemoteMicReceiver::noAudio, this, [this]() {
+        if (!m_micDeviceId.isEmpty()) {
+            emit micNoAudio(m_micDeviceId);
         }
     });
     // Fix wave C2: this device's line, by device; it writes the feed only

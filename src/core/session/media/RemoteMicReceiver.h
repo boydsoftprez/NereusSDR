@@ -98,6 +98,10 @@
 //               rate, within the line's 48 kbit/s offer; kSilencePeak
 //               re-measured at the phone's 48 kbit/s full band and kept.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: kNoAudioCutMs and the
+//               noAudio signal, once 10 s after the line's last packet
+//               while watched. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioRingSpsc.h"
@@ -210,6 +214,10 @@ struct RemoteMicConfig {
     /// from the line's first packet in the wait.
     static constexpr int kStarvationMs = 250;
     static constexpr int kReadyDeadlineMs = 250;
+    /// Remote transmit hold then cut (2026-10-26): how long a keyed
+    /// device's line may carry no audio packets before the Core stops
+    /// transmitting, in every mode (RemoteMicReceiver::noAudio).
+    static constexpr int kNoAudioCutMs = 10000;
     /// Load findings 2 (R-IOS-13): how long a key waits for that first
     /// packet. A device starts its line when the key is pressed (a window
     /// opens its microphone only then), so the line's cold start (capture
@@ -233,6 +241,8 @@ struct RemoteMicConfig {
 
     static_assert(kMaxDepthMs < kStarvationMs,
                   "the transmit jitter buffer is shorter than the starvation deadline");
+    static_assert(kStarvationMs < kNoAudioCutMs,
+                  "a quiet line is held before the no-audio cut");
     static_assert(kTargetDepthMs < kReadyDeadlineMs,
                   "a key can reach the smallest target before its deadline");
     static_assert(kMaxDepthMs < kStaleAfterStallMs,
@@ -697,6 +707,9 @@ public:
     /// Whether a device holding transmit is keyed on this line's audio now.
     /// While it is, 250 ms without audio emits starved(true), and audio
     /// arriving again starved(false). Turning it off ends a starvation.
+    /// Remote transmit hold then cut: while it is, kNoAudioCutMs without
+    /// a packet emits noAudio() once; a packet starts the wait again, and
+    /// turning the watch off or stopping the line cancels it.
     void setWatching(bool watching);
     bool isWatching() const { return m_watching; }
     bool isStarved() const { return m_starved; }
@@ -705,6 +718,9 @@ public:
 
 signals:
     void starved(bool starved);
+    /// Once per quiet period, kNoAudioCutMs after the last packet, while
+    /// watching.
+    void noAudio();
 
 private:
     /// TX mic thread: the event loop's part of a packet (the end of a
@@ -717,6 +733,8 @@ private:
     void refuseWaitAfter(int ms, bool onlyBeforeFirstPacket);
     void scheduleStarvationCheck(int ms);
     void checkStarvation();
+    void scheduleNoAudioCheck(int ms);
+    void checkNoAudio();
     qint64 now() const;
 
     struct Decoder;
@@ -762,6 +780,10 @@ private:
     bool m_starved{false};
     bool m_starvationCheckPending{false};
     quint64 m_starvationGeneration{0};
+    // Remote transmit hold then cut: the no-audio check runs from the same
+    // last audio and under the same generation as the starvation check.
+    bool m_noAudioCheckPending{false};
+    bool m_noAudioSignalled{false};
     // TX mic thread: when the line's audio last came, on m_clock, set by
     // the delivering thread at the packet's receipt there.
     std::atomic<qint64> m_lastAudioMs{0};

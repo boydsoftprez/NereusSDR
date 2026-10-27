@@ -8,6 +8,9 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: Remote transmit hold then cut: micNoAudio forwards the
+//               microphone line's no-audio signal with its device id.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23: American spelling in the keyframe every frame comment.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
@@ -650,6 +653,13 @@ public:
     bool carriesMicFor(const QByteArray& deviceId) const;
     void primeMic(std::function<void(bool)> done);
     void endMicPriming();
+
+signals:
+    /// Remote transmit hold then cut (2026-10-26): the microphone line of
+    /// `deviceId` has had no audio packets for RemoteMicConfig::
+    /// kNoAudioCutMs while the device is keyed on it
+    /// (RemoteMicReceiver::noAudio).
+    void micNoAudio(const QByteArray& deviceId);
 
 private:
     struct EndpointEntry;

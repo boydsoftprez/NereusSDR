@@ -45,6 +45,10 @@
 //               feed's figures (when, how long silent, the gap before it and
 //               how late the packets came). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the no-audio signal, once
+//               10 s after the last packet while watched, reset by a packet
+//               and cancelled by the end of the watch or the line. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/MediaPeer.h"
@@ -255,6 +259,10 @@ private slots:
     void keyWaitRefusesALineThatStartsThenStops();
     void keyWaitEndedAfterItsFirstPacketIsAnsweredOnlyByTheEnd();
     void starvationIsSignalledOnlyWhileWatched();
+    void noAudioIsSignalledOnceTenSecondsAfterTheLastPacket();
+    void aPacketRestartsTheNoAudioWait();
+    void endingTheWatchCancelsThePendingNoAudio();
+    void stoppingTheLineCancelsThePendingNoAudio();
     void anOlderReceiptCannotMoveTheLastAudioBack();
     // R-IOS-13 (2026-09-27): the small adaptive buffer.
     void steadyPacketsHoldTheSmallestTargetWithoutUnderrun();
@@ -275,6 +283,7 @@ void TestRemoteMicReceiver::theLineKeepsTheTransmitNumbers()
     QCOMPARE(RemoteMicConfig::kMinMarginMs, 10);
     QCOMPARE(RemoteMicConfig::kMaxDepthMs, 120);
     QCOMPARE(RemoteMicConfig::kStarvationMs, 250);
+    QCOMPARE(RemoteMicConfig::kNoAudioCutMs, 10000);
     QCOMPARE(RemoteMicConfig::kReadyDeadlineMs, 250);
     QCOMPARE(RemoteMicConfig::kLineStartDeadlineMs, 1000);
     QCOMPARE(RemoteMicConfig::kTargetDepthFrames, 1440);
@@ -988,6 +997,102 @@ void TestRemoteMicReceiver::starvationIsSignalledOnlyWhileWatched()
     QCOMPARE(starved.at(3).at(0).toBool(), false);
     time.advanceTo(time.nowMs + 1000);
     QCOMPARE(starved.count(), 4);
+}
+
+// Remote transmit hold then cut (2026-10-26): watched with no packets, the
+// line starves at 250 ms and signals no audio once at 10000 ms.
+void TestRemoteMicReceiver::noAudioIsSignalledOnceTenSecondsAfterTheLastPacket()
+{
+    FakeTime time;
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+    QSignalSpy starved(&receiver, &RemoteMicReceiver::starved);
+    QSignalSpy noAudio(&receiver, &RemoteMicReceiver::noAudio);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    receiver.setWatching(true);
+
+    time.advanceTo(249);
+    QCOMPARE(starved.count(), 0);
+    time.advanceTo(250);
+    QCOMPARE(starved.count(), 1);
+    QCOMPARE(starved.at(0).at(0).toBool(), true);
+    time.advanceTo(9999);
+    QCOMPARE(noAudio.count(), 0);
+    time.advanceTo(10000);
+    QCOMPARE(noAudio.count(), 1);
+    // Once per quiet period.
+    time.advanceTo(60000);
+    QCOMPARE(noAudio.count(), 1);
+    QCOMPARE(starved.count(), 1);
+}
+
+// A packet at 5000 ms ends the starvation and restarts both waits: starved
+// again 250 ms later, no audio only 10000 ms after that packet.
+void TestRemoteMicReceiver::aPacketRestartsTheNoAudioWait()
+{
+    FakeTime time;
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+    QSignalSpy starved(&receiver, &RemoteMicReceiver::starved);
+    QSignalSpy noAudio(&receiver, &RemoteMicReceiver::noAudio);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    receiver.setWatching(true);
+
+    time.advanceTo(5000);
+    QCOMPARE(starved.count(), 1);
+    receiver.submit(l16Packet(0.1f, 1, 0));
+    QCOMPARE(starved.count(), 2);
+    QCOMPARE(starved.at(1).at(0).toBool(), false);
+    time.advanceTo(5249);
+    QCOMPARE(starved.count(), 2);
+    time.advanceTo(5250);
+    QCOMPARE(starved.count(), 3);
+    QCOMPARE(starved.at(2).at(0).toBool(), true);
+    time.advanceTo(14999);
+    QCOMPARE(noAudio.count(), 0);
+    time.advanceTo(15000);
+    QCOMPARE(noAudio.count(), 1);
+    time.advanceTo(60000);
+    QCOMPARE(noAudio.count(), 1);
+}
+
+void TestRemoteMicReceiver::endingTheWatchCancelsThePendingNoAudio()
+{
+    FakeTime time;
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+    QSignalSpy noAudio(&receiver, &RemoteMicReceiver::noAudio);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    receiver.setWatching(true);
+    time.advanceTo(5000);
+    receiver.setWatching(false);
+    time.advanceTo(60000);
+    QCOMPARE(noAudio.count(), 0);
+
+    // A new watch runs its own 10 s from its start.
+    receiver.setWatching(true);
+    time.advanceTo(69999);
+    QCOMPARE(noAudio.count(), 0);
+    time.advanceTo(70000);
+    QCOMPARE(noAudio.count(), 1);
+}
+
+void TestRemoteMicReceiver::stoppingTheLineCancelsThePendingNoAudio()
+{
+    FakeTime time;
+    RemoteMicFeed feed;
+    RemoteMicReceiver receiver(&feed, nullptr, time.clock(), time.scheduler());
+    QSignalSpy noAudio(&receiver, &RemoteMicReceiver::noAudio);
+    QVERIFY(receiver.start(kMicSsrc, true));
+    feed.setInUse(true);
+    receiver.setWatching(true);
+    time.advanceTo(5000);
+    receiver.stop();
+    time.advanceTo(60000);
+    QCOMPARE(noAudio.count(), 0);
 }
 
 // TX mic thread fix round 2: the last audio only moves forward. A packet
