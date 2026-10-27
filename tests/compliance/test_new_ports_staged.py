@@ -32,6 +32,11 @@ DESIGNER_RANGE = (
     "// Padding range from Thetis setup.designer.cs:63987-64005 [v2.10.3.15]\n"
     "constexpr double kPadding = 10.0;\n"
 )
+# Thetis's own spelling of the designer half is capitalised.
+DESIGNER_CAPITAL_RANGE = (
+    "// The step matches console.Designer.cs:4410\n"
+    "constexpr double kStep = 0.1;\n"
+)
 
 
 class CheckerRepo:
@@ -216,6 +221,13 @@ class NewPortsStagedTests(unittest.TestCase):
         self.fixture.stage("src/RangeEditor.cpp")
         result = self.fixture.check()
         self.assert_fails_for(result, "src/RangeEditor.cpp")
+        self.assertIn("Thetis filename reference", result.stdout)
+
+    def test_unregistered_capitalised_designer_range_fails(self) -> None:
+        self.fixture.write("src/StepEditor.cpp", DESIGNER_CAPITAL_RANGE)
+        self.fixture.stage("src/StepEditor.cpp")
+        result = self.fixture.check()
+        self.assert_fails_for(result, "src/StepEditor.cpp")
         self.assertIn("Thetis filename reference", result.stdout)
 
     def test_full_tree_keeps_worktree_sweep_and_all_registry_lookup(self) -> None:

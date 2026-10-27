@@ -132,7 +132,7 @@ RE_CALLSIGN = re.compile(r"\b(" + "|".join(CALLSIGNS) + r")\b")
 # A WinForms designer half (`setup.designer.cs`) names the same Thetis
 # class as its code file, so a cite of its control ranges is caught too.
 RE_THETIS_FILE = re.compile(
-    r"\b(" + "|".join(re.escape(f) for f in THETIS_FILES) + r")(?:\.designer)?\.(cs|c|h|cpp)\b"
+    r"\b(" + "|".join(re.escape(f) for f in THETIS_FILES) + r")(?:\.[Dd]esigner)?\.(cs|c|h|cpp)\b"
 )
 RE_THETIS_CLASS = re.compile(r"\b(cls|uc|frm)[A-Z]\w{2,}\b")
 RE_SOURCE_COMMENT = re.compile(
