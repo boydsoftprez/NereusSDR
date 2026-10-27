@@ -29,6 +29,9 @@
 //               AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, leaving CW with QSK selected lands on Off, as
 //               Thetis does. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F1: a remote window writes none
+//               of QSK's keying state. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -43,6 +46,7 @@
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/TxChannel.h"
+#include "core/TxSliceArbiter.h"
 #include "core/WdspEngine.h"
 #include "core/WdspTypes.h"
 #include "core/safety/CwKeyerGate.h"
@@ -499,6 +503,64 @@ private slots:
         rig.key(false, false, false);
         QVERIFY(tot->isTicking());
         QTRY_VERIFY_WITH_TIMEOUT(!tot->isTicking(), 3000);
+    }
+
+    // ── F1: a remote window is not a second writer ───────────────────────
+    // The Core owns the break-in selection and QSK's receive changes; a
+    // remote window entering and leaving QSK, or leaving and returning to
+    // CW, writes none of them.
+    void remoteWindow_enteringAndLeavingQsk_writesNoKeyingState()
+    {
+        AppSettings::instance().clear();
+        RadioModel model(RadioModel::Role::Remote);
+        model.setCapsForTest(/*hasAlex=*/false);
+        // A remote window holds the slices the Core created.
+        SliceModel* slice = model.sliceById(model.addSliceWithStationId(0));
+        QVERIFY(slice);
+        slice->setFrequency(14'050'000.0);
+        // The Core's transmit slice: the flag as mirrored, adopted by the
+        // arbiter (its remote no-op lifted for this setup step only).
+        slice->setTxSlice(true);
+        model.txSliceArbiter()->setRemote(false);
+        model.txSliceArbiter()->syncToSliceList();
+        model.txSliceArbiter()->setRemote(true);
+        QVERIFY(model.txBoundSlice() == slice);
+        slice->setAgcMode(AGCMode::Med);
+        slice->setAgcHangThreshold(50);
+        slice->setDspMode(DSPMode::CWU);
+        TransmitModel& tm = model.transmitModel();
+        tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        model.setLastRadioInfoForTest(saturn());
+        model.cwKeyerController()->reevaluate();
+        pump();
+        QSignalSpy agcChanged(slice, &SliceModel::agcModeChanged);
+        QSignalSpy hangChanged(slice, &SliceModel::agcHangThresholdChanged);
+
+        tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        model.cwKeyerController()->reevaluate();
+        pump();
+        // The precondition: the keyer reads QSK as in effect here.
+        QCOMPARE(model.cwKeyerController()->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        QVERIFY(!model.cwQskSideEffectsAppliedForTest());
+        QCOMPARE(slice->agcMode(), AGCMode::Med);
+        QCOMPARE(slice->agcHangThreshold(), 50);
+
+        // Leaving CW with QSK selected: the selection stays as mirrored.
+        slice->setDspMode(DSPMode::USB);
+        pump();
+        QCOMPARE(tm.cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
+        slice->setDspMode(DSPMode::CWU);
+        pump();
+        tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        pump();
+
+        QCOMPARE(agcChanged.count(), 0);
+        QCOMPARE(hangChanged.count(), 0);
+        QCOMPARE(slice->agcMode(), AGCMode::Med);
+        QCOMPARE(slice->agcHangThreshold(), 50);
+        for (const char* key : {"CW_QskSavedAgcMode", "CW_QskSavedHangThreshold", "CW_QskActive"}) {
+            QVERIFY2(!AppSettings::instance().contains(kPfx + QLatin1String(key)), key);
+        }
     }
 
     // ── M7: QSK applied before the radio's MAC is known ──────────────────

@@ -1420,6 +1420,10 @@
 //                stop already latched in a held stretch is not announced
 //                again; the QSK gap has a manual test trigger. J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit final fix wave F1: a remote window never writes
+//                the break-in selection on entering or leaving CW, nor QSK's
+//                receive changes and restore keys; the Core owns them. J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the CW receive shift (composedShiftHz adds
 //                SliceModel::cwShiftHz, R-CW-23); a pitch change moves the
 //                CW filters, re-pushes the shift of every CW slice and the
@@ -33277,9 +33281,16 @@ void RadioModel::syncCwKeying()
     const SliceModel* tx = txBoundSlice();
     const bool inCw = tx != nullptr
         && (tx->dspMode() == DSPMode::CWL || tx->dspMode() == DSPMode::CWU);
+    // Final fix wave F1: the break-in selection and QSK's receive changes
+    // belong to the Core (or a local window). A remote window displays what
+    // the Core mirrors; writing them here too would race the Core's own
+    // writes, as applyCwPitchChange's ownsSettings rule says.
+    const bool ownsSettings = m_role != Role::Remote;
     if (inCw != m_cwTxSliceInCw) {
         m_cwTxSliceInCw = inCw;
-        if (!inCw) {
+        if (!ownsSettings) {
+            // Nothing to remember or select: the Core does both.
+        } else if (!inCw) {
             m_cwQskInCw = tm.cwBreakInMode() == static_cast<int>(CwBreakInMode::Qsk);
             if (m_cwQskInCw) {
                 // Lands on Off, as Thetis does: chkQSK.Checked = false
@@ -33302,7 +33313,9 @@ void RadioModel::syncCwKeying()
     // changes) stays CW.
     m_moxController->setCwModeActive(inCw && !tuneTxModeSwapped());
     m_moxController->setCwBreakInMode(effective);
-    applyCwQskSideEffects(inCw && effective == CwBreakInMode::Qsk);
+    if (ownsSettings) {
+        applyCwQskSideEffects(inCw && effective == CwBreakInMode::Qsk);
+    }
 
     if (!inCw) {
         m_cwLastEffective.reset();
@@ -33424,6 +33437,11 @@ constexpr char kCwQskActiveKey[] = "CW_QskActive";
 
 void RadioModel::applyCwQskSideEffects(bool qsk)
 {
+    // Final fix wave F1: only the Core (or a local window) changes the
+    // receiver and writes the Station-scope restore keys.
+    if (m_role == Role::Remote) {
+        return;
+    }
     AppSettings& settings = AppSettings::instance();
     const QString pfx = cwQskSettingsPrefix();
     const bool persistedActive = !pfx.isEmpty()
