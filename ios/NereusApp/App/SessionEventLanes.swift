@@ -126,6 +126,214 @@ final class CoreEventLane<Item: Sendable>: Sendable {
     }
 }
 
+/// One session reader's lossless FIFO before the main actor takes ready
+/// prefixes. Full admission waits; a ready prefix never waits to fill.
+/// These are internal scheduling bounds, not wire or operator settings.
+final class SessionEventInbox: @unchecked Sendable {
+    static let capacity = 64
+    static let maximumBatchSize = 32
+
+    private let lock = NSLock()
+    private var pending: [StationSession.Event] = []
+    private var inputFinished = false
+    private var closed = false
+    private var waitingOffer: (event: StationSession.Event, done: CheckedContinuation<Bool, Never>)?
+    private var waitingBatch: CheckedContinuation<[StationSession.Event]?, Never>?
+    #if DEBUG
+    private var maximumPending = 0
+    private var maximumBatch = 0
+    private var taken = 0
+
+    struct Snapshot: Sendable {
+        let pendingCount: Int
+        let maximumPendingCount: Int
+        let maximumBatchCount: Int
+        let takenCount: Int
+        let hasCapacityWaiter: Bool
+        let hasBatchWaiter: Bool
+        let isClosed: Bool
+    }
+
+    var snapshotForTesting: Snapshot {
+        lock.withLock {
+            Snapshot(pendingCount: pending.count, maximumPendingCount: maximumPending,
+                     maximumBatchCount: maximumBatch, takenCount: taken,
+                     hasCapacityWaiter: waitingOffer != nil, hasBatchWaiter: waitingBatch != nil,
+                     isClosed: closed)
+        }
+    }
+    #endif
+
+    /// Only the session's reader offers events. The one offer waiting at
+    /// capacity is held separately until a prefix makes room for it.
+    func offer(_ event: StationSession.Event) async -> Bool {
+        await withTaskCancellationHandler {
+            if Task.isCancelled {
+                close()
+                return false
+            }
+            return await withCheckedContinuation { done in
+                var accepted: Bool?
+                var consumer: CheckedContinuation<[StationSession.Event]?, Never>?
+                lock.withLock {
+                    guard !closed, !inputFinished, !Task.isCancelled else {
+                        accepted = false
+                        return
+                    }
+                    if let waiting = waitingBatch {
+                        waitingBatch = nil
+                        consumer = waiting
+                        accepted = true
+                        #if DEBUG
+                        maximumBatch = max(maximumBatch, 1)
+                        taken += 1
+                        #endif
+                    } else if pending.count < Self.capacity {
+                        pending.append(event)
+                        accepted = true
+                        #if DEBUG
+                        maximumPending = max(maximumPending, pending.count)
+                        #endif
+                    } else {
+                        precondition(waitingOffer == nil, "One session reader owns intake admission")
+                        waitingOffer = (event, done)
+                    }
+                }
+                // Resuming a consumer may run model code: never under lock.
+                consumer?.resume(returning: [event])
+                if let accepted { done.resume(returning: accepted) }
+            }
+        } onCancel: {
+            self.close()
+        }
+    }
+
+    /// Only the app's event pump takes prefixes. Removing a prefix also
+    /// admits the offer already waiting at capacity, in the same FIFO.
+    func nextBatch() async -> [StationSession.Event]? {
+        await withTaskCancellationHandler {
+            if Task.isCancelled {
+                close()
+                return nil
+            }
+            return await withCheckedContinuation { done in
+                var batch: [StationSession.Event]?
+                var ready = false
+                var producer: CheckedContinuation<Bool, Never>?
+                lock.withLock {
+                    if closed || Task.isCancelled {
+                        ready = true
+                    } else if !pending.isEmpty {
+                        let count = min(pending.count, Self.maximumBatchSize)
+                        batch = Array(pending.prefix(count))
+                        pending.removeFirst(count)
+                        if let waiting = waitingOffer {
+                            pending.append(waiting.event)
+                            waitingOffer = nil
+                            producer = waiting.done
+                        }
+                        ready = true
+                        #if DEBUG
+                        maximumBatch = max(maximumBatch, count)
+                        taken += count
+                        #endif
+                    } else if inputFinished {
+                        ready = true
+                    } else {
+                        precondition(waitingBatch == nil, "One app pump owns intake consumption")
+                        waitingBatch = done
+                    }
+                }
+                producer?.resume(returning: true)
+                if ready { done.resume(returning: batch) }
+            }
+        } onCancel: {
+            self.close()
+        }
+    }
+
+    /// Normal input completion keeps accepted FIFO work, including an
+    /// offer already waiting for room. The last drained prefix precedes nil.
+    func finishInput() {
+        let consumer = lock.withLock { () -> CheckedContinuation<[StationSession.Event]?, Never>? in
+            inputFinished = true
+            guard pending.isEmpty, waitingOffer == nil else { return nil }
+            let waiting = waitingBatch
+            waitingBatch = nil
+            return waiting
+        }
+        consumer?.resume(returning: nil)
+    }
+
+    /// Abort an abandoned owner. Closing before or after continuation
+    /// registration has the same wakeup: every stored waiter is taken once.
+    func close() {
+        let waiters = lock.withLock { () -> (CheckedContinuation<Bool, Never>?,
+                                           CheckedContinuation<[StationSession.Event]?, Never>?) in
+            closed = true
+            pending.removeAll()
+            let producer = waitingOffer?.done
+            let consumer = waitingBatch
+            waitingOffer = nil
+            waitingBatch = nil
+            return (producer, consumer)
+        }
+        waiters.0?.resume(returning: false)
+        waiters.1?.resume(returning: nil)
+    }
+}
+
+/// Exactly one reader consumes the session stream off the main actor.
+/// The main actor owns all handling; this task only admits FIFO payloads.
+/// The pump closes and joins it before finishing its command/media lanes.
+final class SessionEventIntake: Sendable {
+    private final class ReaderState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ended = false
+        func end() { lock.withLock { ended = true } }
+        var hasEnded: Bool { lock.withLock { ended } }
+    }
+
+    let inbox: SessionEventInbox
+    private let reader: Task<Void, Never>
+    private let state: ReaderState
+
+    init(events: AsyncStream<StationSession.Event>) {
+        let inbox = SessionEventInbox()
+        let state = ReaderState()
+        self.inbox = inbox
+        self.state = state
+        reader = Task.detached(priority: Task.currentPriority) {
+            for await event in events {
+                guard await inbox.offer(event) else { break }
+                // The stop itself is queued before normal input completion.
+                if case .stateChanged(.stopped) = event { break }
+            }
+            inbox.finishInput()
+            state.end()
+        }
+    }
+
+    deinit {
+        inbox.close()
+        reader.cancel()
+    }
+
+    func nextBatch() async -> [StationSession.Event]? { await inbox.nextBatch() }
+
+    /// Wake a reader held at capacity before joining; cancellation also
+    /// releases a reader awaiting an otherwise still-open session stream.
+    func closeAndJoin() async {
+        inbox.close()
+        reader.cancel()
+        await reader.value
+    }
+
+    #if DEBUG
+    var readerHasEndedForTesting: Bool { state.hasEnded }
+    #endif
+}
+
 /// What media control's lane carries: the Core's messages it reads, and
 /// whether the app expects the band's audio to fall silent while the Core
 /// transmits, each time the mirror's transmit state changes that.

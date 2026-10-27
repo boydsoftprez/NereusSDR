@@ -12,8 +12,10 @@ import NereusModels
 /// Everything the screens read about the connected Core, and the way to
 /// connect to one. It owns the session and feeds each of its events, in
 /// order, to the mirror, the settings proxy, the command client and media
-/// control, then to ``connection``. The mirror's side takes each message at
-/// once on the main actor; the command client and media control take theirs
+/// control, then to ``connection``. One off-main reader admits every event
+/// into a lossless FIFO; the main actor handles ready prefixes of at most
+/// 32, without waiting for a batch to fill. The mirror takes each message
+/// synchronously; the command client and media control take theirs
 /// through their own ordered lanes (``SessionEventLanes``), so a write's
 /// answer never waits behind the hops for the readings before it. The
 /// messages that move the session or the transmit state wait for both
@@ -149,6 +151,7 @@ final class AppModel: ObservableObject {
 
     private let route: SessionRoute
     private var pump: Task<Void, Never>?
+    private var eventIntake: SessionEventIntake?
     private var roundTripPump: Task<Void, Never>?
     private var mediaPump: Task<Void, Never>?
     private var watches: Set<AnyCancellable> = []
@@ -211,6 +214,7 @@ final class AppModel: ObservableObject {
     var startAfterMediaActivationForTesting: (@MainActor () async -> Void)?
     var mediaOwnerForTesting: UInt64? { mediaOwner }
     var eventLanesForTesting: SessionEventLanes? { eventLanes }
+    var eventIntakeForTesting: SessionEventIntake? { eventIntake }
     var commandRouteForTesting: SessionRoute { route }
     var winnerAvailabilityCheckedForTesting: (@MainActor () async -> Void)?
     var beforeMediaEventForTesting: (@MainActor (MediaControlEvent) async -> Void)?
@@ -949,31 +953,40 @@ final class AppModel: ObservableObject {
                 self.roundTripMs = Self.shownMilliseconds(time)
             }
         }
-        let events = next.events
+        let intake = SessionEventIntake(events: next.events)
         let lanes = SessionEventLanes(session: next, owner: owner, commands: commands, media: media)
+        eventIntake = intake
         eventLanes = lanes
         pump = Task { [weak self] in
-            for await event in events {
-                guard let self else {
-                    break
-                }
-                if case .message(let message) = event, !Self.waitsOnEveryConsumer(message) {
-                    if lanes.commands.pendingCount >= Self.eventLaneHighWaterMark
-                        || lanes.media.pendingCount >= Self.eventLaneHighWaterMark {
-                        await lanes.drain()
+            eventLoop: while let batch = await intake.nextBatch() {
+                for event in batch {
+                    guard let self, !Task.isCancelled,
+                          self.session === next, self.mediaOwner == owner else {
+                        break eventLoop
                     }
-                    self.handleAtOnce(message, event: event, from: next, owner: owner, lanes: lanes)
-                } else {
-                    // Everything before it has reached the command client
-                    // and media control, as when the pump waited on each.
-                    await lanes.drain()
-                    await self.handle(event, from: next, owner: owner, lanes: lanes)
+                    if case .message(let message) = event, !Self.waitsOnEveryConsumer(message) {
+                        if lanes.commands.pendingCount >= Self.eventLaneHighWaterMark
+                            || lanes.media.pendingCount >= Self.eventLaneHighWaterMark {
+                            await lanes.drain()
+                        }
+                        self.handleAtOnce(message, event: event, from: next, owner: owner, lanes: lanes)
+                    } else {
+                        // Everything before it has reached the command client
+                        // and media control, as when the pump waited on each.
+                        await lanes.drain()
+                        await self.handle(event, from: next, owner: owner, lanes: lanes)
+                    }
+                    if case .stateChanged(.stopped) = event {
+                        break eventLoop
+                    }
                 }
-                if case .stateChanged(.stopped) = event {
-                    break
-                }
+                // Bound consecutive ordinary main-actor work, even when
+                // the next prefix is already ready. Never wait to fill it.
+                await Task.yield()
             }
-            // No consumer outlives its session: the pump ends with its lanes.
+            // Close and wake before joining the reader, including one held
+            // at capacity. No reader or consumer outlives its session pump.
+            await intake.closeAndJoin()
             await lanes.finish()
         }
         await next.connect()
@@ -1071,6 +1084,7 @@ final class AppModel: ObservableObject {
         if let endingListeningIntent { longSession.sessionEnded(owner: endingListeningIntent) }
         listeningIntent = nil
         pump = nil
+        eventIntake = nil
         roundTripPump?.cancel()
         roundTripPump = nil
         roundTripMs = nil

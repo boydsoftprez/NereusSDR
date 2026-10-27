@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the Core's messages reach the mirror at once and the command client and media control in order
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
+import Combine
 import Foundation
 import NereusKitTesting
 import NereusLink
@@ -85,6 +86,246 @@ struct SessionEventLanesTests {
         await lane.drain()
         #expect(lane.pendingCount == 0)
         #expect(handed.all == [1])
+    }
+
+    // MARK: Ordered intake
+
+    nonisolated static func inboxEvent(_ sequence: Int) -> StationSession.Event {
+        .message(strayAnswer(UInt32(sequence)))
+    }
+
+    @Test("intake returns the available FIFO prefix without waiting to fill a batch", .timeLimit(.minutes(1)))
+    func inboxReadyPrefixDoesNotWaitToFill() async {
+        let inbox = SessionEventInbox()
+        defer { inbox.close() }
+        #expect(await inbox.offer(Self.inboxEvent(1)))
+        #expect(await inbox.nextBatch() == [Self.inboxEvent(1)])
+        for sequence in 2 ... 41 {
+            #expect(await inbox.offer(Self.inboxEvent(sequence)))
+        }
+        #expect(await inbox.nextBatch() == (2 ... 33).map(Self.inboxEvent))
+        #expect(await inbox.nextBatch() == (34 ... 41).map(Self.inboxEvent))
+        inbox.finishInput()
+        #expect(await inbox.nextBatch() == nil)
+        #expect(!inbox.snapshotForTesting.hasBatchWaiter)
+    }
+
+    @Test("a full intake suspends its reader and normal input end drains every accepted event", .timeLimit(.minutes(1)))
+    func inboxCapacitySuspendsAndResumesLosslessly() async throws {
+        let inbox = SessionEventInbox()
+        defer { inbox.close() }
+        for sequence in 1 ... 64 {
+            #expect(await inbox.offer(Self.inboxEvent(sequence)))
+        }
+        let producer = Task.detached { await inbox.offer(Self.inboxEvent(65)) }
+        try #require(await settle { inbox.snapshotForTesting.hasCapacityWaiter })
+        #expect(inbox.snapshotForTesting.pendingCount == 64)
+        // End accepts no new offers, but retains the offer already waiting.
+        inbox.finishInput()
+        #expect(!(await inbox.offer(Self.inboxEvent(66))))
+        var received = try #require(await inbox.nextBatch())
+        #expect(received == (1 ... 32).map(Self.inboxEvent))
+        #expect(await producer.value)
+        while let batch = await inbox.nextBatch() {
+            received.append(contentsOf: batch)
+        }
+        #expect(received == (1 ... 65).map(Self.inboxEvent))
+        let state = inbox.snapshotForTesting
+        #expect(state.maximumPendingCount == 64)
+        #expect(state.maximumBatchCount == 32)
+        #expect(state.pendingCount == 0 && !state.hasCapacityWaiter && !state.hasBatchWaiter)
+    }
+
+    @Test("closing a full intake wakes and joins its real stream reader", .timeLimit(.minutes(1)))
+    func intakeCancellationWhileFullReleasesAndJoins() async throws {
+        let (events, source) = AsyncStream<StationSession.Event>.makeStream()
+        let intake = SessionEventIntake(events: events)
+        defer { intake.inbox.close(); source.finish() }
+        for sequence in 1 ... 65 { source.yield(Self.inboxEvent(sequence)) }
+        try #require(await settle { intake.inbox.snapshotForTesting.hasCapacityWaiter })
+        #expect(intake.inbox.snapshotForTesting.pendingCount == 64)
+        await intake.closeAndJoin()
+        #expect(intake.readerHasEndedForTesting)
+        let state = intake.inbox.snapshotForTesting
+        #expect(state.isClosed && state.pendingCount == 0)
+        #expect(!state.hasCapacityWaiter && !state.hasBatchWaiter)
+        #expect(!(await intake.inbox.offer(Self.inboxEvent(66))))
+        #expect(await intake.nextBatch() == nil)
+    }
+
+    @Test("closing an empty intake wakes its consumer and joins a reader on an open stream", .timeLimit(.minutes(1)))
+    func intakeCancellationWhileEmptyReleasesAndJoins() async throws {
+        let (events, source) = AsyncStream<StationSession.Event>.makeStream()
+        let intake = SessionEventIntake(events: events)
+        defer { intake.inbox.close(); source.finish() }
+        let consumer = Task { await intake.nextBatch() }
+        try #require(await settle { intake.inbox.snapshotForTesting.hasBatchWaiter })
+        // The source is still open: joining cannot depend on its deallocation.
+        await intake.closeAndJoin()
+        #expect(await consumer.value == nil)
+        #expect(intake.readerHasEndedForTesting)
+        let state = intake.inbox.snapshotForTesting
+        #expect(state.isClosed && !state.hasBatchWaiter && !state.hasCapacityWaiter)
+
+        let inbox = SessionEventInbox()
+        let cancelledConsumer = Task.detached { await inbox.nextBatch() }
+        try #require(await settle { inbox.snapshotForTesting.hasBatchWaiter })
+        cancelledConsumer.cancel()
+        #expect(await cancelledConsumer.value == nil)
+        #expect(inbox.snapshotForTesting.isClosed && !inbox.snapshotForTesting.hasBatchWaiter)
+    }
+
+    @Test("cancellation before waiter registration cannot leave a full or empty intake suspended",
+          .timeLimit(.minutes(1)), arguments: [false, true])
+    func cancellationBeforeWaiterRegistrationCannotLoseWake(full: Bool) async throws {
+        let inbox = SessionEventInbox()
+        defer { inbox.close() }
+        if full {
+            for sequence in 1 ... 64 { #expect(await inbox.offer(Self.inboxEvent(sequence))) }
+        }
+        let gate = DeliveryGate()
+        let operation = Task.detached {
+            await gate.wait()
+            if full { return await inbox.offer(Self.inboxEvent(65)) }
+            return await inbox.nextBatch() != nil
+        }
+        try #require(await gate.waitUntilEntered())
+        operation.cancel()
+        await gate.release()
+        #expect(!(await operation.value))
+        let state = inbox.snapshotForTesting
+        #expect(state.isClosed && state.pendingCount == 0)
+        #expect(!state.hasCapacityWaiter && !state.hasBatchWaiter)
+    }
+
+    @Test("the real batched pump preserves every reading and relevant event through a full intake",
+          .timeLimit(.minutes(2)))
+    func actualPumpPreservesEveryReadingAndRelevantEventAcrossFullInbox() async throws {
+        let station = try FakeStation(additions: FakeStation.Additions.all.union(.remoteTx))
+        let model = try await connected(station)
+        try await MainScreenShotTests.fill(station)
+        try await station.deliverSetupPanels()
+        try #require(await settle { model.mirror.object("txState") != nil })
+        let slice = try #require(model.mirror.object("slice:1"))
+        let lanes = try #require(model.eventLanesForTesting)
+        let intake = try #require(model.eventIntakeForTesting)
+        let expected = (0 ..< 160).map { -180.0 + Double($0) / 1_000 }
+        var readings: [Double] = []
+        let observation = slice.$values.sink { values in
+            MainActor.assumeIsolated {
+                if case .double(let value)? = values["signalStrengthDbm"], expected.contains(value) {
+                    readings.append(value)
+                }
+            }
+        }
+        defer { observation.cancel() }
+        let gate = DeliveryGate()
+        lanes.hooksForTesting.setCommands { await gate.wait() }
+        defer { Task { await gate.release() } }
+        await station.deliver(Self.strayAnswer(6_999_999))
+        try #require(await gate.waitUntilEntered())
+        // This direct barrier must stop the real pump before every reading below.
+        await station.setSetupKeyed(true)
+        for sequence in 0 ..< 160 {
+            await station.deliver(.delta(.init(key: "slice:1", properties: [
+                .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(expected[sequence])),
+            ])))
+            if sequence % 4 == 0 { await station.deliver(Self.strayAnswer(UInt32(7_000_000 + sequence / 4))) }
+            if sequence % 8 == 0 { await station.deliver(Self.mediaOperation(10_000 + sequence / 8)) }
+        }
+        try #require(await settle { intake.inbox.snapshotForTesting.hasCapacityWaiter })
+        #expect(intake.inbox.snapshotForTesting.pendingCount == 64)
+        #expect(readings.isEmpty)
+        await gate.release()
+        let resultIds = { () -> [UInt32] in
+            lanes.handedForTesting.all.compactMap { entry in
+                if case .commands(.message(.commandResult(let result))) = entry,
+                   result.verb == "test.lane", result.id >= 7_000_000 { return result.id }
+                return nil
+            }
+        }
+        let operations = { () -> [Int] in
+            lanes.handedForTesting.all.compactMap { entry in
+                if case .media(.event(.message(.mediaControl(let control)))) = entry,
+                   case .number(let sequence)? = control.payload["sequence"], sequence >= 10_000 {
+                    return Int(sequence)
+                }
+                return nil
+            }
+        }
+        try #require(await settle { readings.count == 160 && resultIds().count == 40 && operations().count == 20 })
+        #expect(readings == expected)
+        #expect(resultIds() == (0 ..< 40).map { UInt32(7_000_000 + $0) })
+        #expect(operations() == Array(10_000 ..< 10_020))
+        #expect(intake.inbox.snapshotForTesting.maximumPendingCount == 64)
+        #expect(intake.inbox.snapshotForTesting.maximumBatchCount == 32)
+        #expect(lanes.commands.maximumPendingCount <= 64 && lanes.media.maximumPendingCount <= 65)
+        await model.disconnect()
+        #expect(intake.readerHasEndedForTesting && lanes.hasEnded)
+        let ended = intake.inbox.snapshotForTesting
+        #expect(ended.pendingCount == 0 && !ended.hasCapacityWaiter && !ended.hasBatchWaiter)
+    }
+
+    @Test("a transmit barrier inside a ready prefix finishes before its following mirror reading",
+          .timeLimit(.minutes(2)))
+    func barrierInsideReadyPrefixPreservesTransmitOrdering() async throws {
+        let station = try FakeStation(additions: FakeStation.Additions.all.union(.remoteTx))
+        let model = try await connected(station)
+        try await MainScreenShotTests.fill(station)
+        try await station.deliverSetupPanels()
+        try #require(await settle { model.mirror.object("txState") != nil })
+        let slice = try #require(model.mirror.object("slice:1"))
+        let lanes = try #require(model.eventLanesForTesting)
+        let intake = try #require(model.eventIntakeForTesting)
+        try await LinkBarrier.roundTrip(model.commands)
+        await lanes.drain()
+        try #require(await settle { intake.inbox.snapshotForTesting.hasBatchWaiter })
+        let gate = DeliveryGate()
+        lanes.hooksForTesting.setCommands { await gate.wait() }
+        defer { Task { await gate.release() } }
+        await station.deliver(Self.strayAnswer(7_999_999))
+        try #require(await gate.waitUntilEntered())
+        let takenBefore = intake.inbox.snapshotForTesting.takenCount
+        await station.setSetupKeyed(true)
+        // The fake has no spontaneous event publisher here. Once this first
+        // barrier has been taken, the next prefix waits behind its drain.
+        try #require(await settle { intake.inbox.snapshotForTesting.takenCount > takenBefore })
+        let silences = { () -> [Bool] in
+            var values: [Bool] = []
+            for entry in lanes.handedForTesting.all {
+                if case .media(.transmitSilence(let expected)) = entry, values.last != expected { values.append(expected) }
+            }
+            return values
+        }
+        var markers: [Double] = []
+        var heldWhenShown: Bool?
+        let observation = slice.$values.sink { values in
+            MainActor.assumeIsolated {
+                if case .double(let value)? = values["signalStrengthDbm"], value == -31 || value == -32 {
+                    markers.append(value)
+                    if value == -32 { heldWhenShown = silences().last == false }
+                }
+            }
+        }
+        defer { observation.cancel() }
+        await station.deliver(.delta(.init(key: "slice:1", properties: [
+            .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-31)),
+        ])))
+        await station.setSetupKeyed(false)
+        await station.deliver(.delta(.init(key: "slice:1", properties: [
+            .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-32)),
+        ])))
+        await Self.readings(station, rounds: 40)
+        try #require(await settle { intake.inbox.snapshotForTesting.hasCapacityWaiter })
+        #expect(markers.isEmpty)
+        await gate.release()
+        try #require(await settle { heldWhenShown != nil })
+        #expect(markers == [-31, -32])
+        #expect(heldWhenShown == true)
+        #expect(silences() == [false, true, false])
+        #expect(intake.inbox.snapshotForTesting.maximumBatchCount == 32)
+        await model.disconnect()
+        #expect(intake.readerHasEndedForTesting && lanes.hasEnded)
     }
 
     // MARK: The app's pump
@@ -366,6 +607,7 @@ struct SessionEventLanesTests {
         let model = try await connected(oldStation)
         let old = try #require(model.eventLanesForTesting)
         let oldSession = try #require(model.session)
+        let oldIntake = try #require(model.eventIntakeForTesting)
         let gate = DeliveryGate()
         if media {
             old.hooksForTesting.setMedia { await gate.wait() }
@@ -376,6 +618,12 @@ struct SessionEventLanesTests {
         }
         defer { Task { await gate.release() } }
         #expect(await gate.waitUntilEntered())
+        if !media {
+            // Hold the real pump at a direct barrier, then fill its intake.
+            await oldStation.setSetupKeyed(true)
+            await Self.readings(oldStation, rounds: 50)
+            try #require(await settle { oldIntake.inbox.snapshotForTesting.hasCapacityWaiter })
+        }
         var stoppedSession = false
         model.disconnectAfterSessionStopForTesting = { stoppedSession = true }
         let reconnect = Task {
@@ -387,10 +635,15 @@ struct SessionEventLanesTests {
         #expect(model.session === oldSession)
         #expect(model.eventLanesForTesting === old)
         #expect(!old.hasEnded)
+        #expect(model.eventIntakeForTesting === oldIntake)
+        if !media { #expect(!oldIntake.readerHasEndedForTesting) }
         await gate.release()
         await reconnect.value
         model.disconnectAfterSessionStopForTesting = nil
         #expect(old.hasEnded)
+        #expect(oldIntake.readerHasEndedForTesting)
+        let oldIntakeState = oldIntake.inbox.snapshotForTesting
+        #expect(oldIntakeState.pendingCount == 0 && !oldIntakeState.hasCapacityWaiter && !oldIntakeState.hasBatchWaiter)
         try #require(await settle { model.connection == .connected })
         let fresh = try #require(model.eventLanesForTesting)
         #expect(fresh !== old)
