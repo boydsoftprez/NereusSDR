@@ -90,7 +90,7 @@ static_assert(
       + 2 * sizeof(uint32_t)                // sampleRate, channels
       + 3 * sizeof(uint32_t)                // reserved[3]
       + VaxShmBlock::RING_SIZE * sizeof(float),
-    "VaxShmBlock layout changed — update hal-plugin/NereusSDRVAX.cpp to match");
+    "VaxShmBlock layout changed: update hal-plugin/NereusSDRVAX.cpp to match");
 
 static_assert(offsetof(VaxShmBlock, writePos)    == 0,  "VaxShmBlock.writePos offset changed");
 static_assert(offsetof(VaxShmBlock, readPos)     == 4,  "VaxShmBlock.readPos offset changed");

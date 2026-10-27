@@ -145,7 +145,7 @@ void DiagHardwareTestsPage::buildUI()
     m_adcTestButton->setToolTip(QStringLiteral("Run the radio's ADC self-test"));
     vLayout->addWidget(m_adcTestButton);
 
-    m_resultLabel = new QLabel(QStringLiteral("Test result: —"), group);
+    m_resultLabel = new QLabel(QStringLiteral("Test result: –"), group);
     m_resultLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     vLayout->addWidget(m_resultLabel);
 
@@ -204,7 +204,7 @@ void DiagLoggingPage::buildUI()
         m_levelCombo->setToolTip(QStringLiteral("How much detail the log keeps"));
         grid->addWidget(m_levelCombo, 0, 1);
 
-        m_filePathLabel = new QLabel(QStringLiteral("Log file: —"), group);
+        m_filePathLabel = new QLabel(QStringLiteral("Log file: –"), group);
         m_filePathLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
         grid->addWidget(m_filePathLabel, 1, 0, 1, 2);
 

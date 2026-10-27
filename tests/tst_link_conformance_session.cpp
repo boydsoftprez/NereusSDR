@@ -312,6 +312,9 @@
 //                                    deals the fixture rows to three
 //                                    entries. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-27: The data-channel mode's settle check says what has not
+//               settled, for the player's failure. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1500,11 +1503,12 @@ QString TstLinkConformanceSession::run(const QString& id, const QJsonObject& fix
     }
     LinkFixtures::setSettleCheck([&bridges] {
         for (const auto& bridge : bridges) {
-            if (!bridge->settled()) {
-                return false;
+            const QString detail = bridge->unsettledDetail();
+            if (!detail.isEmpty()) {
+                return detail;
             }
         }
-        return true;
+        return QString();
     });
     LinkFixtures::setConnectClient([&join](LoopbackTransport* joined, StationServer&) {
         QString diagnostic;

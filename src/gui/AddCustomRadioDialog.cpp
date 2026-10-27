@@ -175,7 +175,7 @@ void AddCustomRadioDialog::setEditTarget(const RadioInfo& info,
                                          bool pinToMac,
                                          bool autoConnect)
 {
-    setWindowTitle(QStringLiteral("Edit Radio — %1").arg(info.name.isEmpty()
+    setWindowTitle(QStringLiteral("Edit Radio: %1").arg(info.name.isEmpty()
         ? info.address.toString() : info.name));
 
     // Pre-populate form fields from the saved entry.
@@ -245,7 +245,7 @@ void AddCustomRadioDialog::buildUi()
         QStringLiteral(
             "Add a radio that is not visible on the local subnet.\n"
             "Use this for radios accessed over VPN or a static route.\n"
-            "Discovery will not find it automatically — it is saved\n"
+            "Discovery will not find it automatically. It is saved\n"
             "to your settings and shown in the list at launch."));
     infoLabel->setStyleSheet(
         QStringLiteral("QLabel { color: %1; font-size: 12px; padding: 4px; }")
@@ -366,7 +366,7 @@ void AddCustomRadioDialog::buildUi()
     m_probeButton->setObjectName(QStringLiteral("probeButton"));
     m_probeButton->setStyleSheet(kSecondaryButtonStyle);
     m_probeButton->setToolTip(QStringLiteral(
-        "Verify the radio responds at the given IP. Optional — leaves the "
+        "Verify the radio responds at the given IP. Optional. It leaves the "
         "dialog open so you can review and edit before saving."));
     connect(m_probeButton, &QPushButton::clicked,
             this, &AddCustomRadioDialog::onProbeClicked);
@@ -665,7 +665,7 @@ void AddCustomRadioDialog::onProbeClicked()
                     ? m_probedInfo.address.toString()
                     : m_probedInfo.name;
                 showInlineInfo(QStringLiteral(
-                    "✓ Verified %1 (board %2, fw %3, MAC %4) — click Save to add it.")
+                    "✓ Verified %1 (board %2, fw %3, MAC %4). Click Save to add it.")
                     .arg(name)
                     .arg(QString::fromUtf8(BoardCapsTable::forBoard(
                         m_probedInfo.boardType).displayName))
@@ -681,7 +681,7 @@ void AddCustomRadioDialog::onProbeClicked()
                     QStringLiteral(
                         "Couldn't reach %1 after 1.5 s.\n"
                         "Radio may be off, IP may be wrong, or VPN tunnel may be down.\n"
-                        "Your form is preserved — change a field and retry, "
+                        "Your form is preserved. Change a field and retry, "
                         "or save offline for later.")
                         .arg(ipText));
                 m_probeButton->setText(QStringLiteral("Retry probe"));
@@ -708,7 +708,7 @@ void AddCustomRadioDialog::onSaveOfflineClicked()
         if (m_protocolCombo->itemData(protoIdx).toInt() < 0) {
             showInlineInfo(
                 QStringLiteral(
-                    "Pick Protocol (P1 / P2) before saving — without a probe "
+                    "Pick Protocol (P1 / P2) before saving. Without a probe "
                     "we have no way to learn it.\n"
                     "Protocol 1 = HL2 / classic ANAN. Protocol 2 = Saturn / ANAN-G2."));
             m_protocolCombo->setStyleSheet(

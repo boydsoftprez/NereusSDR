@@ -334,10 +334,10 @@ void BarInstrument::refreshFooter()
     if (!m_hasValue) {
         // Wortgleich mit NeedleInstrument::refreshFooter — dieselbe
         // Fusszeile sagt in beiden Formen dasselbe.
-        m_footer->setValueText(QStringLiteral("—"));
+        m_footer->setValueText(QStringLiteral("–"));
         m_footer->setValueColour(Instrument::measuredDim());
         m_footer->setPeakAndLimit(
-            QStringLiteral("—"),
+            QStringLiteral("–"),
             d->threshold.has_value() ? d->text(d->threshold.value()) : QString());
         return;
     }
@@ -345,7 +345,7 @@ void BarInstrument::refreshFooter()
     m_footer->setValueText(d->textWithUnit(m_value));
     m_footer->setValueColour(Instrument::valueColour(*d, m_value));
     m_footer->setPeakAndLimit(
-        m_peak.enabled() ? d->text(m_peak.value()) : QStringLiteral("—"),
+        m_peak.enabled() ? d->text(m_peak.value()) : QStringLiteral("–"),
         d->threshold.has_value() ? d->text(d->threshold.value()) : QString());
 }
 
@@ -473,7 +473,7 @@ void BarInstrument::paintOne(QPainter& p, const QRectF& area,
             // the needle shows for no reading (refreshFooter). Upstream
             // drew two here, so the two forms side by side disagreed.
             const QString text = hasValue ? d.textWithUnit(value)
-                                          : QStringLiteral("\u2014");
+                                          : QStringLiteral("\u2013");
             // NereusSDR: the caller's size when it set one, see
             // setCompactValuePx().
             const QFont valueFont = Style::monoFont(

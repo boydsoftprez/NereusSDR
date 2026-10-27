@@ -632,7 +632,7 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
     bpf1VBox->setSpacing(4);
 
     auto* bpf1Note = new QLabel(
-        QStringLiteral("<i>Separate BPF1 board edges (G8NJJ Saturn) — "
+        QStringLiteral("<i>Separate BPF1 board edges (G8NJJ Saturn): "
                        "fall back to Alex defaults if unset</i>"),
         m_bpf1Group);
     bpf1Note->setWordWrap(true);

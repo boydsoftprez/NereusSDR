@@ -258,7 +258,7 @@ private slots:
         // nothing measured the full form's footer and the compact form's
         // value line show the same single dash, the one the needle's
         // footer shows too.
-        const QString dash(QChar(0x2014));
+        const QString dash(QChar(0x2013));
         BarInstrument full;
         QVERIFY(full.setPrimary(MeterBinding::TxSwr));
         BarInstrument compact;

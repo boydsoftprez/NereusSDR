@@ -175,7 +175,7 @@ void SpectrumOverlayMenu::buildUI()
     m_ctunCheck->setObjectName(QStringLiteral("ctunCheck"));
     m_ctunCheck->setToolTip(QStringLiteral(
         "SmartSDR-style: pan stays fixed, VFO moves within it.\n"
-        "Off: traditional — pan follows VFO."));
+        "Off: traditional (pan follows VFO)."));
     layout->addWidget(m_ctunCheck);
 
     connect(m_ctunCheck, &QCheckBox::toggled, this, &SpectrumOverlayMenu::ctunChanged);

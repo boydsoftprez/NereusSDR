@@ -472,7 +472,7 @@ void PsaIndicatorWidget::updateDisplay()
         : !m_mox ? kSeaGreen()
         : feedbackAvailable ? computeFeedbackColour() : kDimGray();
     m_feedbackText = feedbackAvailable
-        ? tr("Feedback %1").arg(m_feedbackLevel) : tr("Feedback —");
+        ? tr("Feedback %1").arg(m_feedbackLevel) : tr("Feedback –");
     m_lblPsFeedback->setText(psText() + QStringLiteral("\n") + m_feedbackText);
     applyBackground(m_lblPsFeedback, background);
     updateTooltip();

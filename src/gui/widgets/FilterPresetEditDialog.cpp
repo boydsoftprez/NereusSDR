@@ -51,7 +51,7 @@ FilterPresetEditDialog::FilterPresetEditDialog(FilterPresetStore* store,
 
 void FilterPresetEditDialog::buildUi(const FilterPreset& current)
 {
-    setWindowTitle(QStringLiteral("Edit Filter Preset — F%1").arg(m_slot + 1));
+    setWindowTitle(QStringLiteral("Edit Filter Preset: F%1").arg(m_slot + 1));
     setModal(true);
     setMinimumWidth(300);
 

@@ -101,7 +101,7 @@ private slots:
         instruments.setStatus(status, false);
         QCOMPARE(correction->text(), QStringLiteral("Unavailable"));
         QVERIFY(!meter->available());
-        QVERIFY(successes->text().contains(QStringLiteral("—")));
+        QVERIFY(successes->text().contains(QStringLiteral("–")));
     }
     void rawFeedbackAndLegacyDiagnosticHaveHonestCaptions()
     {

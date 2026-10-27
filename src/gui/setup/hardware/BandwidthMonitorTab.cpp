@@ -84,7 +84,7 @@ BandwidthMonitorTab::BandwidthMonitorTab(RadioModel* model, QWidget* parent)
     auto* statusForm  = new QFormLayout(statusGroup);
     statusForm->setLabelAlignment(Qt::AlignRight);
 
-    m_currentRateLabel = new QLabel(QStringLiteral("— Mbps"), statusGroup);
+    m_currentRateLabel = new QLabel(QStringLiteral("– Mbps"), statusGroup);
     m_currentRateLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     statusForm->addRow(tr("LAN PHY rate:"), m_currentRateLabel);
 

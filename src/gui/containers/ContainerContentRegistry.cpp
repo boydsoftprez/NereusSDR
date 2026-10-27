@@ -498,7 +498,7 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
         : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("This applet keeps its current radio and slice. Preview controls are disabled."))
         : tr("Unsupported configuration; original data retained."));
-    auto* title=new QLabel(entry.name+QStringLiteral(" — ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);
+    auto* title=new QLabel(entry.name+QStringLiteral(": ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);
     if (auto* view=singletonView(entry.typeId); view && view->isVisible() && isAvailable(entry.typeId)) {
         // Existing presentation only. This never constructs or reparents a singleton.
         auto* snapshot=new QLabel(tile); snapshot->setPixmap(view->grab().scaledToWidth(480,Qt::SmoothTransformation)); layout->addWidget(snapshot);

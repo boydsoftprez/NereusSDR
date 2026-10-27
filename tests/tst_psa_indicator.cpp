@@ -72,7 +72,7 @@ private slots:
     void constructAndDestruct_withNoModel_doesNotCrash()
     {
         PsaIndicatorWidget w(nullptr);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.psText(), QStringLiteral("PureSignal3"));
     }
 
@@ -82,7 +82,7 @@ private slots:
         QCOMPARE(w.findChildren<QLabel*>().size(), 1);
         QLabel* banner = w.findChild<QLabel*>(QStringLiteral("lblPSFeedback"));
         QVERIFY(banner);
-        QCOMPARE(banner->text(), QStringLiteral("PureSignal3\nFeedback —"));
+        QCOMPARE(banner->text(), QStringLiteral("PureSignal3\nFeedback –"));
         w.ensurePolished();
         QVERIFY(w.sizeHint().width() <= 110);
         QVERIFY(w.sizeHint().height() <= 36);
@@ -99,14 +99,14 @@ private slots:
         PsaIndicatorWidget w(nullptr);
         w.setPsEnabled(true);
         w.setMox(true);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.fbBackgroundColor(), kDimGray);
         w.setFeedbackLevel(0);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback 0"));
         QCOMPARE(w.fbBackgroundColor(), kRed);
         QCOMPARE(w.psBackgroundColor(), kRed);
         w.setPsEnabled(false);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.fbBackgroundColor(), kDimGray);
     }
 
@@ -134,7 +134,7 @@ private slots:
         w.setPsEnabled(false);
         QCOMPARE(w.fbBackgroundColor(), kDimGray);
         QCOMPARE(w.psBackgroundColor(), kDimGray);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.psText(), QStringLiteral("PureSignal3"));
     }
 
@@ -148,7 +148,7 @@ private slots:
         w.setMox(false);
         QCOMPARE(w.fbBackgroundColor(), kSeaGreen);
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.psText(), QStringLiteral("PureSignal3"));
     }
 
@@ -225,7 +225,7 @@ private slots:
         w.setCorrectionsBeingApplied(false);
         QCOMPARE(w.psText(), QStringLiteral("PureSignal3"));
         QCOMPARE(w.psBackgroundColor(), kDimGray);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
     }
 
     // ── Color thresholds: 4 cardinal points + swap behavior ──────────────────
@@ -343,7 +343,7 @@ private slots:
         PsaIndicatorWidget w(nullptr);
         w.setPsEnabled(false);
         w.setUseSmallFonts(true);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
     }
 
     void useSmallFonts_keepsFixedPureSignalTitle()
@@ -450,7 +450,7 @@ private slots:
         QCOMPARE(w.psText(), QStringLiteral("PureSignal3")); // !_mox branch
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
         // FB also takes the !_mox branch
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(w.fbBackgroundColor(), kSeaGreen);
     }
 
@@ -489,11 +489,11 @@ private slots:
         w.setMox(false);
         // !_mox branch (ucInfoBar.cs:882-897 [v2.10.3.13]) always sets
         // lblFB.Text to "Feedback" regardless of stale state.
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
 
         w.setMox(true);
         // A prior TX number is unavailable until the next Core report.
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(w.fbText(), QStringLiteral("Feedback –"));
         w.psInfo(151, true, false, false, kLime);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback 151"));
     }

@@ -395,7 +395,7 @@ void VaxLinuxFirstRunDialog::refreshDetectionState()
     // Non-Linux build: show a static "not applicable" message so the dialog
     // at least renders correctly if opened by accident in a dev build.
     m_stateLabel->setText(
-        QStringLiteral("  <span style='color:%1'>(Linux-only detection — "
+        QStringLiteral("  <span style='color:%1'>(Linux-only detection: "
                         "not applicable on this platform)</span>")
             .arg(WorkspacePreview::roleColourName(Style::kTextSecondary, "text-secondary")));
 #endif

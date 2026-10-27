@@ -46,7 +46,7 @@ std::optional<double> rate(quint64 current, quint64 previous, qint64 elapsed)
 }
 QString number(std::optional<double> value, int decimals = 1)
 {
-    return value ? QString::number(*value, 'f', decimals) : QStringLiteral("—");
+    return value ? QString::number(*value, 'f', decimals) : QStringLiteral("–");
 }
 QString logged(std::optional<double> value, int decimals = 1)
 {
@@ -545,7 +545,7 @@ QString RemoteTelemetryController::bannerText() const
                  rateText(m_view.coreGuiTotalKbps), megabits ? tr("Mbps") : tr("kbps"));
     }
     if (m_view.audioPayloadRxKbps) { parts << tr("Audio %1 kbps").arg(number(m_view.audioPayloadRxKbps)); }
-    parts << tr("Core RTT %1 ms").arg(m_view.coreRttMs ? QString::number(*m_view.coreRttMs) : QStringLiteral("—"));
+    parts << tr("Core RTT %1 ms").arg(m_view.coreRttMs ? QString::number(*m_view.coreRttMs) : QStringLiteral("–"));
     // R-R3-23: with a media controller, its own persistent status (which
     // survives a fault the receiver does not recover from by itself) is the
     // banner word; the running/decoding heuristic below is only a fallback
@@ -679,7 +679,7 @@ QString RemoteTelemetryController::detailText() const
         .arg(p.latePackets).arg(p.invalidPackets).arg(p.duplicatePackets).arg(p.rejectedHeaders);
     text << tr("Playback underflows %1 / overflows %2; device consumed %3 frames; last accepted packet %4 ms ago.")
         .arg(p.underflows).arg(p.overflows).arg(p.deviceConsumedFrames)
-        .arg(p.lastAdmittedPacketAgeMs ? QString::number(*p.lastAdmittedPacketAgeMs) : QStringLiteral("—"));
+        .arg(p.lastAdmittedPacketAgeMs ? QString::number(*p.lastAdmittedPacketAgeMs) : QStringLiteral("–"));
     if (p.lifetimeUnderflows && p.lifetimeOverflows) {
         text << tr("Playback interruptions since this app started: %1 underflows / %2 overflows, including earlier audio streams.")
             .arg(*p.lifetimeUnderflows).arg(*p.lifetimeOverflows);

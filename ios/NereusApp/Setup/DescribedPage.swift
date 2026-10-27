@@ -182,7 +182,7 @@ private struct DisplayV29BandHeader: View {
                     .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
             } else {
                 LabeledContent("Band", value: main.displayEditingBand.flatMap(Int.init)
-                    .flatMap(SetupDescription.bandName) ?? "—")
+                    .flatMap(SetupDescription.bandName) ?? "\u{2013}")
             }
         }
     }
@@ -230,7 +230,7 @@ private struct DisplayV29Control: View {
     }
     private var readout: String? {
         guard let readout = control.readout else { return nil }
-        guard let value = main.displayEffectiveValue(readout) else { return "—" }
+        guard let value = main.displayEffectiveValue(readout) else { return "\u{2013}" }
         return String(format: "%.1f dBm", value)
     }
 }

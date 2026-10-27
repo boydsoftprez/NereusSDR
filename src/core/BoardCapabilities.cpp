@@ -1379,7 +1379,7 @@ const BoardCapabilities kUnknown = {
     .minFirmwareVersion = 0,
     .knownGoodFirmware  = 0,
     .displayName      = "Unknown board",
-    .sourceCitation   = "fallback — no Thetis source for HPSDRHW::Unknown",
+    .sourceCitation   = "fallback: no Thetis source for HPSDRHW::Unknown",
 };
 
 // const (not constexpr) because BoardCapabilities contains QList<SaturnBpf1Edge>

@@ -26,6 +26,9 @@
 //   2026-09-28: Load findings 2: waitForOpen() ends at a failure and
 //               failureReasons() names it. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-27: unsettledDetail() says what has not settled, for the
+//               session runner's failure. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QCoreApplication>
@@ -278,6 +281,43 @@ public:
             return false;
         }
         return !offererOpen || dataChannelPairSettled(*m_offerer, *m_answerer);
+    }
+
+    /// Empty when settled(); otherwise what has not settled, naming the
+    /// client: a close that has not crossed to the other end, or each
+    /// count that differs between what one end sent and the other handled.
+    /// Structural only: no message content. The offerer is the client's
+    /// end, the answerer the Core's.
+    QString unsettledDetail()
+    {
+        if (settled()) {
+            return QString();
+        }
+        const QString client =
+            m_client ? m_client->peerDescription() : QStringLiteral("a deleted client");
+        const bool offererOpen = m_offerer->isOpen();
+        const bool answererOpen = m_answerer && m_answerer->isOpen();
+        if (offererOpen != answererOpen) {
+            return QStringLiteral("%1: the %2 end closed and the close has not reached the %3 end")
+                .arg(client,
+                     offererOpen ? QStringLiteral("Core's") : QStringLiteral("client's"),
+                     offererOpen ? QStringLiteral("client's") : QStringLiteral("Core's"));
+        }
+        const DataChannelTransport::Counts x = m_offerer->countsForTest();
+        const DataChannelTransport::Counts y = m_answerer->countsForTest();
+        QStringList parts;
+        const auto differs = [&parts](const QString& what, quint64 sent, quint64 handled) {
+            if (sent != handled) {
+                parts << QStringLiteral("%1 sent %2, handled %3").arg(what).arg(sent).arg(handled);
+            }
+        };
+        differs(QStringLiteral("client-to-Core messages"), x.messagesSent, y.messagesDelivered);
+        differs(QStringLiteral("Core-to-client messages"), y.messagesSent, x.messagesDelivered);
+        differs(QStringLiteral("client pings"), x.pingsSent, y.pingsReceived);
+        differs(QStringLiteral("Core pings"), y.pingsSent, x.pingsReceived);
+        differs(QStringLiteral("client pongs"), x.pongsSent, y.pongsReceived);
+        differs(QStringLiteral("Core pongs"), y.pongsSent, x.pongsReceived);
+        return QStringLiteral("%1: %2").arg(client, parts.join(QStringLiteral("; ")));
     }
 
     DataChannelTransport* offerer() const { return m_offerer; }

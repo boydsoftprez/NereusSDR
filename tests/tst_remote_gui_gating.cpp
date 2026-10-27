@@ -1952,7 +1952,7 @@ private slots:
         QCOMPARE(consumers.size(), 4);
         for (QLabel* consumer : consumers) {
             QVERIFY2(OperatorWording::isPlain(consumer->text()), qPrintable(consumer->text()));
-            QVERIFY(consumer->text() != QStringLiteral("\u2014"));
+            QVERIFY(consumer->text() != QStringLiteral("\u2013"));
         }
 
         QWidget* const advanced = dialog.realizedPageForTest(QStringLiteral("Advanced"));

@@ -112,7 +112,7 @@ static constexpr const char* kSectionHeaderStyle =
 
 QLabel* NetworkDiagnosticsDialog::makeValueLabel()
 {
-    QLabel* lbl = new QLabel(QStringLiteral("—"), this);
+    QLabel* lbl = new QLabel(QStringLiteral("–"), this);
     lbl->setStyleSheet(QString::fromUtf8(kValueStyle));
     return lbl;
 }
@@ -217,7 +217,7 @@ void NetworkDiagnosticsDialog::buildTelemetrySection(QGridLayout* grid, int& row
 
     // Set meaningful placeholders for fields that have no live source yet.
     if (m_paVoltLabel) {
-        m_paVoltLabel->setText(tr("— (not reported)"));
+        m_paVoltLabel->setText(tr("– (not reported)"));
     }
     if (m_adcOvlLabel) {
         m_adcOvlLabel->setText(tr("None"));
@@ -384,12 +384,12 @@ void NetworkDiagnosticsDialog::refresh()
 
     if (m_uptimeLabel) {
         m_uptimeLabel->setText(
-            m_model ? m_model->connectionUptimeText() : QStringLiteral("—"));
+            m_model ? m_model->connectionUptimeText() : QStringLiteral("–"));
     }
 
     if (m_radioLabel) {
         m_radioLabel->setText(
-            m_model ? m_model->connectedRadioName() : QStringLiteral("—"));
+            m_model ? m_model->connectedRadioName() : QStringLiteral("–"));
     }
 
     if (m_protocolLabel) {
@@ -399,18 +399,18 @@ void NetworkDiagnosticsDialog::refresh()
             m_protocolLabel->setText(
                 tr("OpenHPSDR P%1 \xc2\xb7 %2").arg(proto, fw));
         } else {
-            m_protocolLabel->setText(QStringLiteral("—"));
+            m_protocolLabel->setText(QStringLiteral("–"));
         }
     }
 
     if (m_ipLabel) {
         m_ipLabel->setText(
-            m_model ? m_model->connectionIpText() : QStringLiteral("—"));
+            m_model ? m_model->connectionIpText() : QStringLiteral("–"));
     }
 
     if (m_macLabel) {
         m_macLabel->setText(
-            m_model ? m_model->connectionMacText() : QStringLiteral("—"));
+            m_model ? m_model->connectionMacText() : QStringLiteral("–"));
     }
 
     // ── Network section ───────────────────────────────────────────────────────
@@ -418,14 +418,14 @@ void NetworkDiagnosticsDialog::refresh()
         m_rttLabel->setText(
             m_lastRttMs >= 0
                 ? QString::asprintf("%d ms", m_lastRttMs)
-                : QStringLiteral("— ms"));
+                : QStringLiteral("– ms"));
     }
 
     if (m_maxRttLabel) {
         m_maxRttLabel->setText(
             m_maxRttMs > 0
                 ? QString::asprintf("%d ms", m_maxRttMs)
-                : QStringLiteral("— ms"));
+                : QStringLiteral("– ms"));
     }
 
     // R-R3-32 / R-R3-49 (parity Task 6): jitter, packet loss, packet gap
@@ -457,7 +457,7 @@ void NetworkDiagnosticsDialog::refresh()
             const double mbps = m_model->connection()->txByteRate(1000);
             m_txRateLabel->setText(QString::asprintf("%.2f Mbps", mbps));
         } else {
-            m_txRateLabel->setText(QStringLiteral("—"));
+            m_txRateLabel->setText(QStringLiteral("–"));
         }
     }
 
@@ -466,13 +466,13 @@ void NetworkDiagnosticsDialog::refresh()
             const double mbps = m_model->connection()->rxByteRate(1000);
             m_rxRateLabel->setText(QString::asprintf("%.2f Mbps", mbps));
         } else {
-            m_rxRateLabel->setText(QStringLiteral("—"));
+            m_rxRateLabel->setText(QStringLiteral("–"));
         }
     }
 
     if (m_sampleRateLabel) {
         m_sampleRateLabel->setText(
-            m_model ? m_model->connectionSampleRateText() : QStringLiteral("—"));
+            m_model ? m_model->connectionSampleRateText() : QStringLiteral("–"));
     }
 
     if (m_udpSeenLabel) {
@@ -485,11 +485,11 @@ void NetworkDiagnosticsDialog::refresh()
         // system" line names it (the device catalogue's system, ASIO and
         // the older drivers the saved choices use).
         m_audioBackendLabel->setText(m_audio ? SoundSystemLine::describeEngine(m_audio.data())
-                                             : QStringLiteral("—"));
+                                             : QStringLiteral("–"));
     }
 
     if (m_audioBufferLabel) {
-        m_audioBufferLabel->setText(QStringLiteral("—")); // no production source yet
+        m_audioBufferLabel->setText(QStringLiteral("–")); // no production source yet
     }
 
     if (m_underrunLabel) {
@@ -509,7 +509,7 @@ void NetworkDiagnosticsDialog::refresh()
     // Thetis source-first audit — see ctor.)
     if (m_paVoltLabel && (!m_model || !m_model->isConnected())) {
         if (m_lastUserAdc0Volts < 0.0f) {
-            m_paVoltLabel->setText(tr("— (not reported)"));
+            m_paVoltLabel->setText(tr("– (not reported)"));
         }
     }
 

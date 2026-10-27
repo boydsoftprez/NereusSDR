@@ -400,7 +400,7 @@ void TxEqDialog::buildUi()
         m_ncSpin->setToolTip(
             tr("Number of filter coefficients used by the WDSP EQ stage.  "
                "Higher values give sharper filter shapes but use more CPU.  "
-               "Defaults to 2048 — change only if you know what you're doing."));
+               "Defaults to 2048. Change only if you know what you're doing."));
         topRow->addWidget(m_ncSpin);
     }
 
@@ -422,8 +422,8 @@ void TxEqDialog::buildUi()
         m_ctfmodeCombo = new QComboBox(this);
         m_ctfmodeCombo->setObjectName(QStringLiteral("TxEqCtfmodeCombo"));
         // Items match WDSP eq.c create_eqp() ctfmode parameter.
-        m_ctfmodeCombo->addItem(tr("0 — Peaking"));
-        m_ctfmodeCombo->addItem(tr("1 — Notch"));
+        m_ctfmodeCombo->addItem(tr("0: Peaking"));
+        m_ctfmodeCombo->addItem(tr("1: Notch"));
         m_ctfmodeCombo->setToolTip(
             tr("Filter cutoff mode for band shapes.  Peaking = "
                "bell-shaped boost/cut.  Notch = sharp band-stop.  "
@@ -439,8 +439,8 @@ void TxEqDialog::buildUi()
         m_wintypeCombo = new QComboBox(this);
         m_wintypeCombo->setObjectName(QStringLiteral("TxEqWintypeCombo"));
         // Items match WDSP eq.c create_eqp() wintype parameter.
-        m_wintypeCombo->addItem(tr("0 — Blackman-Harris"));
-        m_wintypeCombo->addItem(tr("1 — Hann"));
+        m_wintypeCombo->addItem(tr("0: Blackman-Harris"));
+        m_wintypeCombo->addItem(tr("1: Hann"));
         m_wintypeCombo->setToolTip(
             tr("Window function used when constructing the EQ filter "
                "impulse response.  Blackman-Harris = sharper rejection.  "

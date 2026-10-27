@@ -261,7 +261,7 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
         int n = m_radioTable->rowCount();
         setStatusText(n > 0
             ? QStringLiteral("Found %1 radio(s)").arg(n)
-            : QStringLiteral("No radios found — try again"));
+            : QStringLiteral("No radios found. Try again."));
         m_scanBtn->setEnabled(true);
     });
 
@@ -718,10 +718,10 @@ void ConnectionPanel::updateStatusStrip()
         RadioConnection* conn = m_radioModel->connection();
         if (conn) {
             const RadioInfo& ri = conn->radioInfo();
-            m_stripInfoLabel->setText(QStringLiteral("Connected — %1  (%2)")
+            m_stripInfoLabel->setText(QStringLiteral("Connected: %1  (%2)")
                 .arg(ri.displayName(), ri.address.toString()));
         } else {
-            m_stripInfoLabel->setText(QStringLiteral("Connected — %1")
+            m_stripInfoLabel->setText(QStringLiteral("Connected: %1")
                 .arg(m_radioModel->name()));
         }
         m_stripInfoLabel->setStyleSheet(QStringLiteral(
@@ -745,7 +745,7 @@ void ConnectionPanel::updateStatusStrip()
         if (!lastMac.isEmpty()) {
             if (auto saved = AppSettings::instance().savedRadio(lastMac)) {
                 m_stripReconnectLabel->setText(
-                    QStringLiteral("Last: %1 — scan to reconnect").arg(saved->info.name));
+                    QStringLiteral("Last: %1. Scan to reconnect.").arg(saved->info.name));
                 m_stripReconnectLabel->setVisible(true);
             } else {
                 m_stripReconnectLabel->setVisible(false);
@@ -1194,7 +1194,7 @@ void ConnectionPanel::onConnectClicked()
     }
 
     if (info.inUse) {
-        setStatusText(QStringLiteral("Warning: radio reports in use — attempting connection anyway"));
+        setStatusText(QStringLiteral("Warning: radio reports in use. Attempting connection anyway."));
     } else {
         setStatusText(QStringLiteral("Connecting to %1...").arg(info.displayName()));
     }
@@ -1374,7 +1374,7 @@ void ConnectionPanel::onForgetClicked()
     int n = m_radioTable->rowCount();
     setStatusText(n > 0
         ? QStringLiteral("Found %1 radio(s)").arg(n)
-        : QStringLiteral("No radios — start discovery"));
+        : QStringLiteral("No radios. Start discovery."));
     updateButtonStates();
 }
 

@@ -496,7 +496,7 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
     row->setContentsMargins(16, 0, 0, 0);
     bar->addLayout(row, 1);
     row->addWidget(new QLabel(tr("OC bank 0:"), m_statusFrame));
-    m_ocBandLabel = new QLabel(QStringLiteral("—"), m_statusFrame);
+    m_ocBandLabel = new QLabel(QStringLiteral("–"), m_statusFrame);
     m_ocBandLabel->setStyleSheet(QStringLiteral("color: #aaa; font-size: 10px;"));
     row->addWidget(m_ocBandLabel);
     m_ocByteLabel = new QLabel(QStringLiteral("0x00"), m_statusFrame);
@@ -532,7 +532,7 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
     m_i2cAddrLabel->setStyleSheet(QStringLiteral("color: #aaa; font-size: 10px;"));
     row->addWidget(m_i2cAddrLabel);
 
-    m_lastProbeLabel = new QLabel(tr("Last probe: —"), m_statusFrame);
+    m_lastProbeLabel = new QLabel(tr("Last probe: –"), m_statusFrame);
     m_lastProbeLabel->setStyleSheet(QStringLiteral("color: #aaa; font-size: 10px;"));
     row->addWidget(m_lastProbeLabel);
 
@@ -584,7 +584,7 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
         // Workspace fonts need one more pixel for the longest register name;
         // leave a small fixed allowance so the label is never clipped.
         lbl->setFixedWidth(164);
-        valueLabel = new QLabel(QStringLiteral("—"), rowW);
+        valueLabel = new QLabel(QStringLiteral("–"), rowW);
         valueLabel->setStyleSheet(QStringLiteral("font-size: 10px; font-family: monospace;"));
         rowL->addWidget(lbl);
         rowL->addWidget(valueLabel);
@@ -640,7 +640,7 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
                 QStringLiteral("0x%1").arg(kRegRows[i].displayAddr, 2, 16,
                                             QLatin1Char('0')).toUpper()));
         m_registerTable->setItem(i, 2, new QTableWidgetItem(QStringLiteral("0x00")));
-        m_registerTable->setItem(i, 3, new QTableWidgetItem(QStringLiteral("—")));
+        m_registerTable->setItem(i, 3, new QTableWidgetItem(QStringLiteral("–")));
     }
 
     regLayout->addWidget(m_registerTable);
@@ -1091,7 +1091,7 @@ QString Hl2IoBoardTab::decodeRegister(IoBoardHl2::Register reg, quint8 value) co
                                 .arg(value, 2, 16, QLatin1Char('0')).toUpper();
 
     default:
-        return QStringLiteral("—");
+        return QStringLiteral("–");
     }
 }
 

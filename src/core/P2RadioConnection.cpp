@@ -5336,8 +5336,8 @@ void P2RadioConnection::onConnectTimeout()
     setState(ConnectionState::Disconnected);
 
     emit connectFailed(ConnectFailure::Timeout,
-                       QStringLiteral("No response from radio within %1 ms — "
-                                      "check IP address, radio power, and network")
+                       QStringLiteral("No response from radio within %1 ms. Check the "
+                                      "IP address, radio power and network.")
                            .arg(m_connectTimeoutMs));
 }
 

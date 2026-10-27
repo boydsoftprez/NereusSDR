@@ -49,8 +49,8 @@ RemoteAudioWidget::RemoteAudioWidget(RemoteMediaController* media, RemoteTelemet
     auto* quality = group(tr("Audio quality"));
     m_quality = new AudioQualityCombo(this); m_quality->setObjectName(QStringLiteral("remoteAudioQuality"));
     m_quality->setStyleSheet(Style::kComboStyle);
-    m_quality->addItem(tr("High — 48 kbps"), int(RemoteAudioQualityChoice::High));
-    m_quality->addItem(tr("Save data — 24 kbps"), int(RemoteAudioQualityChoice::SaveData));
+    m_quality->addItem(tr("High (48 kbps)"), int(RemoteAudioQualityChoice::High));
+    m_quality->addItem(tr("Save data (24 kbps)"), int(RemoteAudioQualityChoice::SaveData));
     m_quality->addItem(tr("Lossless"), int(RemoteAudioQualityChoice::Lossless));
     m_quality->setToolTip(tr("High and Save data are compressed targets. Lossless needs about 1.6 Mbit/s; a link that cannot carry it falls back to Opus."));
     quality->addWidget(m_quality);

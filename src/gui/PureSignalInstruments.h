@@ -226,7 +226,7 @@ public:
             ? QStringLiteral("<span style='font-size:%1px;font-weight:600'>%2</span> "
                 "<span style='font-size:11px'>raw</span>")
                 .arg(feedbackSize).arg(status.feedbackLevel)
-            : QStringLiteral("—"));
+            : QStringLiteral("–"));
         const QString feedbackStyle = QStringLiteral("color: %1;").arg(
             WorkspacePreview::roleColour(QColor("#ffd24a"), "measured").name());
         if (m_feedback->styleSheet() != feedbackStyle) {
@@ -246,10 +246,10 @@ public:
         // vendored WDSP iqc.c:551-560 [@b02d5bac]).
         m_activity->setText(available ? QStringLiteral("Calibration stage: %1 (%2)")
             .arg(psEngineCaption(status.engineState)).arg(status.engineState)
-            : QStringLiteral("Calibration stage: —"));
-        m_successes->setText(QStringLiteral("Successful calibrations  %1").arg(available ? QString::number(status.successfulCalibrations) : QStringLiteral("—")));
-        m_attempts->setText(QStringLiteral("Calibration attempts  %1").arg(available ? QString::number(status.attemptedCalibrations) : QStringLiteral("—")));
-        if (m_legacyInfo13) { m_legacyInfo13->setText(QStringLiteral("Legacy info[13]  %1").arg(available ? QString::number(status.dogCount) : QStringLiteral("—"))); }
+            : QStringLiteral("Calibration stage: –"));
+        m_successes->setText(QStringLiteral("Successful calibrations  %1").arg(available ? QString::number(status.successfulCalibrations) : QStringLiteral("–")));
+        m_attempts->setText(QStringLiteral("Calibration attempts  %1").arg(available ? QString::number(status.attemptedCalibrations) : QStringLiteral("–")));
+        if (m_legacyInfo13) { m_legacyInfo13->setText(QStringLiteral("Legacy info[13]  %1").arg(available ? QString::number(status.dogCount) : QStringLiteral("–"))); }
     }
 private:
     bool m_compact{false};

@@ -2347,7 +2347,7 @@ void TxChannel::applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mo
     // Defer per Plan §3 Phase D.2 — 3M-3b will activate AM/SAM/DSB TX.
     // Throws so accidental 3M-1b callers surface immediately.
     throw std::logic_error(
-        "TxChannel::setSubAmMode deferred to 3M-3b — "
+        "TxChannel::setSubAmMode deferred to 3M-3b: "
         "AM/SAM TX is not enabled in 3M-1b. "
         "Full SubAMMode dispatch (radio.cs:2699-2728 [v2.10.3.13]) "
         "will be ported in Phase 3M-3b.");

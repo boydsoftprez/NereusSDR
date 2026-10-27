@@ -383,7 +383,7 @@ QString ConnectionSegment::audioMetricText(std::optional<double> kbps,
     case State::PlaybackProblem: break;
     }
     return tr("Audio %1 kbps %2")
-        .arg(kbps ? QString::number(*kbps, 'f', 1) : QStringLiteral("—"), status);
+        .arg(kbps ? QString::number(*kbps, 'f', 1) : QStringLiteral("–"), status);
 }
 
 void ConnectionSegment::setRemotePaths(std::optional<NetworkPathSnapshot> controls,
@@ -656,7 +656,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
 
     if (m_state == ConnectionState::Disconnected) {
         p.setPen(WorkspacePreview::roleColour(QColor("#607080"), "text-scale"));
-        p.drawText(x, textY, tr("Disconnected — click to connect"));
+        p.drawText(x, textY, tr("Disconnected. Click to connect."));
         m_lastRttX1 = m_lastRttX2 = 0;
         m_lastPipX1 = m_lastPipX2 = 0;
         return;
@@ -684,10 +684,10 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     // value too, so the green/yellow/red transitions don't flicker.
     const int rttDisplay = smoothedRttMs();
     p.setPen(rttColor(rttDisplay));
-    // QChar(0x2014) for the em-dash placeholder — same byte-escape
+    // QChar(0x2013) for the en-dash placeholder — same byte-escape
     // misinterpretation risk as the Mbps glyphs above; build via QChar.
     const QString rttText = (rttDisplay < 0)
-        ? QChar(0x2014) + QStringLiteral(" ms")
+        ? QChar(0x2013) + QStringLiteral(" ms")
         : QString::asprintf("%d ms", rttDisplay);
     p.drawText(x, textY, rttText);
     m_lastRttX1 = x;

@@ -1347,7 +1347,7 @@ void PaGainByBandPage::loadProfileIntoUi(const PaProfile& profile)
     // sees which profile's values they're editing.
     if (m_gainByBandGroup) {
         m_gainByBandGroup->setTitle(
-            tr("%1 — PA Gain By Band (dB)").arg(profile.name()));
+            tr("%1: PA Gain By Band (dB)").arg(profile.name()));
     }
 
     warnIfProfileDiverged();
@@ -1795,7 +1795,7 @@ void PaGainByBandPage::onFwdPowerSample(double fwdW, double /*revW*/,
     // Safety check first: if observed exceeds band_max * 1.1, abort.
     if (!autoCalSafetyCheck(fwdW, m_autoCalCurrentBand)) {
         abortAutoCal(QStringLiteral(
-            "Observed %1 W on %2 exceeded safety ceiling — aborted.")
+            "Observed %1 W on %2 exceeded safety ceiling. Aborted.")
             .arg(fwdW, 0, 'f', 1)
             .arg(bandLabel(m_autoCalCurrentBand)));
         return;

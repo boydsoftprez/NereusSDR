@@ -52,9 +52,9 @@ void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
     if(auto* source=findChild<QComboBox*>("contentSlice")) {
         const int inherited=defaults.contains("sliceId")?defaults["sliceId"].toInt():defaults["rxSource"].toInt(1)-1;
         source->setItemText(0,defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
-            ? tr("Container default — Follow selected RX") : tr("Container default — Slice %1").arg(QChar('A'+inherited)));
+            ? tr("Container default: Follow selected RX") : tr("Container default: Slice %1").arg(QChar('A'+inherited)));
     }
-    if(auto* session=findChild<QLineEdit*>("sessionId")) {session->setPlaceholderText(tr("Container default — %1").arg(defaults["sessionId"].toString(tr("current session"))));}
+    if(auto* session=findChild<QLineEdit*>("sessionId")) {session->setPlaceholderText(tr("Container default: %1").arg(defaults["sessionId"].toString(tr("current session"))));}
 }
 void ContentPropertyEditor::setGeometryLocked(bool locked)
 {
@@ -277,7 +277,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     m_item.reset(m_registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
     if(m_item) {m_hydrated=m_registry.captureMeterItem(*m_item,entry);}
     if(m_policy==ContentLayout::FreeCanvas) {
-        auto* group=new QGroupBox(tr("Canvas position and size — logical pixels"),this);group->setObjectName("canvasGeometry");group->setEnabled(!m_geometryLocked);
+        auto* group=new QGroupBox(tr("Canvas position and size (logical pixels)"),this);group->setObjectName("canvasGeometry");group->setEnabled(!m_geometryLocked);
         auto* fields=new QFormLayout(group);root->addWidget(group);
         const QRectF rect=entry.freeCanvasRect().value_or(m_resolvedRect);
         const double values[]{rect.x(),rect.y(),rect.width(),rect.height()};
@@ -296,7 +296,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
                 updateFreeCanvasRect(m_entry.id,geometry);publish();
             });
         }
-        auto* layer=new QSpinBox(group);layer->setObjectName("canvasLayer");layer->setRange(std::numeric_limits<int>::min(),std::numeric_limits<int>::max());layer->setValue(entry.paintOrder);fields->addRow(tr("Layer — larger is in front"),layer);
+        auto* layer=new QSpinBox(group);layer->setObjectName("canvasLayer");layer->setRange(std::numeric_limits<int>::min(),std::numeric_limits<int>::max());layer->setValue(entry.paintOrder);fields->addRow(tr("Layer (larger is in front)"),layer);
         connect(layer,qOverload<int>(&QSpinBox::valueChanged),this,[this](int value){if(!m_geometryLocked) {m_entry.paintOrder=value;if(m_item) {m_item->setZOrder(value);}publish();}});
         auto* note=new QLabel(tr("The viewport scrolls when it is smaller than the objects. Resizing the window keeps saved object positions and sizes."),group);note->setWordWrap(true);fields->addRow(note);
     }
@@ -345,7 +345,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         for(const auto& key:composite->editableFields()) { add(fields,key,props[key],-1); }
         const auto channels=props["channels"].toArray();
         for(int i=0;i<channels.size();++i) {
-            const auto c=channels[i].toObject(); auto* group=new QGroupBox(tr("Channel %1 — %2").arg(i+1).arg(c["name"].toString()),this); auto* fields=new QFormLayout(group); root->addWidget(group);
+            const auto c=channels[i].toObject(); auto* group=new QGroupBox(tr("Channel %1: %2").arg(i+1).arg(c["name"].toString()),this); auto* fields=new QFormLayout(group); root->addWidget(group);
             for(const auto& key:composite->editableChannelFields(i)) { add(fields,key,c[key],i); }
         }
         if(composite->typeId()=="meter.signalText") { auto* note=new QLabel(tr("Signal units and decimal precision follow the global multimeter preferences."),this); note->setWordWrap(true); root->addWidget(note); }
@@ -394,7 +394,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     auto* source=new QComboBox(advanced); source->setObjectName("contentSlice");
     const int inherited=m_defaults.contains("sliceId")?m_defaults["sliceId"].toInt():m_defaults["rxSource"].toInt(1)-1;
     source->addItem(m_defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
-        ? tr("Container default — Follow selected RX") : tr("Container default — Slice %1").arg(QChar('A'+inherited)),-1);
+        ? tr("Container default: Follow selected RX") : tr("Container default: Slice %1").arg(QChar('A'+inherited)),-1);
     for(int i=0;i<4;++i) { source->addItem(tr("Slice %1").arg(QChar('A'+i)),i); }
     source->addItem(tr("Follow selected RX"),QStringLiteral("followSelectedRx"));
     const QVariant selected=entry.context.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
@@ -409,7 +409,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         // Declared widget types read no MMIO source.
         if((applet || declared || qobject_cast<WaveformMeterItem*>(m_item.get())) && key!="sessionId") {continue;}
         auto* edit=new QLineEdit(entry.context[key].toString(),advanced); edit->setObjectName(key);
-        edit->setPlaceholderText(key=="sessionId"?tr("Container default — %1").arg(m_defaults[key].toString(tr("current session"))):tr("Unassigned"));
+        edit->setPlaceholderText(key=="sessionId"?tr("Container default: %1").arg(m_defaults[key].toString(tr("current session"))):tr("Unassigned"));
         bindings->addRow(key=="sessionId"?tr("Radio session"):key=="mmioGuid"?tr("MMIO source UUID"):tr("MMIO variable"),edit);
         connect(edit,&QLineEdit::editingFinished,this,[this,edit,key]{ if(edit->text().isEmpty()) {m_entry.context.remove(key);} else {m_entry.context[key]=edit->text();}
             if(m_item && (key=="mmioGuid" || key=="mmioVariable")) {m_item->setMmioBinding(QUuid(m_entry.context["mmioGuid"].toString()),m_entry.context["mmioVariable"].toString());}

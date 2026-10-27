@@ -1698,7 +1698,7 @@ private slots:
         QVERIFY(service.revision() > known);
         const QJsonArray blank = rowsOf(pageById(projectedCategory(service.hardware(), 13),
                                                  "hardware.radioInfo"));
-        const QString dash = QString(QChar(0x2014));
+        const QString dash = QString(QChar(0x2013));
         QCOMPARE(blank.at(4).toObject().value("value"), QJsonValue(dash));
         QCOMPARE(blank.at(5).toObject().value("value"), QJsonValue(dash));
         QCOMPARE(blank.at(6).toObject().value("value"), QJsonValue(dash));

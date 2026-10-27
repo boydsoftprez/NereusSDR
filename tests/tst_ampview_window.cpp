@@ -306,7 +306,7 @@ private slots:
         QVERIFY(window.findChild<QLabel*>(QStringLiteral("ampViewDisplayStatus"))
                     ->text().contains(QStringLiteral("unavailable")));
         QVERIFY(window.findChild<QLabel*>(QStringLiteral("ampViewCursorReadout"))
-                    ->text().contains(QStringLiteral("AMP MAG —")));
+                    ->text().contains(QStringLiteral("AMP MAG –")));
         QVERIFY(captureIfRequested(window, QStringLiteral("ampview-unavailable")));
 
         // A queued frame from the retired identity cannot repopulate the plot.
@@ -398,7 +398,7 @@ private slots:
                     chart->setSelectedInput(0.0);
                     QCoreApplication::processEvents();
                     QVERIFY(!chart->readoutAt(0.0).magnitudeAmp.has_value());
-                    QVERIFY(readout->text().contains(QStringLiteral("AMP GAIN —")));
+                    QVERIFY(readout->text().contains(QStringLiteral("AMP GAIN –")));
                     QVERIFY(captureIfRequested(window, QStringLiteral("ampview-gain-zero")));
                     window.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain"))->setChecked(false);
                     window.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom"))->setChecked(false);

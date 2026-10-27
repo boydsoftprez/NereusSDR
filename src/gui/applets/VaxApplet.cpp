@@ -239,7 +239,7 @@ void VaxApplet::buildUi()
         chLabel->setFixedWidth(44);
         row->addWidget(chLabel);
 
-        m_tagsLbl[i] = new QLabel(QStringLiteral("\u2014"), body);
+        m_tagsLbl[i] = new QLabel(QStringLiteral("\u2013"), body);
         m_tagsLbl[i]->setStyleSheet(QStringLiteral("QLabel { color: #506070; font-size: 11px; }"));
         m_tagsLbl[i]->setFixedWidth(56);
         row->addWidget(m_tagsLbl[i]);
@@ -331,7 +331,7 @@ void VaxApplet::buildUi()
         txLabel->setFixedWidth(44);
         row->addWidget(txLabel);
 
-        m_txTagsLbl = new QLabel(QStringLiteral("\u2014"), body);
+        m_txTagsLbl = new QLabel(QStringLiteral("\u2013"), body);
         m_txTagsLbl->setStyleSheet(QStringLiteral("QLabel { color: #506070; font-size: 11px; }"));
         m_txTagsLbl->setFixedWidth(56);
         row->addWidget(m_txTagsLbl);
@@ -438,7 +438,7 @@ void VaxApplet::buildStationSection(QWidget* body, QVBoxLayout* vbox)
         chLabel->setFixedWidth(44);
         row->addWidget(chLabel);
 
-        m_stationTagsLbl[i] = new QLabel(QStringLiteral("\u2014"), m_stationSection);
+        m_stationTagsLbl[i] = new QLabel(QStringLiteral("\u2013"), m_stationSection);
         m_stationTagsLbl[i]->setStyleSheet(stationLabelStyle("#506070", 11));
         m_stationTagsLbl[i]->setFixedWidth(56);
         row->addWidget(m_stationTagsLbl[i]);
@@ -482,7 +482,7 @@ void VaxApplet::buildStationSection(QWidget* body, QVBoxLayout* vbox)
     txLabel->setStyleSheet(stationLabelStyle(Style::kTextSecondary, 11));
     txLabel->setFixedWidth(44);
     row->addWidget(txLabel);
-    m_stationTxTagsLbl = new QLabel(QStringLiteral("\u2014"), m_stationSection);
+    m_stationTxTagsLbl = new QLabel(QStringLiteral("\u2013"), m_stationSection);
     m_stationTxTagsLbl->setStyleSheet(stationLabelStyle("#506070", 11));
     m_stationTxTagsLbl->setFixedWidth(56);
     row->addWidget(m_stationTxTagsLbl);
@@ -589,7 +589,7 @@ void VaxApplet::refreshStationValues()
     }
     const auto tag = [](const QString& letters) {
         if (letters.isEmpty()) {
-            return QStringLiteral("\u2014");
+            return QStringLiteral("\u2013");
         }
         QStringList parts;
         for (const QChar letter : letters) {
@@ -691,14 +691,14 @@ void VaxApplet::connectSliceTagsTracking()
 
 void VaxApplet::updateTagsLabels()
 {
-    // Reset every RX tag to the em-dash placeholder, then fill in.
+    // Reset every RX tag to the en-dash placeholder, then fill in.
     for (int i = 0; i < kChannels; ++i) {
         if (m_tagsLbl[i]) {
-            m_tagsLbl[i]->setText(QStringLiteral("\u2014"));
+            m_tagsLbl[i]->setText(QStringLiteral("\u2013"));
         }
     }
     if (m_txTagsLbl) {
-        m_txTagsLbl->setText(QStringLiteral("\u2014"));
+        m_txTagsLbl->setText(QStringLiteral("\u2013"));
     }
     if (!m_model) {
         return;
@@ -721,7 +721,7 @@ void VaxApplet::updateTagsLabels()
         if (ch >= 1 && ch <= kChannels && m_tagsLbl[ch - 1]) {
             // If multiple slices share a channel, append letters with "+".
             const QString existing = m_tagsLbl[ch - 1]->text();
-            if (existing == QStringLiteral("\u2014")) {
+            if (existing == QStringLiteral("\u2013")) {
                 m_tagsLbl[ch - 1]->setText(QStringLiteral("Slice %1").arg(letter));
             } else {
                 m_tagsLbl[ch - 1]->setText(existing + QStringLiteral("+") + letter);

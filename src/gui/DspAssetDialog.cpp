@@ -548,7 +548,7 @@ void DspAssetDialog::populateNnrSelectors()
         int selected = m_slotSelectors[slot]->findData(desired[slot]);
         if (selected < 0) {
             m_slotSelectors[slot]->addItem(
-                tr("Missing \u2014 %1").arg(shortId(desired[slot])), desired[slot]);
+                tr("Missing: %1").arg(shortId(desired[slot])), desired[slot]);
             selected = m_slotSelectors[slot]->count() - 1;
             m_slotSelectors[slot]->setItemData(selected,
                                                tr("The chosen file is missing on the Core or cannot be used."),

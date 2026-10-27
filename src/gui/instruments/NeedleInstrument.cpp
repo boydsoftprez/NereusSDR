@@ -267,10 +267,10 @@ void NeedleInstrument::refreshFooter()
         // aussehen. Die GRENZE bleibt stehen — sie ist eine
         // Eigenschaft der Skala und stimmt auch ohne Messung. Wenn du
         // sie auch weg willst, ist es eine Zeile.
-        m_footer->setValueText(QStringLiteral("—"));
+        m_footer->setValueText(QStringLiteral("–"));
         m_footer->setValueColour(Instrument::measuredDim());
         m_footer->setPeakAndLimit(
-            QStringLiteral("—"),
+            QStringLiteral("–"),
             d->threshold.has_value() ? d->text(d->threshold.value()) : QString());
         return;
     }
@@ -278,7 +278,7 @@ void NeedleInstrument::refreshFooter()
     m_footer->setValueText(d->textWithUnit(m_value));
     m_footer->setValueColour(Instrument::valueColour(*d, m_value));
     m_footer->setPeakAndLimit(
-        m_peak.enabled() ? d->text(m_peak.value()) : QStringLiteral("—"),
+        m_peak.enabled() ? d->text(m_peak.value()) : QStringLiteral("–"),
         d->threshold.has_value() ? d->text(d->threshold.value()) : QString());
 }
 

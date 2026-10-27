@@ -739,7 +739,7 @@ void SpectrumDefaultsPage::loadFromRenderer()
     if (m_binWidthReadout) {
         const double width = sw->binWidthHz();
         m_binWidthReadout->setText(width > 0.0 ? QStringLiteral("%1 Hz/bin").arg(width, 0, 'f', 3)
-                                             : QStringLiteral("— Hz/bin"));
+                                             : QStringLiteral("– Hz/bin"));
     }
     if (m_decimationSpin && fe) {
         QSignalBlocker b(m_decimationSpin);
@@ -1569,7 +1569,7 @@ void SpectrumDefaultsPage::buildUI()
     m_showBinWidthToggle->setProperty("nereusSetupId", "display.spectrumDefaults.showBinWidth");
     m_showBinWidthToggle->setToolTip(QStringLiteral(
         "Display the current FFT bin width (sample rate / FFT size) in the spectrum corner."));
-    m_binWidthReadout = new QLabel(QStringLiteral("— Hz/bin"), overlayGroup);
+    m_binWidthReadout = new QLabel(QStringLiteral("– Hz/bin"), overlayGroup);
     m_binWidthReadout->setToolTip(QStringLiteral("Current FFT bin width in Hz."));
     bindDefaultToggle(m_showBinWidthToggle, QStringLiteral("DisplayShowBinWidth"),
         [](SpectrumWidget* pan, bool on) { pan->setShowBinWidth(on); });
@@ -2821,7 +2821,7 @@ void GridScalesPage::buildUI()
         "QFrame { color: #2a3a4a; background: #2a3a4a; max-height: 1px; }"));
     gridForm->addRow(bandSeparator);
 
-    m_editingBandLabel = new QLabel(QStringLiteral("◆ Editing per-band grid: — ◆"), gridGroup);
+    m_editingBandLabel = new QLabel(QStringLiteral("◆ Editing per-band grid: – ◆"), gridGroup);
     m_editingBandLabel->setAlignment(Qt::AlignCenter);
     // Larger + brighter than before — section-header style instead of an
     // inline note.  Cyan picks up the existing accent palette.

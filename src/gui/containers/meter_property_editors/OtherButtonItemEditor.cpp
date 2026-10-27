@@ -44,7 +44,7 @@ void OtherButtonItemEditor::buildOtherSpecific()
     addHeader(tr("Control selection"));
     m_singleControl = new QComboBox(this);
     m_singleControl->setObjectName(QStringLiteral("otherSingleControl"));
-    m_singleControl->addItem(tr("Group — edit visibility below"), -1);
+    m_singleControl->addItem(tr("Group: edit visibility below"), -1);
     const auto controls = supportedContainerControls();
     for (const auto& control : controls) { m_singleControl->addItem(control.title, int(control.buttonId)); }
     addRow(tr("Single control"), m_singleControl);

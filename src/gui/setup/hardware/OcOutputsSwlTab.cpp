@@ -110,11 +110,11 @@ OcOutputsSwlTab::OcOutputsSwlTab(RadioModel* model, OcMatrix* ocMatrix,
     matrixRow->setObjectName(QStringLiteral("swlMatrixRow"));
     matrixRow->setSpacing(10);
 
-    auto* rxGroup = new QGroupBox(tr("SWL — RX OC matrix"), this);
+    auto* rxGroup = new QGroupBox(tr("SWL: RX OC matrix"), this);
     buildMatrixGrid(rxGroup, /*tx=*/false);
     matrixRow->addWidget(rxGroup, /*stretch=*/1);
 
-    auto* txGroup = new QGroupBox(tr("SWL — TX OC matrix"), this);
+    auto* txGroup = new QGroupBox(tr("SWL: TX OC matrix"), this);
     buildMatrixGrid(txGroup, /*tx=*/true);
     matrixRow->addWidget(txGroup, /*stretch=*/1);
     m_txGroup = txGroup;

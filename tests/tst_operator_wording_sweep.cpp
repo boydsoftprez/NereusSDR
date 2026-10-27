@@ -35,6 +35,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1310,40 +1311,122 @@ private slots:
         }
     }
 
-    // Fix wave item 12: no user-visible string in the files the R3 controls
-    // plan touched carries an em dash; prose uses periods, colons,
-    // semicolons, parentheses or commas, and a lone empty-value mark in a
-    // readout is an en dash. Log lines and the decision-list placeholders
-    // are not read by the operator here and are left out.
+    // Fix wave item 12: no user-visible string carries an em dash; prose
+    // uses periods, colons, semicolons, parentheses or commas, and a lone
+    // empty-value mark in a readout is an en dash. Every source file under
+    // src/ is read, not a fixed list: a list of 17 files missed the em
+    // dashes in files written after it. Log lines and the decision-list
+    // placeholders are not read by the operator here and are left out;
+    // tr() literals are read too, so a translated string inside a log
+    // statement's reach is still checked, and so is an em dash built with
+    // QChar(0x2014). The iPhone and iPad sources are read too: every .swift
+    // file under ios/ except test sources (any path segment ending in Tests,
+    // such as Tests/ or UITests/, which may assert the dash is absent) and
+    // generated code in ios/DerivedData/, with comments dropped, for the raw
+    // dash and Swift's \u{2014} escape.
     void noEmDashInUserVisibleStrings()
     {
-        const char* files[] = {
-            "src/gui/AboutDialog.cpp",
-            "src/gui/MainWindow.cpp",
-            "src/gui/SpectrumOverlayPanel.cpp",
-            "src/gui/SpotHubDialog.cpp",
-            "src/gui/applets/PhoneCwApplet.cpp",
-            "src/gui/applets/TxApplet.cpp",
-            "src/gui/diagnostics/DiagnosticsPhaseHPages.cpp",
-            "src/gui/diagnostics/RadioStatusPage.cpp",
-            "src/gui/setup/AudioVaxPage.cpp",
-            "src/gui/setup/DspOptionsPage.cpp",
-            "src/gui/setup/DspSetupPages.cpp",
-            "src/gui/setup/TransmitSetupPages.cpp",
-            "src/gui/setup/hardware/OcOutputsHfTab.cpp",
-            "src/gui/widgets/VfoWidget.cpp",
-            "src/gui/widgets/RxDashboard.cpp",
-            "src/models/RadioModel.cpp",
-            "src/core/P1RadioConnection.cpp",
+        // Swift spells the escape \u{2014}, with 1 to 8 hex digits.
+        static const QRegularExpression swiftEscape(QStringLiteral("\\\\u\\{0*2014\\}"),
+                                                    QRegularExpression::CaseInsensitiveOption);
+        const auto hasEmDash = [](const QString& text) {
+            return text.contains(QChar(0x2014)) || text.contains(QLatin1String("\\u2014"))
+                || text.contains(QLatin1String("\\x2014"))
+                || text.contains(QLatin1String("\\U00002014"))
+                || text.contains(QLatin1String("\\xe2\\x80\\x94"), Qt::CaseInsensitive)
+                || swiftEscape.match(text).hasMatch();
         };
-        for (const char* file : files) {
-            const QStringList literals = userVisibleLiterals(sourcePath(file));
-            QVERIFY2(literals.size() >= 5, file);
-            for (const QString& text : literals) {
-                QVERIFY2(!text.contains(QChar(0x2014)) && !text.contains(QLatin1String("\\u2014")),
-                         qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(file), text)));
+        // The rule is not vacuous: each spelling of the em dash fails it.
+        QVERIFY(hasEmDash(QStringLiteral("Container default \u2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\u2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\x2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\U00002014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\xe2\\x80\\x94 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\xE2\\x80\\x94 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("?? \"\\u{2014}\"")));
+        QVERIFY(hasEmDash(QStringLiteral("?? \"\\u{00002014}\"")));
+        QVERIFY(!hasEmDash(QStringLiteral("?? \"\\u{2013}\"")));
+        QVERIFY(!hasEmDash(QStringLiteral("Container default: %1")));
+        QVERIFY(!hasEmDash(QString(QChar(0x2013))));
+
+        static const QRegularExpression builtEmDash(
+            QStringLiteral("QChar\\(\\s*0x2014\\s*\\)"), QRegularExpression::CaseInsensitiveOption);
+        QVERIFY(builtEmDash.match(QStringLiteral("QChar(0x2014) + QStringLiteral(\" ms\")")).hasMatch());
+
+        // Temporary: PR 677 rewrites these two files, so their em dashes come
+        // out in a follow-up PR after 677 merges. That PR deletes this list.
+        static const QStringList kAwaitingContainerParity{
+            QStringLiteral("src/gui/containers/ContainerContentHost.cpp"),
+            QStringLiteral("src/gui/containers/ContainerSettingsDialog.cpp"),
+        };
+        // A renamed or removed file must not leave a stale exemption behind.
+        for (const QString& exempt : kAwaitingContainerParity) {
+            QVERIFY2(QFileInfo::exists(sourcePath(qPrintable(exempt))), qPrintable(exempt));
+        }
+
+        QStringList failures;
+        int literals = 0;
+        QDirIterator it(sourcePath("src"), {QStringLiteral("*.cpp"), QStringLiteral("*.h"),
+                                            QStringLiteral("*.mm")},
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            const QString file = QDir(QStringLiteral(NEREUS_SOURCE_DIR)).relativeFilePath(path);
+            if (kAwaitingContainerParity.contains(file)) {
+                continue;
+            }
+            const QString code = codeWithoutComments(path);
+            QStringList texts = userVisibleLiterals(path);
+            texts += trLiterals(code);
+            for (const QString& text : std::as_const(texts)) {
+                ++literals;
+                if (hasEmDash(text)) {
+                    failures << QStringLiteral("%1: %2").arg(file, text);
+                }
+            }
+            // An em dash built from its code point never shows as a literal.
+            if (builtEmDash.match(code).hasMatch()) {
+                failures << QStringLiteral("%1: QChar(0x2014)").arg(file);
             }
         }
+        QVERIFY2(literals > 20000, qPrintable(QString::number(literals)));
+
+        // The iPhone and iPad sources. With comments dropped, an em dash left
+        // in a Swift file can only be in a string, multi-line ones included.
+        // codeWithoutComments is a C++ scanner, only approximate for Swift's
+        // multi-line and raw strings: it can miss a dash (a "/*" inside a
+        // multi-line string hides text up to the next "*/"), but a misread
+        // string literal never runs past its line.
+        // Test sources (a path segment ending in Tests) and generated code in
+        // DerivedData are left out.
+        static const QRegularExpression swiftTestSegment(QStringLiteral("/[A-Za-z]*Tests/"));
+        const QString derivedData = sourcePath("ios/DerivedData") + QLatin1Char('/');
+        int swiftFiles = 0;
+        QDirIterator swift(sourcePath("ios"), {QStringLiteral("*.swift")}, QDir::Files,
+                           QDirIterator::Subdirectories);
+        while (swift.hasNext()) {
+            const QString path = swift.next();
+            if (swiftTestSegment.match(path).hasMatch() || path.startsWith(derivedData)) {
+                continue;
+            }
+            ++swiftFiles;
+            const QString file = QDir(QStringLiteral(NEREUS_SOURCE_DIR)).relativeFilePath(path);
+            for (const QString& line : codeWithoutComments(path).split(QLatin1Char('\n'))) {
+                if (hasEmDash(line)) {
+                    failures << QStringLiteral("%1: %2").arg(file, line.trimmed());
+                }
+            }
+        }
+        QVERIFY2(swiftFiles > 300, qPrintable(QString::number(swiftFiles)));
+
+        failures.removeDuplicates();
+        // QtTest cuts a long message short; each failure gets its own line.
+        for (const QString& failure : std::as_const(failures)) {
+            qWarning().noquote() << failure;
+        }
+        QVERIFY2(failures.isEmpty(), qPrintable(QString::number(failures.size())
+                                                + QStringLiteral(" strings carry an em dash")));
+
         // The readouts' empty-value mark is the en dash.
         const QStringList status = userVisibleLiterals(
             sourcePath("src/gui/diagnostics/RadioStatusPage.cpp"));

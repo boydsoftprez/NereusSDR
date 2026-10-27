@@ -23,8 +23,8 @@ QString RadioInfoFacts::supportText() const
 RadioInfoFacts radioInfoFacts(const RadioInfo& info, const BoardCapabilities& caps,
                               HPSDRModel model)
 {
-    // The tab's placeholder for a value not reported (U+2014).
-    const QString none = QString(QChar(0x2014));
+    // The tab's placeholder for a value not reported (U+2013).
+    const QString none = QString(QChar(0x2013));
     RadioInfoFacts facts;
     facts.board = info.name.isEmpty() ? QString::fromLatin1(caps.displayName) : info.name;
     facts.protocol = info.protocol == ProtocolVersion::Protocol2

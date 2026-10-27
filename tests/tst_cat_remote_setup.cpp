@@ -786,7 +786,7 @@ private slots:
             channel.insert(QStringLiteral("secondaryValid"), secondaryValid);
             core->setChannel(1, StationCatModel::toText(channel));
         };
-        const QString invalid = QStringLiteral("Invalid binding — ID 0");
+        const QString invalid = QStringLiteral("Invalid binding (ID 0)");
         publish(false, true);
         NEREUS_TRY_VERIFY(primary->currentText() == invalid);
         QCOMPARE(secondary->currentText(), QStringLiteral("Slice ID 0"));
@@ -916,7 +916,7 @@ private slots:
         channel.insert(QStringLiteral("config"), config);
         channel.insert(QStringLiteral("primaryValid"), false);
         core->setChannel(1, StationCatModel::toText(channel));
-        NEREUS_TRY_VERIFY(primary->currentText() == QStringLiteral("Invalid binding — ID 0"));
+        NEREUS_TRY_VERIFY(primary->currentText() == QStringLiteral("Invalid binding (ID 0)"));
         auto* items = qobject_cast<QStandardItemModel*>(primary->model());
         QVERIFY(items && !items->item(primary->currentIndex())->isEnabled());
         dropAllCells();
@@ -924,7 +924,7 @@ private slots:
         core->setChannel(1, StationCatModel::toText(channel));
         NEREUS_TRY_VERIFY(primary->currentText() == QStringLiteral("Slice ID 0"));
         QVERIFY(items->item(primary->currentIndex())->isEnabled());
-        QVERIFY(primary->findText(QStringLiteral("Invalid binding — ID 0")) < 0);
+        QVERIFY(primary->findText(QStringLiteral("Invalid binding (ID 0)")) < 0);
     }
 
     // The serial page's device list, filled again from the Core with

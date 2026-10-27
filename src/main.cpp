@@ -193,7 +193,7 @@ int main(int argc, char* argv[])
     {
         QCommandLineParser parser;
         parser.setApplicationDescription(
-            QStringLiteral("NereusSDR — cross-platform OpenHPSDR client."));
+            QStringLiteral("NereusSDR, a cross-platform OpenHPSDR client."));
         parser.addHelpOption();
         parser.addVersionOption();
         QCommandLineOption profileOpt(

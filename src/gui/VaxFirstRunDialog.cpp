@@ -613,8 +613,8 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
     for (; slot <= 4; ++slot) {
         listLayout->addWidget(makeDetRow(
             slot,
-            QStringLiteral("<span style='color:%1'>— no more cables"
-                           " available —<br/>"
+            QStringLiteral("<span style='color:%1'>(no more cables"
+                           " available)<br/>"
                            "<span style='font-size:9px'>install another"
                            " cable to enable</span></span>")
                 .arg(WorkspacePreview::roleColourName(Style::kTextInactive, "text-inactive")),

@@ -73,6 +73,10 @@
 //               placeholder, a client's media connection id. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-27: runSession() fails, naming the step, when a drain ends
+//               with the control channel unsettled (playSession() plays
+//               the steps); setSettleCheck() takes what has not settled.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -212,9 +216,10 @@ public:
 
     /// iPhone app plan Task 28: set by the session runner's data-channel
     /// mode. drain() and every wait for the station also wait, in real
-    /// time, until this returns true (both ends of the control channel have
-    /// handled everything the other sent). Unset: no wait.
-    static void setSettleCheck(std::function<bool()> settled);
+    /// time, until this returns empty (both ends of the control channel
+    /// have handled everything the other sent); otherwise it says what has
+    /// not settled, which a drain that ran out reports. Unset: no wait.
+    static void setSettleCheck(std::function<QString()> unsettled);
     /// Also for the data-channel mode: how a client the player adds
     /// (stationSetup.otherClients' {"connect"} step) is joined to the
     /// station. Unset: a LoopbackTransport pair, as always. Returns empty
@@ -224,8 +229,17 @@ public:
         std::function<QString(LoopbackTransport* client, NereusSDR::StationServer& server)>
             connect);
 
+    /// Empty on pass. In the data-channel mode it also fails when a drain
+    /// between steps ended with the control channel unsettled, naming the
+    /// step it ended in.
     static QString runSession(const QJsonObject& fixture, NereusSDR::StationServer& server,
                               LoopbackTransport& transport);
+
+private:
+    /// Plays the session's steps for runSession(); it stops at the step
+    /// after a drain that ended unsettled.
+    static QString playSession(const QJsonObject& fixture, NereusSDR::StationServer& server,
+                               LoopbackTransport& transport);
 };
 
 /// The media vectors' fixed inputs and their JSON form. The regen target

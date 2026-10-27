@@ -97,10 +97,10 @@ private slots:
             frame.status = status;
             panel.setFrame(frame);
             QCOMPARE(textOf(panel, "ImdStatus"), ImdMeasurementPanel::statusText(status));
-            QVERIFY(textOf(panel, "ImdWorstThird").contains(QStringLiteral("—")));
+            QVERIFY(textOf(panel, "ImdWorstThird").contains(QStringLiteral("–")));
             for (int i = 0; i < 6; ++i) {
                 for (int j = 0; j < 3; ++j) {
-                    QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ImdReading%1_%2").arg(i).arg(j))->text(), QStringLiteral("—"));
+                    QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ImdReading%1_%2").arg(i).arg(j))->text(), QStringLiteral("–"));
                 }
             }
         }

@@ -791,7 +791,7 @@ void CoresSetupPage::removeAddress(const QString& address)
     m_removingAddress = address;
     const bool automatic = target->connection.cachedAddresses.contains(address)
         || target->connection.coreAddresses.contains(address);
-    m_removeText->setText(tr("%1 — remove the entry added by you. %2").arg(addressDisplay(address),
+    m_removeText->setText(tr("%1: remove the entry added by you. %2").arg(addressDisplay(address),
         automatic ? tr("It remains an automatic candidate because it previously worked or is supplied by the Core.")
                   : tr("This does not disconnect the window. It may return if a later session succeeds or the Core supplies it.")));
     m_removeConfirmation->show();

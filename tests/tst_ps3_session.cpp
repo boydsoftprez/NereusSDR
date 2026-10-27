@@ -761,11 +761,11 @@ private slots:
         QVERIFY(feedback->text().contains("171"));
         QVERIFY(attempts->text().contains("7"));
         facade->resetSession();
-        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback –"));
         QCOMPARE(correction->text(), QStringLiteral("Unavailable"));
-        QCOMPARE(feedback->text(), QStringLiteral("—"));
-        QVERIFY(successes->text().contains(QStringLiteral("—")));
-        QVERIFY(attempts->text().contains(QStringLiteral("—")));
+        QCOMPARE(feedback->text(), QStringLiteral("–"));
+        QVERIFY(successes->text().contains(QStringLiteral("–")));
+        QVERIFY(attempts->text().contains(QStringLiteral("–")));
         QVERIFY(!feedbackMeter->available());
         QVERIFY(!remote.pureSignal());
     }

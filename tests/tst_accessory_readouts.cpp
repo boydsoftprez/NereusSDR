@@ -239,7 +239,7 @@ void TstAccessoryReadouts::clearValueShowsDashes()
     QCOMPARE(footerLabels(bar).at(2)->text(), QStringLiteral("1.12"));
     bar.clearValue();
     QVERIFY(!bar.hasValue());
-    QCOMPARE(footerLabels(bar).at(2)->text(), QStringLiteral("\u2014"));
+    QCOMPARE(footerLabels(bar).at(2)->text(), QStringLiteral("\u2013"));
 
     // The compact form too: a row with a value and the row after
     // clearValue() are not the same picture.

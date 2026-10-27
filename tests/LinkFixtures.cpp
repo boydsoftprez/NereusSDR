@@ -83,6 +83,20 @@
 //               Anthropic Claude Code.
 //   2026-10-22: The NSDC v2 Held disposition's name. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-27: The player's three waits for the station (a message, a
+//               connect's snapshot.complete, a close) count turns of the
+//               event loop, as QTRY_VERIFY does, not the wall clock, so a
+//               process stall on a loaded runner counts once. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: drain()'s settle wait counts turns too and checks once
+//               more after the last; a turn sleeps until an event or its
+//               end instead of spinning; every wait has a 60 s wall cap.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: A drain() that ends with the control channel unsettled
+//               fails the session, naming the step it ended in, the limit
+//               that ran out and what had not settled, where it had ended
+//               silently; the drains after it do not wait. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -136,10 +150,62 @@ namespace NereusSDR::Test {
 namespace {
 
 constexpr int kMaxShownChars = 400;
-// How long the player waits, in real time, for a station message the event
-// queue has not produced yet (work on another thread of the fake radio). A
-// passing fixture never waits this long; it bounds a failing one.
+// How long the player waits for a station message the event queue has not
+// produced yet (work on another thread of the fake radio). A passing
+// fixture never waits this long; it bounds a failing one.
 constexpr int kStationReplyWaitMs = 5000;
+// The wait is counted in turns of the event loop, as QTRY_VERIFY counts
+// its steps, not on the wall clock: each turn lasts at least kReplyTurnMs
+// of real time and counts kReplyTurnMs, so a station that never replies
+// still fails, after at least kStationReplyWaitMs. A turn the process
+// spends unscheduled counts once, however long the stall. On a starved
+// Linux runner the process stalled for over 5 s while the station set up a
+// client's session (it logged "Session established"), and a wait on the
+// wall clock ran out before the next turn could deliver snapshot.complete.
+constexpr int kReplyTurnMs = 10;
+// Whatever the turns count, a wait ends after this much real time, so a
+// station that never replies on a computer where every turn is slow fails
+// with its step's message, not as the test's ctest time-out.
+constexpr int kReplyWallCapMs = 60000;
+
+// One turn of the event loop: kReplyTurnMs of real time, or less once
+// `done` holds. It sleeps until an event arrives or the turn ends, never
+// spinning a core: a wake timer of its own (no parent, so not one of the
+// station's timers that LinkVirtualClock holds) ends the turn. With
+// `deleteLater`, deleteLater() runs after each event batch.
+template <typename Done>
+void runTurn(const Done& done, bool deleteLater)
+{
+    bool ended = false;
+    QTimer wake;
+    wake.setSingleShot(true);
+    wake.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&wake, &QTimer::timeout, &wake, [&ended] { ended = true; });
+    wake.start(kReplyTurnMs);
+    do {
+        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents);
+        if (deleteLater) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+    } while (!ended && !done());
+}
+
+// Turns the event loop until `done` holds; false once kStationReplyWaitMs
+// of turns, or kReplyWallCapMs of real time, have passed without it.
+// `done` is read after every turn, the last included.
+template <typename Done>
+bool waitForStation(const Done& done, bool deleteLater)
+{
+    QElapsedTimer wall;
+    wall.start();
+    for (int waitedMs = 0; !done(); waitedMs += kReplyTurnMs) {
+        if (waitedMs >= kStationReplyWaitMs || wall.hasExpired(kReplyWallCapMs)) {
+            return false;
+        }
+        runTurn(done, deleteLater);
+    }
+    return true;
+}
 
 QString shown(const QJsonValue& value)
 {
@@ -332,10 +398,11 @@ QString expectKeys(const QJsonObject& object, const QStringList& required,
     return QString();
 }
 
-// Task 28: the data-channel mode's settle check and client joiner.
-std::function<bool()>& settleCheck()
+// Task 28: the data-channel mode's settle check and client joiner. The
+// check returns empty once settled, otherwise what has not settled.
+std::function<QString()>& settleCheck()
 {
-    static std::function<bool()> check;
+    static std::function<QString()> check;
     return check;
 }
 
@@ -345,8 +412,31 @@ std::function<QString(LoopbackTransport*, StationServer&)>& connectClientHook()
     return hook;
 }
 
-// How long drain() waits, in real time, for the control channel to settle
-// in the data-channel mode. A passing fixture settles in milliseconds.
+// The step the player is on, for a drain() that ends unsettled.
+QString& currentStep()
+{
+    static QString step;
+    return step;
+}
+
+// Empty, or the step in which a drain() first ended with the control
+// channel unsettled. runSession() fails with it.
+QString& unsettledStep()
+{
+    static QString step;
+    return step;
+}
+
+// With unsettledStep(): the limit that ran out and what had not settled.
+QString& unsettledWhy()
+{
+    static QString why;
+    return why;
+}
+
+// How long drain() waits, in turns of the event loop (as kStationReplyWaitMs
+// is counted), for the control channel to settle in the data-channel mode.
+// A passing fixture settles in milliseconds.
 constexpr int kSettleWaitMs = 5000;
 
 void drainQueue()
@@ -369,21 +459,53 @@ void drainQueue()
 void drain()
 {
     drainQueue();
-    if (!settleCheck()) {
+    // Once a drain has ended unsettled the session fails at the next step;
+    // until then (an advanceMs drains at every timer it fires) the drains
+    // after it run the queue but do not wait again.
+    if (!settleCheck() || !unsettledStep().isEmpty()) {
         return;
     }
-    const QDeadlineTimer deadline(kSettleWaitMs);
     // Settled twice in a row with the queue drained between: nothing
-    // handled in between sent anything more.
+    // handled in between sent anything more. The wait counts turns of the
+    // event loop, with the same wall cap, as waitForStation() does, and the
+    // check runs once more after the last turn. On the wall clock, a stall
+    // of over 5 s ended it early and silently, with the channel unsettled,
+    // and an advanceMs could then fire the station's timers before the
+    // channel had delivered.
+    const auto check = [] { return settleCheck()().isEmpty(); };
+    QElapsedTimer wall;
+    wall.start();
     int settled = 0;
-    while (settled < 2 && !deadline.hasExpired()) {
-        if (settleCheck()()) {
-            ++settled;
+    int waitedMs = 0;
+    while (true) {
+        if (check()) {
+            if (++settled == 2) {
+                break;
+            }
         } else {
             settled = 0;
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            if (waitedMs >= kSettleWaitMs || wall.hasExpired(kReplyWallCapMs)) {
+                break;
+            }
+            runTurn(check, false);
+            waitedMs += kReplyTurnMs;
         }
         drainQueue();
+    }
+    // Unsettled at the end (the last check failed, after the last turn):
+    // the steps after it would run against a channel that has not
+    // delivered, so the session fails with this step.
+    if (settled < 2) {
+        unsettledStep() = currentStep();
+        unsettledWhy() =
+            (waitedMs >= kSettleWaitMs
+                 ? QStringLiteral("after %1 ms of turns (%2 ms of real time)")
+                       .arg(waitedMs)
+                       .arg(wall.elapsed())
+                 : QStringLiteral("after %1 ms of real time (%2 ms of turns)")
+                       .arg(wall.elapsed())
+                       .arg(waitedMs))
+            + QStringLiteral(": ") + settleCheck()();
     }
 }
 
@@ -1304,9 +1426,9 @@ struct PlayedClient {
 
 } // namespace
 
-void LinkFixtures::setSettleCheck(std::function<bool()> settled)
+void LinkFixtures::setSettleCheck(std::function<QString()> unsettled)
 {
-    settleCheck() = std::move(settled);
+    settleCheck() = std::move(unsettled);
 }
 
 void LinkFixtures::setConnectClient(
@@ -1542,8 +1664,8 @@ QString LinkFixtures::runFraming(const QJsonObject& fixture)
     return QString();
 }
 
-QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& server,
-                                 LoopbackTransport& transport)
+QString LinkFixtures::playSession(const QJsonObject& fixture, StationServer& server,
+                                  LoopbackTransport& transport)
 {
     QString problem = checkSessionFormat(fixture);
     if (!problem.isEmpty()) {
@@ -1753,14 +1875,8 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
     // 50 ms flush sends in real time).
     const auto waitForMessage = [&clock, &settle](const PlayedClient& client) {
         settle();
-        if (client.transport->received().size() <= client.consumed) {
-            const QDeadlineTimer deadline(kStationReplyWaitMs);
-            while (client.transport->received().size() <= client.consumed
-                   && !deadline.hasExpired()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-            }
-        }
+        waitForStation([&client] { return client.transport->received().size() > client.consumed; },
+                       true);
         clock.scan();
     };
 
@@ -1768,6 +1884,12 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
     clock.scan();
 
     for (int index = 0; index < steps.size(); ++index) {
+        // A drain in the step before ended unsettled: runSession() fails
+        // with that step.
+        if (!unsettledStep().isEmpty()) {
+            return QString();
+        }
+        currentStep() = describe(index);
         if (!steps.at(index).isObject()) {
             return QStringLiteral("step %1: not an object").arg(index);
         }
@@ -1959,12 +2081,13 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
                 client->features)));
             client->transport->sendText(
                 SessionMessages::encode(SessionMessages::authRequest(QString(), block)));
-            const QDeadlineTimer deadline(kStationReplyWaitMs);
-            while (!client->transport->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"))
-                   && client->transport->isOpen() && !deadline.hasExpired()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-            }
+            waitForStation(
+                [client] {
+                    return client->transport->receivedKinds().contains(
+                               QByteArrayLiteral("snapshot.complete"))
+                        || !client->transport->isOpen();
+                },
+                true);
             clock.scan();
             const int complete =
                 client->transport->receivedKinds().indexOf(QByteArrayLiteral("snapshot.complete"));
@@ -2001,12 +2124,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
                 return QStringLiteral("%1: that client has not connected").arg(describe(index));
             }
             settle();
-            if (client->transport->isOpen()) {
-                const QDeadlineTimer deadline(kStationReplyWaitMs);
-                while (client->transport->isOpen() && !deadline.hasExpired()) {
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-                }
-            }
+            waitForStation([client] { return !client->transport->isOpen(); }, false);
             if (client->transport->isOpen()) {
                 return QStringLiteral("%1: the station did not close the link").arg(describe(index));
             }
@@ -2037,6 +2155,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
         }
     }
 
+    currentStep() = QStringLiteral("after the last step");
     const QJsonObject last = steps.last().toObject();
     if (!last.contains(QStringLiteral("expectClosed"))
         || last.value(QStringLiteral("expectClosed")).toObject().contains(QStringLiteral("client"))) {
@@ -2047,6 +2166,28 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
         }
     }
     return QString();
+}
+
+QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& server,
+                                 LoopbackTransport& transport)
+{
+    currentStep() = QStringLiteral("before the first step");
+    unsettledStep().clear();
+    unsettledWhy().clear();
+    const QString failure = playSession(fixture, server, transport);
+    if (unsettledStep().isEmpty()) {
+        return failure;
+    }
+    // In the data-channel mode, drain() waits kSettleWaitMs of turns (at
+    // most kReplyWallCapMs of real time) for each end to have handled
+    // everything the other sent; one that ran out ended silently before,
+    // and the steps after it ran against a channel that had not delivered.
+    QString message = QStringLiteral("%1: the control data channel had not settled %2")
+                          .arg(unsettledStep(), unsettledWhy());
+    if (!failure.isEmpty()) {
+        message += QStringLiteral("; then %1").arg(failure);
+    }
+    return message;
 }
 
 // ── Media vectors ────────────────────────────────────────────────────────

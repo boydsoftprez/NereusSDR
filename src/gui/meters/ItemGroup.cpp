@@ -535,7 +535,7 @@ ItemGroup* ItemGroup::createPowerSwrPreset(const QString& name, QObject* parent)
     pwrReadout->setBold(true);
     pwrReadout->setSuffix(QStringLiteral(" W"));
     pwrReadout->setDecimals(0);
-    pwrReadout->setIdleText(QStringLiteral("\u2014 W"));
+    pwrReadout->setIdleText(QStringLiteral("\u2013 W"));
     pwrReadout->setMinValidValue(0.0);
     pwrReadout->setZOrder(10);
     group->addItem(pwrReadout);

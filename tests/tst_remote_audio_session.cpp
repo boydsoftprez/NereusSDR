@@ -6,6 +6,11 @@
 // LibDataChannel transport and carry actual RTP/Opus over their local link.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: losslessPlaysOverTheRealEncryptedSession measures its two
+//               tones in 100 ms Hann blocks at each block's measured
+//               frequency (blockTones), within WDSP rmatch's +-4% clamp, as
+//               the remote playback's rate matcher can move the pitch inside
+//               the window. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22: NSDC v2: the modern start also asks for displayCodecVersion
 //               2, which this Core offers a peer whose hello declares
 //               displayCodec 2; the minor 7 start stays bare. J.J. Boyd
@@ -173,6 +178,70 @@ double toneAmplitude(const QVector<float>& samples, int channel, double hz,
         ++frames;
     }
     return frames > 0 ? 2.0 * std::hypot(cosine, sine) / frames : 0.0;
+}
+
+// One tone as heard in short blocks: each block's own peak frequency near
+// the tone, the tone's amplitude there in the intended channel and in the
+// other one, averaged over the blocks, and the lowest and highest peak.
+struct BlockTones {
+    double intended = 0.0;
+    double other = 0.0;
+    double lowestHz = 0.0;
+    double highestHz = 0.0;
+};
+
+// The remote playback's rate matcher (WDSP rmatch) resamples within +-4%
+// (rmatch.c:270-271), so a tone heard over a whole second need not sit at
+// the frequency it was mixed at, or at one frequency: a coherent sum at the
+// mixed frequency then cancels part of it. 100 ms Hann blocks, each at its
+// own peak within 5% of the tone, hold the tone's level whatever the ratio
+// does between blocks; the search goes past the clamp so a peak beyond it
+// shows.
+BlockTones blockTones(const QVector<float>& samples, int intendedChannel, double hz,
+                      int firstFrame, int frames)
+{
+    constexpr int kBlockFrames = 4800;
+    constexpr double kSearch = 0.05;
+    constexpr double kStepHz = 1.0;
+    const auto amplitude = [&samples](int channel, double toneHz, int start) {
+        double cosine = 0.0;
+        double sine = 0.0;
+        double weight = 0.0;
+        for (int i = 0; i < kBlockFrames; ++i) {
+            const double hann = 0.5 - 0.5 * std::cos(2.0 * kPi * i / (kBlockFrames - 1));
+            const double phase = 2.0 * kPi * toneHz * static_cast<double>(start + i) / 48000.0;
+            const double sample = samples.at((start + i) * 2 + channel) * hann;
+            cosine += sample * std::cos(phase);
+            sine += sample * std::sin(phase);
+            weight += hann;
+        }
+        return 2.0 * std::hypot(cosine, sine) / weight;
+    };
+    BlockTones out;
+    int blocks = 0;
+    for (int start = firstFrame; start + kBlockFrames <= firstFrame + frames
+             && (start + kBlockFrames) * 2 <= samples.size();
+         start += kBlockFrames) {
+        double peakHz = hz;
+        double peak = -1.0;
+        for (double f = hz * (1.0 - kSearch); f <= hz * (1.0 + kSearch); f += kStepHz) {
+            const double a = amplitude(intendedChannel, f, start);
+            if (a > peak) {
+                peak = a;
+                peakHz = f;
+            }
+        }
+        out.intended += peak;
+        out.other += amplitude(1 - intendedChannel, peakHz, start);
+        out.lowestHz = blocks == 0 ? peakHz : std::min(out.lowestHz, peakHz);
+        out.highestHz = blocks == 0 ? peakHz : std::max(out.highestHz, peakHz);
+        ++blocks;
+    }
+    if (blocks > 0) {
+        out.intended /= blocks;
+        out.other /= blocks;
+    }
+    return out;
 }
 
 // R-R3-23: audio detail can be absent while newer, independent media
@@ -867,12 +936,41 @@ private slots:
         QVERIFY(status.losslessEncoder.has_value());
         QVERIFY(!status.qualityReason.has_value());
         QCOMPARE(remoteErrors.count(), 0);
-        // The tones stay where the station mixed them.
+        // The tones stay where the station mixed them, over the last second
+        // heard (inside the interval just measured).
+        //
+        // Open finding (2026-10-26, CI run 40349803203 and quiet Mac runs):
+        // the rate matcher's ratio (WDSP rmatch var, rmatch.c:256-273) holds
+        // near 1.000 for the first ~5.8 s, then steps to about 0.986 to
+        // 0.993 and keeps sliding (to 0.982 seen), as its proportional term
+        // takes the ring's average distance above half full all at once.
+        // That moves both tones up to 1.8% in pitch inside this window, and
+        // a one-second sum at exactly 617 and 1579 Hz partly cancelled,
+        // 1579 Hz most. So each tone is measured in 100 ms blocks at its own
+        // measured frequency (blockTones), which must stay within rmatch's
+        // +-4% clamp; anything past the design limit still fails. A fix to
+        // the slew should tighten this pitch bound.
+        constexpr double kRmatchClamp = 0.04; // rmatch.c:270-271
+        // The heard tones are about 0.066 (617 Hz) and 0.043 (1579 Hz) at
+        // the station's mix levels; silence or a cancelled tone is far below.
+        constexpr double kMinHeardTone = 0.01;
         const int from = h.remoteBus->heard.size() / 2 - 48000;
-        QVERIFY(toneAmplitude(h.remoteBus->heard, 0, 617.0, from)
-                > 8.0 * toneAmplitude(h.remoteBus->heard, 1, 617.0, from));
-        QVERIFY(toneAmplitude(h.remoteBus->heard, 1, 1579.0, from)
-                > 8.0 * toneAmplitude(h.remoteBus->heard, 0, 1579.0, from));
+        const BlockTones left617 = blockTones(h.remoteBus->heard, 0, 617.0, from, 48000);
+        const BlockTones right1579 = blockTones(h.remoteBus->heard, 1, 1579.0, from, 48000);
+        qInfo() << "lossless tones: 617 Hz left" << left617.intended << "right" << left617.other
+                << "at" << left617.lowestHz << "to" << left617.highestHz
+                << "Hz; 1579 Hz right" << right1579.intended << "left" << right1579.other
+                << "at" << right1579.lowestHz << "to" << right1579.highestHz << "Hz";
+        for (const auto& [tone, hz] : {std::pair{left617, 617.0}, std::pair{right1579, 1579.0}}) {
+            QVERIFY2(tone.lowestHz >= hz * (1.0 - kRmatchClamp)
+                         && tone.highestHz <= hz * (1.0 + kRmatchClamp),
+                     qPrintable(QStringLiteral("%1 Hz heard at %2 to %3 Hz")
+                                    .arg(hz).arg(tone.lowestHz).arg(tone.highestHz)));
+            QVERIFY2(tone.intended > kMinHeardTone, qPrintable(QString::number(tone.intended)));
+            QVERIFY2(tone.intended > 8.0 * tone.other,
+                     qPrintable(QStringLiteral("%1 Hz: %2 against %3")
+                                    .arg(hz).arg(tone.intended).arg(tone.other)));
+        }
 
         // Back to Opus when chosen.
         remoteMedia.setAudioProfileChoice(RemoteAudioProfile::Opus);

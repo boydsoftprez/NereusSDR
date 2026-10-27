@@ -339,7 +339,7 @@ void SettingsHygiene::addAttClampIssue(const QString& mac,
     issue.summary  = QStringLiteral("S-ATT setting clamped");
     issue.detail   = QStringLiteral(
         "Persisted attenuator value %1 dB exceeds this radio's 0–%2 dB range "
-        "— will be clamped to %2 dB on next connect. "
+        "and will be clamped to %2 dB on next connect. "
         "Use Reset to Defaults to fix."
     ).arg(persisted).arg(maxDb);
     issue.fixActionId = QStringLiteral("resetToDefaults");

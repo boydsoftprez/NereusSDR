@@ -147,7 +147,7 @@ void CatApplet::buildUI()
 
         for (int i = 0; i < 4; ++i) {
             m_ptyPath[i] = makePathLabel(
-                QStringLiteral("—"), this);
+                QStringLiteral("–"), this);
             row->addWidget(m_ptyPath[i]);
         }
         row->addStretch();
@@ -238,7 +238,7 @@ void CatApplet::syncFromModel()
         m_tcpLed[i]->setToolTip(tr("CAT%1 TCP: %2 · %3:%4 · %5 clients").arg(i+1).arg(state,status.tcpBoundAddress).arg(status.tcpBoundPort).arg(status.tcpClients));
         const QString path=status.ptyPath;
         m_ptyPath[i]->setObjectName(QStringLiteral("catPtyPath%1").arg(i+1));
-        m_ptyPath[i]->setText(path.isEmpty() ? QStringLiteral("—") : path);
+        m_ptyPath[i]->setText(path.isEmpty() ? QStringLiteral("–") : path);
         m_ptyPath[i]->setToolTip(tr("CAT%1 %2 PTY: %3").arg(i+1).arg(control->channelConfig(i+1).ptyDialect,status.pty));
         m_ptyPath[i]->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }

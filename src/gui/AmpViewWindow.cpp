@@ -497,7 +497,7 @@ void AmpViewWindow::updateReadout()
 {
     const AmpViewCursorReadout values = m_chart->readoutAt(m_chart->selectedInput());
     const auto formatted = [](const std::optional<double>& value, int decimals) {
-        return value ? QString::number(*value, 'f', decimals) : QStringLiteral("—");
+        return value ? QString::number(*value, 'f', decimals) : QStringLiteral("–");
     };
     const QString ampLabel = m_chart->showGain() ? tr("AMP GAIN") : tr("AMP MAG");
     const QString correctionLabel = m_chart->showGain() ? tr("CORR GAIN") : tr("CORR MAG");

@@ -137,13 +137,13 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
     auto* form = new QFormLayout(identGroup);
     form->setLabelAlignment(Qt::AlignRight);
 
-    m_boardLabel    = new QLabel(QStringLiteral("—"), identGroup);
-    m_protocolLabel = new QLabel(QStringLiteral("—"), identGroup);
-    m_adcCountLabel = new QLabel(QStringLiteral("—"), identGroup);
-    m_maxRxLabel    = new QLabel(QStringLiteral("—"), identGroup);
-    m_firmwareLabel = new QLabel(QStringLiteral("—"), identGroup);
-    m_macLabel      = new QLabel(QStringLiteral("—"), identGroup);
-    m_ipLabel       = new QLabel(QStringLiteral("—"), identGroup);
+    m_boardLabel    = new QLabel(QStringLiteral("–"), identGroup);
+    m_protocolLabel = new QLabel(QStringLiteral("–"), identGroup);
+    m_adcCountLabel = new QLabel(QStringLiteral("–"), identGroup);
+    m_maxRxLabel    = new QLabel(QStringLiteral("–"), identGroup);
+    m_firmwareLabel = new QLabel(QStringLiteral("–"), identGroup);
+    m_macLabel      = new QLabel(QStringLiteral("–"), identGroup);
+    m_ipLabel       = new QLabel(QStringLiteral("–"), identGroup);
 
     for (QLabel* lbl : {m_boardLabel, m_protocolLabel, m_adcCountLabel,
                         m_maxRxLabel, m_firmwareLabel, m_macLabel, m_ipLabel}) {
@@ -221,7 +221,7 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
         m_anan8000DleVoltsAmpsToggle = new QCheckBox(
             tr("Show volts/amps in title bar"), this);
         m_anan8000DleVoltsAmpsToggle->setToolTip(
-            tr("ANAN-8000DLE only — display power supply voltage and current "
+            tr("ANAN-8000DLE only: display power supply voltage and current "
                "draw in the chrome title bar."));
         m_anan8000DleVoltsAmpsToggle->setChecked(
             s.value(QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),

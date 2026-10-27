@@ -152,7 +152,7 @@ void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 inca
         // A live slice this window does not show (a connected desktop's slices arrive later).
         choices.push_back({QObject::tr("Slice ID %1").arg(selected),selected,incarnation,false}); index=int(choices.size())-1;
     }
-    if (index<0) { choices.push_back({QObject::tr("Invalid binding — ID %1").arg(selected),selected,incarnation,true}); index=int(choices.size())-1; }
+    if (index<0) { choices.push_back({QObject::tr("Invalid binding (ID %1)").arg(selected),selected,incarnation,true}); index=int(choices.size())-1; }
     // Each echo of a change fills the selectors again: the items change in
     // place, and the rows are refilled (through a reset, see clearItems)
     // only when their number changes.
@@ -481,8 +481,8 @@ CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalS
     auto* group=addSection(tr("Input PTT")); auto* form=sectionForm(group); m_serialGroup=group;
     m_pttEnabled=addCheck(form,tr("Enable input PTT"),"catPttEnabled",&CatGlobalConfig::pttEnabled);
     m_pttSource=addChoice(form,tr("Input source:"),"catPttSource",{"None","CAT1","CAT2","CAT3","CAT4","Physical"},&CatGlobalConfig::pttDeviceSource);
-    m_pttCts=addCheck(form,tr("Legacy RTS wiring — samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
-    m_pttDsr=addCheck(form,tr("Legacy DTR wiring — samples DSR input"),"catPttDsr",&CatGlobalConfig::pttUseDsr);
+    m_pttCts=addCheck(form,tr("Legacy RTS wiring: samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
+    m_pttDsr=addCheck(form,tr("Legacy DTR wiring: samples DSR input"),"catPttDsr",&CatGlobalConfig::pttUseDsr);
     m_pttDevice=addText(form,tr("Separate physical device:"),"catPttDevice",&CatGlobalConfig::pttSerialDevice);
     // The Enable tick follows these four as they change.
     connect(m_pttSource,&QComboBox::currentTextChanged,this,[this] { syncPttEnableWaits(); });

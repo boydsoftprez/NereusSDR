@@ -448,9 +448,9 @@ void NnrControls::refresh()
 {
     if (!m_slice) {
         m_runtime->setText(tr("closed"));
-        m_models->setText(QStringLiteral("—"));
-        m_rateLatency->setText(QStringLiteral("—"));
-        m_source->setText(QStringLiteral("—"));
+        m_models->setText(QStringLiteral("–"));
+        m_rateLatency->setText(QStringLiteral("–"));
+        m_source->setText(QStringLiteral("–"));
         m_status->setText(tr("Reopen NNR controls to see this receiver again."));
         m_limitRow->setVisible(false);
         return;
@@ -504,7 +504,7 @@ void NnrControls::refresh()
                                .arg(m_slice->nnrRateSupported() ? tr("supported") : tr("unsupported"))
                                .arg(m_slice->nnrDelaySamples())
                                .arg(m_slice->nnrLatencyMs(), 0, 'f', 2));
-    m_source->setText(m_slice->nnrModelSource().isEmpty() ? QStringLiteral("—")
+    m_source->setText(m_slice->nnrModelSource().isEmpty() ? QStringLiteral("–")
                                                           : m_slice->nnrModelSource());
     const QString profiling = m_slice->nnrProfilingAvailable()
         ? tr("Profiling available. ")
