@@ -10,8 +10,11 @@ whether you use a local or remote Core.
 ## Update the Core and the desktop together
 
 The Core owns the radio, the station DSP and the accessories. The console runs
-where you operate. Update both, and the iPhone and iPad app if you use it. Two improvements
-need a 2026.10.2 Core and a 2026.10.2 window or phone app:
+where you operate. Update both, and the iPhone and iPad app if you use it.
+The phone app has its own version number and delivery through TestFlight;
+desktop and Core packages do not update it. Check the mobile availability
+announcement for the matching phone build. Two improvements need a 2026.10.2
+Core and updated desktop or phone clients:
 
 - **The new remote display format.** Every waterfall row and trace stands on
   its own, so a lost network message costs one row instead of smearing the

@@ -7,9 +7,11 @@
 Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html).
 
 Changes on main since 2026.10.1, for the 2026.10.2 release. Update the Core
-and the desktop together: the new remote display format and the RX meter
-timing need both sides at 2026.10.2, and older Cores, windows and phone apps
-still connect to each other as before.
+and the desktop together, and update the iPhone and iPad app separately if you
+use it. The new remote display format needs a 2026.10.2 Core and updated
+clients; the RX meter timing needs a 2026.10.2 Core and desktop. The phone app
+has its own version number. Older Cores, windows and phone apps still connect
+to each other as before.
 
 ### Remote display: waterfall rows that stand alone
 

@@ -55,7 +55,8 @@ on first launch; verify the download before choosing More info > Run anyway.
 ### Native iPhone and iPad app
 
 The mobile console has its own TestFlight/App Store delivery process.
-Desktop/Core assets do not install it. Follow
+It uses an independent version number; the desktop release number does not
+identify a phone build. Desktop/Core assets do not install it. Follow
 [mobile setup](https://nereussdr.com/manual/06-iphone-connect.html)
 for connecting the app to a running Core; mobile availability is announced separately.
 
