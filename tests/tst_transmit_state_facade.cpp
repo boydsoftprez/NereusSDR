@@ -101,6 +101,9 @@
 //               at 3000 ms, and the microphone's stop is the 10 s without
 //               audio. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-26: Remote transmit hold then cut: a link hold during a key
+//               neither restarts nor pauses the TX time-out. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1142,6 +1145,71 @@ private slots:
         QCOMPARE(p.state().stopSerial(), quint32(1));
         verifyStopSent(p.appA, QStringLiteral("linkLost"), text);
         verifyStopSent(p.appB, QStringLiteral("linkLost"), text);
+    }
+
+    // A link hold during a key neither restarts nor pauses the TX time-out:
+    // after 500 ms keyed, 2000 ms of link silence (held from about 400 ms)
+    // and the keepalive that ends the hold, the time left is what the key's
+    // own start gives, on the Core's clock.
+    void aLinkHoldNeitherRestartsNorPausesTheTimeOut()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA));
+        TxTimeOutTimer* const timeOut = p.core.model->txTimeOutTimer();
+        timeOut->setClock([&p]() { return p.core.now; });
+        timeOut->setPinger([](const QString&, std::function<void(bool)> done) { done(true); });
+        QSignalSpy tripped(p.core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy held(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        QSignalSpy ended(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded);
+        const qint64 keyedAt = p.core.now;
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(timeOut->isTicking());
+        const int limitSeconds = timeOut->remainingSeconds();
+        QVERIFY2(limitSeconds > 10, qPrintable(QString::number(limitSeconds)));
+        // The time left the key's own start gives at `now`, in whole
+        // seconds as the timer rounds them.
+        const auto leftFromTheKey = [&p, keyedAt, limitSeconds]() {
+            const qint64 leftMs = qint64(limitSeconds) * 1000 - (p.core.now - keyedAt);
+            return static_cast<int>((leftMs + 999) / 1000);
+        };
+
+        qint64 sequence = 0;
+        const auto keepalive = [&p, &sequence]() { keepaliveFrom(p, p.appA, ++sequence); };
+        QVERIFY(advanceUntil(p, [&p, keyedAt]() { return p.core.now - keyedAt >= 500; }, 20,
+                             keepalive));
+        QCOMPARE(held.count(), 0);
+        QCOMPARE(timeOut->remainingSeconds(), leftFromTheKey());
+
+        // 2000 ms with no keepalive: held, still keyed, the time-out going on.
+        QVERIFY(advanceUntil(p, [&p, keyedAt]() { return p.core.now - keyedAt >= 2500; }, 60));
+        QCOMPARE(held.count(), 1);
+        QVERIFY(p.state().rfHeld());
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(tripped.count(), 0);
+        QVERIFY(timeOut->isTicking());
+        QCOMPARE(timeOut->remainingSeconds(), leftFromTheKey());
+
+        // A keepalive ends the hold; the time left is still the key's.
+        QVERIFY(advanceUntil(p, [&ended]() { return !ended.isEmpty(); }, 20, keepalive));
+        QCOMPARE(ended.first().at(2).value<RemoteTxWatchdog::HoldEnd>(),
+                 RemoteTxWatchdog::HoldEnd::Heard);
+        const qint64 holdMs = ended.first().at(1).toLongLong();
+        QVERIFY2(holdMs >= 1500, qPrintable(QString::number(holdMs)));
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(timeOut->isTicking());
+        const int left = timeOut->remainingSeconds();
+        qInfo("time-out after a %lld ms hold: %d s left, %d from the key, limit %d",
+              static_cast<long long>(holdMs), left, leftFromTheKey(), limitSeconds);
+        QCOMPARE(left, leftFromTheKey());
+        // Neither restarted at the hold's end nor paused through it.
+        QVERIFY(left < limitSeconds);
+        QCOMPARE(tripped.count(), 0);
+
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted"))
+                    .toBool());
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
     }
 
     // The starvation action: the keyed phone's microphone line sends no

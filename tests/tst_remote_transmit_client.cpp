@@ -46,6 +46,10 @@
 //               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: a program key asked while another is on is refused.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the cases that waited 600 ms
+//               for the watchdog's stop see the hold at 600 ms and run past
+//               the 3000 ms cut. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -932,7 +936,7 @@ private slots:
     // Reproduction: the primary command connection holds tx.unkey, while
     // the independent media TX path keeps delivering fresh heartbeats.
     // VOX stays armed after the local key release, so the Core must still
-    // fail safe within its existing 400 ms deadline.
+    // fail safe: RF held after 400 ms of silence, the key cut after 3000 ms.
     void heldUnkeyWithVoxArmedCannotBeSustainedByIndependentHeartbeats()
     {
         SplitTxPaths paths;
@@ -958,9 +962,14 @@ private slots:
         const int channelBeforeRelease = paths.channelAccepted;
         const quint64 primaryBeforeRelease = paths.client.sessionKeepalivesSent();
         // Deliberately do not deliver the queued tx.unkey to the Core.
-        for (qint64 at = 200; at <= 600; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        for (qint64 at = 200; at <= 3200; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
             paths.advanceTo(at);
             paths.client.keepaliveTick();
+            if (at == 600) {
+                // Hold then cut: past the hold, RF is held and the key kept.
+                QVERIFY(paths.watchdog.isHeld(paths.device));
+                QCOMPARE(paths.stops, 0);
+            }
         }
         QCOMPARE(paths.channelAccepted, channelBeforeRelease);
         QCOMPARE(paths.client.sessionKeepalivesSent(), primaryBeforeRelease);
@@ -991,9 +1000,14 @@ private slots:
         QVERIFY(paths.client.keepaliveRunning());
         const int channelBeforeRelease = paths.channelAccepted;
         const quint64 primaryBeforeRelease = paths.client.sessionKeepalivesSent();
-        for (qint64 at = 200; at <= 600; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        for (qint64 at = 200; at <= 3200; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
             paths.advanceTo(at);
             paths.client.keepaliveTick();
+            if (at == 600) {
+                // Hold then cut: past the hold, RF is held and the key kept.
+                QVERIFY(paths.watchdog.isHeld(paths.device));
+                QCOMPARE(paths.stops, 0);
+            }
         }
         QCOMPARE(paths.channelAccepted, channelBeforeRelease);
         QCOMPARE(paths.client.sessionKeepalivesSent(), primaryBeforeRelease);
@@ -1022,9 +1036,14 @@ private slots:
         // can deliver subsequent primary keepalives. Media also works.
         const int primaryBefore = paths.primaryAccepted;
         const int channelBefore = paths.channelAccepted;
-        for (qint64 at = 200; at <= 600; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        for (qint64 at = 200; at <= 3200; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
             paths.advanceTo(at);
             paths.client.keepaliveTick();
+            if (at == 600) {
+                // Hold then cut: past the hold, RF is held and the key kept.
+                QVERIFY(paths.watchdog.isHeld(paths.device));
+                QCOMPARE(paths.stops, 0);
+            }
         }
         QCOMPARE(paths.primaryAccepted, primaryBefore);
         QCOMPARE(paths.channelAccepted, channelBefore);
@@ -1054,9 +1073,14 @@ private slots:
         QCOMPARE(paths.client.keepaliveEpoch(), RemoteTransmitClient::kReleaseAnyEpoch);
         const int channelBeforeRelease = paths.channelAccepted;
         const quint64 primaryBeforeRelease = paths.client.sessionKeepalivesSent();
-        for (qint64 at = 200; at <= 600; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        for (qint64 at = 200; at <= 3200; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
             paths.advanceTo(at);
             paths.client.keepaliveTick();
+            if (at == 600) {
+                // Hold then cut: past the hold, RF is held and the key kept.
+                QVERIFY(paths.watchdog.isHeld(paths.device));
+                QCOMPARE(paths.stops, 0);
+            }
         }
         QCOMPARE(paths.channelAccepted, channelBeforeRelease);
         QCOMPARE(paths.client.sessionKeepalivesSent(), primaryBeforeRelease);
@@ -1371,9 +1395,14 @@ private slots:
         answerCopies(paths.client, laterOff, true, QString(), {});
         const int channelBefore = paths.channelAccepted;
         const int primaryBefore = paths.primaryAccepted;
-        for (qint64 at = 200; at <= 600; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
+        for (qint64 at = 200; at <= 3200; at += RemoteTxWatchdog::kKeepaliveIntervalMs) {
             paths.advanceTo(at);
             paths.client.keepaliveTick();
+            if (at == 600) {
+                // Hold then cut: past the hold, RF is held and the key kept.
+                QVERIFY(paths.watchdog.isHeld(paths.device));
+                QCOMPARE(paths.stops, 0);
+            }
         }
         QCOMPARE(paths.channelAccepted, channelBefore);
         QCOMPARE(paths.primaryAccepted, primaryBefore);

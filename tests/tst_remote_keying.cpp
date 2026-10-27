@@ -40,6 +40,9 @@
 //               RemoteTxWatchdog::kLinkCutMs (renamed from
 //               kLinkLossDeadlineMs). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: keepalives that stop leave
+//               the key held silent by 500 ms and cut by 3100 ms. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1268,14 +1271,16 @@ private slots:
     }
 
     // Task 37 (remote design section 12.1): keepalives hold a remote key;
-    // keepalives naming an older epoch do not, and the Core stops within
-    // 500 ms of the last one that counted; a delayed copy of the key from
-    // before the stop never keys again.
+    // keepalives naming an older epoch do not: the Core holds its RF
+    // silent within 500 ms of the last one that counted, with the key kept,
+    // and stops within 3100 ms; a delayed copy of the key from before the
+    // stop never keys again.
     void keepalivesHoldAKeyAndTheWatchdogStopsItWithoutThem()
     {
         Pair p;
         QVERIFY(admitted(p.appA));
         QSignalSpy tripped(p.core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy held(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
         const quint32 keyId = p.nextId++;
         const QJsonObject key = invokeAs(p.appA, "tx.key", keyId, trigger("screen"));
         QVERIFY2(accepted(key), qPrintable(describe(key)));
@@ -1297,17 +1302,28 @@ private slots:
         }
         QVERIFY(p.mox->isMox());
         QCOMPARE(tripped.count(), 0);
-        // From an earlier key: answered, but they hold nothing.
-        for (int i = 0; i < 30 && tripped.isEmpty(); ++i) {
+        // From an earlier key: answered, but they hold nothing. The RF is
+        // held first, with the key kept, then the key is cut.
+        bool moxWhenHeld = false;
+        for (int i = 0; i < 80 && tripped.isEmpty(); ++i) {
             if (i % 2 == 0) {
                 QVERIFY(accepted(p.send(p.appA, "tx.keepalive",
                                         {int64("sequence", ++sequence), int64("epoch", epoch - 1)})));
             }
             step();
+            if (held.count() == 1 && tripped.isEmpty() && !moxWhenHeld) {
+                moxWhenHeld = p.mox->isMox() && p.core.model->isRemoteRfHeld();
+            }
         }
+        QCOMPARE(held.count(), 1);
+        const qint64 silentAtHold = held.first().at(1).toLongLong();
+        QVERIFY2(silentAtHold > RemoteTxWatchdog::kLinkHoldMs && silentAtHold <= 500,
+                 qPrintable(QString::number(silentAtHold)));
+        QVERIFY(moxWhenHeld);
         QCOMPARE(tripped.count(), 1);
         const qint64 silent = tripped.first().at(2).toLongLong();
-        QVERIFY2(silent > RemoteTxWatchdog::kLinkCutMs && silent <= 500,
+        QVERIFY2(silent > RemoteTxWatchdog::kLinkCutMs
+                     && silent <= RemoteTxWatchdog::kLinkCutMs + 100,
                  qPrintable(QString::number(silent)));
         QVERIFY(!p.mox->isMox());
         // The key's delayed copy: refused, nothing keys.
