@@ -146,6 +146,25 @@ struct DialLayer: View {
         }
     }
 
+    /// The band's own controls at the waterfall's foot for `kind`: zoom,
+    /// and the knob or the thumbwheel when one is chosen (as
+    /// ``BandGestureLayer`` places them), which the keyed meters keep clear of.
+    static func controlFrames(kind: DialKind, waterfall: CGRect, sideways: Bool, trailingInset: CGFloat = 0,
+                              uprightWidth: CGFloat? = nil) -> [CGRect] {
+        let zoom = CGRect(origin: zoomOrigin(kind: kind, waterfall: waterfall, sideways: sideways,
+                                             trailingInset: trailingInset, uprightWidth: uprightWidth),
+                          size: ZoomButtons.size)
+        switch kind {
+        case .waterfallKnob:
+            return [zoom, knobFrame(waterfall: waterfall, sideways: sideways, trailingInset: trailingInset)]
+        case .thumbwheel:
+            return [zoom, wheelFrame(waterfall: waterfall, sideways: sideways, uprightWidth: uprightWidth,
+                                     trailingInset: trailingInset)]
+        case .off, .sheetKnob:
+            return [zoom]
+        }
+    }
+
     /// The sheet's knob: the board's big one, smaller when the band is too
     /// short for it (sideways).
     static func sheetMetrics(bandHeight: CGFloat) -> Knob.Metrics {

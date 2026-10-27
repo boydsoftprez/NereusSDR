@@ -28,7 +28,7 @@ struct ConnectionPerformanceTests {
                                  rendezvousRole: .current("Introduced direct route; carries no current traffic"))
     }
 
-    private func fixture(stale: Bool = false) -> ConnectionPerformanceInput {
+    func fixture(stale: Bool = false) -> ConnectionPerformanceInput {
         let current: DiagnosticsReading<String> = stale
             ? .stale(reason: "Core sample last seen 8 s ago", historical: "Connected")
             : .current("Example fixture · connected; Core sample age 0.8 s")

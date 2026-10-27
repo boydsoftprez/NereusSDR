@@ -3,6 +3,7 @@
 
 import NereusMirror
 import SwiftUI
+import UIKit
 
 /// The Setup tab (R-IOS-18, D16; spec section 5.2 items 6 to 8, picture
 /// 05): the tree ``SetupTree`` lays out, each category with the line of its
@@ -115,6 +116,14 @@ struct SetupTab: View {
         }
     }
 
+    /// Display's strip: the router keeps its choice across Display's pages,
+    /// and the radio's pans are the fewer of its slices and receivers.
+    private var displayStrip: DisplayStripContext {
+        DisplayStripContext(scope: $router.displayScope,
+                            panLimit: PanLimits.panCount(capabilities: app.mirror.capabilities),
+                            isPhone: UIDevice.current.userInterfaceIdiom == .phone)
+    }
+
     /// The tree now: the app's own pages and the ones the Core describes.
     private var tree: [SetupTree.Category] {
         SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable,
@@ -160,7 +169,8 @@ struct SetupTab: View {
         case .described(let category, let page):
             DescribedPage(pages: pages, dispatcher: controls, category: category, pageId: page,
                           specialized: specialized,
-                          levelCal: page == LevelCalSection.pageId ? app.levelCal : nil, main: main)
+                          levelCal: page == LevelCalSection.pageId ? app.levelCal : nil, main: main,
+                          displayStrip: category == "display" ? displayStrip : nil)
         case .cfcBands(let category, let control):
             CfcBandsEditor(pages: pages, dispatcher: controls, category: category, controlId: control)
         }

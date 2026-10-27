@@ -94,6 +94,14 @@ public final class SetupControlDispatcher: ObservableObject {
     /// (V28's Sizing: what the Size and Hz/bin Target rows show while
     /// another choice is in charge); nil before a pan runs.
     public var runningFftSize: (() -> Int?)?
+    /// The Display pill (R-IOS-55, spec section 9 "Link lost"): while the
+    /// Core is away, a row this phone keeps (a `{"phone": key}` value row,
+    /// not a button) stays editable through `phone`, as the phone's own
+    /// rows do. Off for Setup, which greys every row until the Core's page
+    /// is current again.
+    public var phoneRowsWorkOffline = false
+    /// What a row that needs the Core says while the Core is away.
+    public var offlineReason = SetupControlDispatcher.notConnectedReason
     public var runningBinWidthHz: (() -> Double?)?
     /// The station catalogue's transmit range by name (V15's `rangeFrom`),
     /// or nil before the catalogue arrives.
@@ -458,7 +466,15 @@ public final class SetupControlDispatcher: ObservableObject {
             return availability.reason
         }
         guard store.isSnapshotComplete, !store.isStale else {
-            return Self.notConnectedReason
+            if phoneRowsWorkOffline, let key = Self.phoneValueKey(control) {
+                // The phone's own value: its last description's gate and
+                // dependencies still hold it, the Core's page is not needed.
+                if let reason = gateReason(control.gate) {
+                    return reason
+                }
+                return phoneValueReason(control, key: key)
+            }
+            return offlineReason
         }
         guard currentControl(control.id, in: category) == control else {
             return Self.updatingReason
@@ -564,23 +580,37 @@ public final class SetupControlDispatcher: ObservableObject {
         case .radioSetting(let path)?:
             return radioSettingReason(control, path: path)
         case .phone(let key)?:
-            if let reason = phone?.unavailableReason(forPhoneKey: key) {
-                return reason
-            }
-            guard let phone, phone.value(forPhoneKey: key) != nil else {
-                return Self.notOnThisPhoneReason
-            }
-            // V12's single dependency, or every term of V26's allOf.
-            for dependency in control.phoneDependencies {
-                guard let chosen = phone.value(forPhoneKey: dependency.phone),
-                      dependency.oneOf.contains(where: { Self.matches(chosen, $0) }) else {
-                    return Self.dependsReason
-                }
-            }
-            return nil
+            return phoneValueReason(control, key: key)
         default:
             return Self.notOnThisPhoneReason
         }
+    }
+
+    /// The phone key of a value row this phone keeps; nil for a button or
+    /// any other owner.
+    static func phoneValueKey(_ control: SetupDescription.Control) -> String? {
+        guard case .phone(let key)? = control.binding, control.kind != .button else {
+            return nil
+        }
+        return key
+    }
+
+    /// Why a value row this phone keeps cannot change now, or nil.
+    private func phoneValueReason(_ control: SetupDescription.Control, key: String) -> String? {
+        if let reason = phone?.unavailableReason(forPhoneKey: key) {
+            return reason
+        }
+        guard let phone, phone.value(forPhoneKey: key) != nil else {
+            return Self.notOnThisPhoneReason
+        }
+        // V12's single dependency, or every term of V26's allOf.
+        for dependency in control.phoneDependencies {
+            guard let chosen = phone.value(forPhoneKey: dependency.phone),
+                  dependency.oneOf.contains(where: { Self.matches(chosen, $0) }) else {
+                return Self.dependsReason
+            }
+        }
+        return nil
     }
 
     func gateReason(_ gate: SetupDescription.Gate?) -> String? {
@@ -790,6 +820,12 @@ public final class SetupControlDispatcher: ObservableObject {
 
     /// Everything the edit was admitted against still holds.
     func stillCurrent(_ admission: SetupAdmission, allowsMissingValue: Bool = false) -> Bool {
+        if phoneRowsWorkOffline, !(store.isSnapshotComplete && !store.isStale),
+           Self.phoneValueKey(admission.control) != nil {
+            // Admitted while the Core is away; the Core coming back retires it.
+            return !admission.isRevoked && store.snapshotIdentity == admission.mirrorIdentity
+                && unavailableReason(admission.control, in: admission.category, sliceId: admission.sliceId) == nil
+        }
         guard !admission.isRevoked, store.isSnapshotComplete, !store.isStale,
               store.snapshotIdentity == admission.mirrorIdentity,
               feed.isCurrent(admission.generation, category: admission.category),

@@ -7,14 +7,22 @@ import SwiftUI
 
 /// The sheet the toolbar's Pan 1 drops over the band, as picture 25 draws
 /// it (spec section 5.1 items 14 and 15, D73). Everything it lists is the
-/// Core's (``PanSheetModel``).
+/// Core's (``PanSheetModel``). On the iPad it is the sheet of the pan last
+/// touched, with Add a pan and Close this pan under Pans (R-IOS-59, DC9,
+/// spec section 6.3); on a phone those two are greyed with their reason.
 struct PanSheet: View {
     @ObservedObject var model: PanSheetModel
     /// The active slice's colour, for the title's letter.
     let sliceColour: String?
+    /// The pan this sheet is for.
+    var pan: PanIdentity = .first
+    /// The pans, for Add a pan and Close this pan; nil leaves them out (tests of the sheet alone).
+    var stack: PanStackModel?
+    /// This pan's slices, for Close this pan's note.
+    var slices: BandSlicesModel?
 
     var body: some View {
-        DropSheet(title: "Pan \(MainScreenModel.panNumber)", accessibilityIdentifier: "panSheet") {
+        DropSheet(title: pan.title, accessibilityIdentifier: "panSheet") {
             HStack(spacing: 5) {
                 Text("Slice")
                     .font(.system(size: 11, weight: .semibold))
@@ -28,7 +36,7 @@ struct PanSheet: View {
             }
         } content: {
             SheetCaption("Band:")
-            bandGrid
+            BandSelectGrid(model: model)
             if model.sliceLetter != nil {
                 SheetNote("A band opens where slice \(letter) last was on it: its frequency, mode and filter.")
             }
@@ -50,6 +58,9 @@ struct PanSheet: View {
                 SheetNote("Add a notch: \(model.notchUnavailableReason)")
             }
             extendedView
+            if let stack, let slices {
+                PanSheetPans(stack: stack, slices: slices, pan: pan)
+            }
             if let note = model.note {
                 SheetNote(note)
                     .accessibilityIdentifier("panSheetNote")
@@ -59,30 +70,6 @@ struct PanSheet: View {
 
     private var letter: String {
         model.sliceLetter ?? "A"
-    }
-
-    @ViewBuilder
-    private var bandGrid: some View {
-        switch model.bandGrid {
-        case .needsNewerCore:
-            PanelButton(label: CatalogFeed.needsNewerCoreText, lit: false, style: .blue, disabled: true) {}
-                .accessibilityIdentifier("bandGridNeedsNewerCore")
-            if model.sliceLetter == nil {
-                SheetNote(model.bandUnavailableReason)
-            }
-        case .buttons(let buttons, let enabled):
-            SheetGrid(columns: 4) {
-                ForEach(buttons) { button in
-                    PanelButton(label: button.label, lit: button.lit, style: .blue, disabled: !enabled) {
-                        model.selectBand(button.id)
-                    }
-                    .accessibilityHint(enabled ? "" : model.bandUnavailableReason)
-                }
-            }
-            if !enabled {
-                SheetNote(model.bandUnavailableReason)
-            }
-        }
     }
 
     private var extendedView: some View {
@@ -112,5 +99,62 @@ struct PanSheet: View {
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+/// The Pan sheet's Pans row (spec section 6.3, the board's "Two pans, two
+/// pills"): Add a pan and Close this pan, each greyed with its reason, the
+/// board's notes under them, and what the last of them did.
+private struct PanSheetPans: View {
+    @ObservedObject var stack: PanStackModel
+    /// The slices on this pan, for Close this pan's note.
+    @ObservedObject var slices: BandSlicesModel
+    let pan: PanIdentity
+
+    var body: some View {
+        let add = stack.addPanState()
+        let close = stack.closePanState(pan)
+        SheetCaption("Pans:")
+        SheetGrid(columns: 2) {
+            PanelButton(label: "Add a pan", lit: false, style: .blue, disabled: !add.enabled) {
+                stack.addPan()
+            }
+            .accessibilityHint(add.reason ?? "")
+            .accessibilityIdentifier("panSheet.addPan")
+            PanelButton(label: "Close this pan", lit: false, style: .blue, disabled: !close.enabled) {
+                stack.closePan(pan)
+            }
+            .accessibilityHint(close.reason ?? "")
+            .accessibilityIdentifier("panSheet.closePan")
+        }
+        SheetNote(notes(add: add, close: close))
+            .accessibilityIdentifier("panSheetPansNote")
+        if let status = stack.status {
+            SheetNote(status)
+                .accessibilityIdentifier("panSheetPanStatus")
+        }
+    }
+
+    /// The board's words: why Add a pan is greyed or what it does, then
+    /// why Close this pan is greyed or what it does.
+    private func notes(add: (enabled: Bool, reason: String?), close: (enabled: Bool, reason: String?)) -> String {
+        var words: [String] = []
+        if let reason = add.reason {
+            words.append(reason)
+        } else if add.enabled {
+            let last = stack.open.max() ?? .first
+            words.append(stack.open.count > 1
+                ? "Add a pan opens Pan \(last.number + 1) below \(last.title), with a spare slice moved onto it."
+                : "Add a pan opens Pan 2 below this one, with a spare slice moved onto it.")
+        }
+        if let reason = close.reason {
+            words.append(reason)
+        } else if close.enabled {
+            let letters = slices.entries.filter { $0.panKey == pan.corePanKey && !$0.listening }
+                .map { BandSlice.letter(forIndex: $0.id) }
+            let what = letters.count == 1 ? "slice \(letters[0])" : "its slices"
+            words.append("Close this pan moves \(what) to Pan 1 and keeps this pan's own values for next time.")
+        }
+        return words.joined(separator: " ")
     }
 }

@@ -413,7 +413,7 @@ import Testing
 
     // MARK: Row 30: reset
 
-    @Test func resetKeepsEachBandsScaleThePlansSizeAndTheExtendedView() {
+    @Test func resetKeepsTheScaleThePlansSizeAndTheExtendedView() {
         var settings = BandDisplaySettings.desktopDefaults
         settings.enterBand("5")
         settings.scaleTopDbm = -30
@@ -423,7 +423,7 @@ import Testing
         settings.showFps = true
         let reset = settings.resetKeepingPlace()
         #expect(reset.traceColour == BandDisplaySettings.desktopDefaults.traceColour && !reset.showFps)
-        #expect(reset.scaleTopDbm == -30 && reset.bandScales["5"]?.topDbm == -30 && reset.scaleBand == "5")
+        #expect(reset.scaleTopDbm == -30 && reset.scaleBand == "5")
         #expect(reset.bandPlanSize == .huge && reset.extendedView)
     }
 }

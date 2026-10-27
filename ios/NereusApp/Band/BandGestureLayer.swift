@@ -5,6 +5,7 @@ import Combine
 import NereusBand
 import NereusLink
 import SwiftUI
+import UIKit
 
 /// Everything over one band's Metal view (R-IOS-11, R-IOS-12, D9, D10,
 /// D74, spec section 5.1 items 3, 4, 9 and 17), sized to the band:
@@ -21,7 +22,9 @@ import SwiftUI
 ///   the Core to move the window, as the desktop's remote window does; a
 ///   drag that starts on a flag or its passband tunes that slice in its
 ///   step (with drag to tune on); a tap tunes the active slice, pinch
-///   zooms, and the double tap does Tune, Center or None;
+///   zooms, and the double tap does Tune, Center or None; a half-second
+///   hold on empty band, still within the drag threshold, opens the band
+///   menu at the finger after a light tap (``BandMenuHit``, DC6);
 /// - zoom minus and plus at the bottom right of the waterfall. The bottom
 ///   left stays clear for PTT;
 /// - the tuning dial Setup picked for this phone, if any (``DialLayer``):
@@ -87,6 +90,10 @@ struct BandGestureLayer: View {
     /// The TX badges' take (JJ's ruling of 2026-09-30); nil draws each TX
     /// button as the transmit choice alone (the flag pictures).
     var take: TransmitTakeModel?
+    /// The open band menu's anchor, which a hold on empty band sets; nil
+    /// leaves the band without the hold (the flag pictures). While the menu
+    /// is open the band's taps and drags do nothing.
+    var bandMenu: Binding<BandMenuAnchor?>?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -215,19 +222,12 @@ struct BandGestureLayer: View {
         let dialKind = tuning == nil ? DialKind.off : settings.dialKind
         let zoomAt = DialLayer.zoomOrigin(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
                                           trailingInset: trailingInset, uprightWidth: uprightWidth)
-        // The band's own controls, which the edge markers keep clear of.
-        var controls = [CGRect(origin: zoomAt, size: ZoomButtons.size),
-                        PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
-        switch dialKind {
-        case .waterfallKnob:
-            controls.append(DialLayer.knobFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                trailingInset: trailingInset))
-        case .thumbwheel:
-            controls.append(DialLayer.wheelFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                 uprightWidth: uprightWidth, trailingInset: trailingInset))
-        case .off, .sheetKnob:
-            break
-        }
+        // The band's own controls, which the edge markers keep clear of:
+        // zoom and the dial as DialLayer places them (the one list the keyed
+        // meters keep clear of too), and PTT.
+        let controls = DialLayer.controlFrames(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
+                                               trailingInset: trailingInset, uprightWidth: uprightWidth)
+            + [PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
                                           large: large, dbmArrows: arrows, controls: controls)
@@ -238,8 +238,22 @@ struct BandGestureLayer: View {
                                      trailingInset: trailingInset, large: large)
         // The active slice's flag on top of the others.
         let ordered = flags.sorted { ($0.0.id == slices.activeSliceId ? 1 : 0) < ($1.0.id == slices.activeSliceId ? 1 : 0) }
+        // Where a hold opens the band menu: clear of every flag and folded
+        // tag, the spots, other devices' labels and the dBm scale, as they
+        // stand when the hold fires.
+        let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
+        let spotsModel = spots
+        let emptyBand: (CGPoint) -> Bool = { point in
+            let spotRects = spotsModel.map { model in
+                BandMenuHit.spotRects(SpotLayout.layout(spots: model.bandSpots, flags: placements, geometry: geometry,
+                                                        settings: model.display))
+            } ?? []
+            let stations = others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
+            return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
+                                           layout: layout)
+        }
         return ZStack(alignment: .topLeading) {
-            touchSurface(geometry: geometry)
+            touchSurface(geometry: geometry, emptyBand: emptyBand)
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
             }
@@ -490,12 +504,17 @@ struct BandGestureLayer: View {
 
     // MARK: Touches
 
-    private func touchSurface(geometry: BandGeometry) -> some View {
-        Color.clear
+    /// The band's own surface: the taps and the pinch, and under them the
+    /// hold (``BandHoldSurface``), which opens the band menu.
+    private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
+        BandHoldSurface(enabled: bandMenu != nil) { point in
+            held(at: point, geometry: geometry, emptyBand: emptyBand)
+        }
             .contentShape(Rectangle())
             .gesture(taps(geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
             .accessibilityElement()
+            .accessibilityIdentifier("bandSurface")
             .accessibilityLabel("Band")
             .accessibilityHint(settings.tapToTune ? "Tap to tune the active slice, drag to move the band"
                                                   : "Drag to move the band")
@@ -521,7 +540,8 @@ struct BandGestureLayer: View {
                       placements: [FlagPlacement]) -> some Gesture {
         DragGesture(minimumDistance: TuneGestures.dragThresholdPoints)
             .onChanged { value in
-                guard !pinching else {
+                // While the band menu is open the finger that opened it moves nothing.
+                guard !pinching, !menuOpen || dragger.target != nil else {
                     return
                 }
                 dragger.changed(from: value.startLocation, translation: value.translation.width,
@@ -535,6 +555,23 @@ struct BandGestureLayer: View {
                 dragger.ended(slices: slices)
                 band.cursorHz = nil
             }
+    }
+
+    /// The band menu is open.
+    private var menuOpen: Bool { bandMenu?.wrappedValue != nil }
+
+    /// The hold has fired: a finger down for ``BandMenuHit/holdSeconds``
+    /// that stayed within the drag threshold. On empty band, with no
+    /// pinch, drag or menu under way, it opens the band menu where the
+    /// finger came down, after a light tap; elsewhere the touch is left
+    /// to the flag, spot or label under it, the drag, the tap or the pinch,
+    /// as before.
+    private func held(at point: CGPoint, geometry: BandGeometry, emptyBand: (CGPoint) -> Bool) -> Bool {
+        guard !pinching, !menuOpen, dragger.target == nil, emptyBand(point) else {
+            return false
+        }
+        bandMenu?.wrappedValue = BandMenuAnchor(point: point, frequencyHz: geometry.hz(forX: Double(point.x)))
+        return true
     }
 
     /// A tap tunes at once whenever a double tap would do the same thing;
@@ -562,6 +599,7 @@ struct BandGestureLayer: View {
     private func pinch(geometry: BandGeometry) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                // Two fingers are a pinch, never a hold (``held(at:geometry:emptyBand:)``).
                 let start = pinchStart ?? geometry
                 pinchStart = start
                 pinching = true
@@ -587,6 +625,10 @@ struct BandGestureLayer: View {
     }
 
     private func tap(atX x: CGFloat, geometry: BandGeometry) {
+        // The lift that ends the hold opening the band menu tunes nothing.
+        guard !menuOpen else {
+            return
+        }
         if foreign.openNote != nil {
             // A touch on the band closes an open note, and tunes nothing.
             foreign.openNote = nil
@@ -602,6 +644,9 @@ struct BandGestureLayer: View {
     /// Tune writes to the active slice, even with tap-to-tune off; Center
     /// asks for a new view, as zoom does, and retunes nothing.
     private func doubleTap(_ action: TuneGestures.DoubleTapAction, atX x: CGFloat, geometry: BandGeometry) {
+        guard !menuOpen else {
+            return
+        }
         let step = slices.active.flatMap { snapStep($0) }
         switch TuneGestures.doubleTapped(action, atX: x, geometry: geometry, snap: settings.snapTapToStep,
                                          stepHz: step) {
@@ -626,6 +671,75 @@ struct BandGestureLayer: View {
 
     private var spanLimits: ClosedRange<Double> {
         band.spanLimits(sampleRateHz: slices.active?.sampleRateHz)
+    }
+}
+
+/// The band's touch surface, which times the hold that opens the band
+/// menu (R-IOS-57, DC6) with UIKit's long press: a finger down for
+/// ``BandMenuHit/holdSeconds`` that moves less than
+/// ``BandMenuHit/moveLimitPoints``. A SwiftUI drag cannot time it: a drag
+/// reports nothing while the finger is still, so on the iPad a still
+/// finger's hold was first seen as it lifted, too late to open anything
+/// (no menu on any iPad pan). The long press fires at the half second
+/// whether the finger moves or not, alongside the band's taps, pinch and
+/// drags, and never takes their touches.
+private struct BandHoldSurface: UIViewRepresentable {
+    /// Off while the band has no band menu (the flag pictures).
+    var enabled: Bool
+    /// The hold fired at this point on the band; true when it opened the
+    /// band menu, which then gets the light tap.
+    let held: (CGPoint) -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.fired(_:)))
+        hold.minimumPressDuration = BandMenuHit.holdSeconds
+        hold.allowableMovement = BandMenuHit.moveLimitPoints
+        // The band's own taps, pinch and drags keep every touch.
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.delaysTouchesEnded = false
+        hold.delegate = context.coordinator
+        view.addGestureRecognizer(hold)
+        context.coordinator.hold = hold
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.held = held
+        context.coordinator.hold?.isEnabled = enabled
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var held: ((CGPoint) -> Bool)?
+        weak var hold: UILongPressGestureRecognizer?
+        /// As DialHaptics' detent: a light impact, woken at the touch so it is not late.
+        private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+        @objc func fired(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began, let view = recognizer.view else {
+                return
+            }
+            if held?(recognizer.location(in: view)) == true {
+                haptic.impactOccurred()
+            }
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            haptic.prepare()
+            return true
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
     }
 }
 

@@ -8,7 +8,10 @@ import SwiftUI
 /// scale has them: each tap moves the scale's top 10 dB up or down and
 /// keeps its bottom. Visible buttons in the scale's own column; the
 /// renderer leaves their room free of labels (``BandLayout/dbmArrows``). An
-/// arrow that can go no further is greyed. While the band draws 3D they
+/// arrow that can go no further is greyed, and both are while the Core
+/// keeps the band's scale and the link is lost, with the reason read out.
+/// On a Core that keeps each band's scale they move the Core's
+/// (``CoreBandScale``); while keyed, the transmit grid. While the band draws 3D they
 /// step 3D Floor by 1 dB instead, and say so (JJ's 3D View board,
 /// recommendation 2).
 struct DbmScaleArrows: View {
@@ -26,9 +29,10 @@ struct DbmScaleArrows: View {
         GeometryReader { proxy in
             let rect = BandLayout(size: proxy.size, scale: 1, settings: band.shownSettings).dbmArrows
             let floor = display.arrowsMoveFloor
+            let reason = !floor && display.scaleGreyed ? display.scaleNote : nil
             VStack(spacing: 0) {
                 arrow("\u{25B2}", label: floor ? Self.floorUpLabel : Self.raiseLabel,
-                      enabled: floor ? display.canRaiseFloor : display.canRaiseTop, id: "dbmRaise") {
+                      enabled: floor ? display.canRaiseFloor : display.canRaiseTop, reason: reason, id: "dbmRaise") {
                     if floor {
                         display.nudgeFloor(up: true)
                     } else {
@@ -37,7 +41,7 @@ struct DbmScaleArrows: View {
                 }
                 Rectangle().fill(BandColours.zoomBorder).frame(height: 1)
                 arrow("\u{25BC}", label: floor ? Self.floorDownLabel : Self.lowerLabel,
-                      enabled: floor ? display.canLowerFloor : display.canLowerTop, id: "dbmLower") {
+                      enabled: floor ? display.canLowerFloor : display.canLowerTop, reason: reason, id: "dbmLower") {
                     if floor {
                         display.nudgeFloor(up: false)
                     } else {
@@ -53,7 +57,7 @@ struct DbmScaleArrows: View {
         }
     }
 
-    private func arrow(_ glyph: String, label: String, enabled: Bool, id: String,
+    private func arrow(_ glyph: String, label: String, enabled: Bool, reason: String?, id: String,
                        action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(glyph)
@@ -65,6 +69,7 @@ struct DbmScaleArrows: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(label)
+        .accessibilityHint(reason ?? "")
         .accessibilityIdentifier(id)
     }
 }

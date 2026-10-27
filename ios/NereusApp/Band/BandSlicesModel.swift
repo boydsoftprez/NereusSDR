@@ -280,8 +280,8 @@ final class BandSlicesModel: ObservableObject {
 
     /// This phone's device id, as the Core's `access:<id>` names a
     /// controller; nil until the phone has its key, when every slice reads
-    /// as this phone's.
-    var thisDeviceId: String? {
+    /// as this phone's. Published, so the iPad's other pans keep in step.
+    @Published var thisDeviceId: String? {
         didSet {
             if thisDeviceId != oldValue {
                 rebuild()
@@ -298,10 +298,26 @@ final class BandSlicesModel: ObservableObject {
         }
     }
 
-    /// The pan this band draws; nil shows every slice.
+    /// The pan this band draws; nil shows every slice. Set while the iPad
+    /// shows more than one pan (``PanStackModel``): each pan's band draws
+    /// its own slices, and those the Core keeps on no pan.
     var panKey: String? {
         didSet {
             if panKey != oldValue {
+                rebuild()
+            }
+        }
+    }
+
+    /// With ``panKey`` set, the pans this device shows: a band that also
+    /// draws this device's slices on a pan not shown (Pan 1's, set by
+    /// ``PanStackModel``) draws those whose pan is not among them, as the
+    /// desktop rehomes such slices to its first live pan
+    /// (`RadioModel::rehomeSlicesToPans`, src/models/RadioModel.cpp:35902-35925,
+    /// controlled slices only). Nil draws only ``panKey``'s.
+    var shownPanKeys: Set<String>? {
+        didSet {
+            if shownPanKeys != oldValue {
                 rebuild()
             }
         }
@@ -1158,6 +1174,15 @@ final class BandSlicesModel: ObservableObject {
         rebuild()
     }
 
+    /// Reads the mirror's slices now. The watches redraw on a later
+    /// main-actor turn, each model in a job of its own, so another model can
+    /// already show a change this one has not drawn; a caller that acts on
+    /// ``entries`` at once (Add a pan's spare slice, Close this pan's
+    /// slices) calls this first.
+    func catchUp() {
+        watchSlices()
+    }
+
     private func watchSlices() {
         // The slices, who controls each (`access:<id>`), and who is on the
         // Core (the holder's name in the owner line).
@@ -1195,8 +1220,13 @@ final class BandSlicesModel: ObservableObject {
                 continue
             }
             present.insert(id)
+            // A slice on a pan this device does not show, drawn here if it is this device's.
+            var offShownPans = false
             if let panKey, let pan = object["panKey"]?.text, !pan.isEmpty, pan != panKey {
-                continue
+                guard let shown = shownPanKeys, !shown.contains(pan) else {
+                    continue
+                }
+                offShownPans = true
             }
             guard let frequency = object["frequency"]?.number else {
                 continue
@@ -1235,6 +1265,11 @@ final class BandSlicesModel: ObservableObject {
                                 ? diversity?.live.map { $0.identity.sliceId == id
                                     && (access[id] == nil || access[id]?.incarnation == $0.identity.incarnation) } ?? false
                                 : id == 0 && object["diversityEnabled"]?.flag == true))
+            if offShownPans, next.last?.listening == true {
+                // Another device's slice stays where its controller put it.
+                next.removeLast()
+                continue
+            }
             if object["active"]?.flag == true {
                 // This phone's own active slice; a listened slice's flag is its owner's.
                 if next.last?.listening == false {
@@ -1267,7 +1302,14 @@ final class BandSlicesModel: ObservableObject {
             takenHere = stillTaken
             takenAtRevision = takenAtRevision.filter { stillTaken.contains($0.key) }
         }
+        // A band that draws one pan of several (``panKey``): the Core marks
+        // one active slice for the whole device, which may be on another
+        // pan, so this pan's own active slice is then its first own slice
+        // (R-IOS-59: each pan subscribes on a slice of its own pan). With
+        // none of this device's own on the pan it has no active slice: never
+        // another device's slice, nor one the Core keeps on no pan.
         let own = nextActive ?? anyActive
+            ?? (panKey == nil ? nil : next.first { !$0.listening && $0.panKey == panKey }?.id)
         if own != ownActiveSliceId {
             ownActiveSliceId = own
         }

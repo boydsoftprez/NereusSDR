@@ -385,6 +385,10 @@ final class TransmitModel: ObservableObject {
     private let settings: SettingsProxyClient?
     private let commands: CommandClient?
     private let slices: BandSlicesModel
+    /// The slices the RX panel follows, whose active slice's receive filter
+    /// Match RX copies: on the iPad, the pan last touched's; nil for this
+    /// band's own.
+    weak var receiveSlices: BandSlicesModel?
     private let subscriber: BandSubscriber?
     private let platform: Platform
     private let band: BandModel?
@@ -943,8 +947,9 @@ final class TransmitModel: ObservableObject {
     /// low edge above the high one. A transmit setting: nothing is sent
     /// while the settings may not change.
     func matchRxFilter() {
-        guard settingsEditable(1), let slice = RxPanelModel.sliceObject(slices.activeSliceId, in: mirror),
-              let edges = TxFilterMatch.edges(slice: slice, modes: slices.catalog?.modes ?? []) else {
+        let receive = receiveSlices ?? slices
+        guard settingsEditable(1), let slice = RxPanelModel.sliceObject(receive.activeSliceId, in: mirror),
+              let edges = TxFilterMatch.edges(slice: slice, modes: receive.catalog?.modes ?? []) else {
             return
         }
         let writes = TxFilterMatch.writes(edges, currentHighHz: txFilterHighHz)

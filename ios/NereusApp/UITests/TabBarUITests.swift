@@ -24,7 +24,7 @@ final class TabBarUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let tabBar = app.otherElements["Sections"]
         XCTAssertTrue(tabBar.waitForExistence(timeout: 30))
         let titles = tabBar.buttons.allElementsBoundByIndex.map(\.label)
@@ -37,7 +37,7 @@ final class TabBarUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         // An iPad upright has no panel buttons: its applets sit below the band (IPadUITests).
         let names = Self.iPad ? ["speaker", "slice", "pan", "display", "link"]
             : ["rxPanel", "speaker", "slice", "pan", "display", "link", "txPanel"]
@@ -59,7 +59,7 @@ final class TabBarUITests: XCTestCase {
         try XCTSkipIf(Self.iPad, "An iPad's RX and TX sit beside or below the band, not in sliding panels (IPadUITests)")
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let button = app.buttons["txPanel"]
         XCTAssertTrue(button.waitForExistence(timeout: 30))
         button.tap()
@@ -74,7 +74,7 @@ final class TabBarUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let button = app.buttons["rxPanel"]
         XCTAssertTrue(button.waitForExistence(timeout: 30))
         button.tap()
@@ -89,7 +89,7 @@ final class TabBarUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         XCTAssertTrue(app.buttons["rxPanel"].waitForExistence(timeout: 30))
         XCUIDevice.shared.orientation = .landscapeLeft
         // Sideways the toolbar takes its sideways form, the Core's name in the middle.
@@ -113,7 +113,7 @@ final class TabBarUITests: XCTestCase {
         // The band and its tabs, with made-up Cores listed and none connected
         // (a debug build's launch arguments).
         app.launchArguments = ["-NereusShotCores", "-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let radio = app.otherElements["Sections"].buttons["Radio"]
         XCTAssertTrue(radio.waitForExistence(timeout: 30))
         radio.tap()
@@ -132,7 +132,7 @@ final class TabBarUITests: XCTestCase {
         let app = XCUIApplication()
         // The band and its tabs, with no Core (a debug build's launch argument).
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let setup = app.otherElements["Sections"].buttons["Setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 30))
         setup.tap()

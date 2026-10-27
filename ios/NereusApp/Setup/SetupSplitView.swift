@@ -90,11 +90,15 @@ struct SetupSplitView<Detail: View, Footer: View>: View {
             .padding(.top, 8)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The list's identifier is on its content, a plain container, not on the scroll view:
+            // once a test has walked a hosted scroll view's accessibility tree before its first
+            // layout, SwiftUI's platform scroll views report no identifier for the rest of the process.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("setupSplitList")
         }
         .scrollContentBackground(.hidden)
         .background(WorkspacePalette.panelBg.ignoresSafeArea())
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("setupSplitList")
     }
 
     private func categoryRow(_ category: SetupTree.Category, selection: SetupSplitSelection) -> some View {

@@ -88,7 +88,9 @@ final class DiversityModel: ObservableObject {
     private let mirror: MirrorStore
     private let phone: PhoneSettings
     private let commands: CommandClient?
-    private let slices: BandSlicesModel?
+    private var slices: BandSlicesModel?
+    /// The watches on ``slices``, replaced when the model follows another pan's.
+    private var sliceWatches: Set<AnyCancellable> = []
     private let captureSender: CommandClient.CaptureSender?
     private var watch: ToolMirrorWatch?
     private var fenceWatches: Set<AnyCancellable> = []
@@ -112,8 +114,7 @@ final class DiversityModel: ObservableObject {
         self.slices = slices; self.captureSender = captureSender
         watch = ToolMirrorWatch(mirror: mirror) { [weak self] in self?.refresh() }
         if let slices {
-            watch?.watch(slices.$activeSliceId); watch?.watch(slices.$entries)
-            slices.$entries.dropFirst().sink { [weak self] _ in self?.validateTouches() }.store(in: &fenceWatches)
+            watchSlices(slices)
         }
         mirror.$isSnapshotComplete.dropFirst().sink { [weak self] value in
             if !value { self?.revokeAll() }
@@ -134,6 +135,23 @@ final class DiversityModel: ObservableObject {
             self?.validateTouches(keys: Set(keys))
         }.store(in: &fenceWatches)
         refresh()
+    }
+
+    /// On the iPad with more than one pan: the band's Diversity acts on the
+    /// active slice of the pan last touched, as the RX panel does (R-IOS-59, DC9).
+    func follow(_ next: BandSlicesModel) {
+        guard next !== slices else { return }
+        slices = next
+        watchSlices(next)
+        validateTouches()
+        watch?.queue()
+    }
+
+    private func watchSlices(_ slices: BandSlicesModel) {
+        sliceWatches = []
+        slices.$activeSliceId.sink { [weak self] _ in self?.watch?.queue() }.store(in: &sliceWatches)
+        slices.$entries.sink { [weak self] _ in self?.watch?.queue() }.store(in: &sliceWatches)
+        slices.$entries.dropFirst().sink { [weak self] _ in self?.validateTouches() }.store(in: &sliceWatches)
     }
 
     var coordinated: Bool { DiversityState.available(in: mirror) }

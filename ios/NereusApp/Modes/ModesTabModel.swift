@@ -331,11 +331,13 @@ final class ModesTabModel: ObservableObject {
     let rx: RxPanelModel
     let transmit: TransmitModel
     private let store: MirrorStore
-    /// The band's slices: the Modes tab follows the active one (and the owner block reads it).
-    let slices: BandSlicesModel
+    /// The band's slices: the Modes tab follows the active one (and the
+    /// owner block reads it); on the iPad, the pan last touched's (``follow(_:)``).
+    private(set) var slices: BandSlicesModel
     private let catalogFeed: CatalogFeed
     private let commands: CommandClient?
     private var watches: Set<AnyCancellable> = []
+    private var sliceWatches: Set<AnyCancellable> = []
     private var objectWatches: [String: AnyCancellable] = [:]
     private var watchedObjects: [String: ObjectIdentifier] = [:]
     private lazy var writes = PropertyWriteQueue(store: store) { [weak self] _, outcome in
@@ -361,8 +363,7 @@ final class ModesTabModel: ObservableObject {
         self.transmit = transmit
         // The TX panel's power ranges come from the same catalogue.
         catalogFeed.$catalog.sink { [weak transmit] catalog in transmit?.catalog = catalog }.store(in: &watches)
-        slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
-        slices.$entries.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
+        watch(slices)
         store.$unconfirmedWrites.sink { [weak self] _ in
             Task { @MainActor in self?.confirmationRevision &+= 1 }
         }.store(in: &watches)
@@ -371,6 +372,23 @@ final class ModesTabModel: ObservableObject {
         store.$isSnapshotComplete.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         catalogFeed.$catalog.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         rebuild()
+    }
+
+    private func watch(_ slices: BandSlicesModel) {
+        sliceWatches = []
+        slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }.store(in: &sliceWatches)
+        slices.$entries.sink { [weak self] _ in self?.queueRebuild() }.store(in: &sliceWatches)
+    }
+
+    /// The tab follows `slices`' active slice from now on, as the RX panel
+    /// does (``RxPanelModel/follow(_:)``): the iPad's pan last touched.
+    func follow(_ slices: BandSlicesModel) {
+        guard slices !== self.slices else {
+            return
+        }
+        self.slices = slices
+        watch(slices)
+        queueRebuild()
     }
 
     /// The active slice's mirrored object (the RX panel's).

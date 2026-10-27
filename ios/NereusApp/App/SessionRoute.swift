@@ -18,6 +18,14 @@ final class SessionRoute: @unchecked Sendable {
         lock.withLock { bandFixturePropertySender = sender }
     }
 
+    /// The command-line band fixture's stand-in for the Core's answers to
+    /// commands and settings writes, used only while there is no session.
+    private var bandFixtureCommandSender: (@Sendable (LinkMessage) async throws -> Void)?
+
+    func useBandFixtureCommandSender(_ sender: @escaping @Sendable (LinkMessage) async throws -> Void) {
+        lock.withLock { bandFixtureCommandSender = sender }
+    }
+
     private var commandHandoffHook: (@Sendable (LinkMessage) async -> Void)?
 
     func holdCommandHandoffForTesting(_ hook: (@Sendable (LinkMessage) async -> Void)?) {
@@ -56,6 +64,14 @@ final class SessionRoute: @unchecked Sendable {
             #if DEBUG
             let hook = self?.lock.withLock { self?.commandHandoffHook }
             await hook?(message)
+            if admitted == nil, let self,
+               let fixture = self.lock.withLock({ self.current == nil ? self.bandFixtureCommandSender : nil }) {
+                guard !permit.isRevoked else {
+                    throw LinkSendError.notConnected
+                }
+                try await fixture(message)
+                return
+            }
             #endif
             guard let self, let admitted, self.session === admitted else {
                 throw LinkSendError.notConnected

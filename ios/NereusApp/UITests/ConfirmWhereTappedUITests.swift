@@ -89,7 +89,7 @@ final class ConfirmWhereTappedUITests: XCTestCase {
         // The band and its tabs with no Core, taking the question on the signal
         // (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusAskOnSignal"]
-        app.launch()
+        app.launchFresh()
         XCTAssertTrue(app.otherElements["Sections"].waitForExistence(timeout: 30))
         return app
     }
