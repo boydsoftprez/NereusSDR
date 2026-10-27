@@ -1,0 +1,266 @@
+# Temporary verification only; keep this workflow out of the final product candidate.
+name: iOS ordered intake uninstrumented verification
+'on':
+  push:
+    branches:
+    - codex/ios-queue-proof
+permissions:
+  contents: read
+jobs:
+  ordered-intake:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Bind checkout and record sources
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        mkdir -p "$evidence"
+        {
+          printf 'event=%s\nref=%s\nsha=%s\nhead=%s\nrunner_os=%s\nrunner_arch=%s\nrunner_name=%s\n' \
+            "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" "$(git rev-parse HEAD)" \
+            "$RUNNER_OS" "$RUNNER_ARCH" "$RUNNER_NAME"
+          git status --short
+        } > "$evidence/identity.txt"
+        test "$GITHUB_EVENT_NAME" = push
+        test "$GITHUB_REF" = refs/heads/codex/ios-queue-proof
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain)"
+        shasum -a 256 \
+          ios/NereusApp/App/AppModel.swift \
+          ios/NereusApp/App/SessionEventLanes.swift \
+          ios/NereusApp/Tests/SessionEventLanesTests.swift \
+          ios/NereusKit/Sources/NereusMedia/MediaControlClient.swift \
+          ios/NereusKit/Sources/NereusMirror/CommandClient.swift \
+          ios/NereusKit/Tests/NereusMediaTests/MediaControlClientTests.swift \
+          ios/NereusKit/Tests/NereusMirrorTests/CommandClientTests.swift \
+          ios/NereusKit/Sources/NereusKitTesting/FakeStation.swift \
+          ios/NereusKit/Sources/NereusKitTesting/FakeStationConnection.swift \
+          ios/NereusKit/Sources/NereusLink/StationSession.swift \
+          ios/NereusKit/Sources/NereusMirror/MirrorStore.swift \
+          ios/NereusApp/Tests/TuneUnderLoadTests.swift \
+          ios/NereusApp/Band/BandModel.swift ios/NereusApp/Band/BandView.swift \
+          ios/NereusKit/Sources/NereusBand/BandRenderer.swift \
+          ios/NereusKit/Package.swift ios/project.yml \
+          ios/scripts/generate-project.sh ios/scripts/sim-settle.sh \
+          .github/workflows/ios.yml .github/workflows/ci.yml \
+          .github/workflows/ios-ordered-intake-verification.yml > "$evidence/sources-before.sha256"
+        printf "%s  %s\n" 2103e182166d1f5fc0d4a7c9c500df4e7b3fbe64b6d75211bbcdff1700905135 ios/NereusApp/Tests/TuneUnderLoadTests.swift | shasum -a 256 -c -
+    - name: Select Xcode 27 and pin an existing iPhone 18 Pro Max
+      shell: bash
+      run: |
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        xcode=$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)
+        sudo xcode-select -s "$xcode"
+        { xcode-select -p; xcodebuild -version; swift --version; } > "$evidence/toolchain.txt"
+        xcrun simctl list devicetypes --json > "$evidence/device-types.json"
+        xcrun simctl list devices available --json > "$evidence/available-devices.json"
+        python3 - "$evidence" <<'DEVICE'
+        import json,pathlib,re,os,uuid,sys
+        root=pathlib.Path(sys.argv[1]); found=[]
+        for runtime,devices in json.loads((root/'available-devices.json').read_text())['devices'].items():
+            match=re.search(r'\.iOS-([0-9-]+)$',runtime)
+            if not match: continue
+            for device in devices:
+                if device.get('name')=='iPhone 18 Pro Max' and device.get('isAvailable',True):
+                    found.append((tuple(map(int,match[1].split('-'))),device['udid'],runtime,device))
+        if not found: raise SystemExit('INVALID: no existing available iPhone 18 Pro Max')
+        version,udid,runtime,device=max(found,key=lambda item:(item[0],item[1]))
+        if version[0]!=27: raise SystemExit('INVALID: expected iOS 27 runtime')
+        uuid.UUID(udid)
+        (root/'selected-device.json').write_text(json.dumps({'runtime':runtime,**device},indent=2)+'\n')
+        with open(os.environ['GITHUB_ENV'],'a') as out: out.write('DEVICE_UDID='+udid+'\n')
+        DEVICE
+    - name: Install XcodeGen and generate project
+      run: |
+        brew install xcodegen
+        ios/scripts/generate-project.sh
+    - name: Build app and tests before simulator boot
+      shell: bash
+      run: |
+        set +e
+        set -uo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+          -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
+          -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
+          -jobs 2 -parallel-testing-enabled NO build-for-testing \
+          2>&1 | tee "$evidence/build.log"
+        status=${PIPESTATUS[0]}
+        printf '%s\n' "$status" > "$evidence/build.exit"
+        exit "$status"
+    - name: Boot and settle the pinned model after building
+      shell: bash
+      run: |
+        set +e
+        set -uo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        ios/scripts/sim-settle.sh 'iPhone 18 Pro Max' 2>&1 | tee "$evidence/settle.log"
+        status=${PIPESTATUS[0]}
+        printf '%s\n' "$status" > "$evidence/boot.exit"
+        xcrun simctl list devices available --json > "$evidence/devices-after-settle.json"
+        exit "$status"
+    - name: Enumerate and validate 17 functional plus 4 original Tune identities
+      shell: bash
+      run: |
+        set +e
+        set -uo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        # Apple's xcodebuild manual defines flat enumeration as identifiers
+        # suitable for subsequent -only-testing arguments; enumeration runs no tests.
+        xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+          -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
+          -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
+          -jobs 2 -parallel-testing-enabled NO test-without-building \
+          -enumerate-tests -test-enumeration-style flat \
+          -test-enumeration-format json \
+          -test-enumeration-output-path "$evidence/enumeration.json" \
+          2>&1 | tee "$evidence/enumeration.log"
+        status=${PIPESTATUS[0]}
+        printf '%s\n' "$status" > "$evidence/enumeration.exit"
+        if [ "$status" -ne 0 ]; then
+          exit "$status"
+        fi
+        python3 - "$evidence" <<'PYIDS'
+        import json,pathlib,sys
+        root=pathlib.Path(sys.argv[1])
+        enumeration=json.loads((root/'enumeration.json').read_text())
+        if enumeration.get('errors'): raise SystemExit('INVALID: enumeration errors')
+        SUITES = {'functional': ('SessionEventLanesTests', ['laneKeepsOrderUnderABurst()', 'stoppedLaneSkipsAndFinishedLaneDrainsAtOnce()', 'inboxReadyPrefixDoesNotWaitToFill()', 'inboxCapacitySuspendsAndResumesLosslessly()', 'intakeCancellationWhileFullReleasesAndJoins()', 'intakeCancellationWhileEmptyReleasesAndJoins()', 'cancellationBeforeWaiterRegistrationCannotLoseWake(full:)', 'actualPumpPreservesEveryReadingAndRelevantEventAcrossFullInbox()', 'barrierInsideReadyPrefixPreservesTransmitOrdering()', 'eachConsumerKeepsArrivalOrderUnderABurst()', 'writeAnswerIsAppliedAtOnceWhileReadingsFlood()', 'relevantEventsBackpressurePump()', 'mediaEventsBackpressurePump()', 'meterFloodBypassesHeldLane()', 'heldOldLaneFencesReconnect(media:)', 'lanesEndWithTheirSession()', 'transmitSilenceKeepsItsSequence()']), 'tune': ('TuneUnderLoadTests', ['idleDragKeepsPace()', 'heldMainDragKeepsPace()', 'flatDragKeepsPace()', 'stackedDragKeepsPace()'])}
+        for phase,(suite,methods) in SUITES.items():
+            prefix='NereusSDRTests/'+suite+'/'
+            expected={prefix+method for method in methods}; enabled=[]; disabled=[]
+            for group in enumeration['values']:
+                enabled.extend(item['identifier'] for item in group['enabledTests'] if item['identifier'].startswith(prefix))
+                disabled.extend(item['identifier'] for item in group['disabledTests'] if item['identifier'].startswith(prefix))
+            if disabled or len(enabled)!=len(expected) or set(enabled)!=expected:
+                raise SystemExit(f'INVALID: {phase} missing/extra/duplicate/disabled identities: {enabled!r}, {disabled!r}')
+            (root/(phase+'-identifiers.txt')).write_text('\n'.join(sorted(enabled))+'\n')
+        (root/'enumeration-validation.txt').write_text('VALID: 17 functional and 4 original Tune methods\n')
+        PYIDS
+    - name: Run functional then original Tune4 sequentially on the same build
+      shell: bash
+      run: |
+        set +e
+        set -uo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        test "$(cat "$evidence/enumeration-validation.txt")" = 'VALID: 17 functional and 4 original Tune methods' || exit 1
+        overall=0
+        for phase in functional tune; do
+          selection=()
+          while IFS= read -r identifier; do selection+=("-only-testing:$identifier"); done < "$evidence/$phase-identifiers.txt"
+          case "$phase" in functional) expected=17 ;; tune) expected=4 ;; esac
+          test "${#selection[@]}" -eq "$expected" || exit 1
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
+            -resultBundlePath "$evidence/$phase.xcresult" -jobs 2 -parallel-testing-enabled NO \
+            "${selection[@]}" test-without-building 2>&1 | tee "$evidence/$phase.log"
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > "$evidence/$phase.exit"
+          if [ "$status" -ne 0 ]; then overall=$status; fi
+         done
+        exit "$overall"
+    - name: Always retain results and enforce method, argument, device and drawing evidence
+      if: always()
+      shell: bash
+      run: |
+        set +e
+        set -uo pipefail
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        mkdir -p "$evidence"
+        if [ -f "$evidence/sources-before.sha256" ]; then
+          shasum -a 256 -c "$evidence/sources-before.sha256" > "$evidence/sources-after-check.txt" 2>&1
+          printf '%s\n' "$?" > "$evidence/sources-after-check.exit"
+          sed 's/^[^ ]*  //' "$evidence/sources-before.sha256" | while IFS= read -r path; do shasum -a 256 "$path"; done > "$evidence/sources-after.sha256"
+        fi
+        for phase in functional tune; do
+          if [ -d "$evidence/$phase.xcresult" ]; then
+            for kind in summary tests; do
+              xcrun xcresulttool get test-results "$kind" --path "$evidence/$phase.xcresult" > "$evidence/$phase-$kind.json" 2> "$evidence/$phase-$kind.error"
+              printf '%s\n' "$?" > "$evidence/$phase-$kind.exit"
+            done
+          fi
+        done
+        git status --short > "$evidence/status-after.txt"
+        python3 - "$evidence" <<'RESULTS'
+        import json,pathlib,re,sys
+        root=pathlib.Path(sys.argv[1]); report={'execution':'INVALID / NEEDS INSPECTION','acceptance':'No physical-phone or operator acceptance. Main-held activity requires raw busy-span review.'}
+        def read(name):
+            try: return (root/name).read_text().strip()
+            except OSError: return ''
+        def nodes(value):
+            if isinstance(value,list):
+                for item in value: yield from nodes(item)
+            elif isinstance(value,dict):
+                yield value
+                for item in value.values(): yield from nodes(item)
+        try:
+            selected_device=json.loads(read('selected-device.json'))
+            for phase,method_count,case_count in [('functional',17,19),('tune',4,4)]:
+                summary=json.loads(read(phase+'-summary.json')); tests=json.loads(read(phase+'-tests.json'))
+                expected={s.removeprefix('NereusSDRTests/') for s in read(phase+'-identifiers.txt').splitlines()}
+                methods=[n for n in nodes(tests) if n.get('nodeType')=='Test Case']
+                assert len(expected)==method_count and len(methods)==method_count
+                assert {n.get('nodeIdentifier') for n in methods}==expected and all(n.get('result')=='Passed' for n in methods)
+                parameter_ids=({'SessionEventLanesTests/heldOldLaneFencesReconnect(media:)', 'SessionEventLanesTests/cancellationBeforeWaiterRegistrationCannotLoseWake(full:)'} if phase=='functional' else set())
+                arguments=[n for n in nodes(tests) if n.get('nodeType')=='Arguments']
+                assert len(arguments)==2*len(parameter_ids)
+                for identifier in parameter_ids:
+                    method=next(n for n in methods if n.get('nodeIdentifier')==identifier)
+                    children=[n for n in method.get('children',[]) if n.get('nodeType')=='Arguments']
+                    assert len(children)==2 and {n.get('name') for n in children}=={'false','true'}
+                    urls=[n.get('nodeIdentifierURL','') for n in children]
+                    assert all(n.get('result')=='Passed' for n in children) and len(set(urls))==2
+                    assert all(url.startswith('test://com.apple.xcode/NereusSDR/NereusSDRTests/'+identifier+'?args=') for url in urls)
+                assert summary.get('totalTestCount')==method_count and summary.get('passedTests')==method_count
+                assert all(summary.get(k)==0 for k in ('failedTests','skippedTests','expectedFailures'))
+                configurations=summary['devicesAndConfigurations']; assert len(configurations)==1
+                device=configurations[0]; assert device.get('passedTests')==case_count
+                assert all(device.get(k)==0 for k in ('failedTests','skippedTests','expectedFailures'))
+                assert device['device']['deviceId']==selected_device['udid'] and device['device']['modelName']=='iPhone 18 Pro Max'
+                assert device['device']['platform']=='iOS Simulator' and device['device']['osVersion'].startswith('27.')
+                assert all(read(phase+suffix)=='0' for suffix in ('.exit','-summary.exit','-tests.exit'))
+                report[phase]={'methods':method_count,'cases':case_count,'device':device['device']}
+            assert all(read(name)=='0' for name in ('build.exit','boot.exit','enumeration.exit','sources-after-check.exit'))
+            assert read('enumeration-validation.txt')=='VALID: 17 functional and 4 original Tune methods'
+            tune_lines=[line for line in read('tune.log').splitlines() if line.startswith('TuneUnderLoad ')]
+            (root/'tune-observations.txt').write_text('\n'.join(tune_lines)+'\nFixed source viewport: 402 x 874 points. Original MainHolder has no callback counter; inspect main-held busy spans, do not infer activity from four PASS results.\n')
+            assert len(tune_lines)==4
+            for label in ('2D','3D'):
+                lines=[line for line in tune_lines if line.startswith('TuneUnderLoad '+label+' (simulator):')]; assert len(lines)==1
+                line=lines[0]
+                patterns=[r'; draws (\d+) ',r', link (\d+), skipped',r'link frames (\d+)',r'lines in (\d+)']
+                counts=[int(re.search(pattern,line)[1]) for pattern in patterns]
+                assert all(count>0 for count in counts), (label,counts)
+                report[label]={'draws_linkDraws_linkFrames_rows':counts}
+            held=[line for line in tune_lines if line.startswith('TuneUnderLoad main held ')]; assert len(held)==1
+            assert int(re.search(r'spans (\d+)',held[0])[1])>0
+            report['execution']='PASS: 21 methods / 23 cases; no skips; positive 2D/3D drawing evidence'
+        except (AssertionError,ValueError,TypeError,KeyError,AttributeError,StopIteration) as error:
+            report['detail']=repr(error)
+        (root/'classification.json').write_text(json.dumps(report,indent=2)+'\n')
+        print(json.dumps(report,indent=2))
+        RESULTS
+    - name: Always upload bounded verification evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-ordered-intake-${{ github.sha }}
+        path: ${{ runner.temp }}/ordered-intake-verification/
+        retention-days: 3
+        if-no-files-found: error
+    - name: Require complete execution evidence; acceptance remains a separate review
+      if: always()
+      shell: bash
+      run: |
+        python3 - "$RUNNER_TEMP/ordered-intake-verification/classification.json" <<'GATE'
+        import json,sys
+        assert json.load(open(sys.argv[1]))['execution']=='PASS: 21 methods / 23 cases; no skips; positive 2D/3D drawing evidence'
+        GATE
