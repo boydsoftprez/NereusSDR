@@ -18,6 +18,10 @@
 //                 choice rows are gone; the pulse's two steps, the user
 //                 container background and user item colours are covered.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - PR 677 review fix wave (I9): with the switch off the
+//                 meter ink and bar strip rows compare against the literal
+//                 classic colours, not the mapping under test. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -482,10 +486,12 @@ private slots:
         QFETCH(bool, on);
         WorkspacePreview::setEnabledForTest(on);
         QCOMPARE(barBaseline(QColor(Qt::white)).rgb(), QColor(Qt::white).rgb());
-        QCOMPARE(scaleTick(QColor()).rgb(),
-                 ItemColourLook::effective("Scale.tickColor", QColor(0xc8, 0xd8, 0xe8)).rgb());
+        const QColor classicTick(0xc8, 0xd8, 0xe8);
         if (on) {
-            QVERIFY(scaleTick(QColor()).rgb() != QColor(0xc8, 0xd8, 0xe8).rgb());
+            QCOMPARE(scaleTick(QColor()).rgb(), ItemColourLook::effective("Scale.tickColor", classicTick).rgb());
+            QVERIFY(scaleTick(QColor()).rgb() != classicTick.rgb());
+        } else {
+            QCOMPARE(scaleTick(QColor()).rgb(), classicTick.rgb());
         }
     }
 
@@ -512,9 +518,12 @@ private slots:
         WorkspacePreview::setEnabledForTest(on);
         const QImage img = presetStrip();
         QCOMPARE(img.pixelColor(1, 1).rgb(), expectedData(on, QColor(32, 32, 32), "panel").rgb());
-        for (const QColor& ink : {ItemColourLook::effective("BarPreset.lowColor", QColor(Qt::white)),
-                                  ItemColourLook::effective("BarPreset.highColor", QColor(Qt::red)),
-                                  ItemColourLook::effective("BarPreset.barColor", QColor(Qt::yellow))}) {
+        const QList<QColor> inks = on
+            ? QList<QColor>{ItemColourLook::effective("BarPreset.lowColor", QColor(Qt::white)),
+                            ItemColourLook::effective("BarPreset.highColor", QColor(Qt::red)),
+                            ItemColourLook::effective("BarPreset.barColor", QColor(Qt::yellow))}
+            : QList<QColor>{QColor(Qt::white), QColor(Qt::red), QColor(Qt::yellow)};
+        for (const QColor& ink : inks) {
             QVERIFY2(countPixels(img, img.rect(), ink) > 0, qPrintable(ink.name()));
         }
     }

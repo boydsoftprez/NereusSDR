@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original tests for the VFO display item's
 // clicks, wheel, keys and screens by slice.
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I7): the long press tests wait
+//                 for the timer's result (QTRY) instead of a fixed 1.1 s.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Wheel and click stepping, typed digits, the lock, the long
 //                 press, the BAND, MODE, FILTER and TUNE_STEP screens and
 //                 their close, the meter's key and hover-leave dispatch, and
@@ -235,8 +238,9 @@ private slots:
         Requests r(&vfo);
         QSignalSpy repaint(&vfo, &VfoDisplayItem::repaintRequested);
         press(vfo, kThirdKhzBox);
-        QTest::qWait(1100);
-        QCOMPARE(vfo.screenFor(1), VfoDisplayItem::Screen::TuneStep);
+        // Waits for the long press timer rather than a fixed time, so a
+        // loaded machine that fires it late still passes.
+        QTRY_COMPARE_WITH_TIMEOUT(vfo.screenFor(1), VfoDisplayItem::Screen::TuneStep, 5000);
         QVERIFY(repaint.count() >= 1);
         // The release that ends the long press steps nothing.
         release(vfo, kThirdKhzBox);
@@ -263,12 +267,12 @@ private slots:
         setUp(vfo, 1, 14'074'000);
         Requests r(&vfo);
         press(vfo, kBandBox);
-        QTest::qWait(1100);
+        QTRY_COMPARE_WITH_TIMEOUT(r.bandStack.count(), 1, 5000);
         release(vfo, kBandBox);
         QCOMPARE(r.bandStack.count(), 1);
         QCOMPARE(vfo.screenFor(1), VfoDisplayItem::Screen::Vfo);
         press(vfo, kFilterBox);
-        QTest::qWait(1100);
+        QTRY_COMPARE_WITH_TIMEOUT(r.filterMenu.count(), 1, 5000);
         release(vfo, kFilterBox);
         QCOMPARE(r.filterMenu.count(), 1);
         QCOMPARE(vfo.screenFor(1), VfoDisplayItem::Screen::Vfo);
