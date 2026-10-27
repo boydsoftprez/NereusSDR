@@ -1394,6 +1394,18 @@
 //                pre-check unchanged; the three band-plan setting signals;
 //                the TX time-out on QSK key-out (R-CW-05 to R-CW-07,
 //                R-CW-10). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, MOX in CW, break-in and QSK: the TX channel
+//                is never started for a key in CW (the txReady consumer
+//                and openTxRfGate skip it), and a key in CW does not wait
+//                for the PC microphone; the keyer gate and the radio's
+//                dot and dash reach MoxController; QSK's changes to the
+//                transmit slice's receiver (console.cs:13013-13041) with
+//                their saved values, restored after a restart; leaving CW
+//                turns QSK to Semi and remembers it (console.cs:34566-
+//                34581); a break-in fallback says why once; the QSK
+//                time-out fires once per hold (R-CW-09, R-CW-10, R-CW-18
+//                to R-CW-22). J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                Code.
 // =================================================================
 
 //=================================================================
@@ -5226,6 +5238,18 @@ RadioModel::RadioModel(Role role, QObject* parent)
             this, &RadioModel::pushCwWireState);
     connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
             this, &RadioModel::updateCwQskTimeOut);
+    // CW transmit (R-CW-09, R-CW-18 to R-CW-22): MOX in CW follows the
+    // keyer controller, and a CW press the keyer gate refuses is reported
+    // with its words.
+    m_moxController->setCwKeyerGate([this]() -> TxRefusal {
+        if (!m_cwKeyerController || m_cwKeyerController->keyerAllowed()) {
+            return {};
+        }
+        return m_cwKeyerController->refusal();
+    });
+    connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
+            this, &RadioModel::syncCwKeying);
+    syncCwKeying();
 }
 
 RadioModel::~RadioModel()
@@ -24099,6 +24123,12 @@ bool RadioModel::pcCaptureGatesKeying() const
     if (!pcCaptureRequired()) {
         return false;
     }
+    // CW transmit (R-CW-18): a key in CW sends no microphone (the TX
+    // channel does not run for it), so the PC microphone neither gates it
+    // nor releases it. TUNE in CW keys its tone, not the microphone.
+    if (m_moxController && m_moxController->isCwModeActive() && !m_isTuning) {
+        return false;
+    }
     // iPhone app plan Task 36: a remote device's microphone is the source
     // now; the PC microphone is not read, so its readiness does not gate
     // the key and its loss does not release it.
@@ -30022,6 +30052,17 @@ void RadioModel::wireTxChannelKeying()
         if (!m_txChannel) { return; }
         // Task 33: a txReady from a key the emergency stop cut short.
         if (m_transmitStopHold) { return; }
+        // CW transmit (R-CW-18): a key in CW never starts the TX channel;
+        // the radio's keyer makes the carrier. From Thetis
+        // console.cs:29640-29641 [v2.10.3.15]:
+        //   if (radio.GetDSPTX(0).CurrentDSPMode != DSPMode.CWL &&
+        //       radio.GetDSPTX(0).CurrentDSPMode != DSPMode.CWU) // turn on the transmitter unless in CW mode
+        // Not marked received either, so a later interlock grant does not
+        // start it.
+        if (m_moxController->isCwKeying()) {
+            qCInfo(lcConnection) << "RF-flow gate: txReady in CW; the TX channel stays off";
+            return;
+        }
         m_txReadyReceived = true;
         if (!m_awaitingInterlockForTx) {
             // Either no amp in chain (gate never armed) OR the
@@ -30316,6 +30357,13 @@ void RadioModel::onTxTimeOut(const QString& which, int limitSeconds)
 
     //everything off !!
     stopAllTx(which + QStringLiteral(" Time Out Timer"));
+
+    // CW transmit, Task 5: a QSK key-out time-out fires once per hold; the
+    // count stops now and stays off until key-out is released.
+    if (cwKeyOut) {
+        m_cwQskTimeOutSpent = true;
+        updateCwQskTimeOut();
+    }
 
     emit transmitStopReasonRaised(m_lastTransmitStopReason.code, limitSeconds);
 }
@@ -32319,6 +32367,11 @@ void RadioModel::wireCwKeyerConnection()
             static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
     m_lastPushedCwWire.reset();
     pushCwWireState(m_cwKeyerController->wireState());
+    // Task 5: on every connect, with the controller evaluated for the radio
+    // now known, so the QSK values a restart left saved are looked at
+    // against the break-in mode really in effect (R-CW-21).
+    m_cwKeyerController->reevaluate();
+    syncCwKeying();
 }
 
 void RadioModel::pushCwWireState(const CwWireState& state)
@@ -32341,6 +32394,11 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
     }
     m_cwKeyerController->onRadioKeyStatus(dot, dash, keyOut);
     updateCwQskTimeOut();
+    // R-CW-09: a dot or dash the keyer gate refuses is reported once per
+    // hold (MoxController::onCwKeyStatus).
+    if (m_moxController) {
+        m_moxController->onCwKeyStatus(dot, dash);
+    }
 }
 
 // R-CW-10: the TX time-out counts while MOX is on and, in QSK, while the
@@ -32352,14 +32410,233 @@ void RadioModel::updateCwQskTimeOut()
     if (!m_txTimeOut || !m_cwKeyerController) {
         return;
     }
+    // CW transmit, Task 5: one time-out per hold. Once it has fired, the
+    // count stays off until the radio reports key-out released.
+    if (!m_cwKeyerController->radioKeyOut()) {
+        m_cwQskTimeOutSpent = false;
+    }
     const bool timing = m_cwKeyerController->radioKeyOut()
         && m_cwKeyerController->effectiveBreakInMode() == CwBreakInMode::Qsk
-        && !mox();
+        && !mox() && !m_cwQskTimeOutSpent;
     if (timing == m_cwQskKeyOutTiming) {
         return;
     }
     m_cwQskKeyOutTiming = timing;
     m_txTimeOut->onMox(0, !timing, timing);
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-18 to R-CW-22): MOX in CW follows the keyer controller.
+//
+// Runs on every keyer state change (the transmit slice's mode, the selected
+// and effective break-in mode, QSK and Semi availability). In order:
+//   1. Leaving CW with QSK selected sets Semi and remembers QSK; entering
+//      CW selects QSK again if it is available. From Thetis
+//      console.cs:34566-34581 [v2.10.3.15]:
+//        if ((new_mode != DSPMode.CWL && new_mode != DSPMode.CWU)
+//            && (old_mode == DSPMode.CWL || old_mode == DSPMode.CWU)) // Changing to a non-CW mode from CW
+//        {
+//            if (QSKEnabled)
+//            {
+//                chkQSK.Checked = false;  // QSKEnabled = false; // If QSK was on, turn it off to return to non-QSK settings
+//                qsk_in_CW = true; // But remember it was on in CW modes
+//            }
+//            else qsk_in_CW = false;
+//        }
+//
+//        if ((new_mode == DSPMode.CWL || new_mode == DSPMode.CWU)
+//            && (old_mode != DSPMode.CWL && old_mode != DSPMode.CWU)) // Changing to a CW mode from non-CW
+//        {
+//            if (qsk_in_CW) chkQSK.CheckState = CheckState.Indeterminate;
+//        }
+//      NereusSDR remembers the QSK the operator selected and sets Semi (the
+//      plan's choice for the break-in left in effect outside CW); QSK
+//      comes back only where it is still offered.
+//   2. MoxController hears the CW mode and the effective break-in mode.
+//   3. QSK's changes to the transmit slice's receiver (applyCwQskSideEffects).
+//   4. A fallback while selected (QSK to Semi, R-CW-20; Semi or QSK to Off
+//      under D16, R-CW-22) says why once, through moxRejected.
+// ---------------------------------------------------------------------------
+void RadioModel::syncCwKeying()
+{
+    if (!m_cwKeyerController || !m_moxController || m_cwSyncing) {
+        return;
+    }
+    const QScopedValueRollback<bool> syncing(m_cwSyncing, true);
+    TransmitModel& tm = m_transmitModel;
+
+    const SliceModel* tx = txBoundSlice();
+    const bool inCw = tx != nullptr
+        && (tx->dspMode() == DSPMode::CWL || tx->dspMode() == DSPMode::CWU);
+    if (inCw != m_cwTxSliceInCw) {
+        m_cwTxSliceInCw = inCw;
+        if (!inCw) {
+            m_cwQskInCw = tm.cwBreakInMode() == static_cast<int>(CwBreakInMode::Qsk);
+            if (m_cwQskInCw) {
+                tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+            }
+        } else if (m_cwQskInCw && m_cwKeyerController->qskAvailable()) {
+            tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        }
+    }
+
+    // The controller re-evaluated inside the setter above (a direct
+    // connection), so this is the mode in effect now.
+    const CwBreakInMode effective = m_cwKeyerController->effectiveBreakInMode();
+    m_moxController->setCwModeActive(inCw);
+    m_moxController->setCwBreakInMode(effective);
+    applyCwQskSideEffects(inCw && effective == CwBreakInMode::Qsk);
+
+    if (!inCw) {
+        m_cwLastEffective.reset();
+        m_cwLastSelected = -1;
+        return;
+    }
+    const int selected = tm.cwBreakInMode();
+    if (m_cwLastEffective && selected == m_cwLastSelected
+        && static_cast<int>(effective) < static_cast<int>(*m_cwLastEffective)) {
+        const QString reason = effective == CwBreakInMode::Off
+            ? m_cwKeyerController->semiUnavailableReason()
+            : m_cwKeyerController->qskUnavailableReason();
+        if (!reason.isEmpty()) {
+            m_moxController->reportCwRefusal(TxRefusals::bandPlan(reason));
+        }
+    }
+    m_cwLastEffective = effective;
+    m_cwLastSelected = selected;
+}
+
+QString RadioModel::cwQskSettingsPrefix() const
+{
+    const QString mac = m_lastRadioInfo.macAddress;
+    if (mac.isEmpty()) {
+        return QString();
+    }
+    return QStringLiteral("hardware/%1/tx/").arg(mac);
+}
+
+// ---------------------------------------------------------------------------
+// R-CW-21: QSK's changes to the transmit slice's receiver.
+//
+// From Thetis console.cs:13013-13041 [v2.10.3.15] (the QSKEnabled setter):
+//   if (qsk_enabled)
+//   {
+//       // Save non-QSK settings
+//       non_qsk_agc = RX1AGCMode;
+//       non_qsk_agc_hang_thresh = SetupForm.AGCRX1HangThreshold;//SetupForm.AGCHangThreshold; //MW0LGE_21k8
+//       non_qsk_ATTOnTX = ATTOnTX;
+//       non_qsk_ATTOnTXVal = SetupForm.ATTOnTX;
+//       non_qsk_breakin_delay = break_in_delay;
+//
+//       // Apply QSK settings.
+//       RX1AGCMode = AGCMode.CUSTOM;  // Use AGC Custom mode for optimal QSK settings
+//
+//       if (SetupForm.AGCRX1HangThreshold < 70) SetupForm.AGCRX1HangThreshold = 100;
+//
+//       ATTOnTX = true;         // Enable attenuation on transmit via the setting
+//       SetupForm.ATTOnTX = 31; // W2PA_21a
+//       BreakInDelay = 0;       // Set break-in delay to zero in case it's something else
+//   }
+//   else // Disable
+//   {
+//       // Retrieve saved non-QSK settings
+//       RX1AGCMode = non_qsk_agc;
+//
+//       SetupForm.AGCRX1HangThreshold = non_qsk_agc_hang_thresh;
+//
+//       ATTOnTX = non_qsk_ATTOnTX;
+//       SetupForm.ATTOnTX = non_qsk_ATTOnTXVal;
+//       BreakInDelay = non_qsk_breakin_delay;
+//   }
+// Ported: the AGC mode and the hang threshold, on the transmit slice's
+// receiver (Thetis RX1). The 31 dB TX attenuation goes to the radio in the
+// CW wire state (R-CW-16), not into the operator's ATT-on-TX settings, and
+// the break-in delay setting is never written: the hang sent in QSK uses a
+// delay of 0 (R-CW-13). NereusSDR keeps the saved values under
+// hardware/<mac>/tx/CW_QskSaved* with CW_QskActive, so a restart that finds
+// QSK no longer on puts them back.
+// ---------------------------------------------------------------------------
+namespace {
+// From Thetis console.cs:13025 [v2.10.3.15]: a hang threshold below 70 ...
+constexpr int kCwQskHangThresholdBelow = 70;
+// ... becomes 100.
+constexpr int kCwQskHangThreshold = 100;
+constexpr char kCwQskSavedAgcModeKey[] = "CW_QskSavedAgcMode";
+constexpr char kCwQskSavedHangThresholdKey[] = "CW_QskSavedHangThreshold";
+constexpr char kCwQskActiveKey[] = "CW_QskActive";
+} // namespace
+
+void RadioModel::applyCwQskSideEffects(bool qsk)
+{
+    AppSettings& settings = AppSettings::instance();
+    const QString pfx = cwQskSettingsPrefix();
+    const bool persistedActive = !pfx.isEmpty()
+        && settings.value(pfx + QLatin1String(kCwQskActiveKey), QStringLiteral("False")).toString()
+               == QStringLiteral("True");
+
+    if (qsk == m_cwQskApplied) {
+        // At load: a restart in QSK left the receiver changed and QSK is
+        // not on now, so the saved values go back.
+        if (!qsk && persistedActive) {
+            m_cwQskSavedAgcMode =
+                settings.value(pfx + QLatin1String(kCwQskSavedAgcModeKey), 0).toInt();
+            m_cwQskSavedHangThreshold =
+                settings.value(pfx + QLatin1String(kCwQskSavedHangThresholdKey), 0).toInt();
+            restoreCwQskSavedValues(txBoundSlice());
+            settings.setValue(pfx + QLatin1String(kCwQskActiveKey), QStringLiteral("False"));
+        }
+        return;
+    }
+
+    if (qsk) {
+        SliceModel* slice = txBoundSlice();
+        if (slice == nullptr) {
+            return;
+        }
+        if (persistedActive) {
+            // A restart in QSK: the values saved before it still stand.
+            m_cwQskSavedAgcMode =
+                settings.value(pfx + QLatin1String(kCwQskSavedAgcModeKey), 0).toInt();
+            m_cwQskSavedHangThreshold =
+                settings.value(pfx + QLatin1String(kCwQskSavedHangThresholdKey), 0).toInt();
+        } else {
+            m_cwQskSavedAgcMode = static_cast<int>(slice->agcMode());
+            m_cwQskSavedHangThreshold = slice->agcHangThreshold();
+            if (!pfx.isEmpty()) {
+                settings.setValue(pfx + QLatin1String(kCwQskSavedAgcModeKey),
+                                  QString::number(m_cwQskSavedAgcMode));
+                settings.setValue(pfx + QLatin1String(kCwQskSavedHangThresholdKey),
+                                  QString::number(m_cwQskSavedHangThreshold));
+                settings.setValue(pfx + QLatin1String(kCwQskActiveKey), QStringLiteral("True"));
+            }
+        }
+        m_cwQskApplied = true;
+        m_cwQskSlice = slice;
+        slice->setAgcMode(AGCMode::Custom);
+        if (slice->agcHangThreshold() < kCwQskHangThresholdBelow) {
+            slice->setAgcHangThreshold(kCwQskHangThreshold);
+        }
+        return;
+    }
+
+    m_cwQskApplied = false;
+    SliceModel* slice = m_cwQskSlice ? m_cwQskSlice.data() : txBoundSlice();
+    m_cwQskSlice.clear();
+    restoreCwQskSavedValues(slice);
+    if (!pfx.isEmpty()) {
+        settings.setValue(pfx + QLatin1String(kCwQskActiveKey), QStringLiteral("False"));
+    }
+}
+
+void RadioModel::restoreCwQskSavedValues(SliceModel* slice)
+{
+    if (slice == nullptr) {
+        return;
+    }
+    const int agc = std::clamp(m_cwQskSavedAgcMode, static_cast<int>(AGCMode::Off),
+                               static_cast<int>(AGCMode::Custom));
+    slice->setAgcMode(static_cast<AGCMode>(agc));
+    slice->setAgcHangThreshold(m_cwQskSavedHangThreshold);
 }
 
 bool RadioModel::rxOnlySetting()
@@ -35393,6 +35670,11 @@ void RadioModel::endAmpChangeover()
 void RadioModel::openTxRfGate()
 {
     if (!m_txChannel || m_transmitStopHold) {
+        return;
+    }
+    // CW transmit (R-CW-18): never for a key in CW (see the txReady
+    // consumer in wireTxChannelKeying); this covers every other caller.
+    if (m_moxController && m_moxController->isCwKeying()) {
         return;
     }
     if (ampChangingOver()) {

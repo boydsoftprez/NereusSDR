@@ -1051,6 +1051,12 @@ target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_cw_keyer_gate)
 nereus_add_test(tst_cw_keyer_controller)
 
+# CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
+# QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
+# fallback notice and the TX channel skip on a RadioModel.
+nereus_add_test(tst_mox_controller_cw)
+nereus_add_test(tst_cw_qsk_side_effects)
+
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 

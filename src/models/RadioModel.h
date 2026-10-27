@@ -756,6 +756,12 @@
 //                the connection, and the TX time-out on QSK key-out
 //                (R-CW-05 to R-CW-07, R-CW-10). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, MOX in CW, break-in and QSK: syncCwKeying,
+//                the QSK side effects with their saved values, the QSK
+//                memory across leaving CW, the break-in fallback notice
+//                and the QSK time-out once per hold (R-CW-09, R-CW-10,
+//                R-CW-18 to R-CW-22). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2887,6 +2893,9 @@ public:
     /// CW transmit (R-CW-10): whether the radio's QSK key-out is running
     /// the TX time-out now.
     bool cwQskKeyOutTimingForTest() const { return m_cwQskKeyOutTiming; }
+    /// CW transmit (R-CW-21): whether the QSK changes are applied to the
+    /// transmit slice's receiver now.
+    bool cwQskSideEffectsAppliedForTest() const { return m_cwQskApplied; }
 
     /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
     /// This API remains positional for internal list navigation only.
@@ -9729,6 +9738,34 @@ private:
     void updateCwQskTimeOut();
     std::optional<CwWireState> m_lastPushedCwWire;
     bool m_cwQskKeyOutTiming{false};
+    // The QSK time-out fired for the key-out held now: it stays quiet
+    // until the radio reports key-out released (one time-out per hold).
+    bool m_cwQskTimeOutSpent{false};
+
+    // ── CW transmit: MOX in CW, break-in and QSK (R-CW-18 to R-CW-22) ──────
+    // The keyer controller's state to MoxController (CW mode, the effective
+    // break-in mode), the CW memory of QSK across leaving CW, the QSK side
+    // effects and the break-in fallback notice. Runs on every keyer state
+    // change.
+    void syncCwKeying();
+    // R-CW-21: QSK's changes to the transmit slice's receiver, and their
+    // undoing (also at load, when a restart finds QSK no longer on).
+    void applyCwQskSideEffects(bool qsk);
+    void restoreCwQskSavedValues(SliceModel* slice);
+    // hardware/<mac>/tx/, empty with no radio known.
+    QString cwQskSettingsPrefix() const;
+    bool m_cwSyncing{false};
+    bool m_cwTxSliceInCw{false};
+    // Thetis qsk_in_CW: QSK was selected when the slice left CW.
+    bool m_cwQskInCw{false};
+    bool m_cwQskApplied{false};
+    QPointer<SliceModel> m_cwQskSlice;
+    int m_cwQskSavedAgcMode{0};
+    int m_cwQskSavedHangThreshold{0};
+    // The break-in mode last in effect while in CW, and the mode selected
+    // then (a fallback notice is given once, on the change).
+    std::optional<CwBreakInMode> m_cwLastEffective;
+    int m_cwLastSelected{-1};
     // Declared last so it goes first: nothing it is connected to signals
     // it while this model's other members are destroyed.
     std::unique_ptr<CwKeyerController> m_cwKeyerController;

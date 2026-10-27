@@ -6,9 +6,9 @@
 // states are designed for NereusSDR's Qt6 architecture; logic and
 // timer constants are derived from Thetis:
 //   console.cs:29311-29678 [v2.10.3.13] — chkMOX_CheckedChanged2
-//   console.cs:19659-19698 [v2.10.3.13] — mox_delay / space_mox_delay /
+//   console.cs:19690-19729 [v2.10.3.15] — mox_delay / space_mox_delay /
 //     key_up_delay / rf_delay / ptt_out_delay field declarations
-//   console.cs:18494-18502 [v2.10.3.13] — break_in_delay field declaration
+//   console.cs:18523-18527 [v2.10.3.15] — break_in_delay field declaration
 //   console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged (TUN
 //     slot; only the _manual_mox + _current_ptt_mode flag assignments
 //     at lines 30093-30094 and the _manual_mox clear at line 30142
@@ -25,6 +25,12 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, MOX in CW, break-in and QSK (R-CW-09,
+//               R-CW-18 to R-CW-20): the CW walk without the TX channel,
+//               PttMode::Cw from the radio's PTT and the serial PTT line,
+//               QSK keying from no PTT source, the keyer gate's refusal
+//               once per hold. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 //   2026-10-17: includes <QPointer>, which it used through the shared
 //                precompiled header only. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -270,17 +276,17 @@ MoxController::MoxController(QObject* parent)
     m_sendRingCeilingTimer.setTimerType(Qt::PreciseTimer);
 
     // Set default intervals from Thetis constants.
-    // From Thetis console.cs:19687 — private int rf_delay = 30 [v2.10.3.13]
+    // From Thetis console.cs:19718 — private int rf_delay = 30 [v2.10.3.15]
     m_rfDelayTimer.setInterval(kRfDelayMs);
-    // From Thetis console.cs:19659 — private int mox_delay = 10 [v2.10.3.13]
+    // From Thetis console.cs:19690 — private int mox_delay = 10 [v2.10.3.15]
     m_moxDelayTimer.setInterval(kMoxDelayMs);
-    // From Thetis console.cs:19669 — private int space_mox_delay = 0 [v2.10.3.13]
+    // From Thetis console.cs:19700 — private int space_mox_delay = 0 [v2.10.3.15]
     m_spaceDelayTimer.setInterval(kSpaceDelayMs);
-    // From Thetis console.cs:19677 — private int key_up_delay = 10 [v2.10.3.13]
+    // From Thetis console.cs:19708 — private int key_up_delay = 10 [v2.10.3.15]
     m_keyUpDelayTimer.setInterval(kKeyUpDelayMs);
-    // From Thetis console.cs:19694 — private int ptt_out_delay = 20 [v2.10.3.13]
+    // From Thetis console.cs:19725 — private int ptt_out_delay = 20 [v2.10.3.15]
     m_pttOutDelayTimer.setInterval(kPttOutDelayMs);
-    // From Thetis console.cs:18494 — private double break_in_delay = 300 [v2.10.3.13]
+    // From Thetis console.cs:18523 — private double break_in_delay = 300 [v2.10.3.15]
     m_breakInDelayTimer.setInterval(kBreakInDelayMs);
     // Task 33: WDSP SetChannelState's 100 x Sleep(1) drain bound.
     m_txDrainTimeoutTimer.setInterval(kTxDrainTimeoutMs);
@@ -579,6 +585,11 @@ KeyerIdentity KeyerIdentity::station(PttMode source)
     keyer.source = source;
     keyer.program = source == PttMode::Tci || source == PttMode::Cat;
     return keyer;
+}
+
+KeyerIdentity KeyerIdentity::radioKey()
+{
+    return station(PttMode::Cw);
 }
 
 void MoxController::setKeyingGate(KeyingGateFn gate)
@@ -1413,6 +1424,14 @@ void MoxController::setMoxImpl(bool on)
     // station device's own key); an unkey leaves nobody's key on.
     m_currentKeyer = on ? (m_keyAdmitted ? m_admittedKeyer : KeyerIdentity::station(m_pttMode))
                         : KeyerIdentity::station(PttMode::None);
+    // CW transmit (R-CW-18): a key made while the transmit slice is in CWL
+    // or CWU walks without the TX channel, and its release walks the same
+    // way. TUNE (isManualMox) keeps the voice walk: it runs the TX channel
+    // for its tone. Thetis tests the TX DSP mode, which TUNE has moved off
+    // CW (console.cs:29640-29641 and 29660-29661 [v2.10.3.15]).
+    if (on) {
+        m_cwKeying = m_cwModeActive && !m_manualMox;
+    }
 
     // ── Step 4: Start timer-driven walk ───────────────────────────────────────
     // Cancel any timers still running from a previous (rapid) transition.
@@ -1439,6 +1458,10 @@ void MoxController::setMoxImpl(bool on)
         if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
         emit hardwareFlipped(true);  // RX→TX phase 2 of 3 — before rfDelay
         if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
+        if (m_cwKeying) {
+            finishCwKeyDown();
+            return;
+        }
         advanceState(MoxState::RxToTxRfDelay);
         if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
         m_rfDelayTimer.start();
@@ -1480,6 +1503,11 @@ void MoxController::setMoxImpl(bool on)
         // end-of-over tail (at most kEndOfOverTailMaxMs), with the hardware
         // still keyed, and phase 1 follows it. Never under TX inhibit, the
         // PA trip or receive-only: those unkeys stop transmit at once.
+        if (m_cwKeying) {
+            // CW transmit (R-CW-18): no end-of-over tail (no TX channel).
+            beginCwTxToRxTeardown();
+            return;
+        }
         if (m_endOfOverTail && !transmitBlocked() && m_endOfOverTail()) {
             // The tail is on before stateChanged, so a subscriber of the
             // state change (RemoteKeying, the transmit state) already sees
@@ -1524,6 +1552,110 @@ void MoxController::beginTxToRxTeardown()
             return;
         }
         m_keyUpDelayTimer.start();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-18): RX to TX for a key in CW.
+//
+// From Thetis chkMOX_CheckedChanged2, console.cs:29640-29649 [v2.10.3.15]:
+//   if (radio.GetDSPTX(0).CurrentDSPMode != DSPMode.CWL &&
+//       radio.GetDSPTX(0).CurrentDSPMode != DSPMode.CWU) // turn on the transmitter unless in CW mode
+//   {
+//       if (rf_delay > 0)
+//           Thread.Sleep(rf_delay);
+//       AudioMOXChanged(tx);    // set MOX in audio.cs - wait 'til here to allow last audio to clear AAMix before changing to MON volume
+//       WDSP.SetChannelState(WDSP.id(1, 0), 1, 0);
+//   }
+//   else
+//       AudioMOXChanged(tx);    // set MOX in audio.cs
+// In CW the hardware flips (hardwareFlipped(true), already sent) and the
+// walk is done at once: no rf_delay, and txReady, which RadioModel answers
+// without starting the TX channel (isCwKeying), follows directly.
+// ---------------------------------------------------------------------------
+void MoxController::finishCwKeyDown()
+{
+    onRfDelayElapsed();
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-18): TX to RX for a key in CW.
+//
+// From Thetis chkMOX_CheckedChanged2, console.cs:29653-29670 [v2.10.3.15]:
+//   if (space_mox_delay > 0)
+//       Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE
+//
+//   _mox = tx;
+//   psform.Mox = tx;
+//   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);  // turn off the transmitter (no action if it's already off)
+//
+//   if (radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWL ||
+//       radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWU)
+//   {
+//       if (!cw_fw_keyer && key_up_delay > 0)
+//           Thread.Sleep(key_up_delay);
+//   }
+// and cw_fw_keyer is true in CW (console.cs:10716 and 34560-34564
+// [v2.10.3.15]), so the key-up delay is skipped; the MOX delay is the
+// voice branch's. The phase signals all still go out in their order
+// (txDrainRequested is Thetis's SetChannelState(tx, 0, 1), which does
+// nothing to a channel that is off), but nothing waits: no drain, no send
+// ring, no key-up or MOX delay. ptt_out_delay is kept (onKeyUpDelayElapsed
+// starts it).
+// ---------------------------------------------------------------------------
+void MoxController::beginCwTxToRxTeardown()
+{
+    const QPointer<MoxController> lifetime(this);
+    const quint64 transition = m_transitionSerial;
+    emit txAboutToEnd();                            // TX→RX phase 1 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
+    advanceState(MoxState::TxToRxInFlight);
+    if (!lifetime || transition != m_transitionSerial) { return; }
+    emit txDrainRequested();                        // TX→RX phase 2 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
+    onKeyUpDelayElapsed();                          // phases 3 and 4, then ptt_out_delay
+}
+
+void MoxController::setCwModeActive(bool txSliceInCw)
+{
+    if (m_cwModeActive == txSliceInCw) {
+        return;
+    }
+    m_cwModeActive = txSliceInCw;
+    // The radio's PTT counts as the CW key only in CW.
+    clearCwHoldIfReleased();
+}
+
+void MoxController::setCwBreakInMode(CwBreakInMode effective)
+{
+    m_cwBreakInMode = effective;
+}
+
+void MoxController::setCwKeyerGate(CwKeyerGateFn gate)
+{
+    m_cwKeyerGate = std::move(gate);
+}
+
+TxRefusal MoxController::cwKeyerRefusal() const
+{
+    return m_cwKeyerGate ? m_cwKeyerGate() : TxRefusal{};
+}
+
+void MoxController::reportCwRefusal(const TxRefusal& r)
+{
+    // The existing quiet-repeat rule (Task 7 fix wave, M3), per CW hold.
+    const bool quiet = (m_refusedHeld & kRefusedCw) != 0 && r == m_lastCwRefusal;
+    m_lastCwRefusal = r;
+    reportRefusal(r.text, r, quiet);
+    if (isCwKeyHeld()) {
+        m_refusedHeld |= kRefusedCw;
+    }
+}
+
+void MoxController::clearCwHoldIfReleased()
+{
+    if (!isCwKeyHeld() && ((m_refusedHeld | m_notQueuedHeld) & kRefusedCw) != 0) {
+        clearHeldBits(kRefusedCw);
     }
 }
 
@@ -1695,6 +1827,7 @@ bool MoxController::isLevelHeld(quint8 bit) const noexcept
     case kRefusedCat: return m_catPtt;
     case kRefusedMic: return m_micPtt;
     case kRefusedVox: return m_voxPtt;
+    case kRefusedCw:  return isCwKeyHeld();
     default:          return false;
     }
 }
@@ -1714,6 +1847,8 @@ quint8 MoxController::heldSourceBits() const noexcept
     if (m_catPtt) { bits |= kRefusedCat; }
     if (m_micPtt) { bits |= kRefusedMic; }
     if (m_voxPtt) { bits |= kRefusedVox; }
+    // CW transmit: the serial PTT line (the radio's PTT is the mic's bit).
+    if (m_cwSerialPtt) { bits |= kRefusedCw; }
     return bits;
 }
 
@@ -1782,10 +1917,17 @@ void MoxController::reportIfSourcesReleased()
 // (setTxInhibited, setPaTripped). While either is set the whole pass is
 // skipped, as in Thetis: no source keys and none is refused per frame.
 //
+// CW transmit (R-CW-19, R-CW-20) ports the CW branch, PTTMode.CW's
+// release, cw_ptt (onCwPtt, Semi only) and QSKEnabled (qskActive). Two
+// NereusSDR differences: in QSK only the keying side is skipped, so a key
+// already on when QSK came in still ends when its source is released (the
+// whole Thetis pass is skipped, which would leave it keyed); and a CW press
+// the keyer gate refuses keys nothing and is reported once per hold
+// (R-CW-09), since the radio's keyer is off then.
+//
 // Not ported, each for its own reason:
-//   - _disable_ptt, QSKEnabled: no NereusSDR equivalent in this
-//     controller; QSK is 3M-2. (_rx_only is ported by Task 16, setRxOnly.)
-//   - The CW branch and PTTMode.CW: CW keying is 3M-2 (onCwPtt refuses).
+//   - _disable_ptt: no NereusSDR equivalent in this controller.
+//     (_rx_only is ported by Task 16, setRxOnly.)
 //   - The mic's tx_mode gate (voice modes or _all_mode_mic_ptt): a mic PTT
 //     keys in every mode, as it did before. NereusSDR's RADE modes are not
 //     in Thetis's voice list and RADE transmits from the mic PTT.
@@ -1806,6 +1948,12 @@ void MoxController::pollPtt()
     }
 
     if (!m_mox) {
+        // CW transmit (R-CW-20): QSKEnabled in the gate above. In QSK the
+        // radio keys itself between characters and NereusSDR never enters
+        // MOX, so no source keys (radio, CAT, TCI, VOX, serial).
+        if (qskActive()) {
+            return;
+        }
         // Task 33: StopAllTx's latch.
         // From Thetis console.cs:25479-25492 [v2.10.3.15]:
         //   // we can come in here from a ToT ( StopAllTX() ) //[2.10.3.6]MWLGE fixes #518
@@ -1817,7 +1965,7 @@ void MoxController::pollPtt()
         //       else
         //           _stop_all_tx = false;
         //   }
-        // cw_ptt is 3M-2 (onCwPtt refuses every press).
+        // cw_ptt is the serial PTT line (onCwPtt, kRefusedCw).
         // PR 604 third pass (controller ruling, for JJ's veto): only the
         // sources still held since the stop are skipped, each until it is
         // released (the sweep at the top of the pass); a fresh key from any
@@ -1836,9 +1984,35 @@ void MoxController::pollPtt()
         if (m_catPtt && (waiting & kRefusedCat) == 0 && !isHeldOff(kRefusedCat)) {
             tryPollKey(PttMode::Cat, kRefusedCat);
         }
+        // CW transmit (R-CW-19). From Thetis console.cs:25519-25524
+        // [v2.10.3.15]:
+        //   if ((tx_mode == DSPMode.CWL || tx_mode == DSPMode.CWU) && (cw_ptt || mic_ptt))
+        //   {
+        //       _current_ptt_mode = PTTMode.CW;
+        //
+        //       chkMOX.Checked = true;
+        //   }
+        // The radio's PTT in CW is the radio's key (in Semi its keyer's PTT,
+        // in Off a PTT the operator wires), keyed as radioKey(). A press the
+        // keyer gate refuses keys nothing (the radio's keyer is off) and is
+        // reported once per hold; while another key is on it is left alone.
+        if (m_cwModeActive) {
+            const bool cwPress = (cwSerialPttCounts() && (waiting & kRefusedCw) == 0)
+                || (m_micPtt && (waiting & kRefusedMic) == 0);
+            if (cwPress && !isHeldOff(kRefusedCw)) {
+                const TxRefusal refused = cwKeyerRefusal();
+                if (refused.isEmpty()) {
+                    tryPollKey(PttMode::Cw, kRefusedCw);
+                } else if (!m_mox) {
+                    reportCwRefusal(refused);
+                }
+            }
+        }
         // From Thetis console.cs:25526-25541 [v2.10.3.15] (mode gate not
-        // ported, see above; PTTMode.CW is never set before 3M-2)
-        if (m_micPtt && m_pttMode != PttMode::Cw && (waiting & kRefusedMic) == 0
+        // ported, see above, except that in CW the radio's PTT is the CW
+        // key: the CW branch above takes it, as Thetis's mode gate leaves
+        // it to that branch)
+        if (m_micPtt && !m_cwModeActive && m_pttMode != PttMode::Cw && (waiting & kRefusedMic) == 0
             && !isHeldOff(kRefusedMic)) {
             tryPollKey(PttMode::Mic, kRefusedMic);
         }
@@ -1861,9 +2035,10 @@ void MoxController::pollPtt()
         // From Thetis console.cs:25562-25581 [v2.10.3.15]
         if (!m_tciPtt) {
             // From Thetis getFallbackPTTModeAfterTCIRelease,
-            // console.cs:25429-25461 [v2.10.3.15]: CAT, then CW (3M-2),
-            // then MIC, then VOX (voice modes), else NONE. The mic's
-            // tx_mode gate is left out as on the keying side.
+            // console.cs:25429-25461 [v2.10.3.15]: CAT, then CW, then MIC,
+            // then VOX (voice modes), else NONE. The mic's tx_mode gate is
+            // left out as on the keying side, except in CW, where the
+            // radio's PTT is the CW key.
             // R-R3-36: a source held off after a never-queued refusal is
             // not a fallback either; taking the key would key it without a
             // new press.
@@ -1873,7 +2048,23 @@ void MoxController::pollPtt()
             PttMode fallback = PttMode::None;
             if (m_catPtt && (waiting & kRefusedCat) == 0 && !isHeldOff(kRefusedCat)) {
                 fallback = PttMode::Cat;
-            } else if (m_micPtt && (waiting & kRefusedMic) == 0 && !isHeldOff(kRefusedMic)) {
+            } else if (m_cwModeActive
+                       && ((cwSerialPttCounts() && (waiting & kRefusedCw) == 0)
+                           || (m_micPtt && (waiting & kRefusedMic) == 0))
+                       && !isHeldOff(kRefusedCw)) {
+                // CW transmit (R-CW-19): the CW key sends no microphone, so
+                // the microphone admission below does not apply; the keyer
+                // gate does.
+                const TxRefusal refused = cwKeyerRefusal();
+                if (!refused.isEmpty()) {
+                    reportCwRefusal(refused);
+                    setMox(false);
+                    break;
+                }
+                setPttMode(PttMode::Cw);
+                break;
+            } else if (m_micPtt && !m_cwModeActive && (waiting & kRefusedMic) == 0
+                       && !isHeldOff(kRefusedMic)) {
                 fallback = PttMode::Mic;
             } else if (m_voxPtt && isVoiceMode(m_currentMode) && (waiting & kRefusedVox) == 0
                        && !isHeldOff(kRefusedVox)) {
@@ -1923,6 +2114,20 @@ void MoxController::pollPtt()
             setMox(false);
         }
         break;
+    case PttMode::Cw:
+        // CW transmit (R-CW-19, D1: the radio's hang time ends the key).
+        // From Thetis console.cs:25596-25602 [v2.10.3.15]:
+        //   case PTTMode.CW:
+        //       if (!cw_ptt && !mic_ptt)
+        //       {
+        //           chkMOX.Checked = false;
+        //           vac_bypass_disable = true;
+        //       }
+        //       break;
+        if (!cwSerialPttCounts() && !m_micPtt) {
+            setMox(false);
+        }
+        break;
     case PttMode::Vox:
         // From Thetis console.cs:25603-25608 [v2.10.3.15]
         if (!m_voxPtt) {
@@ -1951,6 +2156,8 @@ void MoxController::clearPttSources()
     m_catRequester = KeyerIdentity::station(PttMode::Cat);
     m_voxPtt = false;
     m_tciPtt = false;
+    m_cwSerialPtt = false;   // CW transmit
+    m_cwPaddleDown = false;
     m_refusedHeld = 0;
     m_notQueuedHeld = 0;
     m_micTakePressDown = false;
@@ -2408,7 +2615,8 @@ void MoxController::onSpaceDelayElapsed()
 //   if (mox_delay > 0)
 //       Thread.Sleep(mox_delay); // default 10, allows in-flight samples to clear
 //
-// (3M-2 will also branch here for CW key_up_delay, also 10ms by default.)
+// In CW (CW transmit, R-CW-18) the walk comes here at once from
+// beginCwTxToRxTeardown: key_up_delay is skipped with the firmware keyer.
 //
 // Phase signals (Codex P1):
 //   TX→RX phase 3 of 4 — emit txaFlushed() — in-flight samples cleared; TX channel may stop
@@ -2468,15 +2676,15 @@ void MoxController::onPttOutElapsed()
 
 // onBreakInDelayElapsed — fires when m_breakInDelayTimer elapses.
 //
-// From Thetis console.cs:18494 [v2.10.3.13]:
+// From Thetis console.cs:18523 [v2.10.3.15]:
 //   private double break_in_delay = 300;
 //
-// Reserved for 3M-2 CW QSK / break-in. NOT started from any 3M-1a path.
-// Declared here so the class is structured for 3M-2 from day one.
+// Never started: in CW the radio's own hang time ends the key and
+// NereusSDR leaves MOX when the radio drops PTT (D1, CW transmit).
 
 void MoxController::onBreakInDelayElapsed()
 {
-    // Not started in 3M-1a. Placeholder for 3M-2 CW QSK break-in.
+    // Never started (D1).
 }
 
 // ===========================================================================
@@ -2853,9 +3061,9 @@ void MoxController::primeWdspState()
 // SPACE and X2 keep the H.4 pattern: set the mode on press, then
 // setMox(pressed).
 //
-// REJECTION PATTERN (CW):
-//   qCWarning(lcDsp) << "... rejected, deferred to 3M-2";
-//   return;  — no setMox(), no setPttMode() update
+// CW (CW transmit, R-CW-19): the radio's PTT in CW keys PttMode::Cw in
+// pollPtt; onCwPtt is the serial PTT line; onCwKeyStatus the radio's dot
+// and dash.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -2892,6 +3100,7 @@ void MoxController::onMicPttFromRadio(bool pressed)
     if (!pressed) {
         m_micTakePressDown = false;   // Task 77 fix round 2
         clearHeldBits(kRefusedMic);   // M3 and R-R3-36: a new press
+        clearCwHoldIfReleased();      // CW transmit: the CW key's hold too
     }
     // iPhone app plan Task 77 (rulings 8.8, 8.9): while another device
     // holds transmit, whatever its key (tx.key, TUNE, two-tone, a Tuner
@@ -2912,7 +3121,8 @@ void MoxController::onMicPttFromRadio(bool pressed)
     // Asked only on a press edge: this runs on every PTT report (each P2
     // status frame; for P1, each change and each status tick), and the
     // Core's hook rebuilds device names each time it is asked.
-    const bool otherDeviceHolds = pressEdge
+    // CW transmit (R-CW-20): in QSK the radio's PTT takes nothing either.
+    const bool otherDeviceHolds = pressEdge && !qskActive()
         && (m_otherDeviceHolds ? m_otherDeviceHolds()
                                : (m_mox && !m_currentKeyer.isStation() && !m_manualKey));
     const bool onAir = m_mox || m_manualKey || m_state != MoxState::Rx;
@@ -3122,24 +3332,48 @@ void MoxController::onX2Ptt(bool pressed)
 }
 
 // ---------------------------------------------------------------------------
-// onCwPtt — CW keyer PTT — REJECTED (deferred to 3M-2).
+// onCwPtt: the serial PTT line (Thetis CWInput.KeyerPTT). CW transmit,
+// R-CW-19.
 //
-// Porting from Thetis Project Files/Source/Console/console.cs [v2.10.3.13]:
-//   PollPTT: bool cw_ptt = CWInput.KeyerPTT && ...;
-//   _current_ptt_mode = PTTMode.CW;  console.cs:25475 [v2.10.3.13]
-//
-// 3M-2 will implement the CW keyer, sidetone, and QSK/break-in state
-// machine.  This slot rejects the call to prevent accidental CW MOX
-// assertion before the full CW infrastructure is ready.
-// Rejection follows the qCWarning-and-return shape (formerly modeled on
-// setAntiVoxSourceVax(true) from H.3, removed in 3M-3a-iv).
+// From Thetis console.cs:25473 [v2.10.3.15]:
+//   bool cw_ptt = CWInput.KeyerPTT && _current_breakin_mode == BreakIn.Semi; // CW serial PTT  //[2.10.3.9]MW0LGE only want to do this on semi breakin
+// The level is recorded and one PollPTT pass decides (see pollPtt): it
+// keys PttMode::Cw in CWL or CWU with Semi break-in, and holds a CW key
+// (with the radio's PTT) until both are up.
 // ---------------------------------------------------------------------------
-void MoxController::onCwPtt(bool /*pressed*/)
+void MoxController::onCwPtt(bool pressed)
 {
-    qCWarning(lcDsp) << "MoxController::onCwPtt rejected —"
-                        " CW keyer PTT is deferred to 3M-2."
-                        " No MOX state change.";
-    return;
+    m_cwSerialPtt = pressed;
+    if (!pressed) {
+        clearCwHoldIfReleased();      // M3 and R-R3-36: a new press
+        sweepStopAllTxWait();
+    }
+    pollPtt();
+    if (!pressed) {
+        reportIfSourcesReleased();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// onCwKeyStatus: the radio's dot and dash. CW transmit, R-CW-09.
+//
+// NereusSDR-original. The radio's keyer keys the radio from its paddle
+// (in Semi its PTT status then keys MOX, see pollPtt), so a dot or dash
+// keys nothing here. When the keyer gate refuses (the keyer is off), the
+// press is reported once per hold, with the gate's words.
+// ---------------------------------------------------------------------------
+void MoxController::onCwKeyStatus(bool dot, bool dash)
+{
+    const bool down = dot || dash;
+    m_cwPaddleDown = down;
+    if (!down) {
+        clearCwHoldIfReleased();
+        return;
+    }
+    const TxRefusal refused = cwKeyerRefusal();
+    if (!refused.isEmpty()) {
+        reportCwRefusal(refused);
+    }
 }
 
 // ---------------------------------------------------------------------------
