@@ -192,12 +192,6 @@ public struct FrameDrawCadence: Equatable, Sendable {
         return true
     }
 
-    /// Counts the frame at `now` as a due draw, whenever it falls: the
-    /// cadence then runs on from it.
-    public mutating func lock(at now: Double) {
-        lastDue = now
-    }
-
     /// Forgets the last draw: the next frame draws.
     public mutating func reset() {
         lastDue = nil
@@ -226,13 +220,12 @@ public struct BandLineDraws: Equatable, Sendable {
     public init() {}
 
     /// Whether the link's frame at `now` (seconds) of `frame` length draws.
-    /// `interval` is the least time between 3D cadence draws, `linesPut` the
-    /// lines the clock put in on this frame, `dirty` whether the band
-    /// changed since it last drew, `flowing` whether lines flow, `urgent`
-    /// whether a change the screens show asked for a draw (in 2D every
-    /// change draws on the next frame, so it draws at once there too).
+    /// `interval` is the least time between 3D cadence draws (2D draws on
+    /// no cadence), `linesPut` the lines the clock put in on this frame,
+    /// `dirty` whether the band changed since it last drew (any change,
+    /// the screens' too), `flowing` whether lines flow.
     public mutating func draws(at now: Double, frame: Double, interval: Double, stacked: Bool, linesPut: Int,
-                               dirty: Bool, flowing: Bool, urgent: Bool) -> Bool {
+                               dirty: Bool, flowing: Bool) -> Bool {
         if stacked {
             return (dirty || flowing) && cadence.take(at: now, interval: interval, frame: frame)
         }

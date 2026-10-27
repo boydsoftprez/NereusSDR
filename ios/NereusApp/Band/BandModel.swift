@@ -278,9 +278,6 @@ final class BandModel: ObservableObject {
     /// Now on the steady clock the display link keeps, in seconds; the
     /// tests set their own.
     var lineClock: () -> Double = { CACurrentMediaTime() }
-    /// A change the screens over the band show wants drawing at once,
-    /// not at the lines' cadence (``takeUrgentDraw()``).
-    private var urgentDraw = false
     #if DEBUG
     /// The phone's timing trace of each line, when asked for
     /// (``WaterfallLineTrace``); nil otherwise.
@@ -293,13 +290,6 @@ final class BandModel: ObservableObject {
     /// Lines are flowing: some wait, or the last is still gliding in.
     var linesFlowing: Bool {
         state.pacingLines && (state.linesWaiting > 0 || (state.rowClock.anchored && !state.rowClock.starved))
-    }
-
-    /// The least time between two draws while lines flow: the Core's frames
-    /// a second, never over 60, and in 3D the pacer's (half as often at
-    /// half rate), so the band draws on a steady cadence of its own.
-    var lineDrawInterval: Double {
-        drawsStack ? stackDrawInterval : StackedTracePacer().leastInterval(askedFps: Double(contextFps))
     }
 
     /// The driver's state changed: lines go in by the clock only while a
@@ -344,12 +334,6 @@ final class BandModel: ObservableObject {
         moveMarks()
         noteTrace()
         redraw()
-    }
-
-    /// Whether a change the screens show asked for a draw since the last call.
-    func takeUrgentDraw() -> Bool {
-        defer { urgentDraw = false }
-        return urgentDraw
     }
 
     /// Hands the lines put in to the timing trace, when it runs.
@@ -1053,7 +1037,6 @@ final class BandModel: ObservableObject {
     /// A change the screens over the band show as well as the band itself.
     private func changed() {
         objectWillChange.send()
-        urgentDraw = true
         redraw()
     }
 

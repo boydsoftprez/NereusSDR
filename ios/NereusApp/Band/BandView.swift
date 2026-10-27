@@ -211,13 +211,12 @@ struct BandView: UIViewRepresentable {
                 return
             }
             let flowing = model.linesFlowing
-            let urgent = model.takeUrgentDraw()
             // 2D draws on each frame the clock puts a line in, and the trace
-            // and other changes on the next frame; 3D glides on the cadence
-            // (BandLineDraws).
-            let draws = lineDraws.draws(at: now, frame: frame, interval: model.lineDrawInterval,
+            // and other changes on the next frame; 3D glides on the pacer's
+            // cadence (BandLineDraws).
+            let draws = lineDraws.draws(at: now, frame: frame, interval: model.stackDrawInterval,
                                         stacked: model.drawsStack, linesPut: put, dirty: dirty,
-                                        flowing: flowing, urgent: urgent)
+                                        flowing: flowing)
             if draws {
                 dirty = false
                 restingFrames = 0

@@ -270,7 +270,7 @@ struct WaterfallPacingTests {
     /// each line went in on, the frame each was first drawn on, and for each
     /// frame's trace the seconds from its arrival to the first draw after it.
     static func drawn(_ arrivals: [Double], urgentEvery: Int,
-                      draws decide: (inout BandLineDraws, Double, Int, Bool, Bool, Bool) -> Bool)
+                      draws decide: (inout BandLineDraws, Double, Int, Bool, Bool) -> Bool)
         -> (put: [Int], shown: [Int], traceDelays: [Double]) {
         var state = Self.state(paced: true)
         var draws = BandLineDraws()
@@ -316,7 +316,7 @@ struct WaterfallPacingTests {
                 dirty = true
             }
             let flowing = state.linesWaiting > 0 || (state.rowClock.anchored && !state.rowClock.starved)
-            if decide(&draws, now, lines, dirty, flowing, urgent) {
+            if decide(&draws, now, lines, dirty, flowing) {
                 dirty = false
                 for _ in 0 ..< Int(state.history.linesAppended - shownLines) {
                     shown.append(number)
@@ -334,9 +334,9 @@ struct WaterfallPacingTests {
     func drawnLinesStayEven(phaseMs: Int) {
         let arrivals = Self.arrivals(lines: 600, phase: Double(phaseMs) / 1000, jitter: 0.008)
         for urgentEvery in [3, 7, 11] {
-            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing, urgent in
+            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing in
                 draws.draws(at: now, frame: Self.frame, interval: Self.period, stacked: false, linesPut: lines,
-                            dirty: dirty, flowing: flowing, urgent: urgent)
+                            dirty: dirty, flowing: flowing)
             }
             #expect(run.put.count == arrivals.count)
             // No line waits a frame for the draws' cadence, nor shows early.
@@ -352,9 +352,9 @@ struct WaterfallPacingTests {
         let arrivals = Self.arrivals(lines: 600, phase: Double(phaseMs) / 1000, jitter: 0.008)
         // A change the screens show every 3 or 7 frames, or once only.
         for urgentEvery in [3, 7, 1_000_000] {
-            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing, urgent in
+            let run = Self.drawn(arrivals, urgentEvery: urgentEvery) { draws, now, lines, dirty, flowing in
                 draws.draws(at: now, frame: Self.frame, interval: Self.period, stacked: false, linesPut: lines,
-                            dirty: dirty, flowing: flowing, urgent: urgent)
+                            dirty: dirty, flowing: flowing)
             }
             #expect(run.traceDelays.count == arrivals.count)
             // As before the clock: a trace waits at most for the next screen frame.
@@ -368,17 +368,12 @@ struct WaterfallPacingTests {
         }
     }
 
-    @Test("the draws' cadence: every second frame at 30 a second, run on from a frame it is locked to, and again after a rest")
+    @Test("the draws' cadence: every second frame at 30 a second, and again after a rest")
     func frameDrawCadence() {
         var cadence = FrameDrawCadence()
         let frames = (0 ..< 8).map { Self.base + Double($0) * Self.frame }
         let drawn = frames.indices.filter { cadence.take(at: frames[$0], interval: Self.period, frame: Self.frame) }
         #expect(drawn == [0, 2, 4, 6])
-        cadence.lock(at: Self.base + 9 * Self.frame)
-        let locked = (10 ..< 16).filter {
-            cadence.take(at: Self.base + Double($0) * Self.frame, interval: Self.period, frame: Self.frame)
-        }
-        #expect(locked == [11, 13, 15])
         // A frame long after the last (the link rested) draws and starts the cadence from itself.
         let rested = (40 ... 42).map {
             cadence.take(at: Self.base + Double($0) * Self.frame, interval: Self.period, frame: Self.frame)
