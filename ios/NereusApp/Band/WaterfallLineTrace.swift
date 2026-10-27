@@ -42,6 +42,11 @@ final class WaterfallLineTrace {
     /// One screen frame at 60 a second, the histogram's bin.
     static let binMs = 1000.0 / 60
 
+    /// The most lines kept for the next draw, two seconds of them. While
+    /// the trace runs and the view does not draw (its tab hidden, the app
+    /// in the background), the older ones are counted dropped.
+    static let mostForDraw = 64
+
     /// Lines put in and not yet drawn.
     private var forDraw: [BandState.PutLine] = []
     private var lastPresented: Double?
@@ -60,6 +65,11 @@ final class WaterfallLineTrace {
     /// still waiting.
     func note(_ puts: [BandState.PutLine], clock: WaterfallRowClock, lock: WaterfallFrameLock, waiting: Int) {
         forDraw.append(contentsOf: puts)
+        if forDraw.count > Self.mostForDraw {
+            let over = forDraw.count - Self.mostForDraw
+            forDraw.removeFirst(over)
+            dropped += over
+        }
         mostWaiting = max(mostWaiting, waiting)
         if clock.starvedSlots > lastClock.starvedSlots {
             starves += clock.starvedSlots - lastClock.starvedSlots

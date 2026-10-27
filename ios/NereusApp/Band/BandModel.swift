@@ -731,8 +731,11 @@ final class BandModel: ObservableObject {
             trackGrid()
             noteEffectiveReadouts()
             stackFrameCount &+= 1
-            if drawsStack, !pacer.draws(frame: stackFrameCount) {
-                // Half rate: this frame is kept but not drawn.
+            if drawsStack, !pacer.draws(frame: stackFrameCount), state.linesWaiting == 0 {
+                // Half rate: this frame is kept but not drawn. A line
+                // waiting for the row clock still asks, since only that
+                // wakes a resting display link: the link's cadence keeps
+                // the half rate.
                 return
             }
             redraw()

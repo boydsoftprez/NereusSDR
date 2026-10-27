@@ -22,6 +22,9 @@ import os
 /// as before.
 struct BandView: UIViewRepresentable {
     @ObservedObject var model: BandModel
+    /// The band's tab shows; hidden, the display link stops and the lines
+    /// go in as they come.
+    @Environment(\.bandOnScreen) private var onScreen
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model)
@@ -42,6 +45,7 @@ struct BandView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MTKView, context: Context) {
+        context.coordinator.onScreen = onScreen
         view.setNeedsDisplay()
     }
 
@@ -137,13 +141,31 @@ struct BandView: UIViewRepresentable {
             }
         }
 
+        /// The band's tab shows (``EnvironmentValues/bandOnScreen``). Hidden,
+        /// the band stops driving its lines: the waiting ones go in, the
+        /// link stops on its next frame, and lines go in as they come until
+        /// the tab shows again, when the row clock starts afresh as after a
+        /// rest.
+        var onScreen = true {
+            didSet {
+                if onScreen != oldValue {
+                    model.notePacing()
+                }
+            }
+        }
+
+        /// The display link is running, for the tests.
+        var linkRuns: Bool {
+            link.map { !$0.isPaused } ?? false
+        }
+
         var drivesLines: Bool {
             #if DEBUG
             if Self.rowClockOff {
                 return false
             }
             #endif
-            return link != nil && renderer != nil && view?.window != nil
+            return onScreen && link != nil && renderer != nil && view?.window != nil
         }
 
         /// A 2D band draws at once. The 3D view draws no faster than the
@@ -298,6 +320,25 @@ struct BandView: UIViewRepresentable {
                           drawTime: timed)
             #endif
         }
+    }
+}
+
+extension EnvironmentValues {
+    /// Whether the band's tab is the one showing. A tab kept alive behind
+    /// another keeps its window (``RootView``), so the window alone does
+    /// not say whether the band can be seen.
+    @Entry var bandOnScreen = true
+}
+
+extension View {
+    /// A tab's screen, kept alive while another tab shows: seen, touched
+    /// and read aloud only while `shown`, and its band's display link
+    /// stopped while hidden.
+    func tabShown(_ shown: Bool) -> some View {
+        opacity(shown ? 1 : 0)
+            .allowsHitTesting(shown)
+            .accessibilityHidden(!shown)
+            .environment(\.bandOnScreen, shown)
     }
 }
 

@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the band's waterfall lines go in on the row clock, driven by the screen, and the 3D glides by it
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
+import Combine
 import CoreGraphics
 import Foundation
 import NereusBand
@@ -142,9 +143,14 @@ struct BandRowClockTests {
             let ready = try await ShotWait.requireBandLaidOut(band, in: window)
             var glides = Set<Double>()
             var waited = false
-            // Lines as the Core sends them, one every 33 ms of real time.
-            for sequence in 1 ... 60 {
-                band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence))))
+            // Lines as the Core sends them, one every 33 ms of real time:
+            // 60 of them, and in 3D more on a busy simulator until the stack
+            // has glided through more than 10 values, for up to 20 s.
+            let deadline = Date().addingTimeInterval(20)
+            var fed = 0
+            while fed < 60 || (stacked && glides.count <= 10 && Date() < deadline) {
+                fed += 1
+                band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(fed))))
                 waited = waited || band.state.linesWaiting > 0
                 for _ in 0 ..< 3 {
                     try await Task.sleep(for: .milliseconds(11))
@@ -153,13 +159,125 @@ struct BandRowClockTests {
             }
             #expect(band.pacingLines, "3D \(stacked)")
             #expect(waited, "the lines waited for the clock")
-            #expect(await ShotWait.until { band.state.linesWaiting == 0 && band.state.history.linesAppended >= 60 })
+            #expect(await ShotWait.until { band.state.linesWaiting == 0 && band.state.history.linesAppended >= fed })
             try await ShotWait.requireBandShown(band, in: window, after: ready)
             if stacked {
                 #expect(band.state.stack.rowsAppended >= 14)
-                #expect(glides.count > 10, "the stack glided between lines: \(glides.count) values")
+                #expect(glides.count > 10, "the stack glided between lines: \(glides.count) values in \(fed) lines")
             }
         }
+    }
+
+    @Test("at 3D half rate, a line that comes on a frame not drawn still wakes the view's display link")
+    func aSkippedFrameStillWakesTheLink() throws {
+        let band = try Self.band(stacked: true)
+        var now = 1_000.0
+        band.clock = { now }
+        // Slow frames: 80 ms each, under 20 a second.
+        for _ in 0 ..< 15 {
+            now += 0.08
+            band.noteStackFrame(drawSeconds: 0.08)
+        }
+        #expect(band.stackStage == .halfRate && band.drawsStack)
+        let driver = Driver()
+        band.lineDriver = driver
+        var steady = 500.0
+        band.lineClock = { steady }
+        var draws = 0
+        let watch = band.draws.sink { draws += 1 }
+        // After a rest the link sleeps: only a draw request wakes it, so each
+        // line that waits for the clock asks for one, drawn or not.
+        for sequence in 1 ... 4 {
+            steady += 1.0 / 30
+            let before = draws
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence))))
+            #expect(band.state.linesWaiting > 0)
+            #expect(draws > before, "line \(sequence) waits with nothing to wake the link")
+        }
+        watch.cancel()
+    }
+
+    @Test("a hidden tab's band stops its display link and its lines go in as they come; shown again, they wait for the clock")
+    func aHiddenTabStopsTheLink() async throws {
+        let band = try Self.band(stacked: false)
+        let tab = TabShown()
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 874))
+        window.rootViewController = ShotHosting.host(TabbedBand(tab: tab, band: band))
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let ready = try await ShotWait.requireBandLaidOut(band, in: window)
+        let linkRuns = {
+            (ShotWait.bandView(for: band, in: window)?.delegate as? BandView.Coordinator)?.linkRuns ?? false
+        }
+        var sequence: UInt32 = 0
+        for _ in 0 ..< 10 {
+            sequence += 1
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: sequence)))
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        #expect(band.pacingLines)
+        // Another tab shows: the band keeps its window, at no opacity.
+        tab.shown = false
+        #expect(await ShotWait.until(seconds: 10) { !band.pacingLines && !linkRuns() },
+                "the hidden band's link still runs")
+        let before = band.state.history.linesAppended
+        for _ in 0 ..< 10 {
+            sequence += 1
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: sequence)))
+            #expect(band.state.linesWaiting == 0, "a hidden band's line goes in as it comes")
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        #expect(band.state.history.linesAppended == before + 10)
+        #expect(!linkRuns(), "the hidden band's link stays stopped")
+        // The tab shows again: the lines wait for the clock, and all go in.
+        tab.shown = true
+        #expect(await ShotWait.until(seconds: 10) { band.pacingLines })
+        var waited = false
+        for _ in 0 ..< 10 {
+            sequence += 1
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: sequence)))
+            waited = waited || band.state.linesWaiting > 0
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        #expect(waited, "the lines waited for the clock")
+        #expect(await ShotWait.until { band.state.linesWaiting == 0 && band.state.history.linesAppended == before + 20 })
+        try await ShotWait.requireBandShown(band, in: window, after: ready)
+    }
+
+    #if DEBUG
+    @Test("the timing trace keeps at most two seconds of lines for a view that does not draw")
+    func theTraceKeepsFewLinesForADraw() {
+        let trace = WaterfallLineTrace()
+        for sequence in 1 ... 1_000 {
+            let line = BandState.PutLine(sequence: UInt32(sequence), arrivedAt: Double(sequence),
+                                         putAt: Double(sequence))
+            trace.note([line], clock: WaterfallRowClock(), lock: WaterfallFrameLock(), waiting: 0)
+        }
+        let kept = trace.takeLinesForDraw()
+        #expect(kept.count == WaterfallLineTrace.mostForDraw)
+        #expect(kept.last?.sequence == 1_000)
+    }
+    #endif
+}
+
+/// Whether the tab holding the band shows.
+@MainActor
+final class TabShown: ObservableObject {
+    @Published var shown = true
+}
+
+/// The band in a tab, kept alive while hidden as the app's tabs are.
+struct TabbedBand: View {
+    @ObservedObject var tab: TabShown
+    let band: BandModel
+
+    var body: some View {
+        BandView(model: band)
+            .ignoresSafeArea()
+            .tabShown(tab.shown)
     }
 }
 

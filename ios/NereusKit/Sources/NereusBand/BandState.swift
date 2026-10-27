@@ -196,6 +196,12 @@ public struct BandState: Equatable, Sendable {
         /// When it was committed and when it went in, on the steady clock.
         public let arrivedAt: Double
         public let putAt: Double
+
+        public init(sequence: UInt32, arrivedAt: Double, putAt: Double) {
+            self.sequence = sequence
+            self.arrivedAt = arrivedAt
+            self.putAt = putAt
+        }
     }
     /// Keeps each line put in for the timing trace (``takePutLines()``).
     public var tracesLines = false {
