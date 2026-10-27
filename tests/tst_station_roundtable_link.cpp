@@ -32,6 +32,9 @@
 //   2026-10-25: Roundtable fix wave: each web sign-in link answers the
 //               oldest waiting request, and a failed one is answered at
 //               once. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: Only the server whose settings RoundtableState reads hands
+//               it back on teardown. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -999,6 +1002,37 @@ private slots:
                  QStringLiteral("Band"));
         QTest::qWait(150);
         QVERIFY(!core.settings->contains(QStringLiteral("Roundtable/PanelOpensOn")));
+    }
+
+    // ── Teardown ───────────────────────────────────────────────────
+
+    // Two servers on one model: the later one bound RoundtableState to its
+    // own settings. The earlier one going away leaves that binding alone and
+    // makes the state reload (and emit) nothing; the owner going away hands
+    // the state back to the application's settings.
+    void onlyTheOwningServerHandsTheStateBack()
+    {
+        Core core;
+        RoundtableState* state = core.state();
+        QVERIFY(state->readsSettings(core.settings.get()));
+
+        QTemporaryDir dir;
+        auto settings = std::make_unique<AppSettings>(dir.filePath(QStringLiteral("owner.settings")));
+        auto owner = std::make_unique<StationServer>(
+            &core.model, *settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        QVERIFY(state->readsSettings(settings.get()));
+
+        QSignalSpy changed(state, &RoundtableState::stateChanged);
+        core.server.reset();
+        QVERIFY(state->readsSettings(settings.get()));
+        QCOMPARE(changed.count(), 0);
+
+        // The owner's settings still reach the state.
+        settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("True"));
+        QVERIFY(changed.count() > 0);
+
+        owner.reset();
+        QVERIFY(state->readsSettings(&AppSettings::instance()));
     }
 };
 

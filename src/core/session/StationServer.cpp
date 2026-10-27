@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: Roundtable: only the server whose settings RoundtableState
+//               reads hands it back on teardown, and the state's signals no
+//               longer reach the server being destroyed. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-25: Roundtable: a server going away hands the model's
 //               RoundtableState back to the application's settings, so a
 //               model that outlives the server's settings no longer crashes
@@ -4481,10 +4485,16 @@ StationServer::~StationServer()
     // Roundtable plan Task 11: setUpRoundtable() pointed the model's
     // RoundtableState at this server's settings, and the model may outlive
     // both; it goes back to the application's settings, as RadioModel binds
-    // it, so its destructor never reaches settings that are gone.
+    // it, so its destructor never reaches settings that are gone. Only the
+    // server whose settings the state reads does this: a later server has
+    // bound it to its own, and keeps it. The state's signals stop reaching
+    // this half-gone server first, since the rebind reloads and emits.
     if (m_roundtableOn && m_radioModel && m_radioModel->roundtableState() != nullptr) {
-        m_radioModel->roundtableState()->bindClient(m_radioModel->roundtableClient(),
-                                                    &AppSettings::instance());
+        RoundtableState* state = m_radioModel->roundtableState();
+        disconnect(state, nullptr, this, nullptr);
+        if (state->readsSettings(&m_settings)) {
+            state->bindClient(m_radioModel->roundtableClient(), &AppSettings::instance());
+        }
     }
 
     // iPhone app plan Task 34: the keying gate asks this object; the model

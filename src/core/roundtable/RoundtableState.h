@@ -33,6 +33,9 @@
 //               object and the Core's Roundtable answers).
 //   2026-10-24: Task 11 fix round: isClientId() public. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: readsSettings(), so only the station server whose
+//               settings the state reads hands it back. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -112,6 +115,10 @@ public:
     void bindClient(RoundtableClient* client, AppSettings* settings);
     bool isBound() const { return !m_client.isNull(); }
     RoundtableClient* client() const { return m_client.data(); }
+    /// Whether the state reads its answers from `settings` (the one
+    /// bindClient was given): a station server going away hands the state
+    /// back only when it is that server's.
+    bool readsSettings(const AppSettings* settings) const { return m_settings == settings; }
     /// The Core's slices, active first, as RoundtableClient gets them.
     void setSlices(const QList<RoundtableSliceState>& slices);
     /// The band list's summaries (the rooms that are listed now).
