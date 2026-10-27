@@ -52,7 +52,7 @@ import Testing
         #expect(abs(row[2] + 80) < 1e-4, "-80 with no neighbour of its own source")
         #expect(row[3].isNaN, "no level stays no level")
         #expect(abs(row[4] + 60) < 1e-4)
-        #expect(StackedRowSmoother.middle(-50, .nan, -90) == -50, "the newest alone when one has none")
+        #expect(StackedRowSmoother.median(-50, .nan, -90, newest: -50) == -50, "the newest alone when one has none")
     }
 
     @Test func anotherViewOrCaptureStartsOver() {
