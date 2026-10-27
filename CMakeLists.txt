@@ -1132,6 +1132,9 @@ set(CORE_SOURCES
     # CW transmit (R-CW-01, R-CW-02): the CW value types and the pitch accessor.
     src/core/CwTypes.cpp
     src/core/CwTypes.h
+    # CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line.
+    src/core/CwKeyLine.cpp
+    src/core/CwKeyLine.h
     src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h

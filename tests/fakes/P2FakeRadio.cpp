@@ -3,6 +3,10 @@
 // no-port-check: NereusSDR-original Protocol 2 loopback fixture. Wire-format
 // citations describe the packets produced by the fake; no upstream control
 // flow is reproduced here.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, every high-priority and CmdTx packet kept
+//               whole. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "P2FakeRadio.h"
 
@@ -66,6 +70,8 @@ bool P2FakeRadio::start(const QHostAddress& address,
     m_lastHighPriorityFlags = 0;
     m_lastHighPriorityOcByte = -1;
     m_highPriorityRecords.clear();
+    m_highPriorityPackets.clear();
+    m_txPackets.clear();
     m_ddcSequence = 0;
     m_statusSequence = 0;
     m_widebandSequence.fill(0);
@@ -178,6 +184,12 @@ void P2FakeRadio::drainRoleSocket(int offset)
             m_lastGeneralWatchdog = static_cast<quint8>(datagram.data().at(38));
         }
 
+        // Host DUC specific commands (CmdTx) use outbound base + 2 and are
+        // 60 bytes.
+        if (offset == 2 && datagram.data().size() == 60) {
+            m_txPackets.append(datagram.data());
+        }
+
         // Host high-priority commands use outbound base + 3 and are 1444
         // bytes. Byte 4 carries run bit 0 and MOX bit 1.
         if (offset == 3 && datagram.data().size() == 1444) {
@@ -188,6 +200,7 @@ void P2FakeRadio::drainRoleSocket(int offset)
                 int(static_cast<quint8>(datagram.data().at(1401)) >> 1);
             m_highPriorityRecords.append(
                 {flags, static_cast<quint8>(datagram.data().at(1400))});
+            m_highPriorityPackets.append(datagram.data());
             if ((flags & 0x01u) == 0) {
                 ++m_stopCount;
             }

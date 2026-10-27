@@ -1035,6 +1035,15 @@ nereus_add_test(tst_alex_filter_map)
 # clamps and the hang, RF delay, sidetone level and P2 mode-control helpers.
 nereus_add_test(tst_cw_wire_state)
 
+# CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line, the P1 key
+# overlay on the EP2 sender's frame, and the P2 CW wire through a loopback
+# fake radio, the transmit cut included.
+nereus_add_test(tst_cw_key_line)
+nereus_add_test(tst_p1_cw_key_overlay)
+target_compile_definitions(tst_p1_cw_key_overlay PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_p2_cw_wire fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 

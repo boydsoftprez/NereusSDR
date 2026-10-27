@@ -137,6 +137,10 @@
 //                Longpath src/core/P1RadioConnection.h:830 [@383f058] (PR 62).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-26 - CW transmit, the wire state, bank 13 on an enable change,
+//                the key overlay on the EP2 sender thread and the cut's
+//                CW zeroing. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                Code.
 // =================================================================
 
 /*
@@ -402,6 +406,9 @@ public slots:
     void setRx2Preamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
+    // CW transmit (R-CW-11, R-CW-12): stores the clamped state; a changed
+    // enable puts bank 13 on the next frame (m_forceBank13Next).
+    void setCwWireState(const NereusSDR::CwWireState& s) override;
     void setAntennaRouting(AntennaRouting routing) override;
     void setAlexRxBpf(AlexRxBpf bpf) override;
     // Level Cal: the Alex receive attenuator (Thetis SetAlexAtten).
@@ -1101,6 +1108,12 @@ private:
     // bank-4 send) immediately after writing prn->adc[i].tx_step_attn.
     bool    m_forceBank4Next{false};
 
+    // CW transmit (2026-10-26): force the next frame to bank 13 so the CW
+    // enable (C1) lands within one frame of a change, or of the transmit
+    // cut. Same pattern as m_forceBank10Next / m_forceBank11Next; set and
+    // consumed under the frame lock.
+    bool    m_forceBank13Next{false};
+
     // Phase 3M-4 Task 17 P1 follow-up: PureSignal nDdc state for the
     // bank 2/3 (RX1/RX2 VFO DDC) freq-override gate.  Captured from
     // PsDdcConfig.nDdc by applyPsDdcConfig().  When (m_psNDdc == 2 &&
@@ -1237,6 +1250,17 @@ private:
     // the window before the cut's own setMox(false) runs carries no MOX bit.
     // Atomic reads only, so it is safe from any compose thread.
     bool wireMox() const noexcept { return m_mox.load() && !transmitCut(); }
+    // CW transmit (2026-10-26): the CW wire state every compose site puts
+    // on the wire: m_cwWire, with CW enable and break-in read as 0 while
+    // the transmit is cut. Under the frame lock.
+    CwWireState wireCwState() const noexcept;
+    // CW transmit (R-CW-12, R-CW-15): on the EP2 sender thread, after both
+    // fillTxZone calls. While the frame's CW enable is 1 (codec path, not
+    // cut), every I and Q word of both zones becomes the host key bits.
+    void applyCwKeyOverlay(quint8* frame) const noexcept;
+    // The transmit cut (2026-10-15) and CW (2026-10-26): the default unkey,
+    // then bank 13 next so the radio's keyer is off within one frame.
+    void applyTransmitCut() override;
     // Link-loss latch (TX safety, whole-branch review 2026-09-30, fix
     // round 1). Set when the watchdog declares a link lost while keyed, and
     // at a reconnect attempt that found a key made during the outage. While
@@ -1831,6 +1855,15 @@ public:
     // forceBank11NextForTest — returns m_forceBank11Next (the bank-11 flush
     // flag state).  Used by tst_p1_mic_tip_ring_wire to verify Codex P2 pattern.
     bool forceBank11NextForTest() const { return m_forceBank11Next; }
+
+    // CW transmit (2026-10-26): bank 13 (CW enable, sidetone level, RF
+    // delay) from current state, and its flush flag.
+    QByteArray captureBank13ForTest() const {
+        quint8 out[5] = {};
+        composeCcForBankForTest(13, out);
+        return QByteArray(reinterpret_cast<const char*>(out), 5);
+    }
+    bool forceBank13NextForTest() const { return m_forceBank13Next; }
 
     // Phase 3M-4 Task 17 P1 follow-up — bank 2/3/4 capture + bank-4 flush
     // flag exposed for the P1 PureSignal regression tests.
