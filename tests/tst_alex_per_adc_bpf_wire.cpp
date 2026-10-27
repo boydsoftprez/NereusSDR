@@ -662,6 +662,128 @@ private slots:
         delete mock;
     }
 
+    // ── Anvelina Pro 3: input 2 follows Slice B when nothing is on it ────
+    //
+    // Thetis sets the Alex-2 high-pass from VFO B on every change, RX2 on or
+    // off (UpdateRX2DDSFreq, console.cs:15435-15444 [v2.10.3.15];
+    // Thetis-Enhanced (EU2AV) console.cs:15462-15471 [@567a7ec]). Slice B is
+    // RX2 / VFO B here. Slice A 7.1 MHz and Slice B 14.2 MHz both on input 1:
+    // Alex0's receive half is both rows (0x0012), and Alex1's is Slice B's
+    // 11 to 22 MHz row (0x0002), not a copy of Alex0's.
+    void anvelina_input2_follows_slice_b_when_nothing_is_on_it()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7100000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        QCOMPARE(model.slices().at(b)->sliceIndex(), 1);   // Slice B
+        QCOMPARE(model.sliceChainIndex(model.slices().at(b)->sliceIndex()), 0);
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        const AlexRxBpf last = mock->bpfCalls.last();
+        QCOMPARE(last.hpfBitsAdc1, 0x01);   // the 11 to 22 MHz row
+
+        CodecContext ctx;
+        ctx.model           = HPSDRModel::ANVELINAPRO3;
+        ctx.alexHpfBits     = quint8(last.hpfBitsAdc0);
+        ctx.alexHpfBitsAdc1 = last.hpfBitsAdc1;
+        quint32 alex0 = 0, alex1 = 0;
+        composeAlexRegisters(ctx, &alex0, &alex1);
+        QCOMPARE(alex0 & 0xFFFFu, 0x0012u);
+        QCOMPARE(alex1 & 0xFFFFu, 0x0002u);
+
+        // Keyed, Thetis keeps following VFO B (HdwMOXChanged calls
+        // UpdateRX2DDSFreq; setAlex2HPF has no MOX arm), so the receive
+        // half is the same word.
+        ctx.mox = true;
+        composeAlexRegisters(ctx, &alex0, &alex1);
+        QCOMPARE(alex1 & 0xFFu, 0x02u);
+        QCOMPARE(alex1 & (1u << 12), 0u);
+
+        // Retuning Slice B moves the input-2 row with it.
+        model.slices().at(b)->setFrequency(3700000.0);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, 0x08);   // 2.1 to 5.5 MHz row
+
+        delete mock;
+    }
+
+    // No Slice B: no decision for input 2, so Alex1 keeps today's mirror of
+    // Alex0's selection.
+    void anvelina_input2_mirrors_alex0_without_slice_b()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7100000.0);
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        const AlexRxBpf last = mock->bpfCalls.last();
+        QCOMPARE(last.hpfBitsAdc0, 0x04);
+        QCOMPARE(last.hpfBitsAdc1, -1);
+
+        CodecContext ctx;
+        ctx.model           = HPSDRModel::ANVELINAPRO3;
+        ctx.alexHpfBits     = quint8(last.hpfBitsAdc0);
+        ctx.alexHpfBitsAdc1 = last.hpfBitsAdc1;
+        quint32 alex0 = 0, alex1 = 0;
+        composeAlexRegisters(ctx, &alex0, &alex1);
+        QCOMPARE(alex0 & 0xFFFFu, 0x0010u);
+        QCOMPARE(alex1 & 0xFFFFu, 0x0010u);   // the mirror
+
+        // Removing Slice B goes back to the mirror.
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, 0x01);
+        model.removeSlice(model.slices().at(b)->sliceIndex());
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, -1);
+
+        delete mock;
+    }
+
+    // A slice on input 2 keeps its own rule: Alex1 follows the slices there,
+    // not Slice B.
+    void anvelina_slice_on_input2_keeps_its_rule()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7100000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        const int c = model.addSlice();
+        model.slices().at(c)->setFrequency(3700000.0);
+        model.setActiveSlice(c);
+        model.slices().at(c)->setRxAntenna(QStringLiteral("EXT1"));
+        QCOMPARE(model.sliceChainIndex(model.slices().at(c)->sliceIndex()), 1);
+
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, 0x08);   // Slice C's row
+
+        delete mock;
+    }
+
     // Removing the second slice collapses the chain back to a single band,
     // so the bypass must lift again.
     void removing_the_cross_band_slice_lifts_the_bypass()

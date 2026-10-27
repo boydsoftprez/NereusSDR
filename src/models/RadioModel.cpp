@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - republishAlexAdcSlices: on the Anvelina Pro 3, input 2's
+//                band-pass follows Slice B (Thetis RX2 / VFO B) when no
+//                slice is on input 2, as Thetis's setAlex2HPF does (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - "Gnd BPF2 on Tx" (alex/master/bpf2GndOnTx): applied to the
 //                connection with the Alex switches and reloaded on a Core
 //                when a window writes it (J.J. Boyd KG4VCF, AI-assisted:
@@ -26678,10 +26682,63 @@ void RadioModel::republishAlexAdcSlices()
     // had. Mirrors Thetis, which only calls setAlex2HPF when RX2 exists
     // (console.cs:15435-15442 [v2.10.3.15]) and otherwise never writes
     // prbpfilter2's HPF nibble.
+    // (Thetis in fact calls setAlex2HPF from VFO B whether RX2 is on or not;
+    // the Anvelina follows that, input2SliceBHz above. The other boards keep
+    // the -1 here.)
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //
+    // Anvelina Pro 3: input 2's band-pass follows Slice B when no slice is on
+    // input 2. Thetis sets the Alex-2 high-pass from RX2's DDS frequency on
+    // every VFO B change, with no RX2-enabled test, so Alex1's receive half
+    // always carries the input-2 row for VFO B, RX2 on or off:
+    //   From Thetis console.cs:15435-15444 [v2.10.3.15] (UpdateRX2DDSFreq)
+    //   From Thetis-Enhanced (EU2AV) console.cs:15462-15471 [@567a7ec]
+    //     if (HardwareSpecific.Model == HPSDRModel.ORIONMKII ||
+    //         ...
+    //         HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //         HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //     {
+    //         setAlex2HPF(rx2_dds_freq_mhz);
+    //     }
+    //   Upstream inline attribution preserved verbatim (console.cs:15449):
+    //                case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    // and RX2DDSFreq is set from VFO B in txtVFOBFreq_LostFocus whether RX2
+    // is on or not:
+    //   From Thetis console.cs:32906, 32921 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) console.cs:32976, 32991 [@567a7ec]
+    //     RX2DDSFreq = freq;
+    //   Upstream inline attribution preserved verbatim (console.cs:32908):
+    //     if (_click_tune_rx2_display) //-W2PA This was preventing proper receiver adjustment
+    // Keyed it keeps following VFO B: HdwMOXChanged calls UpdateRX2DDSFreq
+    // on both edges, and setAlex2HPF has no MOX or PureSignal arm (the
+    // PureSignal HPF bypass, setBPF1ForOrionIISaturn, writes Alex0 only):
+    //   From Thetis console.cs:29091-29098 [v2.10.3.15] (HdwMOXChanged)
+    //   From Thetis-Enhanced (EU2AV) console.cs:29147-29154 [@567a7ec]
+    //     if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+    //     updateVFOFreqs(tx);
+    //     // make sure TX freq has been set
+    //     UpdateRX1DDSFreq();
+    //     UpdateRX2DDSFreq();
+    //   From Thetis console.cs:7069 [v2.10.3.15] (setAlex2HPF)
+    //   From Thetis-Enhanced (EU2AV) console.cs:7096 [@567a7ec]
+    // NereusSDR maps Thetis RX2 / VFO B to Slice B (slice id 1, trx 1). With
+    // no Slice B the chain keeps "no decision" and the connection keeps its
+    // mirror of Alex0, as before. A slice on input 2 is counted above and is
+    // unchanged. Only the radio the plan covers; the other Mk II boards keep
+    // the mirror until their owners ask.
+    double input2SliceBHz = 0.0;
+    if (alex2Chain && !ocFilterPath && chainCount >= 2
+        && m_hardwareProfile.model == HPSDRModel::ANVELINAPRO3) {
+        static constexpr int kVfoBSliceId = 1;   // Slice B = Thetis RX2 / VFO B
+        if (const SliceModel* sliceB = sliceById(kVfoBSliceId)) {
+            input2SliceBHz = sliceB->frequency();
+        }
+    }
+
     auto hpfBitsFor = [this, &counts, &lowestHz, &combinedSelection, &preselectorFor,
-                       chainCount, combineBandFilters, receiveBypass](int adc) -> int {
+                       chainCount, combineBandFilters, receiveBypass,
+                       input2SliceBHz](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -26689,6 +26746,11 @@ void RadioModel::republishAlexAdcSlices()
         // write, and the invariant it states ("no word for a chain the board
         // has not got") is the one that matters if the fold is ever changed.
         if (adc >= chainCount) { return -1; }
+
+        // Nothing on input 2 on the Anvelina: Slice B's row (above).
+        if (adc == 1 && counts[adc] == 0 && input2SliceBHz > 0.0) {
+            return int(preselectorFor(1, input2SliceBHz));
+        }
 
         if (counts[adc] == 0) { return -1; }
 
