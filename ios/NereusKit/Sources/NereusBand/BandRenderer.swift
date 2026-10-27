@@ -215,9 +215,17 @@ public final class BandRenderer {
     private var vertexBuffers: [(any MTLBuffer)?] = Array(repeating: nil, count: BandRenderer.framesInFlight * 2)
     private var ring = 0
     private let inFlight = DispatchSemaphore(value: BandRenderer.framesInFlight)
+    /// Frames committed whose graphics have not finished.
+    private let pending = OSAllocatedUnfairLock(initialState: 0)
     static let framesInFlight = 3
     /// The extras last drawn, kept for frames that come without theirs.
     public private(set) var heldExtras: DisplayExtras?
+    /// Frames committed whose graphics have not finished: at
+    /// ``framesInFlight`` a draw waits for one to finish.
+    public var framesPending: Int {
+        pending.withLock { $0 }
+    }
+
     /// How long the last draw waited for a frame in flight to finish, in
     /// seconds: time the calling thread stood still.
     public private(set) var lastFrameWaitSeconds = 0.0
@@ -375,12 +383,15 @@ public final class BandRenderer {
         }
         commandBufferMade?(commandBuffer)
         let semaphore = inFlight
+        let pending = pending
+        pending.withLock { $0 += 1 }
         // What this frame cost to draw: its encoding here, from after the
         // wait for a free frame, and the graphics' own time, so frames
         // queued behind others are not counted as slow (the 3D pacer).
         let encodeStart = CFAbsoluteTimeGetCurrent()
         let encodeSeconds = CPUSeconds()
         commandBuffer.addCompletedHandler { buffer in
+            pending.withLock { $0 -= 1 }
             semaphore.signal()
             if let drawTime {
                 let gpu = buffer.gpuEndTime > buffer.gpuStartTime ? buffer.gpuEndTime - buffer.gpuStartTime : 0
