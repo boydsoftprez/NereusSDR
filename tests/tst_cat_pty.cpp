@@ -364,6 +364,11 @@ private slots:
         PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
         QVERIFY(keyThenRelease(model, peer)); QCOMPARE(mox->state(), MoxState::TxToRxInFlight);
         QVERIFY(mox->txToRxRemainingMaxMs() >= 2 * kPhaseMs);
+        // Half way into mox_delay, so the TX lands inside a running phase.
+        // One sent the instant a phase starts races that phase's timer: on
+        // macOS under load a 300 ms coarse timer was seen up to 31 ms late,
+        // past the 5% the bound allows for it.
+        QTest::qWait(kPhaseMs / 2); QCOMPARE(mox->state(), MoxState::TxToRxInFlight);
         QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
         QVERIFY(mox->state() != MoxState::Rx);
         QTRY_VERIFY_WITH_TIMEOUT(mox->isMox(), 5000); QCOMPARE(mox->currentKeyer().source, PttMode::Cat);
