@@ -23,6 +23,7 @@
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QTimer>
@@ -53,6 +54,8 @@ constexpr QSize kWindowSize(1500, 950);
 // The one-off refusal toast's life in MainWindow.
 constexpr int kToastLifeMs = 6000;
 constexpr int kPastToastLifeMs = kToastLifeMs + 500;
+// Generous: the capture itself waits 200 ms.
+constexpr int kStartupCaptureTimeoutMs = 5000;
 
 const QString kReadOnly = QStringLiteral("Container layout is read-only:");
 const QString kNotSaved = QStringLiteral("Container change not saved:");
@@ -82,6 +85,16 @@ std::unique_ptr<MainWindow> buildWindow()
     window->resize(kWindowSize);
     window->show();
     settle();
+    // The first show moves and sizes the containers, which starts the
+    // manager's geometry capture. It saves 200 ms later; let it, so a case
+    // that makes saving fail refuses only its own action, as an operator's
+    // would long after the window came up.
+    if (auto* manager = window->findChild<ContainerManager*>()) {
+        if (!QTest::qWaitFor([manager] { return !manager->geometryCommitPendingForTest(); },
+                             kStartupCaptureTimeoutMs)) {
+            QTest::qFail("The startup geometry capture did not finish", __FILE__, __LINE__);
+        }
+    }
     return window;
 }
 
@@ -97,8 +110,12 @@ QList<StatusToast*> toasts(const MainWindow& window, const QString& prefix)
     return found;
 }
 
-// Every message box shown while `action` runs, closed as soon as it is
-// up; any other modal dialog (Container Settings) is cancelled.
+// Every message box shown while `action` runs, closed once it has been up
+// for kBoxUpMs; any other modal dialog (Container Settings) is cancelled.
+// A box stays up longer than ContainerManager's 200 ms geometry capture
+// (m_geometryCommit), as it does in front of an operator and on a slow
+// runner, so a save that runs while the box is up shows in the test.
+constexpr int kBoxUpMs = 300;
 struct ShownBox {
     QString title;
     QString text;
@@ -106,13 +123,17 @@ struct ShownBox {
 QList<ShownBox> boxesDuring(const std::function<void()>& action)
 {
     QList<ShownBox> shown;
+    QList<QPointer<QMessageBox>> seen;
     QTimer poll;
     poll.setInterval(20);
-    QObject::connect(&poll, &QTimer::timeout, [&shown] {
+    QObject::connect(&poll, &QTimer::timeout, [&shown, &seen] {
         QWidget* modal = QApplication::activeModalWidget();
         if (auto* box = qobject_cast<QMessageBox*>(modal)) {
-            shown.append({box->windowTitle(), box->text()});
-            box->done(QMessageBox::Ok);
+            if (!seen.contains(box)) {
+                seen.append(box);
+                shown.append({box->windowTitle(), box->text()});
+                QTimer::singleShot(kBoxUpMs, box, [box] { box->done(QMessageBox::Ok); });
+            }
         } else if (auto* dialog = qobject_cast<QDialog*>(modal)) {
             dialog->reject();
         }
