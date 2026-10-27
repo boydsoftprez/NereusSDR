@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the Modes tab's transmit settings: TX filter, mic level and gain, PROC, LEV, EQ, CFC, VOX, DEXP, AM carrier and MON
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW rows in CW, as on the TX panel (R-CW-50).
+//             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -49,6 +51,10 @@ struct TransmitSection: View {
             if let reason = transmit.settingsReason(1) {
                 ModesChrome.note("TX filter: " + reason)
                     .accessibilityIdentifier("modesTransmitReason")
+            }
+            if transmit.inCw {
+                // CW (R-CW-50): the keyer's controls, as on the TX panel.
+                CwTransmitRows(transmit: transmit, identifierPrefix: "modes")
             }
             // The mic level beside Mic Gain, live from this phone's
             // microphone before keying, so Mic Gain can be set by it.

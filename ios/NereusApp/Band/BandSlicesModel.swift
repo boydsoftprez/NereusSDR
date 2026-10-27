@@ -1,6 +1,9 @@
 // NereusSDR for iOS: this device's slices on one band, read from the mirror, and the touches that tune them
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), V2 opt-in/authority gate; AI-assisted via OpenAI Codex.
+// 2026-10-26: CW transmit, the CW passband drawn at its origin from the mode and
+//             the station pitch (R-CW-24, D5). J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import Combine
 import Foundation
@@ -293,6 +296,16 @@ final class BandSlicesModel: ObservableObject {
     var catalog: StationCatalog? {
         didSet {
             if catalog != oldValue {
+                rebuild()
+            }
+        }
+    }
+
+    /// The station pitch (the Core's `CWPitch`, clamped as the desktop
+    /// reads it), from which a CW slice's passband is drawn (R-CW-24).
+    var cwPitchHz: Int = BandSlice.cwPitchDefaultHz {
+        didSet {
+            if cwPitchHz != oldValue {
                 rebuild()
             }
         }
@@ -1210,7 +1223,8 @@ final class BandSlicesModel: ObservableObject {
                                   filterHighHz: object["filterHigh"]?.number ?? 0,
                                   colour: BandSlice.colour(forIndex: id, in: catalog?.sliceColours ?? []),
                                   lowerSideband: description.map { $0.sideband == .lower } ?? BandSlice.isLowerSideband(mode: mode, in: modes),
-                                  txSlice: object["txSlice"]?.flag ?? false)
+                                  txSlice: object["txSlice"]?.flag ?? false,
+                                  passbandOffsetHz: BandSlice.cwShiftHz(modeLabel: modeLabel, pitchHz: cwPitchHz))
             next.append(Entry(slice: slice, rxAntenna: object["rxAntenna"]?.text ?? "",
                               txAntenna: object["txAntenna"]?.text ?? "",
                               modeLabel: modeLabel,

@@ -1,5 +1,9 @@
 // NereusSDR for iOS: transmit on the main screen: the PTT, the TX panel's controls and the keyed view's readings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW controls of the TX panel and Modes: speed,
+//             pitch, break-in and its delay, the sidetone and its level, at
+//             transmitSettingsVersion 16 (R-CW-50). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -170,6 +174,130 @@ final class TransmitModel: ObservableObject {
     func setMonitorVolume(_ value: Double) {
         guard settingsEditable(2), monitorVolume != nil, value.isFinite else { return }
         write(Self.transmitKey, "monitorVolume", .double(min(max(value, 0), 1)))
+    }
+
+    // MARK: CW (R-CW-50, C13)
+
+    /// The transmit slice is in CWL or CWU (the active slice while this
+    /// phone has no transmit slice): the TX panel and Modes show the CW
+    /// controls, as the desktop's Phone/CW applet turns to its CW page.
+    @Published private(set) var inCw = false
+    /// The Core's CW settings on `transmit`, nil where it has not sent them
+    /// (a Core below `transmitSettingsVersion` 16, or one that does not send
+    /// them to this phone): `cwKeyerSpeed` in WPM, `cwBreakInMode` (0 off,
+    /// 1 semi, 2 QSK), `cwBreakInDelayMs` and `cwSidetone`.
+    @Published private(set) var cwSpeedWpm: Double?
+    @Published private(set) var cwBreakInMode: Int64?
+    @Published private(set) var cwBreakInDelayMs: Double?
+    @Published private(set) var cwSidetone: Bool?
+    /// The station pitch (the Core's `CWPitch`), as the desktop reads it.
+    @Published private(set) var cwPitchHz: Int = BandSlice.cwPitchDefaultHz
+
+    /// The CW settings come with `transmitSettingsVersion` 16.
+    static let cwSettingsVersion: Int64 = 16
+    /// The Core's ranges (link document section 7.1, `transmit` at
+    /// `transmitSettingsVersion` 16): speed 1 to 60 WPM, the break-in delay
+    /// 0 to 1000 ms (the desktop's delay slider steps 10 ms,
+    /// PhoneCwApplet.cpp:757), and the pitch 200 to 2250 Hz in 10 Hz steps.
+    static let cwSpeedRange = StationCatalog.Range(min: 1, max: 60, step: 1)
+    static let cwBreakInDelayRange = StationCatalog.Range(min: 0, max: 1000, step: 10)
+    static let cwPitchRange = StationCatalog.Range(min: Double(BandSlice.cwPitchMinHz),
+                                                   max: Double(BandSlice.cwPitchMaxHz),
+                                                   step: Double(BandSlice.cwPitchStepHz))
+    /// `cwBreakInMode`'s values.
+    static let cwBreakInOff: Int64 = 0
+    static let cwBreakInSemi: Int64 = 1
+    static let cwBreakInQsk: Int64 = 2
+    static let cwBreakInChoices: [(id: Int64, label: String)] = [(0, "Off"), (1, "Semi"), (2, "QSK")]
+    /// A Core that does not let this phone change the CW settings.
+    static let cwSettingsNotTakenText =
+        "This Core does not let this phone change the CW settings. Updating the Core may help."
+    /// The desktop CW page's words for a greyed Delay and Sidetone level
+    /// (PhoneCwApplet.cpp:677-684).
+    static let cwDelayOffReason = "Break-in is off: MOX keys the radio, so there is no break-in delay."
+    static let cwDelayQskReason = "QSK returns to receive between elements, so there is no break-in delay."
+    static let cwSidetoneLevelOffReason = "Turn Sidetone on to set its level."
+
+    /// The CW settings may change: the Core takes them at version 16 and
+    /// has sent them to this phone.
+    var cwSettingsEditable: Bool {
+        settingsEditable(Self.cwSettingsVersion) && cwSpeedWpm != nil
+    }
+
+    /// Why the CW settings cannot change, or nil when they can (or while
+    /// the Core is still sending its state).
+    var cwSettingsReason: String? {
+        guard mirror.isSnapshotComplete else {
+            return nil
+        }
+        if settingsVersion < Self.cwSettingsVersion || cwSpeedWpm == nil {
+            return Self.cwSettingsNotTakenText
+        }
+        return settingsReason(Self.cwSettingsVersion)
+    }
+
+    /// Why Delay is greyed while the CW settings may change: Off and QSK have no break-in delay.
+    var cwBreakInDelayReason: String? {
+        switch cwBreakInMode {
+        case Self.cwBreakInOff?: return Self.cwDelayOffReason
+        case Self.cwBreakInQsk?: return Self.cwDelayQskReason
+        default: return nil
+        }
+    }
+
+    /// Why the sidetone level is greyed while the CW settings may change.
+    var cwSidetoneLevelReason: String? {
+        cwSidetone == false ? Self.cwSidetoneLevelOffReason : nil
+    }
+
+    /// The pitch's write waits for the Core's answer.
+    var cwPitchUnconfirmed: Bool {
+        settings?.isUnconfirmed(BandSlice.cwPitchKey) ?? false
+    }
+
+    /// The keyer speed, in WPM (`cwKeyerSpeed`).
+    func setCwSpeed(_ value: Double) {
+        guard cwSettingsEditable, value.isFinite else { return }
+        write(Self.transmitKey, "cwKeyerSpeed", .int(Int64(RxPanelModel.snapped(value, to: Self.cwSpeedRange).rounded())))
+    }
+
+    /// Break-in: Off, Semi or QSK (`cwBreakInMode`). A radio that cannot
+    /// do QSK is refused by the Core with its words, shown in the note.
+    func setCwBreakInMode(_ mode: Int64) {
+        guard cwSettingsEditable, (Self.cwBreakInOff...Self.cwBreakInQsk).contains(mode), mode != cwBreakInMode else {
+            return
+        }
+        write(Self.transmitKey, "cwBreakInMode", .int(mode))
+    }
+
+    /// The break-in delay, in milliseconds (`cwBreakInDelayMs`), in Semi.
+    func setCwBreakInDelay(_ value: Double) {
+        guard cwSettingsEditable, cwBreakInDelayReason == nil, value.isFinite else { return }
+        write(Self.transmitKey, "cwBreakInDelayMs",
+              .int(Int64(RxPanelModel.snapped(value, to: Self.cwBreakInDelayRange).rounded())))
+    }
+
+    /// The sidetone on and off (`cwSidetone`), as the desktop's MON in CW.
+    func toggleCwSidetone() {
+        guard cwSettingsEditable, let cwSidetone else { return }
+        write(Self.transmitKey, "cwSidetone", .bool(!cwSidetone))
+    }
+
+    /// The sidetone level: the monitor volume, as the desktop's Mon Vol in CW (C9).
+    func setCwSidetoneLevel(_ value: Double) {
+        guard cwSettingsEditable, cwSidetone == true, monitorVolume != nil, value.isFinite else { return }
+        write(Self.transmitKey, "monitorVolume", .double(min(max(value, 0), 1)))
+    }
+
+    /// The pitch, in hertz: the Core's station setting `CWPitch`, clamped
+    /// and rounded to 10 Hz as the desktop's setter does.
+    func setCwPitch(_ value: Double) {
+        guard cwSettingsEditable, let settings, value.isFinite else { return }
+        let hz = BandSlice.clampedCwPitchHz(Int(value.rounded()))
+        Task { [weak self] in
+            let outcome = await settings.write(BandSlice.cwPitchKey, String(hz)).propertyOutcome
+            self?.noteWrite(outcome)
+        }
     }
 
     /// Anti-VOX values mirrored by the Core, independent of VOX arming.
@@ -514,6 +642,10 @@ final class TransmitModel: ObservableObject {
             let protection = Self.swrProtection(values)
             if self?.swrProtection != protection {
                 self?.swrProtection = protection
+            }
+            let pitch = BandSlice.cwPitchHz(setting: values[BandSlice.cwPitchKey])
+            if self?.cwPitchHz != pitch {
+                self?.cwPitchHz = pitch
             }
         }.store(in: &watches)
         // The microphone stopping by itself ends the key it was carrying.
@@ -1818,6 +1950,14 @@ final class TransmitModel: ObservableObject {
         set(\.monitorVolume, transmit?["monitorVolume"].number)
         set(\.dexp, transmit?["dexpEnabled"].flag)
         set(\.amCarrier, transmit?["amCarrierLevel"].number)
+        // The CW controls (R-CW-50): the transmit slice's mode, and the
+        // Core's CW settings, sent at version 16 to a phone that declared them.
+        let cwEntry = slices.entries.first(where: { $0.slice.txSlice }) ?? slices.active
+        set(\.inCw, cwEntry.map { BandSlice.isCw(modeLabel: $0.modeLabel) } ?? false)
+        set(\.cwSpeedWpm, transmit?["cwKeyerSpeed"].number)
+        set(\.cwBreakInMode, RxPanelModel.whole(transmit?["cwBreakInMode"]))
+        set(\.cwBreakInDelayMs, transmit?["cwBreakInDelayMs"].number)
+        set(\.cwSidetone, transmit?["cwSidetone"].flag)
         set(\.activeProfile, transmit?["activeTxProfile"].text.flatMap { $0.isEmpty ? nil : $0 })
         set(\.profiles, Self.profileNames(transmit?["txProfilesJson"].text))
 

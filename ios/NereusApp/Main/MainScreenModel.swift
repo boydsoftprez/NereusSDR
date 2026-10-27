@@ -1,5 +1,8 @@
 // NereusSDR for iOS: everything the main screen shows, fed from the app's model and the Core's media events
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the station pitch reaches the slice models, so a CW
+//             passband is drawn at its origin (R-CW-24). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -226,6 +229,13 @@ final class MainScreenModel: ObservableObject {
             self.foreign.catalog = catalog
             self.queueRefresh()
         }.store(in: &watches)
+        // The station pitch (the Core's CWPitch): CW passbands are drawn from
+        // the dial plus the CW shift (R-CW-24, D5).
+        settings.$values.map { BandSlice.cwPitchHz(setting: $0[BandSlice.cwPitchKey]) }.removeDuplicates()
+            .sink { [weak self] pitch in
+                self?.slices.cwPitchHz = pitch
+                self?.foreign.cwPitchHz = pitch
+            }.store(in: &watches)
         sMeter.$state.map(\.settings.readout).removeDuplicates().sink { [weak self] readout in
             self?.meterReadout = readout
         }.store(in: &watches)

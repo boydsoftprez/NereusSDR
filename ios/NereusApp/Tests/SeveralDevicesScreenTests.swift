@@ -5,6 +5,8 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app asks for Setup description 30 (General's Filters
 //   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the app's hello declares remoteCw 1 and cwSettings
+//   1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -50,7 +52,8 @@ struct SeveralDevicesScreenTests {
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2])
+                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
+                                  "remoteCw": 1, "cwSettings": 1])
         // The capabilities that declare it were delivered last; wait for the app to read them.
         #expect(await settle(seconds: 30) { SeveralDevices.available(in: model.mirror) })
 

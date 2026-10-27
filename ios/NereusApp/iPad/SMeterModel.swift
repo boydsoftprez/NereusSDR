@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the analog S-meter's model: the Core's readings, the menu's choices kept on this device, the needle's swing
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, Max Bin reads the passband from its origin, as the
+//             desktop's peak in the passband does (R-CW-24). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -268,8 +271,8 @@ final class SMeterModel: ObservableObject {
         let slice = active.slice
         let value = SMeterMaxBin.measure(trace: frame.traceDbm, centerHz: coverage.centerHz,
                                          spanHz: coverage.spanHz,
-                                         lowHz: slice.frequencyHz + slice.filterLowHz,
-                                         highHz: slice.frequencyHz + slice.filterHighHz)
+                                         lowHz: slice.passbandOriginHz + slice.filterLowHz,
+                                         highHz: slice.passbandOriginHz + slice.filterHighHz)
         return (value != nil, value)
     }
 

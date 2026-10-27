@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the TX panel: RF and tune power, TUNE and MOX, the amp's and tuner's OPERATE, the tuner's antennas, mic level and gain, PROC, VOX and MON
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW rows in CW: speed, pitch, break-in and its
+//             delay, the sidetone and its level (R-CW-50). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -135,6 +138,13 @@ struct TxPanel: View {
             if let reason = transmit.psaReason, !transmit.psa {
                 note("PS-A: " + reason)
                     .accessibilityIdentifier("txPsaReason")
+            }
+            if transmit.inCw {
+                // CW (R-CW-50): the operator's keyer controls, as the
+                // desktop's CW page; greyed with the update note on a Core
+                // that does not let this phone change them.
+                caption("CW")
+                CwTransmitRows(transmit: transmit, identifierPrefix: "tx")
             }
             if ampConfigured || tunerConfigured {
                 caption("Equipment")
@@ -613,6 +623,97 @@ struct TxPanel: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 4), count: columns), spacing: 4) {
             content()
         }
+    }
+}
+
+/// The CW rows of the TX panel and the Modes tab's Transmit section, while
+/// the transmit slice is in CW (R-CW-50, C13): Speed, Pitch, Break-in (Off,
+/// Semi, QSK) and its Delay, and the Sidetone with its level (the monitor
+/// volume, as the desktop's MON and Mon Vol in CW, C9). Each writes the
+/// Core's setting; against a Core that does not take them from this phone
+/// every row stays shown, greyed, with the update note beneath. Nothing
+/// here keys the radio.
+struct CwTransmitRows: View {
+    @ObservedObject var transmit: TransmitModel
+    /// The rows' accessibility identifiers start with it: "tx" or "modes".
+    let identifierPrefix: String
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    var body: some View {
+        let editable = transmit.cwSettingsEditable
+        VStack(alignment: .leading, spacing: 9) {
+            PanelSliderRow(label: "Speed", value: transmit.cwSpeedWpm, range: TransmitModel.cwSpeedRange,
+                           accessibility: "CW speed", format: { "\(Int($0.rounded())) WPM" },
+                           greyed: !editable, notConfirmed: transmit.isUnconfirmed("cwKeyerSpeed")) {
+                transmit.setCwSpeed($0)
+            }
+            .accessibilityIdentifier(identifierPrefix + "CwSpeed")
+            PanelSliderRow(label: "Pitch", value: Double(transmit.cwPitchHz), range: TransmitModel.cwPitchRange,
+                           accessibility: "CW pitch", format: { "\(Int($0.rounded())) Hz" },
+                           greyed: !editable, notConfirmed: transmit.cwPitchUnconfirmed) {
+                transmit.setCwPitch($0)
+            }
+            .accessibilityIdentifier(identifierPrefix + "CwPitch")
+            HStack(spacing: 4) {
+                Text("Break-in")
+                    .font(.system(size: textSize.isAccessibilitySize ? 17 : 11))
+                    .foregroundStyle(ChromeColours.textDim)
+                    .frame(width: 62, alignment: .leading)
+                ForEach(TransmitModel.cwBreakInChoices, id: \.id) { choice in
+                    PanelButton(label: choice.label, lit: transmit.cwBreakInMode == choice.id, style: .dsp,
+                                disabled: !editable || transmit.cwBreakInMode == nil) {
+                        transmit.setCwBreakInMode(choice.id)
+                    }
+                    .accessibilityLabel("Break-in " + choice.label)
+                    .accessibilityAddTraits(transmit.cwBreakInMode == choice.id ? .isSelected : [])
+                    .accessibilityIdentifier(identifierPrefix + "CwBreakIn" + choice.label)
+                }
+            }
+            PanelSliderRow(label: "Delay", value: transmit.cwBreakInDelayMs, range: TransmitModel.cwBreakInDelayRange,
+                           accessibility: "CW break-in delay", format: { "\(Int($0.rounded())) ms" },
+                           greyed: !editable || transmit.cwBreakInDelayReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("cwBreakInDelayMs")) {
+                transmit.setCwBreakInDelay($0)
+            }
+            .accessibilityHint(transmit.cwBreakInDelayReason ?? "")
+            .accessibilityIdentifier(identifierPrefix + "CwDelay")
+            HStack(spacing: 6) {
+                PanelButton(label: "Sidetone", lit: transmit.cwSidetone == true, style: .dsp,
+                            disabled: !editable || transmit.cwSidetone == nil) {
+                    transmit.toggleCwSidetone()
+                }
+                .frame(width: textSize.isAccessibilitySize ? 110 : 76)
+                .accessibilityIdentifier(identifierPrefix + "CwSidetone")
+                PanelSliderRow(label: nil, value: transmit.monitorVolume, range: TransmitModel.monitorVolumeRange,
+                               accessibility: "Sidetone level", format: { "\(Int(($0 * 100).rounded()))%" },
+                               greyed: !editable || transmit.cwSidetoneLevelReason != nil,
+                               notConfirmed: transmit.isUnconfirmed("monitorVolume")) {
+                    transmit.setCwSidetoneLevel($0)
+                }
+                .accessibilityHint(transmit.cwSidetoneLevelReason ?? "")
+                .accessibilityIdentifier(identifierPrefix + "CwSidetoneLevel")
+            }
+            if let reason = transmit.cwSettingsReason {
+                note("Speed, Pitch, Break-in, Delay and Sidetone: " + reason)
+                    .accessibilityIdentifier(identifierPrefix + "CwReason")
+            } else {
+                if let reason = transmit.cwBreakInDelayReason {
+                    note("Delay: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwDelayReason")
+                }
+                if let reason = transmit.cwSidetoneLevelReason {
+                    note("Sidetone level: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwSidetoneLevelReason")
+                }
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: textSize.isAccessibilitySize ? 17 : 11))
+            .foregroundStyle(ChromeColours.textFaint)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

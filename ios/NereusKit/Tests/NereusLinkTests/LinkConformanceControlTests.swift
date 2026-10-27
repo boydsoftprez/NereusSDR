@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the link's control fixtures, decoded and written again by the app's codec
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-26: CW transmit, the four remote CW verbs pinned.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -80,7 +83,8 @@ import Testing
     @Test func integratedCommandsKeepTheirTypedMetadata() throws {
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
-        #expect(commands.count == 172)
+        // Remote CW adds cw.send, cw.memory, cw.stop and cw.key.
+        #expect(commands.count == 176)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -94,6 +98,10 @@ import Testing
              ["requestId", "channel", "command"], ["i64", "i64", "utf8"]),
             ("refreshStationCatDevices", "stationCatVersion", 1, [], []),
             ("refreshRotorPorts", "remoteRotorControlVersion", 1, [], []),
+            ("cw.send", "remoteCwVersion", 1, ["text"], ["utf8"]),
+            ("cw.memory", "remoteCwVersion", 1, ["number"], ["i64"]),
+            ("cw.stop", "remoteCwVersion", 1, [], []),
+            ("cw.key", "remoteCwVersion", 1, ["down"], ["bool"]),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })

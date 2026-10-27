@@ -1,5 +1,8 @@
 // NereusSDR for iOS: transmit on the main screen against a fake Core: the PTT, its keepalive, refusals, stops and the keyed view
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the TX panel's CW rows in CWU, and greyed with the
+//   update note on a version 15 Core (R-CW-50). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -479,6 +482,105 @@ struct TransmitScreenTests {
         #expect(await settle(seconds: 30) { transmit.ptt.state == .heldElsewhere(device: "MacBook", onAir: true) })
         try await shoot("tx-held-elsewhere-on-air-upright", sideways: false, model: model)
         await model.disconnect()
+    }
+
+    // MARK: CW (R-CW-50)
+
+    @Test("in CWU the TX panel shows Speed, Pitch, Break-in, Delay and the sidetone level, each writing its setting")
+    func txPanelCwRows() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        await Self.fillTransmit(station)
+        let catalogue = try #require(ModesTabBindingTests.catalogueJSON(ModesTabBindingTests.anan))
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(catalogue)),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.catalogFeed.catalog != nil })
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+            .init(ordinal: 89, name: "cwKeyerSpeed", value: .i64(25)),
+            .init(ordinal: 94, name: "cwBreakInMode", value: .i64(1)),
+            .init(ordinal: 95, name: "cwBreakInDelayMs", value: .i64(300)),
+            .init(ordinal: 98, name: "cwSidetone", value: .bool(true)),
+        ])))
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 2, name: "dspMode", value: .enumeration(Int64(cwu.id))),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.inCw && transmit.cwSpeedWpm == 25 && transmit.cwSettingsEditable })
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 1400))
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        let host = UIHostingController(rootView: TxPanel(transmit: transmit, accessories: model.main.accessories,
+                                                         micLevel: model.main.micLevel, modes: model.main.modes,
+                                                         meters: nil, scrolls: false).preferredColorScheme(.dark))
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
+        }
+        await ShotWait.laidOut(window)
+        for label in ["CW speed", "CW pitch", "Break-in Off", "Break-in Semi", "Break-in QSK", "CW break-in delay",
+                      "Sidetone", "Sidetone level"] {
+            #expect(!AccessoryPagesTests.elements(labelled: label, in: window).isEmpty, "\(label)")
+        }
+        // Each row writes its own setting at the Core.
+        transmit.setCwSpeed(18)
+        let speed = await station.waitForMessage(within: .seconds(30)) { message in
+            if case .propertyWrite(let write) = message {
+                return write.key == "transmit" && write.properties.first?.name == "cwKeyerSpeed"
+            }
+            return false
+        }
+        guard case .propertyWrite(let write)? = speed else {
+            Issue.record("no cwKeyerSpeed write reached the Core")
+            return
+        }
+        #expect(write.properties.first?.value == .i64(18))
+        #expect(!station.keyed)
+        await model.disconnect()
+    }
+
+    @Test("against a version 15 Core the CW settings are greyed with the update note and send nothing")
+    func cwSettingsOnAVersion15Core() async throws {
+        let outbox = SliceListTests.Outbox()
+        let mirror = MirrorStore(send: { message in outbox.record(message) })
+        mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
+            .init(name: "transmitSettingsVersion", value: .i64(15)),
+            .init(name: "remoteTxVersion", value: .i64(2)),
+            .init(name: "txPermitted", value: .bool(true)),
+        ])))
+        mirror.apply(.authResult(LinkMessage.AuthResult(accepted: true, reason: "", retryable: false)))
+        mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "transmit", className: "TransmitModel", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+        ])))
+        mirror.apply(.snapshotComplete)
+        let slices = BandSlicesModel(store: mirror, commands: nil)
+        let transmit = TransmitModel(mirror: mirror, commands: nil, slices: slices, subscriber: nil,
+                                     platform: platform.platform)
+        transmit.refresh()
+        #expect(transmit.settingsVersion == 15)
+        #expect(!transmit.cwSettingsEditable)
+        #expect(transmit.cwSettingsReason == TransmitModel.cwSettingsNotTakenText)
+        #expect(TransmitModel.cwSettingsNotTakenText
+                == "This Core does not let this phone change the CW settings. Updating the Core may help.")
+        transmit.setCwSpeed(20)
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInSemi)
+        transmit.setCwBreakInDelay(200)
+        transmit.toggleCwSidetone()
+        transmit.setCwSidetoneLevel(0.3)
+        transmit.setCwPitch(700)
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(!outbox.messages.contains { message in
+            if case .propertyWrite = message { return true }
+            if case .settingsWrite = message { return true }
+            return false
+        })
     }
 
     // MARK: The fake Core
