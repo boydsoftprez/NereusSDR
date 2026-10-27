@@ -62,6 +62,12 @@
 //               (Qt 6.8, Linux CI) and checks it is on, so both halves run
 //               there too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: aRoomsRefreshLeavesThePickedRowAlone puts the update
+//               handler, the accessibility switch and what it heard back
+//               on every exit (qScopeGuard); the own-window test checks
+//               the panel menu and its button say "Open in its own
+//               window". J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -82,6 +88,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSet>
@@ -1950,6 +1957,17 @@ private slots:
         QAccessibleInterface* face = QAccessible::queryAccessibleInterface(own);
         QVERIFY(face != nullptr);
         QCOMPARE(face->text(QAccessible::Name), QStringLiteral("Open in its own window"));
+        // The panel's menu and its button say the same; "Pop out" is the
+        // container's word.
+        auto* more = child<QToolButton>(panel, QStringLiteral("roundtableMenuBtn"));
+        QCOMPARE(more->toolTip(), QStringLiteral("Archive, settings and open in its own window"));
+        more->click();
+        QMenu* menu = openMenu(QStringLiteral("roundtablePanelMenu"));
+        QVERIFY(menu != nullptr);
+        QVERIFY(actionNamed(menu, QStringLiteral("Pop out")) == nullptr);
+        QVERIFY(actionNamed(menu, QStringLiteral("Open in its own window")) != nullptr);
+        menu->close();
+        settle();
 
         own->click();
         settle();
@@ -2228,6 +2246,22 @@ private slots:
                     ++s_heard.stale;
                 }
             });
+        // Every exit, a failed check too, takes the handler, the switch and
+        // what was heard back, so no later test runs with them.
+        const bool wasActive = QAccessible::isActive();
+        bool undone = false;
+        const auto undo = [&undone, previous, wasActive]() {
+            if (undone) {
+                return;
+            }
+            undone = true;
+            setAccessibilityActive(wasActive);
+            QAccessible::installUpdateHandler(previous);
+        };
+        const auto restore = qScopeGuard([&undo]() {
+            undo();
+            s_heard = Heard{};
+        });
         setAccessibilityActive(true);
         // Off, no item view sends an event and both halves below would
         // pass or fail on nothing.
@@ -2271,12 +2305,12 @@ private slots:
                         {QStringLiteral("members"), 3}}};
         p.model.applyRooms(QJsonObject{{QStringLiteral("rooms"), grown}});
         settle();
-        setAccessibilityActive(false);
-        QAccessible::installUpdateHandler(previous);
+        undo();
+        const Heard heard = s_heard;
 
         QCOMPARE(rooms->count(), 4);
-        QVERIFY(s_heard.listRowEvents > 0);
-        QCOMPARE(s_heard.stale, 0);
+        QVERIFY(heard.listRowEvents > 0);
+        QCOMPARE(heard.stale, 0);
         QVERIFY(rooms->currentItem() != nullptr);
         QCOMPARE(rooms->currentItem()->text().left(9), QStringLiteral("7.249.000"));
         QVERIFY(rooms->currentItem()->isSelected());

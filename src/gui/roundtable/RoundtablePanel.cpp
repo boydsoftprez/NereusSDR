@@ -54,6 +54,9 @@
 //               accessible name "Open in its own window", so it is not
 //               taken for the container header's Pop Out arrow beside it.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: the panel menu's action and the menu button's tooltip
+//               say "Open in its own window" too, never "Pop out".
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: your own reading's range is RoundtableWire::kMinDbm and
 //               kMaxDbm, shared with the Core's client. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1406,7 +1409,7 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     menu->setObjectName(QStringLiteral("roundtableMenuBtn"));
     menu->setText(QStringLiteral("\u22ef"));
     menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
-                              : QStringLiteral("Archive, settings and pop out"));
+                              : QStringLiteral("Archive, settings and open in its own window"));
     menu->setStyleSheet(iconStyle());
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
@@ -2751,7 +2754,7 @@ void RoundtablePanel::rebuildEmpty()
     menu->setObjectName(QStringLiteral("roundtableMenuBtn"));
     menu->setText(QStringLiteral("\u22ef"));
     menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
-                              : QStringLiteral("Archive, settings and pop out"));
+                              : QStringLiteral("Archive, settings and open in its own window"));
     menu->setStyleSheet(iconStyle());
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
@@ -3182,7 +3185,8 @@ void RoundtablePanel::showPanelMenu()
     if (m_popped) {
         menu->addAction(QStringLiteral("Wide window"), this, &RoundtablePanel::widePresetRequested);
     } else {
-        menu->addAction(QStringLiteral("Pop out"), this, &RoundtablePanel::popOutRequested);
+        menu->addAction(QStringLiteral("Open in its own window"), this,
+                        &RoundtablePanel::popOutRequested);
     }
     auto* button = findChild<QToolButton*>(QStringLiteral("roundtableMenuBtn"));
     QWidget* anchor = button != nullptr && button->isVisible() ? static_cast<QWidget*>(button) : this;
