@@ -343,6 +343,9 @@ final class BandSlicesModel: ObservableObject {
     /// The frequency shown for a slice under a finger, until the Core answers.
     private var shown: [Int: Double] = [:]
     private static let logger = Logger(subsystem: "NereusSDR", category: "band.slices")
+    #if DEBUG
+    private(set) var writerResumeDiagnosticForTesting: BandWriterResumeDiagnostic?
+    #endif
 
     init(store: MirrorStore, commands: CommandClient?, catalog: StationCatalog? = nil,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
@@ -350,6 +353,15 @@ final class BandSlicesModel: ObservableObject {
         self.commands = commands
         self.catalog = catalog
         self.now = now
+        #if DEBUG
+        if UnitTestHost.isHosting {
+            let diagnostic = BandWriterResumeDiagnostic()
+            writerResumeDiagnosticForTesting = diagnostic
+            store.writerResumeDiagnosticForTesting = { [weak diagnostic] event in
+                diagnostic?.receive(event)
+            }
+        }
+        #endif
         keysWatch = store.$objectKeys.sink { [weak self] keys in
             MainActor.assumeIsolated {
                 self?.heardKeys(keys)
@@ -415,6 +427,13 @@ final class BandSlicesModel: ObservableObject {
     /// A drag on a slice's flag or passband moved to `hz`: written at most
     /// every 50 ms.
     func drag(sliceId: Int, to hz: Double) {
+        #if DEBUG
+        let diagnostic = writerResumeDiagnosticForTesting
+        let diagnosticStarted = diagnostic?.timestamp()
+        defer {
+            if let diagnosticStarted { diagnostic?.recordDuration("drag", since: diagnosticStarted) }
+        }
+        #endif
         guard let entry = entries.first(where: { $0.id == sliceId }), isTunable(entry) else {
             return
         }
@@ -1066,6 +1085,11 @@ final class BandSlicesModel: ObservableObject {
         writer = Task { [weak self] in
             var next: PendingWrite? = pending
             while let current = next {
+                #if DEBUG
+                let diagnostic = self?.writerResumeDiagnosticForTesting
+                let diagnosticRecord = diagnostic?.beginWrite(key: "slice:\(current.sliceId)",
+                                                              frequencyHz: current.hz, edit: current.edit)
+                #endif
                 let outcome = await store.write("slice:\(current.sliceId)", property: "frequency",
                                                 value: .double(current.hz), edit: current.edit,
                                                 onLateOutcome: { [weak self] outcome in
@@ -1075,6 +1099,9 @@ final class BandSlicesModel: ObservableObject {
                         self.returnToCore(current.sliceId)
                     }
                 })
+                #if DEBUG
+                diagnostic?.writerResumed(record: diagnosticRecord)
+                #endif
                 if !outcome.accepted {
                     Self.logger.info("The Core kept the frequency: \(outcome.reason, privacy: .private)")
                 }
@@ -1172,13 +1199,36 @@ final class BandSlicesModel: ObservableObject {
         }
         for object in slices where watching[object.key] == nil {
             watching[object.key] = object.$values.dropFirst().sink { [weak self] _ in
-                Task { @MainActor in self?.rebuild() }
+                #if DEBUG
+                let diagnosticSubmittedAt = MainActor.assumeIsolated { () -> Double? in
+                    let diagnostic = self?.writerResumeDiagnosticForTesting
+                    diagnostic?.count("rebuildRequests")
+                    return diagnostic?.timestamp()
+                }
+                #endif
+                Task { @MainActor in
+                    #if DEBUG
+                    let diagnostic = self?.writerResumeDiagnosticForTesting
+                    diagnostic?.count("rebuildJobs")
+                    if let diagnosticSubmittedAt {
+                        diagnostic?.recordDuration("rebuildQueueWait", since: diagnosticSubmittedAt)
+                    }
+                    #endif
+                    self?.rebuild()
+                }
             }
         }
         rebuild()
     }
 
     private func rebuild() {
+        #if DEBUG
+        let diagnostic = writerResumeDiagnosticForTesting
+        let diagnosticStarted = diagnostic?.timestamp()
+        defer {
+            if let diagnosticStarted { diagnostic?.recordDuration("rebuild", since: diagnosticStarted) }
+        }
+        #endif
         var next: [Entry] = []
         var nextActive: Int?
         var anyActive: Int?
@@ -1392,6 +1442,154 @@ final class BandSlicesModel: ObservableObject {
         return Int(object.key.dropFirst("slice:".count))
     }
 }
+
+#if DEBUG
+// Temporary bounded probes for the unit-test host only. This object is
+// app-owned; MirrorStore's DEBUG callback captures it weakly. Remove before
+// the final uninstrumented validation. No diagnostic task or timer exists.
+@MainActor
+final class BandWriterResumeDiagnostic {
+    private struct Metric: Encodable {
+        var count = 0
+        var totalMs = 0.0
+        var maxMs = 0.0
+    }
+
+    private struct Record: Encodable {
+        let key: String
+        let frequencyHz: Double
+        let edit: UInt64?
+        let writerBeforeAwaitAt: Double
+        var sequence: UInt64? = nil
+        var resolvedAt: Double? = nil
+        var writerResumedAt: Double? = nil
+        var resolveToResumeMs: Double? = nil
+        var answeredByCore: Bool? = nil
+    }
+
+    private struct Snapshot: Encodable {
+        let schema: Int
+        let modelIdentity: String
+        let flushReason: String
+        let recordLimit: Int
+        let records: [Record]
+        let metrics: [String: Metric]
+        let counts: [String: Int]
+        let truncatedRecords: Int
+        let unmatchedResolutions: Int
+        let unmatchedResumes: Int
+        let outstandingAtFlush: Int
+        let resolvedButNotResumedAtFlush: Int
+        let completedMatches: Int
+    }
+
+    private static let recordLimit = 64
+    // Diagnostic model identity only; write identity always comes from the
+    // real pending key/value/edit and MirrorStore sequence below.
+    private let modelIdentity = UUID().uuidString
+    private var records: [Record] = []
+    private var metrics: [String: Metric] = ["drag": Metric(), "rebuild": Metric(), "rebuildQueueWait": Metric(),
+                                           "mainRefresh": Metric(), "mainRefreshQueueWait": Metric()]
+    private var counts: [String: Int] = ["writerStarts": 0, "writerResolutions": 0, "writerResumes": 0,
+                                         "rebuildRequests": 0, "rebuildJobs": 0,
+                                         "mainRefreshRequests": 0, "mainRefreshCoalesced": 0, "mainRefreshJobs": 0]
+    private var truncatedRecords = 0
+    private var unmatchedResolutions = 0
+    private var unmatchedResumes = 0
+    private var flushed = false
+
+    func timestamp() -> Double { ProcessInfo.processInfo.systemUptime }
+
+    func count(_ name: String) {
+        guard !flushed else { return }
+        counts[name, default: 0] += 1
+    }
+
+    func recordDuration(_ name: String, since start: Double) {
+        guard !flushed else { return }
+        let elapsed = max(0, timestamp() - start) * 1_000
+        var metric = metrics[name] ?? Metric()
+        metric.count += 1
+        metric.totalMs += elapsed
+        metric.maxMs = max(metric.maxMs, elapsed)
+        metrics[name] = metric
+    }
+
+    func beginWrite(key: String, frequencyHz: Double, edit: UInt64?) -> Int? {
+        guard !flushed else { return nil }
+        count("writerStarts")
+        guard records.count < Self.recordLimit else {
+            truncatedRecords += 1
+            return nil
+        }
+        records.append(Record(key: key, frequencyHz: frequencyHz, edit: edit, writerBeforeAwaitAt: timestamp()))
+        // This local array position is never reported as a wire/write ID.
+        return records.count - 1
+    }
+
+    func writerResumed(record index: Int?) {
+        guard !flushed else { return }
+        let resumedAt = timestamp()
+        count("writerResumes")
+        guard let index, records.indices.contains(index) else {
+            unmatchedResumes += 1
+            return
+        }
+        var record = records[index]
+        record.writerResumedAt = resumedAt
+        if let resolvedAt = record.resolvedAt {
+            record.resolveToResumeMs = max(0, resumedAt - resolvedAt) * 1_000
+        } else {
+            unmatchedResumes += 1
+        }
+        records[index] = record
+    }
+
+    func receive(_ event: MirrorStore.WriterResumeDiagnosticEvent) {
+        guard !flushed else { return }
+        switch event {
+        case .resolved(let key, let property, let value, let edit, let sequence, let at, let answeredByCore):
+            guard property == "frequency", key.hasPrefix("slice:") else { return }
+            count("writerResolutions")
+            guard let hz = value.number, let index = records.firstIndex(where: {
+                $0.key == key && $0.frequencyHz == hz && $0.edit == edit && $0.resolvedAt == nil
+            }) else {
+                unmatchedResolutions += 1
+                return
+            }
+            records[index].sequence = sequence
+            records[index].resolvedAt = at
+            records[index].answeredByCore = answeredByCore
+        case .sessionStopped:
+            flush()
+        }
+    }
+
+    private func flush() {
+        // An empty initial stopped state must not consume the only flush.
+        guard !flushed, !records.isEmpty else { return }
+        flushed = true
+        let snapshot = Snapshot(schema: 1, modelIdentity: modelIdentity,
+                                flushReason: "sessionStopped", recordLimit: Self.recordLimit,
+                                records: records, metrics: metrics, counts: counts,
+                                truncatedRecords: truncatedRecords, unmatchedResolutions: unmatchedResolutions,
+                                unmatchedResumes: unmatchedResumes,
+                                outstandingAtFlush: max(0, counts["writerStarts", default: 0]
+                                    - counts["writerResumes", default: 0]),
+                                resolvedButNotResumedAtFlush: records.filter {
+                                    $0.resolvedAt != nil && $0.writerResumedAt == nil
+                                }.count,
+                                completedMatches: records.filter {
+                                    $0.sequence != nil && $0.resolvedAt != nil && $0.writerResumedAt != nil
+                                }.count)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) {
+            print("PhoneWriterResumeDiagnostic " + json)
+        }
+    }
+}
+#endif
 
 private extension MirrorValue {
     var number: Double? {
