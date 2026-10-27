@@ -92,6 +92,10 @@
 //                 inf) into its filters, AGC, meters and audio. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-25 - The processIq guard's comment: the move no longer feeds the
+//                 channel early (the stream binding now rides the geometry
+//                 barrier), so the guard is a safety net. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3009,13 +3013,16 @@ void RxChannel::processIq(float* inI, float* inQ,
     // meters and audio. With NB1 or NB2 on it was a write as well: the
     // blanker below writes its buffsize (the old in_size) back into the
     // legs (NB1: xanbEXTF, nob.c:437-446; NB2: xnobEXTF, nobII.c:742). A longer chunk is in bounds but at the wrong
-    // rate: wrong-pitch audio and a wrong S-meter. Both happen when a slice
-    // moves to a stream at another rate: the DSP worker drains the new
-    // stream's chunks at once, while the channel's SetInputBuffsize waits
-    // on the receive lane (RadioModel::applyStreamDspGeometry). Thetis
-    // cannot reach this state: SetXcmInrate and the receive loop take the
-    // same per-stream critical section (ChannelMaster/cmaster.c:343 and 457
-    // [v2.10.3.15]), which the audio path here may not do.
+    // rate: wrong-pitch audio and a wrong S-meter. Both happened when a slice
+    // moved to a stream at another rate: the DSP worker drained the new
+    // stream's chunks at once, while the channel's SetInputBuffsize waited
+    // on the receive lane. Thetis cannot reach this state: SetXcmInrate and
+    // the receive loop take the same per-stream critical section
+    // (ChannelMaster/cmaster.c:343 and 457 [v2.10.3.15]), which the audio
+    // path here may not do. 2026-10-25: nor can NereusSDR now. The slice's
+    // new stream binding reaches the DSP worker inside the same receive-lane
+    // barrier as the re-rate (RadioModel::applyStreamDspGeometry), so this
+    // guard is a safety net: a silenced chunk means that ordering broke.
     //
     // The check is sound because every caller of applyRateOnLane quiesces
     // this worker first, so wdspInputSize() cannot change between this read

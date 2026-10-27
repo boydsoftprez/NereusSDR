@@ -93,6 +93,10 @@
 //                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-25 - takeInputSizeMismatch comment: the guard is a safety net
+//                 now that a slice's stream binding and its channel's re-rate
+//                 land in one step. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1261,9 +1265,12 @@ public:
     qint64 takeOutputNonFiniteSamples() const;
 
     // 2026-10-23: chunks processIq silenced since the previous take because
-    // their size did not match wdspInputSize(). A short window while a slice
-    // changes stream is expected; a count that keeps growing means a drain
-    // threshold and the channel's input block have parted for good.
+    // their size did not match wdspInputSize(). 2026-10-25: a safety net. A
+    // slice's move to a stream at another rate reaches the DSP worker in the
+    // same step as its channel's re-rate (RadioModel::applyStreamDspGeometry),
+    // so any count means that ordering broke; a count that keeps growing
+    // means a drain threshold and the channel's input block have parted for
+    // good.
     // chunkSize and wdspInputSize are the last silenced chunk's pair, as
     // the guard saw it. False (all 0) when no chunk was silenced.
     // Diagnostics only. Lock-free; one periodic owner only: RadioModel's

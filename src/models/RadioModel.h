@@ -12,6 +12,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - stream bindings reach the DSP worker inside the geometry
+//                barrier: republishStreamBindings stages them
+//                (m_stagedStreamBindings) and applyStreamDspGeometry
+//                delivers them, after the quiesce when out of step, as a
+//                receive-lane job when in step. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
+//   2026-10-25 - applyStreamDspGeometry doc: the barrier quiesces the
+//                external-diversity feed too; deliverStagedStreamBindingsInStep
+//                is private. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - applyStreamDspGeometry keeps the external-diversity fork
+//                connected and parks the worker for the re-rate
+//                (parkDspWorkerOnItsThread), so the fork's two legs stay
+//                paired. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -2564,6 +2577,9 @@ public:
     /// seed ({stream 0: [slice 0]}). Anything on a non-zero stream then
     /// demodulated nothing until the operator happened to retune it. Called
     /// from wireConnectionSignals once the worker exists.
+    ///
+    /// 2026-10-25: ends with applyStreamDspGeometry, which is what delivers
+    /// the bindings it stages.
     void republishAllStreamBindings();
 
     /// Drop every slice's stream binding and idle the whole pool.
@@ -7646,8 +7662,15 @@ public:
     /// connected.
     void syncReceiverToStream(int streamIndex, bool live);
 
-    /// Push the current slice set for `streamIndex` to RxDspWorker and emit
-    /// streamBindingsChanged. Called after every bind / unbind.
+    /// Stage the current slice set for `streamIndex` for RxDspWorker and emit
+    /// streamBindingsChanged at once. Called after every bind / unbind.
+    ///
+    /// 2026-10-25: it no longer posts to the worker. The binding is staged
+    /// (m_stagedStreamBindings, only while a worker exists, defect F1) and
+    /// applyStreamDspGeometry delivers it, so every caller reaches
+    /// applyStreamDspGeometry before it returns to the event loop.
+    /// 2026-10-26: a zero-delay check warns and delivers if one ever does
+    /// not.
     void republishStreamBindings(int streamIndex);
     bool streamCtunPinned(int streamIndex) const;
     void setStreamCtunPinned(int streamIndex, bool pinned);
@@ -7707,10 +7730,40 @@ public:
     /// accumulator. Rather than order the two writes (the safe order inverts
     /// between widening and narrowing), this quiesces the I/Q feed for the
     /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
-    /// can observe a half-applied geometry at all.
+    /// can observe a half-applied geometry at all. 2026-10-26: the
+    /// external-diversity fork (hardwareIqDataStamped, which hands its mixed
+    /// chunk to every slice on the target's stream) stays connected: the
+    /// worker pairs its two legs by position, so a disconnect between the
+    /// legs of one packet would leave them apart. The worker is parked
+    /// instead (parkDspWorkerOnItsThread), by the same event that applies the
+    /// drain sizes and the bindings, for the whole re-rate; a diversity batch
+    /// queued before that event runs on the old geometry, one after it on the
+    /// new.
     ///
     /// Cheap and side-effect-free when nothing is out of step, which is every
     /// call on a single-rate radio.
+    ///
+    /// 2026-10-25: the stream's channel set is the third part of the same
+    /// geometry. Thetis never lets the loop that runs fexchange0 see a
+    /// stream's channels, drain size and channel input geometry apart:
+    /// xcmaster holds pcm->update[stream] around the receive block
+    /// (ChannelMaster/cmaster.c:340-404 [v2.10.3.15]) and SetXcmInrate takes
+    /// the same lock (cmaster.c:457-507 [v2.10.3.15]) while it sets the drain
+    /// size and every sub-receiver's input rate and size. RxDspWorker's
+    /// m_streamSlices is the NereusSDR form of that channel set, so this is
+    /// also what delivers the bindings republishStreamBindings staged:
+    ///   * out of step, inside the barrier, after the quiesce, in the event
+    ///     that parks the worker, beside the drain sizes, so the first batch
+    ///     after the release sees the new binding, the new drain size and
+    ///     the channel's new wdspInputSize() together (without a lane, the
+    ///     same, after the blocking resetAccumulator);
+    ///   * in step, as one receive-lane job, so it lands after any barrier
+    ///     already queued (without a lane, queued to the worker at once);
+    ///   * while a live rate change runs, staged until finishSampleRateChange
+    ///     calls this again; abandonSampleRateChange and releaseStreamBindings
+    ///     drop them.
+    /// PR 630's input-size guard in RxChannel::processIq stays as the safety
+    /// net if this ordering is ever broken.
     void applyStreamDspGeometry();
 
     /// Re-run the codec after a MOX, effective PureSignal, or diversity
@@ -7770,6 +7823,10 @@ public:
     }
 
 private:
+    // 2026-10-25: applyStreamDspGeometry's in-step delivery of the staged
+    // bindings (see its declaration).
+    void deliverStagedStreamBindingsInStep();
+
     /// Remote-daemon R2 Task 11. Emits BOTH activeSliceChanged(index) (the
     /// existing positional signal, unchanged) and activeSliceIdChanged(id)
     /// (new), resolving `index` against m_slices to find the id. `index`
@@ -7981,6 +8038,11 @@ private:
     // True when `worker` is the running DSP worker and its thread is not
     // the caller's.
     bool dspWorkerThreadRunning(RxDspWorker* worker) const;
+    // 2026-10-26: parks `worker` on its own thread, after running
+    // `beforePark` there, and returns the function that releases it. The
+    // caller checks that the worker's thread runs and is not its own.
+    static std::function<void()> parkDspWorkerOnItsThread(
+        RxDspWorker* worker, std::function<void()> beforePark);
     // Connects a new RX channel's lane signals (NNR diagnostics and late
     // refusals, DSP-options timing) to the slice that owns it.
     void wireRxChannelLaneSignals(int channelId);
@@ -8320,6 +8382,12 @@ private:
     // never leaves its connect rate is recognised as already in step and
     // applyStreamDspGeometry stays a no-op. Main thread only.
     QHash<int, int> m_streamInSizePushed;
+
+    // 2026-10-25: each stream's slice set as republishStreamBindings last
+    // recorded it, not yet delivered to RxDspWorker. applyStreamDspGeometry
+    // delivers and clears it (see its declaration); a later republish of the
+    // same stream replaces its entry. Main thread only.
+    QMap<int, QVector<int>> m_stagedStreamBindings;
 
     // Phase 3F Sub-Epic I Task 7b: the codec's last per-stream DDC choice,
     // indexed by stream. -1 = that stream is idle, so an emptied stream

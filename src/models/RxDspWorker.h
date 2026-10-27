@@ -48,6 +48,9 @@
 //                 the device the speakers play on whenever it changes.
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-25 - streamSlicesForTest, a read-only test seam for the slices
+//                 a stream is fanned out to. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -238,6 +241,14 @@ public:
     void setProcessingDelayUsForTest(int microseconds)
     {
         m_processingDelayUsForTest.store(microseconds, std::memory_order_relaxed);
+    }
+
+    // The slices this worker fans stream `streamIndex` out to, as its drain
+    // loop reads them. DSP thread only: the map is that thread's.
+    QVector<int> streamSlicesForTest(int streamIndex) const
+    {
+        const auto it = m_streamSlices.find(streamIndex);
+        return it != m_streamSlices.end() ? it->second : QVector<int>{};
     }
 
     using ExternalDiversityOutputHookForTest =
