@@ -45,6 +45,13 @@
 // Core is transmitting.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Expose the client link for synchronous outbound test
+//               observation. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: forgeReplacesFirstContext: the forged first audio context
+//               goes on the wire in place of the real one, so a test can
+//               have the Core answer a request off (R-R3-21: the
+//               MediaNotReady retry). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-10: the window's microphone collector runs inline (no thread)
 //               in every test that builds this harness, so a test's own
 //               microphone and clock stay on the test's thread
@@ -189,6 +196,8 @@ public:
                     message.mediaPayload);
                 ++forgedContexts;
                 LoopbackTransport::sendText(SessionMessages::encode(forged));
+                // The forged copy stands for the real one, which is not sent.
+                if (forgeReplaces) { return; }
             }
         }
         LoopbackTransport::sendText(wire);
@@ -198,6 +207,8 @@ public:
     int forgedContexts = 0;
     int hiddenAudioProfiles = 0;
     Forge forgeNextAudioContext;
+    // The forged copy goes on the wire in place of the real context.
+    bool forgeReplaces = false;
     bool hideAudioProfile = false;
     bool hideAudioCatalogue = false;
     bool hideAudioClock = false;
@@ -342,6 +353,7 @@ struct RemoteAudioSessionHarness {
         auto* station = new RewritingTransport(QStringLiteral("station"), helloMinor);
         auto* clientEnd = new RewritingTransport(QStringLiteral("client"), helloMinor);
         station->forgeNextAudioContext = std::move(forgeFirstContext);
+        station->forgeReplaces = forgeReplacesFirstContext;
         station->hideAudioProfile = hideAudioProfile;
         station->hideAudioCatalogue = hideAudioCatalogue;
         station->hideAudioClock = hideAudioClock;
@@ -352,6 +364,7 @@ struct RemoteAudioSessionHarness {
         station->grantTransmit = grantTransmit;
         clientEnd->declareRemoteTx = declareRemoteTx;
         stationLink = station;
+        clientLink = clientEnd;
         station->linkTo(clientEnd);
         if (pairWindow) {
             // Desktop remote transmit: the window signs in by its own key,
@@ -489,6 +502,9 @@ struct RemoteAudioSessionHarness {
         keying->setMicUplink(uplink);
     }
 
+    // Set before connectSession(): connectSession's forged first audio
+    // context replaces the real one instead of going ahead of it.
+    bool forgeReplacesFirstContext = false;
     // Set before connectSession(): the Core appears to predate lossless.
     bool hideAudioProfile = false;
     bool hideAudioCatalogue = false;
@@ -541,6 +557,7 @@ struct RemoteAudioSessionHarness {
     static constexpr double kSliceBToneHz = 1579.0;
 
     QPointer<RewritingTransport> stationLink;
+    QPointer<RewritingTransport> clientLink;
 
     void feedMixedTone()
     {
