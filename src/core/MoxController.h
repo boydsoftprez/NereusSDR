@@ -38,6 +38,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-27: isMicPttHeld, isCatPttHeld, isVoxPttHeld (TGXL tune lane,
+//                PR 670). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-14: comments say how often P1 reports its PTT level: on each
 //                change and each status tick. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -501,6 +504,12 @@ public:
     // a manual key. TciServer reads it after a trx to give back the TX
     // audio lock when the trx keyed nothing (Task 7 follow-up, item 5).
     bool     isTciPttHeld()  const noexcept { return m_tciPtt; }
+    // TGXL tune lane (PR 670 fix wave 3): each PTT source's level on its
+    // own, so the Core can read the station's PTT apart from VOX (a remote
+    // device's VOX is that device's, ruling 8.4).
+    bool     isMicPttHeld()  const noexcept { return m_micPtt; }
+    bool     isCatPttHeld()  const noexcept { return m_catPtt; }
+    bool     isVoxPttHeld()  const noexcept { return m_voxPtt; }
 
     // iPhone app plan Task 77 fix round 2: a PTT source (mic, CAT, TCI, or
     // VOX triggering) is down now, keyed or held off. The Core never
