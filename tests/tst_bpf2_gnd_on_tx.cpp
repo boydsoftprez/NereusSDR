@@ -7,8 +7,12 @@
 // =================================================================
 //
 // Anvelina filter/OC plan, Task 5. NereusSDR used to set Alex1 bit 8
-// (_rx2_gnd) on every key. Thetis makes it a Setup box, unticked on a fresh
+// (_rx2_gnd) on every key. Thetis makes it a Setup box, ticked on a fresh
 // install, read at the TX edge:
+//   From Thetis setup.cs:403, 33171-33187 [v2.10.3.15] (Setup's
+//     constructor runs defaultAlexSettings(), which sets Checked = true on
+//     a control list ending with chkBPF2Gnd)
+//   From Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752 [@567a7ec]
 //   From Thetis console.cs:29091 [v2.10.3.15] HdwMOXChanged
 //     if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
 //   From Thetis console.cs:29170 [v2.10.3.15] (RX edge)
@@ -19,9 +23,11 @@
 //
 // Covered: the wire (keyed set when ticked, clear when unticked, unkeyed
 // clear either way, taken at the TX edge), the box (model visibility, per
-// MAC persistence, default unticked), a remote window's write reaching the
-// Core (scheduleRemoteHardwareApply), and a remote window on a Core below
-// radioHardwareVersion 14 (disabled with its reason).
+// MAC persistence, default ticked), a hidden-box model (G2E, ORIONMKII)
+// sending the ticked default, the Core's "alex" reload applying a saved key
+// (scheduleRemoteHardwareApply; the window's write across the link is
+// tst_remote_hl2_io's), the key's transmit family, and a remote window on a
+// Core below radioHardwareVersion 14 (disabled with its reason).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -37,6 +43,7 @@
 #include "core/accessories/AlexAntennaFacade.h"
 #include "core/session/IStationLink.h"
 #include "core/session/StationServer.h"
+#include "core/settings/SettingsProxyServer.h"
 #include "gui/setup/HardwarePage.h"
 #include "gui/setup/hardware/AntennaAlexTab.h"
 #include "models/RadioModel.h"
@@ -140,19 +147,20 @@ private slots:
         conn.setBoardForTest(static_cast<HPSDRHW>(board));
         conn.setReceiverFrequency(0, k40mHz);
 
-        // Default unticked: clear keyed and unkeyed (the behavior change
-        // from the old hard-coded set).
-        QVERIFY(!conn.bpf2GndOnTx());
-        QVERIFY(!bpf2Grounded(conn));
-        conn.setMox(true);
-        QVERIFY(!bpf2Grounded(conn));
-        conn.setMox(false);
-
-        // Ticked: unkeyed stays clear, keyed sets bit 8.
-        conn.setBpf2GndOnTx(true);
+        // Default ticked, as Thetis's defaultAlexSettings(): unkeyed clear,
+        // keyed sets bit 8 (the wire NereusSDR always sent).
+        QVERIFY(conn.bpf2GndOnTx());
         QVERIFY(!bpf2Grounded(conn));
         conn.setMox(true);
         QVERIFY(bpf2Grounded(conn));
+        conn.setMox(false);
+        QVERIFY(!bpf2Grounded(conn));
+
+        // Unticked: clear keyed and unkeyed.
+        conn.setBpf2GndOnTx(false);
+        QVERIFY(!bpf2Grounded(conn));
+        conn.setMox(true);
+        QVERIFY(!bpf2Grounded(conn));
         conn.setMox(false);
         QVERIFY(!bpf2Grounded(conn));
     }
@@ -164,6 +172,7 @@ private slots:
         ConnectedP2 conn;
         conn.setBoardForTest(HPSDRHW::OrionMKII);
         conn.setReceiverFrequency(0, k40mHz);
+        conn.setBpf2GndOnTx(false);
 
         conn.setMox(true);
         conn.setBpf2GndOnTx(true);
@@ -213,10 +222,56 @@ private slots:
         QCOMPARE(!box->isHidden(), shown);
         QCOMPARE(box->text(), QStringLiteral("Gnd BPF2 on Tx"));
         QCOMPARE(box->toolTip(), QStringLiteral("Ground BPF2 input on Tx"));
-        QVERIFY(!box->isChecked());
+        QVERIFY(box->isChecked());   // defaultAlexSettings() ticks it
     }
 
-    // ── The box: per MAC, default unticked, reaches the radio ────────────
+    // A model whose box is hidden still sends the ticked default: Thetis's
+    // chkBPF2Gnd_CheckedChanged never checks Visible and HdwMOXChanged has
+    // no model gate, so a G2E on Thetis sets Alex1 bit 8 on every key (as
+    // the 2026-05-23 Thetis-locked G2E pcap shows, Alex1=0x01440100).
+    void hiddenBoxModel_sendsTheTickedDefault_data()
+    {
+        QTest::addColumn<int>("model");
+        QTest::addColumn<int>("board");
+        QTest::newRow("ANAN_G2E") << int(HPSDRModel::ANAN_G2E) << int(HPSDRHW::HermesC10);
+        QTest::newRow("ORIONMKII") << int(HPSDRModel::ORIONMKII) << int(HPSDRHW::OrionMKII);
+    }
+    void hiddenBoxModel_sendsTheTickedDefault()
+    {
+        QFETCH(int, model);
+        QFETCH(int, board);
+        const auto sku = static_cast<HPSDRModel>(model);
+        const auto hw = static_cast<HPSDRHW>(board);
+        QVERIFY(!skuUiProfileFor(sku).hasBpf2GndOnTx);
+
+        ConnectedP2 conn;
+        conn.setBoardForTest(hw);
+        conn.setReceiverFrequency(0, k40mHz);
+        conn.setBpf2GndOnTx(false);   // so only the apply can tick it
+        RadioModel radio;
+        radio.setBoardForTest(hw);
+        radio.setHpsdrModelForTest(sku);
+        RadioInfo info;
+        info.macAddress = kMac;
+        info.boardType = hw;
+        info.modelOverride = sku;
+        radio.setLastRadioInfoForTest(info);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+        radio.injectConnectionForTest(&conn);
+
+        QVERIFY(savedValue(kMac).isEmpty());   // no saved value
+        radio.applyAlexHpfSwitchSettings();
+        QTRY_VERIFY(conn.bpf2GndOnTx());
+        QVERIFY(!bpf2Grounded(conn));
+        conn.setMox(true);
+        QVERIFY(bpf2Grounded(conn));
+        conn.setMox(false);
+        QVERIFY(!bpf2Grounded(conn));
+
+        radio.injectConnectionForTest(nullptr);
+    }
+
+    // ── The box: per MAC, default ticked, reaches the radio ──────────────
     void box_persistsPerMacAndReachesTheRadio()
     {
         ConnectedP2 conn;
@@ -232,35 +287,35 @@ private slots:
             QVERIFY(box != nullptr);
             QVERIFY(!box->isHidden());
             QVERIFY(box->isEnabled());
-            QVERIFY(!box->isChecked());
+            QVERIFY(box->isChecked());
             QVERIFY(savedValue(kMac).isEmpty());   // nothing written until changed
 
             box->click();
-            QCOMPARE(savedValue(kMac), QStringLiteral("True"));
+            QCOMPARE(savedValue(kMac), QStringLiteral("False"));
             QVERIFY(savedValue(kOtherMac).isEmpty());
-            QVERIFY(conn.bpf2GndOnTx());
+            QVERIFY(!conn.bpf2GndOnTx());
             conn.setMox(true);
-            QVERIFY(bpf2Grounded(conn));
-            conn.setMox(false);
             QVERIFY(!bpf2Grounded(conn));
+            conn.setMox(false);
         }
 
         // A new tab restores it for this radio, and not for another.
         {
             AntennaAlexTab tab(&model);
             tab.populate(anvelina(kMac), *model.hardwareProfile().caps);
-            QVERIFY(bpf2Box(tab)->isChecked());
-            tab.populate(anvelina(kOtherMac), *model.hardwareProfile().caps);
             QVERIFY(!bpf2Box(tab)->isChecked());
-            tab.populate(anvelina(kMac), *model.hardwareProfile().caps);
+            tab.populate(anvelina(kOtherMac), *model.hardwareProfile().caps);
             QVERIFY(bpf2Box(tab)->isChecked());
+            tab.populate(anvelina(kMac), *model.hardwareProfile().caps);
+            QVERIFY(!bpf2Box(tab)->isChecked());
 
             bpf2Box(tab)->click();
-            QCOMPARE(savedValue(kMac), QStringLiteral("False"));
-            QVERIFY(!conn.bpf2GndOnTx());
+            QCOMPARE(savedValue(kMac), QStringLiteral("True"));
+            QVERIFY(conn.bpf2GndOnTx());
             conn.setMox(true);
-            QVERIFY(!bpf2Grounded(conn));
+            QVERIFY(bpf2Grounded(conn));
             conn.setMox(false);
+            QVERIFY(!bpf2Grounded(conn));
         }
 
         model.injectConnectionForTest(nullptr);
@@ -270,23 +325,26 @@ private slots:
     void savedValue_isApplied()
     {
         AppSettings::instance().setHardwareValue(
-            kMac, QString::fromLatin1(alexKeys::kBpf2GndOnTx), QStringLiteral("True"));
+            kMac, QString::fromLatin1(alexKeys::kBpf2GndOnTx), QStringLiteral("False"));
         ConnectedP2 conn;
         conn.setBoardForTest(HPSDRHW::OrionMKII);
         RadioModel model;
         prepareCore(model, &conn);
         model.applyAlexHpfSwitchSettings();
+        QTRY_VERIFY(!conn.bpf2GndOnTx());
         conn.setMox(true);
-        QVERIFY(bpf2Grounded(conn));
+        QVERIFY(!bpf2Grounded(conn));
         conn.setMox(false);
         model.injectConnectionForTest(nullptr);
     }
 
-    // ── A remote window's write reaches the Core ─────────────────────────
+    // ── The Core's reload applies a written key ──────────────────────────
     //
-    // The window's write lands in the Core's settings through StationServer,
-    // which then calls scheduleRemoteHardwareApply with the key.
-    void remoteWindowWrite_reachesTheCore()
+    // A window's write lands in the Core's settings through StationServer,
+    // which then calls scheduleRemoteHardwareApply with the key; this test
+    // starts at that call. The write across the link, on a receive-only
+    // Core, is tst_remote_hl2_io's alexHpfSwitchesFromARemoteWindowOnAndOffTheAir.
+    void coreReload_appliesAWrittenKey()
     {
         ConnectedP2 conn;
         conn.setBoardForTest(HPSDRHW::OrionMKII);
@@ -316,12 +374,17 @@ private slots:
     }
 
     // A transmit hardware key: never on the receive-only off-air list
-    // (a receive-only Core takes it from a peer offered version 14).
+    // (a receive-only Core takes it from a peer offered version 14), and in
+    // the transmitter's shared family with the Alex high-pass switches.
     void isATransmitHardwareKey()
     {
         const QString key = QStringLiteral("hardware/%1/%2")
                                 .arg(kMac, QString::fromLatin1(alexKeys::kBpf2GndOnTx));
         QVERIFY(!StationServer::isTransmitSettingKeyAcceptedOffAir(key));
+        QVERIFY(SettingsProxyServer::isAlexHpfTransmitSwitchKey(key));
+        QVERIFY(SettingsProxyServer::isAlexHpfTransmitSwitchKey(key.toUpper()));
+        QCOMPARE(SettingsProxyServer::sharedFamilyOf(key),
+                 SettingsProxyServer::SharedFamily::Transmitter);
     }
 
     // ── A remote window on an older Core ─────────────────────────────────

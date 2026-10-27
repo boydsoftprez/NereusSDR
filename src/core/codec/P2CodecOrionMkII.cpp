@@ -632,13 +632,15 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
         // History: the ANAN-G2E bench-fix of 2026-05-23 (JJ Boyd) set this
         // bit on every key, reading bpf2_gnd's field initialiser (= true,
         // console.cs:10903 [v2.10.3.15]); a Thetis-locked G2E pcap had
-        // Alex1=0x01440100 (bit 8 set) during MOX. But Setup pushes the
-        // box's state at start-up (setup.cs:2867 [v2.10.3.15],
-        // ForceAllEvents -> chkBPF2Gnd_CheckedChanged ->
-        // console.BPF2Gnd = chkBPF2Gnd.Checked), and the designer leaves the
-        // box unticked (setup.designer.cs:5733-5745 [v2.10.3.15]), so a
-        // fresh Thetis install sends it clear. NereusSDR now follows the
-        // box (ctx.bpf2GndOnTx, default false: JJ, 2026-10-26).
+        // Alex1=0x01440100 (bit 8 set) during MOX. That value was right
+        // for the wrong reason: Setup's constructor ticks the box in
+        // defaultAlexSettings() (From Thetis setup.cs:403, 33171-33187
+        // [v2.10.3.15]; From Thetis-Enhanced (EU2AV) setup.cs:432,
+        // 33736-33752 [@567a7ec]), and ForceAllEvents then pushes it
+        // (setup.cs:2867 [v2.10.3.15], chkBPF2Gnd_CheckedChanged ->
+        // console.BPF2Gnd = chkBPF2Gnd.Checked), so a fresh Thetis install
+        // sets the bit on every key, hidden box (G2E, 200D) included.
+        // NereusSDR now follows the box (ctx.bpf2GndOnTx, default true).
         if (ctx.bpf2GndOnTx) {
             reg |= (1u << 8);   // _rx2_gnd (BPF2 ground during TX)
         }

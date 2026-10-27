@@ -341,9 +341,11 @@ struct CodecContext {
     // (_rx2_gnd). The codec sets the bit only while ctx.mox is true; the
     // P2 connection fills this with the value taken at the TX edge, as
     // Thetis's HdwMOXChanged reads bpf2_gnd only then (P2RadioConnection::
-    // setMox). Default false, as a fresh Thetis install (setup.cs:2867
-    // [v2.10.3.15] pushes the unticked box at start-up).
-    bool    bpf2GndOnTx{false};
+    // setMox). Default true, as Thetis's defaultAlexSettings() ticks
+    // chkBPF2Gnd on a fresh install (setup.cs:403, 33171-33187
+    // [v2.10.3.15]; Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752
+    // [@567a7ec]).
+    bool    bpf2GndOnTx{true};
 
     // P1 mic-jack boost bit — bank 10 (C0=0x12) C2 bit 0 (0x01).
     // Polarity: 1 = boost on (no inversion).

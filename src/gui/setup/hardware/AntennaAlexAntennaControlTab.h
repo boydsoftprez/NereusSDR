@@ -153,7 +153,8 @@ public:
     // hardware/<mac>/alex/master/bpf2GndOnTx (alexKeys::kBpf2GndOnTx), as
     // the Alex-1 Filters tab saves its switches; AntennaAlexTab::populate
     // hands the radio's MAC here. Before a MAC is known the box shows the
-    // default (unticked) and saves nothing.
+    // default (ticked, as Thetis's defaultAlexSettings()) and saves
+    // nothing.
     void restoreBpf2GndOnTx(const QString& macAddress);
     // radioHardwareVersion 14: a remote window changes the box only on a
     // Core that applies it, disabled with `reason` otherwise. Always

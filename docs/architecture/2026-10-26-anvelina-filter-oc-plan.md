@@ -179,11 +179,11 @@ Model tier: opus.
 
 ## Task 5: "Gnd BPF2 on Tx" setting (M1) **TX**
 
-JJ's answer to question 1 (2026-10-26, "match thetis"): default unticked, as on a fresh Thetis install (the designer gives `chkBPF2Gnd` no `Checked` line and `ForceAllEvents` pushes the unchecked state at startup, `setup.cs:579`, `:2867`). This is a behaviour change for JJ's radios: keyed Alex1 bit 8 goes clear until the box is ticked; the PR body says so. Thetis: `console.cs:29091` `if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);`, the
+JJ's answer to question 1 (2026-10-26, "match thetis"): default ticked, as Thetis `defaultAlexSettings()`. The designer gives `chkBPF2Gnd` no `Checked` line, but Setup's constructor calls `defaultAlexSettings()` (`setup.cs:403`), which ticks a control list ending with `chkBPF2Gnd` (`setup.cs:33171-33187`; Yuri `setup.cs:432`, `33736-33752`), and `ForceAllEvents` then pushes the ticked state at startup (`setup.cs:579`, `:2867`). (Corrected in the fix wave: this paragraph first said unticked, which missed `defaultAlexSettings()`.) No wire change at default: keyed Alex1 bit 8 stays set until the box is unticked, hidden-box models (G2E, 200D/ORIONMKII) included. Thetis: `console.cs:29091` `if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);`, the
 property at `console.cs:10903`, the Setup box `chkBPF2Gnd` "Gnd BPF2 on Tx" (`setup.designer.cs:5736-5745`, shown
 on the Mk II models at `setup.cs:6208`), its handler `setup.cs:18214-18218`. NereusSDR hard-codes Alex1 bit 8 on
 while keyed (`src/core/codec/P2CodecOrionMkII.cpp:600-615`). Add the box on Antenna / ALEX beside the other
-"on TX" boxes, after "RX BYPASS on TX" / "Ext 2 on Tx" and before "Use TX antenna for RX", as in the approved mockup, shown on the models where Thetis shows it, persisted per MAC (`"False"` default), carried in `CodecContext`. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
+"on TX" boxes, after "RX BYPASS on TX" / "Ext 2 on Tx" and before "Use TX antenna for RX", as in the approved mockup, shown on the models where Thetis shows it, persisted per MAC (`"True"` default), carried in `CodecContext`. Acceptance: keyed Alex1 bit 8 follows the box; unkeyed it is clear either way. Model tier: opus.
 
 ## Task 6: The mapping document and provenance
 

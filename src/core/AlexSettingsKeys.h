@@ -103,7 +103,10 @@ inline constexpr const char* kAlex1LpfPrefix = "alex/lpf";
 inline constexpr const char* kLpfBypass = "alex/master/lpfBypass";
 
 // Thetis chkBPF2Gnd ("Gnd BPF2 on Tx", console.cs BPF2Gnd): ground the BPF2
-// input while transmitting (P2 Alex1 bit 8). Default False. Shown on Setup's
+// input while transmitting (P2 Alex1 bit 8). Default True, as Thetis's
+// defaultAlexSettings() ticks chkBPF2Gnd (setup.cs:403, 33171-33187
+// [v2.10.3.15]; Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752
+// [@567a7ec]). Shown on Setup's
 // Antenna Control tab; kept with the Alex master switches because the Core
 // applies it with them (RadioModel::applyAlexHpfSwitchSettings).
 inline constexpr const char* kBpf2GndOnTx = "alex/master/bpf2GndOnTx";

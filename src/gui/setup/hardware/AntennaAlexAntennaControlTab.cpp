@@ -748,8 +748,17 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     //   this.chkBPF2Gnd.Text = "Gnd BPF2 on Tx";
     //   this.toolTip1.SetToolTip(this.chkBPF2Gnd, "Ground BPF2 input on Tx");
     //   this.chkBPF2Gnd.Visible = false;   (applySkuProfile shows it)
-    // No Checked line: unticked by default.
+    // The designer has no Checked line; Setup's constructor ticks the box
+    // in defaultAlexSettings() (the control list ends with chkBPF2Gnd):
+    //   From Thetis setup.cs:403, 33171-33187 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752 [@567a7ec]
+    //     defaultAlexSettings();
+    //     ... chkForceATTwhenOutPowerChanges, chkBPF2Gnd };
+    //     foreach (Control control in controls)
+    //         if (control is CheckBox) ((CheckBox)control).Checked = true;
+    // So the box starts ticked until a radio's saved value replaces it.
     m_chkBpf2GndOnTx   = new QCheckBox(tr("Gnd BPF2 on Tx"), frame);
+    m_chkBpf2GndOnTx->setChecked(true);
     m_chkRxOutOverride = new QCheckBox(tr("Disable RX Bypass relay"), frame);
     m_chkUseTxAntForRx = new QCheckBox(tr("Use TX antenna for RX"), frame);
     m_chkRxOutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOnTx");
@@ -1071,10 +1080,12 @@ void AntennaAlexAntennaControlTab::syncTxRelaysFromSource()
 void AntennaAlexAntennaControlTab::restoreBpf2GndOnTx(const QString& macAddress)
 {
     m_bpf2GndMac = macAddress;
-    const bool on = !macAddress.isEmpty()
-        && AppSettings::instance()
+    // Default ticked, as Thetis's defaultAlexSettings() (setup.cs:403,
+    // 33171-33187 [v2.10.3.15]).
+    const bool on = macAddress.isEmpty()
+        || AppSettings::instance()
                    .hardwareValue(macAddress, QString::fromLatin1(alexKeys::kBpf2GndOnTx),
-                                  QStringLiteral("False"))
+                                  QStringLiteral("True"))
                    .toString() == QStringLiteral("True");
     QSignalBlocker b(m_chkBpf2GndOnTx);
     m_chkBpf2GndOnTx->setChecked(on);

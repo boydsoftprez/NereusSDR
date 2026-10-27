@@ -34049,10 +34049,13 @@ void RadioModel::applyAlexHpfSwitchSettings()
     const bool lpfBypass = flag(alexKeys::kLpfBypass, "False")
         && codec::alex::lpfBypassAvailable(m_hardwareProfile.model);
     // "Gnd BPF2 on Tx" (Antenna Control's box, saved with the Alex
-    // switches). Default False, the box Thetis's designer leaves unticked.
+    // switches). Default True, as Thetis's defaultAlexSettings() ticks
+    // chkBPF2Gnd (From Thetis setup.cs:403, 33171-33187 [v2.10.3.15];
+    // From Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752 [@567a7ec]).
     // The connection takes it at the next TX edge; kept whatever the model,
-    // as Thetis's hidden box still sets console.BPF2Gnd.
-    const bool bpf2GndOnTx = flag(alexKeys::kBpf2GndOnTx, "False");
+    // as Thetis's hidden box still sets console.BPF2Gnd (G2E, 200D keep
+    // sending the ticked default).
+    const bool bpf2GndOnTx = flag(alexKeys::kBpf2GndOnTx, "True");
     RadioConnection* conn = m_connection;
     QMetaObject::invokeMethod(conn, [conn, onTx, onPs, bypass, lnaOffRx, lnaOffTx, edges,
                                      lpfEdges, lpfBypass, bpf2GndOnTx]() {

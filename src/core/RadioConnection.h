@@ -640,7 +640,9 @@ public slots:
     /// "Gnd BPF2 on Tx" (Setup > Hardware Config > Antenna / ALEX, Thetis
     /// chkBPF2Gnd, console.cs BPF2Gnd). Stored only: the P2 connection
     /// takes it at the next TX edge (P2RadioConnection::setMox) and grounds
-    /// the BPF2 input (Alex1 bit 8) for that key. Default false.
+    /// the BPF2 input (Alex1 bit 8) for that key. Default true, as
+    /// Thetis's defaultAlexSettings() ticks chkBPF2Gnd (setup.cs:403,
+    /// 33171-33187 [v2.10.3.15]).
     void setBpf2GndOnTx(bool on) { m_bpf2GndOnTx = on; }
     bool bpf2GndOnTx() const noexcept { return m_bpf2GndOnTx; }
 
@@ -1628,8 +1630,9 @@ protected:
     bool m_hpfBypassOnTx{false};
 
     // "Gnd BPF2 on Tx" (setBpf2GndOnTx). Written and read on the connection
-    // thread.
-    bool m_bpf2GndOnTx{false};
+    // thread. True until RadioModel applies the saved value, so a
+    // connection that never got it still matches Thetis's ticked default.
+    bool m_bpf2GndOnTx{true};
 
     // "HPF Bypass" (setAlexHpfBypass). Written and read on the connection
     // thread.
