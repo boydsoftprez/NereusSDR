@@ -1484,6 +1484,8 @@
 //                device taking transmit aborts only what is sent for someone
 //                else; stopCwxFor ends a device's request with its session.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: Keep the TUNE observation seam test-only in tests-off
+//                builds. J.J. Boyd (KG4VCF), AI-assisted via Codex.
 // =================================================================
 
 //=================================================================
@@ -30770,10 +30772,12 @@ static double signedTuneToneHz(DSPMode mode, int pitchHz) noexcept
     return isLsbFamily(mode) ? -pitch : +pitch;
 }
 
+#ifdef NEREUS_BUILD_TESTS
 double RadioModel::tuneToneHzForTest() const noexcept
 {
     return m_isTuning ? signedTuneToneHz(m_savedTxDspMode, m_tunePitchHz) : 0.0;
 }
+#endif
 
 quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
 {
