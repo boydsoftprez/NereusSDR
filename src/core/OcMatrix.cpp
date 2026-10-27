@@ -23,6 +23,13 @@
 //                Claude Code.
 //   2026-09-30 - Added the enums.cs header this file cites. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Applied the TX pin actions on the wire: maskFor(band, tx,
+//                tune, twoTone) ports Penny.cs UpdateExtCtrl's adjust step,
+//                adjustForTXAction and adjustForRX (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code)
+//   2026-10-26 - Fix wave: the raw-bits lookup cites Penny.cs:156-186, and
+//                the reduced group lookup keeps its inline comments
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code)
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Penny.cs header ===
@@ -135,18 +142,137 @@ void OcMatrix::setPin(Band band, int pin, bool tx, bool enabled)
     emit changed();
 }
 
-// Derived from Thetis HPSDR/Penny.cs:264-275 [@501e3f5] mask construction loop
-// (for(int nPin=0; nPin<7; nPin++) mask |= nBit << nPin)
+// The two-argument form: tune and twoTone false. With every action at its
+// MOX_TUNE_TWOTONE default the transmit bits pass through unchanged.
 quint8 OcMatrix::maskFor(Band band, bool tx) const
 {
+    return maskFor(band, tx, /*tune=*/false, /*twoTone=*/false);
+}
+
+// From Thetis HPSDR/Penny.cs:156-186 [v2.10.3.15] UpdateExtCtrl
+// From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:156-186 [@567a7ec]
+// The raw bits are the band's TX or RX pins (Penny.cs:170-178,
+// bits = TXABitMasks[idx] / RXABitMasks[idx]), built here from the
+// per-pin matrix; SplitPins and VFOBTX are not ported (one band in).
+quint8 OcMatrix::maskFor(Band band, bool tx, bool tune, bool twoTone) const
+{
     const int b = int(band);
+    // [original inline comment from Penny.cs:162] //26
     if (b < 0 || b >= kBandCount) { return 0; }
     QReadLocker locker(&m_lock);
-    quint8 mask = 0;
+    quint8 bits = 0;
     for (int pin = 0; pin < kPinCount; ++pin) {
-        if (m_pins[b][pin][tx ? 1 : 0]) { mask |= quint8(1 << pin); }
+        if (m_pins[b][pin][tx ? 1 : 0]) { bits |= quint8(1 << pin); }
     }
-    return mask;
+
+    // adjust for pin action and/or PA
+    if (tx) {
+        bits = adjustForTxAction(bits, tx, tune, twoTone);
+    } else {
+        bits = adjustForRx(bits);
+    }
+    //
+    return bits;
+}
+
+// From Thetis HPSDR/Penny.cs:262-296 [v2.10.3.15] adjustForRX
+// From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:262-296 [@567a7ec]
+//
+// NereusSDR keeps no RXPinPA array. Every Thetis RXPinPA[group, pin] starts
+// false and NereusSDR has no control that sets one:
+//   From Thetis HPSDR/Penny.cs:59-61 [v2.10.3.15]
+//   From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:59-61 [@567a7ec]
+//     TXPinAction[group, pin] = TXPinActions.MOX_TUNE_TWOTONE;
+//     TXPinPA[group, pin] = false;
+//     RXPinPA[group, pin] = false;
+// so bConisderPA is always false here and every pin keeps its bit: the
+// bits come back unchanged. Thetis's group lookup (getGroup, SplitPins,
+// VFOBTX) chooses which group's PA flag to read; with one flag value for
+// every group it is reduced away, and no NereusSDR band falls outside the
+// three groups ("some issue finding band, skip" cannot happen).
+// Reduced lines' comments:
+//   [original inline comment from Penny.cs:271] // need to find the group that is VFOA/VFOB
+//   [original inline comment from Penny.cs:285] // some issue finding band, skip
+quint8 OcMatrix::adjustForRx(quint8 bits)
+{
+    // [original Thetis declaration: bool[,] RXPinPA, reduced to its default]
+    constexpr bool kConsiderPa = false;  // From Thetis HPSDR/Penny.cs:61 [v2.10.3.15]
+                                         // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:61 [@567a7ec]
+    constexpr bool kPa = false;          // pa only matters when a pin considers it
+    int mask = 0;
+
+    for (int nPin = 0; nPin < kPinCount; nPin++) {
+        bool bConisderPA = kConsiderPa; // are we considering the PA state for this pin?
+                                        // PA state is an override button on the front end console
+
+        int nBit = !bConisderPA || (bConisderPA && kPa) ? 1 : 0;
+
+        mask |= nBit << nPin;
+    }
+
+    return quint8(bits & mask);
+}
+
+// From Thetis HPSDR/Penny.cs:297-360 [v2.10.3.15] adjustForTXAction
+// From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:297-360 [@567a7ec]
+//
+// One action per pin (NereusSDR collapses Thetis's [group, pin] array; see
+// m_pinActions), and TXPinPA reduced to its false default as in adjustForRx
+// (Penny.cs:60 [v2.10.3.15]; Thetis-Enhanced (EU2AV) Penny.cs:60
+// [@567a7ec]), so the action alone decides each bit. The group lookup is
+// reduced as in adjustForRx; its comments:
+//   [original inline comment from Penny.cs:306] // need to find the group that is VFOA/VFOB
+//   [original inline comment from Penny.cs:320] // some issue finding band, skip
+quint8 OcMatrix::adjustForTxAction(quint8 bits, bool tx, bool tune, bool twoTone) const
+{
+    // [original Thetis declaration: bool[,] TXPinPA, reduced to its default]
+    constexpr bool kConsiderPa = false;  // From Thetis HPSDR/Penny.cs:60 [v2.10.3.15]
+                                         // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:60 [@567a7ec]
+    constexpr bool kPa = false;          // pa only matters when a pin considers it
+    int mask = 0;
+
+    for (int nPin = 0; nPin < kPinCount; nPin++) {
+        const TXPinAction action = m_pinActions[nPin];
+        bool bConisderPA = kConsiderPa; // are we considering the PA state for this pin?
+                                        // PA state is an override button on the front end console
+
+        int nBit = 0;
+
+        if (!bConisderPA || (bConisderPA && kPa)) {
+            switch (action) {
+            case TXPinAction::Mox: // tx only
+                nBit = tx && !tune && !twoTone ? 1 : 0;
+                break;
+            case TXPinAction::Tune: // tune
+                nBit = tune ? 1 : 0;
+                break;
+            case TXPinAction::TwoTone: // twoTone
+                nBit = twoTone ? 1 : 0;
+                break;
+            case TXPinAction::MoxTune: // tx or tune
+                nBit = (tx || tune) && !twoTone ? 1 : 0;
+                break;
+            case TXPinAction::MoxTwoTone: // tx or twoTone
+                // Thetis writes (tx || twoTone) & !tune; the bitwise & on
+                // two bools gives the same result as && and would draw a
+                // -Wbool-operation warning here.
+                nBit = (tx || twoTone) && !tune ? 1 : 0;
+                break;
+            case TXPinAction::TuneTwoTone: // tune or twoTone
+                nBit = tune || twoTone ? 1 : 0;
+                break;
+            case TXPinAction::MoxTuneTwoTone: // tx or tune or twoTone
+                nBit = tx || tune || twoTone ? 1 : 0;
+                break;
+            case TXPinAction::Count:
+                break;
+            }
+        }
+
+        mask |= nBit << nPin;
+    }
+
+    return quint8(bits & mask);
 }
 
 // From Thetis HPSDR/Penny.cs:94-100 [@501e3f5] setTXPinAction

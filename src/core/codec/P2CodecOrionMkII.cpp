@@ -68,6 +68,12 @@
 //   2026-10-15 - The Anvelina note gives the gateware's tested rate budget.
 //                Comment only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - High-priority byte 1397: the Anvelina PRO3 DX open
+//                collector outputs (network.c:1016-1020 [v2.10.3.15]), mask
+//                kDxWireMask (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - Alex1 bit 8 (_rx2_gnd) follows "Gnd BPF2 on Tx"
+//                (ctx.bpf2GndOnTx) instead of being set on every key
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 //
 // === Verbatim Thetis Console/console.cs header (lines 1-50) ===
@@ -296,6 +302,23 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
     //   // Open Collector Outputs
     //   packetbuf[1401] = (prn->oc_output << 1) & 0xfe;
     buf[1401] = static_cast<quint8>((ctx.ocByte << 1) & 0xfe);
+
+    // The Anvelina PRO3 DX open collector outputs, USEROUT7 .. USEROUT10.
+    // From Thetis ChannelMaster/network.c:1016-1020 [v2.10.3.15]
+    // From Thetis-Enhanced (EU2AV) ChannelMaster/network.c:1016-1020 [@567a7ec]
+    //   //1397 - Open_Collector_Anvelina_DX
+    //   if (HPSDRModel == HPSDRModel_ANVELINAPRO3)
+    //   {
+    //       packetbuf[1397] = prn->oc_output_extras & 0x0f;  // [4:0]
+    //   }
+    // NereusSDR-divergence: masked with kDxWireMask (0x1E, bits 1-4), not
+    // 0x0f, so DX OUT 10 (bit 4) reaches the radio. See kDxWireMask in
+    // CodecContext.h (Spec page 2, "Structure of Byte 1397"; Orion.v:923
+    // [@8e86a61]). The radio holds the pins low while run is 0, so the
+    // byte goes out whatever the run state.
+    if (ctx.model == HPSDRModel::ANVELINAPRO3) {
+        buf[1397] = static_cast<quint8>(ctx.ocExtrasByte & kDxWireMask);
+    }
 
     // R-SPK-09: the speaker amplifier mute. Bit 1 only: bit 0 (transverter
     // out) and bit 2 (ATU tune) stay zero, as they always have here.
@@ -597,21 +620,30 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
             reg |= (1u << 18);  // _trx_status mirrors Alex0's _TR_Relay
         }
 
-        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): Alex1 bit 8 (_rx2_gnd)
-        // on MOX-on per Thetis console.cs:29091 HdwMOXChanged [v2.10.3.13]:
-        //   if (tx) { ...
-        //       if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
-        //   }
-        // Default bpf2_gnd = true at console.cs:10903 [v2.10.3.13], so
-        // Alex1 bit 8 fires on every MOX engagement unless the user has
-        // explicitly disabled it.  Bench-confirmed in Thetis-locked G2E
-        // pcap (Alex1=0x01440100 during MOX has bit 8 set).  Without
-        // this, the Alex2 BPF chain doesn't ground the rx2 port during
-        // TX, which can affect the PS feedback path on Mk II BPF boards
-        // (G2E is mkiiBpf=true).
-        // NereusSDR-divergence: we don't yet expose a "bpf2_gnd" user
-        // checkbox.  Hard-coded to true (Thetis default).
-        reg |= (1u << 8);   // _rx2_gnd (BPF2 ground during TX)
+        // Alex1 bit 8 (_rx2_gnd): "Gnd BPF2 on Tx" grounds the BPF2 input
+        // while keyed, when the box is ticked.
+        //   From Thetis console.cs:29091 [v2.10.3.15] HdwMOXChanged
+        //   From Thetis-Enhanced (EU2AV) console.cs:29147 [@567a7ec]
+        //     if (tx) { ...
+        //         if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+        //     }
+        //   From Thetis ChannelMaster/network.h:328 [v2.10.3.15]
+        //     _rx2_gnd       : 1, // bit 08
+        // History: the ANAN-G2E bench-fix of 2026-05-23 (JJ Boyd) set this
+        // bit on every key, reading bpf2_gnd's field initialiser (= true,
+        // console.cs:10903 [v2.10.3.15]); a Thetis-locked G2E pcap had
+        // Alex1=0x01440100 (bit 8 set) during MOX. That value was right
+        // for the wrong reason: Setup's constructor ticks the box in
+        // defaultAlexSettings() (From Thetis setup.cs:403, 33171-33187
+        // [v2.10.3.15]; From Thetis-Enhanced (EU2AV) setup.cs:432,
+        // 33736-33752 [@567a7ec]), and ForceAllEvents then pushes it
+        // (setup.cs:2867 [v2.10.3.15], chkBPF2Gnd_CheckedChanged ->
+        // console.BPF2Gnd = chkBPF2Gnd.Checked), so a fresh Thetis install
+        // sets the bit on every key, hidden box (G2E, 200D) included.
+        // NereusSDR now follows the box (ctx.bpf2GndOnTx, default true).
+        if (ctx.bpf2GndOnTx) {
+            reg |= (1u << 8);   // _rx2_gnd (BPF2 ground during TX)
+        }
     }
 
     // TX antenna selection — same encoding as RX but in Alex1 [@501e3f5]

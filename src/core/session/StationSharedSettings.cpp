@@ -127,6 +127,8 @@
 //   2026-10-22: RX-only values 4 and 5 are worded as XVTR with the first
 //               or second input (rxOnlyWords). J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26: "Gnd BPF2 on Tx" is worded in Antenna Control's words.
+//               J.J. Boyd (KG4VCF), AI-assisted: Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -935,6 +937,8 @@ StationServer::SharedChange StationServer::classifyShared(const SessionMessage& 
                     ? QStringLiteral("HPF Bypass on TX")
                     : field == QLatin1String("hpfbypassonps")
                     ? QStringLiteral("HPF Bypass on PureSignal feedback")
+                    : field == QLatin1String("bpf2gndontx")
+                    ? QStringLiteral("Gnd BPF2 on Tx")
                     : QStringLiteral("Disable 6m LNA on TX");
             } else {
                 label = key.endsWith(QLatin1String("Reversed"))

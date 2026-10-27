@@ -2627,11 +2627,25 @@ nereus_add_test(tst_preamp_mode)
 # under hardware/<mac>/oc/{rx,tx}/<band>/pin<n> and .../actions/pin<n>/action.
 nereus_add_test(tst_oc_matrix)
 
+# ── Anvelina PRO3 DX open collector outputs (DX OUT 7..10) ───────────────────
+# Wire byte (bits 1-4, kDxWireMask 0x1E), per-MAC persistence under
+# hardware/<mac>/oc/dx/out<N>/{enabled,label}, and a Core's "ocDx" reload
+# applying a window's change at once, keyed or not.
+nereus_add_test(tst_anvelina_dx_outputs)
+target_compile_definitions(tst_anvelina_dx_outputs PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-D Task 2: OC Outputs HF sub-sub-tab UI + matrix wiring ──────────
 # Smoke-tests construction, RX/TX pin sync (matrix→UI via changed()), reset
 # flow, GEN band row disabled state, and default TXPinAction (MoxTuneTwoTone).
 nereus_add_test(tst_oc_outputs_hf_tab)
 target_compile_definitions(tst_oc_outputs_hf_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Anvelina DX Outputs group on OC Outputs (DX OUT 7..10) ───────────────────
+# Shown on an ANVELINAPRO3 only; boxes / All on / All off reach the model's
+# wire byte; model to UI sync without write-back; held with the reason while
+# the radio is stopped.
+nereus_add_test(tst_oc_outputs_dx_group)
+target_compile_definitions(tst_oc_outputs_dx_group PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3L: OC Outputs SWL sub-sub-tab UI + matrix wiring ──────────────────
 # Smoke-tests construction, row 0 ↔ Band120m and row 12 ↔ Band11m sync,
@@ -2672,6 +2686,14 @@ target_compile_definitions(tst_hl2_options_wiring_thread PRIVATE NEREUS_BUILD_TE
 #   - Detaching matrix (setOcMatrix(nullptr)) reverts to legacy 0.
 nereus_add_test(tst_p1_oc_matrix_wiring)
 target_compile_definitions(tst_p1_oc_matrix_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── OC transmit pin actions (2026-10-26) ─────────────────────────────────────
+# OcMatrix::maskFor(band, tx, tune, twoTone) masks each TX pin by its TX pin
+# action (Thetis Penny.cs adjustForTXAction); receive is unchanged. Also the
+# P1 OC byte with setOcTxModes, and RadioModel's TUNE flag order (raised
+# before the key, dropped after MOX off, at once on a re-key or handover).
+nereus_add_test(tst_oc_matrix_tx_pin_action)
+target_compile_definitions(tst_oc_matrix_tx_pin_action PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-E Task 1: IoBoardHl2 model ──────────────────────────────────────
 # Verifies the 32-slot circular I2C FIFO (enqueue/dequeue/depth/clear/overflow),
@@ -2853,6 +2875,12 @@ nereus_add_test(tst_shared_input_filters)
 nereus_add_test(tst_p1_band_outputs_follow_tx_slice)
 nereus_add_test(tst_p2_band_outputs_and_rx_lpf)
 nereus_add_test(tst_hpf_bypass_on_tx)
+# Anvelina filter/OC plan Task 5: "Gnd BPF2 on Tx" (Thetis chkBPF2Gnd)
+# grounds the BPF2 input while keyed (P2 Alex1 bit 8), taken at the TX
+# edge, shown where Thetis shows it, saved per MAC, applied on a Core from
+# a remote window (radioHardwareVersion 14). NereusSDR-original test.
+nereus_add_test(tst_bpf2_gnd_on_tx)
+target_compile_definitions(tst_bpf2_gnd_on_tx PRIVATE NEREUS_BUILD_TESTS)
 # Plan Task 14 fix wave (R-R3-49): the Alex tab's other high-pass switches
 # (HPF Bypass on PureSignal feedback, HPF Bypass, Disable 6m LNA on TX / RX)
 # reach the wire as Thetis's setAlexHPF / setBPF1ForOrionIISaturn apply them

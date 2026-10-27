@@ -12,6 +12,9 @@
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code. Extends P1CodecStandard with the bank 17
 //                extra OC carve-out for ANAN-8000DLE / G8NJJ AnvelinaPro3.
+//   2026-10-26 - Bank 17 C1 carries the DX open collector outputs
+//                (ocExtrasByte), no longer the band OC byte (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -43,7 +46,8 @@
 namespace NereusSDR {
 
 // AnvelinaPro3 (ANAN-8000DLE / G8NJJ contribution) — extends Standard
-// with a 17th bank carrying extra OC pin outputs (4 bits in C1).
+// with a 17th bank carrying extra OC pin outputs (the DX outputs,
+// CodecContext::ocExtrasByte, in C1).
 //
 // Source: networkproto1.c:668-674 + 682 [@501e3f5]
 //

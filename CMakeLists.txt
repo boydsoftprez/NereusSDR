@@ -1156,6 +1156,7 @@ set(CORE_SOURCES
     src/core/PaTelemetryScaling.cpp
     src/core/PaTempUnit.cpp
     src/core/OcMatrix.cpp
+    src/core/AnvelinaDxOutputs.cpp
     src/core/RadioStatus.cpp
     src/core/SettingsHygiene.cpp
     src/core/Hl2OptionsModel.cpp

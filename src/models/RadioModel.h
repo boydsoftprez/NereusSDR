@@ -25,6 +25,16 @@
 //                connected and parks the worker for the re-rate
 //                (parkDspWorkerOnItsThread), so the fork's two legs stay
 //                paired. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - AnvelinaDxOutputs: the Anvelina DX open collector outputs,
+//                loaded per MAC beside the OC matrix, handed to the
+//                connection and applied on a Core at once ("ocDx" reload)
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
+//                the OC transmit pin actions (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
+//   2026-10-26 - wireOcTxModes and m_ocTuneHold: TUNE's OC flag falls after
+//                MOX off is queued (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -875,6 +885,7 @@
 #include "TransmitModel.h"
 #include "core/Hl2OptionsModel.h"
 #include "core/OcMatrix.h"
+#include "core/AnvelinaDxOutputs.h"
 #include "core/IoBoardHl2.h"
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/RadioStatus.h"
@@ -1919,6 +1930,13 @@ public:
     // Phase 3P-D Task 3.
     const OcMatrix& ocMatrix()        const { return m_ocMatrix; }
     OcMatrix&       ocMatrixMutable()       { return m_ocMatrix; }
+
+    // The Anvelina PRO3 DX open collector outputs (DX OUT 7..10), their own
+    // state beside the OC matrix. Loaded per MAC at connect time; the
+    // connection sends wireByte() on an ANVELINAPRO3 (P2 byte 1397, P1
+    // bank 17).
+    const AnvelinaDxOutputs& anvelinaDxOutputs() const { return m_anvelinaDxOutputs; }
+    AnvelinaDxOutputs&       anvelinaDxOutputsMutable() { return m_anvelinaDxOutputs; }
 
     // HL2 I/O board model — single instance; non-null on any HL2 connection.
     // Pushed into P1RadioConnection::setIoBoard() at connect time so the
@@ -5034,7 +5052,8 @@ public:
     // a remote window, beside scheduleRemoteDspOptionsApply. Keys under
     // hardware/<connected MAC>/ that a live controller holds in memory
     // queue that controller's reload: oc/ (the OC pin matrix the codec
-    // reads each frame), hl2IoBoard/n2adrFilter (the HL2 N2ADR filter
+    // reads each frame), oc/dx/ (the Anvelina DX outputs, applied at once,
+    // keyed or not), hl2IoBoard/n2adrFilter (the HL2 N2ADR filter
     // board's pins in that matrix), cal/ (the frequency calibration the P2
     // codec reads each command) and hl2/ (the HL2 options). After
     // kHardwareApplyCoalesceMs the queued reloads run once, so the Core's
@@ -5065,7 +5084,7 @@ public:
     void applyHpfBypassOnTxSetting() { applyAlexHpfSwitchSettings(); }
 
     // Test-only: observe each reload the coalesced hardware apply makes,
-    // by name ("oc", "n2adr", "cal", "hl2").
+    // by name ("oc", "ocDx", "n2adr", "cal", "hl2").
     void setHardwareApplyObserverForTest(std::function<void(const QString&)> observer)
     {
         m_hardwareApplyObserverForTest = std::move(observer);
@@ -7270,6 +7289,12 @@ private:
     // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
     bool computeSidetoneExpected() const;
     void refreshSidetoneExpected();
+    // The OC transmit pin actions' TUNE and two-tone inputs
+    // (RadioConnection::setOcTxModes), queued to the connection's thread as
+    // setMox is. TUNE is isTune() or m_ocTuneHold.
+    void pushOcTxModes();
+    // Constructor wiring for pushOcTxModes and m_ocTuneHold.
+    void wireOcTxModes();
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;
@@ -8151,6 +8176,10 @@ private:
     // the same instance. MAC and load() are called on connect.
     // Phase 3P-D Task 3.
     OcMatrix      m_ocMatrix;
+
+    // The Anvelina DX open collector outputs, beside the OC matrix (the
+    // DX OUT 7..10 UI and the connection read the same instance).
+    AnvelinaDxOutputs m_anvelinaDxOutputs;
 
     // HL2 Options model — 9 HL2-specific behavior knobs.  Owned here
     // so the Hl2OptionsTab and (eventually) the P1 codec wire-format
@@ -9068,6 +9097,9 @@ private:
     // it up after Tune ends until the radio has unkeyed.
     bool m_sidetoneExpected{false};
     bool m_tuneSidetoneHold{false};
+    // The OC pin actions' TUNE flag, held from TUNE's end until MOX off is
+    // queued (wireOcTxModes).
+    bool m_ocTuneHold{false};
     // Remote role: the Core's reports as it last sent them.
     int  m_stationRadioSpeakerAvailability{0};
     bool m_stationSpeakerAmplifierAvailable{false};

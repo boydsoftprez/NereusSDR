@@ -300,11 +300,11 @@ import Testing
 
     /// The Core's hardware version: 12 with the level calibration (5cdb9a1ab),
     /// 13 with the radio codec lane (dc238c2d5), which opened HL2 Swap audio
-    /// channels.
-    @Test func radioHardwareVersionIsThirteenInTheSurface() throws {
+    /// channels, 14 with the Anvelina's "Gnd BPF2 on Tx" and DX Outputs.
+    @Test func radioHardwareVersionIsFourteenInTheSurface() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
         let hardware = try #require(capabilities.first { $0["name"] as? String == "radioHardwareVersion" })
-        #expect((hardware["value"] as? NSNumber)?.intValue == 13)
+        #expect((hardware["value"] as? NSNumber)?.intValue == 14)
     }
 
     /// The RADE reason (Core trunk 4582efc90, hello `radeReason` 1, which

@@ -260,6 +260,12 @@
 //                                    roundtableAvailable and the thirteen
 //                                    roundtable.* requests. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  bpf2GndOnTxUnavailableReason
+//                                    (radioHardwareVersion 14).
+//                                    AI-assisted: Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  dxOutputsUnavailableReason
+//                                    (radioHardwareVersion 14).
+//                                    AI-assisted: Claude Code.
 // =================================================================
 
 #include <QString>
@@ -771,6 +777,14 @@ public:
     // Core applies to the receive audio it sends its radio.
     static QString hl2SwapAudioUnavailableReason()
     { return QStringLiteral("This Core cannot swap its radio's audio channels for this app. Updating the Core may help."); }
+    // radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx", which the
+    // Core applies to its radio at the next transmit.
+    static QString bpf2GndOnTxUnavailableReason()
+    { return QStringLiteral("This Core cannot change Gnd BPF2 on Tx for this app. Updating the Core may help."); }
+    // radioHardwareVersion 14: OC Outputs' Anvelina DX Outputs, which the
+    // Core applies to its radio at once.
+    static QString dxOutputsUnavailableReason()
+    { return QStringLiteral("This Core cannot switch the Anvelina DX outputs for this app. Updating the Core may help."); }
     // Verb "requestIoBoardI2c" (radioHardwareVersion 7): one I2C read or
     // write on the Core's radio. The answer (a read's bytes in `value`)
     // arrives as RadioModel::reportStationIoBoardResult.

@@ -31,6 +31,10 @@
 //   2026-09-30 - extCtrlBandIndex now serves only the range test; the HL2
 //                pins are ordered by frequency. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Applied the TX pin actions: maskFor(band, tx, tune,
+//                twoTone) masks the transmit bits as Penny.cs
+//                UpdateExtCtrl / adjustForTXAction / adjustForRX do
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code)
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Penny.cs header ===
@@ -187,7 +191,25 @@ public:
     // From Thetis HPSDR/Penny.cs:117-132 [@501e3f5] setBandABitMask
     bool   pinEnabled(Band band, int pin, bool tx) const;
     void   setPin(Band band, int pin, bool tx, bool enabled);
-    quint8 maskFor(Band band, bool tx) const;  // 7-bit mask, bit N = pin N
+    // 7-bit mask, bit N = pin N. The two-argument form is the
+    // four-argument one with tune and twoTone false.
+    quint8 maskFor(Band band, bool tx) const;
+
+    // The OC byte UpdateExtCtrl sends: the band's RX or TX pins, then on
+    // transmit each pin masked by its TX pin action against the live MOX,
+    // TUNE and two-tone state, on receive by adjustForRX.
+    //   From Thetis HPSDR/Penny.cs:182-186 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:182-186 [@567a7ec]
+    //     // adjust for pin action and/or PA
+    //     if (tx)
+    //         bits = adjustForTXAction(band, bandb, bits, tx, tune, twoTone, pa);
+    //     else
+    //         bits = adjustForRX(band, bandb, bits, tx, tune, twoTone, pa);
+    // Thetis's callers pass tx = _mox, tune = _tuning and twoTone =
+    // SetupForm.TestIMD (console.cs:29106 [v2.10.3.15]; Thetis-Enhanced
+    // (EU2AV) console.cs:29162 [@567a7ec]). NereusSDR has no
+    // "consider PA" arrays, so pa is not a parameter (see adjustForRx).
+    quint8 maskFor(Band band, bool tx, bool tune, bool twoTone) const;
 
     // Shared-input filters, ruling (c) 2026-09-30: a band's index as
     // mi0bot's UpdateExtCtrl computes it, the order its HL2 receive arm
@@ -258,6 +280,11 @@ private:
     mutable QReadWriteLock m_lock;
 
     QString persistenceKey() const;  // "hardware/<mac>/oc"
+
+    // Penny.cs adjustForTXAction / adjustForRX over the stored actions.
+    // Callers hold m_lock for reading.
+    quint8 adjustForTxAction(quint8 bits, bool tx, bool tune, bool twoTone) const;
+    static quint8 adjustForRx(quint8 bits);
 
     // Persistence slug for a TXPinAction value
     static QString actionSlug(TXPinAction action);

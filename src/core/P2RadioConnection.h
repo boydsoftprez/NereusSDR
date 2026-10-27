@@ -40,6 +40,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - m_bpf2GndKeyed: "Gnd BPF2 on Tx" taken at the TX edge
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - onOcExtrasChanged: the Anvelina DX open collector byte
+//                sends the high-priority packet on a change (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
 //                 public, so a test reads the product's watchdogs instead of
 //                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
@@ -553,6 +561,13 @@ private slots:
     void onEstablishedSilenceTimeout();
 
 private:
+    // RadioConnection::setOcTxModes: a change sends the high-priority
+    // packet when the OC byte it carries changed.
+    void onOcTxModesChanged() override { pushBandOutputsIfChanged(); }
+    // RadioConnection::setOcExtrasByte: a change sends the high-priority
+    // packet, which carries byte 1397.
+    void onOcExtrasChanged() override;
+
     int telemetryUdpBasePort() const override { return m_baseOutboundPort; }
 
     // --- Phase 3P-B: per-board codec chosen at connectToRadio() time ---
@@ -693,6 +708,10 @@ private:
     quint64 m_establishedSilenceGeneration{0};
     quint64 m_connectionGeneration{0};
     bool m_linkLossLatched{false};
+
+    // "Gnd BPF2 on Tx" (RadioConnection::m_bpf2GndOnTx) as setMox(true)
+    // took it, for the key in progress (buildCodecContext).
+    bool m_bpf2GndKeyed{false};
 
     // Connect watchdog budget — 2 s matches P1.
     // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, in the

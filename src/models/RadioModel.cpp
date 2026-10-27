@@ -46,6 +46,34 @@
 //                and delivered; an in-step binding dropped for a replaced
 //                worker is logged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-27 - Restore the verbatim console.cs G2E contributor notice.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27 - republishAlexAdcSlices: input 2 follows Slice B when idle
+//                on every board Thetis calls setAlex2HPF for (Orion MkII,
+//                7000D, 8000D, G2, G2 1K, Anvelina Pro 3, RedPitaya), not
+//                the Anvelina alone (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
+//   2026-10-26 - republishAlexAdcSlices: on the Anvelina Pro 3, input 2's
+//                band-pass follows Slice B (Thetis RX2 / VFO B) when no
+//                slice is on input 2, as Thetis's setAlex2HPF does (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - "Gnd BPF2 on Tx" (alex/master/bpf2GndOnTx): applied to the
+//                connection with the Alex switches and reloaded on a Core
+//                when a window writes it (J.J. Boyd KG4VCF, AI-assisted:
+//                Claude Code).
+//   2026-10-26 - AnvelinaDxOutputs: the Anvelina DX open collector outputs,
+//                loaded per MAC beside the OC matrix, handed to the
+//                connection (setOcExtrasByte) and applied on a Core at once,
+//                keyed or not ("ocDx" reload); a remote window's copy
+//                follows the Core's (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
+//   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
+//                the OC transmit pin actions (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
+//   2026-10-26 - wireOcTxModes: TUNE's OC flag falls after MOX off is
+//                queued (m_ocTuneHold), reproducing Thetis's unkey before
+//                _tuning clears; the connection no longer holds it (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -1476,6 +1504,7 @@
 // Modifications for using the new database import function.  W2PA, 29 May 2017
 // Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
 // Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
@@ -2991,6 +3020,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
             [this](bool) { refreshRadioStatusPtt(); });
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this,
             [this](bool) { updateCoreOnAir(); });
+    // The OC Outputs TX pin actions read TUNE and two-tone beside MOX:
+    // wireOcTxModes, at the end of construction, after onMoxHardwareFlipped's
+    // queued connection.
     if (m_pureSignalFacade) {
         connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
                 this, &RadioModel::updateCoreOnAir);
@@ -5247,6 +5279,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // Radio speaker (R-SPK-15): the CW or Tune flag and the amplifier
     // status line follow the transmit mode, Tune and the key.
     wireRadioSpeakerState();
+    // The OC Outputs TX pin actions' TUNE and two-tone inputs.
+    wireOcTxModes();
 }
 
 RadioModel::~RadioModel()
@@ -19917,6 +19951,13 @@ void RadioModel::connectBandOutputsReport()
     connect(&m_ocMatrix, &OcMatrix::changed, conn,
             [conn]() { conn->onBandOutputPinsChanged(); },
             Qt::QueuedConnection);
+    // The Anvelina DX outputs (this window's, or a remote window's through
+    // the "ocDx" reload) reach the connection, which sends them at once on
+    // Protocol 2 and in bank 17's rotation on Protocol 1. wireByte() is
+    // atomic, read here on the connection's thread.
+    connect(&m_anvelinaDxOutputs, &AnvelinaDxOutputs::changed, conn,
+            [conn, dx = &m_anvelinaDxOutputs]() { conn->setOcExtrasByte(dx->wireByte()); },
+            Qt::QueuedConnection);
 }
 
 void RadioModel::onBandOutputsComposed(quint8 ocByte, int band, bool keyed)
@@ -20390,6 +20431,9 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     if (!info.macAddress.isEmpty()) {
         m_ocMatrix.setMacAddress(info.macAddress);
         m_ocMatrix.load();
+        // And the Anvelina DX outputs, the radio's own per-MAC state.
+        m_anvelinaDxOutputs.setMacAddress(info.macAddress);
+        m_anvelinaDxOutputs.load();
 
         // Reconcile the OcMatrix to the persisted N2ADR Filter setting at
         // app launch.  Without this, a matrix populated by a prior session's
@@ -21963,6 +22007,15 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     } else if (auto* p2 = qobject_cast<class P2RadioConnection*>(m_connection)) {
         p2->setOcMatrix(&m_ocMatrix);
     }
+    // The Anvelina DX outputs as they stand now; later changes arrive
+    // through connectBandOutputsReport's connection.
+    if (m_connection != nullptr) {
+        m_connection->setOcExtrasByte(m_anvelinaDxOutputs.wireByte());
+    }
+    // The TX pin actions' TUNE and two-tone state as it stands now; nothing
+    // has keyed the new connection, so no TUNE flag is held for it.
+    m_ocTuneHold = false;
+    pushOcTxModes();
 
     // Wire CalibrationController to P2RadioConnection so hzToPhaseWord()
     // applies effectiveFreqCorrectionFactor(). Phase 3P-G.
@@ -24121,6 +24174,75 @@ void RadioModel::refreshSidetoneExpected()
     refreshRadioSpeakerReports();
 }
 
+void RadioModel::pushOcTxModes()
+{
+    if (m_connection == nullptr) {
+        return;
+    }
+    const bool tune = m_transmitModel.isTune() || m_ocTuneHold;
+    const bool twoTone = m_transmitModel.isTwoToneActive();
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection, tune, twoTone]() {
+        conn->setOcTxModes(tune, twoTone);
+    });
+}
+
+void RadioModel::wireOcTxModes()
+{
+    // Thetis sets _tuning before it keys and clears it after MOX is off:
+    //   From Thetis console.cs:30059, 30157, 30173 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) console.cs:30129, 30227, 30243 [@567a7ec]
+    //     _tuning = true;                                                  // used for a few things
+    //     ...                                             (then keys)
+    //     chkMOX.Checked = false;                                         // we're done
+    //     ...
+    //     _tuning = false;
+    // so the OC pins (Penny.cs UpdateExtCtrl, recomputed on the MOX edge)
+    // never see TUNE drop while TUNE's key is on the wire. TransmitModel's
+    // tune flag rises inside setTune(true) before it keys, so its push is
+    // queued ahead of the MOX bit. It falls before the unkey walk has
+    // queued MOX off, so the pushed flag is held (m_ocTuneHold) until
+    // hardwareFlipped(false) has queued it, with the rules of the
+    // sidetone hold (wireRadioSpeakerState): a key that is not TUNE's also
+    // ends it (a re-key during the unkey walk, where hardwareFlipped(false)
+    // never comes), and a remote window never holds (its TUNE and key are
+    // the Core's). Two-tone needs no hold: TwoToneController clears it
+    // after the release has settled.
+    //
+    // isTransmitting() stays true through MoxState::TxToRxFlush, which
+    // starts after hardwareFlipped(false) was emitted. A TUNE that clears
+    // there (a MOX drop walking out with TUNE still on) must not set the
+    // hold: no further hardwareFlipped would release it, and the next key
+    // would go out with TUNE's pins until its own hardwareFlipped(true).
+    // The drop is queued instead, behind onMoxHardwareFlipped's MOX off if
+    // that is still waiting, so it still reaches the connection after it.
+    connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
+        const bool releasing = !on && m_role != Role::Remote
+                               && m_moxController != nullptr && isTransmitting();
+        if (releasing && m_moxController->state() == MoxState::TxToRxFlush) {
+            m_ocTuneHold = false;
+            QMetaObject::invokeMethod(this, [this]() { pushOcTxModes(); },
+                                      Qt::QueuedConnection);
+            return;
+        }
+        m_ocTuneHold = releasing;
+        pushOcTxModes();
+    });
+    connect(&m_transmitModel, &TransmitModel::twoToneActiveChanged, this,
+            [this](bool) { pushOcTxModes(); });
+    if (m_moxController != nullptr) {
+        // Queued, and connected after onMoxHardwareFlipped's own queued
+        // connection, so this runs after that slot has queued MOX off.
+        connect(m_moxController, &MoxController::hardwareFlipped, this,
+                [this](bool isTx) {
+                    if (m_ocTuneHold && (!isTx || !m_transmitModel.isTune())) {
+                        m_ocTuneHold = false;
+                        pushOcTxModes();
+                    }
+                },
+                Qt::QueuedConnection);
+    }
+}
+
 void RadioModel::wireRadioSpeakerState()
 {
     // Tune's flag is sent here, from inside setTune(true) before it keys,
@@ -24132,6 +24254,9 @@ void RadioModel::wireRadioSpeakerState()
     // still walking to receive when Tune clears, with MOX off not yet sent.
     // Never on a remote window: its Tune and transmit state are the Core's,
     // its own controller never keys, so no hardwareFlipped would clear it.
+    // This hold shares the OC TUNE hold's window (wireOcTxModes): Tune
+    // clearing in MoxState::TxToRxFlush, after hardwareFlipped(false), sets
+    // it with no hardwareFlipped left to clear it until the next key.
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
         m_tuneSidetoneHold = !on && m_role != Role::Remote
                              && m_moxController != nullptr && isTransmitting();
@@ -27091,10 +27216,70 @@ void RadioModel::republishAlexAdcSlices()
     // had. Mirrors Thetis, which only calls setAlex2HPF when RX2 exists
     // (console.cs:15435-15442 [v2.10.3.15]) and otherwise never writes
     // prbpfilter2's HPF nibble.
+    // (Thetis in fact calls setAlex2HPF from VFO B whether RX2 is on or not;
+    // the boards it does that for follow it, input2SliceBHz below. The other
+    // boards keep the -1 here.)
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //
+    // Input 2's band-pass follows Slice B when no slice is on input 2, on
+    // every board Thetis calls setAlex2HPF for from UpdateRX2DDSFreq (the
+    // Alex-2 boards, codec::alex::usesAlex2Hpf, alex2Chain). Thetis sets the
+    // Alex-2 high-pass from RX2's DDS frequency on every VFO B change, with
+    // no RX2-enabled test, so Alex1's receive half
+    // always carries the input-2 row for VFO B, RX2 on or off:
+    //   From Thetis console.cs:15435-15444 [v2.10.3.15] (UpdateRX2DDSFreq)
+    //   From Thetis-Enhanced (EU2AV) console.cs:15462-15471 [@567a7ec]
+    //   Upstream inline attribution preserved verbatim (console.cs:15449):
+    //                case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //     if (HardwareSpecific.Model == HPSDRModel.ORIONMKII ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN8000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2 ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2_1K ||
+    //         HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //         HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //     {
+    //         setAlex2HPF(rx2_dds_freq_mhz);
+    //     }
+    //   Same list, same order in both trees; codec::alex::usesAlex2Hpf holds
+    //   exactly these seven models, so alex2Chain is the model check.
+    // and RX2DDSFreq is set from VFO B in txtVFOBFreq_LostFocus whether RX2
+    // is on or not:
+    //   From Thetis console.cs:32906, 32921 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) console.cs:32976, 32991 [@567a7ec]
+    //     RX2DDSFreq = freq;
+    //   Upstream inline attribution preserved verbatim (console.cs:32908):
+    //     if (_click_tune_rx2_display) //-W2PA This was preventing proper receiver adjustment
+    // Keyed it keeps following VFO B: HdwMOXChanged calls UpdateRX2DDSFreq
+    // on both edges, and setAlex2HPF has no MOX or PureSignal arm (the
+    // PureSignal HPF bypass, setBPF1ForOrionIISaturn, writes Alex0 only):
+    //   From Thetis console.cs:29091-29098 [v2.10.3.15] (HdwMOXChanged)
+    //   From Thetis-Enhanced (EU2AV) console.cs:29147-29154 [@567a7ec]
+    //     if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+    //     updateVFOFreqs(tx);
+    //     // make sure TX freq has been set
+    //     UpdateRX1DDSFreq();
+    //     UpdateRX2DDSFreq();
+    //   From Thetis console.cs:7069 [v2.10.3.15] (setAlex2HPF)
+    //   From Thetis-Enhanced (EU2AV) console.cs:7096 [@567a7ec]
+    // NereusSDR maps Thetis RX2 / VFO B to Slice B (slice id 1, trx 1). With
+    // no Slice B the chain keeps "no decision" and the connection keeps its
+    // mirror of Alex0, as before. A slice on input 2 is counted above and is
+    // unchanged. Boards outside that list (Atlas, Hermes, ANAN-10/10E/100/100B,
+    // 100D, 200D, G2E, HL2) keep the mirror: Thetis's UpdateRX2DDSFreq
+    // never calls setAlex2HPF for them.
+    double input2SliceBHz = 0.0;
+    if (alex2Chain && !ocFilterPath && chainCount >= 2) {
+        static constexpr int kVfoBSliceId = 1;   // Slice B = Thetis RX2 / VFO B
+        if (const SliceModel* sliceB = sliceById(kVfoBSliceId)) {
+            input2SliceBHz = sliceB->frequency();
+        }
+    }
+
     auto hpfBitsFor = [this, &counts, &lowestHz, &combinedSelection, &preselectorFor,
-                       chainCount, combineBandFilters, receiveBypass](int adc) -> int {
+                       chainCount, combineBandFilters, receiveBypass,
+                       input2SliceBHz](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -27102,6 +27287,11 @@ void RadioModel::republishAlexAdcSlices()
         // write, and the invariant it states ("no word for a chain the board
         // has not got") is the one that matters if the fold is ever changed.
         if (adc >= chainCount) { return -1; }
+
+        // Nothing on input 2 on an Alex-2 board: Slice B's row (above).
+        if (adc == 1 && counts[adc] == 0 && input2SliceBHz > 0.0) {
+            return int(preselectorFor(1, input2SliceBHz));
+        }
 
         if (counts[adc] == 0) { return -1; }
 
@@ -30834,6 +31024,13 @@ void RadioModel::finishCutShortTuneStart(quint64 tag)
     // power back without releasing that key, as setMoxFromButton does.
     m_pendingTuneOff = true;
     m_transmitModel.setTune(false);
+    // TUNE never keyed here: the key on the wire is the other source's, so
+    // the OC TUNE flag drops at once (wireOcTxModes holds it only for
+    // TUNE's own unkey).
+    if (m_ocTuneHold) {
+        m_ocTuneHold = false;
+        pushOcTxModes();
+    }
     completeTuneOff();
 }
 
@@ -34116,7 +34313,12 @@ void RadioModel::scheduleRemoteHardwareApply(const QString& key)
     }
     const QString rest = key.mid(prefix.size());
     QString reload;
-    if (rest.startsWith(QLatin1String("oc/"))) {
+    if (rest.startsWith(QLatin1String("oc/dx/"), Qt::CaseInsensitive)) {
+        // The Anvelina DX outputs: not transmit settings and not the band
+        // OC byte, so they apply at once, keyed or not (no on-air hold in
+        // flushRemoteHardwareApply).
+        reload = QStringLiteral("ocDx");
+    } else if (rest.startsWith(QLatin1String("oc/"))) {
         reload = QStringLiteral("oc");
     } else if (rest == QLatin1String("hl2IoBoard/n2adrFilter")) {
         reload = QStringLiteral("n2adr");
@@ -34158,11 +34360,15 @@ void RadioModel::scheduleRemoteHardwareApply(const QString& key)
                                Qt::CaseInsensitive) == 0
                || rest.startsWith(QLatin1String("alex/lpf/"), Qt::CaseInsensitive)
                || rest.compare(QLatin1String(alexKeys::kLpfBypass),
+                               Qt::CaseInsensitive) == 0
+               || rest.compare(QLatin1String(alexKeys::kBpf2GndOnTx),
                                Qt::CaseInsensitive) == 0) {
         // Plan Task 14 and its fix wave: the Alex tab's high-pass switches,
         // applied to the connection. radioHardwareVersion 8: and its
         // receive filter rows (savedAlexHpfEdges). radioHardwareVersion 10:
         // and its low-pass rows and 6m/ByPass on RX (savedAlexLpfEdges).
+        // radioHardwareVersion 14: and "Gnd BPF2 on Tx"
+        // (alexKeys::kBpf2GndOnTx).
         reload = QStringLiteral("alex");
     } else {
         return;
@@ -34228,6 +34434,13 @@ void RadioModel::flushRemoteHardwareApply()
         m_ocMatrix.setMacAddress(mac);
         m_ocMatrix.load();
         observe(QStringLiteral("oc"));
+    }
+    // The Anvelina DX outputs, which load() hands to the connection
+    // (changed()); never held for the air.
+    if (reloads.contains(QStringLiteral("ocDx"))) {
+        m_anvelinaDxOutputs.setMacAddress(mac);
+        m_anvelinaDxOutputs.load();
+        observe(QStringLiteral("ocDx"));
     }
     // The same reconcile the connect path runs (see connectToRadio):
     // the N2ADR switch on the Core's HL2 fills or clears the filter-board
@@ -34385,9 +34598,18 @@ void RadioModel::applyAlexHpfSwitchSettings()
     m_alexLpfEdges = lpfEdges;
     const bool lpfBypass = flag(alexKeys::kLpfBypass, "False")
         && codec::alex::lpfBypassAvailable(m_hardwareProfile.model);
+    // "Gnd BPF2 on Tx" (Antenna Control's box, saved with the Alex
+    // switches). Default True, as Thetis's defaultAlexSettings() ticks
+    // chkBPF2Gnd (From Thetis setup.cs:403, 33171-33187 [v2.10.3.15];
+    // From Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752 [@567a7ec]).
+    // The connection takes it at the next TX edge; kept whatever the model,
+    // as Thetis's hidden box still sets console.BPF2Gnd (G2E, 200D keep
+    // sending the ticked default).
+    const bool bpf2GndOnTx = flag(alexKeys::kBpf2GndOnTx, "True");
     RadioConnection* conn = m_connection;
     QMetaObject::invokeMethod(conn, [conn, onTx, onPs, bypass, lnaOffRx, lnaOffTx, edges,
-                                     lpfEdges, lpfBypass]() {
+                                     lpfEdges, lpfBypass, bpf2GndOnTx]() {
+        conn->setBpf2GndOnTx(bpf2GndOnTx);
         conn->setHpfBypassOnTx(onTx);
         conn->setHpfBypassOnPs(onPs);
         conn->setAlexHpfBypass(bypass);
@@ -34632,6 +34854,9 @@ void RadioModel::scheduleRemoteOcReload(const QString& key)
             }
             m_ocMatrix.setMacAddress(current);
             m_ocMatrix.load();
+            // The Anvelina DX outputs sit under the same oc/ prefix.
+            m_anvelinaDxOutputs.setMacAddress(current);
+            m_anvelinaDxOutputs.load();
         });
     }
     if (!m_remoteOcReloadTimer->isActive()) {

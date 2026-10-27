@@ -40,6 +40,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - "Gnd BPF2 on Tx": setMox takes the box at the TX edge and
+//                buildCodecContext hands it to Alex1 bit 8, as Thetis's
+//                HdwMOXChanged does (console.cs:29091 [v2.10.3.15]) (J.J.
+//                Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - High-priority byte 1397 carries the Anvelina DX open
+//                collector outputs (ctx.ocExtrasByte); a change sends the
+//                packet at once, as SetOCExtraBits does (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 //   2026-10-15 - The transmit cut: setMox(true) is refused while it is
 //                 set, and the high-priority PTT bit (codec and legacy) and
 //                 the TX I/Q frames read it as unkeyed. J.J. Boyd (KG4VCF),
@@ -1643,6 +1654,22 @@ void P2RadioConnection::setMox(bool enabled)
         m_txIqPrimePending.store(true, std::memory_order_release);
         // R-IOS-13, R-R3-42: the send path's counters run per key.
         resetTxSendStats();
+        // "Gnd BPF2 on Tx" is read at the TX edge only, so a change made
+        // while keyed reaches the wire at the next key, as in Thetis:
+        //   From Thetis console.cs:29084-29091 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29140-29147 [@567a7ec]
+        //     private void HdwMOXChanged(bool tx, double freq)
+        //     {
+        //         if (tx)
+        //         { ...
+        //             if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+        //   and on the RX edge, unconditionally:
+        //   From Thetis console.cs:29170 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29226 [@567a7ec]
+        //     NetworkIO.SetBPF2Gnd(0);
+        // The codec sets Alex1 bit 8 only while m_mox is true, which is
+        // that clear.
+        m_bpf2GndKeyed = m_bpf2GndOnTx;
     } else if (m_txMicSource != nullptr) {
         // TX diagnostics lane: the pump's wakes are timed during the key.
         m_txMicSource->wakeWatch().end();
@@ -2124,7 +2151,13 @@ quint8 P2RadioConnection::composedOcByte() const
 {
     if (m_ocMatrix && m_caps && m_caps->ocOutputCount > 0) {
         const Band currentBand = bandFromFrequency(static_cast<double>(ocBandFrequencyHz()));
-        return m_ocMatrix->maskFor(currentBand, m_mox);  // 3M-1a E.7: was m_tx[0].pttOut != 0
+        // 3M-1a E.7: was m_tx[0].pttOut != 0
+        // Keyed, each TX pin is masked by its TX pin action against MOX,
+        // TUNE and two-tone (OcMatrix::maskFor, Penny.cs UpdateExtCtrl):
+        //   From Thetis console.cs:29106 [v2.10.3.15]
+        //   From Thetis-Enhanced (EU2AV) console.cs:29162 [@567a7ec]
+        //     int bits = Penny.getPenny().UpdateExtCtrl(lo_band, lo_bandb, _mox, _tuning, SetupForm.TestIMD, chkExternalPA.Checked); //MW0LGE_21j
+        return m_ocMatrix->maskFor(currentBand, m_mox, ocTune(), ocTwoTone());
     }
     return 0;
 }
@@ -2170,6 +2203,33 @@ void P2RadioConnection::pushBandOutputsIfChanged()
 void P2RadioConnection::onBandOutputPinsChanged()
 {
     pushBandOutputsIfChanged();
+}
+
+// ---------------------------------------------------------------------------
+// onOcExtrasChanged: the Anvelina DX open collector byte changed
+// (RadioConnection::setOcExtrasByte). Thetis sends the high-priority packet
+// at once:
+//   From Thetis ChannelMaster/netInterface.c:409-418 [v2.10.3.15]
+//   From Thetis-Enhanced (EU2AV) ChannelMaster/netInterface.c:409-418 [@567a7ec]
+//     PORT
+//     void SetOCExtraBits(int b)
+//     {
+//         if (prn->oc_output_extras != b)
+//         {
+//             prn->oc_output_extras = b;
+//             if (listenSock != INVALID_SOCKET && prn->sendHighPriority != 0)
+//                 CmdHighPriority();
+//         }
+//     }
+// The base already compared and stored the byte; m_running stands in for
+// the socket and sendHighPriority checks, as pushBandOutputsIfChanged.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::onOcExtrasChanged()
+{
+    if (!m_running) {
+        return;
+    }
+    sendCmdHighPriority();
 }
 
 // ---------------------------------------------------------------------------
@@ -4346,6 +4406,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     }
     ctx.p2TxPa           = m_tx[0].pa;
     ctx.txPaDisabled     = m_tx[0].pa != 0;  // "Disable HF PA": the T/R relay (buildAlex0)
+    ctx.bpf2GndOnTx      = m_bpf2GndKeyed;   // "Gnd BPF2 on Tx" as taken at the TX edge (setMox)
     ctx.p2TxSamplingRate = m_tx[0].samplingRate;
     ctx.p2TxPhaseShift   = m_tx[0].phaseShift;
 
@@ -4492,6 +4553,15 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // band while not (ocBandFrequencyHz). Only a board with OC outputs
     // (ocOutputCount, every Protocol 2 row) drives the pins.
     ctx.ocByte = composedOcByte();
+
+    // The Anvelina PRO3 DX open collector outputs (prn->oc_output_extras),
+    // which P2CodecOrionMkII writes to byte 1397 on an ANVELINAPRO3 only
+    // (network.c:1016-1020 [v2.10.3.15]). Every high-priority packet
+    // carries it, as byte 1401 carries the OC byte. The codec's gate reads
+    // the model, which this context did not carry before (no compose read
+    // it; the DDC assignment takes RadioModel::currentCodecContext's).
+    ctx.ocExtrasByte = ocExtrasByte();
+    ctx.model        = m_hardwareProfile.model;
 
     // The speaker amplifier mute, high-priority byte 1400 bit 1, only on a
     // model with the switchable amplifier (R-SPK-08, R-SPK-09).

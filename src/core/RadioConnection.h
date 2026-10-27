@@ -7,6 +7,14 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: "Gnd BPF2 on Tx" (setBpf2GndOnTx, bpf2GndOnTx). J.J. Boyd
+//               (KG4VCF), AI-assisted: Claude Code.
+//   2026-10-26: The Anvelina DX open collector byte (setOcExtrasByte,
+//               ocExtrasByte, onOcExtrasChanged). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
+//   2026-10-26: The OC transmit pin actions' TUNE and two-tone inputs
+//               (setOcTxModes, ocTune, ocTwoTone). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
 //   2026-10-04: Carry the same longest wake interval's worker/acquire split.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
@@ -629,6 +637,15 @@ public slots:
     virtual void setHpfBypassOnTx(bool on) { m_hpfBypassOnTx = on; }
     bool hpfBypassOnTx() const noexcept { return m_hpfBypassOnTx; }
 
+    /// "Gnd BPF2 on Tx" (Setup > Hardware Config > Antenna / ALEX, Thetis
+    /// chkBPF2Gnd, console.cs BPF2Gnd). Stored only: the P2 connection
+    /// takes it at the next TX edge (P2RadioConnection::setMox) and grounds
+    /// the BPF2 input (Alex1 bit 8) for that key. Default true, as
+    /// Thetis's defaultAlexSettings() ticks chkBPF2Gnd (setup.cs:403,
+    /// 33171-33187 [v2.10.3.15]).
+    void setBpf2GndOnTx(bool on) { m_bpf2GndOnTx = on; }
+    bool bpf2GndOnTx() const noexcept { return m_bpf2GndOnTx; }
+
     /// The Alex tab's high-pass switches as the high-pass word applies them
     /// (codec::alex::applyAlex1HpfSwitches). Plan Task 14 fix wave.
     codec::alex::Alex1HpfSwitches alexHpfSwitches() const noexcept {
@@ -700,6 +717,44 @@ public slots:
     bool radioSpeakerMuted() const noexcept { return m_radioSpeakerMuted; }
     virtual void setSidetoneExpected(bool expected) { m_sidetoneExpected = expected; }
     bool sidetoneExpected() const noexcept { return m_sidetoneExpected; }
+
+    /// The OC transmit pin actions (Setup > OC Outputs "TX Pin Action
+    /// mapping") read the live TUNE and two-tone state, Thetis's _tuning
+    /// and SetupForm.TestIMD, beside MOX (OcMatrix::maskFor). RadioModel
+    /// hands them over on this object's thread, as it does setMox; safe to
+    /// call before the connection runs.
+    ///
+    /// Thetis sets _tuning before it keys and clears it after MOX is off
+    /// (console.cs:30059, 30157, 30173 [v2.10.3.15]; Thetis-Enhanced (EU2AV)
+    /// console.cs:30129, 30227, 30243 [@567a7ec]). RadioModel reproduces
+    /// that order (RadioModel::pushOcTxModes: TUNE's flag rises before the
+    /// key is queued and falls after MOX off is queued), so this object
+    /// only stores the pair and puts a changed byte on the wire.
+    void setOcTxModes(bool tune, bool twoTone)
+    {
+        const bool changed = tune != m_ocTune.load() || twoTone != m_ocTwoTone.load();
+        m_ocTune.store(tune);
+        m_ocTwoTone.store(twoTone);
+        if (changed) {
+            onOcTxModesChanged();
+        }
+    }
+    bool ocTune() const noexcept { return m_ocTune.load(); }
+    bool ocTwoTone() const noexcept { return m_ocTwoTone.load(); }
+
+    /// The Anvelina PRO3 DX open collector outputs as their wire byte
+    /// (AnvelinaDxOutputs::wireByte), which the codecs put in Protocol 2
+    /// high-priority byte 1397 and Protocol 1 bank 17 on an ANVELINAPRO3.
+    /// RadioModel hands it over on this object's thread; safe to call
+    /// before the connection runs. A change calls onOcExtrasChanged.
+    // Same role as Thetis SetOCExtraBits, netInterface.c:409-418 [v2.10.3.15]
+    void setOcExtrasByte(quint8 bits)
+    {
+        if (m_ocExtrasByte.exchange(bits) != bits) {
+            onOcExtrasChanged();
+        }
+    }
+    quint8 ocExtrasByte() const noexcept { return m_ocExtrasByte.load(); }
 
     /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
     /// Alex-2 Filters): each row's edges and per-row bypass for the
@@ -1007,6 +1062,13 @@ public slots:
     void clearTransmitCut();
 
 protected:
+    // Called when the applied TUNE / two-tone pair changed, to put the new
+    // OC byte on the wire. The base does nothing.
+    virtual void onOcTxModesChanged() {}
+    // Called when the DX open collector byte changed (setOcExtrasByte), to
+    // put it on the wire. Protocol 1 carries bank 17 in its frame rotation,
+    // so the base does nothing.
+    virtual void onOcExtrasChanged() {}
     // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
     // in ms: the test clock when one is set, the wall clock otherwise.
     qint64 iqSequenceGapClockMs() const
@@ -1322,6 +1384,13 @@ private:
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
     // The transmit cut latch (cutTransmit / clearTransmitCut).
     std::atomic<bool> m_transmitCut{false};
+    // setOcTxModes: the TUNE and two-tone flags the OC byte reads (atomic,
+    // read by whichever thread composes the frame).
+    std::atomic<bool> m_ocTune{false};
+    std::atomic<bool> m_ocTwoTone{false};
+    // setOcExtrasByte: the DX open collector byte (atomic, read by whichever
+    // thread composes the frame).
+    std::atomic<quint8> m_ocExtrasByte{0};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one
@@ -1536,6 +1605,11 @@ protected:
     // "HPF Bypass on TX" (setHpfBypassOnTx). Written and read on the
     // connection thread.
     bool m_hpfBypassOnTx{false};
+
+    // "Gnd BPF2 on Tx" (setBpf2GndOnTx). Written and read on the connection
+    // thread. True until RadioModel applies the saved value, so a
+    // connection that never got it still matches Thetis's ticked default.
+    bool m_bpf2GndOnTx{true};
 
     // "HPF Bypass" (setAlexHpfBypass). Written and read on the connection
     // thread.

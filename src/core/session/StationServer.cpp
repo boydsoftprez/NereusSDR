@@ -26,6 +26,12 @@
 //               per peer; a post keyed by its connection and a Core
 //               clientId. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx"
+//               (alex/master/bpf2GndOnTx) from a window, a transmit
+//               hardware key taken on and off the air like the Alex tab's
+//               high-pass switches. J.J. Boyd (KG4VCF), AI-assisted: Claude
+//               Code. Version 14 also names OC Outputs' Anvelina DX
+//               Outputs ("ocDx" reload).
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -2050,7 +2056,8 @@ bool isTransmitDspOptionsKey(const QString& key)
 //   hardware/<mac>/powerByBand/..., tunePowerByBand/...   (TransmitModel)
 //   any .../oc/extPa/...                the external PA group (OcOutputsHfTab)
 //   any .../oc/allowHotSwitching        OC lines switching while transmitting
-//   any .../alex/master/{hpfBypassOnTx,hpfBypassOnPs,disable6mLnaOnTx}
+//   any .../alex/master/{hpfBypassOnTx,hpfBypassOnPs,disable6mLnaOnTx,
+//                        bpf2GndOnTx}
 //   any .../alex/lpf/...                the Alex TX low-pass table
 //                                       (AntennaAlexAlex1Tab, its own keys and
 //                                       the Hardware page's copies)
@@ -2074,7 +2081,8 @@ bool isTransmitHardwareKey(const QString& rawKey)
         if (here == QLatin1String("alex") && next == QLatin1String("master") && i + 2 < parts.size()) {
             const QString& field = parts[i + 2];
             if (field == QLatin1String("hpfbypassontx") || field == QLatin1String("hpfbypassonps")
-                || field == QLatin1String("disable6mlnaontx")) {
+                || field == QLatin1String("disable6mlnaontx")
+                || field == QLatin1String("bpf2gndontx")) {
                 return true;
             }
         }
@@ -2400,6 +2408,30 @@ bool isAlexHpfTransmitSwitchKey(const QString& rawKey)
             return field == QLatin1String("hpfbypassontx")
                 || field == QLatin1String("hpfbypassonps")
                 || field == QLatin1String("disable6mlnaontx");
+        }
+    }
+    return false;
+}
+
+// radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx", under any
+// .../alex/master/bpf2GndOnTx (alexKeys::kBpf2GndOnTx). The Core applies it
+// with the high-pass switches (RadioModel::applyAlexHpfSwitchSettings); the
+// radio takes it at the next TX edge. A receive-only Core takes it from a
+// peer offered version 14, on the air too: Thetis's handler stores it with
+// no MOX check.
+// From Thetis setup.cs:18214-18218 [v2.10.3.15]
+// From Thetis-Enhanced (EU2AV) setup.cs:18373-18377 [@567a7ec]
+//   private void chkBPF2Gnd_CheckedChanged(object sender, EventArgs e)
+//   { if (initializing) return; console.BPF2Gnd = chkBPF2Gnd.Checked; }
+bool isAlexBpf2GndKey(const QString& rawKey)
+{
+    const QStringList parts = rawKey.toLower().split(QLatin1Char('/'));
+    if (parts.isEmpty() || parts[0] != QLatin1String("hardware")) {
+        return false;
+    }
+    for (int i = 1; i + 2 < parts.size(); ++i) {
+        if (parts[i] == QLatin1String("alex") && parts[i + 1] == QLatin1String("master")) {
+            return parts[i + 2] == QLatin1String("bpf2gndontx");
         }
     }
     return false;
@@ -12551,6 +12583,14 @@ bool StationServer::receiveOnlyRefusesKey(SessionTransport* transport,
             || peer->agreedMinor < kRadioIdentitySessionProtocolMinor
             || radioHardwareVersion() < 7;
     }
+    // radioHardwareVersion 14: "Gnd BPF2 on Tx" (isAlexBpf2GndKey),
+    // likewise on and off the air.
+    if (isAlexBpf2GndKey(key)) {
+        const auto peer = m_peers.constFind(transport);
+        return peer == m_peers.cend()
+            || peer->agreedMinor < kRadioIdentitySessionProtocolMinor
+            || radioHardwareVersion() < 14;
+    }
     // radioHardwareVersion 10: the Alex-1 low-pass rows (isAlexLpfRowKey),
     // likewise on and off the air.
     if (isAlexLpfRowKey(key)) {
@@ -13833,7 +13873,21 @@ int StationServer::radioHardwareVersion() const
     // mi0bot's chkSwapAudioChannels_CheckedChanged has no MOX check
     // (setup.cs:38065 [@c26a8a4]). A Core below 13 stores it without
     // effect, so a window keeps the box closed.
-    return m_radioModel->ioBoardFacade()->isBound() ? 13 : 2;
+    //
+    // 14 (Anvelina filter/OC plan): Antenna Control's "Gnd BPF2 on Tx"
+    // (hardware/<mac>/alex/master/bpf2GndOnTx) reaches this Core's radio
+    // through the "alex" reload (RadioModel::applyAlexHpfSwitchSettings ->
+    // RadioConnection::setBpf2GndOnTx), on and off the air, as Thetis's
+    // chkBPF2Gnd_CheckedChanged has no MOX check (setup.cs:18214-18218
+    // [v2.10.3.15]); the radio takes it at the next TX edge. A Core below
+    // 14 stores it without effect, so a window keeps the box closed.
+    // 14 also carries OC Outputs' Anvelina DX Outputs
+    // (hardware/<mac>/oc/dx/outN/{enabled,label}), which reach this Core's
+    // radio through the "ocDx" reload (RadioModel's AnvelinaDxOutputs ->
+    // RadioConnection::setOcExtrasByte, P2 byte 1397) at once, keyed or
+    // not. A Core below 14 reloads only the OC matrix for an oc/ key, so a
+    // window keeps the DX group closed.
+    return m_radioModel->ioBoardFacade()->isBound() ? 14 : 2;
 }
 
 QString StationServer::radioAntennaRowRefusal(SessionTransport* transport,
