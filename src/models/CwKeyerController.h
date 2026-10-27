@@ -18,6 +18,10 @@
 //               R-CW-07, R-CW-10, R-CW-13, R-CW-16, R-CW-20, R-CW-22,
 //               R-CW-38, D16). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit early fix wave: C1 (a stop in a QSK sending
+//               stretch latches with the key up), I2 (an interlock grant
+//               counts only for the key now on), M4 (the HL2 reason
+//               first). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -38,7 +42,8 @@ namespace NereusSDR {
 class RadioModel;
 class SliceModel;
 
-// R-CW-20: why QSK is not offered, in the order the rule checks them.
+// R-CW-20: why QSK is not offered, in the order the rule checks them
+// (the Hermes Lite 2 first, so an HL2 is told it by name; kCwQskHl2Reason).
 inline constexpr char kCwQskNeedsP2Reason[] =
     "QSK needs a radio on the newer network protocol.";
 inline constexpr char kCwQskBoardReason[] = "This radio can't do QSK.";
@@ -80,12 +85,18 @@ public:
     // main thread. A stop latch clears once the key is released.
     void onRadioKeyStatus(bool dot, bool dash, bool keyOut);
     bool radioKeyOut() const { return m_keyOut; }
+    // The radio reports dot, dash or key-out down now.
+    bool radioKeyDown() const { return m_dot || m_dash || m_keyOut; }
 
     // An emergency stop or the TX time-out (R-CW-10): the keyer stays off
     // until the radio reports dot, dash and key-out all up. With the key
-    // already up it clears at once, as MoxController::latchStopAllTx does
-    // for a source no longer held.
-    void latchStop();
+    // already up it does not latch, as MoxController::latchStopAllTx does
+    // for a source no longer held, unless `sendingStretch` is true: the
+    // keyer is allowed and the radio is between the elements of a QSK
+    // sending stretch (RadioModel's QSK time-out stretch, C1), where the
+    // next element would key again. That latch clears with the next
+    // all-up report, after the next press is released.
+    void latchStop(bool sendingStretch = false);
     bool isStopLatched() const { return m_stopLatched; }
 
     // Test seam: how many times the inputs were evaluated.
@@ -120,7 +131,9 @@ private:
     bool m_dash{false};
     bool m_keyOut{false};
     bool m_stopLatched{false};
-    // D16: an armed interlock granted for the key now on (MOX in Off).
+    // D16: an armed interlock granted for the key now on (MOX in Off). A
+    // grant is taken only while MOX is on (I2): the listener's grant comes
+    // from an uncancelled 30 ms timer and may land after a short key ended.
     bool m_interlockGranted{false};
     int m_evaluations{0};
 };

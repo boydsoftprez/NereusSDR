@@ -210,6 +210,9 @@
 //                CW enable, break-in and the key bits and sends both
 //                packets; the radio's dot, dash and key-out status.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit early fix wave I1: clearing the cut sends
+//                CmdTx and high priority with the restored CW state.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //
@@ -1818,6 +1821,16 @@ void P2RadioConnection::applyTransmitCut()
     // setMox(false) sends high priority only when MOX was on. The cut puts
     // both packets on the wire, composed with the CW enable, break-in and
     // key bits at 0 (buildCodecContext reads the cut).
+    if (m_running && m_socket) {
+        sendCmdTx();
+        sendCmdHighPriority();
+    }
+}
+
+void P2RadioConnection::onTransmitCutCleared()
+{
+    // buildCodecContext no longer reads the cut, so both packets carry the
+    // stored CW state and key bits again.
     if (m_running && m_socket) {
         sendCmdTx();
         sendCmdHighPriority();

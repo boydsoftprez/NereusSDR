@@ -762,6 +762,13 @@
 //                and the QSK time-out once per hold (R-CW-09, R-CW-10,
 //                R-CW-18 to R-CW-22). J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-26 - CW transmit early fix wave: a stop latches the keyer
+//                whenever the radio reports a key down or a QSK sending
+//                stretch is under way (C1), the transmit cut's catch-up
+//                waits for the key to be released before clearing (C1),
+//                the QSK time-out spans one sending stretch (I4), and the
+//                QSK restore keys are written once the radio is known
+//                (M7). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -9738,9 +9745,20 @@ private:
     void updateCwQskTimeOut();
     std::optional<CwWireState> m_lastPushedCwWire;
     bool m_cwQskKeyOutTiming{false};
-    // The QSK time-out fired for the key-out held now: it stays quiet
-    // until the radio reports key-out released (one time-out per hold).
+    // The QSK time-out fired for the stretch now: it stays quiet until the
+    // stretch ends (one time-out per stretch).
     bool m_cwQskTimeOutSpent{false};
+    // Early fix wave I4 and C1: a QSK sending stretch, from the first
+    // key-out until key-out has been up longer than the break-in delay
+    // setting (m_cwQskGapTimer). NereusSDR's own rule.
+    bool m_cwQskStretch{false};
+    QTimer* m_cwQskGapTimer{nullptr};
+    // Early fix wave C1: the transmit cut's catch-up found the radio still
+    // reporting a key down in CW; the cut is cleared once it is released.
+    bool m_cwCutClearPending{false};
+    // Whether the radio reports a key down in CW now, or a QSK stretch is
+    // under way: the radio may be on the air with MOX off.
+    bool cwRadioMayBeKeyed() const;
 
     // ── CW transmit: MOX in CW, break-in and QSK (R-CW-18 to R-CW-22) ──────
     // The keyer controller's state to MoxController (CW mode, the effective

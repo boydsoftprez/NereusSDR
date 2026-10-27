@@ -20,6 +20,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, MOX in CW, break-in and QSK. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave M3: a paddle touch outside CW
+//               raises nothing. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -316,6 +319,25 @@ private slots:
         ctrl.setCwKeyerGate({});
         ctrl.onCwKeyStatus(true, false);
         QCOMPARE(rejected.count(), 2);
+        QVERIFY(!ctrl.isMox());
+    }
+
+    // Early fix wave M3: outside CW the paddle is not the transmit key; a
+    // touch the gate would refuse raises nothing.
+    void gateRefused_dotOutsideCw_raisesNothing()
+    {
+        MoxController ctrl;
+        ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        ctrl.onModeChanged(DSPMode::USB);
+        ctrl.setCwModeActive(false);
+        ctrl.setCwKeyerGate([]() { return gateWords(); });
+        QSignalSpy rejected(&ctrl, &MoxController::moxRejected);
+        QSignalSpy refused(&ctrl, &MoxController::moxRefused);
+        ctrl.onCwKeyStatus(true, false);
+        ctrl.onCwKeyStatus(false, false);
+        ctrl.onCwKeyStatus(false, true);
+        QCOMPARE(rejected.count(), 0);
+        QCOMPARE(refused.count(), 0);
         QVERIFY(!ctrl.isMox());
     }
 

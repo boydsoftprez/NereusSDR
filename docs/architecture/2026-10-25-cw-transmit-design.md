@@ -531,11 +531,11 @@ these. A refused gate (R-CW-05) means the radio's keyer is off, so no RF can
 follow a PTT status in CW.
 
 R-CW-20. **[TX]** QSK ignores every PTT source (radio, CAT, TCI, VOX, serial;
-`console.cs:25470`) and never enters MOX. It is offered only when all hold:
-P2 connection (D3); Orion or Orion MkII board with firmware 17 or later, or
-Saturn or SaturnMKII (D2); the TX slice's TX antenna equals its RX antenna;
-not a transverter band; not HL2; no armed amplifier interlock (D16). Otherwise
-it shows greyed with the first failing reason. The rule re-runs on an antenna
+`console.cs:25470`) and never enters MOX. It is offered only when all hold,
+checked in this order: not HL2; P2 connection (D3); Orion or Orion MkII board
+with firmware 17 or later, or Saturn or SaturnMKII (D2); the TX slice's TX
+antenna equals its RX antenna; not a transverter band; no armed amplifier
+interlock (D16). Otherwise it shows greyed with the first failing reason. The rule re-runs on an antenna
 or band change; if QSK stops being allowed while selected, NereusSDR falls back
 to Semi and says why. Leaving CW turns QSK off and remembers it for the next
 time the slice enters CW (`console.cs:34566-34576`).

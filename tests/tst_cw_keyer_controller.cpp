@@ -11,6 +11,12 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, the CW keyer controller. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave: stops in QSK and Semi with
+//               MOX off latch (C1), a late interlock grant is ignored
+//               (I2), the radio's PTT keys MOX in Off with an armed
+//               interlock (I3), the QSK time-out spans a sending stretch
+//               (I4), the HL2 reason first (M4), the not-CW code (M5).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -213,7 +219,7 @@ private slots:
             {"frequency", [s]() { s->setFrequency(14'400'000.0); },
              [s]() { s->setFrequency(14'050'000.0); }, TxRefusals::kBandPlan},
             {"mode", [s]() { s->setDspMode(DSPMode::USB); },
-             [s]() { s->setDspMode(DSPMode::CWU); }, TxRefusals::kBandPlan},
+             [s]() { s->setDspMode(DSPMode::CWU); }, TxRefusals::kNotReady},
             {"receiveOnly", [&rig]() { rig.model.setReceiveOnlyStationPolicy(true); },
              [&rig]() { rig.model.setReceiveOnlyStationPolicy(false); },
              TxRefusals::kStationReceiveOnly},
@@ -484,7 +490,8 @@ private slots:
             const char* reason;
         } cases[] = {
             {ProtocolVersion::Protocol1, HPSDRHW::Hermes, 30, kCwQskNeedsP2Reason},
-            {ProtocolVersion::Protocol1, HPSDRHW::HermesLite, 72, kCwQskNeedsP2Reason},
+            // M4: the HL2 is told it by name, not the protocol reason.
+            {ProtocolVersion::Protocol1, HPSDRHW::HermesLite, 72, kCwQskHl2Reason},
             {ProtocolVersion::Protocol2, HPSDRHW::Angelia, 30, kCwQskBoardReason},
             {ProtocolVersion::Protocol2, HPSDRHW::HermesC10, 30, kCwQskBoardReason},
             {ProtocolVersion::Protocol2, HPSDRHW::Orion, 16, kCwQskFirmwareReason},
@@ -568,6 +575,21 @@ private slots:
         QVERIFY(!rig.conn.states.last().enable);
         QVERIFY(!rig.conn.states.last().breakIn);
 
+        // I2: a grant with no key on (a stale one) is ignored.
+        MoxController* mox = rig.model.moxController();
+        QVERIFY(!mox->isMox());
+        emit listener->interlockGranted(QStringLiteral("MOX"));
+        QVERIFY(!k->keyerAllowed());
+        QVERIFY(!rig.conn.states.last().enable);
+
+        // I3: the radio's PTT keys MOX in Off (keying MOX asks for the
+        // grant); the keyer stays off until the grant, then turns on.
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->pttMode(), PttMode::Cw);
+        QVERIFY(!k->keyerAllowed());
+        QVERIFY(!rig.conn.states.last().enable);
         emit listener->interlockGranted(QStringLiteral("MOX"));
         QVERIFY(k->keyerAllowed());
         QVERIFY(rig.conn.states.last().enable);
@@ -575,8 +597,15 @@ private slots:
         QCOMPARE(rig.conn.states.last().hangMs, 0);
 
         // The key ends: the grant goes with it.
-        emit rig.model.moxController()->moxStateChanged(false);
+        mox->onMicPttFromRadio(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!mox->isMox() && mox->state() == MoxState::Rx, 2000);
+        pump();
         QVERIFY(!k->keyerAllowed());
+        // I2: the grant the listener sends 30 ms late, after a short key,
+        // leaves the keyer off.
+        emit listener->interlockGranted(QStringLiteral("MOX"));
+        QVERIFY(!k->keyerAllowed());
+        QVERIFY(!rig.conn.states.last().enable);
 
         // The amplifier goes: QSK is back.
         QSignalSpy disarmed(listener, &SmartSdrApiListener::interlockedAmpChanged);
@@ -601,12 +630,15 @@ private slots:
         QVERIFY(tot);
         QVERIFY(!tot->isTicking());
 
-        // Key-out counts; its drop stops the count.
+        // Key-out counts; a drop longer than the break-in delay stops the
+        // count (I4: a shorter one is a gap in the same stretch).
+        rig.model.transmitModel().setCwBreakInDelayMs(40);
+        pump();
         rig.key(true, false, true);
         QVERIFY(rig.model.cwQskKeyOutTimingForTest());
         QVERIFY(tot->isTicking());
         rig.key(false, false, false);
-        QVERIFY(!rig.model.cwQskKeyOutTimingForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.model.cwQskKeyOutTimingForTest(), 2000);
         QVERIFY(!tot->isTicking());
 
         // Held past the limit: the time-out stops it and latches the keyer.
@@ -650,6 +682,170 @@ private slots:
         k->latchStop();
         QVERIFY(!k->isStopLatched());
         QVERIFY(k->keyerAllowed());
+        // Nothing keyed, nothing in QSK: a stop says nothing.
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        QCOMPARE(stopped.count(), 0);
+        QVERIFY(!k->isStopLatched());
+    }
+
+    // ── C1: a stop with MOX off reaches the radio's keyer ────────────────
+    void qskStopWithTheDotHeldAndKeyOutUpLatches()
+    {
+        Rig rig;
+        CwKeyerController* k = rig.keyer();
+        rig.model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::Saturn, 10));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        pump();
+        QCOMPARE(k->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        QVERIFY(rig.conn.states.last().enable);
+
+        // The paddle held between elements: dot down, key-out up.
+        rig.key(true, false, false);
+        QVERIFY(!rig.model.mox());
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        pump();
+        QCOMPARE(stopped.count(), 1);
+        QVERIFY(k->isStopLatched());
+        QVERIFY(!k->keyerAllowed());
+        QVERIFY(!rig.conn.states.last().enable);
+        rig.key(false, false, false);
+        QVERIFY(!k->isStopLatched());
+        QVERIFY(rig.conn.states.last().enable);
+    }
+
+    void qskStopInAGapWithThePaddleUpLatches()
+    {
+        Rig rig;
+        CwKeyerController* k = rig.keyer();
+        rig.model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::Saturn, 10));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        rig.model.transmitModel().setCwBreakInDelayMs(1000);
+        pump();
+        // An element, then the gap before the next: everything reads up.
+        rig.key(false, true, true);
+        rig.key(false, false, false);
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        pump();
+        QCOMPARE(stopped.count(), 1);
+        QVERIFY(k->isStopLatched());
+        QVERIFY(!rig.conn.states.last().enable);
+        // The next press is refused; its release clears the latch.
+        rig.key(true, false, false);
+        QVERIFY(k->isStopLatched());
+        rig.key(false, false, false);
+        QVERIFY(!k->isStopLatched());
+        QVERIFY(rig.conn.states.last().enable);
+    }
+
+    void semiStopBeforeThePttIsSeenLatches()
+    {
+        Rig rig;
+        CwKeyerController* k = rig.keyer();
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        pump();
+        QCOMPARE(k->effectiveBreakInMode(), CwBreakInMode::Semi);
+        // The radio's keyer is sending; its PTT has not reached MOX yet.
+        rig.key(true, false, false);
+        QVERIFY(!rig.model.mox());
+        rig.model.stopAllTx(QStringLiteral("Stopped."));
+        pump();
+        QVERIFY(k->isStopLatched());
+        QVERIFY(!rig.conn.states.last().enable);
+        QVERIFY(!rig.conn.states.last().breakIn);
+    }
+
+    void cutCatchUpLatchesAndHoldsTheCutWhileTheKeyIsDown()
+    {
+        Rig rig;
+        CwKeyerController* k = rig.keyer();
+        rig.model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::Saturn, 10));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        pump();
+        rig.key(true, false, false);
+        QTest::ignoreMessage(QtWarningMsg, "Transmit cut: MOX and the T/R relay off");
+        rig.conn.cutTransmit();
+        pump();
+        QVERIFY(rig.conn.transmitCut());
+
+        rig.model.catchUpTransmitCut(QStringLiteral("The link went quiet."));
+        pump();
+        QVERIFY(k->isStopLatched());
+        QVERIFY(!rig.conn.states.last().enable);
+        // The key still reads down: the cut is not cleared.
+        QVERIFY(rig.conn.transmitCut());
+        rig.key(true, false, false);
+        QVERIFY(rig.conn.transmitCut());
+        // Released: the cut clears and the keyer may run again.
+        rig.key(false, false, false);
+        pump();
+        QVERIFY(!rig.conn.transmitCut());
+        QVERIFY(!k->isStopLatched());
+        QVERIFY(rig.conn.states.last().enable);
+    }
+
+    // ── I4: the QSK time-out spans one sending stretch ───────────────────
+    void qskTimeOutSpansAStretchAndAShortGapDoesNotRestartIt()
+    {
+        Rig rig;
+        CwKeyerController* k = rig.keyer();
+        rig.model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::Saturn, 10));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        rig.model.transmitModel().setCwBreakInDelayMs(300);
+        pump();
+        TxTimeOutTimer* tot = rig.model.txTimeOutTimer();
+        QVERIFY(tot);
+        QSignalSpy stopped(&rig.model, &RadioModel::transmitStopped);
+
+        // Elements 5 s long with gaps far shorter than 300 ms: six of them
+        // reach the 30 s limit in a gap, and the count never restarts.
+        const qint64 elementMs = 5000;
+        const int elements = static_cast<int>(TxTimeOutTimer::kMinimumSeconds * 1000 / elementMs);
+        for (int i = 0; i < elements; ++i) {
+            rig.key(true, false, true);
+            QVERIFY(tot->isTicking());
+            rig.clockMs += elementMs;
+            rig.key(false, false, false);
+            QVERIFY(rig.model.cwQskKeyOutTimingForTest());
+            if (i + 1 < elements) {
+                tot->tick();
+                pump();
+                QCOMPARE(stopped.count(), 0);
+            }
+        }
+        tot->tick();
+        pump();
+        QCOMPARE(stopped.count(), 1);
+        QVERIFY(k->isStopLatched());
+        QVERIFY(!rig.conn.states.last().enable);
+        // Once per stretch.
+        tot->tick();
+        pump();
+        QCOMPARE(stopped.count(), 1);
+
+        // The next press's release clears the latch; the stretch has ended.
+        rig.key(true, false, false);
+        rig.key(false, false, false);
+        QVERIFY(!k->isStopLatched());
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.model.cwQskKeyOutTimingForTest(), 2000);
+
+        // A gap longer than the delay restarts the count.
+        rig.key(true, false, true);
+        rig.clockMs += 20'000;
+        rig.key(false, false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.model.cwQskKeyOutTimingForTest(), 2000);
+        QVERIFY(!tot->isTicking());
+        rig.key(true, false, true);
+        rig.clockMs += 20'000;
+        tot->tick();
+        pump();
+        QCOMPARE(stopped.count(), 1);
+        rig.clockMs += 10'000;
+        tot->tick();
+        pump();
+        QCOMPARE(stopped.count(), 2);
     }
 };
 

@@ -4400,8 +4400,9 @@ nereus_add_test(tst_mox_controller_prime_wdsp_state)
 #     onX2Ptt — each press emits pttModeChanged(Xxx) then moxStateChanged(true);
 #     each release emits moxStateChanged(false); the unkey clears PttMode
 #     (Task 7: chkMOX_CheckedChanged2 console.cs:29547 [v2.10.3.15]).
-#   onTciPtt keys with PttMode::Tci (Task 7). Rejected slot: onCwPtt
-#     (deferred to 3M-2): press and release emit no signals.
+#   onTciPtt keys with PttMode::Tci (Task 7). onCwPtt, the serial PTT line,
+#     keys only in CW with Semi break-in (CW transmit Task 5); outside CW its
+#     press and release emit no signals.
 #   Cross-source rules (§G): PollPTT keys only from receive and releases only
 #     in the source's own mode (Task 7).
 #   Idempotency (§H): repeated press does not double-emit.

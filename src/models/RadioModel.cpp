@@ -1406,6 +1406,15 @@
 //                time-out fires once per hold (R-CW-09, R-CW-10, R-CW-18
 //                to R-CW-22). J.J. Boyd (KG4VCF), AI-assisted via Claude
 //                Code.
+//   2026-10-26 - CW transmit early fix wave: C1 (every stop latches the
+//                keyer while the radio reports a key down or a QSK
+//                stretch runs; the cut's catch-up clears only once the
+//                key is up), I4 (the QSK time-out spans one sending
+//                stretch, bounded by the break-in delay setting), M2
+//                (the Semi landing on leaving CW, commented), M5 (the
+//                break-in fallback notice's code), M7 (the QSK restore
+//                keys once the radio is known). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5234,6 +5243,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // wire state goes to the connection on a change; a break-in mode
     // change starts or stops the QSK key-out time-out (R-CW-10).
     m_cwKeyerController = std::make_unique<CwKeyerController>(*this);
+    // Early fix wave I4: the gap that ends a QSK sending stretch.
+    m_cwQskGapTimer = new QTimer(this);
+    m_cwQskGapTimer->setSingleShot(true);
+    connect(m_cwQskGapTimer, &QTimer::timeout, this, [this]() {
+        m_cwQskStretch = false;
+        updateCwQskTimeOut();
+    });
     connect(m_cwKeyerController.get(), &CwKeyerController::wireStateChanged,
             this, &RadioModel::pushCwWireState);
     connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
@@ -30157,8 +30173,10 @@ void RadioModel::stopTransmitNow(const QString& reason)
     // CW transmit (R-CW-10): the radio's keyer goes off until its key is
     // released (at once when it is up). The connection's transmit cut is
     // the off-main-thread form of this (R-CW-08).
+    // Early fix wave C1: between the elements of a QSK stretch, with the
+    // paddle up, it latches too.
     if (m_cwKeyerController) {
-        m_cwKeyerController->latchStop();
+        m_cwKeyerController->latchStop(m_cwQskStretch);
     }
 
     // No further TX I/Q block reaches the connection after this returns,
@@ -30239,11 +30257,14 @@ void RadioModel::stopAllTx(const QString& message)
     // mox_delay. Thetis runs its unkey synchronously, so a StopAllTx can
     // never land inside it; here it can, and must still stop the radio.
     const bool releasing = transmitReleaseInProgress();
-    // CW transmit (R-CW-10): in QSK the radio is on the air while it
-    // reports key-out, with MOX off.
-    const bool cwKeyOut = m_cwQskKeyOutTiming;
+    // CW transmit (R-CW-10): the radio's keyer may be on the air with MOX
+    // off: in QSK while it reports key-out or between the elements of a
+    // stretch, and in Semi before the radio's PTT reaches MOX. Early fix
+    // wave C1: any key the radio reports down (dot, dash or key-out), or a
+    // QSK stretch, reaches the stop, so the keyer latches off.
+    const bool cwKeyed = cwRadioMayBeKeyed();
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
-        && !cwKeyOut) {
+        && !cwKeyed) {
         return;
     }
 
@@ -30300,9 +30321,20 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
         || m_isTuning
         || (m_twoToneController
             && (m_twoToneController->isActive() || m_twoToneController->isActivationInFlight()))
-        || endOfOverTailActive();
+        || endOfOverTailActive()
+        // Early fix wave C1: the radio's keyer, which keys with MOX off.
+        || cwRadioMayBeKeyed();
     if (stillKeyed || !transmitReleaseInProgress()) {
         stopAllTx(stopText);
+    }
+    // Early fix wave C1: while the radio still reports a CW key down the
+    // cut stays, so the next frame cannot key it again; it clears with the
+    // radio's all-up report (onCwRadioKeyStatus).
+    if (m_cwKeyerController && m_cwKeyerController->radioKeyDown()) {
+        m_cwCutClearPending = true;
+        qCInfo(lcConnection).noquote()
+            << "Transmit cut held until the CW key is released:" << stopText;
+        return;
     }
     if (m_connection) {
         QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
@@ -30344,7 +30376,8 @@ void RadioModel::onTxTimeOut(const QString& which, int limitSeconds)
     // NereusSDR: a release still on the air (see stopAllTx) is keyed too;
     // Thetis's synchronous unkey has no such stretch.
     const bool releasing = transmitReleaseInProgress();
-    // CW transmit (R-CW-10): the QSK key-out the timer counted.
+    // CW transmit (R-CW-10): the QSK stretch the timer counted (early fix
+    // wave I4: its gaps included).
     const bool cwKeyOut = m_cwQskKeyOutTiming;
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !releasing && !cwKeyOut) {
         return;
@@ -30358,8 +30391,8 @@ void RadioModel::onTxTimeOut(const QString& which, int limitSeconds)
     //everything off !!
     stopAllTx(which + QStringLiteral(" Time Out Timer"));
 
-    // CW transmit, Task 5: a QSK key-out time-out fires once per hold; the
-    // count stops now and stays off until key-out is released.
+    // CW transmit, Task 5: a QSK key-out time-out fires once per stretch;
+    // the count stops now and stays off until the stretch ends.
     if (cwKeyOut) {
         m_cwQskTimeOutSpent = true;
         updateCwQskTimeOut();
@@ -32366,6 +32399,7 @@ void RadioModel::wireCwKeyerConnection()
             this, &RadioModel::onCwRadioKeyStatus,
             static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
     m_lastPushedCwWire.reset();
+    m_cwCutClearPending = false;
     pushCwWireState(m_cwKeyerController->wireState());
     // Task 5: on every connect, with the controller evaluated for the radio
     // now known, so the QSK values a restart left saved are looked at
@@ -32394,6 +32428,15 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
     }
     m_cwKeyerController->onRadioKeyStatus(dot, dash, keyOut);
     updateCwQskTimeOut();
+    // Early fix wave C1: a transmit cut the catch-up held while the key was
+    // down clears now that the radio reports it up.
+    if (m_cwCutClearPending && !m_cwKeyerController->radioKeyDown()) {
+        m_cwCutClearPending = false;
+        if (m_connection) {
+            QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
+                                      Qt::QueuedConnection);
+        }
+    }
     // R-CW-09: a dot or dash the keyer gate refuses is reported once per
     // hold (MoxController::onCwKeyStatus).
     if (m_moxController) {
@@ -32401,23 +32444,64 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
     }
 }
 
+bool RadioModel::cwRadioMayBeKeyed() const
+{
+    return m_cwQskStretch || (m_cwKeyerController && m_cwKeyerController->radioKeyDown());
+}
+
 // R-CW-10: the TX time-out counts while MOX is on and, in QSK, while the
 // radio reports key-out. NereusSDR's own (Thetis has no QSK time-out). MOX
 // never goes on in QSK; while it is on, moxChanged drives the timer and
 // key-out is not counted a second time.
+//
+// Early fix wave I4 (controller's ruling): the count spans one sending
+// stretch, not one element. TxTimeOutTimer::onMox restarts the count on
+// every off-to-on edge, and in QSK key-out drops between every element, so
+// the timer is told the stretch instead: on at the first key-out, and off
+// only once key-out has been up longer than the operator's break-in delay
+// setting (TransmitModel::cwBreakInDelayMs, the hang Semi break-in sends
+// the radio; no new constant). NereusSDR's own rule: Thetis has no
+// host-side QSK time-out to follow. The stretch also tells a stop that the
+// radio may key again between elements (C1).
 void RadioModel::updateCwQskTimeOut()
 {
-    if (!m_txTimeOut || !m_cwKeyerController) {
+    if (!m_cwKeyerController) {
         return;
     }
-    // CW transmit, Task 5: one time-out per hold. Once it has fired, the
-    // count stays off until the radio reports key-out released.
-    if (!m_cwKeyerController->radioKeyOut()) {
+    const bool qsk = m_cwKeyerController->effectiveBreakInMode() == CwBreakInMode::Qsk && !mox();
+    const bool keyOut = m_cwKeyerController->radioKeyOut();
+    // A stretch whose time-out has fired ends as soon as key-out is up (at
+    // once when it fired in a gap): the stop has latched the keyer, and the
+    // first key-out after its release is counted afresh.
+    if (!qsk || (m_cwQskTimeOutSpent && !keyOut)) {
+        if (m_cwQskGapTimer) {
+            m_cwQskGapTimer->stop();
+        }
+        m_cwQskStretch = false;
+    } else if (keyOut) {
+        if (m_cwQskGapTimer) {
+            m_cwQskGapTimer->stop();
+        }
+        m_cwQskStretch = true;
+    } else if (m_cwQskStretch && !(m_cwQskGapTimer && m_cwQskGapTimer->isActive())) {
+        // Key-out up: the stretch holds through a gap no longer than the
+        // break-in delay.
+        const int gapMs = m_transmitModel.cwBreakInDelayMs();
+        if (m_cwQskGapTimer && gapMs > 0) {
+            m_cwQskGapTimer->start(gapMs);
+        } else {
+            m_cwQskStretch = false;
+        }
+    }
+    // CW transmit, Task 5: one time-out per stretch. Once it has fired, the
+    // count stays off until the stretch ends.
+    if (!m_cwQskStretch) {
         m_cwQskTimeOutSpent = false;
     }
-    const bool timing = m_cwKeyerController->radioKeyOut()
-        && m_cwKeyerController->effectiveBreakInMode() == CwBreakInMode::Qsk
-        && !mox() && !m_cwQskTimeOutSpent;
+    if (!m_txTimeOut) {
+        return;
+    }
+    const bool timing = m_cwQskStretch && !m_cwQskTimeOutSpent;
     if (timing == m_cwQskKeyOutTiming) {
         return;
     }
@@ -32473,6 +32557,13 @@ void RadioModel::syncCwKeying()
         if (!inCw) {
             m_cwQskInCw = tm.cwBreakInMode() == static_cast<int>(CwBreakInMode::Qsk);
             if (m_cwQskInCw) {
+                // Early fix wave M2: Thetis lands on Off here.
+                // chkQSK.Checked = false (console.cs:34571 [v2.10.3.15])
+                // leaves the box Unchecked, which Thetis reads as manual
+                // break-in (CATBreakIn, console.cs:16163-16173
+                // [v2.10.3.15]: Unchecked is "manual break-in"). NereusSDR
+                // picks Semi, as the plan does, for the break-in left in
+                // effect outside CW. Flagged to the maintainer.
                 tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
             }
         } else if (m_cwQskInCw && m_cwKeyerController->qskAvailable()) {
@@ -32499,7 +32590,11 @@ void RadioModel::syncCwKeying()
             ? m_cwKeyerController->semiUnavailableReason()
             : m_cwKeyerController->qskUnavailableReason();
         if (!reason.isEmpty()) {
-            m_moxController->reportCwRefusal(TxRefusals::bandPlan(reason));
+            // Early fix wave M5: the notice is not the band plan's, so it
+            // carries notReady (the closest existing code: the keyer is not
+            // ready for the mode selected), as the gate's not-CW refusal.
+            m_moxController->reportCwRefusal(
+                TxRefusal{QByteArray(TxRefusals::kNotReady), reason, QByteArray()});
         }
     }
     m_cwLastEffective = effective;
@@ -32575,6 +32670,17 @@ void RadioModel::applyCwQskSideEffects(bool qsk)
                == QStringLiteral("True");
 
     if (qsk == m_cwQskApplied) {
+        // Early fix wave M7: QSK applied before the radio's MAC was known
+        // saved nothing; once it is known (a connect), the restore keys are
+        // written, so a restart in QSK can still put the receiver back.
+        if (qsk && !pfx.isEmpty() && !persistedActive) {
+            settings.setValue(pfx + QLatin1String(kCwQskSavedAgcModeKey),
+                              QString::number(m_cwQskSavedAgcMode));
+            settings.setValue(pfx + QLatin1String(kCwQskSavedHangThresholdKey),
+                              QString::number(m_cwQskSavedHangThreshold));
+            settings.setValue(pfx + QLatin1String(kCwQskActiveKey), QStringLiteral("True"));
+            return;
+        }
         // At load: a restart in QSK left the receiver changed and QSK is
         // not on now, so the saved values go back.
         if (!qsk && persistedActive) {

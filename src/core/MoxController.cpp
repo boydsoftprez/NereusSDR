@@ -31,6 +31,11 @@
 //               QSK keying from no PTT source, the keyer gate's refusal
 //               once per hold. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //               Code.
+//   2026-10-26: CW transmit early fix wave: I3 (cwMoxPressRefusal: an
+//               armed interlock's not-yet-granted refusal does not stop a
+//               CW press keying MOX) and M3 (onCwKeyStatus reports only
+//               while the transmit slice is in CW). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-17: includes <QPointer>, which it used through the shared
 //                precompiled header only. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -237,6 +242,7 @@
 
 #include <QSignalBlocker>
 #include "core/LogCategories.h"
+#include "core/safety/CwKeyerGate.h"
 
 #include <algorithm>
 
@@ -1641,6 +1647,19 @@ TxRefusal MoxController::cwKeyerRefusal() const
     return m_cwKeyerGate ? m_cwKeyerGate() : TxRefusal{};
 }
 
+// Early fix wave I3 (R-CW-19, D16): in Off with an armed amplifier
+// interlock the keyer waits for the grant, and the grant is asked for when
+// MOX is keyed (txAboutToBegin). A CW press therefore keys MOX through
+// this refusal; the keyer gate keeps the radio's keyer off until the grant.
+TxRefusal MoxController::cwMoxPressRefusal() const
+{
+    TxRefusal refused = cwKeyerRefusal();
+    if (refused.text == QLatin1String(safety::kCwGateInterlockNotGrantedText)) {
+        return TxRefusal{};
+    }
+    return refused;
+}
+
 void MoxController::reportCwRefusal(const TxRefusal& r)
 {
     // The existing quiet-repeat rule (Task 7 fix wave, M3), per CW hold.
@@ -2000,7 +2019,7 @@ void MoxController::pollPtt()
             const bool cwPress = (cwSerialPttCounts() && (waiting & kRefusedCw) == 0)
                 || (m_micPtt && (waiting & kRefusedMic) == 0);
             if (cwPress && !isHeldOff(kRefusedCw)) {
-                const TxRefusal refused = cwKeyerRefusal();
+                const TxRefusal refused = cwMoxPressRefusal();
                 if (refused.isEmpty()) {
                     tryPollKey(PttMode::Cw, kRefusedCw);
                 } else if (!m_mox) {
@@ -2055,7 +2074,7 @@ void MoxController::pollPtt()
                 // CW transmit (R-CW-19): the CW key sends no microphone, so
                 // the microphone admission below does not apply; the keyer
                 // gate does.
-                const TxRefusal refused = cwKeyerRefusal();
+                const TxRefusal refused = cwMoxPressRefusal();
                 if (!refused.isEmpty()) {
                     reportCwRefusal(refused);
                     setMox(false);
@@ -3359,8 +3378,9 @@ void MoxController::onCwPtt(bool pressed)
 //
 // NereusSDR-original. The radio's keyer keys the radio from its paddle
 // (in Semi its PTT status then keys MOX, see pollPtt), so a dot or dash
-// keys nothing here. When the keyer gate refuses (the keyer is off), the
-// press is reported once per hold, with the gate's words.
+// keys nothing here. When the keyer gate refuses (the keyer is off) while
+// the transmit slice is in CW, the press is reported once per hold, with
+// the gate's words.
 // ---------------------------------------------------------------------------
 void MoxController::onCwKeyStatus(bool dot, bool dash)
 {
@@ -3368,6 +3388,11 @@ void MoxController::onCwKeyStatus(bool dot, bool dash)
     m_cwPaddleDown = down;
     if (!down) {
         clearCwHoldIfReleased();
+        return;
+    }
+    // Early fix wave M3: outside CW the paddle is not the transmit key, so
+    // a touch raises nothing.
+    if (!m_cwModeActive) {
         return;
     }
     const TxRefusal refused = cwKeyerRefusal();

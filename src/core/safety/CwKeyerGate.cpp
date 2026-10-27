@@ -6,6 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, the keyer gate (R-CW-05, R-CW-06, D16).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave M5: the not-CW refusal carries
+//               notReady, not the band plan's code. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/safety/CwKeyerGate.h"
@@ -47,7 +50,10 @@ CwKeyerGateResult evaluateCwKeyerGate(const CwKeyerGateInputs& in)
         return refused(TxRefusals::noTransmitSlice());
     }
     if (!in.txSliceInCw) {
-        return refused(TxRefusals::bandPlan(QString::fromLatin1(kCwGateNotCwText)));
+        // Early fix wave M5: not the band plan's refusal. notReady is the
+        // closest existing code (the keyer is not ready in this mode); the
+        // codes are strings on the link, so none is renumbered.
+        return refused(withCode(TxRefusals::kNotReady, QString::fromLatin1(kCwGateNotCwText)));
     }
     if (in.receiveOnly) {
         return refused(TxRefusals::stationReceiveOnly());

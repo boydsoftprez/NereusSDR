@@ -65,6 +65,9 @@
 //   2026-10-26: CW transmit, setCwWireState, cwKeyLine and the
 //               radioKeyStatus signal (R-CW-12, R-CW-16, R-CW-17).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: onTransmitCutCleared, a
+//               hook clearTransmitCut runs when it clears the latch.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -1043,6 +1046,11 @@ protected:
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
     // once and keeps re-sending MOX off for its grace window.
     virtual void applyTransmitCut();
+    // This object's thread, from clearTransmitCut when it cleared a set
+    // latch (early fix wave I1). The default does nothing: P1 sends the
+    // restored state on its next frames. P2 sends CmdTx and high priority,
+    // which nothing else resends while receiving.
+    virtual void onTransmitCutCleared() {}
 
     // CW transmit (2026-10-26): emits radioKeyStatus when the three bits
     // differ from the last ones published. This object's thread.

@@ -8,6 +8,8 @@
 //               R-CW-07, R-CW-10, R-CW-13, R-CW-16, R-CW-20, R-CW-22,
 //               R-CW-38, D16). J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit early fix wave: C1, I2 and M4 (see the
+//               header). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/CwKeyerController.h"
@@ -67,9 +69,19 @@ CwKeyerController::CwKeyerController(RadioModel& radio, QObject* parent)
     // D16: whether an amplifier interlock is armed, and its grant for the
     // key now on. The grant can arrive inside txAboutToBegin (a fast
     // acknowledgement), so it is cleared only when that key ends.
+    // Early fix wave I2: the grant belongs to the key now on. MOX is on from
+    // the moment the key is made (MoxController sets it before
+    // txAboutToBegin), so a grant that arrives with MOX off is for a key
+    // that has already ended (the listener sends it from a 30 ms timer that
+    // an unkey does not cancel) and is ignored, as the voice path drops a
+    // stale queued step by its key generation.
     if (SmartSdrApiListener* listener = m_radio.smartSdrListener()) {
         connect(listener, &SmartSdrApiListener::interlockedAmpChanged, this, again);
         connect(listener, &SmartSdrApiListener::interlockGranted, this, [this](const QString&) {
+            const MoxController* mox = m_radio.moxController();
+            if (mox == nullptr || !mox->isMox()) {
+                return;
+            }
             m_interlockGranted = true;
             evaluate();
         });
@@ -125,9 +137,14 @@ void CwKeyerController::onRadioKeyStatus(bool dot, bool dash, bool keyOut)
     }
 }
 
-void CwKeyerController::latchStop()
+void CwKeyerController::latchStop(bool sendingStretch)
 {
-    if (m_stopLatched || (!m_dot && !m_dash && !m_keyOut)) {
+    if (m_stopLatched) {
+        return;
+    }
+    // Early fix wave C1: a stop between the elements of a QSK stretch, with
+    // the paddle up, latches too; the next element would key again.
+    if (!radioKeyDown() && !(sendingStretch && m_result.allowed)) {
         return;
     }
     m_stopLatched = true;
@@ -194,12 +211,17 @@ safety::CwKeyerGateInputs CwKeyerController::gateInputs() const
 
 QString CwKeyerController::qskReasonNow(bool armed) const
 {
-    // R-CW-20, in its order.
+    // R-CW-20, in its order. Early fix wave M4: the Hermes Lite 2 first, so
+    // an HL2 (a Protocol 1 radio) is told it by name rather than the
+    // protocol or board reason.
     const RadioInfo& info = m_radio.currentRadioInfo();
+    const HPSDRHW board = info.boardType;
+    if (board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly) {
+        return QString::fromLatin1(kCwQskHl2Reason);
+    }
     if (info.protocol != ProtocolVersion::Protocol2) {
         return QString::fromLatin1(kCwQskNeedsP2Reason);
     }
-    const HPSDRHW board = info.boardType;
     const bool orion = board == HPSDRHW::Orion || board == HPSDRHW::OrionMKII;
     const bool saturn = board == HPSDRHW::Saturn || board == HPSDRHW::SaturnMKII;
     if (!orion && !saturn) {
@@ -215,9 +237,6 @@ QString CwKeyerController::qskReasonNow(bool armed) const
     }
     if (txOnTransverterBand()) {
         return QString::fromLatin1(kCwQskTransverterReason);
-    }
-    if (board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly) {
-        return QString::fromLatin1(kCwQskHl2Reason);
     }
     if (armed) {
         return QString::fromLatin1(kCwAmpInterlockBreakInReason);

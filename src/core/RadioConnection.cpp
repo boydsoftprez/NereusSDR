@@ -11,6 +11,9 @@
 //   2026-10-26: CW transmit, the default setCwWireState, and
 //               publishRadioKeyStatus (all up when the link stops being
 //               connected). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: clearTransmitCut runs
+//               onTransmitCutCleared. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 
 #include "RadioConnection.h"
 #include "P1RadioConnection.h"
@@ -61,6 +64,7 @@ void RadioConnection::clearTransmitCut()
 {
     if (m_transmitCut.exchange(false, std::memory_order_acq_rel)) {
         qCInfo(lcConnection) << "Transmit cut cleared; the next key is allowed";
+        onTransmitCutCleared();
     }
 }
 

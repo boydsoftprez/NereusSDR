@@ -144,6 +144,9 @@
 //                attenuation, the cut's CW zeroing, and the radio's dot,
 //                dash and key-out status. J.J. Boyd (KG4VCF), AI-assisted
 //                via Claude Code.
+//   2026-10-26 - CW transmit early fix wave I1: onTransmitCutCleared
+//                sends CmdTx and high priority with the restored CW
+//                state. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*
@@ -774,6 +777,11 @@ private:
     // then CmdTx and high priority at once, so the radio's keyer, break-in
     // and key bits are off on the wire with MOX.
     void applyTransmitCut() override;
+    // Early fix wave I1: the cut cleared. CmdTx and high priority go out at
+    // once with the CW enable, break-in and key bits the cut held at 0;
+    // the wire state did not change, so setCwWireState sends nothing, and
+    // no heartbeat resends CmdTx while receiving.
+    void onTransmitCutCleared() override;
 
     // CW transmit (2026-10-26): the key line changed. Queued on this
     // object's thread by the key line's callback, once per burst: clears

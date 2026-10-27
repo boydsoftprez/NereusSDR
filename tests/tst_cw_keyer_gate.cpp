@@ -11,6 +11,8 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, the keyer gate's truth table. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave M5: the not-CW code.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -50,7 +52,8 @@ QList<Row> rowsInGateOrder()
         {"noTxSlice", [](CwKeyerGateInputs& in) { in.hasTxSlice = false; },
          TxRefusals::noTransmitSlice()},
         {"notCw", [](CwKeyerGateInputs& in) { in.txSliceInCw = false; },
-         TxRefusals::bandPlan(QString::fromLatin1(kCwGateNotCwText))},
+         // Early fix wave M5: notReady, not the band plan's code.
+         TxRefusal{TxRefusals::kNotReady, QString::fromLatin1(kCwGateNotCwText), {}}},
         {"receiveOnly", [](CwKeyerGateInputs& in) { in.receiveOnly = true; },
          TxRefusals::stationReceiveOnly()},
         {"txInhibited", [](CwKeyerGateInputs& in) { in.txInhibited = true; },

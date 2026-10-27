@@ -280,6 +280,10 @@
 //               the keyer gate's refusal once per hold. The delay cites
 //               refreshed to v2.10.3.15 (R-CW-52). J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave: I3 (in Off with an armed
+//               interlock the CW press keys MOX, which asks for the
+//               grant), M3 (a paddle refusal is reported only in CW).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -1897,6 +1901,11 @@ private:
     void clearCwHoldIfReleased();
     // The keyer gate's refusal for a CW key-down, empty when allowed.
     TxRefusal cwKeyerRefusal() const;
+    // The refusal for keying MOX from a CW press: cwKeyerRefusal without
+    // the armed interlock's not-yet-granted refusal (I3), since keying MOX
+    // is what asks the amplifier for the grant. The keyer itself still
+    // waits for it.
+    TxRefusal cwMoxPressRefusal() const;
     // RX to TX and TX to RX for a key in CW (R-CW-18).
     void finishCwKeyDown();
     void beginCwTxToRxTeardown();

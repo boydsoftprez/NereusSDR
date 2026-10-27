@@ -261,6 +261,9 @@
 //                mi0bot netInterface.c:1193-1224), CW zeroed under the
 //                transmit cut, and the radio's dot and dash status.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit early fix wave M1: why the HL2 store rule is
+//                applied per frame where mi0bot latches it. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*
@@ -2780,6 +2783,22 @@ void P1RadioConnection::applyTransmitCut()
 // [v2.10.3.13-beta2], SetCWX). NereusSDR keeps the CWX bit in CwKeyLine
 // whatever the state, and applies the same condition per frame with the
 // break-in and MOX this frame encodes. HL2 only.
+//
+// Why ours differs (a bug the upstream has, fixed in our copy): mi0bot
+// latches the bit at the moment it is written. From mi0bot
+// ChannelMaster/netInterface.c:1196-1204 [v2.10.3.13-beta2]:
+//   if (prn->tx[0].cwx != bit)
+//   {
+//       if (prn->cw.break_in == true || XmitBit == true || prn->tx[0].cwx_ptt == true)
+//       {
+//           prn->tx[0].cwx = bit;
+//       }
+// A CWX key-down stored while break-in, MOX or CWX PTT was on, whose
+// release arrives after all three have gone off, is never stored, so cwx
+// stays 1 and the radio's keyer is left keyed. Deciding per frame from the
+// live line and the frame's own break-in and MOX cannot strand the bit:
+// the release always reaches the wire, and a key-down outside the three
+// states is still not sent, as mi0bot intends.
 // ---------------------------------------------------------------------------
 void P1RadioConnection::applyCwKeyOverlay(quint8* frame) const noexcept
 {

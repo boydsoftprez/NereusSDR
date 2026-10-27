@@ -23,6 +23,10 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, MOX in CW, break-in and QSK. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave: the restore keys once the
+//               radio is known (M7), the fallback notice's code (M5), the
+//               QSK time-out's stretch (I4). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -362,6 +366,7 @@ private slots:
         rig.selectBreakIn(CwBreakInMode::Qsk);
         QVERIFY(rig.model.cwQskSideEffectsAppliedForTest());
         QSignalSpy rejected(rig.mox(), &MoxController::moxRejected);
+        QSignalSpy refused(rig.mox(), &MoxController::moxRefused);
 
         rig.slice->setTxAntenna(QStringLiteral("ANT2"));
         pump();
@@ -369,6 +374,9 @@ private slots:
         QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
         QCOMPARE(rejected.count(), 1);
         QCOMPARE(rejected.at(0).at(0).toString(), QString::fromLatin1(kCwQskAntennaReason));
+        // M5: not the band plan's code.
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.at(0).at(0).value<TxRefusal>().code, QByteArray(TxRefusals::kNotReady));
         // No longer in QSK: its changes are undone.
         QVERIFY(!rig.model.cwQskSideEffectsAppliedForTest());
         QCOMPARE(rig.slice->agcMode(), AGCMode::Med);
@@ -482,8 +490,40 @@ private slots:
         rig.key(true, false, true);
         QVERIFY(rig.model.cwQskKeyOutTimingForTest());
         QVERIFY(tot->isTicking());
+        // I4: the count stops once key-out has been up longer than the
+        // break-in delay (400 ms here).
         rig.key(false, false, false);
-        QVERIFY(!tot->isTicking());
+        QVERIFY(tot->isTicking());
+        QTRY_VERIFY_WITH_TIMEOUT(!tot->isTicking(), 3000);
+    }
+
+    // ── M7: QSK applied before the radio's MAC is known ──────────────────
+    void qskBeforeTheMacIsKnown_writesTheRestoreKeysOnConnect()
+    {
+        Rig rig;
+        // The radio known without its MAC (before discovery fills it in).
+        RadioInfo noMac = saturn();
+        noMac.macAddress.clear();
+        rig.model.setLastRadioInfoForTest(noMac);
+        rig.keyer()->reevaluate();
+        pump();
+        rig.selectBreakIn(CwBreakInMode::Qsk);
+        QVERIFY(rig.model.cwQskSideEffectsAppliedForTest());
+        QCOMPARE(rig.slice->agcMode(), AGCMode::Custom);
+        QVERIFY(!AppSettings::instance().contains(kPfx + QStringLiteral("CW_QskActive")));
+
+        // The connect, with the MAC known: the keys are written.
+        rig.model.setLastRadioInfoForTest(saturn());
+        rig.model.wireCwKeyerConnectionForTest();
+        pump();
+        QCOMPARE(setting("CW_QskActive"), QStringLiteral("True"));
+        QCOMPARE(setting("CW_QskSavedAgcMode"), QString::number(static_cast<int>(AGCMode::Med)));
+        QCOMPARE(setting("CW_QskSavedHangThreshold"), QStringLiteral("50"));
+
+        // Leaving QSK restores and clears them as usual.
+        rig.selectBreakIn(CwBreakInMode::Semi);
+        QCOMPARE(rig.slice->agcMode(), AGCMode::Med);
+        QCOMPARE(setting("CW_QskActive"), QStringLiteral("False"));
     }
 };
 

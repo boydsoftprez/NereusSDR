@@ -21,6 +21,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, the P2 CW wire tests. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: clearing the cut sends
+//               CmdTx and high priority. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -275,11 +278,23 @@ private slots:
             QCOMPARE(int(quint8(fake.highPriorityPackets().at(i)[4])) & 0x02, 0);
         }
 
+        // Early fix wave I1: clearing the cut sends CmdTx and high priority
+        // at once with the restored bits; nothing else would (the wire state
+        // is unchanged and no heartbeat resends CmdTx while receiving).
+        const int txBeforeClear = txCount();
+        const int hpBeforeClear = hpCount();
         connection.clearTransmitCut();
         connection.composeCmdTxForTest(tx);
         QCOMPARE(int(tx[5] & 0x82), 0x82);
         connection.composeCmdHighPriorityForTest(hp);
         QCOMPARE(int(hp[5]), 0x03);
+        const qint64 txClearMs = waitForMore(txCount, txBeforeClear);
+        const qint64 hpClearMs = waitForMore(hpCount, hpBeforeClear);
+        QVERIFY2(txClearMs >= 0 && txClearMs < kAtOnceMs, "CmdTx did not go out on the clear");
+        QVERIFY2(hpClearMs >= 0 && hpClearMs < kAtOnceMs,
+                 "high priority did not go out on the clear");
+        QCOMPARE(int(quint8(fake.txPackets().last()[5])) & 0x82, 0x82);
+        QCOMPARE(int(quint8(fake.highPriorityPackets().last()[5])), 0x03);
     }
 
     // R-CW-14: the legacy compose sends no CW. A state set before the
