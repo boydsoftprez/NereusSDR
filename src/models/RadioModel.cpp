@@ -1427,6 +1427,9 @@
 //                centre is cwPitchHz() plus the tune offset in place of
 //                kApfCwPitchHz, cited at setup.cs:17112 [v2.10.3.15]
 //                (R-CW-52). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, leaving CW with QSK selected lands break-in on
+//                Off, as Thetis does (console.cs:34571, 16163-16173), in
+//                place of Semi. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -32630,7 +32633,7 @@ void RadioModel::updateCwQskTimeOut()
 //
 // Runs on every keyer state change (the transmit slice's mode, the selected
 // and effective break-in mode, QSK and Semi availability). In order:
-//   1. Leaving CW with QSK selected sets Semi and remembers QSK; entering
+//   1. Leaving CW with QSK selected sets Off and remembers QSK; entering
 //      CW selects QSK again if it is available. From Thetis
 //      console.cs:34566-34581 [v2.10.3.15]:
 //        if ((new_mode != DSPMode.CWL && new_mode != DSPMode.CWU)
@@ -32649,9 +32652,9 @@ void RadioModel::updateCwQskTimeOut()
 //        {
 //            if (qsk_in_CW) chkQSK.CheckState = CheckState.Indeterminate;
 //        }
-//      NereusSDR remembers the QSK the operator selected and sets Semi (the
-//      plan's choice for the break-in left in effect outside CW); QSK
-//      comes back only where it is still offered.
+//      NereusSDR remembers the QSK the operator selected and sets Off, as
+//      Thetis's Unchecked box is manual break-in; QSK comes back only
+//      where it is still offered.
 //   2. MoxController hears the CW mode and the effective break-in mode.
 //   3. QSK's changes to the transmit slice's receiver (applyCwQskSideEffects).
 //   4. A fallback while selected (QSK to Semi, R-CW-20; Semi or QSK to Off
@@ -32673,14 +32676,12 @@ void RadioModel::syncCwKeying()
         if (!inCw) {
             m_cwQskInCw = tm.cwBreakInMode() == static_cast<int>(CwBreakInMode::Qsk);
             if (m_cwQskInCw) {
-                // Early fix wave M2: Thetis lands on Off here.
-                // chkQSK.Checked = false (console.cs:34571 [v2.10.3.15])
-                // leaves the box Unchecked, which Thetis reads as manual
-                // break-in (CATBreakIn, console.cs:16163-16173
-                // [v2.10.3.15]: Unchecked is "manual break-in"). NereusSDR
-                // picks Semi, as the plan does, for the break-in left in
-                // effect outside CW. Flagged to the maintainer.
-                tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+                // Lands on Off, as Thetis does: chkQSK.Checked = false
+                // (console.cs:34571 [v2.10.3.15]) leaves the box Unchecked,
+                // which Thetis reads as manual break-in (CATBreakIn,
+                // console.cs:16163-16173 [v2.10.3.15]: Unchecked is
+                // "manual break-in"), NereusSDR's Off.
+                tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
             }
         } else if (m_cwQskInCw && m_cwKeyerController->qskAvailable()) {
             tm.setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));

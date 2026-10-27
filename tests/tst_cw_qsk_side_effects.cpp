@@ -11,7 +11,7 @@
 //     below 70 raised to 100, the values saved under hardware/<mac>/tx/
 //     and put back on leaving QSK, also after a restart; the break-in
 //     delay setting is never written;
-//   - leaving CW with QSK selected sets Semi and remembers QSK
+//   - leaving CW with QSK selected sets Off and remembers QSK
 //     (console.cs:34566-34581);
 //   - a QSK fallback says why once;
 //   - a key in CW never starts the TX channel;
@@ -27,6 +27,8 @@
 //               radio is known (M7), the fallback notice's code (M5), the
 //               QSK time-out's stretch (I4). J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, leaving CW with QSK selected lands on Off, as
+//               Thetis does. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -312,8 +314,10 @@ private slots:
         QCOMPARE(rig.slice->agcHangThreshold(), 30);
     }
 
-    // ── R-CW-20: leaving CW turns QSK to Semi and remembers it ───────────
-    void leavingCw_setsSemiAndRemembersQsk_returningSelectsItAgain()
+    // ── R-CW-20: leaving CW turns QSK off and remembers it ──────────────
+    // Thetis: chkQSK.Checked = false (console.cs:34571 [v2.10.3.15]) is
+    // manual break-in (console.cs:16163-16173), NereusSDR's Off.
+    void leavingCw_setsOffAndRemembersQsk_returningSelectsItAgain()
     {
         Rig rig;
         rig.selectBreakIn(CwBreakInMode::Qsk);
@@ -321,7 +325,7 @@ private slots:
 
         rig.slice->setDspMode(DSPMode::USB);
         pump();
-        QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Semi));
+        QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Off));
         QVERIFY(!rig.mox()->isCwModeActive());
         QVERIFY(!rig.model.cwQskSideEffectsAppliedForTest());
         QCOMPARE(rig.slice->agcMode(), AGCMode::Med);
@@ -343,7 +347,7 @@ private slots:
         QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Semi));
     }
 
-    void returningToCw_whereQskIsNotOffered_staysSemi()
+    void returningToCw_whereQskIsNotOffered_staysOff()
     {
         Rig rig;
         rig.selectBreakIn(CwBreakInMode::Qsk);
@@ -355,7 +359,7 @@ private slots:
         rig.slice->setDspMode(DSPMode::CWU);
         pump();
         QVERIFY(!rig.keyer()->qskAvailable());
-        QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Semi));
+        QCOMPARE(rig.tm().cwBreakInMode(), static_cast<int>(CwBreakInMode::Off));
         QVERIFY(!rig.model.cwQskSideEffectsAppliedForTest());
     }
 

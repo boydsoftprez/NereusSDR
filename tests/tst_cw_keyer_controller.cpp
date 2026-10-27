@@ -23,6 +23,8 @@
 //               stopped twice; the QSK gap is ended by the test, not a
 //               wall-clock timer. J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-26: CW transmit, leaving CW with QSK selected lands on Off.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -452,14 +454,18 @@ private slots:
         QCOMPARE(w.hangMs, 50);
 
         // Refused: enable, break-in and the QSK attenuation all off.
+        // Leaving CW with QSK selected lands on Off, as Thetis does
+        // (console.cs:34571 [v2.10.3.15]); returning selects QSK again.
         rig.slice->setDspMode(DSPMode::USB);
         pump();
+        QCOMPARE(tm.cwBreakInMode(), static_cast<int>(CwBreakInMode::Off));
         w = k->wireState();
         QVERIFY(!w.enable);
         QVERIFY(!w.breakIn);
         QVERIFY(!w.qskTxAttenuation);
         rig.slice->setDspMode(DSPMode::CWU);
         pump();
+        QCOMPARE(tm.cwBreakInMode(), static_cast<int>(CwBreakInMode::Qsk));
 
         // A pitch, a setting and the RADIO mute each re-emit.
         QSignalSpy wire(k, &CwKeyerController::wireStateChanged);

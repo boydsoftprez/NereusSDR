@@ -611,7 +611,7 @@ delay cites refreshed to v2.10.3.15).
   80); saved values persist; leaving QSK restores them; a restart with `CW_QskActive`
   true and QSK no longer selected restores them at load. The break-in delay setting is
   never written.
-- Leaving CW with QSK selected sets Semi and remembers QSK; returning to CW selects QSK
+- Leaving CW with QSK selected sets Off and remembers QSK; returning to CW selects QSK
   again if available. A QSK fallback (antenna change) shows its reason through
   `moxRejected` once.
 
