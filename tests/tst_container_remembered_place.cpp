@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original offscreen regressions for the place the operator gave a container.
 // Modification history (NereusSDR):
+//   2026-10-27 - Reloading a blocked store restores the saved placement
+//                 even without a manager error. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-26 - Right after a good reload ends a state that refused every
 //                 save (the saved layout changed underneath), the geometry
 //                 capture runs again with no other commit first: a header
@@ -367,6 +370,37 @@ private slots:
         QVERIFY(rig.settleCapture());
         QTRY_COMPARE_WITH_TIMEOUT(storedGeometry(store, QStringLiteral("a")), kFirstRect.translated(40, 30),
                                   kSaveTimeoutMs);
+    }
+
+    void aStoreOnlyBlockedReloadRestoresSavedPlacement()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("store-only-reload.settings")));
+        ContainerWorkspaceStore store(settings);
+        Rig rig(store);
+        QVERIFY(rig.show());
+        QCOMPARE(rig.manager->commitWorkspace(workspace({freeContainer(QStringLiteral("a"), kFirstRect)}), 0).status,
+                 CommitStatus::Saved);
+        QVERIFY(rig.settleCapture());
+        const WorkspaceDocument before = store.snapshot();
+        WorkspaceDocument external = before;
+        external.revision += 5;
+        external.containers[0].geometry = kSecondRect;
+        settings.setValue(QStringLiteral("ContainerWorkspace"),
+                          QString::fromUtf8(ContainerDocumentCodec::encode(external)));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+            QStringLiteral("^Container workspace commit refused: Conflict - Workspace changed; reload before editing$")));
+        // This caller bypasses the manager, so only the store is blocked.
+        QCOMPARE(store.commit(before, before.revision).status, CommitStatus::Conflict);
+        QVERIFY(!store.blockedReason().isEmpty());
+        QVERIFY(rig.manager->storageError().isEmpty());
+        QCOMPARE(rig.shown(QStringLiteral("a")), kFirstRect);
+
+        QVERIFY(store.load().ok);
+        QVERIFY(store.blockedReason().isEmpty());
+        QVERIFY(rig.manager->storageError().isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(rig.shown(QStringLiteral("a")), kSecondRect, kSaveTimeoutMs);
     }
 
     void operatorDragIsSaved()
