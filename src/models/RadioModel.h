@@ -785,6 +785,10 @@
 //                here, on the current connection's key line, its request
 //                gate and its aborts. J.J. Boyd (KG4VCF), AI-assisted via
 //                Claude Code.
+//   2026-10-27: CW transmit, CAT and TCI CW commands: the CWX applet host
+//                (setCwxAppletHost) CAT ZZKO reports and toggles, absent on
+//                a headless Core (R-CW-34). J.J. Boyd (KG4VCF), AI-assisted
+//                via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2916,6 +2920,18 @@ public:
     /// taking transmit, every stop, a transmit cut's catch-up and the
     /// connection going away abort it. Never null.
     CwxSender* cwxSender() const { return m_cwxSender.get(); }
+    /// CW transmit (R-CW-34): the window that shows the CWX applet, for CAT
+    /// ZZKO. The GUI registers whether the applet is shown and how to show
+    /// or hide it; a headless Core registers nothing and ZZKO answers ?;.
+    /// Passing empty functions removes the host.
+    void setCwxAppletHost(std::function<bool()> isShown, std::function<void(bool)> setShown)
+    {
+        m_cwxAppletShown = std::move(isShown);
+        m_cwxAppletSetShown = std::move(setShown);
+    }
+    bool hasCwxAppletHost() const { return m_cwxAppletShown && m_cwxAppletSetShown; }
+    bool cwxAppletShown() const { return m_cwxAppletShown ? m_cwxAppletShown() : false; }
+    void setCwxAppletShown(bool shown) { if (m_cwxAppletSetShown) { m_cwxAppletSetShown(shown); } }
     /// CW transmit: the band-plan half of the MOX pre-check for the
     /// transmit slice's carrier (region, extended, US 60 m, prevent TX on
     /// a different band and the band edges), shared by the MOX pre-check
@@ -9861,6 +9877,8 @@ private:
     void syncCwxKeyLine();
     // Reset first in the destructor, before the keyer controller.
     std::unique_ptr<CwxSender> m_cwxSender;
+    std::function<bool()> m_cwxAppletShown;          // R-CW-34 ZZKO
+    std::function<void(bool)> m_cwxAppletSetShown;
     // Declared last so it goes first: nothing it is connected to signals
     // it while this model's other members are destroyed.
     std::unique_ptr<CwKeyerController> m_cwKeyerController;

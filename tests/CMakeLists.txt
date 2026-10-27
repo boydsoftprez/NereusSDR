@@ -1058,6 +1058,12 @@ nereus_add_test(tst_cw_keyer_controller)
 # the sender's own thread), hence REALTIME.
 nereus_add_test(tst_cwx_sender REALTIME)
 
+# CW transmit Task 9 (R-CW-35): the TCI CW commands (macros, cw_msg, the
+# terminal, speeds, keyer with its 3 s watchdog and timed releases, stop,
+# the owner and refusals) on a local model with a fake connection. The
+# keyer timings run on the wall clock (3 s watchdog), hence REALTIME.
+nereus_add_test(tst_tci_cw REALTIME)
+
 # CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
 # QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
 # fallback notice and the TX channel skip on a RadioModel.
@@ -11428,6 +11434,9 @@ nereus_split_test(tst_cat_rx_commands ENV NEREUS_CAT_RX_COMMANDS_GROUP
 
 nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
 nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+# CW transmit Task 9 (R-CW-02, R-CW-34): the CAT CW and CWX commands on a
+# local model with a fake connection; the sender runs on the wall clock.
+nereus_add_test(tst_cat_cw_commands CORE_ONLY)
 nereus_add_test(tst_cat_coverage CORE_ONLY)
 # CI load round, 2026-10-26: 783 fixture rows took 84 s of the 120 s limit
 # on a quiet Linux runner and timed out on a busy one; the test's main()

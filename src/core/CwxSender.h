@@ -21,6 +21,10 @@
 //               R-CW-33): reimplemented in C++20/Qt6 for NereusSDR on a
 //               thread of its own, keying the host key line. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit, the TCI keyer's timed release
+//               (releaseKeyAfter, from TCIServer.cs scheduleKeyerRelease),
+//               isKeyHeld and keyHeldChanged (R-CW-35). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -277,6 +281,13 @@ public:
     void setMemories(const QStringList& eight);
     void stop();                                   // abort and clear
     void setKeyHeld(bool down);                    // the Key hand key, 3 s watchdog
+    // R-CW-35, the TCI keyer: the held Key goes up `msAfterPress` ms after
+    // it went down (at once when that has passed), never later than the
+    // watchdog. Nothing when the Key is not held.
+    // From Thetis TCIServer.cs:9050-9064 [v2.10.3.15]
+    // (scheduleKeyerReleaseLocked).
+    void releaseKeyAfter(int msAfterPress);
+    bool isKeyHeld() const { return m_keyHeldNow.load(std::memory_order_acquire); }
     int queuedCharacters() const;                  // CAT KY/ZZKY buffer answers
     // A message, its hang or a repeat delay is running, or the Key is held.
     bool isSending() const { return m_sending.load(std::memory_order_acquire); }
@@ -289,6 +300,7 @@ signals:
     void sendingChanged(bool sending);
     void emptied();                                // TCI cw_macros_empty
     void refused(const QString& words);
+    void keyHeldChanged(bool held);                // the Key went down or up
 
 private:
     using TimePoint = std::chrono::steady_clock::time_point;
@@ -304,6 +316,7 @@ private:
     void run();
     void tickLocked();
     void releaseKeyHeldLocked();
+    void setKeyHeldStateLocked(bool held);
     void abortLocked();
     void applyLineLocked();
     void setPttLocked(bool on);
@@ -360,6 +373,8 @@ private:
     // The Key (setKeyHeld).
     bool m_keyHeld{false};
     TimePoint m_keyDeadline{};
+    TimePoint m_keyPressedAt{};
+    std::atomic<bool> m_keyHeldNow{false};
 
     std::atomic<int> m_queuedChars{0};
     std::atomic<bool> m_sending{false};

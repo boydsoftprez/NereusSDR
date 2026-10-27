@@ -14,6 +14,12 @@
 //   - tst_tci_init_burst_golden.cpp (byte-for-byte baseline parity)
 //   - tst_tci_init_burst_smoke.cpp  (wrapper sanity)
 //   - tst_tci_init_burst_typo_divergence.cpp (design doc §7 row 1 typo fix)
+//
+// Modification history (NereusSDR):
+//   2026-10-27: CW transmit, the init burst's CW lines carry the real CWX
+//               speed, CWX PTT delay and keyer speed from a RadioModel;
+//               a mock keeps the null-controller defaults. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest>
 #include <QSignalSpy>
@@ -27,6 +33,7 @@
 #include "core/TxSliceArbiter.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 #include "TestMockRadioModel.h"
 
 using namespace NereusSDR;
@@ -114,6 +121,7 @@ private slots:
     void digl_digu_offset_drives_offset_lines();
     // RED #18 -- CW macros default to Thetis null-controller defaults 30/0/30.
     void cw_macros_match_thetis_null_controller_defaults();
+    void cw_macros_carry_the_radio_models_real_values();
 
     // RED #19 -- distinct mock state must produce distinct init-burst output
     // (catches any future re-introduction of hardcoded placeholders).
@@ -896,11 +904,11 @@ void TestTciInitBurstLiveState::cw_macros_match_thetis_null_controller_defaults(
 {
     pinAppSettingsToCaptureConditions();
     TestMockRadioModel mock;
-    // No CwController on NereusSDR yet (3M-2).  Thetis's TCIServer
-    // GetCwMacrosSpeed / GetCwMacrosDelay / GetCwKeyerSpeed
-    // (TCIServer.cs:6950-6973 [v2.10.3.15]) return 30 / 0 / 30 when
-    // m_cwController is null.  Our port must match that defaults set
-    // verbatim (NOT the old 25/0/25 placeholder).
+    // A radio object that is not a RadioModel has no CW controller.
+    // Thetis's TCIServer GetCwMacrosSpeed / GetCwMacrosDelay /
+    // GetCwKeyerSpeed (TCIServer.cs:6950-6973 [v2.10.3.15]) return
+    // 30 / 0 / 30 when m_cwController is null.  Our port must match that
+    // defaults set verbatim (NOT the old 25/0/25 placeholder).
     TciProtocol p(&mock);
     const QStringList burst = p.buildInitBurst();
 
@@ -910,6 +918,24 @@ void TestTciInitBurstLiveState::cw_macros_match_thetis_null_controller_defaults(
              "cw_macros_delay default must be Thetis null-controller 0 ms");
     QVERIFY2(burst.contains(QStringLiteral("cw_keyer_speed:30;")),
              "cw_keyer_speed default must be Thetis null-controller 30 WPM");
+}
+
+// CW transmit (R-CW-35): with a RadioModel the init burst carries its CWX
+// speed, the CWX PTT delay (CwxSender::kPttDelayMs) and its keyer speed, as
+// Thetis's controller reads CWXForm.WPM, CWXForm.PTTDelayMs and CATCWSpeed
+// (TCIServer.cs:8346-8396 [v2.10.3.15]).
+void TestTciInitBurstLiveState::cw_macros_carry_the_radio_models_real_values()
+{
+    pinAppSettingsToCaptureConditions();
+    RadioModel model;
+    model.transmitModel().setCwxSpeed(28);
+    model.transmitModel().setCwKeyerSpeed(33);
+    TciProtocol p(&model);
+    const QStringList burst = p.buildInitBurst();
+    QVERIFY(burst.contains(QStringLiteral("cw_macros_speed:28;")));
+    QVERIFY(burst.contains(QStringLiteral("cw_macros_delay:50;")));
+    QVERIFY(burst.contains(QStringLiteral("cw_keyer_speed:33;")));
+    QVERIFY(!burst.contains(QStringLiteral("cw_macros_speed:30;")));
 }
 
 // Regression catch: builds two distinct mock states and asserts the resulting

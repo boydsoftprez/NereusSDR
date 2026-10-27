@@ -18,6 +18,9 @@
 // Modification history (NereusSDR):
 //   2026-10-27: CW transmit, the CWX sender. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-27: CW transmit, the Key's timed release for the TCI keyer
+//               (releaseKeyAfter) and keyHeldChanged. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -562,6 +565,67 @@ private slots:
         QVERIFY(b.idle());
         using Edges = std::vector<std::pair<qint64, bool>>;
         QCOMPARE(b.rec.keyEdges(), (Edges{{0, true}, {0, false}}));
+    }
+
+    // R-CW-35, the TCI keyer: the Key goes up `ms` after it went down.
+    void keyReleaseAfterFallsThatLongAfterThePress()
+    {
+        Bench b;
+        b.time.set(b.time.start);
+        bool scheduled = false;
+        b.time.setHook([&b, &scheduled](SteadyTime until) {
+            if (!scheduled && b.time.ms(until) == 3000) {
+                scheduled = true;
+                b.sender->releaseKeyAfter(120);
+                return true;
+            }
+            return false;
+        });
+        QSignalSpy held(b.sender.get(), &CwxSender::keyHeldChanged);
+        b.sender->setKeyHeld(true);
+        QVERIFY(b.sender->isKeyHeld());
+        QTRY_VERIFY(b.idle());
+        QVERIFY(!b.sender->isKeyHeld());
+        using Edges = std::vector<std::pair<qint64, bool>>;
+        QCOMPARE(b.rec.keyEdges(), (Edges{{0, true}, {120, false}}));
+        QTRY_COMPARE(held.count(), 2);
+        QCOMPARE(held.at(0).at(0).toBool(), true);
+        QCOMPARE(held.at(1).at(0).toBool(), false);
+    }
+
+    void keyReleaseAfterATimeAlreadyPassedReleasesAtOnce()
+    {
+        Bench b;
+        b.time.set(b.time.start);
+        b.time.freeze();
+        b.sender->setKeyHeld(true);
+        b.time.set(b.time.start + 200ms);
+        b.sender->releaseKeyAfter(120);
+        QVERIFY(!b.line->cwx());
+        QVERIFY(!b.sender->isKeyHeld());
+        using Edges = std::vector<std::pair<qint64, bool>>;
+        QCOMPARE(b.rec.keyEdges(), (Edges{{0, true}, {200, false}}));
+        b.sender->releaseKeyAfter(120);   // not held: nothing
+        QCOMPARE(b.rec.keyEdges().size(), std::size_t(2));
+    }
+
+    void keyReleaseAfterNeverOutlastsTheWatchdog()
+    {
+        Bench b;
+        b.time.set(b.time.start);
+        bool scheduled = false;
+        b.time.setHook([&b, &scheduled](SteadyTime until) {
+            if (!scheduled && b.time.ms(until) == 3000) {
+                scheduled = true;
+                b.sender->releaseKeyAfter(5000);
+                return true;
+            }
+            return false;
+        });
+        b.sender->setKeyHeld(true);
+        QTRY_VERIFY(b.idle());
+        using Edges = std::vector<std::pair<qint64, bool>>;
+        QCOMPARE(b.rec.keyEdges(), (Edges{{0, true}, {3000, false}}));
     }
 
     // ── HL2 CWX PTT (R-CW-15) ─────────────────────────────────────────────

@@ -7,6 +7,13 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-27: CW transmit, the TCI CW commands (R-CW-35): cw_macros,
+//                 cw_msg, cw_terminal, cw_macros_stop, cw_macros_speed (set,
+//                 query, up, down), cw_macros_delay, cw_keyer_speed and
+//                 keyer through the CWX sender, cw_macros_empty, the speed
+//                 notifications and the init burst's real values, after
+//                 TCIServer.cs TCICWController [v2.10.3.15]. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, the ifOffsetHz note says why dds and if stay
 //                 RF-true in CW (D4, R-CW-26); comment only. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
@@ -201,6 +208,8 @@ mw0lge@grange-lane.co.uk
 #include <optional>
 
 namespace NereusSDR {
+
+class RadioModel;   // R-CW-35: the CW commands act on the Core's own model
 
 // ─────────────────────────────────────────────────────────────────────────
 // AppSettings keys introduced by Phase 3J-1 TCI Server.
@@ -433,6 +442,15 @@ public:
     // through the slice's own change broadcast). Off by default: local
     // operation is unchanged.
     void setRemoteWindow(bool remote) { m_remoteWindow = remote; }
+
+    // R-CW-35: the app whose command handleCommand is about to handle
+    // (TciServer sets it around each call; null afterwards). The CW macros,
+    // the terminal and the keyer belong to one app at a time, as Thetis's
+    // TCICWController owner (TCIServer.cs:8987-9010 [v2.10.3.15]).
+    void setCommandOwner(const void* owner) { m_cmdOwner = owner; }
+    // R-CW-35: an app left. Its terminals turn off and what it sends stops.
+    // From Thetis TCIServer.cs:8625-8640 [v2.10.3.15] (DisconnectClient).
+    void cwClientDisconnected(const void* owner);
     bool remoteWindow() const { return m_remoteWindow; }
 
     // R-R3-48 / R-R3-25: the Core's station server transmits for no app
@@ -724,12 +742,57 @@ private:
     QString handleSpotSimulateClickCommand(const QStringList& args);
     // From Thetis TCIServer.cs:5184 [v2.10.3.13] — spot_clear case in 1-arg query switch.
     QString handleSpotClearCommand();
-    // From Thetis TCIServer.cs:4989 [v2.10.3.13] — cw_macros_speed_up case in set switch.
+    // ── CW family (R-CW-35), after TCIServer.cs TCICWController ─────────────
+    // From Thetis TCIServer.cs:5345-5370 [v2.10.3.15] — the set switch's CW
+    // cases; 5568-5579 the query switch's.
+    // From Thetis TCIServer.cs:3493-3503 [v2.10.3.15] — handleCwMacrosSpeed.
+    QString handleCwMacrosSpeedCommand(const QStringList& args, bool hasArgs);
+    // From Thetis TCIServer.cs:3505-3515 [v2.10.3.15] — handleCwMacrosDelay.
+    QString handleCwMacrosDelayCommand(const QStringList& args, bool hasArgs);
+    // From Thetis TCIServer.cs:3517-3527 [v2.10.3.15] — handleCwKeyerSpeed.
+    QString handleCwKeyerSpeedCommand(const QStringList& args, bool hasArgs);
+    // From Thetis TCIServer.cs:3529-3533 [v2.10.3.15] — handleCwMacrosSpeedUp.
     QString handleCwMacrosSpeedUpCommand(const QStringList& args);
-    // From Thetis TCIServer.cs:4992 [v2.10.3.13] — cw_macros_speed_down case in set switch.
+    // From Thetis TCIServer.cs:3535-3539 [v2.10.3.15] — handleCwMacrosSpeedDown.
     QString handleCwMacrosSpeedDownCommand(const QStringList& args);
-    // From Thetis TCIServer.cs:5001 [v2.10.3.13] — cw_msg case in set switch.
+    // From Thetis TCIServer.cs:3541-3548 [v2.10.3.15] — handleCwMacros.
+    QString handleCwMacrosCommand(const QStringList& args);
+    // From Thetis TCIServer.cs:3550-3557 [v2.10.3.15] — handleCwTerminal.
+    QString handleCwTerminalCommand(const QStringList& args);
+    // From Thetis TCIServer.cs:3559-3576 [v2.10.3.15] — handleCwMsg.
     QString handleCwMsgCommand(const QStringList& args);
+    // From Thetis TCIServer.cs:3578-3581 [v2.10.3.15] — handleCwMacrosStop.
+    QString handleCwMacrosStopCommand();
+    // From Thetis TCIServer.cs:3582-3593 [v2.10.3.15] — handleKeyer.
+    QString handleKeyerCommand(const QStringList& args);
+
+    // TCICWController's state and steps (TCIServer.cs:8231-9300
+    // [v2.10.3.15]). The CWX sender sends every macro and holds every
+    // keyer press, so its stop, the cut and leaving CW release both.
+    struct CwSegment {
+        QString text;
+        bool callsign{false};
+    };
+    RadioModel* cwRadio() const;
+    bool cwKeyingAllowed() const;
+    bool cwSettingsAllowed() const;
+    bool cwTargetAvailable(int rx) const;
+    bool cwTxSliceInCw() const;
+    void hookCw();
+    void cwStartOperation(int rx, QList<CwSegment> segments);
+    void cwFeedNextSegment();
+    void cwCompleteOperation();
+    void cwAbortOperation();
+    void cwOnCharacterStarted();
+    void cwOnKeyHeldChanged(bool held);
+    void cwReleaseKeyerMox();
+    void cwEnsureTerminalPtt();
+    void cwReleaseTerminalPtt();
+    void cwSetMacroSpeed(int wpm);
+    bool cwIsCurrentOwner(const void* owner) const;
+    bool cwTryAcquireOwnership(const void* owner);
+    void cwReleaseOwnershipIfIdle();
+    bool cwTerminalEnabled(int rx) const;
 
     // ── IQ stream family handlers (Phase 11) ─────────────────────────────────
     // From Thetis TCIServer.cs:5016-5026 [v2.10.3.13] — set-switch IQ cases.
@@ -1077,6 +1140,23 @@ private:
     bool m_stationReceiveOnly{false};
     SliceWriteGate m_sliceWriteGate;
     std::function<int(int)> m_receiverSliceMap;
+
+    // R-CW-35 (TCICWController). The owner is the app whose command is
+    // being handled (setCommandOwner); null owns everything, as Thetis's
+    // null listener.
+    const void* m_cmdOwner{nullptr};
+    const void* m_cwOwner{nullptr};
+    QList<CwSegment> m_cwSegments;       // not yet given to the sender
+    bool m_cwOperationActive{false};
+    int m_cwOperationRx{-1};
+    bool m_cwEmptyNotified{false};
+    bool m_cwTerminalEnabled[2]{false, false};
+    bool m_cwTerminalPttAsserted{false};
+    int m_cwTerminalPttRx{-1};
+    bool m_cwReleaseTerminalPttWhenIdle{false};
+    bool m_cwKeyerPressed{false};
+    bool m_cwKeyerReleasePending{false};
+    bool m_cwKeyerAssertedMox{false};
 };
 
 } // namespace NereusSDR

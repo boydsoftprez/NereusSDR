@@ -21,6 +21,10 @@
 //               R-CW-33): reimplemented in C++20/Qt6 for NereusSDR on a
 //               thread of its own, keying the host key line. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27: CW transmit, the TCI keyer's timed release
+//               (releaseKeyAfter, from TCIServer.cs scheduleKeyerRelease),
+//               isKeyHeld and keyHeldChanged (R-CW-35). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // --- From [cwx.cs] ---
@@ -802,7 +806,7 @@ void CwxSender::abortLocked()
     m_queue.clear();
     m_repeatText.clear();
     m_repeatMarker = false;
-    m_keyHeld = false;
+    setKeyHeldStateLocked(false);
     setKeyLocked(false); //[2.10.3]MW0LGE swap
     setPttLocked(false);
     m_ttx = 0; m_pause = 0; m_newptt = 0;
@@ -866,9 +870,18 @@ void CwxSender::applyLineLocked()
     }
 }
 
+void CwxSender::setKeyHeldStateLocked(bool held)
+{
+    m_keyHeld = held;
+    if (m_keyHeldNow.exchange(held, std::memory_order_acq_rel) != held) {
+        QMetaObject::invokeMethod(this, [this, held]() { emit keyHeldChanged(held); },
+                                  Qt::QueuedConnection);
+    }
+}
+
 void CwxSender::releaseKeyHeldLocked()
 {
-    m_keyHeld = false;
+    setKeyHeldStateLocked(false);
     setKeyLocked(false);
     setPttLocked(false);
     if (!m_ticking) {
@@ -1179,12 +1192,36 @@ void CwxSender::setKeyHeld(bool down)
                                               Qt::QueuedConnection);
                 }
             }
-            m_keyHeld = true;
+            setKeyHeldStateLocked(true);
+            m_keyPressedAt = m_clock();
             setPttLocked(true);
             setKeyLocked(true);
             setSendingLocked(true);
         }
         m_keyDeadline = m_clock() + std::chrono::milliseconds(kKeyWatchdogMs);
+        m_wake.store(true, std::memory_order_release);
+    }
+    m_cv.notify_all();
+}
+
+// From Thetis TCIServer.cs:9050-9064 [v2.10.3.15] (scheduleKeyerReleaseLocked):
+// the release falls `durationMs` after the press; when that time has passed
+// the key is released at once. NereusSDR keeps it no later than the
+// watchdog's deadline, so a long duration cannot hold the key past the 3 s
+// rule (section 6). The sender's thread releases it at the deadline.
+void CwxSender::releaseKeyAfter(int msAfterPress)
+{
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_keyHeld) {
+            return;
+        }
+        const TimePoint releaseAt = m_keyPressedAt + std::chrono::milliseconds(std::max(0, msAfterPress));
+        if (releaseAt <= m_clock()) {
+            releaseKeyHeldLocked();
+        } else if (releaseAt < m_keyDeadline) {
+            m_keyDeadline = releaseAt;
+        }
         m_wake.store(true, std::memory_order_release);
     }
     m_cv.notify_all();
