@@ -17,6 +17,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26: Created for the container bugs JJ found on PR 657.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: the container's Pop Out and Return while Roundtable's own
+//               window is open. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -27,6 +30,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
+#include <QPointer>
 #include <QPushButton>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -494,6 +498,78 @@ private slots:
         QVERIFY(arrange->returnEntry(was.entryId).ok);
         settle();
         QCOMPARE(roundtableIn(w.store->snapshot()).containerId, was.containerId);
+        w.main->close();
+    }
+
+    void theContainerPopOutWithTheOwnWindowOpen()
+    {
+        // Roundtable's own window open, then the container's Pop Out: the
+        // applet (its "in its own window" note) moves to a pop-out
+        // container, the own window keeps the panel, and putting the panel
+        // back puts it in the pop-out container.
+        Window w;
+        QVERIFY(w.open());
+        LiveRoundtable live(w.main->radioModel());
+        settle();
+        QVERIFY(w.idle());
+        RoundtablePanel* panel = w.applet->panel();
+        QPointer<RoundtablePanel> alive(panel);
+        emit panel->popOutRequested();
+        settle();
+        QVERIFY(w.applet->isPoppedOut());
+        RoundtableWindow* own = w.applet->floatingWindow();
+        QVERIFY(own != nullptr && own->isVisible());
+
+        ContainerArrangeController* arrange = w.manager->arrangeController();
+        const WorkspaceDocument before = w.store->snapshot();
+        const Placement was = roundtableIn(before);
+        QVERIFY(arrange->popOut(was.entryId).ok);
+        settle();
+        const WorkspaceDocument after = w.store->snapshot();
+        QCOMPARE(after.containers.size(), before.containers.size() + 1);
+        const Placement now = roundtableIn(after);
+        QVERIFY(now.containerId != was.containerId);
+        const ContainerDocument* shell = containerIn(after, now.containerId);
+        QVERIFY(shell != nullptr);
+        QVERIFY(shell->popOutShell);
+        ContainerWidget* shown = shownIn(w.applet);
+        QVERIFY(shown != nullptr);
+        QCOMPARE(shown->id(), now.containerId);
+        QVERIFY(w.applet->isVisible());
+        // The own window still holds the panel; the applet shows its note.
+        QVERIFY(w.applet->isPoppedOut());
+        QCOMPARE(w.applet->floatingWindow(), own);
+        QVERIFY(own->isVisible());
+        QVERIFY(alive);
+        QCOMPARE(panel->window(), own);
+        auto* note = w.applet->findChild<QWidget*>(QStringLiteral("roundtablePoppedNote"));
+        QVERIFY(note != nullptr && note->isVisible());
+
+        // Put back: the panel goes into the applet, in the pop-out container.
+        w.applet->findChild<QPushButton*>(QStringLiteral("roundtablePutBackBtn"))->click();
+        settle();
+        QVERIFY(!w.applet->isPoppedOut());
+        QVERIFY(!own->isVisible());
+        QVERIFY(alive);
+        QCOMPARE(panel->parentWidget(), w.applet);
+        QVERIFY(panel->isVisible());
+        QCOMPARE(shownIn(w.applet)->id(), now.containerId);
+
+        // The own window opened from the pop-out container, then the
+        // container returned: the panel survives the shell going away.
+        emit panel->popOutRequested();
+        settle();
+        QVERIFY(w.applet->isPoppedOut());
+        QVERIFY(arrange->returnEntry(was.entryId).ok);
+        settle();
+        QCOMPARE(roundtableIn(w.store->snapshot()).containerId, was.containerId);
+        QVERIFY(alive);
+        QVERIFY(w.applet->isPoppedOut());
+        QVERIFY(w.applet->floatingWindow() != nullptr && w.applet->floatingWindow()->isVisible());
+        w.applet->findChild<QPushButton*>(QStringLiteral("roundtablePutBackBtn"))->click();
+        settle();
+        QVERIFY(alive);
+        QCOMPARE(panel->parentWidget(), w.applet);
         w.main->close();
     }
 

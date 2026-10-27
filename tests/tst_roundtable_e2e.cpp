@@ -49,6 +49,9 @@
 //               posts WM_CLOSE, which a console Python never gets, so the
 //               test force-killed it after 10 s. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: a Python under WindowsApps (the Microsoft Store alias) is
+//               not taken. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -90,6 +93,15 @@ using namespace NereusSDR;
 
 namespace {
 
+// Windows' Microsoft Store python3.exe and python.exe under
+// ...\WindowsApps\ are aliases that open the Store instead of running
+// Python, so none is taken: the skip then says no Python was found.
+bool isStoreAlias(const QString& path)
+{
+    return QDir::fromNativeSeparators(path).contains(QLatin1String("/WindowsApps/"),
+                                                     Qt::CaseInsensitive);
+}
+
 // The interpreter CMake resolved for the Python-backed tests
 // (NEREUS_TEST_PYTHON, tests/CMakeLists.txt): an absolute path, which CI
 // sets to /usr/bin/python3 with Ubuntu's websockets and cryptography. When
@@ -100,11 +112,12 @@ QString findPython()
 {
     const QString configured = QStringLiteral(NEREUS_TEST_PYTHON);
     if (QFileInfo(configured).isAbsolute()) {
-        return QFileInfo(configured).isExecutable() ? configured : QString();
+        return QFileInfo(configured).isExecutable() && !isStoreAlias(configured) ? configured
+                                                                                  : QString();
     }
     for (const QString& name : {configured, QStringLiteral("python3"), QStringLiteral("python")}) {
         const QString found = QStandardPaths::findExecutable(name);
-        if (!found.isEmpty()) {
+        if (!found.isEmpty() && !isStoreAlias(found)) {
             return found;
         }
     }
