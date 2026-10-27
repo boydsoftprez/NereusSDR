@@ -10,6 +10,10 @@
 //   2026-10-27: passive audioRestartTimingForTest captures the exact retry
 //               scheduling inputs and selected delay. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
+//   2026-10-27: retry an accepted MediaNotReady audio refusal on the
+//               existing restart backoff, and cancel that retry when a
+//               newer context supersedes it. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -1848,6 +1852,9 @@ struct RemoteMediaController::Private {
     bool preparingAudio = false;
     bool audioEnabled = false;
     bool audioRetryPending = false;
+    // Only a retry scheduled for a Core MediaNotReady answer is superseded
+    // by a later accepted context; speaker failure retries are independent.
+    bool audioRetryForMediaNotReady = false;
     // Direct media: the pending restart's fence. Bumped wherever the
     // pending flag is cleared outside the restart itself, so a stale
     // restart does nothing; a media move leaves it alone, so a restart
@@ -2301,6 +2308,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // moves the revision on, so it could never run); the failure's own
         // retry, below, takes the next step.
         d->audioRetryPending = false;
+        d->audioRetryForMediaNotReady = false;
         ++d->audioRetryGeneration;
         d->audioHeldForTransmit = false; // R-R3-51: the failure's retry asks, not the unkey
         const QPointer<RemoteMediaController> self(this);
@@ -4182,6 +4190,7 @@ void RemoteMediaController::stop()
     d->audio->stop();
     d->audioEnabled = false;
     d->audioRetryPending = false;
+    d->audioRetryForMediaNotReady = false;
     ++d->audioRetryGeneration;
     d->audioRetryRevision = 0;
     d->audioAwaitingDevicesSinceMs = -1;
@@ -6942,6 +6951,7 @@ void RemoteMediaController::scheduleAudioRetry()
         if (generation != d->audioRetryGeneration
             || revision != d->audioRevision) { return; }
         d->audioRetryPending = false;
+        d->audioRetryForMediaNotReady = false;
         const QPointer<RemoteMediaController> self(this);
         requestAudio();
         if (!self) { return; }
@@ -6990,6 +7000,7 @@ void RemoteMediaController::requestAudio()
     d->audio->stop();
     d->audioEnabled = false;
     d->audioRetryPending = false;
+    d->audioRetryForMediaNotReady = false;
     ++d->audioRetryGeneration;
     d->audioHeldForTransmit = false; // R-R3-51: this request answers a hold
     // Every request follows a mute, speaker, radio or retry change (or the
@@ -7935,6 +7946,13 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         if (!context || context->revision != d->audioRevision
             || !isNewerGeneration(context->generation, d->audioGeneration)
             || context->ssrc != d->logicalSsrcs.value(0, d->peer->audioSsrc())) { return; }
+        const bool mediaNotReady = !context->enabled
+            && context->offReason == RemoteAudioOffReason::MediaNotReady;
+        if (!mediaNotReady && d->audioRetryForMediaNotReady) {
+            d->audioRetryPending = false;
+            d->audioRetryForMediaNotReady = false;
+            ++d->audioRetryGeneration;
+        }
         d->audioGeneration = context->generation;
         d->acceptedAudioContext = context;
         // R-R3-35: the Core's capture of the previous context no longer
@@ -7948,6 +7966,11 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         // start() can report a speaker failure synchronously, and a listener
         // to that report, or to the status change, may retire this controller.
         const QPointer<RemoteMediaController> self(this);
+        if (mediaNotReady && d->model && d->model->isConnected()
+            && !d->model->audioEngine()->masterMuted() && !d->audioRetryPending) {
+            d->audioRetryForMediaNotReady = true;
+            scheduleAudioRetry();
+        }
         if (context->enabled && d->model
             && d->model->isConnected() && !d->model->audioEngine()->masterMuted()) {
             d->preparingAudio = true;
