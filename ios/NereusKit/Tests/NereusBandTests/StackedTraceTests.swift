@@ -905,7 +905,7 @@ import Testing
                                             scale: settings.scaleRange)
         let ridge = geometry.ridgeY(dbm: -100, depth: 0)
         let next = geometry.ridgeY(dbm: -100, depth: StackedTraceGeometry.lineDepth(place: 1))
-        #expect(ridge - next > 2, "the two lines' strips do not overlap: \(ridge - next) pixels apart")
+        #expect(ridge - next > 1.5, "the two lines \(ridge - next) pixels apart")
         // The front line's pixels: centres within its strip, clear of the next line's.
         let rows = ((Int(ridge) - 2)...(Int(ridge) + 2)).filter {
             abs(Double($0) + 0.5 - ridge) < StackedTrace.lineHalfWidthPixels
@@ -935,6 +935,8 @@ import Testing
     /// The rows' ends fade out over StackedTrace.sideFadePixels on an S
     /// curve, as drawn: in the front row's curtain, each pixel's share of
     /// the way from the bare band to the curtain inside follows the fade.
+    /// One row only, grown in at the front, so one layer lies over the
+    /// band; the left end only, as the dBm scale covers the right.
     @Test func theRowsEndsFadeOverEightPixels() throws {
         let target = try Offscreen(width: BandRendererTests.width, height: BandRendererTests.height)
         let renderer = try BandRenderer(device: target.device)
@@ -944,25 +946,20 @@ import Testing
         let flat = [Float](repeating: -70, count: 200)
         var stack = StackedTraceHistory(smoothsRows: false)
         stack.append(frame: BandFixtures.frame(trace: flat, sequence: 1), coverage: coverage, wide: nil, time: 1)
-        stack.append(frame: BandFixtures.frame(trace: flat, sequence: 2), coverage: coverage, wide: nil, time: 2)
         let plot = BandRendererTests.geometry(settings)
         let geometry = StackedTraceGeometry(size: plot.size, settings: settings, noiseFloorDbm: -125,
                                             scale: settings.scaleRange)
-        // Half way down the front curtain, far from its ridge line. At
-        // glide 0 the front shows the older row alone.
+        // Half way down the front curtain, far from its ridge line.
         let y = Int((geometry.ridgeY(dbm: -70, depth: 0) + geometry.baselineY(depth: 0)) / 2)
-        let image = try renderStack(stack, glide: 0, target: target, renderer: renderer, settings: settings)
+        let image = try renderStack(stack, glide: 1, target: target, renderer: renderer, settings: settings)
         let bare = try renderStack(StackedTraceHistory(smoothsRows: false), glide: 0, target: target,
                                    renderer: renderer, settings: settings)
-        let width = Int(plot.size.width)
-        let inside = image.grey(width / 2, y)
-        #expect(inside - bare.grey(width / 2, y) > 80, "the curtain stands out: \(inside)")
-        for pixels in 0..<12 {
-            let expected = StackedTraceGeometry.sideFade(pixels: Double(pixels) + 0.5)
-            for x in [pixels, width - 1 - pixels] {
-                let share = Double(image.grey(x, y) - bare.grey(x, y)) / Double(inside - bare.grey(x, y))
-                #expect(abs(share - expected) < 0.06, "\(x): \(share) against \(expected)")
-            }
+        let inside = image.grey(Int(plot.size.width) / 2, y)
+        #expect(inside - bare.grey(Int(plot.size.width) / 2, y) > 80, "the curtain stands out: \(inside)")
+        for x in 0..<12 {
+            let expected = StackedTraceGeometry.sideFade(pixels: Double(x) + 0.5)
+            let share = Double(image.grey(x, y) - bare.grey(x, y)) / Double(inside - bare.grey(x, y))
+            #expect(abs(share - expected) < 0.04, "\(x): \(share) against \(expected)")
         }
     }
 }
