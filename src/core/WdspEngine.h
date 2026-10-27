@@ -79,6 +79,10 @@
 //                 maxBinHoldNextDbm declared, ported from Longpath PR 215
 //                 (src/core/WdspEngine.h:631-654 [@383f058]), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-25 : Issue #650 by J.J. Boyd (KG4VCF): test-only friendship
+//                 for the audio panel test, which reads the panel's copy
+//                 flag back from real RX channels. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -227,6 +231,9 @@ class TstConfirmStep;
 // AGC Fixed Gain seed: the test opens real RX channels and reads the fixed
 // gain WDSP applies back from rxa[].agc.
 class TestRxChannelAgcFixedSeed;
+// Issue #650: the audio panel test opens real RX channels and reads the
+// panel's copy flag back from rxa[].panel.
+class TestRxChannelAudioPanel;
 // Task 27: the transmit analyzer skirt test opens a real TX channel.
 class TestTxAnalyzerSkirt;
 // R-IOS-13: the transmit path's DSP latency test.
@@ -1176,6 +1183,8 @@ private:
     friend class ::TstTxChannelVoxListening;
     // AGC Fixed Gain seed: same friendship, real RX channels.
     friend class ::TestRxChannelAgcFixedSeed;
+    // Issue #650: same friendship, real RX channels, for the panel test.
+    friend class ::TestRxChannelAudioPanel;
     // Squelch persistence: the squelch seed test opens real RX channels.
     friend class ::TestSliceSquelchChannelSeed;
     // Same friendship for the first DSP > Options apply test.

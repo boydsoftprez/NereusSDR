@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The BIN tooltip says both ears hear the same audio while
+//                noise reduction, SNB or the auto-notch is on (issue #650).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                (Claude Opus 5.5).
 //   2026-10-25 - The Roundtable line's text is drawn at Normal when it
 //                does not fit its room at semibold (roundtableLineFontFor,
 //                by measurement; it was by the face's reported weight).
@@ -1874,7 +1878,7 @@ void VfoWidget::buildAudioTab()
         // From Thetis radio.cs:1147 bin_on_dsp [v2.10.3.15]; WDSP
         // patchpanel.c:197 SetRXAPanelBinaural (cites moved from the
         // tooltip, R-R3-17).
-        m_binBtn->setToolTip(QStringLiteral("Binaural audio: I and Q play in separate ears, for a stereo image in headphones"));
+        m_binBtn->setToolTip(QStringLiteral("Binaural audio: I and Q play in separate ears, for a stereo image in headphones. While noise reduction, SNB or the auto-notch is on, both ears hear the same audio."));
         row->addWidget(m_binBtn);
 
         row->addStretch();
