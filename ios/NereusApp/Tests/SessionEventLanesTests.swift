@@ -708,6 +708,7 @@ struct SessionEventLanesTests {
         try await MainScreenShotTests.fill(station)
         try await station.deliverSetupPanels()
         try #require(await settle { model.mirror.object("txState") != nil })
+        let slice = try #require(model.mirror.object("slice:1"))
         let lanes = try #require(model.eventLanesForTesting)
         let silences = { () -> [Bool] in
             var values: [Bool] = []
@@ -719,6 +720,16 @@ struct SessionEventLanesTests {
             return values
         }
         for (keyed, marker) in [(true, -21.0), (false, -22.0)] {
+            // At the marker's synchronous publication, media control must
+            // already hold its silence, even if the next reading follows now.
+            var heldWhenShown: Bool?
+            let observation = slice.$values.sink { values in
+                MainActor.assumeIsolated {
+                    if heldWhenShown == nil, values["signalStrengthDbm"] == .double(marker) {
+                        heldWhenShown = silences().last == keyed
+                    }
+                }
+            }
             // The key change and a reading right behind it, while readings flow.
             let sent = Task.detached {
                 await Self.readings(station, rounds: 20)
@@ -728,18 +739,12 @@ struct SessionEventLanesTests {
                 ])))
                 await Self.readings(station, rounds: 20, from: -100)
             }
-            // The first main turn that shows the reading behind the key
-            // change finds media control already holding its silence.
-            var heldWhenShown: Bool?
             let giveUp = ContinuousClock.now + .seconds(10)
-            while ContinuousClock.now < giveUp {
-                if model.mirror.object("slice:1")?["signalStrengthDbm"] == .double(marker) {
-                    heldWhenShown = silences().last == keyed
-                    break
-                }
+            while heldWhenShown == nil && ContinuousClock.now < giveUp {
                 await Task.yield()
             }
             await sent.value
+            observation.cancel()
             #expect(heldWhenShown == true, "keyed \(keyed): media control's silence when the next reading showed")
             #expect(model.expectedTransmitSilence() == keyed)
         }
