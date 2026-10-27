@@ -31,6 +31,9 @@
 //   2026-10-26 - CW transmit, interlockedAmpChanged: hasInterlockedAmp
 //                 changed (D16, the CW keyer gate). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit fix wave 2 (I2): m_transmittingSettle, the
+//                 30 ms TRANSMITTING settle the un-key cancels. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -405,6 +408,15 @@ private:
     bool m_lastInterlockedAmp{false};
     void cancelInterlockRepeat();
     void onInterlockRepeat();
+
+    // CW transmit fix wave 2 (I2): the C4 30 ms settle before
+    // TRANSMITTING, a member timer so the un-key (setInterlockTransmitting
+    // false) and stop() cancel it. Before, an uncancelled single-shot sent
+    // TRANSMITTING and interlockGranted after the idle sequence of a key
+    // released inside the settle.
+    static constexpr int kTransmittingSettleMs = 30;
+    QTimer  m_transmittingSettle;
+    QString m_transmittingSource;
 
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: actual emission
     // of the canonical TRANSMITTING S-frame + RF-flow gate release.

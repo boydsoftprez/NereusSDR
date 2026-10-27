@@ -430,13 +430,13 @@ private slots:
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // § F — onCwPtt outside CW (keys nothing), onTciPtt
+    // § F: onCwPtt outside CW (keys nothing), onTciPtt
     //
     // All rejection tests suppress qCWarning via setFilterRules per the
     // precedent in tst_mox_controller_anti_vox.cpp §C.2 (H.3 pattern).
     // ════════════════════════════════════════════════════════════════════════
 
-    // §F.1 — the serial PTT line outside CW keys nothing: no
+    // §F.1: the serial PTT line outside CW keys nothing: no
     // pttModeChanged, no moxStateChanged
     void cw_press_rejected_noSignals()
     {
@@ -459,7 +459,7 @@ private slots:
         QLoggingCategory::setFilterRules(QString());
     }
 
-    // §F.2 — its release outside CW: no signals regardless of direction
+    // §F.2: its release outside CW: no signals regardless of direction
     void cw_release_rejected_noSignals()
     {
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.dsp=false"));

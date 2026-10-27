@@ -28,6 +28,9 @@
 // hours instead of minutes; AI-assisted via Anthropic Claude Code.
 // 2026-10-26: CW transmit, interlockedAmpChanged when hasInterlockedAmp
 // changes (D16). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit fix wave 2 (I2): the 30 ms TRANSMITTING settle
+// is a member timer that an un-key and stop() cancel. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -61,6 +64,16 @@ SmartSdrApiListener::SmartSdrApiListener(QObject* parent)
     m_interlockRepeat.setInterval(kInterlockRepeatMs);
     connect(&m_interlockRepeat, &QTimer::timeout,
             this, &SmartSdrApiListener::onInterlockRepeat);
+
+    // C4 settle before TRANSMITTING (see broadcastTransmitting).
+    m_transmittingSettle.setSingleShot(true);
+    m_transmittingSettle.setTimerType(Qt::PreciseTimer);
+    m_transmittingSettle.setInterval(kTransmittingSettleMs);
+    connect(&m_transmittingSettle, &QTimer::timeout, this, [this]() {
+        const QString source = m_transmittingSource;
+        m_transmittingSource.clear();
+        broadcastTransmitting(source);
+    });
 }
 
 void SmartSdrApiListener::armInterlockRepeat(const QByteArray& frame)
@@ -196,6 +209,8 @@ void SmartSdrApiListener::stop()
     // interlock state after the operator toggled 4O3A off in Setup.
     m_periodicTimer.stop();
     m_pttAckTimeout.stop();
+    m_transmittingSettle.stop();
+    m_transmittingSource.clear();
     cancelInterlockRepeat();
     closeServers();
 
@@ -453,6 +468,11 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // initiator name is the one recorded for the in-flight TX (TUNE
         // path) or the first PGXL-class amp's name (MIC/MOX path).
         m_pttAckTimeout.stop();
+        // CW transmit fix wave 2 (I2): a TRANSMITTING still settling is
+        // for this key, which has ended: it is not sent, and its grant
+        // cannot land in the next key.
+        m_transmittingSettle.stop();
+        m_transmittingSource.clear();
         // G-20: the un-key is a state change; the keyed state is not
         // repeated after it.
         cancelInterlockRepeat();
@@ -496,9 +516,11 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: 30 ms settle
     // before TRANSMITTING + RF-flow gate release so TGXL relays have
     // time to switch to TRANSMIT position before PGXL sees carrier.
-    QTimer::singleShot(30, this, [this, source]() {
-        broadcastTransmitting(source);
-    });
+    // CW transmit fix wave 2 (I2): the settle is a member timer, so an
+    // un-key inside it cancels it (no TRANSMITTING, no grant for a key
+    // that has ended).
+    m_transmittingSource = source;
+    m_transmittingSettle.start();
 }
 
 void SmartSdrApiListener::broadcastTransmitting(const QString& source)
@@ -724,9 +746,11 @@ void SmartSdrApiListener::onPttAckTimeout()
     cancelInterlockRepeat();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
-    QTimer::singleShot(30, this, [this, source]() {
-        broadcastTransmitting(source);
-    });
+    // CW transmit fix wave 2 (I2): the settle is a member timer, so an
+    // un-key inside it cancels it (no TRANSMITTING, no grant for a key
+    // that has ended).
+    m_transmittingSource = source;
+    m_transmittingSettle.start();
 }
 
 void SmartSdrApiListener::onNewConnection()

@@ -1415,6 +1415,11 @@
 //                break-in fallback notice's code), M7 (the QSK restore
 //                keys once the radio is known). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit fix wave 2: the C1 stop and cut hold apply
+//                only with the transmit slice in CW and the cut set; a
+//                stop already latched in a held stretch is not announced
+//                again; the QSK gap has a manual test trigger. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5246,10 +5251,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // Early fix wave I4: the gap that ends a QSK sending stretch.
     m_cwQskGapTimer = new QTimer(this);
     m_cwQskGapTimer->setSingleShot(true);
-    connect(m_cwQskGapTimer, &QTimer::timeout, this, [this]() {
-        m_cwQskStretch = false;
-        updateCwQskTimeOut();
-    });
+    connect(m_cwQskGapTimer, &QTimer::timeout, this, &RadioModel::endCwQskGap);
     connect(m_cwKeyerController.get(), &CwKeyerController::wireStateChanged,
             this, &RadioModel::pushCwWireState);
     connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
@@ -30262,7 +30264,10 @@ void RadioModel::stopAllTx(const QString& message)
     // stretch, and in Semi before the radio's PTT reaches MOX. Early fix
     // wave C1: any key the radio reports down (dot, dash or key-out), or a
     // QSK stretch, reaches the stop, so the keyer latches off.
-    const bool cwKeyed = cwRadioMayBeKeyed();
+    // Fix wave 2: a keyer this stop (or an earlier one) has already
+    // latched off is not stopped, or announced, a second time.
+    const bool cwKeyed = cwRadioMayBeKeyed()
+        && !(m_cwKeyerController && m_cwKeyerController->isStopLatched());
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
         && !cwKeyed) {
         return;
@@ -30330,7 +30335,10 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
     // Early fix wave C1: while the radio still reports a CW key down the
     // cut stays, so the next frame cannot key it again; it clears with the
     // radio's all-up report (onCwRadioKeyStatus).
-    if (m_cwKeyerController && m_cwKeyerController->radioKeyDown()) {
+    // Fix wave 2: only with the transmit slice in CW (a paddle read down
+    // in voice keys nothing) and only while the cut is set.
+    if (m_cwTxSliceInCw && m_cwKeyerController && m_cwKeyerController->radioKeyDown()
+        && m_connection && m_connection->transmitCut()) {
         m_cwCutClearPending = true;
         qCInfo(lcConnection).noquote()
             << "Transmit cut held until the CW key is released:" << stopText;
@@ -32446,7 +32454,36 @@ void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
 
 bool RadioModel::cwRadioMayBeKeyed() const
 {
-    return m_cwQskStretch || (m_cwKeyerController && m_cwKeyerController->radioKeyDown());
+    // Fix wave 2: only with the transmit slice in CW. The wire enable is
+    // not used: the stop being decided may already have latched it off.
+    return m_cwTxSliceInCw
+        && (m_cwQskStretch || (m_cwKeyerController && m_cwKeyerController->radioKeyDown()));
+}
+
+void RadioModel::startCwQskGap(int gapMs)
+{
+    m_cwQskGapPending = true;
+    if (!m_cwQskGapManualForTest && m_cwQskGapTimer) {
+        m_cwQskGapTimer->start(gapMs);
+    }
+}
+
+void RadioModel::stopCwQskGap()
+{
+    m_cwQskGapPending = false;
+    if (m_cwQskGapTimer) {
+        m_cwQskGapTimer->stop();
+    }
+}
+
+void RadioModel::endCwQskGap()
+{
+    if (!m_cwQskGapPending) {
+        return;
+    }
+    m_cwQskGapPending = false;
+    m_cwQskStretch = false;
+    updateCwQskTimeOut();
 }
 
 // R-CW-10: the TX time-out counts while MOX is on and, in QSK, while the
@@ -32474,21 +32511,17 @@ void RadioModel::updateCwQskTimeOut()
     // once when it fired in a gap): the stop has latched the keyer, and the
     // first key-out after its release is counted afresh.
     if (!qsk || (m_cwQskTimeOutSpent && !keyOut)) {
-        if (m_cwQskGapTimer) {
-            m_cwQskGapTimer->stop();
-        }
+        stopCwQskGap();
         m_cwQskStretch = false;
     } else if (keyOut) {
-        if (m_cwQskGapTimer) {
-            m_cwQskGapTimer->stop();
-        }
+        stopCwQskGap();
         m_cwQskStretch = true;
-    } else if (m_cwQskStretch && !(m_cwQskGapTimer && m_cwQskGapTimer->isActive())) {
+    } else if (m_cwQskStretch && !m_cwQskGapPending) {
         // Key-out up: the stretch holds through a gap no longer than the
         // break-in delay.
         const int gapMs = m_transmitModel.cwBreakInDelayMs();
-        if (m_cwQskGapTimer && gapMs > 0) {
-            m_cwQskGapTimer->start(gapMs);
+        if (gapMs > 0) {
+            startCwQskGap(gapMs);
         } else {
             m_cwQskStretch = false;
         }

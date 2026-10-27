@@ -9,6 +9,9 @@
 //   2026-05-21  Created by J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
 //                 Smoke test (Task 0 foundation).
+//   2026-10-26  CW transmit fix wave 2 (I2): a key released inside the
+//                 30 ms settle sends no TRANSMITTING and no grant.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -177,6 +180,7 @@ private slots:
     void g20_pttRequestedIsRepeatedWhileAnAmpHasNotAcked();
     void g20_unkeyCancelsTheRepeat();
     void g20_noAmpTransmittingIsRepeatedToo();
+    void i2_unkeyInsideTheSettleSendsNoTransmittingAndNoGrant();
     void receiveOnlyStationBlocksNativeAccessoryProxy();
 };
 
@@ -874,6 +878,51 @@ void SmartSdrApiListenerPttChainTest::g20_unkeyCancelsTheRepeat()
                      qPrintable(t.line));
         }
     }
+}
+
+// CW transmit fix wave 2 (I2): the 30 ms settle before TRANSMITTING is
+// for the key that asked; an un-key inside it cancels it, so neither
+// TRANSMITTING (after the idle sequence) nor interlockGranted (into the
+// next key) goes out for a key that has ended.
+void SmartSdrApiListenerPttChainTest::i2_unkeyInsideTheSettleSendsNoTransmittingAndNoGrant()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    QTcpSocket pgxl;
+    pgxl.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&pgxl);
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&pgxl);
+
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+    listener.setInterlockTransmitting(true, QStringLiteral("MOX"));
+    drain(&pgxl, 50);
+    pgxl.write("C11|interlock ready 1\n");
+    pgxl.flush();
+    // The ACK is processed once its reply arrives; one more pass runs the
+    // advance, which starts the settle.
+    QByteArray seen;
+    QVERIFY(waitFor([&]() {
+        seen.append(pgxl.readAll());
+        return seen.contains("R11|");
+    }));
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    const int grantsAtUnkey = grantSpy.count();
+    listener.setInterlockTransmitting(false, QStringLiteral("MOX"));
+
+    const QList<TimedLine> lines = drainTimed(&pgxl, 300);
+    const QList<TimedLine> unkey = interlockLinesIn(lines, QStringLiteral("UNKEY_REQUESTED"));
+    QCOMPARE(unkey.size(), 1);
+    for (const TimedLine& t : lines) {
+        if (t.ms >= unkey.first().ms) {
+            QVERIFY2(!t.line.contains(QStringLiteral("state=TRANSMITTING"))
+                         && !t.line.contains(QStringLiteral("state=TRANSMIT_A")),
+                     qPrintable(t.line));
+        }
+    }
+    QCOMPARE(grantSpy.count(), grantsAtUnkey);
 }
 
 void SmartSdrApiListenerPttChainTest::g20_noAmpTransmittingIsRepeatedToo()

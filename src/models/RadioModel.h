@@ -2903,6 +2903,12 @@ public:
     /// CW transmit (R-CW-21): whether the QSK changes are applied to the
     /// transmit slice's receiver now.
     bool cwQskSideEffectsAppliedForTest() const { return m_cwQskApplied; }
+    /// CW transmit fix wave 2: the QSK gap ends only when the test calls
+    /// endCwQskGapForTest (no wall-clock timer), so time-out tests do not
+    /// depend on QTimer timing under load.
+    void setCwQskGapManualForTest(bool manual) { m_cwQskGapManualForTest = manual; }
+    void endCwQskGapForTest() { endCwQskGap(); }
+    bool cwQskGapPendingForTest() const { return m_cwQskGapPending; }
 
     /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
     /// This API remains positional for internal list navigation only.
@@ -9753,6 +9759,12 @@ private:
     // setting (m_cwQskGapTimer). NereusSDR's own rule.
     bool m_cwQskStretch{false};
     QTimer* m_cwQskGapTimer{nullptr};
+    // A gap is running (the timer, or the test's manual trigger).
+    bool m_cwQskGapPending{false};
+    bool m_cwQskGapManualForTest{false};
+    void startCwQskGap(int gapMs);
+    void stopCwQskGap();
+    void endCwQskGap();
     // Early fix wave C1: the transmit cut's catch-up found the radio still
     // reporting a key down in CW; the cut is cleared once it is released.
     bool m_cwCutClearPending{false};
