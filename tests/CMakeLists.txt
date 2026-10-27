@@ -608,7 +608,7 @@ if(TARGET wdsp_static)
     # never lands after the next SetChannelState(ch, 1, 0) and leaves a
     # running channel bypassed (tst_hl2_tune_magnitude_replay's CI hang).
     # The worker is held in dsplock.c's test-only exchange hook until the
-    # re-key; the hold's 1 s valve only frees the fixed drain's wait, so the
+    # re-key; the hold's 2 s valve only frees the fixed drain's wait, so the
     # test cannot fail on time alone and is not REALTIME.
     nereus_add_test(tst_wdsp_drain_timeout_flush WdspChannelStateProbe.c CORE_ONLY EXTRA_LABELS core)
     set_source_files_properties(WdspChannelStateProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

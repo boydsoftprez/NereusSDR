@@ -23,12 +23,15 @@
 // radio feeds the TX worker slowly enough that every unkey drain reaches the
 // timeout.
 //
-// This test makes the timing certain instead of likely. The channel's worker
-// is held inside dexchange (dsplock.c's test-only exchange hook, csDSP held)
-// once the down-slew has been asked for, so the down-slew finishes on output
-// the worker already released while the flush thread waits for csDSP. Then
-// the channel is switched on again as soon as the drain returns, and the
-// worker is let go. The channel must come back running, not bypassed.
+// The test thread steps fexchange0 itself, so the order of events is set by
+// counting calls, not by scheduling. The channel worker is held inside its
+// first dexchange (dsplock.c's test-only exchange hook, with csDSP held)
+// right after it releases 16 output blocks; 15 are left once the caller has
+// made its 17th call. The unkey then raises the down-slew, and exactly the 9
+// calls it needs end it on those blocks, so the flush thread is released
+// while csDSP is taken. The channel is switched on again as soon as the
+// drain returns, then the worker is let go. The channel must come back
+// running, not bypassed.
 
 #include <QtTest>
 
@@ -48,10 +51,10 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // A TX channel at the Core's sizes (WdspEngine::createTxChannel): 64-frame
-// input at 48 kHz, 2048-sample DSP buffer at 96 kHz, 192 kHz output. One
-// dexchange releases 16 output blocks; the 10 ms down-slew at 192 kHz plus
-// its zero block ends within 9 fexchange0 calls, so it finishes on output
-// the held worker already released.
+// input at 48 kHz, 2048-sample DSP buffer at 96 kHz, 192 kHz output. A new
+// channel starts with 16 output blocks (iobuffs.c create_iobuffs: one
+// 4096-sample DSP output over 256-sample blocks); each dexchange takes 1024
+// input frames (16 calls) and releases 16 more.
 constexpr int kChannel = 0;
 constexpr int kInSize = 64;
 constexpr int kDspSize = 2048;
@@ -59,13 +62,21 @@ constexpr int kInRate = 48000;
 constexpr int kDspRate = 96000;
 constexpr int kOutRate = 192000;
 constexpr int kOutSize = kInSize * kOutRate / kInRate;  // 256
-// The held worker lets go once the channel is on again, or, when the drain
+constexpr int kCallsPerExchange = 16;
+// The first dexchange runs on the 16th call; the 17th waits for its blocks.
+constexpr int kCallsToHold = kCallsPerExchange + 1;
+// The 10 ms down-slew at 192 kHz (iobuffs.c downslew0): one BEGIN sample,
+// 1921 DOWNSLEW, 257 ZERO, then OFF to the end of that block: 2179 samples,
+// so it clears downflag at the end of the 9th 256-sample block.
+constexpr int kSlewCalls = 9;
+// The held worker lets go once the channel is on again or, when the drain
 // is still waiting (it does once fixed: it waits for the flush the held
 // worker blocks), after this long: far past the drain's own 100 ms timeout.
-constexpr auto kHoldValve = std::chrono::milliseconds(1000);
+constexpr auto kHoldValve = std::chrono::milliseconds(2000);
 // How long to look for a late flush after the worker lets go.
 constexpr auto kLateFlushWatch = std::chrono::milliseconds(1000);
-constexpr auto kProgressLimit = std::chrono::seconds(20);
+constexpr auto kWaitLimit = std::chrono::milliseconds(20000);
+constexpr int kAttempts = 3;
 
 std::atomic<int> g_exchanges{0};
 std::atomic<bool> g_holdArmed{false};
@@ -73,10 +84,11 @@ std::atomic<bool> g_holding{false};
 std::atomic<bool> g_held{false};
 std::atomic<bool> g_keyOnDone{false};
 std::atomic<bool> g_drainReturned{false};
-std::atomic<bool> g_slewEndedInHold{false};
-std::atomic<bool> g_pumpOn{false};
-std::atomic<bool> g_pumpIdle{false};
-std::atomic<bool> g_pumpStop{false};
+
+void idle()
+{
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+}
 
 // On the channel worker, right after dexchange releases Sem_OutReady, with
 // csDSP held.
@@ -99,32 +111,6 @@ void onExchange(int channel)
     g_holding.store(false);
 }
 
-void pump()
-{
-    std::vector<double> in(static_cast<size_t>(kInSize) * 2, 0.0);
-    std::vector<double> out(static_cast<size_t>(kOutSize) * 2, 0.0);
-    for (int i = 0; i < kInSize; ++i) {
-        in[static_cast<size_t>(2 * i)] = 0.25;
-    }
-    while (!g_pumpStop.load()) {
-        if (!g_pumpOn.load()) {
-            g_pumpIdle.store(true);
-            std::this_thread::yield();
-            continue;
-        }
-        g_pumpIdle.store(false);
-        int error = 0;
-        fexchange0(kChannel, in.data(), out.data(), &error);
-        if (nereus_channel_exchange(kChannel) == 0) {
-            if (g_holding.load() && !g_drainReturned.load()) {
-                g_slewEndedInHold.store(true);
-            }
-            std::this_thread::yield();
-        }
-    }
-    g_pumpIdle.store(true);
-}
-
 template <typename Pred>
 bool waitFor(Pred pred, std::chrono::milliseconds limit)
 {
@@ -133,9 +119,87 @@ bool waitFor(Pred pred, std::chrono::milliseconds limit)
         if (Clock::now() >= end) {
             return false;
         }
-        std::this_thread::yield();
+        idle();
     }
     return true;
+}
+
+struct Attempt {
+    bool held = false;
+    bool slewAsked = false;
+    // The down-slew ended on the held worker's blocks before the drain
+    // returned. Only then does the attempt say anything about the fix.
+    bool slewEndedInHold = false;
+    int exchangeAfterKeyOn = -1;
+    int bypassAfterKeyOn = -1;
+    bool progressed = false;
+};
+
+Attempt runAttempt()
+{
+    g_exchanges.store(0);
+    g_holding.store(false);
+    g_held.store(false);
+    g_keyOnDone.store(false);
+    g_drainReturned.store(false);
+
+    std::vector<double> in(static_cast<size_t>(kInSize) * 2, 0.0);
+    std::vector<double> out(static_cast<size_t>(kOutSize) * 2, 0.0);
+    for (int i = 0; i < kInSize; ++i) {
+        in[static_cast<size_t>(2 * i)] = 0.25;
+    }
+    auto step = [&in, &out](int calls) {
+        for (int c = 0; c < calls; ++c) {
+            int error = 0;
+            fexchange0(kChannel, in.data(), out.data(), &error);
+        }
+    };
+
+    OpenChannel(kChannel, kInSize, kDspSize, kInRate, kDspRate, kOutRate,
+                1,       // type: TX
+                0,       // state: off until started
+                0.000, 0.010, 0.000, 0.010,   // WdspEngine's TX slews
+                1);      // bfo: fexchange0 waits for output, as in the Core
+    SetChannelState(kChannel, 1, 0);
+
+    Attempt a;
+    g_holdArmed.store(true);
+    step(kCallsToHold);
+    a.held = waitFor([] { return g_held.load(); }, kWaitLimit);
+
+    // Unkey, then key again as soon as the drain returns, as the TX lane
+    // does on a quick re-key.
+    std::thread keyThread([] {
+        SetChannelState(kChannel, 0, 1);
+        g_drainReturned.store(true);
+        SetChannelState(kChannel, 1, 0);
+        g_keyOnDone.store(true);
+    });
+    a.slewAsked = waitFor([] { return nereus_channel_downflag(kChannel) == 1; }, kWaitLimit);
+    if (a.held && a.slewAsked) {
+        step(kSlewCalls);
+        a.slewEndedInHold = nereus_channel_exchange(kChannel) == 0
+            && g_holding.load() && !g_drainReturned.load();
+    }
+    keyThread.join();
+    waitFor([] { return !g_holding.load(); }, kWaitLimit);
+    // A late flush runs as soon as the worker leaves csDSP.
+    waitFor([] { return nereus_channel_exec_bypass(kChannel) == 1; }, kLateFlushWatch);
+    a.bypassAfterKeyOn = nereus_channel_exec_bypass(kChannel);
+    a.exchangeAfterKeyOn = nereus_channel_exchange(kChannel);
+
+    // The channel processes again. Only stepped when it is not bypassed: a
+    // bypassed bfo channel would block this thread for good. Three
+    // exchanges' worth of calls: each of the first two later groups waits
+    // for the exchange before it.
+    if (a.bypassAfterKeyOn == 0 && a.exchangeAfterKeyOn == 1) {
+        const int before = g_exchanges.load();
+        step(3 * kCallsPerExchange);
+        a.progressed = g_exchanges.load() >= before + 2;
+    }
+    SetChannelState(kChannel, 0, 0);
+    CloseChannel(kChannel);
+    return a;
 }
 
 } // namespace
@@ -149,67 +213,23 @@ private slots:
 
     void timedOutDrainsFlushNeverLandsOnARunningChannel()
     {
-        OpenChannel(kChannel, kInSize, kDspSize, kInRate, kDspRate, kOutRate,
-                    1,       // type: TX
-                    0,       // state: off until started
-                    0.000, 0.010, 0.000, 0.010,   // WdspEngine's TX slews
-                    1);      // bfo: fexchange0 waits for output, as in the Core
-        SetChannelState(kChannel, 1, 0);
+        // An attempt in which the drain returned before the 9 calls ended
+        // the down-slew (this thread stalled for 100 ms in between) proves
+        // nothing either way and is run again.
+        Attempt a;
+        int attempts = 0;
+        do {
+            a = runAttempt();
+            ++attempts;
+            QVERIFY2(a.held, "the worker was never held in dexchange");
+            QVERIFY2(a.slewAsked, "the drain never raised the down-slew");
+        } while (!a.slewEndedInHold && attempts < kAttempts);
 
-        g_pumpOn.store(true);
-        std::thread pumpThread(pump);
-        const bool warmed = waitFor([] { return g_exchanges.load() >= 4; },
-                                    std::chrono::milliseconds(20000));
-
-        // Unkey, then key again as soon as the drain returns, with the pump
-        // quiet in between, as the TX lane does on a quick re-key.
-        std::thread keyThread([] {
-            SetChannelState(kChannel, 0, 1);
-            g_drainReturned.store(true);
-            g_pumpOn.store(false);
-            while (!g_pumpIdle.load()) {
-                std::this_thread::yield();
-            }
-            SetChannelState(kChannel, 1, 0);
-            g_keyOnDone.store(true);
-        });
-        // Hold the worker in its next dexchange once the down-slew is asked
-        // for, so the flush thread will find csDSP taken.
-        const bool slewAsked = waitFor([] { return nereus_channel_downflag(kChannel) == 1; },
-                                       std::chrono::milliseconds(20000));
-        g_holdArmed.store(true);
-        keyThread.join();
-        const bool held = waitFor([] { return g_held.load() && !g_holding.load(); },
-                                  std::chrono::milliseconds(20000));
-        // A late flush runs as soon as the worker leaves csDSP.
-        waitFor([] { return nereus_channel_exec_bypass(kChannel) == 1; }, kLateFlushWatch);
-        const int bypassAfterKeyOn = nereus_channel_exec_bypass(kChannel);
-        const int exchangeAfterKeyOn = nereus_channel_exchange(kChannel);
-
-        // The channel processes again (only pumped when it is not bypassed:
-        // a bypassed bfo channel would block the pump for good).
-        bool progressed = false;
-        if (bypassAfterKeyOn == 0) {
-            const int before = g_exchanges.load();
-            g_pumpOn.store(true);
-            progressed = waitFor([before] { return g_exchanges.load() >= before + 3; },
-                                 std::chrono::milliseconds(kProgressLimit));
-            g_pumpOn.store(false);
-            waitFor([] { return g_pumpIdle.load(); }, std::chrono::milliseconds(20000));
-        }
-        g_pumpStop.store(true);
-        pumpThread.join();
-        SetChannelState(kChannel, 0, 0);
-        CloseChannel(kChannel);
-
-        QVERIFY2(warmed, "the channel's worker never exchanged a chunk");
-        QVERIFY2(slewAsked, "the drain never raised the down-slew");
-        QVERIFY2(held, "the worker was never held in dexchange");
-        QVERIFY2(g_slewEndedInHold.load(),
-                 "the down-slew did not finish while the worker was held");
-        QCOMPARE(exchangeAfterKeyOn, 1);
-        QCOMPARE(bypassAfterKeyOn, 0);
-        QVERIFY2(progressed, "the channel did not process again after the re-key");
+        QVERIFY2(a.slewEndedInHold,
+                 "the down-slew never ended while the worker was held and the drain waited");
+        QCOMPARE(a.exchangeAfterKeyOn, 1);
+        QCOMPARE(a.bypassAfterKeyOn, 0);
+        QVERIFY2(a.progressed, "the channel did not process again after the re-key");
     }
 };
 
