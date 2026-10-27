@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: CW transmit, the CWX sender (R-CW-15, R-CW-31 to
 //               R-CW-33): reimplemented in C++20/Qt6 for NereusSDR on a
 //               thread of its own, keying the host key line. J.J. Boyd
@@ -192,6 +194,11 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
+class RemoteCwSafetyState;
+#ifdef NEREUS_BUILD_TESTS
+struct CwxSenderMailboxTestAccess;
+#endif
+
 class CwKeyLine;
 
 // R-CW-32 and section 6: the words a CWX request is refused with. Each
@@ -273,6 +280,34 @@ public:
     CwxSender(Clock clock, Sleeper sleeper, QObject* parent = nullptr); // tests
     ~CwxSender() override;                         // stops and joins its thread
 
+
+    // Unused proposal scaffold. Install shared state before any producer is
+    // exposed, outside the cut-line lifetime lock; keep it immutable until
+    // all producers are detached. Binding itself MUST NOT take m_mutex.
+    void setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state);
+    void bindRemoteActivity(quint32 epoch);
+    void requestRemotePause(quint32 epoch) noexcept;
+    void requestRemoteCancel(quint32 epoch) noexcept;
+    bool pauseRemoteActivity(quint32 epoch);
+    bool prepareRemoteResume(quint32 epoch);
+    bool resumeRemoteActivity(quint32 epoch);
+    void cancelRemoteActivity(quint32 epoch);
+#ifdef NEREUS_BUILD_TESTS
+    enum class RemoteRequestKindForTest { Pause, Cancel };
+    using RemoteRequestObserverForTest =
+        std::function<void(RemoteRequestKindForTest, quint32)>;
+    // Actual ENTRY only. Install once before reachability, never replace
+    // concurrently. No wait, throw, Qt, sender re-entry or main dispatch.
+    void setRemoteRequestObserverForTest(RemoteRequestObserverForTest observer);
+    enum class RemoteMailboxCasKindForTest { Pause, Cancel, Consume };
+    using RemoteMailboxBeforeCasObserverForTest =
+        std::function<void(RemoteMailboxCasKindForTest, quint32, quint64)>;
+    // Separate TEST-only scheduling barrier at the actual candidate read,
+    // before the first CAS attempt. May wait ONLY in controlled tests.
+    // Install once before producers; never called from audio rendering.
+    void setRemoteMailboxBeforeCasObserverForTest(RemoteMailboxBeforeCasObserverForTest observer);
+#endif
+
     void setKeyLine(std::shared_ptr<CwKeyLine> line);
     void setHl2(bool hl2);                         // drive cwxPtt (R-CW-15)
     void setSpeedWpm(int wpm);                     // 5..60
@@ -318,6 +353,7 @@ public:
     static int elementMs(int wpm);
 
 signals:
+    void remoteActivityEnded(quint32 epoch);
     void characterStarted(int index);              // for the applet's sent/current text
     void sendingChanged(bool sending);
     void emptied();                                // TCI cw_macros_empty
@@ -356,6 +392,25 @@ private:
     std::deque<Element> elementsForText(const QString& text, int baseWpm, int* characters) const;
     std::deque<Element> elementsForMemory(const QString& text, int baseWpm, int* characters,
                                           bool* loops) const;
+
+    // Proposed atomic mailbox: upper32 captured binding, lower Pause=1 or
+    // Cancel=2. Cancel supersedes Pause. Draining flags retains binding.
+    static constexpr unsigned kRemoteEpochShift = 32;
+    static constexpr quint32 kRemotePauseRequest = 1;
+    static constexpr quint32 kRemoteCancelRequest = 2;
+    static_assert(std::atomic<quint64>::is_always_lock_free,
+                  "Remote CW requests require lock-free 64-bit atomics");
+    std::atomic<quint64> m_remoteRequests{0};
+    // Immutable while atomic-only binding/request producers are reachable.
+    std::shared_ptr<RemoteCwSafetyState> m_remoteSafetyState;
+    void publishRemoteRequest(quint32 epoch, quint32 request) noexcept;
+    // Called under the EXISTING sender mutex; clears flags, never identity.
+    quint32 takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept;
+#ifdef NEREUS_BUILD_TESTS
+    friend struct CwxSenderMailboxTestAccess;
+    RemoteRequestObserverForTest m_remoteRequestObserverForTest;
+    RemoteMailboxBeforeCasObserverForTest m_remoteMailboxBeforeCasObserverForTest;
+#endif
 
     Clock m_clock;
     Sleeper m_sleeper;

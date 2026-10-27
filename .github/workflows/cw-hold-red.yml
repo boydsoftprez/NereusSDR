@@ -1,15 +1,15 @@
-# Focused positive verification; root-reviewed publication/runtime required.
-name: CW hold pure-value GREEN verification
+# Focused mailbox RED diagnostic; root-reviewed publication/runtime required.
+name: CW hold sender mailbox RED verification
 on:
   push:
     branches: [codex/remote-cw-hold-union]
 permissions:
   contents: read
 concurrency:
-  group: cw-hold-pure-green-${{ github.ref }}
+  group: cw-hold-mailbox-red-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  pure-value-green:
+  sender-mailbox-red:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -30,18 +30,18 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-green-artifacts
+          mkdir -p cw-mailbox-red-artifacts
           test "$GITHUB_EVENT_NAME" = push
           test "$GITHUB_REF" = refs/heads/codex/remote-cw-hold-union
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test -z "$(git status --porcelain --untracked-files=no)"
-          git merge-base --is-ancestor 8a334c2a55b7d09f024767c710706ac7e01cc841 HEAD
-          git show -s --format='%H%n%T%n%P' HEAD > cw-green-artifacts/source-identity.txt
-          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-green-artifacts/run-binding.txt
-          git diff --name-only 8a334c2a55b7d09f024767c710706ac7e01cc841 HEAD -z | xargs -0 -r sha256sum > cw-green-artifacts/reviewed-path-hashes.txt
-          uname -a > cw-green-artifacts/runner.txt
-          df -k . > cw-green-artifacts/disk-start.txt
-          uptime > cw-green-artifacts/load-start.txt
+          test -z "$(git --no-optional-locks status --porcelain --untracked-files=no)"
+          git merge-base --is-ancestor 24283c1a9b3ab16f8bd641efb4941c128cd84788 HEAD
+          git show -s --format='%H%n%T%n%P' HEAD > cw-mailbox-red-artifacts/source-identity.txt
+          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-mailbox-red-artifacts/run-binding.txt
+          git diff --name-only 24283c1a9b3ab16f8bd641efb4941c128cd84788 HEAD -z | xargs -0 -r sha256sum > cw-mailbox-red-artifacts/reviewed-path-hashes.txt
+          uname -a > cw-mailbox-red-artifacts/runner.txt
+          df -k . > cw-mailbox-red-artifacts/disk-start.txt
+          uptime > cw-mailbox-red-artifacts/load-start.txt
       - name: Restore dependency downloads
         uses: actions/cache/restore@v4
         with:
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
-          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-green-artifacts/dependencies.log
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-mailbox-red-artifacts/dependencies.log
           git config --global --add include.path "$mirrors"
       - name: Install system dependencies
         run: |
@@ -87,7 +87,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-v2-Linux-cw-pure-red-${{ github.sha }}
+          key: ccache-v2-Linux-cw-mailbox-red-${{ github.sha }}
           restore-keys: |
             ccache-v2-Linux-realtime-
       - name: Configure compiler cache
@@ -98,13 +98,13 @@ jobs:
           ccache --set-config=hash_dir=false
           ccache --set-config=compiler_check=content
           ccache --zero-stats
-      - name: Configure normal core with only focused test build requested
+      - name: Configure normal Core and GUI for the focused sender target
         run: |
           set -euo pipefail
-          cmake --version > cw-green-artifacts/tool-versions.txt
-          g++ --version >> cw-green-artifacts/tool-versions.txt
-          qmake -query QT_VERSION >> cw-green-artifacts/tool-versions.txt
-          cp cmake/NereusDependencyArchives.cmake cw-green-artifacts/
+          cmake --version > cw-mailbox-red-artifacts/tool-versions.txt
+          g++ --version >> cw-mailbox-red-artifacts/tool-versions.txt
+          qmake -query QT_VERSION >> cw-mailbox-red-artifacts/tool-versions.txt
+          cp cmake/NereusDependencyArchives.cmake cw-mailbox-red-artifacts/
           set +e
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
@@ -114,81 +114,166 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_TEST_SHARDS=0 -DNEREUS_TEST_SHARD=0 -DNEREUS_TESTS_OFFSCREEN=ON \
-            2>&1 | tee cw-green-artifacts/configure.log
+            2>&1 | tee cw-mailbox-red-artifacts/configure.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-green-artifacts/configure.status
+          printf '%s\n' "$result" > cw-mailbox-red-artifacts/configure.status
           test "$result" -eq 0
-          cp build/CMakeCache.txt cw-green-artifacts/
-          ninja -C build -t query tests/tst_remote_cw_safety > cw-green-artifacts/target-query.txt
-          ninja -C build -t commands tests/tst_remote_cw_safety > cw-green-artifacts/target-commands.txt
-      - name: Build exact pure value target
+          cp build/CMakeCache.txt cw-mailbox-red-artifacts/
+          ninja -C build -t query tests/tst_cwx_sender > cw-mailbox-red-artifacts/target-query.txt
+          ninja -C build -t commands tests/tst_cwx_sender > cw-mailbox-red-artifacts/target-commands.txt
+      - name: Build exact existing Core and GUI sender target
         run: |
           set -euo pipefail
           set +e
-          nice -n 20 cmake --build build --target tst_remote_cw_safety --parallel 2 2>&1 | tee cw-green-artifacts/build.log
+          nice -n 20 cmake --build build --target tst_cwx_sender --parallel 2 2>&1 | tee cw-mailbox-red-artifacts/build.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-green-artifacts/build.status
+          printf '%s\n' "$result" > cw-mailbox-red-artifacts/build.status
           test "$result" -eq 0
-      - name: Verify all pure-value cases pass
+      - name: Run exact sender mailbox baseline
         run: |
           set -euo pipefail
           set +e
-          ctest --test-dir build -R '^tst_remote_cw_safety$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-green-artifacts/ctest-junit.xml" 2>&1 | tee cw-green-artifacts/ctest.log
+          ctest --test-dir build -R '^tst_cwx_sender$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-mailbox-red-artifacts/ctest-junit.xml" 2>&1 | tee cw-mailbox-red-artifacts/ctest.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-green-artifacts/ctest.status
-          cp build/Testing/Temporary/LastTest.log cw-green-artifacts/LastTest.log
-          python3 - <<'PY_GUARD'
-          import collections, hashlib, json, pathlib, re, sys, xml.etree.ElementTree as ET
-          out = pathlib.Path("cw-green-artifacts")
-          expected = {'class': 'TestRemoteCwSafetyState', 'ctestName': 'tst_remote_cw_safety', 'testSourceSha256': 'd44b0624e4e5d3233efdd39207f9054a7a0e76d2881b1aeec0b4f5bdc8fa915f', 'expectedPassingQtCases': ['initTestCase', 'noActivityRejectsAllMutations', 'zeroEpochCannotCreateActivity', 'beginRecordsLiveUnheldEpoch', 'independentReasons(clear-link)', 'independentReasons(clear-mic)', 'independentReasons(clear-guard)', 'oldEpochCannotHoldOrRelease', 'invalidationBlocksRecoveryUntilFinish', 'physicalPressOnlyInvalidatesNetworkHold(no-hold)', 'physicalPressOnlyInvalidatesNetworkHold(mic-only)', 'physicalPressOnlyInvalidatesNetworkHold(link)', 'physicalPressOnlyInvalidatesNetworkHold(guard)', 'physicalPressOnlyInvalidatesNetworkHold(mic-and-link)', 'physicalObservationBeforeRecoveryPreventsRelease', 'recoveryBeforePhysicalObservationAddsNoTakeover', 'remainingNetworkReasonStillAllowsTakeover', 'finishedOldEpochCannotClearNew', 'currentFinishClearsInvalidatedEpoch', 'concurrentPhysicalAndRecoveryHaveOnlyLegalOutcomes', 'cleanupTestCase'], 'expectedCounts': {'passed': 21, 'failed': 0, 'skipped': 0}, 'status': 'POSITIVE VERIFICATION CONTRACT; NOT EXECUTED', 'scope': 'pure safety value only; no bridge/sender/guard/physical/phone acceptance'}
-          (out / "expected-behavioral-green.json").write_text(json.dumps(expected, indent=2) + "\n")
-          verdict = {"acceptedPureValueGreen": False, "scope": expected["scope"]}
+          printf '%s\n' "$result" > cw-mailbox-red-artifacts/ctest.status
+          # Preserve actual Qt records BEFORE guard; missing log is rejected.
+          cp build/Testing/Temporary/LastTest.log cw-mailbox-red-artifacts/LastTest.log || true
+      - name: Validate source-bound mailbox publication RED evidence
+        if: always()
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p cw-mailbox-red-artifacts
+          cat > cw-mailbox-red-artifacts/red_guard.py <<'PY_GUARD'
+          import json
+          expected = {'schemaVersion': 1, 'status': 'SOURCE-PREDICTED ONLY; NOT EXECUTED', 'class': 'TestCwxSender', 'ctestName': 'tst_cwx_sender', 'workflowName': 'CW hold sender mailbox RED verification', 'reviewedSourceAncestor': '24283c1a9b3ab16f8bd641efb4941c128cd84788', 'expectedRef': 'refs/heads/codex/remote-cw-hold-union', 'workflowPath': '.github/workflows/cw-hold-red.yml', 'approvedSourcePatchSHA256': 'f1c9fe72ec750ff055e5e343ecdf58f1353726c6357f94061802001e5cc6f5eb', 'originalTestSourceSHA256': '59b20de44806952626eb16e1eae5dfdd1a6f06e9c0f2b70b0727d806a2799056', 'proposedTestSourceSHA256': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962', 'reviewedSourceHashes': {'src/core/safety/RemoteCwSafetyState.h': 'b04cd686caab3f308bb44976c681c20c1ddf0a00ab70b2c689b5589c5c509c22', 'src/core/safety/RemoteCwSafetyState.cpp': 'af03e8d247b85c503385d0029a9abde7fa7b328a1543ae45e4c6fbfb85fd758a', 'docs/architecture/2026-10-27-remote-cw-hold-plan.md': '8221cce294141d0455dd0eb9b7d7d2548ca5c056ceca5965daec407d1b065670', 'CMakeLists.txt': '0277e9f5224e372d2bf9a159fd49cfc07785372acd2d1d38c0df2c930de27ff1', 'tests/CMakeLists.txt': '1c8a84a0f618d6ccdbc191a071fb892d20ec6366996680fe0e3efc0404b01223', 'cmake/NereusDependencyArchives.cmake': '3cf622e8a482ff8942c94af6db53e1f4e713d9fa6d69ed9e233fd1397f1c76b3', 'cmake/FetchDependencyArchives.cmake': '28a62b0f7271c3a508b9df93e1a82a1de2bb1f9773bbec113182030ae9fec084', 'src/core/CwxSender.h': 'e2ddb944eaf181af9f93cbef0e610970fcf40ac24b2168e4435e84d7f720ed90', 'src/core/CwxSender.cpp': '94414a37f8f9836bf4bb7dfabc5b32d4d030d1e4436a68994e5a0e79ab8820e6', 'tests/tst_cwx_sender.cpp': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962'}, 'allowedChangedPathsFromAncestor': ['.github/workflows/cw-hold-red.yml', 'src/core/CwxSender.cpp', 'src/core/CwxSender.h', 'tests/tst_cwx_sender.cpp'], 'expectedCounts': {'total': 52, 'passed': 42, 'failed': 10, 'skipped': 0, 'blacklisted': 0, 'independentPublicationFailures': 6, 'dependentPrerequisiteFailures': 4, 'originalPassing': 40, 'newLocalPassing': 2}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-after-invalidate)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause-then-cancel)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-then-pause)', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 526, 'assertion': 'QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED'}}, {'case': 'remoteBindAndPublicationDoNotWaitForSenderMutex', 'result': 'FAIL!', 'classification': 'independent-publication-red', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 550, 'assertion': 'QCOMPARE(quint32(word & 3u), 1u); // REAL publication RED'}}, {'case': 'remoteStaleRequestsAfterBindTwelvePreserveTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 562, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u); // publication prerequisite'}}, {'case': 'remoteCapturedElevenCannotPublishOverTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 598, 'assertion': 'QCOMPARE(quint32(beforeRelease & 3u), 2u); // publication prerequisite'}}, {'case': 'remoteTakeRetainsBindingAndAllowsLaterCancel', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 611, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite'}}, {'case': 'remoteStaleTakeCannotClearTwelve', 'result': 'FAIL!', 'classification': 'dependent-publication-prerequisite-failure', 'firstFailure': {'file': 'tests/tst_cwx_sender.cpp', 'line': 630, 'assertion': 'QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite'}}, {'case': 'remoteUnboundRequestsDoNotAdoptLocalWork', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'remoteBareBindingAndOldCancelLeaveLocalQueueAlone', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'elementTimeIs1200OverWpm', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'eAt20KeysSixtyMsThenTheCharacterGap', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'parisAt20TakesFiftyElementsOnSchedule', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'speedMarkRaisesTheNextSegmentByFive', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'prosignBetweenBarsSendsItsCharacter', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'memoryEndingInQuoteRepeatsAfterTheDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptSwitchRepeatsWithoutTheMarker', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptOffMemoryWithoutTheMarkerSendsOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'stopMidElementReleasesAtOnceAndClears', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'queuedCharactersCountsWhatHasNotStarted', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyHeldDropsThreeSecondsAfterTheLastPress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseDropsAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterFallsThatLongAfterThePress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterATimeAlreadyPassedReleasesAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterNeverOutlastsTheWatchdog', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2PttLeadsTheKeyAndHangsAfterTheLastElement', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2MemoryAt60LeadsPttByThePttDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(text)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(memory)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nonHl2NeverSetsThePtt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'inOffCwxKeysOnlyWhileMoxIsHeld', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'gateWordsRefuseEverySendAndTheKey', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nothingToSendIsRefusedWithWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'swappingTheLineReleasesTheOldOneAndAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'testAt30KeysEachEdgeWithinTwoMs', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesOutsideCw', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesWithTheKeyerGatesWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelGateTurningFalseMidMessageAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelLeavingCwAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelTeardownReleasesTheLineAndLetsGo', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelConnectionSwapReleasesTheOldLine', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelCutMidMessageThenClearKeysNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithMox_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInQsk_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxStopsCwx', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}], 'scope': 'six independent mailbox-publication RED candidates only; four dependent prerequisite failures are NOT consumption/race RED; no worker-loop/content-identity/bridge/physical/Task3A-complete acceptance'}
+          import collections, hashlib, os, pathlib, re, subprocess, sys, xml.etree.ElementTree as ET
+          out = pathlib.Path("cw-mailbox-red-artifacts")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / "expected-behavioral-red.json").write_text(json.dumps(expected, indent=2) + "\n")
+          verdict = {"acceptedMailboxPublicationRed": False, "consumptionOrRaceRed": False,
+                     "task3aComplete": False, "scope": expected["scope"]}
+          observed = []
+          def require(condition, message):
+              if not condition:
+                  raise AssertionError(message)
+          def git(*args):
+              return subprocess.check_output(["git", "--no-optional-locks", *args], text=True).strip()
+          def digest(path):
+              return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
           try:
-              actual_test_sha = hashlib.sha256(pathlib.Path("tests/tst_remote_cw_safety.cpp").read_bytes()).hexdigest()
-              assert actual_test_sha == expected["testSourceSha256"], "unexpected frozen test source hash"
-              for phase in ("configure", "build", "ctest"):
-                  assert (out / (phase + ".status")).read_text().strip() == "0", phase + " failed or missing"
+              env = os.environ
+              require(env["GITHUB_EVENT_NAME"] == "push", "wrong event")
+              require(env["GITHUB_REF"] == expected["expectedRef"], "wrong ref")
+              require(env["GITHUB_WORKFLOW"] == expected["workflowName"], "old/wrong workflow")
+              require(env["RUNNER_OS"] == "Linux", "wrong runner OS")
+              require(re.fullmatch(r"[0-9a-f]{40}", env["GITHUB_SHA"]), "invalid source SHA")
+              require(env["GITHUB_RUN_ID"].isdigit() and int(env["GITHUB_RUN_ATTEMPT"]) > 0, "invalid run/attempt")
+              workflow_ref = env["GITHUB_REPOSITORY"] + "/" + expected["workflowPath"] + "@" + expected["expectedRef"]
+              require(env["WORKFLOW_REF"] == workflow_ref, "workflow ref mismatch")
+              require(env["WORKFLOW_SHA"] == env["GITHUB_SHA"], "workflow/source SHA mismatch")
+              require(git("rev-parse", "HEAD") == env["GITHUB_SHA"], "checkout/source SHA mismatch")
+              require(not git("status", "--porcelain", "--untracked-files=no"), "tracked source dirt")
+              subprocess.run(["git", "--no-optional-locks", "merge-base", "--is-ancestor",
+                              expected["reviewedSourceAncestor"], "HEAD"], check=True)
+              changed = git("diff", "--name-only", expected["reviewedSourceAncestor"], "HEAD").splitlines()
+              require(sorted(changed) == expected["allowedChangedPathsFromAncestor"], "unreviewed/missing changed path")
+              require((out / "source-identity.txt").read_text().strip() == git("show", "-s", "--format=%H%n%T%n%P", "HEAD"),
+                      "source head/tree/parent receipt mismatch")
+              wanted_binding = [env[key] for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REF", "WORKFLOW_REF", "WORKFLOW_SHA")]
+              require((out / "run-binding.txt").read_text().splitlines() == wanted_binding, "source/run receipt mismatch")
+              actual_hashes = {path: digest(path) for path in expected["reviewedSourceHashes"]}
+              require(actual_hashes == expected["reviewedSourceHashes"], "wrong reviewed source bytes")
+              require(actual_hashes["tests/tst_cwx_sender.cpp"] == expected["proposedTestSourceSHA256"], "wrong final test")
+              source_lines = pathlib.Path("tests/tst_cwx_sender.cpp").read_text().splitlines()
+              for record in expected["expectedRecordsInOrder"]:
+                  first = record["firstFailure"]
+                  if first:
+                      require(source_lines[first["line"] - 1].strip() == first["assertion"], "assertion source/line mismatch")
+              for phase, status in (("configure", "0"), ("build", "0"), ("ctest", "8")):
+                  require((out / (phase + ".status")).read_text().strip() == status, phase + " failed/missing/wrong status")
+              cache = (out / "CMakeCache.txt").read_text()
+              for name, value in {"ENABLE_DFNR": "ON", "ENABLE_WDSP": "ON", "NEREUS_USE_PCH": "ON",
+                                  "NEREUS_BUILD_TESTS": "ON", "NEREUS_TESTS_OFFSCREEN": "ON",
+                                  "NEREUS_TEST_SHARDS": "0", "NEREUS_TEST_SHARD": "0", "CMAKE_BUILD_TYPE": "RelWithDebInfo"}.items():
+                  require(re.search(r"^" + re.escape(name) + r":[^=\n]+=" + re.escape(value) + r"$", cache, re.M),
+                          "wrong normal configuration: " + name)
+              require(re.search(r"^6\.8\.\d+\s*$", (out / "tool-versions.txt").read_text(), re.M), "wrong/missing Qt6.8")
               root = ET.parse(out / "ctest-junit.xml").getroot()
-              cases = list(root.iter("testcase"))
-              assert len(cases) == 1 and cases[0].attrib.get("name") == expected["ctestName"], "wrong/absent test selection"
-              for tag in ("failure", "error", "skipped"):
-                  assert not list(root.iter(tag)), "JUnit " + tag
-              # CTest suppresses passing Qt output on stdout. Its actual LastTest.log
-              # is copied BEFORE this guard; do not manufacture PASS from quiet output.
+              wrappers = list(root.iter("testcase"))
+              require(len(wrappers) == 1 and wrappers[0].attrib.get("name") == expected["ctestName"], "wrong/no/extra CTest selection")
+              require(len(list(root.iter("failure"))) == 1 and len(wrappers[0].findall("failure")) == 1, "wrong CTest failure wrapper")
+              require(not list(root.iter("error")) and not list(root.iter("skipped")), "CTest error/skip")
               text = (out / "LastTest.log").read_text()
-              assert re.search(r"Test:\s+" + re.escape(expected["ctestName"]), text), "wrong LastTest log"
-              assert not re.search(r"FAIL!|QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*Timeout|Not Run|XFAIL|XPASS|SKIP\s*:", text, re.I), "failure/skip/non-assertion termination"
-              pattern = r"^PASS\s*:\s*" + re.escape(expected["class"]) + r"::([A-Za-z0-9_]+)\(([^)]*)\)"
-              entries = re.findall(pattern, text, flags=re.M)
-              actual_pass = [name + ("(" + row + ")" if row else "") for name, row in entries]
-              assert collections.Counter(actual_pass) == collections.Counter(expected["expectedPassingQtCases"]), "missing/extra Qt case or data row"
-              assert re.search(r"Totals:\s+21 passed, 0 failed, 0 skipped", text), "wrong/incomplete Qt totals"
-              assert re.search(r"Test Passed\.", text), "CTest did not record passing execution"
-              verdict.update(acceptedPureValueGreen=True, actualPassingQtCases=actual_pass, frozenTestSha256=actual_test_sha)
+              console = (out / "ctest.log").read_text()
+              reject = r"QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*\s*Timeout|Test timeout|\bNot Run\b|XFAIL|XPASS|SKIP\s*:|No tests were found|No tests to run"
+              require(not re.search(reject, text + "\n" + console, re.I), "fatal/timeout/skip/no-test/non-assertion result")
+              require(re.findall(r"^\d+/\d+ Test:\s*(\S+)\s*$", text, re.M) == [expected["ctestName"]], "wrong LastTest selection")
+              require(text.count("Start testing of " + expected["class"]) == 1 and text.count("Finished testing of " + expected["class"]) == 1,
+                      "incomplete/duplicate Qt execution")
+              pattern = r"^(PASS|FAIL!)\s*:\s*" + re.escape(expected["class"]) + r"::([A-Za-z0-9_]+)\(([^)]*)\)([^\n]*)$"
+              entries = list(re.finditer(pattern, text, re.M))
+              require(len(entries) == expected["expectedCounts"]["total"], "missing/extra/duplicate Qt result")
+              all_result_lines = re.findall(r"^(?:PASS|FAIL!)\s*:.*$", text, re.M)
+              require(len(all_result_lines) == len(entries), "malformed/foreign Qt result")
+              for index, entry in enumerate(entries):
+                  kind, name, row, detail = entry.groups()
+                  case = name + ("(" + row + ")" if row else "")
+                  wanted = expected["expectedRecordsInOrder"][index]
+                  require(case == wanted["case"] and kind == wanted["result"], "unexpected/missing/duplicate/wrong case/result: " + case)
+                  block = text[entry.end():entries[index + 1].start() if index + 1 < len(entries) else len(text)]
+                  locations = re.findall(r"Loc:\s*\[([^\]]+)\]", block)
+                  actual = {"case": case, "result": kind, "classification": wanted["classification"]}
+                  if kind == "FAIL!":
+                      require("Compared values are not the same" in detail, "unexpected assertion kind: " + case)
+                      require(len(locations) == 1, "missing/duplicate assertion location: " + case)
+                      loc = re.fullmatch(r"(.+?)[/\\]tst_cwx_sender\.cpp\((\d+)\)", locations[0])
+                      require(loc is not None, "wrong assertion file: " + case)
+                      require(pathlib.Path(loc.group(1)).resolve() == pathlib.Path("tests").resolve(), "foreign assertion path: " + case)
+                      require(int(loc.group(2)) == wanted["firstFailure"]["line"], "wrong FIRST assertion line: " + case)
+                      actual["location"] = locations[0]
+                  else:
+                      require(not locations, "assertion under passing case: " + case)
+                  observed.append(actual)
+              require(len(re.findall(r"Loc:\s*\[", text)) == expected["expectedCounts"]["failed"], "unassociated assertion location")
+              totals = re.findall(r"Totals:\s+(\d+) passed, (\d+) failed, (\d+) skipped, (\d+) blacklisted", text)
+              require(totals == [("42", "10", "0", "0")], "wrong/incomplete totals")
+              require(len(re.findall(r"^Test Failed\.", text, re.M)) == 1, "missing/wrong CTest failed completion")
+              verdict.update(acceptedMailboxPublicationRed=True, sourceSHA=env["GITHUB_SHA"], sourceTree=git("rev-parse", "HEAD^{tree}"),
+                             runId=env["GITHUB_RUN_ID"], runAttempt=env["GITHUB_RUN_ATTEMPT"], reviewedSourceHashes=actual_hashes,
+                             workflowSHA256=digest(expected["workflowPath"]), guardSHA256=digest(__file__),
+                             independentPublicationFailures=[r["case"] for r in observed if r["classification"] == "independent-publication-red"],
+                             dependentPrerequisiteFailures=[r["case"] for r in observed if r["classification"] == "dependent-publication-prerequisite-failure"],
+                             originalPassing=40, localNegativePassing=2, counts=expected["expectedCounts"],
+                             rawEvidenceSHA256={name: digest(out / name) for name in ("LastTest.log", "ctest.log", "ctest-junit.xml")})
           except Exception as error:
               verdict["rejection"] = str(error)
-          (out / "green-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+          (out / "qt-records.json").write_text(json.dumps(observed, indent=2) + "\n")
+          (out / "red-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
           print(json.dumps(verdict, indent=2))
-          sys.exit(0 if verdict["acceptedPureValueGreen"] else 1)
+          sys.exit(0 if verdict["acceptedMailboxPublicationRed"] else 1)
           PY_GUARD
+          python3 cw-mailbox-red-artifacts/red_guard.py
       - name: Capture final diagnostics
         if: always()
         run: |
-          mkdir -p cw-green-artifacts
-          df -k . > cw-green-artifacts/disk-end.txt
-          uptime > cw-green-artifacts/load-end.txt
-          ccache -s > cw-green-artifacts/ccache-final.txt 2>&1 || true
-          cp build/CMakeCache.txt cw-green-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTest.log cw-green-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTestsFailed.log cw-green-artifacts/ 2>/dev/null || true
-      - name: Upload focused GREEN evidence
+          mkdir -p cw-mailbox-red-artifacts
+          df -k . > cw-mailbox-red-artifacts/disk-end.txt
+          uptime > cw-mailbox-red-artifacts/load-end.txt
+          ccache -s > cw-mailbox-red-artifacts/ccache-final.txt 2>&1 || true
+          cp build/CMakeCache.txt cw-mailbox-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTest.log cw-mailbox-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTestsFailed.log cw-mailbox-red-artifacts/ 2>/dev/null || true
+      - name: Upload focused mailbox RED evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cw-pure-green-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cw-green-artifacts/
+          name: cw-mailbox-red-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cw-mailbox-red-artifacts/
           retention-days: 7
           if-no-files-found: error

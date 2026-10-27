@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Final fix wave F14: macOS time-constraint policy on the
 //               sender thread only, with the existing QoS as fallback.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -176,6 +178,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "core/CwxSender.h"
+#include "core/safety/RemoteCwSafetyState.h"
 
 #include "core/CwKeyLine.h"
 #include "core/LogCategories.h"
@@ -581,6 +584,112 @@ CwxSender::CwxSender(Clock clock, Sleeper sleeper, QObject* parent)
     }
     m_thread = std::thread([this] { run(); });
 }
+
+// NereusSDR-original, unused mailbox RED scaffold. Only installation and
+// atomic binding provide real fixture setup. Publication and consumption
+// intentionally do not mutate pending flags, and checkpoint stubs deny
+// recovery. NO production caller/run-loop integration is supplied here.
+void CwxSender::setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    m_remoteSafetyState = std::move(state);
+    // Installation occurs with all producers detached, never guard traffic.
+    m_remoteRequests.store(0, std::memory_order_release);
+}
+
+void CwxSender::bindRemoteActivity(quint32 epoch)
+{
+    if (epoch == 0 || !m_remoteSafetyState) {
+        return;
+    }
+    const RemoteCwSafetySnapshot safety = m_remoteSafetyState->snapshot();
+    if (safety.epoch != epoch || !safety.valid || safety.invalidated) {
+        return;
+    }
+    quint64 word = m_remoteRequests.load(std::memory_order_acquire);
+    const quint64 bound = quint64{epoch} << kRemoteEpochShift;
+    // The caller serializes new bindings and finishes old remote intent.
+    // An idempotent bind must not erase already-published current requests.
+    while (static_cast<quint32>(word >> kRemoteEpochShift) != epoch) {
+        if (m_remoteRequests.compare_exchange_weak(word, bound, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            return;
+        }
+    }
+}
+
+void CwxSender::requestRemotePause(quint32 epoch) noexcept
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteRequestObserverForTest) {
+        m_remoteRequestObserverForTest(RemoteRequestKindForTest::Pause, epoch);
+    }
+#endif
+    publishRemoteRequest(epoch, kRemotePauseRequest);
+}
+
+void CwxSender::requestRemoteCancel(quint32 epoch) noexcept
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteRequestObserverForTest) {
+        m_remoteRequestObserverForTest(RemoteRequestKindForTest::Cancel, epoch);
+    }
+#endif
+    publishRemoteRequest(epoch, kRemoteCancelRequest);
+}
+
+void CwxSender::publishRemoteRequest(quint32 epoch, quint32 request) noexcept
+{
+    const quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    if (epoch == 0 || static_cast<quint32>(candidate >> kRemoteEpochShift) != epoch) {
+        return;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteMailboxBeforeCasObserverForTest) {
+        m_remoteMailboxBeforeCasObserverForTest(request == kRemoteCancelRequest
+            ? RemoteMailboxCasKindForTest::Cancel : RemoteMailboxCasKindForTest::Pause,
+            epoch, candidate);
+    }
+#endif
+    Q_UNUSED(request);
+    // Deliberately absent: full-word captured-identity CAS publication,
+    // Cancel priority, m_wake store and m_cv notify. Positive tests fail
+    // on the REAL mailbox, not a spy counter or denied bind.
+}
+
+quint32 CwxSender::takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept
+{
+    const quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    if (expectedEpoch == 0
+        || static_cast<quint32>(candidate >> kRemoteEpochShift) != expectedEpoch) {
+        return 0;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteMailboxBeforeCasObserverForTest) {
+        m_remoteMailboxBeforeCasObserverForTest(RemoteMailboxCasKindForTest::Consume,
+                                               expectedEpoch, candidate);
+    }
+#endif
+    // Deliberately absent: full-word CAS clearing FLAGS ONLY, retaining
+    // matching live binding, returning captured flags for checkpoint work.
+    return 0;
+}
+
+bool CwxSender::pauseRemoteActivity(quint32 epoch) { Q_UNUSED(epoch); return false; }
+bool CwxSender::prepareRemoteResume(quint32 epoch) { Q_UNUSED(epoch); return false; }
+bool CwxSender::resumeRemoteActivity(quint32 epoch) { Q_UNUSED(epoch); return false; }
+void CwxSender::cancelRemoteActivity(quint32 epoch) { Q_UNUSED(epoch); }
+
+#ifdef NEREUS_BUILD_TESTS
+void CwxSender::setRemoteRequestObserverForTest(RemoteRequestObserverForTest observer)
+{
+    m_remoteRequestObserverForTest = std::move(observer);
+}
+void CwxSender::setRemoteMailboxBeforeCasObserverForTest(RemoteMailboxBeforeCasObserverForTest observer)
+{
+    m_remoteMailboxBeforeCasObserverForTest = std::move(observer);
+}
+#endif
 
 CwxSender::~CwxSender()
 {
