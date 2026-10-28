@@ -102,6 +102,50 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From piHPSDR src/saturnmain.c [@4aa95c5] ---
+/* Copyright (C)
+*  2021 - Laurence Barker G8NJJ
+*  2025 - Christoph van Wüllen, DL1YCF
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+// Modification history (NereusSDR):
+//   2026-10-28 - Recover the piHPSDR discovery notice and contain the
+//                 unfinished XDMA backend to opt-in, read-only Linux detection.
+//                 Original adaptation: Martinus Stroomer (CT1IQI), Codeconvert.ai.
+//                 Repair: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
+
 #include "RadioDiscovery.h"
 #include <QThread>
 #include <QMutexLocker>
@@ -118,9 +162,25 @@ mw0lge@grange-lane.co.uk
 #include <sys/socket.h>
 #endif
 
+
+#if defined(Q_OS_LINUX) && defined(NEREUS_ENABLE_XDMA_DETECTION)
+#include <QScopeGuard>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace NereusSDR {
 
 // --- RadioInfo static helpers ---
+
+QString RadioInfo::connectionUnavailableReason() const
+{
+    if (protocol == ProtocolVersion::G2XDMA) {
+        return QStringLiteral("XDMA hardware detected; direct radio connection is not implemented");
+    }
+    return {};
+}
 
 QString RadioInfo::displayName() const
 {
@@ -389,6 +449,89 @@ qint64 RadioDiscovery::walkBoundMs() const
 QList<RadioInfo> RadioDiscovery::discoveredRadios() const
 {
     return m_radios.values();
+}
+
+// From piHPSDR src/saturnmain.c:310-370 [@4aa95c5].
+// Only decode identity. Unlike upstream saturn_discovery, do not initialize
+// registers, advertise a working data path, or select this backend for a connection.
+bool RadioDiscovery::parseG2XdmaRegisters(quint32 software, quint32 product, RadioInfo& out)
+{
+    // From piHPSDR src/saturnmain.c:310-315 [@4aa95c5].
+    constexpr quint32 kSaturnProductId = 1; // Saturn, any version
+    constexpr quint32 kGoldenConfigId = 3; // "golden" configuration id
+    constexpr quint32 kPrimaryConfigId = 4; // "primary" configuration id
+    // From piHPSDR src/saturnmain.c:335-350 [@4aa95c5].
+    // All version info is contained in two 32-bit string SI and PI, to be read
+    // from two FPGA registers. The layout is
+    //
+    //     FPGA_MajorVersion  SW[31:25], only valid if MinorVersion >= 18
+    //     FPGA_SWID          SW[24:20]
+    //     FPGA_MinorVersion  SW[19:4]
+    //     FPGA_ClockInfo     SW[3:0]
+    //     FPGA_ProdID        PR[31:16]
+    //     Saturn_PCB_Version PR[15:0]
+    //
+    constexpr quint32 kClockMask = 0xF; // 4 clock bits
+    constexpr quint32 kSoftwareIdMask = 0x1F; //  5 bit software ID
+    constexpr quint32 kVersionMask = 0xFFFF; // 16 bit product ID
+    constexpr int kSoftwareIdShift = 20;
+    constexpr int kProductShift = 16;
+    constexpr int kMinorShift = 4;
+    const quint32 softwareId = (software >> kSoftwareIdShift) & kSoftwareIdMask;
+    if ((product >> kProductShift) != kSaturnProductId
+        || (softwareId != kGoldenConfigId && softwareId != kPrimaryConfigId)
+        || (software & kClockMask) != kClockMask) { // not all clocks are present
+        return false;
+    }
+    RadioInfo detected;
+    detected.protocol = ProtocolVersion::G2XDMA;
+    detected.iface = IfaceVersion::XDMA;
+    detected.boardType = HPSDRHW::Saturn;
+    detected.pcbVersion = int(product & kVersionMask); // 16 bit board ID
+    detected.firmwareVersion = int((software >> kMinorShift) & kVersionMask); // 16 bit minor sw version
+    detected.name = QString::fromLatin1(BoardCapsTable::forBoard(detected.boardType).displayName);
+    // Preserve CT1IQI's synthetic local identity, not the radio's Ethernet MAC.
+    detected.macAddress = QStringLiteral("41:6E:61:6E:47:32");
+    detected.address = QHostAddress::AnyIPv4;
+    detected.port = 0;
+    out = detected;
+    return true;
+}
+
+bool RadioDiscovery::parseG2XDMA(RadioInfo& out)
+{
+#if defined(Q_OS_LINUX) && defined(NEREUS_ENABLE_XDMA_DETECTION)
+    // From piHPSDR src/saturnmain.c:319-323 [@4aa95c5]: discover only
+    // the local XDMA character device. No shell command or radio writes.
+    struct stat deviceStat {};
+    if (::stat("/dev/xdma0_user", &deviceStat) != 0 || !S_ISCHR(deviceStat.st_mode)) {
+        return false;
+    }
+    // NereusSDR detection only: upstream saturndrivers.c:72-94 opens O_RDWR
+    // for later control. A scoped O_RDONLY descriptor cannot write registers.
+    const int device = ::open("/dev/xdma0_user", O_RDONLY | O_CLOEXEC);
+    if (device < 0) {
+        qCWarning(lcDiscovery) << "Cannot read local XDMA hardware identity";
+        return false;
+    }
+    const auto closeDevice = qScopeGuard([device]() { ::close(device); });
+    // From piHPSDR src/saturnmain.c:314-315,344-345 [@4aa95c5].
+    constexpr off_t kSoftwareRegister = 0xC000; // user defined s/w version register
+    constexpr off_t kProductRegister = 0xC004; // user defined product version register
+    quint32 software = 0;
+    quint32 product = 0;
+    if (::pread(device, &software, sizeof(software), kSoftwareRegister) != sizeof(software)
+        || ::pread(device, &product, sizeof(product), kProductRegister) != sizeof(product)) {
+        qCWarning(lcDiscovery) << "Cannot read complete local XDMA version registers";
+        return false;
+    }
+    // Same native uint32 register reads as piHPSDR saturndrivers.c:144-153
+    // [@4aa95c5]; no firmware writes or initialization are performed.
+    return parseG2XdmaRegisters(software, product, out);
+#else
+    Q_UNUSED(out);
+    return false;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +858,18 @@ void RadioDiscovery::scanAllNics()
 
     // Global MAC de-duplication across all NICs for this scan cycle
     m_scanSeen.clear();
+    RadioInfo localXdma;
+    if (parseG2XDMA(localXdma)) {
+        m_scanSeen.insert(localXdma.macAddress);
+        m_lastSeen[localXdma.macAddress] = m_scanNowMs;
+        const bool known = m_radios.contains(localXdma.macAddress);
+        m_radios.insert(localXdma.macAddress, localXdma);
+        if (known) {
+            emit radioUpdated(localXdma);
+        } else {
+            emit radioDiscovered(localXdma);
+        }
+    }
     m_scanStats = ScanStats{};
 
     // The candidates are taken once per walk, as the blocking loop read

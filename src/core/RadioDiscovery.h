@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - PR 339 detection-only containment and regression coverage;
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -77,6 +79,24 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "core/NereusCoreExport.h"
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
+
 #include "HpsdrModel.h"
 
 #include <QObject>
@@ -100,7 +120,13 @@ namespace NereusSDR {
 // Protocol version supported by the radio.
 enum class ProtocolVersion : int {
     Protocol1 = 1,
-    Protocol2 = 2
+    Protocol2 = 2,
+    G2XDMA = 3
+};
+
+enum class IfaceVersion : int {
+    IP = 0,
+    XDMA = 1
 };
 
 // Information about a discovered OpenHPSDR radio.
@@ -113,6 +139,8 @@ struct RadioInfo {
 
     // Hardware
     HPSDRHW boardType{HPSDRHW::Unknown};
+    IfaceVersion iface{IfaceVersion::IP};
+    int pcbVersion{0};
     int firmwareVersion{0};
     // The second firmware number the radio reported in discovery, or 0 when
     // it reported none (a zero byte, a short reply, a board with no such
@@ -147,6 +175,7 @@ struct RadioInfo {
 
     // Display helpers
     QString displayName() const;
+    QString connectionUnavailableReason() const;
     // The firmware as every place that shows it words it: the number the
     // radio reported, then a dot and its second number when it reported one
     // ("22.14"). A radio that reported no second number reads as the first
@@ -347,6 +376,9 @@ public:
     // Public static parsers — exposed for unit-testing in Task 5.
     // Both return true on a valid discovery reply and populate 'out'.
     // From Thetis clsRadioDiscovery.cs parseDiscoveryReply() P1/P2 branches.
+    // Local hardware identity only; the XDMA sample/control backend is unfinished.
+    static bool parseG2XDMA(RadioInfo& out);
+    static bool parseG2XdmaRegisters(quint32 software, quint32 product, RadioInfo& out);
     static bool parseP1Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
     static bool parseP2Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
 

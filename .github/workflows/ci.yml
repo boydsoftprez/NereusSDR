@@ -1349,7 +1349,8 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-            -DNEREUS_BUILD_TESTS=OFF
+            -DNEREUS_BUILD_TESTS=OFF \
+            -DENABLE_XDMA=ON
           status=0
           cmake --build build-notests -j"$(nproc)" --target NereusSDR nereusd || status=1
           ccache --show-stats
@@ -1800,7 +1801,8 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-            -DNEREUS_BUILD_TESTS=OFF
+            -DNEREUS_BUILD_TESTS=OFF \
+            -DENABLE_XDMA=ON
           cmake --build build-notests -j"$(nproc)" --target NereusSDR nereusd
 
       - name: Trim compiler cache to this run

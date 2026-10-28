@@ -2240,6 +2240,23 @@ set(GUI_SOURCES
 )
 
 # --------------------------------------------------------------------------
+# Option to run native in an Anan G2 SDR as host.
+# The G2 has a Compute Module and Linux OS (UNIX).
+# The SDR's FPGA can be reached via XDMA.
+# This opt-in detects the local platform identity only.
+# The unfinished sample/control backend remains outside the build.
+# --------------------------------------------------------------------------
+option(ENABLE_XDMA "Enable experimental local Saturn XDMA hardware detection (no connection backend)" OFF)
+if(ENABLE_XDMA)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_compile_definitions(NEREUS_ENABLE_XDMA_DETECTION=1)
+        message(STATUS "XDMA hardware detection enabled; direct connection is unavailable")
+    else()
+        message(STATUS "XDMA hardware detection is Linux-only; disabled on this platform")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # Resources
 # --------------------------------------------------------------------------
 if(APPLE)

@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - PR 339 detection-only containment and regression coverage;
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -240,6 +242,8 @@ struct BoardCapabilities {
     // the apply-caps call.
     HPSDRHW         board{HPSDRHW::Unknown};
     ProtocolVersion protocol;
+    bool hasAltProtocol {false};
+    ProtocolVersion altProtocol{ProtocolVersion::Protocol1};
 
     int  adcCount;
 

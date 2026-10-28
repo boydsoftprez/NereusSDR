@@ -72,3 +72,12 @@ Derivation type:
 | `src/core/P2RadioConnection.h` + `P2RadioConnection.cpp` | `src/new_protocol.c:1488-1490` | P2 CmdTx byte 50 mic_ptt bit (0x04, INVERTED): `if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] \|= 0x04; }`. NOTE: polarity inversion at NereusSDR `setMicPTT(bool enabled)` API layer — wire bit is `!enabled`. | `port` | 3M-1b G.5. Date: 2026-04-28. |
 | `src/core/P2RadioConnection.h` + `P2RadioConnection.cpp` | `src/new_protocol.c:1500-1502` | P2 CmdTx byte 50 mic_xlr bit (0x20): `if (mic_input_xlr) { transmit_specific_buffer[50] \|= 0x20; }`. Saturn G2 only — P1 implementation is storage-only with no wire emission. | `port` | 3M-1b G.6. Date: 2026-04-28. |
 | `src/core/P2RadioConnection.h` + `P2RadioConnection.cpp` | `src/new_protocol.c:2243-2272` (@f3d857c) | P2 TX I/Q send pacing: the radio's DUC FIFO estimated from elapsed time (`FIFO -= (now - last) * 192000.0`, clamped at 0; `FIFO += 240` per packet sent), used by `TxIqPacer::advance` and `serviceTxIqSend` to send a frame only while one more fits under a 15 ms target lead (deskhpsdr waits 1 ms once the estimate passes 1250 samples wired). | `port` | R-IOS-13, R-R3-42 (the Rock, 2026-09-26: P2 TX I/Q ring overflows). Date: 2026-09-27. |
+
+
+
+
+
+
+
+| `src/core/G2XdmaRadioConnection.cpp` | `src/new_protocol.c` | 1480-1502 (@120188f) | `port` | Legacy P2 microphone byte-50 masks retained in PR 339, with inherited exact deskHPSDR GPL notice. Unfinished backend excluded from build/factory; no later P2 thread or wire corrections claimed. Original adaptation Martinus Stroomer (CT1IQI), Codeconvert.ai; notice recovery 2026-10-28 J.J. Boyd (KG4VCF), OpenAI Codex. |
+| `src/core/G2XdmaRadioConnection.h` | `src/new_protocol.c` | 1480-1502 (@120188f) | `port` | Legacy P2 microphone byte-50 masks retained in PR 339, with inherited exact deskHPSDR GPL notice. Unfinished backend excluded from build/factory; no later P2 thread or wire corrections claimed. Original adaptation Martinus Stroomer (CT1IQI), Codeconvert.ai; notice recovery 2026-10-28 J.J. Boyd (KG4VCF), OpenAI Codex. |

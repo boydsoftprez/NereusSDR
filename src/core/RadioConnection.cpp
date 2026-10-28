@@ -5,6 +5,8 @@
 // implemented from the Thetis console.cs interface specification.
 //
 // Modification history (NereusSDR):
+//   2026-10-28 - PR 339 detection-only containment and regression coverage;
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: The transmit cut latch: cutTransmit, clearTransmitCut and
 //               the default applyTransmitCut. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -28,12 +30,17 @@ RadioConnection::~RadioConnection() = default;
 std::unique_ptr<RadioConnection> RadioConnection::create(const RadioInfo& info)
 {
     switch (info.protocol) {
-    case ProtocolVersion::Protocol2: {
-        auto conn = std::make_unique<P2RadioConnection>();
-        return conn;
-    }
-    case ProtocolVersion::Protocol1:
-        return std::make_unique<P1RadioConnection>();
+        case ProtocolVersion::Protocol2: {
+            auto conn = std::make_unique<P2RadioConnection>();
+            return conn;
+        }
+        case ProtocolVersion::Protocol1: {
+            return std::make_unique<P1RadioConnection>();
+        }
+        case ProtocolVersion::G2XDMA: {
+            qCWarning(lcConnection) << info.connectionUnavailableReason();
+            return nullptr;
+        }
     }
     qCWarning(lcConnection) << "Unknown protocol version:" << static_cast<int>(info.protocol);
     return nullptr;

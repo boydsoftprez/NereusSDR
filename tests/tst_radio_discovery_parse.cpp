@@ -12,6 +12,8 @@
 //     (preserved via inline marker on HPSDRHW::HermesLite QCOMPARE assertion)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - PR 339 detection-only containment and regression coverage;
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -68,6 +70,7 @@ mw0lge@grange-lane.co.uk
 #include <QHostAddress>
 
 #include "core/RadioDiscovery.h"
+#include "core/RadioConnection.h"
 #include "core/HpsdrModel.h"
 
 using namespace NereusSDR;
@@ -119,6 +122,53 @@ private:
     }
 
 private slots:
+    void xdmaDetectionNeverConstructsAnUnfinishedConnection()
+    {
+        RadioInfo info;
+        info.protocol = ProtocolVersion::G2XDMA;
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral(".*XDMA hardware detected.*")));
+        const std::unique_ptr<RadioConnection> connection = RadioConnection::create(info);
+        QVERIFY(!connection);
+        QVERIFY(!info.connectionUnavailableReason().isEmpty());
+    }
+
+    void xdmaRegistersIdentifyOnlySaturnWithoutAdvertisingAWorkingBackend()
+    {
+        // piHPSDR src/saturnmain.c:310-370 [@4aa95c5]: product 1,
+        // primary image 4, clocks 0xF, major 1/minor 18, PCB revision 2.
+        constexpr quint32 kSoftware = (1u << 25) | (4u << 20) | (18u << 4) | 0xFu;
+        constexpr quint32 kProduct = (1u << 16) | 2u;
+        RadioInfo info;
+        QVERIFY(RadioDiscovery::parseG2XdmaRegisters(kSoftware, kProduct, info));
+        QCOMPARE(info.boardType, HPSDRHW::Saturn);
+        QCOMPARE(info.iface, IfaceVersion::XDMA);
+        QCOMPARE(info.protocol, ProtocolVersion::G2XDMA);
+        QCOMPARE(info.firmwareVersion, 18);
+        QCOMPARE(info.pcbVersion, 2);
+        QVERIFY(!info.connectionUnavailableReason().isEmpty());
+        QCOMPARE(info.port, quint16(0));
+        QVERIFY(!info.hasPureSignal);
+        QVERIFY(!info.hasDiversityReceiver);
+
+        const RadioInfo accepted = info;
+        QVERIFY(!RadioDiscovery::parseG2XdmaRegisters(kSoftware, (2u << 16), info));
+        QCOMPARE(info.macAddress, accepted.macAddress);
+        QVERIFY(!RadioDiscovery::parseG2XdmaRegisters(kSoftware & ~0xFu, kProduct, info));
+        QVERIFY(!RadioDiscovery::parseG2XdmaRegisters((kSoftware & ~(0x1Fu << 20)) | (2u << 20), kProduct, info));
+    }
+
+    void networkRadiosKeepTheirInterfaceAndConnectionAvailability()
+    {
+        RadioInfo info;
+        QCOMPARE(info.iface, IfaceVersion::IP);
+        QVERIFY(info.connectionUnavailableReason().isEmpty());
+        const QByteArray bytes = p2Reply(10, 22, 14);
+        QVERIFY(RadioDiscovery::parseP2Reply(bytes, QHostAddress(QStringLiteral("192.0.2.10")), info));
+        QCOMPARE(info.iface, IfaceVersion::IP);
+        QCOMPARE(info.protocol, ProtocolVersion::Protocol2);
+        QVERIFY(info.connectionUnavailableReason().isEmpty());
+    }
+
 
     // --- P1: Hermes Lite 2 (HL2) ---
     // Fixture: fw=72, status=free, MAC=aa:bb:cc:11:22:33, board=HermesLite
