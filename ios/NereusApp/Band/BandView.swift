@@ -78,10 +78,19 @@ struct BandView: UIViewRepresentable {
         private var lineDraws = BandLineDraws()
         /// The band changed since the view last drew.
         private var dirty = false
+        /// The display link is drawing the band now (``step(_:)``).
+        private var drawingFromLink = false
         /// Frames in a row with nothing to draw and no line flowing.
         private var restingFrames = 0
         /// Frames with nothing flowing before the link rests.
         private static let framesBeforeRest = 6
+        /// Frames in flight a draw may join. The view's layer holds three
+        /// drawables and the screen shows one: with two in flight, taking
+        /// another would wait for the screen to let one go.
+        private static let mostFramesPending = 2
+        /// How soon a draw on demand that found no frame free tries again:
+        /// a 60 Hz screen frame.
+        private static let retrySeconds = 1.0 / 60
         #if DEBUG
         /// `NEREUS_ROW_CLOCK=0` (or the launch argument `-NereusRowClock 0`)
         /// puts each line in as it comes, the way before the clock, for a
@@ -210,6 +219,13 @@ struct BandView: UIViewRepresentable {
         /// line or a change, in 3D when its cadence falls due. With nothing
         /// flowing for a few frames the link rests.
         fileprivate func step(_ link: CADisplayLink) {
+            #if DEBUG
+            let stepStart = CACurrentMediaTime()
+            defer {
+                model.drawCost.linkFrames += 1
+                model.drawCost.linkSeconds += CACurrentMediaTime() - stepStart
+            }
+            #endif
             guard let view, view.window != nil else {
                 link.isPaused = true
                 model.notePacing()
@@ -222,6 +238,9 @@ struct BandView: UIViewRepresentable {
             let now = link.timestamp
             let frame = max(link.targetTimestamp - link.timestamp, 0)
             let put = model.advanceLines(at: now, frameSeconds: frame)
+            #if DEBUG
+            model.drawCost.advanceSeconds += CACurrentMediaTime() - stepStart
+            #endif
             guard model.pacingLines else {
                 // The clock stopped (no line period, or the view went):
                 // back to drawing on demand.
@@ -242,7 +261,16 @@ struct BandView: UIViewRepresentable {
             if draws {
                 dirty = false
                 restingFrames = 0
+                #if DEBUG
+                let drawStart = CACurrentMediaTime()
+                defer {
+                    model.drawCost.linkDraws += 1
+                    model.drawCost.linkDrawSeconds += CACurrentMediaTime() - drawStart
+                }
+                #endif
+                drawingFromLink = true
                 view.draw()
+                drawingFromLink = false
             } else if dirty || flowing {
                 restingFrames = 0
             } else {
@@ -267,11 +295,54 @@ struct BandView: UIViewRepresentable {
         }
 
         private func drawBand(in view: MTKView) {
-            guard let renderer, let drawable = view.currentDrawable else {
+            #if DEBUG
+            let drawStart = CACurrentMediaTime()
+            #endif
+            guard let renderer else {
                 return
             }
+            // While the display link runs, it draws each change on its next
+            // frame: a draw the view asks for itself (an update of the
+            // screen, a resize) waits for it, so the band draws at most once
+            // a screen frame, and in 3D only on its cadence. Drawn as well
+            // as on the link's frame, the band drew about 100 times a
+            // second while a flag was dragged (2026-10-27).
+            if !drawingFromLink, model.pacingLines, let link, !link.isPaused {
+                dirty = true
+                restingFrames = 0
+                return
+            }
+            // The main thread does not wait for the graphics: while the
+            // frames in flight hold the drawables the screen does not, the
+            // band draws on a later frame.
+            guard renderer.framesPending < Self.mostFramesPending else {
+                #if DEBUG
+                model.drawCost.skipped += 1
+                #endif
+                dirty = true
+                if !drawingFromLink {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.retrySeconds) { [weak view] in
+                        MainActor.assumeIsolated {
+                            view?.setNeedsDisplay()
+                        }
+                    }
+                }
+                return
+            }
+            guard let drawable = view.currentDrawable else {
+                return
+            }
+            #if DEBUG
+            let prepareStart = CACurrentMediaTime()
+            model.drawCost.drawableWaitSeconds += prepareStart - drawStart
+            #endif
             let scale = view.contentScaleFactor
             let state = model.prepareToDraw(size: view.drawableSize, scale: scale)
+            #if DEBUG
+            let overlaysStart = CACurrentMediaTime()
+            model.drawCost.prepareSeconds += overlaysStart - prepareStart
+            #endif
+            let overlays = model.overlays(scale: scale)
             let stacked = model.drawsStack
             // What a 3D frame cost to draw, for the pacer (recommendation 3).
             var timing: (@Sendable (Double) -> Void)?
@@ -302,8 +373,10 @@ struct BandView: UIViewRepresentable {
                                         width: size.width, height: size.height)
             currentDrawKey = key
             model.drawingStarted(key)
+            let encodeStart = CACurrentMediaTime()
+            model.drawCost.overlaysSeconds += encodeStart - overlaysStart
             renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: state.frameExtras,
-                          overlays: model.overlays(scale: scale), into: drawable.texture, present: drawable,
+                          overlays: overlays, into: drawable.texture, present: drawable,
                           completed: { [weak model, weak trace] in
                               let finished = CACurrentMediaTime()
                               // The GPU has drawn it; the model notes it on the main queue.
@@ -314,9 +387,14 @@ struct BandView: UIViewRepresentable {
                                   }
                               }
                           }, drawTime: timed)
+            let drawEnd = CACurrentMediaTime()
+            model.drawCost.draws += 1
+            model.drawCost.frameWaitSeconds += renderer.lastFrameWaitSeconds
+            model.drawCost.encodeSeconds += drawEnd - encodeStart - renderer.lastFrameWaitSeconds
+            model.drawCost.drawSeconds += drawEnd - drawStart
             #else
             renderer.draw(frame: state.frame, history: state.history, stack: state.stack, extras: state.frameExtras,
-                          overlays: model.overlays(scale: scale), into: drawable.texture, present: drawable,
+                          overlays: overlays, into: drawable.texture, present: drawable,
                           drawTime: timed)
             #endif
         }

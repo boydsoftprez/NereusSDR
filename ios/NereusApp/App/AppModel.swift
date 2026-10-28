@@ -17,7 +17,15 @@ import NereusModels
 /// Everything the screens read about the connected Core, and the way to
 /// connect to one. It owns the session and feeds each of its events, in
 /// order, to the mirror, the settings proxy, the command client and media
-/// control, then to ``connection``. The clients live as long as the app:
+/// control, then to ``connection``. One off-main reader admits every event
+/// into a lossless FIFO; the main actor handles ready prefixes of at most
+/// 32, without waiting for a batch to fill. The mirror takes each message
+/// synchronously; the command client and media control take theirs
+/// through their own ordered lanes (``SessionEventLanes``), so a write's
+/// answer never waits behind the hops for the readings before it. The
+/// messages that move the session or the transmit state wait for both
+/// lanes and then for every consumer in turn, as they always did. The
+/// clients live as long as the app:
 /// they send through whichever session is current, so a screen holds them
 /// across reconnects and a change of Core.
 ///
@@ -26,7 +34,9 @@ import NereusModels
 @MainActor
 final class AppModel: ObservableObject {
     /// The session to the current Core, or nil when none is chosen.
-    @Published private(set) var session: StationSession?
+    @Published private(set) var session: StationSession? {
+        didSet { eventLanesFollowSession() }
+    }
     /// Where the connection has got to.
     @Published private(set) var connection: ConnectionState = .notConnected
     /// The link's latest round-trip time in milliseconds, once a ping has
@@ -161,6 +171,7 @@ final class AppModel: ObservableObject {
 
     private let route: SessionRoute
     private var pump: Task<Void, Never>?
+    private var eventIntake: SessionEventIntake?
     private var roundTripPump: Task<Void, Never>?
     private var mediaPump: Task<Void, Never>?
     private var watches: Set<AnyCancellable> = []
@@ -195,7 +206,11 @@ final class AppModel: ObservableObject {
     private var currentMediaRoute: MediaRoute?
     private var mediaTunnel: MediaTunnelContext?
     private var nextMediaOwner: UInt64 = 0
-    private var mediaOwner: UInt64?
+    private var mediaOwner: UInt64? {
+        didSet { eventLanesFollowSession() }
+    }
+    /// The current session's lanes to the command client and media control.
+    private var eventLanes: SessionEventLanes?
     private var connectIntent: UInt64 = 0
     private var listeningIntent: UInt64?
     var snapshotCompleted: ((StationSession) -> Void)?
@@ -218,6 +233,8 @@ final class AppModel: ObservableObject {
     var startBeforeMediaActivationForTesting: (@MainActor () async -> Void)?
     var startAfterMediaActivationForTesting: (@MainActor () async -> Void)?
     var mediaOwnerForTesting: UInt64? { mediaOwner }
+    var eventLanesForTesting: SessionEventLanes? { eventLanes }
+    var eventIntakeForTesting: SessionEventIntake? { eventIntake }
     var commandRouteForTesting: SessionRoute { route }
     var winnerAvailabilityCheckedForTesting: (@MainActor () async -> Void)?
     var beforeMediaEventForTesting: (@MainActor (MediaControlEvent) async -> Void)?
@@ -973,17 +990,41 @@ final class AppModel: ObservableObject {
                 self.roundTripMs = Self.shownMilliseconds(time)
             }
         }
-        let events = next.events
+        let intake = SessionEventIntake(events: next.events)
+        let lanes = SessionEventLanes(session: next, owner: owner, commands: commands, media: media)
+        eventIntake = intake
+        eventLanes = lanes
         pump = Task { [weak self] in
-            for await event in events {
-                guard let self else {
-                    return
+            eventLoop: while let batch = await intake.nextBatch() {
+                for event in batch {
+                    guard let self, !Task.isCancelled,
+                          self.session === next, self.mediaOwner == owner else {
+                        break eventLoop
+                    }
+                    if case .message(let message) = event, !Self.waitsOnEveryConsumer(message) {
+                        if lanes.commands.pendingCount >= Self.eventLaneHighWaterMark
+                            || lanes.media.pendingCount >= Self.eventLaneHighWaterMark {
+                            await lanes.drain()
+                        }
+                        self.handleAtOnce(message, event: event, from: next, owner: owner, lanes: lanes)
+                    } else {
+                        // Everything before it has reached the command client
+                        // and media control, as when the pump waited on each.
+                        await lanes.drain()
+                        await self.handle(event, from: next, owner: owner, lanes: lanes)
+                    }
+                    if case .stateChanged(.stopped) = event {
+                        break eventLoop
+                    }
                 }
-                await self.handle(event, from: next, owner: owner)
-                if case .stateChanged(.stopped) = event {
-                    return
-                }
+                // Bound consecutive ordinary main-actor work, even when
+                // the next prefix is already ready. Never wait to fill it.
+                await Task.yield()
             }
+            // Close and wake before joining the reader, including one held
+            // at capacity. No reader or consumer outlives its session pump.
+            await intake.closeAndJoin()
+            await lanes.finish()
         }
         await next.connect()
         return session === next && mediaOwner == owner && connectIntent == intent
@@ -1080,6 +1121,7 @@ final class AppModel: ObservableObject {
         if let endingListeningIntent { longSession.sessionEnded(owner: endingListeningIntent) }
         listeningIntent = nil
         pump = nil
+        eventIntake = nil
         roundTripPump?.cancel()
         roundTripPump = nil
         roundTripMs = nil
@@ -1101,8 +1143,78 @@ final class AppModel: ObservableObject {
 
     // MARK: Events
 
+    /// The pump is the only lane producer. Below this mark one message
+    /// adds at most one command item and two media items (silence and the
+    /// event), so the pending counts stay at most 64 and 65 respectively.
+    /// Readings below the mark need no suspension to check admission.
+    private static let eventLaneHighWaterMark = 64
+
+    /// The lanes stop handing over a session's messages once it is no
+    /// longer the app's, as ``handle(_:from:owner:lanes:)`` skips them.
+    private func eventLanesFollowSession() {
+        guard let lanes = eventLanes, session !== lanes.session || mediaOwner != lanes.owner else { return }
+        lanes.stopDelivering()
+        eventLanes = nil
+    }
+
+    /// Whether the pump waits for both lanes and then for every consumer in
+    /// turn before the next message, as it did for every message before the
+    /// lanes: a message that moves the session (its `hello`, capabilities,
+    /// the snapshot's end, a held or ended session) or the transmit state,
+    /// whose silence media control must hold before the mirror goes on, and
+    /// whose handling here runs on after the clients. Session state changes
+    /// and refusals always wait.
+    nonisolated static func waitsOnEveryConsumer(_ message: LinkMessage) -> Bool {
+        switch message {
+        case .hello, .capabilities, .snapshotComplete, .sessionHeld, .sessionEnd:
+            return true
+        case .delta(let delta):
+            return delta.key == transmitStateKey
+        case .objectCreate(let created):
+            return created.key == transmitStateKey
+        case .objectDestroy(let destroyed):
+            return destroyed.key == transmitStateKey
+        default:
+            return false
+        }
+    }
+
+    /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.
+    nonisolated static let transmitStateKey = "txState"
+
+    /// One of the Core's messages that moves neither the session nor the
+    /// transmit state: the mirror, the settings and the records take it now,
+    /// and the command client and media control get it through their lanes
+    /// when they read it. Same order as ``handle(_:from:owner:lanes:)``,
+    /// with no wait between messages below the lanes' high-water mark.
+    private func handleAtOnce(_ message: LinkMessage, event: StationSession.Event, from expected: StationSession,
+                              owner: UInt64, lanes: SessionEventLanes) {
+        guard session === expected, mediaOwner == owner else { return }
+        mirror.handle(event)
+        paValues.handle(event)
+        if Self.changesMoveSafety(message) {
+            safetyMirrorChanged?(expected)
+        }
+        settings.handle(event)
+        if CommandClient.reads(message) {
+            lanes.commands.send(event)
+        }
+        // After the mirror, which holds the capabilities the streams need.
+        records.handle(event)
+        devices.handle(event)
+        // Media control already holds an unchanged value; it acts only on a change.
+        let silence = expectedTransmitSilence()
+        if silence != lanes.sentTransmitSilence {
+            lanes.sentTransmitSilence = silence
+            lanes.media.send(.transmitSilence(silence))
+        }
+        if MediaControlClient.reads(message) {
+            lanes.media.send(.event(event))
+        }
+    }
+
     private func handle(_ event: StationSession.Event, from expected: StationSession,
-                        owner: UInt64) async {
+                        owner: UInt64, lanes: SessionEventLanes) async {
         guard session === expected, mediaOwner == owner else { return }
         if case .stateChanged(let state) = event {
             // Before the command client fails what was waiting: a take
@@ -1120,7 +1232,12 @@ final class AppModel: ObservableObject {
         // After the mirror, which holds the capabilities the streams need.
         records.handle(event)
         devices.handle(event)
-        _ = await media.setExpectedAudioSilenceDuringTransmit(expectedTransmitSilence(), owner: owner)
+        let silence = expectedTransmitSilence()
+        lanes.sentTransmitSilence = silence
+        _ = await media.setExpectedAudioSilenceDuringTransmit(silence, owner: owner)
+        #if DEBUG
+        lanes.handedForTesting.note(.media(.transmitSilence(silence)))
+        #endif
         if case .message(.capabilities) = event {
             await coreCapabilitiesChanged(on: expected, owner: owner)
             guard session === expected, mediaOwner == owner else { return }

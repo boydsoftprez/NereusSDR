@@ -555,6 +555,36 @@ final class BandModel: ObservableObject {
         guard currentDrawByView[key.viewID] == key else { return }
         presentedDraws[key] = max(presentedDraws[key] ?? 0, revision)
     }
+
+    /// What the band's view cost the main thread, summed since the view
+    /// was made, in seconds: for the tests that time a drag while the band
+    /// draws.
+    struct DrawCost: Equatable {
+        /// Display link frames, and their whole time on the main thread.
+        var linkFrames = 0
+        var linkSeconds = 0.0
+        /// The row clock's work on those frames: the lines it put in.
+        var advanceSeconds = 0.0
+        /// Draws, and how many the display link made.
+        var draws = 0
+        var linkDraws = 0
+        /// The display link's draws' time, inside ``linkSeconds``.
+        var linkDrawSeconds = 0.0
+        /// Draws left for a later frame because no drawable was free.
+        var skipped = 0
+        /// Waiting for the view's drawable.
+        var drawableWaitSeconds = 0.0
+        /// Preparing the band's state for a draw, and building its overlays.
+        var prepareSeconds = 0.0
+        var overlaysSeconds = 0.0
+        /// The renderer waiting for a frame in flight, and encoding.
+        var frameWaitSeconds = 0.0
+        var encodeSeconds = 0.0
+        /// Every draw's whole time on the main thread.
+        var drawSeconds = 0.0
+    }
+
+    var drawCost = DrawCost()
     #endif
 
     init(settings: BandDisplaySettings = .desktopDefaults) {

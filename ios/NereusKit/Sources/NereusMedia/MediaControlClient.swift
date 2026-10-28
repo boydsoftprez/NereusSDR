@@ -869,6 +869,20 @@ public actor MediaControlClient {
         }
     }
 
+    /// Whether ``handle(_:)`` acts on `message`: the Core's `hello`, its
+    /// capabilities, the end of its snapshot and its media operations. A
+    /// feed that hands this client only some of the Core's messages (the
+    /// app's own lane for it) asks this, so it never leaves out one this
+    /// client reads. Keep it in step with ``handle(_:)``.
+    public static func reads(_ message: LinkMessage) -> Bool {
+        switch message {
+        case .hello, .capabilities, .snapshotComplete, .mediaControl:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Feed an app-owned session event with its captured logical owner.
     /// Events that arrive after another session activates are ignored.
     public func handle(_ event: StationSession.Event, owner: UInt64) async {
