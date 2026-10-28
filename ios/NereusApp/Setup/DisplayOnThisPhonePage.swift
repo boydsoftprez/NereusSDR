@@ -23,6 +23,10 @@ import UIKit
 /// does not compute display extras (D23). Calibration offset is greyed on
 /// every Core, with the desktop remote window's reason: the Core already
 /// calibrates the display for its radio, so it is never applied twice.
+///
+/// Listed only for a Core whose Display description is below version 29:
+/// from 29 each of these rows sits on the desktop's eight pages instead
+/// (spec section 7.2; ``DisplayPhoneGroups/onThisPhonePlaces``).
 struct DisplayOnThisPhonePage: View {
     @ObservedObject var main: MainScreenModel
     @ObservedObject var band: BandModel
@@ -31,6 +35,8 @@ struct DisplayOnThisPhonePage: View {
     /// The Core's transmit display settings (Task 54f).
     @ObservedObject var coreTx: CoreTxDisplaySettings
     @ObservedObject var core: CoreDisplayModel
+    /// Each band's dB Max and dB Min, on a Core that keeps them.
+    @ObservedObject var bandScale: CoreBandScale
     @Environment(\.displayScale) private var displayScale
     /// Reset to defaults asks first, as the desktop's does.
     @State var confirmingReset = false
@@ -42,6 +48,7 @@ struct DisplayOnThisPhonePage: View {
         pan = main.pan
         coreTx = main.coreTxDisplay
         core = main.coreDisplay
+        bandScale = main.bandScale
     }
 
     /// The level modes in the order the page lists them, with their names.
@@ -104,22 +111,37 @@ struct DisplayOnThisPhonePage: View {
         change { $0.waterfallLowDbm = max(min(value.rounded(), high - 1), Self.levelRange.lowerBound) }
     }
 
+    /// The receive scale's top: the Core's for the band on the pan when it
+    /// keeps it, else this phone's.
+    var scaleTop: Double { bandScale.shownRange?.maxDbm ?? settings.scaleTopDbm }
+    /// The receive scale's bottom, the same way.
+    var scaleBottom: Double { bandScale.shownRange?.minDbm ?? settings.scaleBottomDbm }
+
+    /// Writes the receive scale: to the Core for the band on the pan when
+    /// it keeps it (nothing while the link is lost), else on this phone.
+    func writeScale(top: Double, bottom: Double) {
+        guard !bandScale.setShown(maxDbm: top, minDbm: bottom) else {
+            return
+        }
+        change {
+            $0.scaleTopDbm = top
+            $0.scaleBottomDbm = bottom
+        }
+    }
+
     /// The receive scale's top, its range kept as far as -200 dBm allows.
     /// Setup always moves the receive scale; the band's own scale moves the
     /// transmit grid while keyed.
     func setTop(_ value: Double) {
         let top = min(max(value.rounded(), Self.scaleRange.lowerBound), Self.scaleRange.upperBound)
-        let depth = max(settings.scaleTopDbm - settings.scaleBottomDbm, 1)
-        change {
-            $0.scaleTopDbm = top
-            $0.scaleBottomDbm = max(top - depth, min(Self.scaleRange.lowerBound, top - 1))
-        }
+        let depth = max(scaleTop - scaleBottom, 1)
+        writeScale(top: top, bottom: max(top - depth, min(Self.scaleRange.lowerBound, top - 1)))
     }
 
     /// The scale's bottom, kept below its top.
     func setBottom(_ value: Double) {
-        let top = settings.scaleTopDbm
-        change { $0.scaleBottomDbm = max(min(value.rounded(), top - 1), Self.scaleRange.lowerBound) }
+        let top = scaleTop
+        writeScale(top: top, bottom: max(min(value.rounded(), top - 1), Self.scaleRange.lowerBound))
     }
 
     /// A colour as `#RRGGBB`.
@@ -191,7 +213,7 @@ struct DisplayOnThisPhonePage: View {
             Text(Self.resetMessage)
         }
         .modifier(DisplayV29Presentation(main: main, model: display))
-        .onAppear { main.displayEditScope = .pan }
+        .onAppear { main.displayEditScope = .pan(.first) }
         .setupPageTitle("Display")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -345,12 +367,17 @@ struct DisplayOnThisPhonePage: View {
             SetupNumberRow(title: "Grid step", value: settings.gridStepDb, range: Self.gridStepRange, step: 1,
                            unit: "dB", enabled: settings.grid,
                            id: "gridStep") { value in change { $0.gridStepDb = value } }
-            SetupNumberRow(title: "Top", value: settings.scaleTopDbm, range: Self.scaleRange, step: 1, unit: "dBm",
-                           id: "scaleTop") { setTop($0) }
-            SetupNumberRow(title: "Bottom", value: settings.scaleBottomDbm, range: Self.scaleRange, step: 1,
-                           unit: "dBm", id: "scaleBottom") { setBottom($0) }
+            SetupNumberRow(title: "Top", value: scaleTop, range: Self.scaleRange, step: 1, unit: "dBm",
+                           enabled: !bandScale.greyed, id: "scaleTop") { setTop($0) }
+            SetupNumberRow(title: "Bottom", value: scaleBottom, range: Self.scaleRange, step: 1,
+                           unit: "dBm", enabled: !bandScale.greyed, id: "scaleBottom") { setBottom($0) }
         } header: {
             Text("Grid & Scales")
+        } footer: {
+            if let note = bandScale.shownNote {
+                Text(note)
+                    .accessibilityIdentifier("scaleNote")
+            }
         }
     }
 

@@ -9,7 +9,11 @@
 //   - MoxController::onVoxActive(bool)        — H.4 Phase 3M-1b
 //   - MoxController::onSpacePtt(bool)         — H.4 Phase 3M-1b
 //   - MoxController::onX2Ptt(bool)            — H.4 Phase 3M-1b
-//   - MoxController::onCwPtt(bool)            — H.4 rejected (3M-2)
+//   - MoxController::onCwPtt(bool)            : the serial PTT line; it
+//                                                keys only in CW with Semi
+//                                                break-in (CW transmit
+//                                                Task 5), so outside CW it
+//                                                keys nothing
 //   - MoxController::onTciPtt(bool)           : keys with PttMode::Tci
 //                                                (receiver and transmit
 //                                                gaps plan, Task 7)
@@ -426,13 +430,14 @@ private slots:
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // § F — Rejected slots: onCwPtt, onTciPtt
+    // § F: onCwPtt outside CW (keys nothing), onTciPtt
     //
     // All rejection tests suppress qCWarning via setFilterRules per the
     // precedent in tst_mox_controller_anti_vox.cpp §C.2 (H.3 pattern).
     // ════════════════════════════════════════════════════════════════════════
 
-    // §F.1 — CW press is rejected: no pttModeChanged, no moxStateChanged
+    // §F.1: the serial PTT line outside CW keys nothing: no
+    // pttModeChanged, no moxStateChanged
     void cw_press_rejected_noSignals()
     {
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.dsp=false"));
@@ -454,7 +459,7 @@ private slots:
         QLoggingCategory::setFilterRules(QString());
     }
 
-    // §F.2 — CW release is rejected: no signals regardless of direction
+    // §F.2: its release outside CW: no signals regardless of direction
     void cw_release_rejected_noSignals()
     {
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.dsp=false"));

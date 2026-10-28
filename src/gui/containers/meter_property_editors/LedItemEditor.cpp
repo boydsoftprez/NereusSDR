@@ -1,4 +1,73 @@
+// =================================================================
+// src/gui/containers/meter_property_editors/LedItemEditor.cpp  (NereusSDR)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/Console/setup.designer.cs (Setup control ranges):
+//     upstream source has no top-of-file GPL header, the setup.cs header
+//     below covers its partial class
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I3): the Thetis header and
+//                 provenance row for the LED update interval, offset, size and
+//                 padding ranges and the No TX rows this editor
+//                 takes from setup.designer.cs. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+// =================================================================
+
+// --- From setup.cs ---
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From setup.designer.cs ---
+// Upstream source 'Project Files/Source/Console/setup.designer.cs' has no top-of-file GPL header —
+// project-level LICENSE applies (it is the designer half of the Setup class in setup.cs).
+
 #include "LedItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/LEDItem.h"
 
 #include <QCheckBox>
@@ -6,13 +75,118 @@
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QColorDialog>
+#include <QLabel>
+#include <QLineEdit>
+#include <QFormLayout>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QHBoxLayout>
 
 namespace NereusSDR {
+
+namespace {
+// Gives a group of wrapped row labels one width: the narrowest at which each
+// wraps to two lines. It measures again when a label's font or style changes.
+class SameWrapWidth final : public QObject {
+public:
+    SameWrapWidth(const QList<QLabel*>& labels, QObject* parent) : QObject(parent), m_labels(labels)
+    {
+        for (QLabel* label : m_labels) { label->installEventFilter(this); }
+    }
+    void update()
+    {
+        // QLabel measures no narrower than its minimum width, so the width
+        // set last time is cleared before measuring again.
+        for (QLabel* label : m_labels) {
+            label->setMinimumWidth(0);
+            label->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
+        int width = 0;
+        for (QLabel* label : m_labels) {
+            label->ensurePolished();
+            const QFontMetrics metrics = label->fontMetrics();
+            const int oneLine = label->QLabel::heightForWidth(QWIDGETSIZE_MAX);
+            if (!label->wordWrap() || oneLine <= 0) { return; }
+            const int twoLines = oneLine + metrics.lineSpacing();
+            const int full = metrics.horizontalAdvance(label->text()) + 2 * label->margin();
+            // Narrowest width that needs at most two lines (the height falls
+            // as the width grows), and never narrower than its longest word.
+            int low = 1;
+            for (const QString& word : label->text().split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+                low = qMax(low, metrics.horizontalAdvance(word) + 2 * label->margin());
+            }
+            int high = qMax(1, full);
+            while (low < high) {
+                const int mid = (low + high) / 2;
+                if (label->QLabel::heightForWidth(mid) > twoLines) { low = mid + 1; } else { high = mid; }
+            }
+            width = qMax(width, low);
+        }
+        for (QLabel* label : m_labels) { label->setFixedWidth(width); }
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange) {
+            update();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QList<QLabel*> m_labels;
+};
+} // namespace
 
 LedItemEditor::LedItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
 {
     buildTypeSpecific();
+    // Update interval range from Thetis setup.designer.cs:63735-63744 [v2.10.3.15]
+    // (nudLedIndicator_UpdateInterval: 50-10000)
+    setUpdateIntervalRange(kLedMinUpdateIntervalMs, kLedMaxUpdateIntervalMs);
+}
+
+void LedItemEditor::applyPlacedRows(bool placed)
+{
+    beginProgrammaticUpdate();
+    if (placed) {
+        // Padding range from Thetis setup.designer.cs:63987-64005 [v2.10.3.15]
+        // (nudLedIndicator_PanelPadding: 0.001-10, step 0.001)
+        m_spinPadding->setDecimals(3);
+        m_spinPadding->setRange(kLedMinPanelPadding, kLedMaxPanelPadding);
+        m_spinPadding->setSingleStep(0.001);
+        m_spinPadding->setToolTip(QStringLiteral(
+            "Height of the panel as a ratio of the width."));
+    } else {
+        m_spinPadding->setDecimals(1);
+        m_spinPadding->setRange(0.0, 50.0);
+        m_spinPadding->setSingleStep(0.5);
+        m_spinPadding->setToolTip(QStringLiteral(
+            "Space in pixels between the light and the edge of the item."));
+    }
+    for (QDoubleSpinBox* spin : {m_spinOffsetX, m_spinOffsetY, m_spinSizeX, m_spinSizeY}) {
+        spin->setEnabled(placed);
+    }
+    endProgrammaticUpdate();
+}
+
+void LedItemEditor::refreshConditionRows()
+{
+    LEDItem* x = qobject_cast<LEDItem*>(m_item);
+    const bool has = x && x->hasCondition();
+    for (QDoubleSpinBox* spin : {m_spinGreenThreshold, m_spinAmberThreshold, m_spinRedThreshold}) {
+        spin->setEnabled(!has);
+    }
+    QString error;
+    if (has) {
+        const LedConditionResult check = x->checkCondition(x->condition());
+        if (!check.ok) {
+            error = check.error;
+        }
+    }
+    m_lblConditionError->setText(error);
 }
 
 void LedItemEditor::setItem(MeterItem* item)
@@ -21,13 +195,13 @@ void LedItemEditor::setItem(MeterItem* item)
     LEDItem* x = qobject_cast<LEDItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
+
+    m_lblId->setText(x->fourChar());
 
     const int shapeIdx = m_comboShape->findData(static_cast<int>(x->ledShape()));
     m_comboShape->setCurrentIndex(shapeIdx >= 0 ? shapeIdx : 0);
@@ -35,20 +209,33 @@ void LedItemEditor::setItem(MeterItem* item)
     const int styleIdx = m_comboStyle->findData(static_cast<int>(x->ledStyle()));
     m_comboStyle->setCurrentIndex(styleIdx >= 0 ? styleIdx : 0);
 
-    applyColor(m_btnTrueColour, x->trueColour());
-    applyColor(m_btnFalseColour, x->falseColour());
+    applyColor(m_btnTrueColour, QStringLiteral("Led.trueColour"), x->trueColour());
+    applyColor(m_btnFalseColour, QStringLiteral("Led.falseColour"), x->falseColour());
 
     m_chkShowPanel->setChecked(x->showBackPanel());
-    applyColor(m_btnPanelBack1, x->panelBackColour1());
-    applyColor(m_btnPanelBack2, x->panelBackColour2());
+    applyColor(m_btnPanelBack1, QStringLiteral("Led.panelBackColour1"), x->panelBackColour1());
+    applyColor(m_btnPanelBack2, QStringLiteral("Led.panelBackColour2"), x->panelBackColour2());
 
     m_chkBlink->setChecked(x->blink());
     m_chkPulsate->setChecked(x->pulsate());
+    m_chkPlaced->setChecked(x->placed());
+    applyPlacedRows(x->placed());
     m_spinPadding->setValue(static_cast<double>(x->padding()));
+    m_spinOffsetX->setValue(static_cast<double>(x->offsetX()));
+    m_spinOffsetY->setValue(static_cast<double>(x->offsetY()));
+    m_spinSizeX->setValue(static_cast<double>(x->sizeX()));
+    m_spinSizeY->setValue(static_cast<double>(x->sizeY()));
+    m_chkShowTrue->setChecked(x->showTrue());
+    m_chkShowFalse->setChecked(x->showFalse());
+    m_chkProcessWhenHidden->setChecked(x->processWhenHidden());
+    m_chkNoTxTrue->setChecked(x->noTx());
+    m_chkNoTxFalse->setChecked(x->noTxFalse());
 
+    m_editCondition->setText(x->condition());
     m_spinGreenThreshold->setValue(x->greenThreshold());
     m_spinAmberThreshold->setValue(x->amberThreshold());
     m_spinRedThreshold->setValue(x->redThreshold());
+    refreshConditionRows();
 
     endProgrammaticUpdate();
 }
@@ -56,6 +243,29 @@ void LedItemEditor::setItem(MeterItem* item)
 void LedItemEditor::buildTypeSpecific()
 {
     addHeader(QStringLiteral("LED Item"));
+
+    // The LED's 4-character ID, which a text overlay names to show a line
+    // only while this LED is on.
+    auto* idRow = new QWidget(this);
+    auto* idLayout = new QHBoxLayout(idRow);
+    idLayout->setContentsMargins(0, 0, 0, 0);
+    m_lblId = new QLabel(idRow);
+    m_lblId->setObjectName(QStringLiteral("ledId"));
+    m_lblId->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_lblId->setToolTip(QStringLiteral(
+        "This LED's ID. A text overlay can show a line only while this LED is on."));
+    m_btnCopyId = new QPushButton(QStringLiteral("Copy"), idRow);
+    m_btnCopyId->setObjectName(QStringLiteral("ledCopyId"));
+    m_btnCopyId->setToolTip(QStringLiteral("Copy this LED's ID."));
+    idLayout->addWidget(m_lblId);
+    idLayout->addWidget(m_btnCopyId);
+    idLayout->addStretch(1);
+    addRow(QStringLiteral("ID"), idRow);
+    connect(m_btnCopyId, &QPushButton::clicked, this, [this]() {
+        if (QClipboard* clipboard = QGuiApplication::clipboard()) {
+            clipboard->setText(m_lblId->text());
+        }
+    });
 
     // Shape
     m_comboShape = new QComboBox(this);
@@ -92,10 +302,9 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->trueColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.trueColour"));
             x->setTrueColour(chosen);
-            m_btnTrueColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnTrueColour, QStringLiteral("Led.trueColour"), chosen);
             notifyChanged();
         }
     });
@@ -108,10 +317,9 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->falseColour(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.falseColour"));
             x->setFalseColour(chosen);
-            m_btnFalseColour->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnFalseColour, QStringLiteral("Led.falseColour"), chosen);
             notifyChanged();
         }
     });
@@ -134,10 +342,9 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->panelBackColour1(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.panelBackColour1"));
             x->setPanelBackColour1(chosen);
-            m_btnPanelBack1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack1, QStringLiteral("Led.panelBackColour1"), chosen);
             notifyChanged();
         }
     });
@@ -150,10 +357,9 @@ void LedItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->panelBackColour2(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("Led.panelBackColour2"));
             x->setPanelBackColour2(chosen);
-            m_btnPanelBack2->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnPanelBack2, QStringLiteral("Led.panelBackColour2"), chosen);
             notifyChanged();
         }
     });
@@ -162,21 +368,44 @@ void LedItemEditor::buildTypeSpecific()
     // Animation
     addHeader(QStringLiteral("Animation"));
 
+    // A placed light takes one light mode (Thetis radLed_light_on_off /
+    // blink / pulsate), so checking one clears the other; the fill look
+    // keeps both.
     m_chkBlink = makeCheckRow(QStringLiteral("Blink"));
+    m_chkBlink->setToolTip(QStringLiteral(
+        "Placed light: flash twice when it turns true. "
+        "Fill light: flash on and off."));
     connect(m_chkBlink, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         LEDItem* x = qobject_cast<LEDItem*>(m_item);
         if (!x) { return; }
-        x->setBlink(on);
+        if (x->placed() && on) {
+            x->setLightMode(LEDItem::LightMode::Blink);
+            beginProgrammaticUpdate();
+            m_chkPulsate->setChecked(false);
+            endProgrammaticUpdate();
+        } else {
+            x->setBlink(on);
+        }
         notifyChanged();
     });
 
     m_chkPulsate = makeCheckRow(QStringLiteral("Pulsate"));
+    m_chkPulsate->setToolTip(QStringLiteral(
+        "Placed light: fade up and down while true. "
+        "Fill light: fade the light in and out."));
     connect(m_chkPulsate, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         LEDItem* x = qobject_cast<LEDItem*>(m_item);
         if (!x) { return; }
-        x->setPulsate(on);
+        if (x->placed() && on) {
+            x->setLightMode(LEDItem::LightMode::Pulsate);
+            beginProgrammaticUpdate();
+            m_chkBlink->setChecked(false);
+            endProgrammaticUpdate();
+        } else {
+            x->setPulsate(on);
+        }
         notifyChanged();
     });
 
@@ -188,6 +417,165 @@ void LedItemEditor::buildTypeSpecific()
         x->setPadding(static_cast<float>(v));
         notifyChanged();
     });
+
+    // Placement
+    addHeader(QStringLiteral("Placement"));
+
+    m_chkPlaced = makeCheckRow(QStringLiteral("Place by offset and size"));
+    m_chkPlaced->setToolTip(QStringLiteral(
+        "Draw the light at the offset and size below, inside a panel as tall as the width "
+        "times the padding, fading between its colors. Off: the light fills the item."));
+    connect(m_chkPlaced, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setPlaced(on);
+        // The padding changes unit with the look, so it starts again at
+        // that look's default.
+        x->setPadding(on ? kLedThetisDefaults.padding : kLedFillDefaultPadding);
+        if (on && x->blink() && x->pulsate()) {
+            x->setLightMode(LEDItem::LightMode::Blink);
+        }
+        applyPlacedRows(on);
+        beginProgrammaticUpdate();
+        m_spinPadding->setValue(static_cast<double>(x->padding()));
+        m_chkPulsate->setChecked(x->pulsate());
+        endProgrammaticUpdate();
+        notifyChanged();
+    });
+
+    // Offset and size range from Thetis setup.designer.cs:63894-63974 [v2.10.3.15]
+    // (nudLedIndicator_xSize / xOffset: -10..10, step 0.001)
+    auto offsetSizeRow = [this](const QString& label, const QString& tip,
+                                void (LEDItem::*setter)(float)) {
+        QDoubleSpinBox* spin = makeDoubleRow(label, kLedMinOffsetSize, kLedMaxOffsetSize, 0.001, 3);
+        spin->setToolTip(tip);
+        connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                [this, setter](double v) {
+            if (isProgrammaticUpdate()) { return; }
+            LEDItem* x = qobject_cast<LEDItem*>(m_item);
+            if (!x) { return; }
+            (x->*setter)(static_cast<float>(v));
+            notifyChanged();
+        });
+        return spin;
+    };
+    m_spinOffsetX = offsetSizeRow(QStringLiteral("Offset X"),
+        QStringLiteral("Center of the light from the left, as a ratio of the item's width."),
+        &LEDItem::setOffsetX);
+    m_spinOffsetY = offsetSizeRow(QStringLiteral("Offset Y"),
+        QStringLiteral("Center of the light from the top, as a ratio of the item's width."),
+        &LEDItem::setOffsetY);
+    m_spinSizeX = offsetSizeRow(QStringLiteral("Size X"),
+        QStringLiteral("Width of the light as a ratio of the item's width."),
+        &LEDItem::setSizeX);
+    m_spinSizeY = offsetSizeRow(QStringLiteral("Size Y"),
+        QStringLiteral("Height of the light as a ratio of the item's width."),
+        &LEDItem::setSizeY);
+
+    m_chkShowTrue = makeCheckRow(QStringLiteral("Show when true"));
+    m_chkShowTrue->setToolTip(QStringLiteral("Draw the light while it is true."));
+    connect(m_chkShowTrue, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setShowTrue(on);
+        notifyChanged();
+    });
+
+    m_chkShowFalse = makeCheckRow(QStringLiteral("Show when false"));
+    m_chkShowFalse->setToolTip(QStringLiteral("Draw the light while it is false."));
+    connect(m_chkShowFalse, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setShowFalse(on);
+        notifyChanged();
+    });
+
+    m_chkProcessWhenHidden = makeCheckRow(QStringLiteral("Process when hidden"));
+    m_chkProcessWhenHidden->setToolTip(QStringLiteral(
+        "Keep working out whether the light is true while its container is hidden."));
+    connect(m_chkProcessWhenHidden, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setProcessWhenHidden(on);
+        notifyChanged();
+    });
+
+    // No TX when true / false (Thetis chkLed_notx_true and chkLed_notx_false,
+    // setup.designer.cs:3995-3996 [v2.10.3.15]; LEDItem::setNoTx and
+    // setNoTxFalse).
+    m_chkNoTxTrue = makeCheckRow(QStringLiteral("Stop transmitting when the LED turns on"));
+    m_chkNoTxTrue->setObjectName(QStringLiteral("ledNoTxTrue"));
+    m_chkNoTxTrue->setToolTip(QStringLiteral(
+        "While this radio transmits, transmitting stops each time the LED turns on."));
+    connect(m_chkNoTxTrue, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setNoTx(on);
+        notifyChanged();
+    });
+
+    m_chkNoTxFalse = makeCheckRow(QStringLiteral("Stop transmitting when the LED turns off"));
+    m_chkNoTxFalse->setObjectName(QStringLiteral("ledNoTxFalse"));
+    m_chkNoTxFalse->setToolTip(QStringLiteral(
+        "While this radio transmits, transmitting stops each time the LED turns off."));
+    connect(m_chkNoTxFalse, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setNoTxFalse(on);
+        notifyChanged();
+    });
+    // The two long labels wrap rather than widen the label column.
+    for (QWidget* field : {static_cast<QWidget*>(m_chkNoTxTrue), static_cast<QWidget*>(m_chkNoTxFalse)}) {
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { label->setWordWrap(true); }
+    }
+    // They read alike: both take the narrowest width at which each wraps
+    // to two lines, so they wrap at the same word and line up. The width is
+    // measured again whenever their font or style changes (the look).
+    {
+        QList<QLabel*> stopLabels;
+        for (QWidget* field : {static_cast<QWidget*>(m_chkNoTxTrue), static_cast<QWidget*>(m_chkNoTxFalse)}) {
+            if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { stopLabels.append(label); }
+        }
+        auto* sync = new SameWrapWidth(stopLabels, this);
+        sync->update();
+    }
+
+    // Condition, beside the thresholds (Thetis txtLedIndicator_condition).
+    addHeader(QStringLiteral("Condition"));
+
+    m_editCondition = new QLineEdit(this);
+    m_editCondition->setObjectName(QStringLiteral("ledCondition"));
+    m_editCondition->setPlaceholderText(QStringLiteral("%signal_strength% > -73"));
+    m_editCondition->setToolTip(QStringLiteral(
+        "When to light the LED, worked out from readings, for example "
+        "%swr% >= 2 or (%swr% >= 2) && !(%mic% < -20). "
+        "Use numbers, \"text\", %names%, + - * /, < <= > >= == !=, && || ! and brackets. "
+        "Names are the readings of this slice, the clock values, and data "
+        "source values written %ABCD.name%. Leave it empty to use the thresholds."));
+    addRow(QStringLiteral("Condition"), m_editCondition);
+    connect(m_editCondition, &QLineEdit::textEdited, this, [this](const QString& text) {
+        if (isProgrammaticUpdate()) { return; }
+        LEDItem* x = qobject_cast<LEDItem*>(m_item);
+        if (!x) { return; }
+        x->setCondition(text);
+        refreshConditionRows();
+        notifyChanged();
+    });
+
+    // The reason the condition cannot be worked out; empty while it can.
+    // The LED stays false while there is one.
+    m_lblConditionError = new QLabel(this);
+    m_lblConditionError->setWordWrap(true);
+    m_lblConditionError->setStyleSheet(QStringLiteral("QLabel { color: #ff8060; }"));
+    m_lblConditionError->setToolTip(QStringLiteral(
+        "While the condition has a mistake the LED stays false."));
+    addRow(QString(), m_lblConditionError);
 
     // Thresholds
     addHeader(QStringLiteral("Thresholds"));
@@ -218,6 +606,10 @@ void LedItemEditor::buildTypeSpecific()
         x->setRedThreshold(v);
         notifyChanged();
     });
+
+    for (QDoubleSpinBox* spin : {m_spinGreenThreshold, m_spinAmberThreshold, m_spinRedThreshold}) {
+        spin->setToolTip(QStringLiteral("Used while the condition is empty."));
+    }
 }
 
 } // namespace NereusSDR

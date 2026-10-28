@@ -1,5 +1,23 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-26 - Availability of a meter entry is judged on the entry (a
+//                 stored BarPreset ADC maximum bar shows unavailable with its
+//                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - A stack holding one button grid fits its rows to the
+//                 view, so the last shown row is never cut in half; the
+//                 preferred height still counts the full rows. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX for widget-factory rows: each row
+//                 gets ContentFade's overlay, setTransmitting hands it the
+//                 transmit state (a row created later starts in it), and a
+//                 row on another session's radio stays in the receive
+//                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - A meter item's own config edits (ContentConfigNotifier,
+//                 the other buttons' reorder) are committed to its entry
+//                 the same way. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 - An applet whose capability is off (Power Genius, Tuner
 //                 Genius, RF-Kit, RADE) stays in its place grayed, with its
 //                 reason, instead of being hidden: disabled, never hidden.
@@ -92,6 +110,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QTimer>
 #include <QSet>
 #include "ContainerContentRegistry.h"
+#include "ContentFade.h"
 #include "core/LogCategories.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
@@ -113,6 +132,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 namespace NereusSDR {
 namespace {
 int preferredWidgetHeight(const QWidget* widget, int width)
@@ -333,7 +353,7 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
             }
         }
         if (comparable!=previous || effectiveContext(document,entry) != effectiveContext(m_document,prior)) { return true; }
-        if (m_registry.isAvailable(entry.typeId) !=
+        if (m_registry.isAvailable(entry) !=
             std::any_of(m_rows.cbegin(),m_rows.cend(),[&](const EntryRow& row){ return row.entryId==entry.id && row.effectiveVisible; }) && entry.visible) { return true; }
     }
     return false;
@@ -438,7 +458,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     };
     for (const auto& entry : document.contents) {
         EntryRow row; row.entryId = entry.id; row.context = effectiveContext(document, entry);
-        row.effectiveVisible = entry.visible && m_registry.isAvailable(entry.typeId);
+        row.effectiveVisible = entry.visible && m_registry.isAvailable(entry);
         row.presentationVisible = row.effectiveVisible;
         if (entry.typeId.startsWith("applet:")) {
             finishRun();
@@ -467,7 +487,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         // A hidden/unavailable record is still an ordered insertion boundary.
         if (!row.effectiveVisible) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry.typeId), m_body);
+            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry), m_body);
             label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
             row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
@@ -481,6 +501,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 widget->setProperty("containerSourceContext", row.context);
                 widget->setProperty(WorkspacePreview::kSkipProperty, true);
                 connectConfigNotifier(widget, entry.id);
+                attachFade(widget, effective, row.context);
                 row.widget = widget; m_layout->addWidget(widget);
                 widget->setVisible(row.effectiveVisible);
                 m_rows.append(row); continue;
@@ -510,6 +531,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         }
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
+        connectItemConfigNotifier(item, entry.id);
         int height = isSingleContainerControl(item) ? singleContainerControlSize().height() : 72;
         const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
         item->setProperty("containerStackGrid",!stackSize.isEmpty());
@@ -568,7 +590,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
     m_canvas->show();
     for(const auto& entry:document.contents) {
         EntryRow row;row.entryId=entry.id;row.context=effectiveContext(document,entry);
-        row.effectiveVisible=entry.visible && m_registry.isAvailable(entry.typeId);
+        row.effectiveVisible=entry.visible && m_registry.isAvailable(entry);
         const EntryRow* old=nullptr;
         for(const auto& candidate:oldRows) {if(candidate.entryId==entry.id) {old=&candidate;break;}}
         if(entry.typeId.startsWith("applet:")) {
@@ -601,6 +623,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     widget->setProperty("containerSourceContext",row.context);
                     widget->setProperty(WorkspacePreview::kSkipProperty,true);
                     connectConfigNotifier(widget,entry.id);
+                    attachFade(widget,effective,row.context);
                     widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
                     widget->setProperty("freeCanvasHint",widget->sizeHint());
                     widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
@@ -618,6 +641,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 if(auto* item=m_registry.createMeterItem(entry,meter.get())) {
                     item->clearStackMetadata();item->setRect(0,0,1,1);
                     item->setProperty("containerEntryId",entry.id);item->setProperty("containerSourceContext",row.context);
+                    connectItemConfigNotifier(item,entry.id);
                     QSize minimum = isSingleContainerControl(item) ? singleContainerControlMinimum() : QSize(24,24);
                     if(auto* face=qobject_cast<BarPresetItem*>(item)) {minimum=face->minimumFaceSize();}
                     if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
@@ -640,7 +664,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             // Workspace preview: as above, a factory widget is not the label.
             if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
-            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
+            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry));}
         }
         // A singleton view is grayed when unavailable, never hidden for it.
         if(!row.widget->property("singletonTypeId").toString().isEmpty()) {presentAvailability(row.widget,m_registry,entry.typeId);}
@@ -676,6 +700,55 @@ void ContainerContentHost::connectConfigNotifier(QWidget* widget, const QString&
         const ArrangeResult result = m_arrange->setEntryConfig(entryId, config);
         if (!result.ok) { qCWarning(lcContainer) << "entry" << entryId << "config not saved:" << result.error; }
     }, Qt::QueuedConnection);
+}
+void ContainerContentHost::connectItemConfigNotifier(MeterItem* item, const QString& entryId)
+{
+    auto* notifier = item->findChild<ContentConfigNotifier*>(QString(), Qt::FindDirectChildrenOnly);
+    if (!notifier) { return; }
+    // Queued, as for a widget: the commit reconciles this host, which
+    // rebuilds the item, and must not run inside the item's own mouse
+    // handling. A host with no arrange controller holds a copy (a
+    // settings preview): the edit stays on that copy.
+    connect(notifier, &ContentConfigNotifier::configEdited, this, [this, entryId](const QJsonObject& edited) {
+        if (!m_arrange) { return; }
+        for (const ContentEntry& entry : std::as_const(m_document.contents)) {
+            if (entry.id != entryId) { continue; }
+            QJsonObject config = entry.config;
+            for (auto it = edited.constBegin(); it != edited.constEnd(); ++it) { config.insert(it.key(), it.value()); }
+            const ArrangeResult result = m_arrange->setEntryConfig(entryId, config);
+            if (!result.ok) { qCWarning(lcContainer) << "entry" << entryId << "config not saved:" << result.error; }
+            return;
+        }
+    }, Qt::QueuedConnection);
+}
+void ContainerContentHost::attachFade(QWidget* widget, const ContentEntry& entry, const QJsonObject& context)
+{
+    // The host builds live content only; the settings preview builds its
+    // own (ContainerPreviewWidget).
+    ContentFade::attach(widget, entry.config, ContentRenderMode::Live);
+    // Created while transmitting, it starts in the transmit look.
+    ContentFade::setTransmitting(widget, rowTransmitting(context));
+}
+bool ContainerContentHost::foreignSession(const QJsonObject& context, const QString& localSessionId)
+{
+    const QString session = context.value(QStringLiteral("sessionId")).toString();
+    return !session.isEmpty() && session != localSessionId;
+}
+bool ContainerContentHost::rowTransmitting(const QJsonObject& context) const
+{
+    if (!m_transmitting) { return false; }
+    return !foreignSession(context, m_sessionIdSource ? m_sessionIdSource() : QString());
+}
+void ContainerContentHost::setSessionIdSource(std::function<QString()> source)
+{
+    m_sessionIdSource = std::move(source);
+}
+void ContainerContentHost::setTransmitting(bool transmitting)
+{
+    m_transmitting = transmitting;
+    for (const EntryRow& row : std::as_const(m_rows)) {
+        if (row.widget && !row.item) { ContentFade::setTransmitting(row.widget, rowTransmitting(row.context)); }
+    }
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 {
@@ -931,8 +1004,27 @@ void ContainerContentHost::projectStackRows()
             fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
         }
     }
+    // A stack holding one button grid and nothing else, not auto height:
+    // the grid's rows fit the view (containerStackGridHeight), so its last
+    // shown row is never cut in half. Auto height keeps the preferred rows,
+    // the height it grows to.
+    int fittedGridHeight = -1;
+    if (!m_document.autoHeight) {
+        const EntryRow* only = nullptr;
+        int shown = 0;
+        for (const auto& row : std::as_const(m_rows)) {
+            if (row.widget && row.presentationVisible) { ++shown; only = &row; }
+        }
+        if (shown == 1 && only->item && only->item->property("containerStackGrid").toBool()) {
+            const int rows = containerStackButtonRows(qobject_cast<const ButtonBoxItem*>(only->item.data()));
+            const int available = m_scroll->viewport()->height() - margins.top() - margins.bottom()
+                - (m_bannerMenu ? 22 : 0) - headerGap;
+            fittedGridHeight = containerStackGridHeight(rows, available);
+            fixedHeight += fittedGridHeight - only->baseHeight;
+        }
+    }
     // Workspace preview: header slots still need placing without bar rows.
-    if (responsiveBaseHeight <= 0 && headerGap == 0) { return; }
+    if (responsiveBaseHeight <= 0 && headerGap == 0 && fittedGridHeight < 0) { return; }
     double scale = 1.0;
     if (responsiveBaseHeight > 0) {
         // Workspace preview, auto height: the bars scale by the width the
@@ -966,6 +1058,9 @@ void ContainerContentHost::projectStackRows()
         for (auto& row : m_rows) {
             if (row.widget != meter || !row.item) { continue; }
             int height = row.baseHeight;
+            if (fittedGridHeight > 0 && row.item->property("containerStackGrid").toBool()) {
+                height = fittedGridHeight;
+            }
             if (qobject_cast<BarPresetItem*>(row.item.data())) {
                 responsiveOffset += row.baseHeight * scale;
                 const int bottom = qRound(responsiveOffset);
@@ -1057,6 +1152,14 @@ int ContainerContentHost::preferredContentHeight() const
         }
         height += m_document.layout == ContentLayout::VerticalStack ? preferredWidgetHeight(row.widget, usableWidth)
             : qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(), row.widget->maximumHeight());
+    }
+    // A grid fitted to the view (projectStackRows) still prefers its full
+    // rows: the strip and auto height size the container from this.
+    for (const auto& row : m_rows) {
+        if (m_document.layout == ContentLayout::VerticalStack && row.widget && row.presentationVisible && row.item
+            && row.item->property("containerStackGrid").toBool()) {
+            height += row.baseHeight - row.height;
+        }
     }
     return qMax(24, height + (m_bannerMenu ? 22 : 0));
 }

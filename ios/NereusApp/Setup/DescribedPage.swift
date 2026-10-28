@@ -6,6 +6,7 @@ import NereusMirror
 import SwiftUI
 import UniformTypeIdentifiers
 import ImageIO
+import UIKit
 
 /// A page the Core describes (R-IOS-18): its sections and controls in the
 /// desktop's order, with the Core's labels, ranges, units and help. Each
@@ -20,6 +21,9 @@ struct DescribedPage: View {
     /// Calibration's Level Cal group, on that page only (nil elsewhere).
     var levelCal: LevelCalModel?
     var main: MainScreenModel? = nil
+    /// Display's version 29 pages: the pans the strip edits (``SetupRouter/displayScope``)
+    /// and the radio's pan limit; nil elsewhere.
+    var displayStrip: DisplayStripContext? = nil
     @State var profileOwner = UUID()
     @State private var paPresentation: UUID?
 
@@ -32,11 +36,42 @@ struct DescribedPage: View {
         }
     }
 
+    /// Display at version 29: the desktop's eight pages with this phone's rows on them.
+    private var displayV29: Bool {
+        category == "display" && (pages.categories[category]?.version ?? 0) >= SetupTree.displayPagesVersion
+    }
+
+    /// The page's sections as drawn: on Display at version 29 without the
+    /// desktop's thread priority and monitor rate (spec section 7.2).
+    private func sections(of page: SetupDescription.Page)
+        -> [(section: SetupDescription.Section, controls: [SetupDescription.Control])] {
+        guard displayV29 else { return page.sections.map { ($0, $0.controls) } }
+        return page.sections.compactMap { section in
+            let kept = section.controls.filter { control in
+                guard case .phone(let key)? = control.binding else { return true }
+                return !DisplayPhoneGroups.leftOff.contains(key)
+            }
+            // A group left with none of its rows is left out with them.
+            return kept.isEmpty && !section.controls.isEmpty ? nil : (section, kept)
+        }
+    }
+
+    /// This phone's groups on this page, placed `where`.
+    private func phoneGroups(_ placement: DisplayPhoneGroups.Placement) -> [DisplayPhoneGroups.Group] {
+        // Appearance holds this phone's strongest-signal color beside the
+        // spectrum's, once the Core's Display pages are version 29.
+        let appearanceV29 = category == "appearance"
+            && (pages.categories["display"]?.version ?? 0) >= SetupTree.displayPagesVersion
+        guard displayV29 || appearanceV29 else { return [] }
+        return DisplayPhoneGroups.groups(on: pageId).filter { $0.placement == placement }
+    }
+
     var body: some View {
         if let page = pages.page(pageId, in: category) {
             SetupPageContainer {
                 if let main, !PhoneSetupKeys.pictureFields(on: page).isEmpty {
-                    DisplayV29ScopeHeader(main: main, page: page)
+                    DisplayV29Strip(main: main, slices: main.slices, stack: main.panStack, page: page,
+                                    context: displayStrip ?? .following(main))
                 }
                 if let main, page.sections.flatMap(\.controls).contains(where: { $0.perBand != nil }) {
                     DisplayV29BandHeader(main: main)
@@ -51,13 +86,19 @@ struct DescribedPage: View {
                         Text(LevelCalSection.title)
                     }
                 }
-                ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in
+                ForEach(Array(sections(of: page).enumerated()), id: \.offset) { _, entry in
+                    let section = entry.section
                     let group = levelCal.flatMap { section.title == LevelCalSection.title ? $0 : nil }
+                    if let main {
+                        ForEach(phoneGroups(.before(section.title)), id: \.title) { phone in
+                            DisplayPhoneGroupSection(group: phone, main: main)
+                        }
+                    }
                     SetupPanelSection {
                         if let group {
                             LevelCalSection.Top(model: group)
                         }
-                        ForEach(section.controls, id: \.id) { control in
+                        ForEach(entry.controls, id: \.id) { control in
                             if let main, control.owner != nil {
                                 DisplayV29Control(control: control, category: category, dispatcher: dispatcher,
                                     main: main, band: main.band, specialized: specialized, profileOwner: profileOwner)
@@ -69,6 +110,11 @@ struct DescribedPage: View {
                         if let group {
                             LevelCalSection.Run(model: group)
                         }
+                        if let main {
+                            ForEach(phoneGroups(.into(section.title)), id: \.title) { phone in
+                                DisplayPhoneGroupRows(group: phone, main: main)
+                            }
+                        }
                         if let note = section.note {
                             Text(note).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                         }
@@ -77,6 +123,16 @@ struct DescribedPage: View {
                             SetupPanelTitle(title: section.title,
                                             tag: section.owner.map { $0 == .station ? .core : .thisPhone })
                         }
+                    }
+                    if let main {
+                        ForEach(phoneGroups(.after(section.title)), id: \.title) { phone in
+                            DisplayPhoneGroupSection(group: phone, main: main)
+                        }
+                    }
+                }
+                if let main {
+                    ForEach(phoneGroups(.end), id: \.title) { phone in
+                        DisplayPhoneGroupSection(group: phone, main: main)
                     }
                 }
             }
@@ -115,14 +171,29 @@ struct DescribedPage: View {
 }
 
 
-/// The accepted scope context and row own indicators use the actual
-/// singlePan typed store. Disabled stored preferences retain their own dot.
-private struct DisplayV29ScopeHeader: View {
-    @ObservedObject var main: MainScreenModel
-    let page: SetupDescription.Page
-    private var fields: Set<String> { PhoneSetupKeys.pictureFields(on: page) }
-    private var own: Set<String> { main.ownDisplayFields(among: fields) }
-    private var ownCount: Int {
+/// Where Display's strip reads and keeps its choice: the Setup router's
+/// scope (``SetupRouter/displayScope``), the radio's pan limit, and
+/// whether this device is an iPhone.
+struct DisplayStripContext {
+    let scope: Binding<MainScreenModel.DisplayEditScope>
+    let panLimit: Int
+    let isPhone: Bool
+
+    /// A strip that keeps its choice on the model itself, for a page shown
+    /// outside the Setup tab.
+    @MainActor
+    static func following(_ main: MainScreenModel) -> DisplayStripContext {
+        DisplayStripContext(scope: Binding(get: { main.displayEditScope }, set: { main.displayEditScope = $0 }),
+                            panLimit: 1, isPhone: UIDevice.current.userInterfaceIdiom == .phone)
+    }
+}
+
+/// How many rows of `page` keep their own value for a pan, given the
+/// fields it keeps (`own`): each pan-owned row of this phone's, and the
+/// background picture.
+@MainActor
+enum DisplayPageOwnRows {
+    static func count(on page: SetupDescription.Page, own: Set<String>) -> Int {
         var count = 0
         for control in page.sections.flatMap(\.controls) {
             guard control.owner == .pan, control.perBand == nil, control.kind != .button,
@@ -132,32 +203,142 @@ private struct DisplayV29ScopeHeader: View {
         if own.contains("backgroundImagePath") { count += 1 }
         return count
     }
+}
+
+/// The pans open on this device, each with the letters of its slices:
+/// Pan 1, the band, and on the iPad every pan open below it (each pan's
+/// own slices, by the Core's pan key; Pan 1 also those on no pan).
+@MainActor
+enum DisplayStripPans {
+    static func slicesByPan(_ stack: PanStackModel) -> [PanIdentity: [String]] {
+        var byPan: [PanIdentity: [String]] = [:]
+        for pan in stack.open {
+            byPan[pan] = stack.band(for: pan).slices.entries
+                .filter { entry in
+                    entry.panKey.flatMap(PanIdentity.init(corePanKey:)).map { $0 == pan } ?? (pan == .first)
+                }
+                .map(\.slice.letter)
+        }
+        return byPan
+    }
+}
+
+/// The strip on a Display page, live on the model: the pans' own rows on
+/// this page, each open pan's slices, and the choice carried to the model
+/// so every row edits the pans chosen.
+private struct DisplayV29Strip: View {
+    @ObservedObject var main: MainScreenModel
+    @ObservedObject var slices: BandSlicesModel
+    @ObservedObject var stack: PanStackModel
+    let page: SetupDescription.Page
+    let context: DisplayStripContext
+    private var fields: Set<String> { PhoneSetupKeys.pictureFields(on: page) }
+
+    private var slicesByPan: [PanIdentity: [String]] { DisplayStripPans.slicesByPan(stack) }
+
+    var body: some View {
+        DisplaySettingsStrip(
+            pageId: page.id, scope: context.scope, panLimit: context.panLimit, isPhone: context.isPhone,
+            slicesByPan: slicesByPan,
+            ownFieldCount: { pan in
+                DisplayPageOwnRows.count(on: page, own: main.ownDisplayFields(among: fields, pan: pan))
+            },
+            reset: { pan in main.resetDisplayPicture(fields: fields, pan: pan) },
+            useOnAll: { pan in main.copyOwnDisplayPictureToMaster(fields: fields, pan: pan) })
+        .onAppear { follow(context.scope.wrappedValue) }
+        .onChange(of: context.scope.wrappedValue) { _, scope in follow(scope) }
+    }
+
+    /// Every row on the page edits the pans the strip has chosen.
+    private func follow(_ scope: MainScreenModel.DisplayEditScope) {
+        if main.displayEditScope != scope {
+            main.displayEditScope = scope
+        }
+    }
+}
+
+/// One of this phone's groups on a Display page (``DisplayPhoneGroups``).
+private struct DisplayPhoneGroupSection: View {
+    let group: DisplayPhoneGroups.Group
+    let main: MainScreenModel
+
     var body: some View {
         SetupPanelSection {
-            SheetGrid(columns: 2) {
-                PanelButton(label: "All pans", lit: main.displayEditScope == .all, style: .blue) {
-                    main.displayEditScope = .all
-                }
-                PanelButton(label: "Pan 1", lit: main.displayEditScope == .pan, style: .blue) {
-                    main.displayEditScope = .pan
+            DisplayPhoneGroupRows(group: group, main: main)
+        } header: {
+            SetupPanelTitle(title: group.title, tag: group.tag)
+        }
+        .accessibilityIdentifier("phoneGroup." + group.title)
+    }
+}
+
+/// The rows of one of this phone's groups, as the older "On this phone"
+/// page drew them, each with its own words and reasons.
+private struct DisplayPhoneGroupRows: View {
+    let group: DisplayPhoneGroups.Group
+    @ObservedObject var main: MainScreenModel
+    @ObservedObject var display: DisplaySheetModel
+    @ObservedObject var pan: PanSheetModel
+    @ObservedObject var band: BandModel
+
+    init(group: DisplayPhoneGroups.Group, main: MainScreenModel) {
+        self.group = group
+        self.main = main
+        display = main.display
+        pan = main.pan
+        band = main.band
+    }
+
+    var body: some View {
+        ForEach(group.rows, id: \.self) { row in
+            self.row(row)
+        }
+    }
+
+    @ViewBuilder private func row(_ id: String) -> some View {
+        switch id {
+        case "setupSpectrumHeight":
+            SetupNumberRow(title: "Spectrum height", value: display.spectrumHeight,
+                           range: BandDisplaySettings.spectrumShareRange, step: 5, unit: "%",
+                           id: "setupSpectrumHeight") { display.setSpectrumHeight($0) }
+        case "extendedView":
+            Toggle("Extended view", isOn: Binding(get: { pan.extendedViewOn }, set: { _ in pan.toggleExtendedView() }))
+                .disabled(!pan.extendedViewAvailable)
+                .accessibilityIdentifier("extendedView")
+            Text(pan.extendedViewAvailable ? "The radio's full width either side of the band."
+                 : "Extended view: \(CatalogFeed.needsNewerCoreText)")
+                .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
+        case "setupCtun":
+            SetupSwitchRow(title: "CTUN", detail: display.ctun ? DisplaySheetModel.ctunOnNote : DisplaySheetModel.ctunOffNote,
+                           isOn: Binding(get: { display.ctun }, set: { display.setCtun($0) }), id: "setupCtun")
+        case "bandPlanPicker":
+            BandPlanPicker(model: display)
+        case "bandPlanSize":
+            Picker("Size", selection: Binding(get: { band.settings.bandPlanSize },
+                                              set: { display.setBandPlanSize($0) })) {
+                ForEach(BandPlanSize.allCases, id: \.self) { size in
+                    Text(size.label).tag(size)
                 }
             }
-            .accessibilityLabel("Display settings for")
-            .accessibilityIdentifier("displayScope")
-            if main.displayEditScope == .pan {
-                Text("\(ownCount) own value\(ownCount == 1 ? "" : "s") on this page")
-                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
-                    .accessibilityIdentifier("displayPageOwnCount")
-                Button("Follow All pans on this page") { main.resetDisplayPicture(fields: fields) }
-                    .buttonStyle(SetupButtonStyle())
-                    .disabled(own.isEmpty).accessibilityIdentifier("displayPageFollow")
-                Button("Copy own values to All pans") { _ = main.copyOwnDisplayPictureToMaster(fields: fields) }
-                    .buttonStyle(SetupButtonStyle())
-                    .disabled(own.isEmpty).accessibilityIdentifier("displayPageCopy")
-            } else {
-                Text("Changes here go to every pan. A pan's own value for the changed row is cleared.")
-                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
-            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Band plan size")
+            .accessibilityIdentifier("bandPlanSize")
+            Text(DisplayOnThisPhonePage.planNote)
+                .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
+        case "setupDuplex":
+            SetupSwitchRow(title: "DUP", detail: display.duplexNote,
+                           isOn: Binding(get: { display.duplex && display.duplexAvailable },
+                                         set: { display.setDuplex($0) }),
+                           enabled: display.duplexAvailable, id: "setupDuplex")
+        case "peakValueColour":
+            ColorPicker("Strongest signal",
+                        selection: Binding(get: { BandColours.withAlpha(main.displayEditingSettings.peakValueColour) },
+                                           set: { colour in
+                main.changeDisplay { $0.peakValueColour = DisplayOnThisPhonePage.hexWithAlpha(colour) }
+            }), supportsOpacity: true)
+            .accessibilityIdentifier("peakValueColour")
+        default:
+            EmptyView()
         }
     }
 }
@@ -211,16 +392,18 @@ private struct DisplayV29Control: View {
         self.profileOwner = profileOwner
         readouts = band.effectiveReadouts
     }
-    private var own: Bool {
-        guard main.displayEditScope == .pan, control.owner == .pan, control.perBand == nil,
-              control.kind != .button, case .phone(let key)? = control.binding else { return false }
-        return !main.ownDisplayFields(among: PhoneSetupKeys.displayFields(forPhoneKey: key)).isEmpty
+    /// The pan whose own value this row holds, marked with the amber dot.
+    private var ownPan: PanIdentity? {
+        guard case .pan(let pan) = main.displayEditScope, control.owner == .pan, control.perBand == nil,
+              control.kind != .button, case .phone(let key)? = control.binding else { return nil }
+        return main.ownDisplayFields(among: PhoneSetupKeys.displayFields(forPhoneKey: key), pan: pan).isEmpty
+            ? nil : pan
     }
     var body: some View {
         HStack(spacing: 8) {
-            if own {
-                Circle().fill(WorkspacePalette.accentFill).frame(width: 5, height: 5)
-                    .accessibilityLabel("Pan 1's own value")
+            if let pan = ownPan {
+                Circle().fill(WorkspacePalette.amberText).frame(width: 5, height: 5)
+                    .accessibilityLabel("\(pan.title)'s own value")
                     .accessibilityIdentifier(control.id + ".own")
             }
             DescribedControl(control: control, category: category, dispatcher: dispatcher,

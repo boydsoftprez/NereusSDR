@@ -12,6 +12,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The dynamic shows and hides of PS-A, the holder line and
+//                 Take transmit go through each row's parts, so a container
+//                 copy that hides one keeps it hidden. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the CW layer (R-CW-42): MON and its level show
+//               and set cwSidetone and monitorVolume in CW; VOX, LEV, EQ,
+//               CFC and TX BW are disabled with "Not used in CW: the radio
+//               makes the signal." through their own saved keys, between the
+//               remote layers and the receive-only lock. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-23 - A TX Keying copy can hide its slice indicators.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-21 - Copies of a row carry the gates, follow the Core's 2-TONE
@@ -38,6 +48,8 @@
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - CW final correction F9: radio-keyer badge in CW.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -276,6 +288,12 @@
 //   2026-10-21  J.J. Boyd (KG4VCF): the drive source gate sets a grayed
 //               power slider's accessible description to its reason, as
 //               the transmit gates do. AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the MOX tooltip in CWL and CWU is the normal
+//               one (R-CW-05). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): in CW, MON (cwSidetone)
+//               is gated on the CW settings (transmitSettingsVersion 16)
+//               with their reason. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 //=================================================================
@@ -888,6 +906,17 @@ QString TxApplet::micSourceBadgeStyle(bool amber)
 void TxApplet::refreshMicSourceBadge()
 {
     if (!m_model || !m_micSourceBadge) { return; }
+    // CW final correction F9, approved mockup: the radio makes the CW
+    // signal. Display its keyer without changing the selected mic source.
+    if (m_cwMode) {
+        m_micSourceBadge->setText(QStringLiteral("Radio keyer"));
+        m_micSourceBadge->setToolTip(cwNotUsedReason());
+        if (m_micSourceBadgeAmber) {
+            m_micSourceBadgeAmber = false;
+            m_micSourceBadge->setStyleSheet(micSourceBadgeStyle(false));
+        }
+        return;
+    }
     MicSource source = m_model->transmitModel().micSource();
     QString reason;
     if (!m_model->ownsLocalDsp()) {
@@ -1043,9 +1072,10 @@ void TxApplet::syncFromModel()
 
     // MON button state (J.3 Phase 3M-1b)
     // monEnabled intentionally loads as OFF — plan §0 row 9 safety rule.
+    // CW transmit (R-CW-42): the CW sidetone switch in CW.
     for (TxMonitorSection* s : allMonitorSections()) {
         QSignalBlocker bm(s->monButton());
-        s->monButton()->setChecked(tx.monEnabled());
+        s->monButton()->setChecked(m_cwMode ? tx.cwSidetone() : tx.monEnabled());
     }
 
     // Monitor volume slider (J.3 Phase 3M-1b)
@@ -1439,14 +1469,13 @@ QString TxApplet::tooltipForMode(DSPMode mode)
     case DSPMode::AM:
     case DSPMode::SAM:
     case DSPMode::DSB:
+    // CW transmit (R-CW-05): BandPlanGuard lets CWL and CWU key.
+    case DSPMode::CWL:
+    case DSPMode::CWU:
         return QStringLiteral("Manual transmit (MOX)");
 
     // R-R3-17 / R-R3-21: the same user words BandPlanGuard refuses with.
-    // CW transmit is Phase 3M-2; FM transmit waits on pre-emphasis (Phase
-    // 3M-3b). DRM names DRM.
-    case DSPMode::CWL:
-    case DSPMode::CWU:
-        return QStringLiteral("CW transmit is not available on this Core");
+    // FM transmit waits on pre-emphasis (Phase 3M-3b). DRM names DRM.
 
     case DSPMode::FM:
         return QStringLiteral("FM transmit is not available on this Core");
@@ -1564,8 +1593,11 @@ void TxApplet::refreshTxFilterStatus()
 void TxApplet::onMoxModeChanged(DSPMode mode)
 {
     // Task 16: the receive-only lock sits on top of the tooltip; take it
-    // off, change the tooltip under it, and put it back.
+    // off, change the tooltip under it, and put it back. CW transmit
+    // (R-CW-42): the CW layer under it follows the mode.
     removeReceiveOnlyLock();
+    removeCwLock();
+    m_cwMode = mode == DSPMode::CWL || mode == DSPMode::CWU;
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->moxButton()) { continue; }
         // Task 16 fix wave 2 (Minor 2): while the transmit-permission layer
@@ -1577,7 +1609,99 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
             s->moxButton()->setToolTip(tooltipForMode(mode));
         }
     }
+    applyCwLock();
     applyReceiveOnlyLock();
+    showMonitorForMode();
+    refreshMicSourceBadge();
+    // CW transmit (R-CW-48): MON's gate follows what it writes.
+    applyMonitorChainGate();
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (R-CW-42): the CW layer.
+//
+// In CW the radio's keyer makes the signal and no microphone audio is sent
+// (C1, C9), so VOX, LEV, EQ, CFC and TX BW do nothing; they are shown
+// disabled with the reason, never hidden. The layer keeps its own saved
+// keys, so leaving CW gives each control back exactly what the layers under
+// it had left it, whichever of them changed in between.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr auto kCwSavedTooltip = "TxAppletCwSavedTooltip";
+constexpr auto kCwSavedDescription = "TxAppletCwSavedDescription";
+constexpr auto kCwSavedEnabled = "TxAppletCwSavedEnabled";
+}
+
+QString TxApplet::cwNotUsedReason()
+{
+    return QStringLiteral("Not used in CW: the radio makes the signal.");
+}
+
+QList<QWidget*> TxApplet::cwLockedControls() const
+{
+    QList<QWidget*> controls;
+    for (const TxVoxSection* s : allVoxSections()) {
+        controls << s->button() << s->thresholdSlider() << s->holdSlider();
+    }
+    for (const TxChainSection* s : allChainSections()) {
+        controls << s->levButton() << s->eqButton() << s->cfcButton();
+    }
+    for (const TxFilterSection* s : allFilterSections()) {
+        controls << s->filterLowSpin() << s->filterHighSpin() << s->filterStatusLabel();
+    }
+    return controls;
+}
+
+void TxApplet::removeCwLock()
+{
+    for (QWidget* control : cwLockedControls()) {
+        if (!control || !control->property(kCwSavedTooltip).isValid()) {
+            continue;
+        }
+        control->setEnabled(control->property(kCwSavedEnabled).toBool());
+        control->setToolTip(control->property(kCwSavedTooltip).toString());
+        control->setAccessibleDescription(control->property(kCwSavedDescription).toString());
+        control->setProperty(kCwSavedTooltip, QVariant());
+        control->setProperty(kCwSavedDescription, QVariant());
+        control->setProperty(kCwSavedEnabled, QVariant());
+    }
+}
+
+void TxApplet::applyCwLock()
+{
+    if (!m_cwMode) {
+        return;
+    }
+    const QString reason = cwNotUsedReason();
+    for (QWidget* control : cwLockedControls()) {
+        if (!control || control->property(kCwSavedTooltip).isValid()) {
+            continue;
+        }
+        control->setProperty(kCwSavedTooltip, control->toolTip());
+        control->setProperty(kCwSavedDescription, control->accessibleDescription());
+        control->setProperty(kCwSavedEnabled, control->isEnabled());
+        control->setEnabled(false);
+        control->setToolTip(reason);
+        control->setAccessibleDescription(reason);
+    }
+}
+
+// C9: in CW, MON is the CW sidetone switch, as Thetis's MON drives the
+// sidetone in CW modes (console.cs:29056-29063 [v2.10.3.15]); its level is
+// the monitor level in every mode.
+void TxApplet::showMonitorForMode()
+{
+    if (!m_model) { return; }
+    const TransmitModel& tx = m_model->transmitModel();
+    const bool on = m_cwMode ? tx.cwSidetone() : tx.monEnabled();
+    const bool was = m_updatingFromModel;
+    m_updatingFromModel = true;
+    for (TxMonitorSection* s : allMonitorSections()) {
+        if (!s->monButton()) { continue; }
+        QSignalBlocker b(s->monButton());
+        s->monButton()->setChecked(on);
+    }
+    m_updatingFromModel = was;
 }
 
 // ---------------------------------------------------------------------------
@@ -2021,8 +2145,10 @@ void TxApplet::setTxProcessingPermitted(bool permitted, const QString& unavailab
 // ---------------------------------------------------------------------------
 void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableReason)
 {
-    // Task 16: the receive-only lock goes back on top afterwards.
+    // Task 16: the receive-only lock goes back on top afterwards, and the
+    // CW layer (R-CW-42) under it.
     removeReceiveOnlyLock();
+    removeCwLock();
     m_transmitPermitted = permitted;
     const QString reason = unavailableReason.isEmpty()
         ? tr("Transmit controls are unavailable until the Core confirms "
@@ -2053,18 +2179,21 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
         apply(s->twoToneButton());
     }
     // Task 16: the receive-only lock back on top (checkpoint join).
+    applyCwLock();
     applyReceiveOnlyLock();
 }
 
 void TxApplet::setVoxPermitted(bool permitted, const QString& reason)
 {
     removeReceiveOnlyLock();
+    removeCwLock();
     m_voxPermitted = permitted;
     m_voxReason = reason;
     for (TxVoxSection* s : allVoxSections()) {
         gateTransmitControl(s->button(), m_transmitPermitted && permitted,
                             m_transmitPermitted ? reason : m_transmitPermissionReason);
     }
+    applyCwLock();
     applyReceiveOnlyLock();
 }
 
@@ -2095,9 +2224,15 @@ void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unava
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
     m_transmitSettingsReason = reason;
+    // CW transmit (R-CW-42): the CW layer and the lock above it come off
+    // the TX BW cutoffs first and go back after.
+    removeReceiveOnlyLock();
+    removeCwLock();
     for (QWidget* control : transmitSettingsGatedControls()) {
         gateTransmitControl(control, permitted, reason);
     }
+    applyCwLock();
+    applyReceiveOnlyLock();
 }
 
 // R-R3-49 (parity Task 2): the rest of this applet's transmit settings. The
@@ -2111,14 +2246,45 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
     m_transmitChainSettingsReason = reason;
+    // CW transmit (R-CW-42): the CW layer and the lock above it come off
+    // the VOX levels and LEV, EQ and CFC first and go back after.
+    removeReceiveOnlyLock();
+    removeCwLock();
     for (QWidget* control : chainSettingsGatedControls()) {
         gateTransmitControl(control, permitted, reason);
     }
-    for (QWidget* control : monitorChainControls()) {
-        gateTransmitControl(control, permitted, reason);
-    }
+    applyCwLock();
+    applyReceiveOnlyLock();
+    applyMonitorChainGate();
     // Parity Task 32: the MON output pair also needs a Core that sends MON.
     applyMonitorOutputGate();
+}
+
+void TxApplet::setCwSettingsPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_cwSettingsPermitted = permitted;
+    m_cwSettingsReason = unavailableReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : unavailableReason;
+    applyMonitorChainGate();
+}
+
+// CW transmit (R-CW-48): in CW, MON writes cwSidetone, which came with
+// transmitSettingsVersion 16; outside CW it writes monEnabled (version 2).
+// The level is monitorVolume in both, on the chain gate.
+void TxApplet::applyMonitorChainGate()
+{
+    const bool chain = m_transmitChainSettingsPermitted;
+    const QString chainReason = m_transmitChainSettingsReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : m_transmitChainSettingsReason;
+    const bool mon = chain && (!m_cwMode || m_cwSettingsPermitted);
+    const QString monReason = !chain ? chainReason : m_cwSettingsReason;
+    // allMonitorSections skips a copy that is gone.
+    for (const TxMonitorSection* s : allMonitorSections()) {
+        gateTransmitControl(s->monButton(), mon, monReason);
+        gateTransmitControl(s->volumeSlider(), chain, chainReason);
+    }
 }
 
 // Remote-window parity Task 32 (R-IOS-13, R-R3-49): where MON plays is this
@@ -2171,7 +2337,9 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
     m_holderOnAir = holderOnAir;
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->takeTransmitButton()) { continue; }
-        s->takeTransmitButton()->setVisible(offered && !s->sliceIndicatorsHidden());
+        // Through the parts: a copy that hides its slice indicators keeps
+        // Take transmit hidden.
+        s->parts().setDynamicVisible(s->takeTransmitButton(), offered);
         s->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
         s->takeTransmitButton()->setStyleSheet(offered && holderOnAir
             ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
@@ -2191,7 +2359,7 @@ void TxApplet::setTransmitHolderText(const QString& text)
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->holderLabel()) { continue; }
         s->holderLabel()->setText(text);
-        s->holderLabel()->setVisible(!text.isEmpty() && !s->sliceIndicatorsHidden());
+        s->parts().setDynamicVisible(s->holderLabel(), !text.isEmpty());
     }
 }
 
@@ -2244,7 +2412,8 @@ void TxApplet::setBoardCapabilities(const NereusSDR::BoardCapabilities& caps)
     const bool boardUnknown = caps.board == HPSDRHW::Unknown;
     m_psBoardUnknown = boardUnknown && !caps.hasPureSignal;
     for (TxProcessingSection* s : allProcessingSections()) {
-        s->psaButton()->setVisible(caps.hasPureSignal || boardUnknown);
+        // Through the parts: a copy that hides PS-A keeps it hidden.
+        s->parts().setDynamicVisible(QStringLiteral("psa"), caps.hasPureSignal || boardUnknown);
     }
     syncPsaFromFacade();
 }
@@ -2379,12 +2548,25 @@ void TxApplet::wireMonitorSection(TxMonitorSection* s)
     auto* monitorVolumeSlider = s->volumeSlider();
     auto* monitorVolumeValue = s->volumeValue();
 
+    // CW transmit (R-CW-42, C9): in CW the button is the CW sidetone switch.
     connectRow(s, monBtn, &QPushButton::toggled, [this, &tx](bool on) {
         if (m_updatingFromModel) { return; }
-        tx.setMonEnabled(on);
+        if (m_cwMode) {
+            tx.setCwSidetone(on);
+        } else {
+            tx.setMonEnabled(on);
+        }
     });
 
     connectRow(s, &tx, &TransmitModel::monEnabledChanged, [this, monBtn](bool on) {
+        if (m_cwMode) { return; }
+        QSignalBlocker b(monBtn);
+        m_updatingFromModel = true;
+        monBtn->setChecked(on);
+        m_updatingFromModel = false;
+    });
+    connectRow(s, &tx, &TransmitModel::cwSidetoneChanged, [this, monBtn](bool on) {
+        if (!m_cwMode) { return; }
         QSignalBlocker b(monBtn);
         m_updatingFromModel = true;
         monBtn->setChecked(on);
@@ -3689,7 +3871,7 @@ void TxApplet::reapplyGates()
         const bool shown = !m_processingSection->psaButton()->isHidden();
         for (TxProcessingSection* s : allProcessingSections()) {
             if (s->psaButton()) {
-                s->psaButton()->setVisible(shown);
+                s->parts().setDynamicVisible(QStringLiteral("psa"), shown);
             }
         }
     }

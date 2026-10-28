@@ -1,6 +1,11 @@
 // no-port-check: NereusSDR-original checks for the ported Longpath
 // instruments and their container-content registration (workspace preview).
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a saved frequency instrument
+//                 keeps its first other slice; a new one follows transmit.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Picker names without the "(Longpath)" suffix. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - frequencyRowUsesSliceLetters. J.J. Boyd (KG4VCF),
@@ -36,11 +41,42 @@
 //                 AI-assisted via xAI Grok.
 //   2026-10-24 - frequencyShowsWhenRemoteSliceAccessArrives. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - everyThetisReadingHasItsThetisScale,
+//                 readingsThetisDoesNotScaleStayUnscaled,
+//                 newReadingsDriveNeedleAndBar,
+//                 reversePowerBarFollowsThePowerScale,
+//                 editorListsEveryScaledReading and
+//                 alreadyScaledReadingsAreUnchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The second frequency line shows the transmit slice by
+//                 default or the slice picked in "Second line":
+//                 secondLinePicksItsSlice, secondLineFollowsTheTransmitSlice,
+//                 frequencyEditorsNameSlices; the slice-letter, follow and
+//                 Custom cases set a transmit slice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The VHF S9 rule on needles and bars, per slice:
+//                 signalReadingsTakeTheVhfS9RuleOfTheirSlice,
+//                 vhfS9RuleFollowsTheSliceAcross30MHz,
+//                 secondReadingTakesTheVhfS9RuleOfItsBinding and
+//                 previewTakesTheVhfS9RuleOnce. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX on the five types:
+//                 everyTypeDeclaresTheFadeToggles,
+//                 fadeFollowsTransmitOnEveryType,
+//                 rowMadeWhileTransmittingStartsInTheTransmitLook,
+//                 fadedRowsStillTakeTheMouse and
+//                 previewRowTakesTheTransmitState; a needle's editor now
+//                 has the fade rows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
+#include <limits>
+#include <optional>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QLineEdit>
 #include <QMenu>
@@ -59,16 +95,20 @@
 #include <QScopeGuard>
 #include <QSplitter>
 #include <QTemporaryDir>
+#include <QWheelEvent>
+#include <QWindow>
 #include "core/AppSettings.h"
 #include "core/SliceOwnership.h"
 #include "core/antenna/AmateurBands.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContentEntryMigration.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerPreviewWidget.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/WorkspaceHeader.h"
 #include "gui/instruments/BarInstrument.h"
@@ -80,6 +120,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/BandwidthFilterPane.h"
+#include "models/MainPowerMeter.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -174,12 +215,124 @@ QString footerValueText(const QWidget& instrument)
     return value ? value->text() : QString();
 }
 
+
+// One reading Thetis draws on a calibrated bar or needle: its binding,
+// picker label and calibration (key, position). The red threshold is the
+// HighPoint key; none for the ANANMM volts and amps needles (linear).
+struct ThetisScaleCase {
+    int binding;
+    const char* label;
+    QList<QPair<double, double>> calibration;
+    std::optional<double> threshold;
+};
+
+QList<ThetisScaleCase> thetisScaleCases()
+{
+    // Thetis MeterManager.cs [v2.10.3.15] ScaleCalibration and HighPoint.
+    const QList<QPair<double, double>> adc{{-120.0, 0.0}, {-20.0, 0.8333}, {0.0, 0.99}};
+    const QList<QPair<double, double>> agc{{-125.0, 0.0}, {0.0, 0.5}, {125.0, 0.99}};
+    const QList<QPair<double, double>> agcGain{{-50.0, 0.0}, {100.0, 0.857}, {125.0, 0.99}};
+    const QList<QPair<double, double>> pbSnr{{0.0, 0.0}, {50.0, 0.8333}, {60.0, 0.99}};
+    const QList<QPair<double, double>> power{{0.0, 0.0}, {5.0, 0.1875}, {10.0, 0.375},
+                                             {50.0, 0.5625}, {100.0, 0.75}, {120.0, 0.99}};
+    const QList<QPair<double, double>> stage{{-30.0, 0.0}, {0.0, 0.665}, {12.0, 0.99}};
+    const QList<QPair<double, double>> gain{{0.0, 0.0}, {20.0, 0.8}, {25.0, 0.99}};
+    const QList<QPair<double, double>> group{{-30.0, 0.0}, {0.0, 0.5}, {25.0, 0.99}};
+    const QList<QPair<double, double>> volts{{10.0, 0.0}, {12.5, 0.5}, {15.0, 1.0}};
+    const QList<QPair<double, double>> amps{{0.0, 0.0}, {10.0, 0.5}, {20.0, 1.0}};
+    return {
+        {MeterBinding::AdcPeak, "RX: ADC Peak", adc, -20.0},
+        {MeterBinding::AdcAvg, "RX: ADC Avg", adc, -20.0},
+        {MeterBinding::AgcPeak, "RX: AGC Peak", agc, 0.0},
+        {MeterBinding::AgcAvg, "RX: AGC Avg", agc, 0.0},
+        {MeterBinding::AgcGain, "RX: AGC Gain", agcGain, 100.0},
+        {MeterBinding::PbSnr, "RX: PB SNR", pbSnr, 50.0},
+        // AddPWRBar's HighPoint is ElementAt(4), 100 W.
+        {MeterBinding::TxReversePower, "TX: Reverse Power", power, 100.0},
+        {MeterBinding::TxMic, "TX: Mic", stage, 0.0},
+        {MeterBinding::TxMicPeak, "TX: Mic Peak", stage, 0.0},
+        {MeterBinding::TxEq, "TX: EQ", stage, 0.0},
+        {MeterBinding::TxEqPeak, "TX: EQ Peak", stage, 0.0},
+        {MeterBinding::TxLeveler, "TX: Leveler", stage, 0.0},
+        {MeterBinding::TxLevelerPeak, "TX: Leveler Peak", stage, 0.0},
+        {MeterBinding::TxAlcPeak, "TX: ALC Peak", stage, 0.0},
+        {MeterBinding::TxCfc, "TX: CFC", stage, 0.0},
+        {MeterBinding::TxCfcPeak, "TX: CFC Peak", stage, 0.0},
+        {MeterBinding::TxComp, "TX: Compressor", stage, 0.0},
+        {MeterBinding::TxCompPeak, "TX: Compressor Peak", stage, 0.0},
+        {MeterBinding::TxLevelerGain, "TX: Leveler Gain", gain, 20.0},
+        {MeterBinding::TxAlcGain, "TX: ALC Gain", gain, 20.0},
+        {MeterBinding::TxCfcGain, "TX: CFC Gain", gain, 20.0},
+        {MeterBinding::TxAlcGroup, "TX: ALC Group", group, 0.0},
+        {MeterBinding::HwVolts, "HW: Volts", volts, std::nullopt},
+        {MeterBinding::HwAmps, "HW: Amps", amps, std::nullopt},
+    };
+}
+
 } // namespace
 
 // Longpath's NoiseFloor and RadeSnr reading ids, kept local in
 // ReadingSource.cpp (LongpathBinding); MeterBinding has neither.
 constexpr int kNoiseFloorReading = 9;
 constexpr int kRadeSnrReading = 10;
+
+// The five Longpath widget types.
+constexpr const char* kLongpathTypes[] = {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType,
+                                          LongpathContent::kNeedleType, LongpathContent::kBarType,
+                                          LongpathContent::kFilterType};
+
+// A container manager over a workspace store, as the app has one.
+struct FadeHarness {
+    explicit FadeHarness(ContainerContentRegistry& registry)
+    {
+        dock.resize(900, 900);
+        manager.setWorkspaceAdapter(&store, &registry);
+    }
+    bool commit(const QVector<ContainerDocument>& containers)
+    {
+        WorkspaceDocument document;
+        for (const ContainerDocument& c : containers) { document.containers.append(c); }
+        document.mainContainerId = containers.constFirst().id;
+        const auto committed = manager.commitWorkspace(document, store.snapshot().revision);
+        settle();
+        return committed.status == CommitStatus::Saved;
+    }
+    QTemporaryDir directory;
+    AppSettings settings{directory.filePath(QStringLiteral("fade.xml"))};
+    ContainerWorkspaceStore store{settings};
+    QWidget dock;
+    QSplitter splitter;
+    ContainerManager manager{&dock, &splitter};
+};
+
+ContainerDocument fadeContainer(const QString& id, ContentLayout layout)
+{
+    ContainerDocument c;
+    c.id = id;
+    c.name = id;
+    c.layout = layout;
+    c.dockMode = DockMode::OverlayDocked;
+    c.geometry = QRect(10, 10, 380, 860);
+    return c;
+}
+
+ContentEntry fadeEntry(const ContainerContentRegistry& registry, const QString& typeId, const QString& id,
+                       bool fadeOnRx, bool fadeOnTx)
+{
+    ContentEntry entry = registry.makeEntry(typeId);
+    entry.id = id;
+    if (fadeOnRx) { entry.config.insert(QString::fromLatin1(ContentFade::kFadeOnRxKey), true); }
+    if (fadeOnTx) { entry.config.insert(QString::fromLatin1(ContentFade::kFadeOnTxKey), true); }
+    return entry;
+}
+
+QWidget* rowWidget(const ContainerContentHost& host, const QString& entryId)
+{
+    for (const auto& row : host.entryRows()) {
+        if (row.entryId == entryId) { return row.widget; }
+    }
+    return nullptr;
+}
 
 class TstLongpathInstruments : public QObject {
     Q_OBJECT
@@ -438,6 +591,207 @@ private slots:
         QVERIFY(bar.hasValue());
     }
 
+    void everyThetisReadingHasItsThetisScale()
+    {
+        for (const ThetisScaleCase& c : thetisScaleCases()) {
+            const ReadingDescriptor* d = readingFor(c.binding);
+            QVERIFY2(d, c.label);
+            QCOMPARE(d->label, QString::fromLatin1(c.label));
+            QVERIFY2(d->hasScale, c.label);
+            QVERIFY2(d->available, c.label);
+            QCOMPARE(d->min, c.calibration.first().first);
+            QCOMPARE(d->max, c.calibration.last().first);
+            for (const auto& point : c.calibration) {
+                QVERIFY2(qAbs(d->fraction(point.first) - point.second) < 1e-9,
+                         qPrintable(QStringLiteral("%1 at %2: %3, expected %4")
+                                        .arg(QString::fromLatin1(c.label)).arg(point.first)
+                                        .arg(d->fraction(point.first)).arg(point.second)));
+            }
+            QCOMPARE(d->threshold.has_value(), c.threshold.has_value());
+            if (c.threshold) { QCOMPARE(*d->threshold, *c.threshold); }
+            QVERIFY2(!d->ticks.isEmpty(), c.label);
+            QVERIFY2(readingsWithScale().contains(d), c.label);
+        }
+        // Between two calibration points the bar moves linearly, and it
+        // stays at the end positions outside them.
+        const ReadingDescriptor* agcGain = readingFor(MeterBinding::AgcGain);
+        QVERIFY(qAbs(agcGain->fraction(25.0) - 0.857 / 2.0) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(112.5) - (0.857 + 0.99) / 2.0) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(-80.0)) < 1e-9);
+        QVERIFY(qAbs(agcGain->fraction(200.0) - 0.99) < 1e-9);
+        // generalScale's labels (MeterManager.cs:33442, 33689).
+        QStringList agcLabels;
+        for (const ReadingTick& tick : readingFor(MeterBinding::AgcPeak)->ticks) { agcLabels.append(tick.label); }
+        QCOMPARE(agcLabels, (QStringList{QStringLiteral("-100"), QStringLiteral("-75"), QStringLiteral("-50"),
+                                         QStringLiteral("-25"), QStringLiteral("0"), QStringLiteral("25"),
+                                         QStringLiteral("50"), QStringLiteral("75"), QStringLiteral("100"),
+                                         QStringLiteral("125")}));
+        QCOMPARE(readingFor(MeterBinding::TxAlcGain)->ticks.last().label, QStringLiteral("25+"));
+        // The TX stage readings share the TX: ALC scale's ticks.
+        const ReadingDescriptor* alc = readingFor(MeterBinding::TxAlc);
+        const ReadingDescriptor* mic = readingFor(MeterBinding::TxMicPeak);
+        QCOMPARE(mic->ticks.size(), alc->ticks.size());
+        for (int i = 0; i < alc->ticks.size(); ++i) {
+            QCOMPARE(mic->ticks.at(i).value, alc->ticks.at(i).value);
+            QCOMPARE(mic->ticks.at(i).label, alc->ticks.at(i).label);
+        }
+        QCOMPARE(mic->minorTicks, alc->minorTicks);
+    }
+
+    void readingsThetisDoesNotScaleStayUnscaled()
+    {
+        for (int binding : {int(MeterBinding::HwTemperature), int(MeterBinding::RotatorAz),
+                            int(MeterBinding::RotatorEle)}) {
+            const ReadingDescriptor* d = readingFor(binding);
+            QVERIFY(d);
+            QVERIFY(!d->hasScale);
+            QVERIFY(!readingsWithScale().contains(d));
+            NeedleInstrument needle;
+            QVERIFY(!needle.setPrimary(binding));
+            BarInstrument bar;
+            QVERIFY(!bar.setPrimary(binding));
+        }
+    }
+
+    void newReadingsDriveNeedleAndBar()
+    {
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        QWidget parent;
+        for (const ThetisScaleCase& c : thetisScaleCases()) {
+            const double value = c.calibration.at(1).first;
+            ContentEntry needleEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+            needleEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.binding);
+            needleEntry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+            std::unique_ptr<QWidget> a(registry.createWidget(needleEntry, &parent));
+            auto* needle = qobject_cast<NeedleInstrument*>(a.get());
+            QVERIFY2(needle, c.label);
+            QCOMPARE(needle->primary(), c.binding);
+            QVERIFY2(needle->isOffline(), c.label);
+            emit poller.readingUpdated(needleEntry.context, c.binding, value);
+            QVERIFY2(needle->hasValue(), c.label);
+            QVERIFY2(!needle->isOffline(), c.label);
+
+            ContentEntry barEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+            barEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.binding);
+            barEntry.context = needleEntry.context;
+            std::unique_ptr<QWidget> b(registry.createWidget(barEntry, &parent));
+            auto* bar = qobject_cast<BarInstrument*>(b.get());
+            QVERIFY2(bar, c.label);
+            QVERIFY2(!bar->hasValue(), c.label);
+            emit poller.readingUpdated(barEntry.context, c.binding, value);
+            QVERIFY2(bar->hasValue(), c.label);
+            QCOMPARE(bar->value(), value);
+        }
+    }
+
+    void reversePowerBarFollowsThePowerScale()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        MainPowerMeter* meter = model.mainPowerMeter();
+        QVERIFY(meter);
+        meter->setHardwareModel(HPSDRModel::ANAN8000D);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        QWidget parent;
+        ContentEntry forwardEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        forwardEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), int(MeterBinding::TxPower));
+        ContentEntry reverseEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        reverseEntry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey),
+                                   int(MeterBinding::TxReversePower));
+        std::unique_ptr<QWidget> a(registry.createWidget(forwardEntry, &parent));
+        std::unique_ptr<QWidget> b(registry.createWidget(reverseEntry, &parent));
+        auto* forward = qobject_cast<BarInstrument*>(a.get());
+        auto* reverse = qobject_cast<BarInstrument*>(b.get());
+        QVERIFY(forward && reverse);
+        QCOMPARE(reverse->primary(), int(MeterBinding::TxReversePower));
+        QCOMPARE(reverse->reading()->max, double(meter->scaleTopW()));
+        QCOMPARE(reverse->reading()->max, forward->reading()->max);
+        QCOMPARE(*reverse->reading()->threshold, double(meter->visualLimitW()));
+        QCOMPARE(reverse->reading()->bindingId, int(MeterBinding::TxReversePower));
+        QCOMPARE(reverse->reading()->label, QStringLiteral("TX: Reverse Power"));
+        QCOMPARE(reverse->reading()->thetisName(), readingFor(MeterBinding::TxReversePower)->thetisName());
+
+        const double before = reverse->reading()->max;
+        meter->setHardwareModel(HPSDRModel::HERMESLITE);
+        QVERIFY(meter->scaleTopW() != before);
+        QCOMPARE(reverse->reading()->max, double(meter->scaleTopW()));
+        QCOMPARE(reverse->reading()->max, forward->reading()->max);
+        QCOMPARE(*reverse->reading()->threshold, double(meter->visualLimitW()));
+        QCOMPARE(reverse->reading()->bindingId, int(MeterBinding::TxReversePower));
+    }
+
+    void editorListsEveryScaledReading()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        for (const char* type : {LongpathContent::kNeedleType, LongpathContent::kBarType}) {
+            editor.setEntry(registry.makeEntry(QString::fromLatin1(type)));
+            auto* binding = editor.findChild<QComboBox*>(QStringLiteral("property_binding"));
+            QVERIFY(binding);
+            auto* model = qobject_cast<QStandardItemModel*>(binding->model());
+            QVERIFY(model);
+            for (const ThetisScaleCase& c : thetisScaleCases()) {
+                const int row = binding->findData(c.binding);
+                QVERIFY2(row >= 0, c.label);
+                QCOMPARE(binding->itemText(row), QString::fromLatin1(c.label));
+                QVERIFY2(model->item(row)->isEnabled(), c.label);
+            }
+            for (int binding_id : {int(MeterBinding::HwTemperature), int(MeterBinding::RotatorAz),
+                                   int(MeterBinding::RotatorEle)}) {
+                QCOMPARE(binding->findData(binding_id), -1);
+            }
+        }
+    }
+
+    void alreadyScaledReadingsAreUnchanged()
+    {
+        // A saved needle or bar on a reading that already had a scale draws
+        // as before: the descriptors keep their range, red zone and shape.
+        const ReadingDescriptor* sig = readingFor(MeterBinding::SignalPeak);
+        QCOMPARE(sig->min, kS0Dbm);
+        QCOMPARE(sig->max, kSMaxDbm);
+        QVERIFY(!sig->threshold.has_value());
+        QCOMPARE(sig->fraction(kS9Dbm), kS9Fraction);
+        const ReadingDescriptor* fwd = readingFor(MeterBinding::TxPower);
+        QCOMPARE(fwd->min, 0.0);
+        QCOMPARE(fwd->max, 120.0);
+        QCOMPARE(*fwd->threshold, 100.0);
+        QVERIFY(fwd->fractionOf == nullptr);
+        QCOMPARE(fwd->ticks.size(), 5);
+        const ReadingDescriptor* swr = readingFor(MeterBinding::TxSwr);
+        QCOMPARE(swr->min, 1.0);
+        QCOMPARE(swr->max, 3.0);
+        QCOMPARE(*swr->threshold, 2.5);
+        QVERIFY(swr->fractionOf == nullptr);
+        const ReadingDescriptor* noise = readingFor(kNoiseFloorReading);
+        QCOMPARE(noise->min, -140.0);
+        QCOMPARE(noise->max, -40.0);
+        QVERIFY(!noise->available);
+        const ReadingDescriptor* rade = readingFor(kRadeSnrReading);
+        QCOMPARE(rade->min, -21.0);
+        QCOMPARE(rade->max, 30.0);
+        QVERIFY(!rade->available);
+
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        QWidget parent;
+        ContentEntry saved = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        saved.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), int(MeterBinding::TxSwr));
+        std::unique_ptr<QWidget> widget(registry.createWidget(saved, &parent));
+        auto* bar = qobject_cast<BarInstrument*>(widget.get());
+        QVERIFY(bar);
+        QCOMPARE(bar->reading(), swr);
+    }
+
     void registryRoundTripCreatesTwoNeedles()
     {
         ContainerContentRegistry registry;
@@ -450,13 +804,13 @@ private slots:
                 names.append(d.title);
             }
         }
-        QCOMPARE(names, (QStringList{QStringLiteral("Frequency (Longpath)"), QStringLiteral("Frequency (Custom)"),
-                                     QStringLiteral("Needle meter (Longpath)"), QStringLiteral("Bar meter (Longpath)"),
-                                     QStringLiteral("Filter passband (Longpath)")}));
+        QCOMPARE(names, (QStringList{QStringLiteral("Frequency"), QStringLiteral("Custom frequency"),
+                                     QStringLiteral("Needle meter"), QStringLiteral("Bar meter"),
+                                     QStringLiteral("Filter passband")}));
 
         ContentEntry rx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
         ContentEntry tx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
-        QCOMPARE(rx.name, QStringLiteral("Needle meter (Longpath)"));
+        QCOMPARE(rx.name, QStringLiteral("Needle meter"));
         QVERIFY(rx.id != tx.id);
         QVERIFY(registry.validateEntry(rx).isEmpty());
         tx.config.insert(QString::fromLatin1(LongpathContent::kDirectionKey), QStringLiteral("tx"));
@@ -528,6 +882,9 @@ private slots:
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
         sliceA->setFrequency(7185000.0);
         sliceB->setFrequency(14225000.0);
+        // The second line shows the transmit slice (the default).
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
 
         SliceModel* target = sliceB;
         LongpathContent::Sources sources;
@@ -548,6 +905,9 @@ private slots:
         QVERIFY2(rowB.contains(QStringLiteral(">A 7.185.000<")), qPrintable(rowB));
         QVERIFY(rowB.indexOf(QStringLiteral(">B ")) < rowB.indexOf(QStringLiteral(">A ")));
 
+        // On A, B transmitting: A's own letter first, then B.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         target = sliceA;
         std::unique_ptr<QWidget> onA(registry.createWidget(entry, &parent));
         auto* freqA = qobject_cast<FrequencyInstrument*>(onA.get());
@@ -570,6 +930,7 @@ private slots:
         QCOMPARE(model.slices().size(), 1);
         SliceModel* sliceA = model.slices().at(0);
         sliceA->setFrequency(7185000.0);
+        sliceA->setTxSlice(false);
 
         LongpathContent::Sources sources;
         sources.radio = &model;
@@ -588,6 +949,10 @@ private slots:
         QCOMPARE(model.slices().size(), 2);
         SliceModel* sliceB = model.slices().at(1);
         QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
+        // B transmits, so the second line shows it.
+        // The transmit arbiter binds A again when B is added.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
         sliceB->setFrequency(14225000.0);
         QCOMPARE(freq->otherFrequency(), 14225000.0);
         QCOMPARE(freq->ownLetter(), QLatin1Char('A'));
@@ -604,6 +969,154 @@ private slots:
         // The own slice's binding survives the refreshes.
         sliceA->setFrequency(7190000.0);
         QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
+    void secondLineFollowsTheTransmitSlice()
+    {
+        // Slices A and B, the item on B. The second line shows the
+        // transmit slice while that is not B, and nothing otherwise.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14225000.0);
+        model.setActiveSlice(0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            sliceA->setTxSlice(true);
+            sliceB->setTxSlice(false);
+            const ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            QWidget parent;
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+            QVERIFY(freq);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(freq->otherSliceLineVisible());
+            QCOMPARE(freq->otherLetter(), QLatin1Char('A'));
+            QCOMPARE(freq->otherFrequency(), 7185000.0);
+            const QString row = vfoRowText(*freq);
+            QVERIFY2(row.contains(QStringLiteral(">A 7.185.000<")), qPrintable(row));
+            // A is active and shown, so this line is the dim one.
+            QVERIFY(!freq->activeIsThis());
+
+            // B becomes the transmit slice: it is the item's own slice.
+            sliceA->setTxSlice(false);
+            sliceB->setTxSlice(true);
+            QVERIFY(freq->ownSliceLineVisible());
+            QVERIFY(!freq->otherSliceLineVisible());
+            // The active marker compares with the slice shown: none.
+            QVERIFY(freq->activeIsThis());
+
+            // No transmit slice: hidden.
+            sliceB->setTxSlice(false);
+            QVERIFY(!freq->otherSliceLineVisible());
+
+            // A transmits again: shown, and it follows A's frequency.
+            sliceA->setTxSlice(true);
+            QVERIFY(freq->otherSliceLineVisible());
+            sliceA->setFrequency(7190000.0);
+            QCOMPARE(freq->otherFrequency(), 7190000.0);
+            sliceA->setFrequency(7185000.0);
+        }
+    }
+
+    void secondLinePicksItsSlice()
+    {
+        // Slices A, B and C, the item on B, A transmitting.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        SliceModel* sliceC = model.slices().at(2);
+        QCOMPARE(sliceC->sliceLetter(), QLatin1Char('C'));
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        sliceC->setTxSlice(false);
+        sliceC->setFrequency(21300000.0);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+        QCOMPARE(key, QStringLiteral("secondSlice"));
+        QWidget parent;
+        const auto build = [&](const char* type, const QJsonObject& extra) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            for (auto it = extra.constBegin(); it != extra.constEnd(); ++it) { entry.config.insert(it.key(), it.value()); }
+            return std::unique_ptr<QWidget>(registry.createWidget(entry, &parent));
+        };
+
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            // "Slice C" with C open shows C, not the transmit slice.
+            std::unique_ptr<QWidget> onC = build(type, {{key, QStringLiteral("C")}});
+            auto* freqC = qobject_cast<FrequencyInstrument*>(onC.get());
+            QVERIFY(freqC);
+            QVERIFY(freqC->otherSliceLineVisible());
+            QCOMPARE(freqC->otherLetter(), QLatin1Char('C'));
+            QCOMPARE(freqC->otherFrequency(), 21300000.0);
+
+            // The item's own letter hides the line.
+            std::unique_ptr<QWidget> onOwn = build(type, {{key, QStringLiteral("B")}});
+            auto* freqOwn = qobject_cast<FrequencyInstrument*>(onOwn.get());
+            QVERIFY(freqOwn);
+            QVERIFY(freqOwn->ownSliceLineVisible());
+            QVERIFY(!freqOwn->otherSliceLineVisible());
+
+            // "None" hides it.
+            std::unique_ptr<QWidget> none = build(type, {{key, QStringLiteral("none")}});
+            auto* freqNone = qobject_cast<FrequencyInstrument*>(none.get());
+            QVERIFY(freqNone);
+            QVERIFY(!freqNone->otherSliceLineVisible());
+
+            // A slice that is not open hides it.
+            std::unique_ptr<QWidget> onD = build(type, {{key, QStringLiteral("D")}});
+            auto* freqD = qobject_cast<FrequencyInstrument*>(onD.get());
+            QVERIFY(freqD);
+            QVERIFY(!freqD->otherSliceLineVisible());
+        }
+
+        // Custom: "Show the second line" off hides it whatever the picker says.
+        for (const QJsonValue pick : {QJsonValue(QStringLiteral("C")), QJsonValue(QJsonValue::Undefined)}) {
+            QJsonObject extra{{QString::fromLatin1(LongpathContent::kShowOtherKey), false}};
+            if (!pick.isUndefined()) { extra.insert(key, pick); }
+            std::unique_ptr<QWidget> off = build(LongpathContent::kFrequencyCustomType, extra);
+            auto* freqOff = qobject_cast<FrequencyInstrument*>(off.get());
+            QVERIFY(freqOff);
+            QVERIFY(freqOff->ownSliceLineVisible());
+            QVERIFY(!freqOff->otherSliceLineVisible());
+        }
+
+        // C closes: hidden; C opens again: shown.
+        std::unique_ptr<QWidget> follows = build(LongpathContent::kFrequencyType, {{key, QStringLiteral("C")}});
+        auto* freq = qobject_cast<FrequencyInstrument*>(follows.get());
+        QVERIFY(freq);
+        QVERIFY(freq->otherSliceLineVisible());
+        model.removeSlice(2);
+        QCOMPARE(model.slices().size(), 2);
+        QVERIFY(!freq->otherSliceLineVisible());
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 3);
+        QCOMPARE(model.slices().at(2)->sliceLetter(), QLatin1Char('C'));
+        QVERIFY(freq->otherSliceLineVisible());
+        QCOMPARE(freq->otherLetter(), QLatin1Char('C'));
     }
 
     void frequencyShowsAfterTheStationAdoptsTheSlice()
@@ -1010,6 +1523,226 @@ private slots:
         }
     }
 
+    void signalReadingsTakeTheVhfS9RuleOfTheirSlice()
+    {
+        // At or above 30 MHz Thetis raises Signal Strength and Avg Signal
+        // Strength 20 dB before positioning them (getPerc), so -93 dBm
+        // shows S9. Max Bin and the TX readings are not raised.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        const QJsonObject context{{QStringLiteral("sliceId"), 0}};
+        const auto entryFor = [&](const char* type, int binding) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), binding);
+            entry.context = context;
+            return entry;
+        };
+        const ReadingDescriptor* signal = readingFor(MeterBinding::SignalPeak);
+        QVERIFY(signal);
+        QCOMPARE(signal->textWithUnit(kS9Dbm), QStringLiteral("S9"));
+        QWidget parent;
+
+        struct Case {
+            double hz;
+            double shown;
+        };
+        // 50.1 MHz and exactly 30.000000 MHz are shifted; 14.2 MHz is not.
+        for (const Case& c : {Case{50.1e6, -73.0}, Case{30.0e6, -73.0}, Case{14.2e6, -93.0}}) {
+            slice->setFrequency(c.hz);
+            const QByteArray where = QByteArray::number(c.hz, 'f', 0);
+            std::unique_ptr<QWidget> n(registry.createWidget(entryFor(LongpathContent::kNeedleType, MeterBinding::SignalPeak), &parent));
+            auto* needle = qobject_cast<NeedleInstrument*>(n.get());
+            QVERIFY(needle);
+            emit poller.readingUpdated(context, MeterBinding::SignalPeak, -93.0);
+            QVERIFY2(needle->hasValue(), where.constData());
+            QCOMPARE(needle->peakHold().value(), c.shown);
+            QCOMPARE(footerValueText(*needle), signal->textWithUnit(c.shown));
+            QCOMPARE(footerValueText(*needle) == QStringLiteral("S9"), c.shown == -73.0);
+
+            const auto barValue = [&](int binding, double fed) -> double {
+                std::unique_ptr<QWidget> b(registry.createWidget(entryFor(LongpathContent::kBarType, binding), &parent));
+                auto* bar = qobject_cast<BarInstrument*>(b.get());
+                if (!bar) { return std::numeric_limits<double>::quiet_NaN(); }
+                emit poller.readingUpdated(context, binding, fed);
+                return bar->hasValue() ? bar->value() : std::numeric_limits<double>::quiet_NaN();
+            };
+            QCOMPARE(barValue(MeterBinding::SignalPeak, -93.0), c.shown);
+            QCOMPARE(barValue(MeterBinding::SignalAvg, -93.0), c.shown);
+            QCOMPARE(barValue(MeterBinding::SignalMaxBin, -93.0), -93.0);
+            QCOMPARE(barValue(MeterBinding::TxPower, 50.0), 50.0);
+            QCOMPARE(barValue(MeterBinding::TxSwr, 1.5), 1.5);
+        }
+    }
+
+    void vhfS9RuleFollowsTheSliceAcross30MHz()
+    {
+        // A band change takes effect on the next reading, without a
+        // rebuild; a Follow selected RX entry takes the newly selected
+        // slice's rule and drops the old slice's.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(14.2e6);
+        sliceB->setFrequency(144.2e6);
+        model.setActiveSlice(0);
+        QCOMPARE(model.activeSlice(), sliceA);
+
+        MeterPoller poller;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        // Follow selected RX: the context names whichever slice is active.
+        sources.sliceForContext = [&model](const QJsonObject&) { return model.activeSlice(); };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), MeterBinding::SignalAvg);
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 0}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* bar = qobject_cast<BarInstrument*>(widget.get());
+        QVERIFY(bar);
+        const auto feed = [&] { emit poller.readingUpdated(entry.context, MeterBinding::SignalAvg, -93.0); };
+
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+        sliceA->setFrequency(50.1e6);
+        QCOMPARE(bar->value(), -93.0);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        sliceA->setFrequency(29.999999e6);
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+
+        // Slice B (144.2 MHz) becomes the selected RX.
+        model.setActiveSlice(1);
+        QCOMPARE(model.activeSlice(), sliceB);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        // The old slice's band no longer counts; the new one's does.
+        sliceA->setFrequency(7.1e6);
+        feed();
+        QCOMPARE(bar->value(), -73.0);
+        sliceB->setFrequency(21.2e6);
+        feed();
+        QCOMPARE(bar->value(), -93.0);
+    }
+
+    void secondReadingTakesTheVhfS9RuleOfItsBinding()
+    {
+        // Each trough of a compact bar takes the rule for its own reading:
+        // on 50.1 MHz the same -93 dBm is S9 on Signal Peak or Avg and S6
+        // on Max Bin.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(50.1e6);
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        const QString s9 = readingFor(MeterBinding::SignalPeak)->textWithUnit(-73.0);
+        const QString s6 = readingFor(MeterBinding::SignalMaxBin)->textWithUnit(-93.0);
+        QVERIFY(s9 != s6);
+
+        struct Case {
+            int primary;
+            int secondary;
+            QStringList shown;
+        };
+        const QList<Case> cases{
+            {MeterBinding::SignalMaxBin, MeterBinding::SignalAvg, {s6, s9}},
+            {MeterBinding::SignalPeak, MeterBinding::SignalMaxBin, {s9, s6}},
+        };
+        QWidget parent;
+        for (const Case& c : cases) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+            entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), c.primary);
+            entry.config.insert(QString::fromLatin1(LongpathContent::kSecondaryKey), c.secondary);
+            entry.context = QJsonObject{{QStringLiteral("sliceId"), 0}};
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* bar = qobject_cast<BarInstrument*>(widget.get());
+            QVERIFY(bar);
+            QVERIFY(bar->isCompact());
+            emit poller.readingUpdated(entry.context, c.primary, -93.0);
+            emit poller.readingUpdated(entry.context, c.secondary, -93.0);
+            QVERIFY(bar->hasValue() && bar->hasSecondValue());
+            QStringList drawn = textsDrawnBy(*bar, QSize(320, bar->sizeHint().height()));
+            const int before = drawn.size();
+            drawn.removeAll(readingFor(c.primary)->thetisName());
+            drawn.removeAll(readingFor(c.secondary)->thetisName());
+            QCOMPARE(before - drawn.size(), 2);
+            QCOMPARE(drawn, c.shown);
+        }
+    }
+
+    void previewTakesTheVhfS9RuleOnce()
+    {
+        // An inert preview reads its slice once, when it is built: the
+        // cached -93 dBm shows S9 for a 50.1 MHz slice, and a later band
+        // change does not move it.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(50.1e6);
+        MeterPoller poller;
+        poller.setRxReadingSource([](const QJsonObject&, int) { return -93.0; });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+
+        std::unique_ptr<QWidget> view(registry.createPreview(entry, &parent));
+        auto* needle = qobject_cast<NeedleInstrument*>(view.get());
+        QVERIFY(needle);
+        QCOMPARE(poller.readingConsumerCountForTest(), 0);
+        QVERIFY(needle->hasValue());
+        QCOMPARE(needle->peakHold().value(), -73.0);
+        QCOMPARE(footerValueText(*needle), QStringLiteral("S9"));
+        for (QObject* child : needle->findChildren<QObject*>(Qt::FindDirectChildrenOnly)) {
+            QVERIFY2(std::strcmp(child->metaObject()->className(), "QObject") != 0,
+                     "a preview holds no slice follower");
+        }
+
+        slice->setFrequency(14.2e6);
+        emit poller.readingUpdated(entry.context, MeterBinding::SignalPeak, -93.0);
+        QCOMPARE(needle->peakHold().value(), -73.0);
+        QCOMPARE(footerValueText(*needle), QStringLiteral("S9"));
+
+        // Built again on 14.2 MHz, the same reading sits 20 dB lower.
+        std::unique_ptr<QWidget> rebuilt(registry.createPreview(entry, &parent));
+        auto* hf = qobject_cast<NeedleInstrument*>(rebuilt.get());
+        QVERIFY(hf);
+        QCOMPARE(hf->peakHold().value(), -93.0);
+        QCOMPARE(footerValueText(*hf), readingFor(MeterBinding::SignalPeak)->textWithUnit(-93.0));
+    }
+
     void registrationReplayReachesOnlyTheNewWidget()
     {
         // Two TX power needles on one context. Building the second replays
@@ -1128,9 +1861,13 @@ private slots:
         QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kLabelKey)));
         QVERIFY(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
 
-        // A needle declares only readings: no empty appearance group.
+        // A needle declares its readings and the fade toggles: the
+        // appearance group holds only the toggles.
         editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType)));
-        QVERIFY(!editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
+        auto* needleGroup = editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties"));
+        QVERIFY(needleGroup);
+        QCOMPARE(needleGroup->findChildren<QCheckBox*>().size(), 2);
+        QVERIFY(!needleGroup->findChild<QComboBox*>());
         const auto advancedGroup = [&editor]() -> QGroupBox* {
             for (QGroupBox* g : editor.findChildren<QGroupBox*>()) {
                 if (g->title() == QStringLiteral("Advanced bindings")) { return g; }
@@ -1203,10 +1940,143 @@ private slots:
         QVERIFY(!editor.findChild<QCheckBox*>(QStringLiteral("property_center")));
     }
 
-    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    // Fix wave I9 (D5): a frequency instrument saved before the second-line
+    // pick (no "secondSlice" key) loads as "first" and keeps showing the
+    // first other open slice, even while its own slice transmits; a new
+    // one stores "tx" and shows the transmit slice.
+    void savedFrequencyKeepsItsFirstOtherSlice()
+    {
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        SliceModel* sliceC = model.slices().at(2);
+        sliceA->setFrequency(14074000.0);
+        sliceB->setFrequency(7074000.0);
+        sliceC->setFrequency(21300000.0);
+        // The item's own slice B transmits; C is not the first other slice.
+        sliceA->setTxSlice(false);
+        sliceB->setTxSlice(true);
+        sliceC->setTxSlice(false);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const QString key = QString::fromLatin1(LongpathContent::kSecondSliceKey);
+        QWidget parent;
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            ContentEntry saved = registry.makeEntry(QString::fromLatin1(type));
+            saved.config.remove(key);   // as written before the pick existed
+            migrateEntryOnLoad(saved);
+            QCOMPARE(saved.config.value(key).toString(), QStringLiteral("first"));
+            ContentEntry again = saved;
+            migrateEntryOnLoad(again);
+            QCOMPARE(again, saved);
+            std::unique_ptr<QWidget> legacy(registry.createWidget(saved, &parent));
+            auto* old = qobject_cast<FrequencyInstrument*>(legacy.get());
+            QVERIFY(old);
+            QVERIFY(old->otherSliceLineVisible());
+            QCOMPARE(old->otherLetter(), QLatin1Char('A'));
+            QCOMPARE(old->otherFrequency(), 14074000.0);
+
+            // A new instrument: "tx", unchanged by the load migration; its
+            // own slice transmits, so the second line is hidden.
+            ContentEntry fresh = registry.makeEntry(QString::fromLatin1(type));
+            QCOMPARE(fresh.config.value(key).toString(), QStringLiteral("tx"));
+            ContentEntry loaded = fresh;
+            migrateEntryOnLoad(loaded);
+            QCOMPARE(loaded, fresh);
+            std::unique_ptr<QWidget> made(registry.createWidget(fresh, &parent));
+            auto* neu = qobject_cast<FrequencyInstrument*>(made.get());
+            QVERIFY(neu);
+            QVERIFY(!neu->otherSliceLineVisible());
+            // Transmit moves to C: the new one shows C, the old one still A.
+            sliceB->setTxSlice(false);
+            sliceC->setTxSlice(true);
+            QTRY_VERIFY(neu->otherSliceLineVisible());
+            QCOMPARE(neu->otherLetter(), QLatin1Char('C'));
+            QCOMPARE(old->otherLetter(), QLatin1Char('A'));
+            sliceC->setTxSlice(false);
+            sliceB->setTxSlice(true);
+        }
+    }
+
+    void frequencyEditorsNameSlices()
     {
         ContainerContentRegistry registry;
         LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType}) {
+            editor.setEntry(registry.makeEntry(QString::fromLatin1(type)));
+            auto* second = editor.findChild<QComboBox*>(QStringLiteral("property_secondSlice"));
+            QVERIFY(second);
+            QStringList items;
+            for (int i = 0; i < second->count(); ++i) { items.append(second->itemText(i)); }
+            QCOMPARE(items, (QStringList{QStringLiteral("Transmit slice"),
+                                         QStringLiteral("First other slice"), QStringLiteral("None"),
+                                         QStringLiteral("Slice A"), QStringLiteral("Slice B"),
+                                         QStringLiteral("Slice C"), QStringLiteral("Slice D")}));
+            QCOMPARE(second->currentIndex(), 0);
+
+            edited.clear();
+            second->setCurrentIndex(second->findText(QStringLiteral("Slice C")));
+            QCOMPARE(edited.size(), 1);
+            auto entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("C"));
+            second->setCurrentIndex(second->findText(QStringLiteral("None")));
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("none"));
+            // Back to the transmit slice: stored as "tx", so a reload does
+            // not take it for a record saved before the pick (fix wave I9).
+            second->setCurrentIndex(0);
+            entry = edited.takeLast().at(0).value<ContentEntry>();
+            QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kSecondSliceKey)).toString(),
+                     QStringLiteral("tx"));
+
+            QStringList texts = items;
+            for (const QLabel* l : editor.findChildren<QLabel*>()) { texts.append(l->text()); }
+            for (const QAbstractButton* b : editor.findChildren<QAbstractButton*>()) { texts.append(b->text()); }
+            for (const QComboBox* c : editor.findChildren<QComboBox*>()) {
+                for (int i = 0; i < c->count(); ++i) { texts.append(c->itemText(i)); }
+            }
+            for (const QString& text : std::as_const(texts)) {
+                for (const char* banned : {"A/B", "VFO A", "VFO B", "RX1", "RX2"}) {
+                    QVERIFY2(!text.contains(QLatin1String(banned)), qPrintable(text));
+                }
+            }
+            if (QLatin1String(type) == QLatin1String(LongpathContent::kFrequencyCustomType)) {
+                QVERIFY2(texts.contains(QStringLiteral("Show this slice's line")), qPrintable(texts.join('|')));
+                QVERIFY2(texts.contains(QStringLiteral("Show the second line")), qPrintable(texts.join('|')));
+            }
+        }
+    }
+
+    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    {
+        // The item is on slice B and A transmits, so both lines have a
+        // slice to show (the second line is the transmit slice).
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14200000.0);
+        sliceA->setTxSlice(true);
+        sliceB->setTxSlice(false);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceB](const QJsonObject&) { return sliceB; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
         QWidget parent;
 
         ContentEntry plain = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
@@ -1249,6 +2119,9 @@ private slots:
         freq->show();
         settle();
         QVERIFY(freq->vfoRowVisible());
+        // The slice's frequency built the digit row before the font size
+        // rebuilt it; drop the replaced labels (deleteLater) first.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
         QLabel* digit = nullptr;
         QString row;
@@ -1263,8 +2136,9 @@ private slots:
         QVERIFY(digit);
         QCOMPARE(digit->font().pixelSize(), 36);
         QVERIFY(digit->styleSheet().contains(QStringLiteral("#44aaff")));
-        QVERIFY2(row.contains(QStringLiteral(">B ")), qPrintable(row));
-        QVERIFY2(!row.contains(QStringLiteral(">A ")), qPrintable(row));
+        // This slice's line (B) is off; the second line shows A.
+        QVERIFY2(row.contains(QStringLiteral(">A ")), qPrintable(row));
+        QVERIFY2(!row.contains(QStringLiteral(">B ")), qPrintable(row));
 
         freq->setParent(nullptr);
         freq->resize(720, 260);
@@ -1439,6 +2313,278 @@ private slots:
         });
         QTest::mouseClick(chip, Qt::LeftButton);
         QVERIFY(shown.contains(QStringLiteral("Active slice")));
+    }
+
+    // --- Fade on RX / Fade on TX (Thetis fade(), ContentFade) ----------
+
+    // The five Longpath types show the two toggles and write them to the
+    // entry config.
+    void everyTypeDeclaresTheFadeToggles()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            QStringList keys;
+            for (const ContentProperty& p : registry.declaredProperties(typeId)) { keys.append(p.key); }
+            QVERIFY2(keys.contains(QString::fromLatin1(ContentFade::kFadeOnRxKey)), type);
+            QVERIFY2(keys.contains(QString::fromLatin1(ContentFade::kFadeOnTxKey)), type);
+
+            editor.setEntry(registry.makeEntry(typeId));
+            auto* group = editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties"));
+            QVERIFY2(group, type);
+            auto* fields = qobject_cast<QFormLayout*>(group->layout());
+            QVERIFY(fields);
+            for (const auto& [key, label] : {std::pair{ContentFade::kFadeOnRxKey, "Fade on RX"},
+                                             std::pair{ContentFade::kFadeOnTxKey, "Fade on TX"}}) {
+                auto* check = editor.findChild<QCheckBox*>(QStringLiteral("property_") + QString::fromLatin1(key));
+                QVERIFY2(check, type);
+                QVERIFY(!check->isChecked());
+                auto* shown = qobject_cast<QLabel*>(fields->labelForField(check));
+                QVERIFY(shown);
+                QCOMPARE(shown->text(), QString::fromLatin1(label));
+                edited.clear();
+                check->setChecked(true);
+                QCOMPARE(edited.size(), 1);
+                const auto entry = edited.takeLast().at(0).value<ContentEntry>();
+                QCOMPARE(entry.config.value(QString::fromLatin1(key)), QJsonValue(true));
+            }
+        }
+    }
+
+    // Fade on RX dims a row while receiving and lifts it on transmit; Fade
+    // on TX is the reverse; with both off the row has no overlay, so an
+    // entry saved without the keys looks as it did. Both host layouts.
+    void fadeFollowsTransmitOnEveryType()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        FadeHarness h(registry);
+        ContainerDocument stack = fadeContainer(QStringLiteral("stack"), ContentLayout::VerticalStack);
+        ContainerDocument canvas = fadeContainer(QStringLiteral("canvas"), ContentLayout::FreeCanvas);
+        canvas.geometry = QRect(400, 10, 380, 300);
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("rx-") + typeId, true, false));
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("tx-") + typeId, false, true));
+            stack.contents.append(fadeEntry(registry, typeId, QStringLiteral("off-") + typeId, false, false));
+        }
+        canvas.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kNeedleType),
+                                         QStringLiteral("canvas-rx"), true, false));
+        canvas.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kNeedleType),
+                                         QStringLiteral("canvas-off"), false, false));
+        QVERIFY(h.commit({stack, canvas}));
+        ContainerContentHost* stackHost = h.manager.contentHost(stack.id);
+        ContainerContentHost* canvasHost = h.manager.contentHost(canvas.id);
+        QVERIFY(stackHost && canvasHost);
+
+        QVector<ContentFadeOverlay*> receive, transmit;
+        for (const char* type : kLongpathTypes) {
+            const QString typeId = QString::fromLatin1(type);
+            QWidget* rx = rowWidget(*stackHost, QStringLiteral("rx-") + typeId);
+            QWidget* tx = rowWidget(*stackHost, QStringLiteral("tx-") + typeId);
+            QWidget* off = rowWidget(*stackHost, QStringLiteral("off-") + typeId);
+            QVERIFY2(rx && tx && off, type);
+            QCOMPARE(rx->property("containerFactoryType").toString(), typeId);
+            QVERIFY2(ContentFade::overlayFor(rx), type);
+            QVERIFY2(ContentFade::overlayFor(tx), type);
+            QVERIFY2(!ContentFade::overlayFor(off), type);
+            QVERIFY(off->findChildren<ContentFadeOverlay*>().isEmpty());
+            receive.append(ContentFade::overlayFor(rx));
+            transmit.append(ContentFade::overlayFor(tx));
+        }
+        QWidget* canvasRx = rowWidget(*canvasHost, QStringLiteral("canvas-rx"));
+        QWidget* canvasOff = rowWidget(*canvasHost, QStringLiteral("canvas-off"));
+        QVERIFY(canvasRx && canvasOff);
+        QVERIFY(ContentFade::overlayFor(canvasRx));
+        QVERIFY(!ContentFade::overlayFor(canvasOff));
+        receive.append(ContentFade::overlayFor(canvasRx));
+
+        const auto steps = [](const QVector<ContentFadeOverlay*>& overlays) {
+            for (int i = 0; i < 5; ++i) {
+                for (ContentFadeOverlay* o : overlays) { o->advance(); }
+            }
+        };
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), 255); }
+
+        h.manager.setTransmitting(true);
+        QVERIFY(stackHost->transmitting());
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QVERIFY(o->transmitting()); }
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), 255); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+
+        h.manager.setTransmitting(false);
+        steps(receive);
+        steps(transmit);
+        for (ContentFadeOverlay* o : std::as_const(receive)) { QCOMPARE(o->value(), ContentFade::kDimmedLevel); }
+        for (ContentFadeOverlay* o : std::as_const(transmit)) { QCOMPARE(o->value(), 255); }
+    }
+
+    // A row made while the radio transmits is in the transmit look at
+    // once, without waiting for the next transmit change; a row on another
+    // session's radio stays in the receive state.
+    void rowMadeWhileTransmittingStartsInTheTransmitLook()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        MeterPoller poller;
+        poller.setSessionIdSource([] { return QStringLiteral("this-radio"); });
+        FadeHarness h(registry);
+        h.manager.setPreviewPoller(&poller);
+        h.manager.setTransmitting(true);
+        ContainerDocument c = fadeContainer(QStringLiteral("late"), ContentLayout::VerticalStack);
+        const QString needle = QString::fromLatin1(LongpathContent::kNeedleType);
+        c.contents.append(fadeEntry(registry, needle, QStringLiteral("own"), false, true));
+        ContentEntry local = fadeEntry(registry, needle, QStringLiteral("local"), false, true);
+        local.context.insert(QStringLiteral("sessionId"), QStringLiteral("this-radio"));
+        ContentEntry foreign = fadeEntry(registry, needle, QStringLiteral("foreign"), false, true);
+        foreign.context.insert(QStringLiteral("sessionId"), QStringLiteral("other-radio"));
+        c.contents << local << foreign;
+        QVERIFY(h.commit({c}));
+        ContainerContentHost* host = h.manager.contentHost(c.id);
+        QVERIFY(host);
+        QVERIFY(host->transmitting());
+        ContentFadeOverlay* own = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("own")));
+        ContentFadeOverlay* onThis = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("local")));
+        ContentFadeOverlay* onOther = ContentFade::overlayFor(rowWidget(*host, QStringLiteral("foreign")));
+        QVERIFY(own && onThis && onOther);
+        QVERIFY(own->transmitting());
+        QVERIFY(onThis->transmitting());
+        QVERIFY(!onOther->transmitting());
+        for (int i = 0; i < 5; ++i) {
+            own->advance();
+            onOther->advance();
+        }
+        QCOMPARE(own->value(), ContentFade::kDimmedLevel);
+        QCOMPARE(onOther->value(), 255);
+
+        // The other session's row does not follow this window's MOX.
+        h.manager.setTransmitting(false);
+        h.manager.setTransmitting(true);
+        QVERIFY(!onOther->transmitting());
+        QVERIFY(onThis->transmitting());
+        QVERIFY(ContainerContentHost::foreignSession(foreign.context, QStringLiteral("this-radio")));
+        QVERIFY(!ContainerContentHost::foreignSession(local.context, QStringLiteral("this-radio")));
+        QVERIFY(!ContainerContentHost::foreignSession(QJsonObject{}, QStringLiteral("this-radio")));
+    }
+
+    // A faded row still takes the mouse: the wheel on a frequency digit
+    // tunes the slice and a filter edge drag moves the slice's filter.
+    void fadedRowsStillTakeTheMouse()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.slices().at(0);
+        slice->setFrequency(7185000.0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFilter(100, 3100);
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [slice](const QJsonObject&) { return slice; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        FadeHarness h(registry);
+        ContainerDocument c = fadeContainer(QStringLiteral("input"), ContentLayout::VerticalStack);
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kFrequencyType),
+                                    QStringLiteral("freq"), true, false));
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kFilterType),
+                                    QStringLiteral("filter"), true, false));
+        QVERIFY(h.commit({c}));
+        h.dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&h.dock));
+        settle();
+        ContainerContentHost* host = h.manager.contentHost(c.id);
+        QVERIFY(host);
+        auto* frequency = qobject_cast<FrequencyInstrument*>(rowWidget(*host, QStringLiteral("freq")));
+        auto* pane = qobject_cast<BandwidthFilterPane*>(rowWidget(*host, QStringLiteral("filter")));
+        QVERIFY(frequency && pane);
+        for (QWidget* w : {static_cast<QWidget*>(frequency), static_cast<QWidget*>(pane)}) {
+            ContentFadeOverlay* overlay = ContentFade::overlayFor(w);
+            QVERIFY(overlay);
+            for (int i = 0; i < 5; ++i) { overlay->advance(); }
+            QCOMPARE(overlay->value(), ContentFade::kDimmedLevel);
+            QVERIFY(overlay->isVisible());
+            QCOMPARE(overlay->geometry(), w->rect());
+        }
+
+        // Wheel: the window's hit test passes the veil and finds a digit.
+        QWidget* window = h.dock.window();
+        QLabel* digit = nullptr;
+        for (QLabel* l : frequency->findChildren<QLabel*>()) {
+            if (l->isVisible() && l->text().size() == 1 && l->text().at(0).isDigit()) {
+                digit = l;
+                break;
+            }
+        }
+        QVERIFY(digit);
+        const QPoint digitAt = digit->mapTo(window, digit->rect().center());
+        QCOMPARE(window->childAt(digitAt), static_cast<QWidget*>(digit));
+        const double before = slice->frequency();
+        QWheelEvent wheel(QPointF(digit->rect().center()), QPointF(digit->mapToGlobal(digit->rect().center())),
+                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(window->childAt(digitAt), &wheel);
+        QVERIFY(slice->frequency() > before);
+
+        // Filter edge: hover finds it through the veil, then a drag moves it.
+        QWindow* handle = window->windowHandle();
+        QVERIFY(handle);
+        const int y = pane->height() / 2;
+        int edgeX = -1;
+        for (int x = 2; x < pane->width() - 2 && edgeX < 0; ++x) {
+            const QPoint at = pane->mapTo(window, QPoint(x, y));
+            QCOMPARE(window->childAt(at), static_cast<QWidget*>(pane));
+            QTest::mouseMove(handle, at);
+            if (pane->cursor().shape() == Qt::SizeHorCursor) { edgeX = x; }
+        }
+        QVERIFY(edgeX >= 0);
+        const int lowBefore = slice->filterLow();
+        const int highBefore = slice->filterHigh();
+        const QPoint from = pane->mapTo(window, QPoint(edgeX, y));
+        const QPoint to = pane->mapTo(window, QPoint(edgeX + 30, y));
+        QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, from);
+        QTest::mouseMove(handle, to);
+        QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, to);
+        QVERIFY(slice->filterLow() != lowBefore || slice->filterHigh() != highBefore);
+        QCOMPARE(pane->filterLow(), slice->filterLow());
+    }
+
+    // The settings preview shows the transmit look of a faded widget row,
+    // read only.
+    void previewRowTakesTheTransmitState()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        MeterPoller poller;
+        ContainerDocument c = fadeContainer(QStringLiteral("preview"), ContentLayout::VerticalStack);
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kBarType),
+                                    QStringLiteral("bar"), false, true));
+        c.contents.append(fadeEntry(registry, QString::fromLatin1(LongpathContent::kBarType),
+                                    QStringLiteral("plain"), false, false));
+        poller.setInTx(true);
+        ContainerPreviewWidget preview(registry, poller);
+        preview.setDocument(c);
+        QVector<ContentFadeOverlay*> overlays = preview.findChildren<ContentFadeOverlay*>();
+        QCOMPARE(overlays.size(), 1);
+        ContentFadeOverlay* overlay = overlays.constFirst();
+        QVERIFY(overlay->transmitting());
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
+        for (int i = 0; i < 5; ++i) { overlay->advance(); }
+        QCOMPARE(overlay->value(), ContentFade::kDimmedLevel);
+
+        poller.setInTx(false);
+        emit poller.frameAdvanced(1000);
+        QVERIFY(!overlay->transmitting());
+        for (int i = 0; i < 5; ++i) { overlay->advance(); }
+        QCOMPARE(overlay->value(), 255);
     }
 
     void traceFromRenderedTakesBucketMaxima()

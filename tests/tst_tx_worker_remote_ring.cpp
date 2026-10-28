@@ -83,6 +83,10 @@
 //               so a busy computer cannot fail a case that is not about
 //               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: a key whose keepalives stop
+//               is held silent by 600 ms on the Core's clock and cut after
+//               3000 ms. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1290,24 +1294,31 @@ void TestTxWorkerRemoteRing::eachTxChannelKeepaliveCountsForItsOwnDevice()
         s.core.now += 50;
     }
     QVERIFY(mox->isMox());
-    // Only B keeps sending keepalives on its channel; A's key stops within
-    // the watchdog's deadline.
+    // Only B keeps sending keepalives on its channel; A's key is held
+    // silent after the watchdog's hold and stops after its cut.
     QElapsedTimer since;
     since.start();
     quint64 sequence = 1;
     // The Core's clock is the harness's; it moves with the real time here.
     qint64 moved = 0;
-    while (mox->isMox() && since.elapsed() < 3000) {
+    qint64 heldAt = -1;
+    while (mox->isMox() && since.elapsed() < 15000) {
         s.transportB->deliverTx(RemoteTxWatchdog::channelKeepalive(sequence++, 4294967295U));
         s.sendMicA();   // A's audio keeps flowing: only its keepalives are missing
         QTest::qWait(50);
         s.core.now += 50;
         moved += 50;
+        if (heldAt < 0 && s.core.model->isRemoteRfHeld() && mox->isMox()) {
+            heldAt = moved;
+        }
     }
     QVERIFY(!mox->isMox());
-    // Within the watchdog's deadline on the Core's clock (400 ms, plus a
-    // step of this loop and the timer's own).
-    QVERIFY2(moved <= 600, qPrintable(QString::number(moved)));
+    // On the Core's clock: held after 400 ms and cut after 3000 ms, each
+    // within a step of this loop and the timer's own.
+    QVERIFY2(heldAt > RemoteTxWatchdog::kLinkHoldMs && heldAt <= 600,
+             qPrintable(QString::number(heldAt)));
+    QVERIFY2(moved > RemoteTxWatchdog::kLinkCutMs && moved <= RemoteTxWatchdog::kLinkCutMs + 200,
+             qPrintable(QString::number(moved)));
 }
 
 void TestTxWorkerRemoteRing::stalledIqDoesNotDelayTxWatchdog()
@@ -1358,18 +1369,26 @@ void TestTxWorkerRemoteRing::stalledIqDoesNotDelayTxWatchdog()
     QTRY_VERIFY(station.core.model->moxController()->isMox());
     QVERIFY(resultFor(station.app, 3841).value(QStringLiteral("accepted")).toBool());
     qint64 moved = 0;
+    qint64 heldAt = -1;
     QElapsedTimer since;
     since.start();
-    while (station.core.model->moxController()->isMox() && since.elapsed() < 3000) {
+    while (station.core.model->moxController()->isMox() && since.elapsed() < 15000) {
         // No TX keepalive. The I/Q sender is wedged while microphone audio
-        // continues, so only the watchdog may end this key.
+        // continues, so only the watchdog may hold and end this key.
         station.sendMic();
         QTest::qWait(50);
         station.core.now += 50;
         moved += 50;
+        if (heldAt < 0 && station.core.model->isRemoteRfHeld()
+            && station.core.model->moxController()->isMox()) {
+            heldAt = moved;
+        }
     }
     QVERIFY(!station.core.model->moxController()->isMox());
-    QVERIFY2(moved <= 600, qPrintable(QString::number(moved)));
+    QVERIFY2(heldAt > RemoteTxWatchdog::kLinkHoldMs && heldAt <= 600,
+             qPrintable(QString::number(heldAt)));
+    QVERIFY2(moved > RemoteTxWatchdog::kLinkCutMs && moved <= RemoteTxWatchdog::kLinkCutMs + 200,
+             qPrintable(QString::number(moved)));
 }
 
 // Fix wave C2: the holder's media restarting mid-key leaves the ring the

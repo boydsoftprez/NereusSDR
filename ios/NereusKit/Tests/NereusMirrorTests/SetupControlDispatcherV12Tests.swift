@@ -130,6 +130,21 @@ private final class V12PhoneKeys: SetupPhoneKeys {
         }
     }
 
+    @Test(arguments: [Int64(28), 29])
+    func waterfallRateKeepsElevenAndTwelveMilliseconds(version: Int64) async throws {
+        let rig = Rig()
+        rig.phone.values["DisplayWfUpdatePeriodMs"] = .integer(10)
+        try await rig.connect(version: version)
+        let row = try rig.control("display.waterfallDefaults.updatePeriod")
+        #expect(rig.dispatcher.resolved(row).range?.step == 1)
+        for value: Int64 in [11, 12] {
+            #expect(await rig.dispatcher.edit(row, in: "display", to: .integer(value)) == .applied)
+            #expect(rig.phone.values["DisplayWfUpdatePeriodMs"] == .integer(value))
+        }
+        #expect(rig.phone.writes.map { $0.1 } == [.integer(11), .integer(12)])
+        #expect(rig.route.sent.isEmpty)
+    }
+
     @Test func aButtonRunsThePhonesActionAndOneItLacksStaysGreyed() async throws {
         let rig = Rig()
         try await rig.connect()

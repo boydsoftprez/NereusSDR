@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the Tools tab's list and the Core's tool pages against a fake Core: order, tags, reads, writes, reasons
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, CWX opens its page and sends the Core's CW verbs
+//   (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -28,14 +30,14 @@ struct ToolsPagesTests {
     /// Server, which a Core without its own TCI server does not offer and
     /// the phone shows greyed, and the Rotor last, greyed until a rotor is
     /// set up at the Core.
-    static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "catControl",
-                             "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
+    static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "cwx",
+                             "catControl", "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
 
     /// The phone's list from that catalogue: the same tools. CAT Control
     /// opens from a Core that lets this app set up its CAT, and is greyed
     /// with its reason from one that does not.
-    static let listedIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "catControl",
-                            "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
+    static let listedIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "cwx",
+                            "catControl", "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
 
     // MARK: The list
 
@@ -54,10 +56,10 @@ struct ToolsPagesTests {
                 && list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason
         })
         #expect(list.entries.map(\.title) == ["Spot Hub", "FreeDV Reporter", "TX Equalizer", "PureSignal",
-                                              "Diversity", "CAT Control", "TCI Server", "VAX Audio",
+                                              "Diversity", "CWX", "CAT Control", "TCI Server", "VAX Audio",
                                               "Connection and performance", "Support Bundle", "Rotor"])
-        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .both, .both,
-                                            .core])
+        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .core, .both,
+                                            .both, .core])
         #expect(list.entries.allSatisfy { $0.page != nil })
         // This Core runs no TCI server of its own: TCI Server is greyed with the reason; the rest open.
         let tci = try #require(list.entries.first { $0.id == "tciServer" })
@@ -70,8 +72,11 @@ struct ToolsPagesTests {
         // No rotor is set up on this Core: the Rotor stays listed, greyed with that reason.
         let rotor = try #require(list.entries.first { $0.id == "rotor" })
         #expect(!rotor.enabled && rotor.reason == StationToolList.noRotorReason && rotor.page == .rotor)
-        // CWX and the Memory Manager are not built on the desktop: not listed (D41).
-        #expect(!list.entries.contains { ["cwx", "memoryManager"].contains($0.id) })
+        // CWX opens its page (R-CW-50); the Memory Manager is not built on the desktop: not listed (D41).
+        let cwx = try #require(list.entries.first { $0.id == "cwx" })
+        #expect(cwx.title == "CWX" && cwx.tag == .core && cwx.page == .cwx && cwx.enabled)
+        #expect(cwx.detail == "Send CW from text and the Core's eight memories")
+        #expect(!list.entries.contains { $0.id == "memoryManager" })
         await model.disconnect()
     }
 
@@ -94,11 +99,11 @@ struct ToolsPagesTests {
         let list = ToolListModel(mirror: model.mirror, catalogFeed: model.main.catalogFeed)
         try await deliverCatalogue(station, revision: 2)
         #expect(await settle { model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.listedIds })
-        // The desktop builds CWX, and the Core stops offering PureSignal.
+        // The desktop builds the Memory Manager, and the Core stops offering PureSignal.
         try await deliverCatalogue(station, revision: 3) { tools in
             tools.map { tool in
                 var tool = tool
-                if tool["id"] as? String == "cwx" {
+                if tool["id"] as? String == "memoryManager" {
                     tool["offered"] = true
                 }
                 if tool["id"] as? String == "pureSignal" {
@@ -107,13 +112,13 @@ struct ToolsPagesTests {
                 return tool
             }
         }
-        #expect(await settle { list.entries.contains { $0.id == "cwx" } })
+        #expect(await settle { list.entries.contains { $0.id == "memoryManager" } })
         #expect(list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity", "cwx",
-                                           "catControl", "tciServer", "vaxAudio", "networkDiagnostics",
-                                           "supportBundle", "rotor"])
-        let cwx = try #require(list.entries.first { $0.id == "cwx" })
-        #expect(cwx.title == "CWX" && cwx.tag == .core && cwx.page == nil)
-        #expect(cwx.reason == StationToolList.unknownToolReason && !cwx.enabled)
+                                           "memoryManager", "catControl", "tciServer", "vaxAudio",
+                                           "networkDiagnostics", "supportBundle", "rotor"])
+        let memories = try #require(list.entries.first { $0.id == "memoryManager" })
+        #expect(memories.title == "Memory Manager" && memories.tag == .core && memories.page == nil)
+        #expect(memories.reason == StationToolList.unknownToolReason && !memories.enabled)
         // The Core goes away: its own tools grey with the reason; this phone's stay.
         await model.disconnect()
         #expect(await settle { list.entries.first { $0.id == "txEqualizer" }?.enabled == false })
@@ -135,7 +140,7 @@ struct ToolsPagesTests {
         // The Hermes Lite 2's catalogue: no diversity receiver, no TCI server of the Core's own.
         try await deliverCatalogue(station, revision: 2, fixture: "catalog-hermes-lite-2")
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "pureSignal",
-                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "cwx", "catControl", "tciServer", "vaxAudio",
                                                           "networkDiagnostics", "supportBundle", "rotor"] })
         #expect(list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason)
         // A headless Core with its own TCI server: VAX Audio greyed, TCI Server opens; no PureSignal on this radio.
@@ -151,7 +156,7 @@ struct ToolsPagesTests {
             }
         }
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity",
-                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "cwx", "catControl", "tciServer", "vaxAudio",
                                                           "networkDiagnostics", "supportBundle", "rotor"] })
         let vax = try #require(list.entries.first { $0.id == "vaxAudio" })
         #expect(!vax.enabled && vax.reason == StationToolList.noVaxReason && vax.page == .vaxAudio)
@@ -1572,6 +1577,153 @@ struct ToolsPagesTests {
         #expect(abs(points[2].x - 180) < 1e-9 && abs(points[2].y - 100) < 1e-9)
         #expect(DiversitySensitivity(shares: [0.2, 0.9, 0.1, 0.3]).strongestBearing == 90)
         #expect(DiversitySensitivity(shares: []).strongestBearing == nil)
+    }
+
+    // MARK: CWX (R-CW-50)
+
+    @Test("a Core that lists CWX unbuilt leaves it out, as the desktop it runs does not have it")
+    func cwxUnbuiltIsLeftOut() throws {
+        let tools = try JSONDecoder().decode([StationCatalog.Tool].self, from: Data("""
+        [{"id":"cwx","label":"CWX","where":"station","offered":false},
+         {"id":"spotHub","label":"Spot Hub","where":"both","offered":true}]
+        """.utf8))
+        let entries = StationToolList.entries(tools: tools, connected: true, olderCore: false)
+        #expect(entries.map(\.id) == ["spotHub", "networkDiagnostics", "rotor"])
+    }
+
+    @Test("CWX sends the text, a memory and Stop as the Core's CW verbs, three copies under one id, and keys nothing")
+    func cwxSendsTheVerbs() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                      className: "TransmitModel", values: [
+            .init(ordinal: 0, name: "cwxMemory1", value: .utf8("CQ CQ DE KG4VCF")),
+            .init(ordinal: 1, name: "cwxMemory2", value: .utf8("")),
+        ])
+        let cwx = CwxModel(mirror: store, commands: commands)
+        #expect(await settle { cwx.memories[0] == "CQ CQ DE KG4VCF" })
+        #expect(cwx.reason == nil)
+        #expect(cwx.memories[1] == "" && cwx.memories[2] == nil)
+        // Nothing typed: Send is greyed with why, and sends nothing.
+        #expect(cwx.sendReason == CwxModel.noTextReason)
+        cwx.send()
+        cwx.text = "TEST DE KG4VCF"
+        #expect(cwx.sendReason == nil)
+        cwx.send()
+        #expect(await settle { outbox.invokes(CwxModel.sendVerb).count == CwxModel.copies })
+        let send = try #require(outbox.invokes(CwxModel.sendVerb).first)
+        #expect(send.args == [LinkMessage.PropertyEntry(name: "text", value: .utf8("TEST DE KG4VCF"))])
+        #expect(Set(outbox.invokes(CwxModel.sendVerb).map(\.id)).count == 1)
+        #expect(await accept(commands, outbox, CwxModel.sendVerb))
+        // A memory goes by its number; an empty one is greyed with the Core's words and sends nothing.
+        #expect(cwx.memoryReason(2) == "Memory 2 is empty.")
+        cwx.sendMemory(2)
+        cwx.sendMemory(1)
+        #expect(await settle { outbox.invokes(CwxModel.memoryVerb).count == CwxModel.copies })
+        #expect(outbox.invokes(CwxModel.memoryVerb).allSatisfy {
+            $0.args == [LinkMessage.PropertyEntry(name: "number", value: .i64(1))]
+        })
+        #expect(await accept(commands, outbox, CwxModel.memoryVerb))
+        cwx.stop()
+        #expect(await settle { outbox.invokes(CwxModel.stopVerb).count == CwxModel.copies })
+        #expect(outbox.invokes(CwxModel.stopVerb).first?.args == [])
+        #expect(await accept(commands, outbox, CwxModel.stopVerb))
+        // The phone never keys: no tx.key, no cw.key.
+        #expect(outbox.invokes("tx.key").isEmpty && outbox.invokes("cw.key").isEmpty)
+    }
+
+    @Test("CWX shows the Core's refusal in its words, with its fix")
+    func cwxShowsTheRefusal() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                      className: "TransmitModel", values: [])
+        let cwx = CwxModel(mirror: store, commands: commands)
+        cwx.text = "CQ"
+        cwx.send()
+        #expect(await settle { !outbox.invokes(CwxModel.sendVerb).isEmpty })
+        let invoke = try #require(outbox.invokes(CwxModel.sendVerb).last)
+        await commands.receive(.commandResult(LinkMessage.CommandResult(
+            verb: CwxModel.sendVerb, id: invoke.id, accepted: false, reason: "Take transmit on this device first.",
+            affected: [], values: [.init(name: "refusalCode", value: .utf8("notHolder")),
+                                   .init(name: "refusalFix", value: .utf8("takeTransmit"))])))
+        #expect(await settle { cwx.refusal != nil })
+        #expect(cwx.refusal == TxRefusalInfo(reason: "Take transmit on this device first.", code: "notHolder",
+                                             fix: TxRefusalInfo.takeTransmit))
+    }
+
+    @Test("against a Core without remote CW every CWX control is greyed with why, and nothing is sent")
+    func cwxOnAnOlderCore() async throws {
+        let (store, commands, outbox) = await handFed("transmitSettingsVersion", version: 16, key: "transmit",
+                                                      className: "TransmitModel", values: [
+            .init(ordinal: 0, name: "cwxMemory1", value: .utf8("CQ")),
+        ])
+        let cwx = CwxModel(mirror: store, commands: commands)
+        #expect(await settle { cwx.reason == CwxModel.olderCoreReason })
+        #expect(CwxModel.olderCoreReason == "This Core can't send CW from a phone. Updating the Core may help.")
+        cwx.text = "CQ"
+        #expect(cwx.sendReason == CwxModel.olderCoreReason && cwx.memoryReason(1) == CwxModel.olderCoreReason)
+        cwx.send()
+        cwx.sendMemory(1)
+        cwx.stop()
+        await Task.yield()
+        #expect(outbox.invokes(CwxModel.sendVerb).isEmpty && outbox.invokes(CwxModel.memoryVerb).isEmpty
+                && outbox.invokes(CwxModel.stopVerb).isEmpty)
+    }
+
+    @Test("v1 keeps Stop available while v2 is required for Send and memories")
+    func cwxV1CanStopButCannotStart() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 1, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let cwx = CwxModel(mirror: store, commands: commands)
+        cwx.text = "CQ"
+        #expect(cwx.sendReason == CwxModel.olderCoreReason)
+        #expect(cwx.memoryReason(1) == CwxModel.olderCoreReason)
+        #expect(cwx.stopReason == nil)
+        cwx.send()
+        cwx.sendMemory(1)
+        cwx.stop()
+        #expect(await settle { outbox.invokes(CwxModel.stopVerb).count == CwxModel.copies })
+        #expect(outbox.invokes(CwxModel.sendVerb).isEmpty && outbox.invokes(CwxModel.memoryVerb).isEmpty)
+        #expect(await accept(commands, outbox, CwxModel.stopVerb))
+    }
+
+    @Test("Stop retires a pending CW send before a delayed accepted result can recreate it")
+    func cwxStopRetiresDelayedAcceptedSend() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let lease = RemoteCwLease()
+        let cwx = CwxModel(mirror: store, commands: commands, lease: lease)
+        cwx.text = "CQ"
+        cwx.send()
+        #expect(await settle { outbox.invokes(CwxModel.sendVerb).count == CwxModel.copies })
+        let send = try #require(outbox.invokes(CwxModel.sendVerb).first)
+        cwx.stop()
+        #expect(await settle { outbox.invokes(CwxModel.stopVerb).count == CwxModel.copies })
+        await commands.receive(.commandResult(LinkMessage.CommandResult(
+            verb: CwxModel.sendVerb, id: send.id, accepted: true, reason: "", affected: [], values: [
+                .init(name: "cwEpoch", value: .i64(24)), .init(name: "cwActive", value: .bool(true)),
+            ])))
+        #expect(await accept(commands, outbox, CwxModel.stopVerb))
+        await cwx.settleForTesting()
+        #expect(lease.epoch == nil)
+        lease.observe(.init(deviceId: "aa", epoch: 24, active: true), thisDeviceId: "aa")
+        #expect(lease.epoch == nil)
+    }
+
+    @Test("accepted CW result establishes the exact epoch on the shared phone lease")
+    func cwxAcceptedResultEstablishesLease() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let lease = RemoteCwLease()
+        let cwx = CwxModel(mirror: store, commands: commands, lease: lease)
+        cwx.text = "CQ"
+        cwx.send()
+        #expect(await settle { outbox.invokes(CwxModel.sendVerb).count == CwxModel.copies })
+        let send = try #require(outbox.invokes(CwxModel.sendVerb).first)
+        await commands.receive(.commandResult(LinkMessage.CommandResult(
+            verb: CwxModel.sendVerb, id: send.id, accepted: true, reason: "", affected: [], values: [
+                .init(name: "cwEpoch", value: .i64(25)), .init(name: "cwActive", value: .bool(true)),
+            ])))
+        #expect(await settle { lease.epoch == 25 })
+        lease.observe(.init(deviceId: "aa", epoch: 25, active: false), thisDeviceId: "aa")
+        #expect(lease.epoch == nil)
     }
 
     // MARK: Helpers

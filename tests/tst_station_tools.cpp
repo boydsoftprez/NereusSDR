@@ -4,6 +4,8 @@
 // RadioModel; no radio, no socket listens, no audio device is opened.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, CWX is built and offered (R-CW-46). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-28  J.J. Boyd / KG4VCF  Created (iPhone app plan Task 25, D41).
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4b: the Rotor
@@ -93,8 +95,8 @@ private slots:
         QCOMPARE(tools.value(QStringLiteral("diversity")), caps.hasDiversityReceiver);
         QCOMPARE(tools.value(QStringLiteral("tciServer")), true);
         QCOMPARE(tools.value(QStringLiteral("vaxAudio")), true);
-        // CAT is built; the other two desktop tools remain unavailable.
-        QCOMPARE(tools.value(QStringLiteral("cwx")), false);
+        // CAT and CWX are built; the Memory Manager remains unavailable.
+        QCOMPARE(tools.value(QStringLiteral("cwx")), true);
         QCOMPARE(tools.value(QStringLiteral("memoryManager")), false);
         QCOMPARE(tools.value(QStringLiteral("catControl")), true);
 

@@ -61,6 +61,13 @@
 //               stays on the housekeeping cores. While transmitting,
 //               spectrum threads keep off the transmit roles' cores. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: CW transmit, the CWX sender role (R-CW-31): it shares the
+//               DSP thread's core where the connection thread does, and
+//               runs with everything else elsewhere. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the serial key reader role (R-CW-36), placed
+//               as the CWX sender is. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -114,6 +121,8 @@ enum class ThreadRole {
     RadeDecoder,     ///< a RADE slice's decoder thread (RadeRx<id>), per channel
     ConnectionThread, ///< the radio connection thread (reads the radio's UDP)
     SpectrumThread,  ///< a spectrum FFT thread, told apart by a number FftEnginePool gives each
+    CwxSender,       ///< the CWX sender's element timing thread (R-CW-31)
+    CwSerialKey,     ///< the serial key reader's line wait thread (R-CW-36)
 };
 
 /// Which signal processing threads are busy.
@@ -129,6 +138,8 @@ struct PlacementDemand {
     QList<int> radeDecoders;      ///< running RADE decoder threads, by channel, placed in this order
     bool connectionThread{false}; ///< the radio connection thread is running
     QList<int> spectrumThreads;   ///< running spectrum threads, by FftEnginePool's number
+    bool cwxSender{false};        ///< the CWX sender's thread is running
+    bool cwSerialKey{false};      ///< the serial key reader's thread is running
 };
 
 struct RoleAssignment {
@@ -221,6 +232,13 @@ struct PlacementPlan {
 /// connection thread, which takes that lock to hand it samples, would wait
 /// the burst out and lose the radio's packets. Where all cores are equally
 /// fast they run on the housekeeping cores with everything else.
+///
+/// The CWX sender's thread shares the DSP thread's core, raised, wherever
+/// the connection thread does (slower cores run everything else and the
+/// DSP thread has a core). It wakes once per CW element and runs for
+/// microseconds, but each key edge it writes must land on its element's
+/// boundary. Elsewhere it runs with everything else at normal priority.
+/// It is not counted when RADE decoders choose their cores.
 ///
 /// RADE decoders come after every role with a core and share one rather
 /// than own one, on the least busy signal processing core: first the core

@@ -9,6 +9,20 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): markColourPicked(). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
+//                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - populateReadingCombo(): the Reading row's list for other
+//                 reading rows (the history graph's axis 1). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
+//                 RX / TX". J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
+//                 spin box (15-5000) for the per-item update interval.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -80,6 +94,7 @@ class MeterItem;
 //   - Data binding id         (QComboBox, populated from MeterBinding)
 //   - Z-order
 //   - onlyWhenRx / onlyWhenTx / displayGroup (block 1 filter)
+//   - update interval (Limit update rate + Update interval (ms))
 //
 // Subclasses add their own type-specific fields in buildTypeSpecific()
 // which is called from the constructor after the base form is laid
@@ -93,6 +108,10 @@ class BaseItemEditor : public QWidget {
     Q_OBJECT
 
 public:
+    // The reason an option whose artwork NereusSDR does not bundle (the
+    // ANAN dark face, the built-in magic eye bezel) is shown disabled.
+    static QString noArtworkReason();
+
     explicit BaseItemEditor(QWidget* parent = nullptr);
     ~BaseItemEditor() override = default;
 
@@ -123,9 +142,17 @@ protected:
                                   int decimals = 3);
     QSpinBox*       makeIntRow(const QString& label, int min, int max);
     QCheckBox*      makeCheckRow(const QString& label);
+    // The update interval row's range (default kMinUpdateIntervalMs ..
+    // kMaxUpdateIntervalMs); a type editor whose item takes another range
+    // sets it once after the base form is built.
+    void            setUpdateIntervalRange(int minMs, int maxMs);
 
     // Append a pre-made widget under a new label.
     void addRow(const QString& label, QWidget* widget);
+
+    // Fills a combo with "(none)" and every reading the Reading row offers,
+    // each item's data the MeterBinding id (-1 for none).
+    static void populateReadingCombo(QComboBox* combo);
 
     // Append a section header row (bold, slightly-highlighted).
     void addHeader(const QString& text);
@@ -139,6 +166,11 @@ protected:
 
     // Emit propertyChanged() unless we're in a programmatic update.
     void notifyChanged();
+
+    // Records `field` (an ItemColourLook field) as a colour the user picked
+    // on the bound item, so it stays as picked even when it equals a
+    // default. Every colour dialog pick calls it.
+    void markColourPicked(const QString& field);
 
     MeterItem*   m_item{nullptr};
     QFormLayout* m_form{nullptr};
@@ -155,7 +187,13 @@ private:
     QComboBox*      m_comboBinding{nullptr};
     QCheckBox*      m_chkOnlyRx{nullptr};
     QCheckBox*      m_chkOnlyTx{nullptr};
+    // Fade on RX / TX (MeterItem's animated fade). Hidden for a fade cover
+    // and a button grid, whose editors carry the record's own rows.
+    QCheckBox*      m_chkFadeRx{nullptr};
+    QCheckBox*      m_chkFadeTx{nullptr};
     QSpinBox*       m_spinDisplayGroup{nullptr};
+    QCheckBox*      m_chkLimitUpdate{nullptr};
+    QSpinBox*       m_spinUpdateInterval{nullptr};
 
     int m_programmaticDepth{0};
 

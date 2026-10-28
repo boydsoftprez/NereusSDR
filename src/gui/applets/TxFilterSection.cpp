@@ -22,6 +22,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -177,6 +180,12 @@ void TxFilterSection::buildUI(int rowSpacing)
         ).arg(QLatin1String(Style::kTxFilterOverlayLabel)));
         m_txFilterStatusLabel->setAccessibleName(QStringLiteral("TX filter status"));
         vbox->addWidget(m_txFilterStatusLabel);
+
+        // The parts a container copy hides and orders (SectionParts).
+        m_parts.add(QStringLiteral("caption"), QStringLiteral("TX BW label"), 0, {bwLbl});
+        m_parts.add(QStringLiteral("low"), QStringLiteral("Low cutoff"), 0, {loLbl, m_txFilterLowSpin});
+        m_parts.add(QStringLiteral("high"), QStringLiteral("High cutoff"), 0, {hiLbl, m_txFilterHighSpin});
+        m_parts.add(QStringLiteral("status"), QStringLiteral("Filter status"), -1, {m_txFilterStatusLabel});
     }
 }
 

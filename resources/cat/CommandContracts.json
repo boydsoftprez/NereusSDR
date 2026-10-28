@@ -253,14 +253,14 @@
   },
   {
     "code": "KS",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
   },
   {
     "code": "KY",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Text",
     "precedence": "SetFirst"
@@ -1072,7 +1072,7 @@
   },
   {
     "code": "ZZCS",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -1086,7 +1086,7 @@
   },
   {
     "code": "ZZCL",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -1296,7 +1296,7 @@
   },
   {
     "code": "ZZCI",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -1331,14 +1331,14 @@
   },
   {
     "code": "ZZCB",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
   },
   {
     "code": "ZZCD",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -1422,7 +1422,7 @@
   },
   {
     "code": "ZZQK",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CW keyer/display",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -1569,14 +1569,14 @@
   },
   {
     "code": "ZZKS",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
   },
   {
     "code": "ZZKY",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Text",
     "precedence": "SetFirst"
@@ -2199,7 +2199,7 @@
   },
   {
     "code": "ZZKM",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -2451,7 +2451,7 @@
   },
   {
     "code": "ZZKO",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"
@@ -2577,7 +2577,7 @@
   },
   {
     "code": "ZZSS",
-    "outcome": "Unavailable",
+    "outcome": "Adapted",
     "family": "CWX",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"

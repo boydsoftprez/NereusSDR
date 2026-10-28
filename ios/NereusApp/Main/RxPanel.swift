@@ -353,9 +353,14 @@ struct PanelSliderRow: View {
     var greyed = false
     var notConfirmed = false
     let onChange: (Double) -> Void
+    /// Told true while a finger holds the slider and false when it lifts or
+    /// the touch is taken away (the Display pill's peek).
+    var onEditingChanged: ((Bool) -> Void)?
 
     /// The finger's value, shown until the value it sent shows.
     @State private var gestureDraft = SliderGestureDraft()
+    /// A finger holds the slider; reset on its own when the touch ends or is cancelled.
+    @GestureState private var held = false
     @State private var pacer = SliderSendPacer()
     @Environment(\.panelSliderHeight) private var height
     @Environment(\.panelTextScale) private var textScale
@@ -386,6 +391,7 @@ struct PanelSliderRow: View {
             gestureDraft.modelChanged(notConfirmed: notConfirmed)
         }
         .onChange(of: notConfirmed) { gestureDraft.modelChanged(notConfirmed: notConfirmed) }
+        .onChange(of: held) { _, now in onEditingChanged?(now) }
         .onChange(of: greyed) {
             if greyed {
                 gestureDraft.disable()
@@ -430,6 +436,9 @@ struct PanelSliderRow: View {
         .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
+            .updating($held) { _, state, _ in
+                state = range != nil && value != nil && !greyed
+            }
             .onChanged { gesture in
                 guard let range, value != nil, !greyed else {
                     return
@@ -450,6 +459,13 @@ struct PanelSliderRow: View {
                 // the Core answers; the finger's value goes as it arrives.
                 gestureDraft.release(model: value)
             })
+    }
+
+    /// The slider with `action` told while a finger holds it.
+    func onEditing(_ action: @escaping (Bool) -> Void) -> PanelSliderRow {
+        var row = self
+        row.onEditingChanged = action
+        return row
     }
 
     private func formatted(_ number: Double) -> String {

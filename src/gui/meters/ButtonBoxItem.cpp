@@ -7,6 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Screenshot fix: a placeholder button (placeholderReason)
+//                 is dimmed, never highlights and never acts; a click
+//                 says why. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Fade on RX / TX: a faded grid is drawn under the animated
+//                 veil instead of being skipped; clicks stay guarded.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Contain marked stack button ink in its allocated row by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Fit transient container stack grids without changing legacy
@@ -30,6 +40,16 @@
 //                 corner radius, height ratio, fade on RX/TX) after the
 //                 older fields. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-25 - Grids of more than 32 buttons: each button's grid
+//                 position is cached, and a single control is one shown
+//                 button rather than one mask bit. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The fade click guard and a shown button's rectangle are
+//                 open to a subclass (other buttons' reorder drag).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - columnRange (NereusSDR's range unless the grid type gives
+//                 its own) and new grids get Thetis's 3 columns. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -78,6 +98,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "ButtonBoxItem.h"
+#include "ItemColourLook.h"
 #include "ResponsiveText.h"
 
 #include <QPainter>
@@ -88,6 +109,8 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 namespace {
+// The alpha an unavailable button's text, and a placeholder's body, take.
+constexpr int kPlaceholderAlpha = 80;
 bool hasFiniteButtonGeometry(const QRectF& rect)
 {
     return std::isfinite(rect.x()) && std::isfinite(rect.y())
@@ -110,6 +133,28 @@ ButtonBoxItem::ButtonBoxItem(QObject* parent)
 
 ButtonBoxItem::~ButtonBoxItem() = default;
 
+std::pair<int, int> ButtonBoxItem::columnRange() const
+{
+    return {kDefaultMinColumns, kDefaultMaxColumns};
+}
+
+void ButtonBoxItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    // From Thetis MeterManager.cs:25390 [v2.10.3.15] (and its twins at
+    // :25462, :25563, :25628, :25664, :25700)
+    setColumns(kNewGridColumns);
+}
+
+int ButtonBoxItem::checkedButtonCount() const
+{
+    int checked = 0;
+    for (int i = 0; i < m_buttonCount && i < m_buttons.size(); ++i) {
+        if (m_buttons[i].visible) { ++checked; }
+    }
+    return checked;
+}
+
 bool ButtonBoxItem::advanceMeter(qint64 monotonicMs)
 {
     Q_UNUSED(monotonicMs);
@@ -122,10 +167,13 @@ void ButtonBoxItem::setButtonCount(int count)
 {
     m_buttonCount = count;
     m_buttons.resize(count);
+    m_shownDirty = true;
 }
 
 ButtonBoxItem::ButtonState& ButtonBoxItem::button(int index)
 {
+    // The caller may change the button's visibility through the reference.
+    m_shownDirty = true;
     return m_buttons[index];
 }
 
@@ -140,18 +188,38 @@ void ButtonBoxItem::setVisibleBits(uint32_t bits)
     for (int i = 0; i < m_buttonCount && i < 32; ++i) {
         m_buttons[i].visible = (bits >> i) & 1;
     }
+    m_shownDirty = true;
 }
 
 void ButtonBoxItem::setButtonHiddenUntilBuilt(int index, bool hidden)
 {
     if (index < 0 || index >= m_buttonCount) { return; }
     m_buttons[index].hiddenUntilBuilt = hidden;
+    m_shownDirty = true;
 }
 
 bool ButtonBoxItem::isButtonShown(int index) const
 {
     if (index < 0 || index >= m_buttonCount || index >= m_buttons.size()) { return false; }
     return m_buttons[index].visible && !m_buttons[index].hiddenUntilBuilt;
+}
+
+int ButtonBoxItem::shownButtonCount() const
+{
+    ensureShownLayout();
+    return m_shownCount;
+}
+
+void ButtonBoxItem::ensureShownLayout() const
+{
+    if (!m_shownDirty && m_shownOrdinal.size() == m_buttonCount) { return; }
+    m_shownOrdinal.resize(m_buttonCount);
+    int shown = 0;
+    for (int i = 0; i < m_buttonCount; ++i) {
+        m_shownOrdinal[i] = isButtonShown(i) ? shown++ : -1;
+    }
+    m_shownCount = shown;
+    m_shownDirty = false;
 }
 
 void ButtonBoxItem::setButtonAvailable(int index, bool available, const QString& reason)
@@ -171,12 +239,15 @@ void ButtonBoxItem::setAllButtonsAvailable(bool available, const QString& reason
 bool ButtonBoxItem::isButtonAvailable(int index) const
 {
     if (index < 0 || index >= m_buttonCount) { return false; }
-    return m_buttons[index].enabled;
+    return m_buttons[index].enabled && m_buttons[index].placeholderReason.isEmpty();
 }
 
 QString ButtonBoxItem::buttonUnavailableReason(int index) const
 {
     if (index < 0 || index >= m_buttonCount) { return QString(); }
+    if (!m_buttons[index].placeholderReason.isEmpty()) {
+        return m_buttons[index].placeholderReason;
+    }
     return m_buttons[index].unavailableReason;
 }
 
@@ -198,10 +269,14 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     if (m_columns <= 0) { return {}; }
 
     // Count visible buttons up to this index to determine grid position
+    // (cached: an other-buttons grid has 384 slots).
+    ensureShownLayout();
     int visIndex = 0;
-    for (int i = 0; i < index; ++i) {
-        if (isButtonShown(i)) {
-            ++visIndex;
+    if (index >= 0 && index < m_shownOrdinal.size() && m_shownOrdinal[index] >= 0) {
+        visIndex = m_shownOrdinal[index];
+    } else {
+        for (int i = 0; i < index && i < m_shownOrdinal.size(); ++i) {
+            if (m_shownOrdinal[i] >= 0) { ++visIndex; }
         }
     }
 
@@ -216,16 +291,15 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     // only a supported single OTHERBTNS cell marked by
     // the container factory/editor fits its viewport. Legacy groups retain
     // the upstream aspect ratio. Paint and hit testing share this rectangle.
-    const bool singleControl = m_columns == 1 && m_visibleBits != 0
-        && (m_visibleBits & (m_visibleBits - 1)) == 0
+    // One shown button (an other-buttons grid holds more than one mask).
+    const bool singleControl = m_columns == 1 && m_shownCount == 1
         && property("containerSingleControl").toBool();
     // NereusSDR-original stack exception: keep saved legacy ratios intact,
     // and fit all actually shown rows only inside an explicitly marked stack.
     const bool stackGrid=!singleControl && property("containerStackGrid").toBool();
     int rows=1;
     if (stackGrid) {
-        int shown=0;
-        for (int i=0;i<m_buttonCount;++i) { if (isButtonShown(i)) { ++shown; } }
+        const int shown=m_shownCount;
         rows=qMax(1,shown/m_columns+int(shown%m_columns!=0));
     }
     // Keep the legacy float product and the existing viewport narrowing;
@@ -266,9 +340,9 @@ int ButtonBoxItem::buttonAt(const QPointF& pos, int widgetW, int widgetH) const
 
 void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    // FadeOnRx/FadeOnTx guard (from Thetis clsButtonBox)
-    if (m_fadeOnTx && m_transmitting) { return; }
-    if (m_fadeOnRx && !m_transmitting) { return; }
+    // Fade on RX / TX: the grid is drawn and MeterWidget dims it with the
+    // fade veil (Thetis covers its grids rather than skipping them); the
+    // click guard below (handleMousePress) still applies.
 
     const QRectF area = pixelRect(widgetW, widgetH);
     // NereusSDR-original: wide outlines must not bleed into neighboring stack
@@ -289,20 +363,27 @@ void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
 void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
 {
     const ButtonState& btn = m_buttons[index];
+    const bool placeholder = !btn.placeholderReason.isEmpty();
 
     // Determine fill color: clicked > hovered > on/off
     QColor fill;
-    if (index == m_clickedIndex) {
-        fill = btn.clickColour;
-    } else if (index == m_hoveredIndex) {
-        fill = btn.hoverColour;
+    if (index == m_clickedIndex && !placeholder) {
+        fill = ItemColourLook::effective("ButtonBox.clickColour", btn.clickColour, this);
+    } else if (index == m_hoveredIndex && !placeholder) {
+        fill = ItemColourLook::effective("ButtonBox.hoverColour", btn.hoverColour, this);
     } else {
-        fill = btn.on ? btn.onColour : btn.fillColour;
+        fill = btn.on ? ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this) : ItemColourLook::effective("ButtonBox.fillColour", btn.fillColour, this);
     }
 
-    // Button body
+    // Button body; a placeholder's is dimmed as an unavailable button's
+    // text is.
+    QColor border = ItemColourLook::effective("ButtonBox.borderColour", btn.borderColour, this);
+    if (placeholder) {
+        fill.setAlpha(kPlaceholderAlpha);
+        border.setAlpha(kPlaceholderAlpha);
+    }
     const float r = m_cornerRadius;
-    p.setPen(QPen(btn.borderColour, m_borderWidth * rect.width()));
+    p.setPen(QPen(border, m_borderWidth * rect.width()));
     p.setBrush(fill);
     p.drawRoundedRect(rect, r, r);
 
@@ -314,9 +395,9 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
     // Text
     if (!btn.text.isEmpty()) {
         QColor textCol = btn.on && btn.indicatorType == IndicatorType::TextIconColour
-                             ? btn.onColour : btn.textColour;
-        if (!btn.enabled) {
-            textCol.setAlpha(80);
+                             ? ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this) : ItemColourLook::effective("ButtonBox.textColour", btn.textColour, this);
+        if (!btn.enabled || placeholder) {
+            textCol.setAlpha(kPlaceholderAlpha);
         }
         QFont font = WorkspacePreview::readableFont(p.font(), p.device());
         font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(8, static_cast<int>(rect.height() * 0.4))));
@@ -335,11 +416,11 @@ void ButtonBoxItem::paintIndicator(QPainter& p, int index, const QRectF& rect)
 
     const float iw = btn.indicatorWidth * rect.width();
     p.setPen(Qt::NoPen);
-    p.setBrush(btn.onColour);
+    p.setBrush(ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this));
 
     switch (btn.indicatorType) {
     case IndicatorType::Ring:
-        p.setPen(QPen(btn.onColour, iw));
+        p.setPen(QPen(ItemColourLook::effective("ButtonBox.onColour", btn.onColour, this), iw));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(rect.adjusted(iw/2, iw/2, -iw/2, -iw/2),
                           m_cornerRadius, m_cornerRadius);
@@ -389,14 +470,23 @@ void ButtonBoxItem::paintIndicator(QPainter& p, int index, const QRectF& rect)
 // Mouse Interaction
 // ============================================================================
 
+bool ButtonBoxItem::inputFaded() const
+{
+    return (m_fadeOnTx && m_transmitting) || (m_fadeOnRx && !m_transmitting);
+}
+
+QRectF ButtonBoxItem::shownButtonRect(int index, int widgetW, int widgetH) const
+{
+    return buttonRect(index, pixelRect(widgetW, widgetH));
+}
+
 bool ButtonBoxItem::handleMousePress(QMouseEvent* event, int widgetW, int widgetH)
 {
-    if (m_fadeOnTx && m_transmitting) { return false; }
-    if (m_fadeOnRx && !m_transmitting) { return false; }
+    if (inputFaded()) { return false; }
 
     const int idx = buttonAt(event->position(), widgetW, widgetH);
     if (idx < 0) { return false; }
-    if (!m_buttons[idx].enabled) {
+    if (!isButtonAvailable(idx)) {
         // R-R3-21: an unavailable button takes the click (so nothing
         // beneath it acts) and says why on release; it changes nothing.
         m_unavailablePressedIndex = idx;
@@ -414,8 +504,8 @@ bool ButtonBoxItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widg
         const int pressed = m_unavailablePressedIndex;
         m_unavailablePressedIndex = -1;
         if (buttonAt(event->position(), widgetW, widgetH) == pressed
-            && pressed < m_buttons.size() && !m_buttons[pressed].enabled) {
-            emit unavailableButtonClicked(pressed, m_buttons[pressed].unavailableReason);
+            && pressed < m_buttons.size() && !isButtonAvailable(pressed)) {
+            emit unavailableButtonClicked(pressed, buttonUnavailableReason(pressed));
         }
         return true;
     }

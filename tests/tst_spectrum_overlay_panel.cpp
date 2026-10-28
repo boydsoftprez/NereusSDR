@@ -2859,6 +2859,14 @@ private slots:
             QCOMPARE(slider->maximum(), range.max);
         }
 
+        QSlider* rate = h.slider("pillDisplayWfUpdatePeriodMs");
+        QCOMPARE(rate->singleStep(), 1);
+        rate->setValue(10);
+        rate->triggerAction(QAbstractSlider::SliderSingleStepAdd);
+        QCOMPARE(h.pan.wfUpdatePeriodMs(), 11);
+        rate->triggerAction(QAbstractSlider::SliderSingleStepAdd);
+        QCOMPARE(h.pan.wfUpdatePeriodMs(), 12);
+
         QStringList averaging;
         for (int i = 0; i < h.combo("pillDisplayWaterfallAveraging")->count(); ++i) {
             averaging << h.combo("pillDisplayWaterfallAveraging")->itemText(i);

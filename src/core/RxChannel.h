@@ -93,6 +93,18 @@
 //                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-25 - Issue #650: BIN sends WDSP dual mono while a stage that
+//                 zeroes Q runs (NR1 to NR4, NNR, SNB, ANF), so the right ear
+//                 is not silent; binauralEnabled() stays the operator's
+//                 choice (applyEffectiveBinaural). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. NereusSDR-original.
+//   2026-10-25 - takeInputSizeMismatch comment: the guard is a safety net
+//                 now that a slice's stream binding and its channel's re-rate
+//                 land in one step. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
+//   2026-10-26: CW transmit, apfFreqHz(): the value last handed to
+//                 setApfFreq, for the APF centre tests (R-CW-27). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -757,6 +769,11 @@ public:
     bool apfEnabled() const { return m_apfEnabled.load(); }
     void setApfEnabled(bool enabled);
     void setApfFreq(double hz);
+    // The value last handed to setApfFreq, in Hz (0 before the first one).
+    // WDSP has no getter for the SPCW frequency; carried so the APF centre
+    // (CW pitch + tune offset, R-CW-27) is assertable from the caller side,
+    // as shiftOffsetHz() is for the shift.
+    double apfFreqHz() const { return m_apfFreqHz; }
     void setApfBandwidth(double hz);
     void setApfGain(double gain);
     void setApfSelection(int selection);
@@ -827,9 +844,11 @@ public:
 
     // Binaural mode: enabled → I and Q carry separate headphone channels.
     // Disabled (default) → dual-mono (Q copies I).
-    // From Thetis Project Files/Source/Console/radio.cs:1145-1162
+    // From Thetis Project Files/Source/Console/radio.cs:1147-1162 [v2.10.3.15]
     //   Thetis default bin_on = false
-    // WDSP: third_party/wdsp/src/patchpanel.c:187
+    // WDSP: third_party/wdsp/src/patchpanel.c:197
+    // binauralEnabled() is the operator's choice. WDSP gets dual mono while
+    // a stage that zeroes Q runs (issue #650, applyEffectiveBinaural).
     bool binauralEnabled() const { return m_binauralEnabled.load(); }
     void setBinauralEnabled(bool enabled);
 
@@ -1261,9 +1280,12 @@ public:
     qint64 takeOutputNonFiniteSamples() const;
 
     // 2026-10-23: chunks processIq silenced since the previous take because
-    // their size did not match wdspInputSize(). A short window while a slice
-    // changes stream is expected; a count that keeps growing means a drain
-    // threshold and the channel's input block have parted for good.
+    // their size did not match wdspInputSize(). 2026-10-25: a safety net. A
+    // slice's move to a stream at another rate reaches the DSP worker in the
+    // same step as its channel's re-rate (RadioModel::applyStreamDspGeometry),
+    // so any count means that ordering broke; a count that keeps growing
+    // means a drain threshold and the channel's input block have parted for
+    // good.
     // chunkSize and wdspInputSize are the last silenced chunk's pair, as
     // the guard saw it. False (all 0) when no chunk was silenced.
     // Diagnostics only. Lock-free; one periodic owner only: RadioModel's
@@ -1384,6 +1406,19 @@ private:
     bool applyActiveNrOnLane(NrSlot slot);
     // Sets the NR selection flags (m_activeNr and the ones kept with it).
     void storeActiveNrFlags(NrSlot slot);
+    // Issue #650: true while a WDSP stage that writes Q = 0 is selected
+    // (NR1 to NR4, NNR not held off by its limit, legacy ANR / EMNR, SNB,
+    // ANF).
+    bool qSilencingStageSelected() const;
+    // Issue #650: where a panel job goes relative to a stage's run job.
+    enum class BinauralStep { BeforeStageRun, AfterStageRun };
+    // Issue #650: AfterStageRun sends SetRXAPanelBinaural the effective
+    // value, m_binauralEnabled && !qSilencingStageSelected(), read when the
+    // job runs. Every writer of those inputs calls it after its own WDSP
+    // job. BeforeStageRun, called before the run job, queues dual mono
+    // first when a stage is (or, with stageStarting, is about to be) on.
+    void applyEffectiveBinaural(BinauralStep step = BinauralStep::AfterStageRun,
+                                bool stageStarting = false);
     // R-R3-39: builds this channel's DeepFilterNet3 instance when `slot` is
     // DFNR and none is built yet (on the receive lane when there is one), publishes the
     // pointer, then sets m_dfnrActive from the current selection.
@@ -1484,8 +1519,16 @@ private:
     // from Thetis radio.cs, which sets AF as SetRXAPanelGain1.
     static constexpr double kPanelGain1Unity = 1.0;
     // binauralEnabled: binaural audio — off by default (dual-mono)
-    // From Thetis radio.cs:1145-1162 — bin_on = false
+    // From Thetis radio.cs:1147-1162 [v2.10.3.15]: bin_on = false
     std::atomic<bool> m_binauralEnabled{false};
+    // Issue #650: the bin value last sent to SetRXAPanelBinaural, so the
+    // panel is pushed only when the effective value changes (a channel
+    // never opened in WDSP sees no call while it stays at the default).
+    // create_panel opens with copy 0 (third_party/wdsp/src/RXA.c:567), but
+    // WdspEngine::openRxChannelWdsp then sends bin 0 (WdspEngine.cpp:808),
+    // and every open (create or rebuild) gets a new wrapper, so 0 is what
+    // WDSP holds when this wrapper's first job runs. Written on the lane.
+    std::atomic<int> m_panelBinauralSent{0};
     std::atomic<bool> m_active{false};
     // Task 8: nonzero while a no-drain stop is waiting for WDSP to report it
     // done. processIq keeps exchanging on the channel meanwhile and clears it
@@ -1600,6 +1643,7 @@ private:
 
     // Shift offset carry (mirrors what was last passed to setShiftFrequency)
     double m_shiftOffsetHz{0.0};
+    double m_apfFreqHz{0.0};
 
     // Notch tune-frequency carry (mirrors what was last passed to
     // RXANBPSetTuneFrequency). Plain member, not atomic: WDSP owns the

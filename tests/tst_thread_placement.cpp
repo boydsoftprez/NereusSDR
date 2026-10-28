@@ -20,6 +20,10 @@
 //               stays on the housekeeping cores, and while transmitting
 //               spectrum keeps off the transmit roles' cores. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: CW transmit, the CWX sender role (R-CW-31). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the serial key reader role (R-CW-36). J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -355,6 +359,85 @@ private slots:
         QCOMPARE(full.cpuFor(ThreadRole::TxWorkerThread), 7);
         QCOMPARE(full.cpuFor(ThreadRole::RxWorker, 1), -1);
         QCOMPARE(full.housekeeping, (QList<int>{0, 1, 2, 3}));
+    }
+
+    // CW transmit (R-CW-31): the CWX sender shares the DSP thread's core,
+    // raised, where the connection thread does, and changes no other role
+    // (the RADE decoders included); on equal cores it runs with everything
+    // else at normal priority.
+    void cwxSenderSharesTheDspThreadsCoreWhereTheConnectionThreadDoes()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        PlacementDemand d = demand({0, 1}, true);
+        d.connectionThread = true;
+        d.radeDecoders = {0, 1};
+        const PlacementPlan without = planThreadPlacement(f.read(), d);
+        d.cwxSender = true;
+        const PlacementPlan plan = planThreadPlacement(f.read(), d);
+        QVERIFY(plan.active);
+        QVERIFY(plan.cpuFor(ThreadRole::DspThread) >= 0);
+        QCOMPARE(plan.cpuFor(ThreadRole::CwxSender), plan.cpuFor(ThreadRole::DspThread));
+        QVERIFY(plan.raisedFor(ThreadRole::CwxSender));
+        QCOMPARE(plan.signalCores(), without.signalCores());
+        QCOMPARE(plan.housekeeping, without.housekeeping);
+        for (const RoleAssignment& a : without.assignments) {
+            QCOMPARE(plan.cpuFor(a.role, a.channel), a.cpu);
+        }
+        QVERIFY(without.cpuFor(ThreadRole::CwxSender) == -1);
+
+        SysfsFixture e;
+        e.online("0-3");
+        for (int cpu = 0; cpu < 4; ++cpu) {
+            e.capacity(cpu, 1024);
+        }
+        e.policy(0, "0 1 2 3");
+        PlacementDemand q = demand({0}, true);
+        q.connectionThread = true;
+        q.cwxSender = true;
+        const PlacementPlan flat = planThreadPlacement(e.read(), q);
+        QVERIFY(flat.active);
+        QCOMPARE(flat.cpuFor(ThreadRole::CwxSender), -1);
+        QVERIFY(flat.coresFor(ThreadRole::CwxSender).isEmpty());
+        QVERIFY(!flat.raisedFor(ThreadRole::CwxSender));
+    }
+
+    // CW transmit (R-CW-36): the serial key reader is placed as the CWX
+    // sender is, and changes no other role.
+    void cwSerialKeySharesTheDspThreadsCoreWhereTheConnectionThreadDoes()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        PlacementDemand d = demand({0, 1}, true);
+        d.connectionThread = true;
+        d.cwxSender = true;
+        const PlacementPlan without = planThreadPlacement(f.read(), d);
+        d.cwSerialKey = true;
+        const PlacementPlan plan = planThreadPlacement(f.read(), d);
+        QVERIFY(plan.active);
+        QVERIFY(plan.cpuFor(ThreadRole::DspThread) >= 0);
+        QCOMPARE(plan.cpuFor(ThreadRole::CwSerialKey), plan.cpuFor(ThreadRole::DspThread));
+        QVERIFY(plan.raisedFor(ThreadRole::CwSerialKey));
+        QCOMPARE(plan.signalCores(), without.signalCores());
+        QCOMPARE(plan.housekeeping, without.housekeeping);
+        for (const RoleAssignment& a : without.assignments) {
+            QCOMPARE(plan.cpuFor(a.role, a.channel), a.cpu);
+        }
+        QVERIFY(without.cpuFor(ThreadRole::CwSerialKey) == -1);
+
+        SysfsFixture e;
+        e.online("0-3");
+        for (int cpu = 0; cpu < 4; ++cpu) {
+            e.capacity(cpu, 1024);
+        }
+        e.policy(0, "0 1 2 3");
+        PlacementDemand q = demand({0}, true);
+        q.connectionThread = true;
+        q.cwSerialKey = true;
+        const PlacementPlan flat = planThreadPlacement(e.read(), q);
+        QVERIFY(flat.active);
+        QCOMPARE(flat.cpuFor(ThreadRole::CwSerialKey), -1);
+        QVERIFY(!flat.raisedFor(ThreadRole::CwSerialKey));
     }
 
     // As measured on the Rock on 2026-10-10 with wide receivers: the radio

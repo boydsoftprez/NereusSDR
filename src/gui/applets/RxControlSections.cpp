@@ -15,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Each section but Mode registers its parts (SectionParts);
+//                 RX Filter's hideTop and hideBottom are the hide keys of
+//                 its top and bottom parts, and its preset grid is a part
+//                 too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-24 - The mode combo takes its items from the applet only;
 //                 Thetis headers byte for byte and the tooltip cites
 //                 stamped at v2.10.3.15. J.J. Boyd (KG4VCF), AI-assisted
@@ -272,6 +277,10 @@ RxAntennasSection::RxAntennasSection(QWidget* parent)
     row->addWidget(m_rx, 1);
     row->addWidget(m_tx, 1);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("rxAntenna"), QStringLiteral("RX antenna button"), 0, {m_rx});
+    m_parts.add(QStringLiteral("txAntenna"), QStringLiteral("TX antenna button"), 0, {m_tx});
 }
 
 RxModeSection::RxModeSection(QWidget* parent)
@@ -309,6 +318,12 @@ RxStepSection::RxStepSection(QWidget* parent)
     workspaceArrow(m_up);
     row->addWidget(m_up);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("caption"), QStringLiteral("STEP label"), 0, {lbl});
+    m_parts.add(QStringLiteral("down"), QStringLiteral("Step down"), 0, {m_down});
+    m_parts.add(QStringLiteral("value"), QStringLiteral("Step size"), 0, {m_label});
+    m_parts.add(QStringLiteral("up"), QStringLiteral("Step up"), 0, {m_up});
 }
 
 RxFilterSection::RxFilterSection(QWidget* parent)
@@ -335,6 +350,12 @@ RxFilterSection::RxFilterSection(QWidget* parent)
     m_passband->setFixedHeight(WorkspacePreview::enabled() ? 49 : 48);
     m_passband->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     rows(this)->addWidget(m_passband);
+
+    // The parts a container copy hides and orders (SectionParts). The
+    // hide keys of top and bottom are the existing hideTop and hideBottom.
+    m_parts.add(QStringLiteral("top"), QStringLiteral("Width label"), -1, {m_width});
+    m_parts.add(QStringLiteral("presets"), QStringLiteral("Preset buttons"), -1, {host});
+    m_parts.add(QStringLiteral("bottom"), QStringLiteral("Passband"), -1, {m_passband});
 }
 
 namespace {
@@ -349,8 +370,9 @@ QColor configColor(const QJsonObject& config, const char* key, const QColor& fal
 
 void RxFilterSection::applyConfig(const QJsonObject& config)
 {
-    if (m_width) { m_width->setVisible(!config.value(QLatin1String("hideTop")).toBool(false)); }
-    if (m_passband) { m_passband->setVisible(!config.value(QLatin1String("hideBottom")).toBool(false)); }
+    // hideTop, hidePresets and hideBottom hide the parts; order orders
+    // them.
+    m_parts.apply(config);
 
     const int columns = qBound(1, config.value(QLatin1String("columns")).toInt(3), 32);
     m_columns = columns;
@@ -406,6 +428,11 @@ RxPanSection::RxPanSection(QWidget* parent)
     caption(right);
     row->addWidget(right);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("left"), QStringLiteral("L label"), 0, {left});
+    m_parts.add(QStringLiteral("slider"), QStringLiteral("Pan slider"), 0, {m_slider});
+    m_parts.add(QStringLiteral("right"), QStringLiteral("R label"), 0, {right});
 }
 
 RxSquelchSection::RxSquelchSection(QWidget* parent)
@@ -427,6 +454,10 @@ RxSquelchSection::RxSquelchSection(QWidget* parent)
     workspaceSlider(m_slider);
     row->addWidget(m_slider, 1);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("button"), QStringLiteral("SQL button"), 0, {m_button});
+    m_parts.add(QStringLiteral("slider"), QStringLiteral("Squelch level"), 0, {m_slider});
 }
 
 RxAttenuatorSection::RxAttenuatorSection(QWidget* parent)
@@ -463,6 +494,12 @@ RxAttenuatorSection::RxAttenuatorSection(QWidget* parent)
         m_rx1Preamp));
     m_rx1Preamp->hide();
     rows(this)->addWidget(m_rx1Preamp);
+
+    // The parts a container copy hides and orders (SectionParts). The
+    // preamp check box shows only when the applet allows it.
+    m_parts.add(QStringLiteral("caption"), QStringLiteral("ATT label"), 0, {m_label});
+    m_parts.add(QStringLiteral("control"), QStringLiteral("Attenuator control"), 0, {m_stack});
+    m_parts.add(QStringLiteral("preamp"), QStringLiteral("Preamp check box"), -1, {m_rx1Preamp});
 }
 
 RxAgcSection::RxAgcSection(QWidget* parent)
@@ -513,6 +550,15 @@ RxAgcSection::RxAgcSection(QWidget* parent)
     caption(m_info);
     m_info->hide();
     rows(this)->addWidget(m_info);
+
+    // The parts a container copy hides and orders (SectionParts). The info
+    // line shows only when the applet allows it.
+    m_parts.add(QStringLiteral("mode"), QStringLiteral("AGC mode"), 0, {m_combo});
+    m_parts.add(QStringLiteral("caption"), QStringLiteral("AGC-T label"), 0, {name});
+    m_parts.add(QStringLiteral("value"), QStringLiteral("Threshold value"), 0, {m_value});
+    m_parts.add(QStringLiteral("auto"), QStringLiteral("AUTO button"), 0, {m_auto});
+    m_parts.add(QStringLiteral("slider"), QStringLiteral("Threshold slider"), -1, {m_slider});
+    m_parts.add(QStringLiteral("info"), QStringLiteral("AGC info"), -1, {m_info});
 }
 
 RxRitSection::RxRitSection(QWidget* parent)
@@ -544,6 +590,13 @@ RxRitSection::RxRitSection(QWidget* parent)
     workspaceArrow(m_plus);
     row->addWidget(m_plus);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("on"), QStringLiteral("RIT button"), 0, {m_on});
+    m_parts.add(QStringLiteral("zero"), QStringLiteral("Zero button"), 0, {m_zero});
+    m_parts.add(QStringLiteral("minus"), QStringLiteral("Step down"), 0, {m_minus});
+    m_parts.add(QStringLiteral("offset"), QStringLiteral("Offset"), 0, {m_label});
+    m_parts.add(QStringLiteral("plus"), QStringLiteral("Step up"), 0, {m_plus});
 }
 
 RxXitSection::RxXitSection(QWidget* parent)
@@ -575,6 +628,13 @@ RxXitSection::RxXitSection(QWidget* parent)
     workspaceArrow(m_plus);
     row->addWidget(m_plus);
     rows(this)->addLayout(row);
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("on"), QStringLiteral("XIT button"), 0, {m_on});
+    m_parts.add(QStringLiteral("zero"), QStringLiteral("Zero button"), 0, {m_zero});
+    m_parts.add(QStringLiteral("minus"), QStringLiteral("Step down"), 0, {m_minus});
+    m_parts.add(QStringLiteral("offset"), QStringLiteral("Offset"), 0, {m_label});
+    m_parts.add(QStringLiteral("plus"), QStringLiteral("Step up"), 0, {m_plus});
 }
 
 } // namespace NereusSDR

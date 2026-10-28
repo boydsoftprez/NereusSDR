@@ -257,13 +257,49 @@ jobs:
         # and waits in them ran out of time.
         run: ios/scripts/sim-settle.sh 'iPhone 17'
 
+      - name: Test the scroll view identifiers in a process of their own
+        id: scroll-view-identifiers
+        # ScrollViewIdentifierTests only catches a regression when its walk
+        # is the first in the test process to turn application accessibility
+        # on, and that switch belongs to the simulator, not the process: a
+        # suite that restores it out of order, or a test that dies before
+        # its restore, leaves it on, and the walk then cancels. So it runs
+        # first, on the simulator sim-settle just booted, where the switch is
+        # off, and it must pass: a cancel, or a name that matches no suite,
+        # also ends in TEST EXECUTE SUCCEEDED, so the step counts the passes.
+        if: matrix.part == 1
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          result="$RUNNER_TEMP/scroll-view-identifiers.xcresult"
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -resultBundlePath "$result" \
+            -only-testing:NereusSDRTests/ScrollViewIdentifierTests \
+            test-without-building
+          counts=$(xcrun xcresulttool get test-results summary --path "$result" |
+            python3 -c 'import json, sys; s = json.load(sys.stdin); print(s.get("totalTestCount", 0), s.get("passedTests", 0))')
+          read -r total passed <<< "$counts"
+          echo "ScrollViewIdentifierTests: $total tests, $passed passed"
+          if [ "$total" -ne 1 ] || [ "$passed" -ne 1 ]; then
+            echo "::error title=Scroll view identifiers::ScrollViewIdentifierTests did not run and pass ($total tests, $passed passed): cancelled, or matched no suite"
+            exit 1
+          fi
+
       - name: Test on an iPhone 17 simulator
+        # Also after the step above fails, so its failure hides no other,
+        # but not after a build or boot failure: that step runs only when
+        # every step before it succeeded. Part 1 runs without
+        # ScrollViewIdentifierTests, which ran alone above: in a process
+        # where an earlier suite has turned accessibility on, it can only
+        # cancel itself.
+        if: ${{ success() || steps.scroll-view-identifiers.outcome == 'failure' }}
         shell: bash
         env:
           PART: ${{ matrix.part }}
         run: |
           case "$PART" in
-            1) selection=(-skip-testing:NereusSDRUITests) ;;
+            1) selection=(-skip-testing:NereusSDRUITests -skip-testing:NereusSDRTests/ScrollViewIdentifierTests) ;;
             2) selection=(-only-testing:NereusSDRUITests) ;;
             *)
               echo "Unknown part $PART" >&2

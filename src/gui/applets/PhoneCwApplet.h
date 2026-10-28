@@ -50,6 +50,11 @@
 //   2026-09-25 - R-R3-49 (parity Task 3): setTxProfilePermitted for the
 //                 mic profile combo. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26: CW transmit, the CW page (R-CW-41, R-CW-47): Delay, Speed,
+//               Sidetone and its level, the L/R pan, Break-in, Iambic,
+//               Pitch, the KEY, TX and keyer lamps and the keyer's state
+//               line; setCwSettingsPermitted. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -114,6 +119,7 @@ namespace NereusSDR {
 
 class HGauge;
 class DexpPeakMeter;
+class TriBtn;
 
 // PhoneCwApplet — QStackedWidget with Phone (0) and CW (1) pages.
 // FM is a separate FmApplet per the reconciled design spec.
@@ -146,6 +152,11 @@ public:
     // lists the Core's profiles and selects through the Core
     // (transmitSettingsVersion 3), live while its radio is off the air.
     void setTxProfilePermitted(bool permitted, const QString& reason = QString());
+    // CW transmit (R-CW-03, R-CW-41): the CW page's settings (they key
+    // nothing). In a remote window they are live while the Core takes the
+    // CW settings (transmitSettingsVersion 16) and the window may change
+    // its transmit settings; otherwise shown disabled with `reason`.
+    void setCwSettingsPermitted(bool permitted, const QString& reason = QString());
 
     // Switch the stacked widget page: 0=Phone, 1=CW, 2=FM
     void showPage(int index);
@@ -201,6 +212,21 @@ private:
     void refreshMicSourceItems();
     void showMicSourceFromModel();
     void applyMicInput(MicInput input);
+    // ── CW page (R-CW-41) ────────────────────────────────────────────────────
+    void wireCwPage();
+    // Model to page: every control from TransmitModel and the pitch, under
+    // m_updatingFromModel.
+    void showCwFromModel();
+    // The break-in button's text and tooltip, the Delay's availability, the
+    // lamps and the keyer's state line, from the keyer controller.
+    void refreshCwKeyerState();
+    void refreshCwLamps();
+    void applyCwSettingsGate();
+    // The break-in mode the radio uses: the controller's in a local
+    // window, the setting in a remote one.
+    int cwEffectiveBreakInMode() const;
+    void stepCwPitch(int deltaHz);
+    void stepCwBreakIn();
     // ── Shared ───────────────────────────────────────────────────────────────
     QStackedWidget* m_stack{nullptr};
     QButtonGroup*   m_tabGroup{nullptr};
@@ -283,14 +309,30 @@ private:
     QSlider*     m_amCarSlider{nullptr};
     QLabel*      m_amCarLabel{nullptr};
 
-    // ── CW page — placeholder (Phase 3M-2 deferred) ─────────────────────────
-    // CW member variables removed per
-    // docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 7.
-    // Re-add alongside the buildCwPage() implementation when 3M-2 lands:
-    //   m_alcGauge, m_speedSlider, m_speedLabel, m_pitchDown, m_pitchLabel,
-    //   m_pitchUp, m_delaySlider, m_delayLabel, m_sidetoneBtn,
-    //   m_sidetoneSlider, m_sidetoneLabel, m_breakinBtn, m_iambicBtn,
-    //   m_fwKeyerBtn, m_cwPanSlider, m_cwPanLabel.
+    // ── CW page (R-CW-41) ────────────────────────────────────────────────────
+    // AetherSDR's CW page layout (PhoneCwApplet.cpp:440-724 [@1e0718ad]),
+    // without its ALC gauge. Object names are the UI gate's and the tests'.
+    QSlider*     m_cwDelaySlider{nullptr};      // cwDelaySlider: cwBreakInDelayMs
+    QLabel*      m_cwDelayValue{nullptr};
+    QSlider*     m_cwSpeedSlider{nullptr};      // cwSpeedSlider: cwKeyerSpeed
+    QLabel*      m_cwSpeedValue{nullptr};
+    QPushButton* m_cwSidetoneBtn{nullptr};      // cwSidetoneButton: cwSidetone
+    QSlider*     m_cwSidetoneSlider{nullptr};   // cwSidetoneSlider: monitorVolume
+    QLabel*      m_cwSidetoneValue{nullptr};
+    QSlider*     m_cwPanSlider{nullptr};        // cwPanSlider: no setting holds it
+    QPushButton* m_cwBreakInBtn{nullptr};       // cwBreakInButton: cwBreakInMode
+    QPushButton* m_cwIambicBtn{nullptr};        // cwIambicButton: cwKeyerMode
+    TriBtn*      m_cwPitchDown{nullptr};
+    QLabel*      m_cwPitchValue{nullptr};       // cwPitchValue: RadioModel::cwPitchHz
+    TriBtn*      m_cwPitchUp{nullptr};
+    QLabel*      m_cwKeyLamp{nullptr};          // cwKeyLamp: dot, dash or key-out
+    QLabel*      m_cwTxLamp{nullptr};           // cwTxLamp: MOX or key-out
+    QLabel*      m_cwKeyerLamp{nullptr};        // cwKeyerLamp: keyer ready or off
+    QLabel*      m_cwStatusLine{nullptr};       // cwStatusLine
+    bool m_cwSettingsPermitted{true};
+    QString m_cwSettingsReason;
+    // The iambic letter Iambic turns back on (A or B), from the setting.
+    int m_cwLastIambicMode{2};
 
     // ── FM page (8 controls) ─────────────────────────────────────────────────
     // #1  FM MIC slider (0-100) + inset value

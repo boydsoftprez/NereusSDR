@@ -365,6 +365,12 @@ warren@wpratt.com
 //   2026-10-14 - Atomic VOX target publication and retirement guards across
 //                 lane rebuilds. J.J. Boyd (KG4VCF), AI-assisted via OpenAI
 //                 Codex. NereusSDR-original.
+//   2026-10-26 - Remote transmit hold then cut: the RF hold (RfHold,
+//                 setRfHold, isRfHeld, rfHoldMask, clearRfHolds). While any
+//                 reason holds, every block still reaches the connection
+//                 and the AM monitor tap, all zeros; the gate, the run
+//                 sequence and rfGateOpened are untouched. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -696,6 +702,27 @@ public:
     {
         return m_runSequence.load(std::memory_order_acquire) == sequence && isRfGateOpen();
     }
+
+    // Remote transmit hold then cut (2026-10-26): the RF hold. A reason a
+    // remote key's RF is held silent while everything else stays keyed.
+    // While any reason is set, each block the worker sends still reaches
+    // the connection (and the AM monitor tap) at the usual cadence and
+    // sample count, with every sample exactly zero; the next block after
+    // the last reason clears carries the channel's real output again. A
+    // hold never touches the RF gate (m_running), m_runSequence or
+    // rfGateOpened: isRfGateOpen() stays true and closeRfGate still stops
+    // every block at once.
+    enum class RfHold : quint32 { Link = 1u << 0, Mic = 1u << 1, Guard = 1u << 2 };
+    // Any thread. On: returns once no block being sent at the call is still
+    // inside sendTxIq, so no non-zero sample reaches the connection after
+    // it returns (the same short wait as closeRfGateAndWaitForSender). Off:
+    // never waits.
+    void setRfHold(RfHold reason, bool on) noexcept;
+    // Any reason set.
+    bool isRfHeld() const noexcept { return rfHoldMask() != 0u; }
+    quint32 rfHoldMask() const noexcept { return m_rfHoldMask.load(std::memory_order_acquire); }
+    // Every reason off. Never waits.
+    void clearRfHolds() noexcept;
 
     // The last TXA meter reading for `meterType` (a WDSP txaMeterType index,
     // 0..16). With a lane, the value the lane last read (-400, WDSP's idle
@@ -3005,6 +3032,11 @@ private:
     // both sides sequentially consistent), so no block reaches the
     // connection after it returns.
     mutable std::atomic<int> m_txIqSendersInFlight{0};
+    // Remote transmit hold then cut: the RfHold reasons now set. Read by the
+    // worker inside the sender section above (sequentially consistent, the
+    // same Dekker pairing as the gate), so setRfHold(on) can wait for a
+    // block already past the check.
+    std::atomic<quint32> m_rfHoldMask{0};
 
     // Caches the lane refreshes. Without a lane they are unused.
     mutable std::array<std::atomic<bool>, static_cast<std::size_t>(Stage::kStageCount)> m_stageRunCache{};

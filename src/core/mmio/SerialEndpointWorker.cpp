@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity): outbound
+//                 send; port opens read/write for OUT or BOTH; inbound
+//                 data read only for IN or BOTH. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -110,7 +114,11 @@ void SerialEndpointWorker::start()
     connect(m_port, &QSerialPort::errorOccurred,
             this,   &SerialEndpointWorker::onErrorOccurred);
 
-    if (!m_port->open(QIODevice::ReadOnly)) {
+    // Writing is only needed when the direction sends (OUT or BOTH).
+    const QIODevice::OpenMode mode =
+        m_endpoint->direction() == MmioEndpoint::Direction::In
+            ? QIODevice::ReadOnly : QIODevice::ReadWrite;
+    if (!m_port->open(mode)) {
         qCWarning(lcMmio) << "Serial open failed:" << m_port->errorString();
         setState(State::Error);
         return;
@@ -119,6 +127,9 @@ void SerialEndpointWorker::start()
     setState(State::Connected);
     qCInfo(lcMmio) << "Serial opened on" << m_endpoint->serialDevice()
                    << "@" << m_endpoint->serialBaud();
+
+    // Anything queued while the port was closed goes out now.
+    flushOutbound();
 }
 
 void SerialEndpointWorker::stop()
@@ -138,7 +149,13 @@ void SerialEndpointWorker::stop()
 // dispatches each complete line to the format parser.
 void SerialEndpointWorker::onReadyRead()
 {
-    m_lineBuffer.append(m_port->readAll());
+    const QByteArray received = m_port->readAll();
+    // From Thetis MeterManager.cs:42589, :42592 [v2.10.3.15] — data is
+    // only read in when the direction is IN or BOTH.
+    if (m_endpoint->direction() == MmioEndpoint::Direction::Out) {
+        return;
+    }
+    m_lineBuffer.append(received);
 
     // Process every complete newline-terminated record in the buffer.
     int newlinePos;
@@ -184,6 +201,27 @@ void SerialEndpointWorker::onErrorOccurred()
 
     qCWarning(lcMmio) << "Serial error:" << m_port->errorString();
     setState(State::Error);
+}
+
+// From Thetis MeterManager.cs:42651-42700 [v2.10.3.15] — SerialPortHandler
+// outbound: up to 20 queued messages per write, as ASCII.
+void SerialEndpointWorker::flushOutbound()
+{
+    if (!m_port || !m_port->isOpen() || !m_port->isWritable()
+        || m_endpoint->direction() == MmioEndpoint::Direction::In) {
+        return;
+    }
+
+    while (true) {
+        const QByteArray sendBytes = m_endpoint->takeOutboundPayload();
+        if (sendBytes.isEmpty()) {
+            break;
+        }
+        if (m_port->write(sendBytes) < 0) {
+            qCWarning(lcMmio) << "Serial send failed:" << m_port->errorString();
+            break;
+        }
+    }
 }
 
 } // namespace NereusSDR

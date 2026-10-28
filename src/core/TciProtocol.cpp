@@ -7,6 +7,13 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-27 - CW transmit, the TCI CW commands (R-CW-35) by J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code: cw_macros, cw_msg,
+//                cw_terminal, cw_macros_stop, cw_macros_speed (set, query,
+//                up, down), cw_macros_delay, cw_keyer_speed and keyer, after
+//                TCIServer.cs TCICWController [v2.10.3.15], every macro and
+//                keyer press through the CWX sender; cw_macros_empty, the
+//                speed notifications and the init burst's real values.
 //   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code: the init burst's TX dial rule
 //                moves into announcesTxSlice / txFrequencyFor, which the
@@ -201,6 +208,13 @@ mw0lge@grange-lane.co.uk
 #include "models/Band.h"  // bandFromFrequency + bandLabel for tx_frequency_thetis
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
+#include "models/CwKeyerController.h"
+#include "core/CwxSender.h"
+#include "core/CwTypes.h"
+
+#include <algorithm>
+#include <cstdlib>
 
 namespace NereusSDR {
 
@@ -255,6 +269,7 @@ TciProtocol::TciProtocol(QObject* radio, QObject* parent)
     , m_radio(radio)
 {
     (void)m_radio;  // dereferenced in Phase 6+ via QMetaObject::invokeMethod for setters.
+    hookCw();
 }
 
 // From Thetis TCIServer.cs:4900-4924 [v2.10.3.13] — text-frame parser.
@@ -1158,14 +1173,20 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     //   return m_cwController != null ? m_cwController.GetMacroSpeed() : 30;
     //   return m_cwController != null ? m_cwController.GetMacroDelayMs() : 0;
     //   return m_cwController != null ? m_cwController.GetKeyerSpeed()  : 30;
-    // NereusSDR has no CwController yet (Phase 3M-2 introduces it).  Until
-    // then we emit the same numeric defaults Thetis emits when its controller
-    // is absent -- this is the Thetis-faithful null-controller path, ported
-    // verbatim.  Phase 3M-2 replaces these with readIntGlobal calls to the
-    // CwController-backed shims.
-    const int cwMacrosSpeed = 30;  // WPM (Thetis null-controller default)
-    const int cwMacrosDelay = 0;   // ms  (Thetis null-controller default)
-    const int cwKeyerSpeed  = 30;  // WPM (Thetis null-controller default)
+    // CW transmit (R-CW-35): with a RadioModel the values are the CWX
+    // speed, the CWX PTT delay (CwxSender::kPttDelayMs, the hidden udPtt)
+    // and the keyer speed, as Thetis's controller reads CWXForm.WPM,
+    // CWXForm.PTTDelayMs and CATCWSpeed (TCIServer.cs:8346-8396
+    // [v2.10.3.15]). Any other radio object (the test mocks) has no
+    // controller and keeps the null-controller defaults below.
+    int cwMacrosSpeed = 30;  // WPM (Thetis null-controller default)
+    int cwMacrosDelay = 0;   // ms  (Thetis null-controller default)
+    int cwKeyerSpeed  = 30;  // WPM (Thetis null-controller default)
+    if (RadioModel* cwModel = cwRadio()) {
+        cwMacrosSpeed = cwModel->transmitModel().cwxSpeed();
+        cwMacrosDelay = CwxSender::kPttDelayMs;
+        cwKeyerSpeed = cwModel->transmitModel().cwKeyerSpeed();
+    }
 
     // Split per-rx -- From Thetis TCIServer.cs:2615-2616 [v2.10.3.15].
     const bool split[2] = { readBoolPerRx("split", 0), readBoolPerRx("split", 1) };
@@ -2213,12 +2234,17 @@ QString TciProtocol::handleSetCommand(const QString& name, const QStringList& ar
     if (name == QStringLiteral("spot_delete"))            { return handleSpotDeleteCommand(args); }
     // From Thetis TCIServer.cs:5082 [v2.10.3.13] — spot_simulate_click case in set switch.
     if (name == QStringLiteral("spot_simulate_click"))    { return handleSpotSimulateClickCommand(args); }
-    // From Thetis TCIServer.cs:4989 [v2.10.3.13] — cw_macros_speed_up case in set switch.
+    // CW family (R-CW-35).
+    // From Thetis TCIServer.cs:5345-5370 [v2.10.3.15] — the set switch's CW cases.
+    if (name == QStringLiteral("cw_macros_speed"))        { return handleCwMacrosSpeedCommand(args, true); }
+    if (name == QStringLiteral("cw_macros_delay"))        { return handleCwMacrosDelayCommand(args, true); }
+    if (name == QStringLiteral("cw_keyer_speed"))         { return handleCwKeyerSpeedCommand(args, true); }
     if (name == QStringLiteral("cw_macros_speed_up"))     { return handleCwMacrosSpeedUpCommand(args); }
-    // From Thetis TCIServer.cs:4992 [v2.10.3.13] — cw_macros_speed_down case in set switch.
     if (name == QStringLiteral("cw_macros_speed_down"))   { return handleCwMacrosSpeedDownCommand(args); }
-    // From Thetis TCIServer.cs:5001 [v2.10.3.13] — cw_msg case in set switch.
+    if (name == QStringLiteral("cw_macros"))              { return handleCwMacrosCommand(args); }
+    if (name == QStringLiteral("cw_terminal"))            { return handleCwTerminalCommand(args); }
     if (name == QStringLiteral("cw_msg"))                 { return handleCwMsgCommand(args); }
+    if (name == QStringLiteral("keyer"))                  { return handleKeyerCommand(args); }
 
     return {};
 }
@@ -2277,6 +2303,13 @@ QString TciProtocol::handleQueryCommand(const QString& name)
     if (name == QStringLiteral("shutdown_ex")) {
         return handleShutdownExCommand();
     }
+
+    // CW family (R-CW-35).
+    // From Thetis TCIServer.cs:5568-5579 [v2.10.3.15] — the query switch's CW cases.
+    if (name == QStringLiteral("cw_macros_speed")) { return handleCwMacrosSpeedCommand({}, false); }
+    if (name == QStringLiteral("cw_macros_delay")) { return handleCwMacrosDelayCommand({}, false); }
+    if (name == QStringLiteral("cw_keyer_speed"))  { return handleCwKeyerSpeedCommand({}, false); }
+    if (name == QStringLiteral("cw_macros_stop"))  { return handleCwMacrosStopCommand(); }
 
     return {};
 }
@@ -4113,27 +4146,656 @@ QString TciProtocol::handleSpotClearCommand()
     return {};
 }
 
-// From Thetis TCIServer.cs:4989 [v2.10.3.13] — cw_macros_speed_up case.
-// Phase 12 STUB: log + return empty. Real handler lands in Phase 3M-2.
+// ── CW family (R-CW-35) ─────────────────────────────────────────────────────
+//
+// After Thetis TCIServer.cs TCICWController (8231-9330 [v2.10.3.15]) and the
+// listener's handlers (3493-3593). NereusSDR differences, each for the
+// slices, the remote Core or the one key-line owner:
+//   - Every macro goes to the CWX sender, which does the prosigns and the
+//     '>' / '<' speed marks itself; so the macro speed is never changed
+//     behind the operator's back and nothing is restored afterwards.
+//   - A macro's segments go to the sender one after another as the last
+//     character of the one before starts (Thetis feeds the next segment
+//     once CWX is idle on its 50 ms poll), so a callsign can still be
+//     changed while the prefix sends and there is no gap.
+//   - The keyer's press and timed release are held by the sender
+//     (setKeyHeld, releaseKeyAfter), whose 3 s watchdog drops a press that
+//     is never released (DirectKeyerWatchdogMs, TCIServer.cs:8233; Thetis
+//     polls it every 50 ms, 8287, and releases at 9066-9093). The sender's
+//     stop, a cut and leaving CW release it with whatever else CWX sends.
+//   - A keyer press while CWX sends anything, or a macro while the keyer is
+//     held, is ignored, as Thetis ignores them against its own operations
+//     (8479-8519, 8449-8477).
+//   - The keyer's press and release both take the optional duration: a
+//     press with one keys for that long (TCI's keyer:rx,true,ms), a release
+//     with one releases that long after the press (Thetis's only use,
+//     scheduleKeyerReleaseLocked 9050-9064). Neither outlasts the watchdog.
+//   - The gate is asked before MOX: the key goes down first and, in Semi,
+//     MOX after it (Thetis asserts MOX first, 9194-9210).
+//   - rx 1 must be on, but the transmit slice is not moved to it (Thetis
+//     sets VFOBTX, 9127-9147); the sender keys the transmit slice.
+//   - A remote window keys nothing (its sender is a copy of nothing; the
+//     Core's own server keys) and neither does a receive-only station
+//     server; settings change only on the Core's own model.
+
+namespace {
+
+// From Thetis TCIServer.cs:8647-8651 [v2.10.3.15] — decodeTciText.
+QString cwDecodeTciText(const QString& text)
+{
+    if (text.isEmpty()) { return QString(); }
+    QString out = text;
+    out.replace(QLatin1Char('^'), QLatin1Char(':'));
+    out.replace(QLatin1Char('~'), QLatin1Char(','));
+    out.replace(QLatin1Char('*'), QLatin1Char(';'));
+    return out;
+}
+
+// From Thetis TCIServer.cs:8653-8657 [v2.10.3.15] — normalizeMessageField.
+QString cwNormalizeMessageField(const QString& text)
+{
+    const QString decoded = cwDecodeTciText(text);
+    return decoded == QStringLiteral("_") ? QString() : decoded;
+}
+
+// From Thetis TCIServer.cs:8678-8684 [v2.10.3.15] — buildRepeatedCallsign.
+QString cwBuildRepeatedCallsign(const QString& callsign, int repeatCount)
+{
+    const QString trimmed = callsign.trimmed();
+    if (repeatCount < 2) { return trimmed; }
+    QStringList copies;
+    for (int i = 0; i < repeatCount; ++i) { copies << trimmed; }
+    return copies.join(QLatin1Char(' '));
+}
+
+// From Thetis TCIServer.cs:8686-8701 [v2.10.3.15] — parseCallsignBase:
+// "CALL$3" sends CALL three times.
+QString cwParseCallsignBase(const QString& callsign, int* repeatCount)
+{
+    *repeatCount = 1;
+    QString base = callsign.trimmed();
+    const int dollarIndex = base.lastIndexOf(QLatin1Char('$'));
+    if (dollarIndex > 0 && dollarIndex < base.size() - 1) {
+        bool ok = false;
+        const int parsedRepeat = base.mid(dollarIndex + 1).toInt(&ok);
+        if (ok) {
+            *repeatCount = std::max(1, parsedRepeat);
+            base = base.left(dollarIndex).trimmed();
+        }
+    }
+    return base;
+}
+
+// The '>' and '<' marks outside |prosign| bars, net, as Thetis's
+// parseMacroText counts them (TCIServer.cs:8703-8762 [v2.10.3.15]): the
+// callsign and suffix start at the prefix's final speed.
+int cwNetSpeedMarks(const QString& text)
+{
+    int net = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar ch = text.at(i);
+        if (ch == QLatin1Char('|') && i + 1 < text.size()) {
+            const int end = text.indexOf(QLatin1Char('|'), i + 1);
+            if (end > i + 1) {
+                i = end;
+                continue;
+            }
+        }
+        if (ch == QLatin1Char('>')) { ++net; }
+        if (ch == QLatin1Char('<')) { --net; }
+    }
+    return net;
+}
+
+QString cwSpeedMarks(int net)
+{
+    return QString(std::abs(net), net >= 0 ? QLatin1Char('>') : QLatin1Char('<'));
+}
+
+// C# bool.TryParse: "true" or "false", any case, surrounding white space.
+bool cwParseBool(const QString& text, bool* value)
+{
+    const QString t = text.trimmed().toLower();
+    if (t == QStringLiteral("true")) { *value = true; return true; }
+    if (t == QStringLiteral("false")) { *value = false; return true; }
+    return false;
+}
+
+} // namespace
+
+RadioModel* TciProtocol::cwRadio() const
+{
+    return qobject_cast<RadioModel*>(m_radio);
+}
+
+bool TciProtocol::cwSettingsAllowed() const
+{
+    const RadioModel* radio = cwRadio();
+    return radio && !m_remoteWindow && radio->ownsLocalDsp();
+}
+
+bool TciProtocol::cwKeyingAllowed() const
+{
+    const RadioModel* radio = cwRadio();
+    return cwSettingsAllowed() && !transmitRefused() && radio->cwxSender() != nullptr
+           && radio->cwKeyerController() != nullptr;
+}
+
+// From Thetis TCIServer.cs:9121-9125 [v2.10.3.15] — isCwTargetAvailableLocked.
+bool TciProtocol::cwTargetAvailable(int rx) const
+{
+    if (rx < 0 || rx > 1) { return false; }
+    if (rx != 1) { return true; }
+    return receiverAvailableNow(1);
+}
+
+// From Thetis TCIServer.cs:8946-8954 [v2.10.3.15] — isCWModeLocked: the
+// transmitting receiver's mode.
+bool TciProtocol::cwTxSliceInCw() const
+{
+    const RadioModel* radio = cwRadio();
+    const SliceModel* tx = radio ? radio->txBoundSlice() : nullptr;
+    return tx && (tx->dspMode() == DSPMode::CWL || tx->dspMode() == DSPMode::CWU);
+}
+
+void TciProtocol::hookCw()
+{
+    RadioModel* radio = cwRadio();
+    if (!radio) { return; }
+    // From Thetis TCIServer.cs:1246-1265 [v2.10.3.15] — CwMacrosSpeedChanged
+    // and CwKeyerSpeedChanged send the new speed to every app.
+    TransmitModel* tx = &radio->transmitModel();
+    connect(tx, &TransmitModel::cwxSpeedChanged, this, [this](int wpm) {
+        enqueueLocalBroadcast(buildCwMacrosSpeedLine(wpm));
+    });
+    connect(tx, &TransmitModel::cwKeyerSpeedChanged, this, [this](int wpm) {
+        enqueueLocalBroadcast(buildCwKeyerSpeedLine(wpm));
+    });
+    if (CwxSender* cwx = radio->cwxSender()) {
+        connect(cwx, &CwxSender::characterStarted, this, [this](int) { cwOnCharacterStarted(); });
+        connect(cwx, &CwxSender::emptied, this, [this]() {
+            if (m_cwOperationActive) { cwCompleteOperation(); }
+        });
+        connect(cwx, &CwxSender::keyHeldChanged, this, [this](bool held) { cwOnKeyHeldChanged(held); });
+    }
+}
+
+// From Thetis TCIServer.cs:8987-9010 [v2.10.3.15] — isCurrentOwnerLocked,
+// tryAcquireOwnershipLocked, releaseOwnershipIfIdleLocked.
+bool TciProtocol::cwIsCurrentOwner(const void* owner) const
+{
+    return owner == nullptr || (m_cwOwner != nullptr && m_cwOwner == owner);
+}
+
+bool TciProtocol::cwTryAcquireOwnership(const void* owner)
+{
+    if (owner == nullptr) { return true; }
+    if (m_cwOwner == nullptr || m_cwOwner == owner) {
+        m_cwOwner = owner;
+        return true;
+    }
+    return false;
+}
+
+void TciProtocol::cwReleaseOwnershipIfIdle()
+{
+    if (!m_cwTerminalEnabled[0] && !m_cwTerminalEnabled[1] && !m_cwOperationActive
+        && m_cwSegments.isEmpty() && !m_cwKeyerPressed && !m_cwKeyerReleasePending) {
+        m_cwOwner = nullptr;
+    }
+}
+
+// From Thetis TCIServer.cs:9178-9181 [v2.10.3.15] — isTerminalEnabledLocked.
+bool TciProtocol::cwTerminalEnabled(int rx) const
+{
+    return rx >= 0 && rx < 2 && m_cwTerminalEnabled[rx];
+}
+
+// From Thetis TCIServer.cs:9149-9166 [v2.10.3.15] — ensureTerminalTciPttLocked:
+// with the terminal on, a macro holds TCI PTT. RadioModel::setMox is the TCI
+// PTT (MoxController::onTciPtt).
+void TciProtocol::cwEnsureTerminalPtt()
+{
+    if (!m_cwOperationActive) { return; }
+    if (!cwTerminalEnabled(m_cwOperationRx)) { return; }
+    if (m_cwTerminalPttAsserted) {
+        m_cwTerminalPttRx = m_cwOperationRx;
+        return;
+    }
+    RadioModel* radio = cwRadio();
+    if (!radio || radio->mox()) { return; }
+    radio->setMox(true);
+    if (radio->mox()) {
+        m_cwTerminalPttAsserted = true;
+        m_cwTerminalPttRx = m_cwOperationRx;
+    }
+}
+
+// From Thetis TCIServer.cs:9168-9176 [v2.10.3.15] — releaseTerminalTciPttIfOwnedLocked.
+void TciProtocol::cwReleaseTerminalPtt()
+{
+    if (m_cwTerminalPttAsserted) {
+        if (RadioModel* radio = cwRadio()) { radio->setMox(false); }
+    }
+    m_cwTerminalPttAsserted = false;
+    m_cwTerminalPttRx = -1;
+    m_cwReleaseTerminalPttWhenIdle = false;
+}
+
+// From Thetis TCIServer.cs:9240-9255 [v2.10.3.15] — captureDirectKeyerMoxReleaseLocked
+// and releaseDirectKeyerMox. setMox(false) lets go of the TCI key only.
+void TciProtocol::cwReleaseKeyerMox()
+{
+    if (!m_cwKeyerAssertedMox) { return; }
+    m_cwKeyerAssertedMox = false;
+    if (RadioModel* radio = cwRadio()) {
+        if (radio->mox()) { radio->setMox(false); }
+    }
+}
+
+// From Thetis TCIServer.cs:8883-8904 [v2.10.3.15] — startNextOperationLocked.
+// A macro while one is sending follows it.
+void TciProtocol::cwStartOperation(int rx, QList<CwSegment> segments)
+{
+    if (segments.isEmpty()) {
+        segments.append(CwSegment{QStringLiteral(" "), false});
+    }
+    m_cwSegments.append(segments);
+    if (m_cwOperationActive) { return; }
+    if (!cwTxSliceInCw()) {
+        cwAbortOperation();
+        return;
+    }
+    m_cwOperationActive = true;
+    m_cwOperationRx = rx;
+    m_cwEmptyNotified = false;
+    if (m_cwTerminalPttAsserted && m_cwTerminalPttRx != rx && !cwTerminalEnabled(rx)) {
+        cwReleaseTerminalPtt();
+    }
+    cwEnsureTerminalPtt();
+    cwFeedNextSegment();
+}
+
+// From Thetis TCIServer.cs:8906-8929 [v2.10.3.15] — queueNextSegmentLocked.
+void TciProtocol::cwFeedNextSegment()
+{
+    if (!m_cwOperationActive || m_cwSegments.isEmpty()) { return; }
+    RadioModel* radio = cwRadio();
+    CwxSender* cwx = radio ? radio->cwxSender() : nullptr;
+    if (!cwx || !cwTxSliceInCw()) {
+        cwAbortOperation();
+        return;
+    }
+    const CwSegment segment = m_cwSegments.takeFirst();
+    const QString text = segment.text.isEmpty() ? QStringLiteral(" ") : segment.text;
+    cwEnsureTerminalPtt();
+    // A refusal (the request gate's words, or nothing to send) ends the
+    // macro; the sender has already told the operator why.
+    if (!cwx->sendText(text)) {
+        cwAbortOperation();
+    }
+}
+
+// The sender started a character. Once the last one waiting starts, the
+// next segment goes (no gap), or, with nothing left and the terminal on,
+// the app is told the buffer is empty so it can type more.
+// From Thetis TCIServer.cs:8539-8561, 8845-8857 [v2.10.3.15]
+// (OnRemoteCharacterStarted, PollCallback): cw_macros_empty when the last
+// segment is queued, the remote buffer is empty and elements still wait.
+void TciProtocol::cwOnCharacterStarted()
+{
+    if (!m_cwOperationActive) { return; }
+    const RadioModel* radio = cwRadio();
+    const CwxSender* cwx = radio ? radio->cwxSender() : nullptr;
+    if (!cwx || cwx->queuedCharacters() > 0) { return; }
+    if (!m_cwSegments.isEmpty()) {
+        cwFeedNextSegment();
+        return;
+    }
+    if (cwTerminalEnabled(m_cwOperationRx) && !m_cwEmptyNotified) {
+        m_cwEmptyNotified = true;
+        // From Thetis TCIServer.cs:1991-1994 [v2.10.3.15] — sendCwMacrosEmpty.
+        enqueueLocalBroadcast(QStringLiteral("cw_macros_empty:%1;").arg(m_cwOperationRx));
+    }
+}
+
+// From Thetis TCIServer.cs:8931-8944 [v2.10.3.15] — completeActiveOperationLocked.
+// The sender went empty: the macro is done, or it was stopped, cut or left
+// CW (abortOperationsForNonCWLocked, 8956-8985, releases the terminal PTT).
+void TciProtocol::cwCompleteOperation()
+{
+    const int rx = m_cwOperationRx;
+    m_cwOperationActive = false;
+    m_cwOperationRx = -1;
+    m_cwSegments.clear();
+    if (!cwTerminalEnabled(rx) || m_cwReleaseTerminalPttWhenIdle || !cwTxSliceInCw()) {
+        cwReleaseTerminalPtt();
+    }
+    cwReleaseOwnershipIfIdle();
+}
+
+void TciProtocol::cwAbortOperation()
+{
+    m_cwSegments.clear();
+    m_cwOperationActive = false;
+    m_cwOperationRx = -1;
+    cwReleaseTerminalPtt();
+    cwReleaseOwnershipIfIdle();
+}
+
+// The sender's Key went up (a release, the watchdog, a stop, the cut, or
+// leaving CW): the keyer is free and MOX it raised drops.
+// From Thetis TCIServer.cs:9095-9112 [v2.10.3.15] — releaseKeyerLocked.
+void TciProtocol::cwOnKeyHeldChanged(bool held)
+{
+    if (held || !m_cwKeyerPressed) { return; }
+    const RadioModel* radio = cwRadio();
+    if (radio && radio->cwxSender() && radio->cwxSender()->isKeyHeld()) { return; }  // a later press
+    m_cwKeyerPressed = false;
+    m_cwKeyerReleasePending = false;
+    cwReleaseKeyerMox();
+    cwReleaseOwnershipIfIdle();
+}
+
+void TciProtocol::cwSetMacroSpeed(int wpm)
+{
+    // From Thetis TCIServer.cs:8357-8368 [v2.10.3.15] — SetMacroSpeed. The
+    // CWX speed setter clamps to 5..60 (D12); Thetis clamps 1..99
+    // (clampMacroSpeed, 8642-8645).
+    if (!cwSettingsAllowed()) { return; }
+    cwRadio()->transmitModel().setCwxSpeed(wpm);
+}
+
+QString TciProtocol::handleCwMacrosSpeedCommand(const QStringList& args, bool hasArgs)
+{
+    if (!hasArgs || args.size() < 1) {
+        RadioModel* radio = cwRadio();
+        // From Thetis TCIServer.cs:6950-6955 [v2.10.3.15]: 30 with no controller.
+        return buildCwMacrosSpeedLine(radio ? radio->transmitModel().cwxSpeed() : 30);
+    }
+    bool ok = false;
+    const int speed = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    cwSetMacroSpeed(speed);
+    return {};
+}
+
+// The CWX PTT delay is the sender's fixed udPtt value (cwx.cs:1381-1385
+// [v2.10.3.15], hidden in Thetis's form); a set leaves it, and the query
+// answers it.
+QString TciProtocol::handleCwMacrosDelayCommand(const QStringList& args, bool hasArgs)
+{
+    if (!hasArgs || args.size() < 1) {
+        return buildCwMacrosDelayLine(cwRadio() ? CwxSender::kPttDelayMs : 0);
+    }
+    bool ok = false;
+    const int delayMs = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    qCInfo(lcTci) << "TCI cw_macros_delay" << delayMs
+                  << "ms not applied: the CWX PTT delay is fixed at" << CwxSender::kPttDelayMs << "ms";
+    return {};
+}
+
+QString TciProtocol::handleCwKeyerSpeedCommand(const QStringList& args, bool hasArgs)
+{
+    if (!hasArgs || args.size() < 1) {
+        RadioModel* radio = cwRadio();
+        return buildCwKeyerSpeedLine(radio ? radio->transmitModel().cwKeyerSpeed() : 30);
+    }
+    bool ok = false;
+    const int speed = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    // From Thetis TCIServer.cs:8398-8401 [v2.10.3.15] — SetKeyerSpeed, 1 to 60.
+    if (cwSettingsAllowed()) {
+        cwRadio()->transmitModel().setCwKeyerSpeed(std::max(1, std::min(60, speed)));
+    }
+    return {};
+}
+
 QString TciProtocol::handleCwMacrosSpeedUpCommand(const QStringList& args)
 {
-    qCInfo(lcTci) << "TCI stub: cw_macros_speed_up received with" << args.size() << "args (Phase 12 stub)";
+    if (args.size() != 1) { return {}; }
+    bool ok = false;
+    const int amount = args.at(0).trimmed().toInt(&ok);
+    if (!ok || !cwSettingsAllowed()) { return {}; }
+    // From Thetis TCIServer.cs:8403-8406 [v2.10.3.15] — IncreaseMacroSpeed.
+    cwSetMacroSpeed(cwRadio()->transmitModel().cwxSpeed() + std::max(0, amount));
     return {};
 }
 
-// From Thetis TCIServer.cs:4992 [v2.10.3.13] — cw_macros_speed_down case.
-// Phase 12 STUB: log + return empty. Real handler lands in Phase 3M-2.
 QString TciProtocol::handleCwMacrosSpeedDownCommand(const QStringList& args)
 {
-    qCInfo(lcTci) << "TCI stub: cw_macros_speed_down received with" << args.size() << "args (Phase 12 stub)";
+    if (args.size() != 1) { return {}; }
+    bool ok = false;
+    const int amount = args.at(0).trimmed().toInt(&ok);
+    if (!ok || !cwSettingsAllowed()) { return {}; }
+    // From Thetis TCIServer.cs:8408-8411 [v2.10.3.15] — DecreaseMacroSpeed.
+    cwSetMacroSpeed(cwRadio()->transmitModel().cwxSpeed() - std::max(0, amount));
     return {};
 }
 
-// From Thetis TCIServer.cs:5001 [v2.10.3.13] — cw_msg case.
-// Phase 12 STUB: log + return empty. Real handler lands in Phase 3M-2.
+QString TciProtocol::handleCwMacrosCommand(const QStringList& args)
+{
+    if (args.size() < 2) { return {}; }
+    bool ok = false;
+    const int rx = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    if (rx < 0 || rx > 1) { return {}; }
+    const QString text = args.mid(1).join(QLatin1Char(','));
+    // From Thetis TCIServer.cs:8449-8462 [v2.10.3.15] — SendMacro.
+    if (!cwKeyingAllowed() || !cwTargetAvailable(rx)) { return {}; }
+    if (!cwTryAcquireOwnership(m_cmdOwner)) { return {}; }
+    if (m_cwKeyerPressed) { return {}; }
+    // From Thetis TCIServer.cs:8764-8776 [v2.10.3.15] — buildMacroOperation.
+    cwStartOperation(rx, {CwSegment{cwDecodeTciText(text), false}});
+    cwReleaseOwnershipIfIdle();
+    return {};
+}
+
+QString TciProtocol::handleCwTerminalCommand(const QStringList& args)
+{
+    if (args.size() != 2) { return {}; }
+    bool ok = false;
+    const int rx = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    if (rx < 0 || rx > 1) { return {}; }
+    bool enabled = false;
+    if (!cwParseBool(args.at(1), &enabled)) { return {}; }
+    if (!cwKeyingAllowed()) { return {}; }
+    // From Thetis TCIServer.cs:8413-8447 [v2.10.3.15] — SetTerminalEnabled.
+    if (enabled) {
+        if (!cwTryAcquireOwnership(m_cmdOwner)) { return {}; }
+    } else if (!cwIsCurrentOwner(m_cmdOwner)) {
+        return {};
+    }
+    m_cwTerminalEnabled[rx] = enabled;
+    if (enabled) {
+        if (m_cwOperationActive && m_cwOperationRx == rx) { cwEnsureTerminalPtt(); }
+        m_cwReleaseTerminalPttWhenIdle = false;
+    } else if (m_cwOperationActive && m_cwOperationRx == rx) {
+        m_cwReleaseTerminalPttWhenIdle = true;
+    } else if (!m_cwOperationActive && m_cwTerminalPttAsserted && m_cwTerminalPttRx == rx) {
+        cwReleaseTerminalPtt();
+    }
+    cwReleaseOwnershipIfIdle();
+    return {};
+}
+
 QString TciProtocol::handleCwMsgCommand(const QStringList& args)
 {
-    qCInfo(lcTci) << "TCI stub: cw_msg received with" << args.size() << "args (Phase 12 stub)";
+    if (args.size() < 1) { return {}; }
+    if (args.size() == 1) {
+        // From Thetis TCIServer.cs:8521-8537 [v2.10.3.15] — UpdatePendingCallsign:
+        // a callsign not yet sent changes.
+        if (!cwIsCurrentOwner(m_cmdOwner) || !m_cwOperationActive) { return {}; }
+        int repeatCount = 1;
+        const QString base = cwParseCallsignBase(cwDecodeTciText(args.at(0)), &repeatCount);
+        if (base.trimmed().isEmpty()) { return {}; }
+        for (CwSegment& segment : m_cwSegments) {
+            if (segment.callsign) {
+                // Keep the speed marks the callsign was given (its leading
+                // run of '>' or '<').
+                int lead = 0;
+                while (lead < segment.text.size()
+                       && (segment.text.at(lead) == QLatin1Char('>')
+                           || segment.text.at(lead) == QLatin1Char('<'))) {
+                    ++lead;
+                }
+                segment.text = segment.text.left(lead) + cwBuildRepeatedCallsign(base, repeatCount);
+                break;
+            }
+        }
+        return {};
+    }
+    if (args.size() < 4) { return {}; }
+    bool ok = false;
+    const int rx = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    if (rx < 0 || rx > 1) { return {}; }
+    // From Thetis TCIServer.cs:8464-8477 [v2.10.3.15] — SendMessage.
+    if (!cwKeyingAllowed() || !cwTargetAvailable(rx)) { return {}; }
+    if (!cwTryAcquireOwnership(m_cmdOwner)) { return {}; }
+    if (m_cwKeyerPressed) { return {}; }
+    // From Thetis TCIServer.cs:8778-8815 [v2.10.3.15] — buildMessageOperation.
+    const QString prefix = cwNormalizeMessageField(args.at(1));
+    const QString callsign = cwNormalizeMessageField(args.at(2));
+    const QString suffix = cwNormalizeMessageField(args.mid(3).join(QLatin1Char(',')));
+    int repeatCount = 1;
+    QString callsignBase = cwParseCallsignBase(callsign, &repeatCount);
+    if (callsignBase.trimmed().isEmpty()) {
+        callsignBase = QStringLiteral("?");
+    }
+    // The callsign and suffix start at the prefix's final speed.
+    const QString lead = cwSpeedMarks(cwNetSpeedMarks(prefix));
+    QList<CwSegment> segments;
+    if (!prefix.isEmpty()) {
+        segments.append(CwSegment{prefix, false});
+    }
+    segments.append(CwSegment{lead + cwBuildRepeatedCallsign(callsignBase, repeatCount), true});
+    if (!suffix.isEmpty()) {
+        segments.append(CwSegment{lead + suffix, false});
+    }
+    cwStartOperation(rx, segments);
+    cwReleaseOwnershipIfIdle();
+    return {};
+}
+
+// From Thetis TCIServer.cs:8563-8610 [v2.10.3.15] — Stop: the macros, the
+// keyer and CWX (AbortSending) stop, and the terminal's PTT drops.
+QString TciProtocol::handleCwMacrosStopCommand()
+{
+    if (!cwIsCurrentOwner(m_cmdOwner)) { return {}; }
+    RadioModel* radio = cwRadio();
+    m_cwSegments.clear();
+    m_cwOperationActive = false;
+    m_cwOperationRx = -1;
+    m_cwKeyerPressed = false;
+    m_cwKeyerReleasePending = false;
+    m_cwReleaseTerminalPttWhenIdle = false;
+    if (radio && radio->cwxSender() && cwSettingsAllowed()) {
+        radio->cwxSender()->stop();
+    }
+    cwReleaseKeyerMox();
+    cwReleaseTerminalPtt();
+    cwReleaseOwnershipIfIdle();
+    return {};
+}
+
+// From Thetis TCIServer.cs:8625-8640 [v2.10.3.15] — DisconnectClient.
+void TciProtocol::cwClientDisconnected(const void* owner)
+{
+    if (owner == nullptr || !cwIsCurrentOwner(owner)) { return; }
+    m_cwTerminalEnabled[0] = false;
+    m_cwTerminalEnabled[1] = false;
+    m_cwReleaseTerminalPttWhenIdle = false;
+    const void* previous = m_cmdOwner;
+    m_cmdOwner = owner;
+    handleCwMacrosStopCommand();
+    m_cmdOwner = previous;
+}
+
+QString TciProtocol::handleKeyerCommand(const QStringList& args)
+{
+    // From Thetis TCIServer.cs:3582-3593 [v2.10.3.15] — handleKeyer.
+    if (args.size() < 2 || args.size() > 3) { return {}; }
+    bool ok = false;
+    const int rx = args.at(0).trimmed().toInt(&ok);
+    if (!ok) { return {}; }
+    if (rx < 0 || rx > 1) { return {}; }
+    bool pressed = false;
+    if (!cwParseBool(args.at(1), &pressed)) { return {}; }
+    int durationMs = 0;
+    if (args.size() > 2) {
+        durationMs = args.at(2).trimmed().toInt(&ok);
+        if (!ok) { return {}; }
+    }
+    durationMs = std::max(0, durationMs);
+
+    RadioModel* radio = cwRadio();
+    if (!cwKeyingAllowed()) { return {}; }
+    CwxSender* cwx = radio->cwxSender();
+
+    // From Thetis TCIServer.cs:8479-8519 [v2.10.3.15] — HandleKeyer.
+    if (pressed) {
+        if (!cwTryAcquireOwnership(m_cmdOwner)) { return {}; }
+        if (m_cwOperationActive || !m_cwSegments.isEmpty()) { return {}; }
+
+        if (m_cwKeyerReleasePending) {
+            cwx->setKeyHeld(false);
+            cwOnKeyHeldChanged(false);
+        }
+
+        if (m_cwKeyerPressed) {
+            return {};
+        }
+
+        // CWX text from elsewhere (the applet, CAT) keeps sending.
+        if (cwx->isSending()) {
+            cwReleaseOwnershipIfIdle();
+            return {};
+        }
+
+        if (!cwTargetAvailable(rx) || !cwTxSliceInCw()) {
+            cwReleaseOwnershipIfIdle();
+            return {};
+        }
+
+        // The request gate first: a refusal emits its words and keys nothing.
+        cwx->setKeyHeld(true);
+        if (!cwx->isKeyHeld()) {
+            cwReleaseOwnershipIfIdle();
+            return {};
+        }
+        // From Thetis TCIServer.cs:9212-9238 [v2.10.3.15] —
+        // ensureDirectKeyerMoxLocked: in Semi the keyer raises MOX itself,
+        // unless MOX is already on.
+        CwKeyerController* keyer = radio->cwKeyerController();
+        if (keyer->effectiveBreakInMode() == CwBreakInMode::Semi && !radio->mox()) {
+            radio->setMox(true);
+            if (!radio->mox()) {
+                cwx->setKeyHeld(false);
+                cwReleaseOwnershipIfIdle();
+                return {};
+            }
+            m_cwKeyerAssertedMox = true;
+        }
+        m_cwKeyerPressed = true;
+        m_cwKeyerReleasePending = false;
+        if (durationMs > 0) {
+            m_cwKeyerReleasePending = true;
+            cwx->releaseKeyAfter(durationMs);
+            if (!cwx->isKeyHeld()) { cwOnKeyHeldChanged(false); }
+        }
+        return {};
+    }
+
+    if (!cwIsCurrentOwner(m_cmdOwner)) { return {}; }
+    if (!m_cwKeyerPressed) { return {}; }
+
+    // From Thetis TCIServer.cs:9050-9064 [v2.10.3.15] — scheduleKeyerReleaseLocked.
+    m_cwKeyerReleasePending = true;
+    cwx->releaseKeyAfter(durationMs);
+    if (!cwx->isKeyHeld()) { cwOnKeyHeldChanged(false); }
     return {};
 }
 

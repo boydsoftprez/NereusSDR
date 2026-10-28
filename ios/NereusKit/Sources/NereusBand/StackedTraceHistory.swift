@@ -11,9 +11,19 @@ import NereusMedia
 /// the frame carries one, and nothing (not a number) where neither reaches.
 /// Each row keeps its window, so after a pan or a zoom the older rows are
 /// drawn where their frequencies now fall.
+///
+/// Every row has the same columns, ``StackedTrace/maxColumns``, whatever
+/// the line's width: a column narrower than a sample takes the one sample
+/// nearest its low edge. A line of another width (the quality allocator
+/// granting a pan a pixel more or less, a resize, a turn) so goes in beside
+/// the rows already held and the smoothing runs on. When each width had
+/// its own columns, every width step under 769 samples emptied the stack,
+/// which took 97 rows (about 13 s at Match 4) to fill again (2026-10-26).
 public struct StackedTraceHistory: Equatable, Sendable {
     /// Samples in every row; 0 before the first.
     public private(set) var columns = 0
+    /// The columns every row takes once the first goes in.
+    let rowColumns: Int
     public let capacity = StackedTrace.keptRows
     /// Rows held, at most ``capacity``.
     public private(set) var count = 0
@@ -30,32 +40,51 @@ public struct StackedTraceHistory: Equatable, Sendable {
     private var captured: [Float] = []
     private var times: [Double] = []
     private var head = 0
+    /// Smooths each row as it goes in (``StackedRowSmoother``).
+    private var smoother = StackedRowSmoother()
+    /// Each row's levels and sources as taken, kept so a row makes no list.
+    private var rawRow: [Float] = []
+    private var rowSources: [StackedRowSmoother.Source] = []
 
-    public init() {}
+    /// Rows go in smoothed unless `smoothsRows` is off: the tests of the
+    /// columns themselves read them as they were taken.
+    let smoothsRows: Bool
+
+    public init() {
+        smoothsRows = true
+        rowColumns = StackedTrace.maxColumns
+    }
+
+    /// `columns` other than ``StackedTrace/maxColumns`` are for the tests
+    /// that price another density.
+    init(smoothsRows: Bool, columns: Int = StackedTrace.maxColumns) {
+        self.smoothsRows = smoothsRows
+        rowColumns = max(1, columns)
+    }
 
     /// Rows with no level hold not-a-number, which never equals itself, so
     /// two histories compare by their levels' bits.
     public static func == (lhs: StackedTraceHistory, rhs: StackedTraceHistory) -> Bool {
-        lhs.columns == rhs.columns && lhs.count == rhs.count && lhs.rowsAppended == rhs.rowsAppended
+        lhs.smoothsRows == rhs.smoothsRows && lhs.rowColumns == rhs.rowColumns && lhs.columns == rhs.columns
+            && lhs.count == rhs.count && lhs.rowsAppended == rhs.rowsAppended
             && lhs.layoutGeneration == rhs.layoutGeneration && lhs.head == rhs.head && lhs.windows == rhs.windows
             && lhs.times == rhs.times && lhs.storage.map(\.bitPattern) == rhs.storage.map(\.bitPattern)
-            && lhs.quietLevels == rhs.quietLevels && lhs.captured == rhs.captured
+            && lhs.quietLevels == rhs.quietLevels && lhs.captured == rhs.captured && lhs.smoother == rhs.smoother
     }
 
     /// Adds `frame`'s waterfall line as a row when the frame advances the
     /// waterfall. `coverage` is what the frame covers (its context),
     /// `wide` what its wide row covers (nil when the frame has none), and
-    /// `time` when the line arrived. Returns whether a row was added.
+    /// `time` when the line arrived. The row is smoothed as it goes in
+    /// (``StackedRowSmoother``). Returns whether a row was added.
     @discardableResult
     public mutating func append(frame: DisplayFrame, coverage: BandCoverage?, wide: BandCoverage?,
                                 time: Double) -> Bool {
         guard frame.waterfallAdvance, !frame.waterfallDbm.isEmpty, let coverage, coverage.spanHz > 0 else {
             return false
         }
-        let wanted = min(StackedTrace.maxColumns,
-                         Int((Double(frame.waterfallDbm.count) * StackedTrace.widestRowSpan).rounded(.up)))
-        if wanted != columns || storage.isEmpty {
-            columns = max(1, wanted)
+        if storage.isEmpty {
+            columns = rowColumns
             storage = Array(repeating: .nan, count: columns * capacity)
             windows = Array(repeating: nil, count: capacity)
             quietLevels = Array(repeating: nil, count: capacity)
@@ -64,25 +93,66 @@ public struct StackedTraceHistory: Equatable, Sendable {
             head = 0
             count = 0
             layoutGeneration &+= 1
+            smoother.clear()
         }
         let window = BandCoverage(centerHz: coverage.centerHz, spanHz: coverage.spanHz * StackedTrace.widestRowSpan)
         let wideLine = wide.flatMap { $0.spanHz > 0 && !frame.wideDbm.isEmpty ? $0 : nil }
         let start = head * columns
         let columnHz = window.spanHz / Double(columns)
+        // Taken out while the row is made, so filling them copies nothing.
+        var raw = rawRow
+        var sources = rowSources
+        rawRow = []
+        rowSources = []
+        defer {
+            rawRow = raw
+            rowSources = sources
+        }
+        if raw.count != columns {
+            raw = [Float](repeating: .nan, count: columns)
+            sources = [StackedRowSmoother.Source](repeating: .none, count: columns)
+        }
         for column in 0..<columns {
+            raw[column] = .nan
+            sources[column] = .none
             let low = window.lowHz + Double(column) * columnHz
             let middle = low + columnHz / 2
-            var value = Float.nan
-            var covered: Float = 0
             if middle >= coverage.lowHz, middle < coverage.highHz {
-                value = Self.peak(frame.waterfallDbm, over: coverage, from: low, to: low + columnHz)
-                covered = 1
+                raw[column] = Self.peak(frame.waterfallDbm, over: coverage, from: low, to: low + columnHz)
+                sources[column] = .line
             } else if let wideLine, middle >= wideLine.lowHz, middle < wideLine.highHz {
-                value = Self.peak(frame.wideDbm, over: wideLine, from: low, to: low + columnHz)
-                covered = 1
+                raw[column] = Self.peak(frame.wideDbm, over: wideLine, from: low, to: low + columnHz)
+                sources[column] = .wide
             }
-            storage[start + column] = value
-            captured[start + column] = covered
+        }
+        let origin = StackedRowSmoother.Origin(endpointId: frame.endpointId,
+                                               contextGeneration: frame.contextGeneration,
+                                               window: window, wide: wideLine)
+        let before = count > 0 ? storageRow(age: 0) * columns : nil
+        // The smoother writes the row straight into its place in storage,
+        // reading the row before from there too.
+        var smoother = self.smoother
+        self.smoother = StackedRowSmoother()
+        let width = columns
+        let smooths = smoothsRows
+        storage.withUnsafeMutableBufferPointer { levels in
+            let out = UnsafeMutableBufferPointer(rebasing: levels[start..<(start + width)])
+            guard smooths else {
+                for column in 0..<width {
+                    out[column] = raw[column]
+                }
+                return
+            }
+            let previous = before.map { UnsafeBufferPointer(rebasing: levels[$0..<($0 + width)]) }
+            raw.withUnsafeBufferPointer { raw in
+                sources.withUnsafeBufferPointer { sources in
+                    smoother.smooth(raw, sources: sources, origin: origin, previous: previous, into: out)
+                }
+            }
+        }
+        self.smoother = smoother
+        for column in 0..<columns {
+            captured[start + column] = sources[column] == .none ? 0 : 1
         }
         // Store from the real folded exact row before existing resampling.
         quietLevels[head] = StackedQuietOverhang.quiet(from: frame.waterfallDbm)
@@ -130,9 +200,40 @@ public struct StackedTraceHistory: Equatable, Sendable {
         guard age >= 0, age < count else { return nil }
         return quietLevels[storageRow(age: age)]
     }
-    func packedStorageLine(_ row: Int) -> [Float] {
+
+    /// Storage row `row` as the rows' texture holds it: each column's
+    /// level, then whether it was captured, into `out` (two floats a column).
+    func pack(storageRow row: Int, into out: UnsafeMutableBufferPointer<Float>) {
         let start = row * columns
-        return (0..<columns).flatMap { [storage[start + $0], captured[start + $0]] }
+        for column in 0..<min(columns, out.count / 2) {
+            out[2 * column] = storage[start + column]
+            out[2 * column + 1] = captured[start + column]
+        }
+    }
+
+    /// Whether each column of storage row `row` was captured: 1 or 0.
+    func capturedLine(_ row: Int) -> ArraySlice<Float> {
+        captured[(row * columns)..<((row + 1) * columns)]
+    }
+
+    /// Storage row `row` packed as ``pack(storageRow:into:)`` packs it.
+    func packedStorageLine(_ row: Int) -> [Float] {
+        [Float](unsafeUninitializedCapacity: columns * 2) { buffer, initialized in
+            pack(storageRow: row, into: buffer)
+            initialized = columns * 2
+        }
+    }
+
+    /// Every storage row packed, in storage order: the whole texture.
+    func packedStorage() -> [Float] {
+        let rowFloats = columns * 2
+        return [Float](unsafeUninitializedCapacity: rowFloats * capacity) { buffer, initialized in
+            for row in 0..<capacity {
+                let slot = buffer[(row * rowFloats)..<((row + 1) * rowFloats)]
+                pack(storageRow: row, into: UnsafeMutableBufferPointer(rebasing: slot))
+            }
+            initialized = rowFloats * capacity
+        }
     }
     func sample(age: Int, frequencyHz: Double, view: BandCoverage, currentFloor: Float) -> StackedHistorySample {
         guard age >= 0, age < count, view.spanHz > 0, frequencyHz.isFinite else {
@@ -186,8 +287,17 @@ public struct StackedTraceHistory: Equatable, Sendable {
         count > 0 ? times[storageRow(age: 0)] : nil
     }
 
+    /// At a key and an unkey: the next row is smoothed on its own, from
+    /// its own levels only, and the rows after it from there.
+    public mutating func resetSmoothing() {
+        smoother.restart()
+    }
+
     /// Starts over: 3D turned off, a new session or a new endpoint.
     public mutating func clear() {
+        rawRow = []
+        rowSources = []
+        smoother.clear()
         guard count > 0 || !storage.isEmpty else {
             return
         }

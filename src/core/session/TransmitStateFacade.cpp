@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 39 (D14, R-IOS-13,
 //               R-IOS-21), with AI-assisted implementation via Anthropic
@@ -66,6 +68,9 @@
 //   2026-10-22: PR 604: the SWR protection's open-antenna stop is a
 //               station stop in Thetis's warning words. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Claude Code.
+//   2026-10-26: Remote transmit hold then cut: setRfHold and the four hold
+//               properties, in a window's copy too. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/TransmitStateFacade.h"
@@ -575,6 +580,42 @@ bool TransmitState::recordStop(const QByteArray& reason, const QString& text,
     return true;
 }
 
+void TransmitState::setRemoteCwActivity(const QByteArray& deviceId, quint32 epoch, bool active)
+{
+    const QString device = QString::fromLatin1(deviceId.toHex());
+    if (m_remoteCwDeviceId == device && m_remoteCwEpoch == epoch && m_remoteCwActive == active) {
+        return;
+    }
+    m_remoteCwDeviceId = device;
+    m_remoteCwEpoch = epoch;
+    m_remoteCwActive = active;
+    emit remoteCwChanged();
+}
+
+void TransmitState::setRfHold(bool held, const QString& reason)
+{
+    if (held) {
+        if (m_rfHeld && reason == m_rfHeldReason) {
+            return;
+        }
+        if (!m_rfHeld) {
+            m_rfHoldSinceMs = now();
+        }
+        m_rfHeld = true;
+        m_rfHeldReason = reason;
+        emit holdChanged();
+        return;
+    }
+    if (!m_rfHeld) {
+        return;
+    }
+    m_rfHeld = false;
+    m_rfHeldReason.clear();
+    m_rfLastHoldMs = std::max<qint64>(0, now() - m_rfHoldSinceMs);
+    ++m_rfHoldSerial;
+    emit holdChanged();
+}
+
 // ---- The stop texts ----
 
 QString TransmitState::durationText(int seconds)
@@ -753,6 +794,43 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
             emit adcRawChanged();
         }
         return true;
+    } else if (propertyName == "remoteCwDeviceId" || propertyName == "remoteCwEpoch"
+               || propertyName == "remoteCwActive") {
+        bool changed = false;
+        if (propertyName == "remoteCwDeviceId") {
+            changed = m_remoteCwDeviceId != value.toString();
+            m_remoteCwDeviceId = value.toString();
+        } else if (propertyName == "remoteCwEpoch") {
+            changed = m_remoteCwEpoch != value.toLongLong();
+            m_remoteCwEpoch = value.toLongLong();
+        } else {
+            changed = m_remoteCwActive != value.toBool();
+            m_remoteCwActive = value.toBool();
+        }
+        if (changed) { emit remoteCwChanged(); }
+        return true;
+    } else if (propertyName == "rfHeld" || propertyName == "rfHeldReason"
+               || propertyName == "rfHoldSerial" || propertyName == "rfLastHoldMs") {
+        // Remote transmit hold then cut: the Core's hold, as it sends it.
+        bool changed = false;
+        if (propertyName == "rfHeld") {
+            changed = value.toBool() != m_rfHeld;
+            m_rfHeld = value.toBool();
+        } else if (propertyName == "rfHeldReason") {
+            changed = value.toString() != m_rfHeldReason;
+            m_rfHeldReason = value.toString();
+        } else if (propertyName == "rfHoldSerial") {
+            const auto serial = static_cast<quint64>(value.toLongLong());
+            changed = serial != m_rfHoldSerial;
+            m_rfHoldSerial = serial;
+        } else {
+            changed = value.toLongLong() != m_rfLastHoldMs;
+            m_rfLastHoldMs = value.toLongLong();
+        }
+        if (changed) {
+            emit holdChanged();
+        }
+        return true;
     } else if (propertyName == "keyedForSeconds") {
         state = value.toLongLong() != m_stationKeyedForSeconds;
         m_stationKeyedForSeconds = value.toLongLong();
@@ -807,6 +885,12 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
 
 void TransmitState::clearStationValues()
 {
+    if (m_remoteCwEpoch != 0 || m_remoteCwActive || !m_remoteCwDeviceId.isEmpty()) {
+        m_remoteCwEpoch = 0;
+        m_remoteCwDeviceId.clear();
+        m_remoteCwActive = false;
+        emit remoteCwChanged();
+    }
     const bool state = m_keyed || m_tuning || m_twoTone || m_txSliceId != -1
         || !m_keyedByName.isEmpty() || !m_keyedByKind.isEmpty() || !m_keyedTrigger.isEmpty()
         || m_keyedSinceMs != 0 || m_txEnding;
@@ -848,6 +932,13 @@ void TransmitState::clearStationValues()
         m_highSwr = false;
         m_swrWindBackLatched = false;
         emit swrChanged();
+    }
+    // Nothing is held on a Core that is gone; the last hold's serial and
+    // length stay, as the stop fields do.
+    if (m_rfHeld || !m_rfHeldReason.isEmpty()) {
+        m_rfHeld = false;
+        m_rfHeldReason.clear();
+        emit holdChanged();
     }
     // The stop fields stay: they say what happened, and the next Core's
     // values replace them.

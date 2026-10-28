@@ -105,6 +105,10 @@
 //   2026-10-15: the follow-media result also reports replacingConnection,
 //               so a failure shows whether a replacement held the slot.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: keepalive gaps are counted
+//               over kLinkHoldMs (the gap that now silences RF), the name
+//               that replaced kLinkLossDeadlineMs. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QCoreApplication>
@@ -723,7 +727,7 @@ int runCore(const QStringList& args)
             };
             int over = 0;
             for (const qint64 gap : sorted) {
-                if (gap > RemoteTxWatchdog::kLinkLossDeadlineMs) {
+                if (gap > RemoteTxWatchdog::kLinkHoldMs) {
                     ++over;
                 }
             }

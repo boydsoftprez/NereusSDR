@@ -49,6 +49,20 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-49): a receive-only session's
+//               CWX Send, Stop, Key and memories are disabled with the
+//               Core's reason, never hidden, and its CWX settings stay
+//               live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, CWX built: the DSP > CW groups show in a
+//                 connected remote window (R-CW-46). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, the DSP > CW groups (break-in, sidetone, key
+//                input, options) and the sidetone row disabled, never
+//                hidden, on an HL2. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-26 - CW transmit (R-CW-40): the sidetone row case reads a
+//                Saturn, since the HL2 rows no longer claim a sidetone.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21 - The transmit settings gate case puts TUNE on the Tune
 //                slider too, so the chain settings gate is what it reads.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -275,6 +289,7 @@
 #include "gui/StationStartupSelection.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/applets/AmpApplet.h"
+#include "gui/applets/CwxApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/RadeApplet.h"
 #include "gui/applets/Rf2ksApplet.h"
@@ -3251,10 +3266,15 @@ private slots:
             const char* page;
             const char* what;
             std::function<bool(QWidget*)> shown;
+            // Built (CW transmit, R-CW-46): shown in both passes.
+            bool built{false};
         };
         QList<Check> checks{
-            {"CW", "keyer group", named("cwKeyerGroup")},
-            {"CW", "timing group", named("cwTimingGroup")},
+            {"CW", "keyer group", named("cwKeyerGroup"), true},
+            {"CW", "break-in group", named("cwBreakInGroup"), true},
+            {"CW", "sidetone group", named("cwSidetoneGroup"), true},
+            {"CW", "key input group", named("cwSerialGroup"), true},
+            {"CW", "options group", named("cwOptionsGroup"), true},
             {"CW", "peak filter bandwidth", text("Bandwidth")},
             {"CW", "peak filter gain", text("Gain")},
             {"AM/SAM", "synchronous AM group", named("samGroup")},
@@ -3309,7 +3329,7 @@ private slots:
                 QWidget* const page = dialog.realizedPageForTest(label);
                 QVERIFY2(page != nullptr, check.page);
                 QVERIFY2(!dialog.isPagePlaceholderForTest(label), check.page);
-                if (check.shown(page) != allBuilt) {
+                if (check.shown(page) != (allBuilt || check.built)) {
                     wrong << QStringLiteral("%1: %2").arg(label, QString::fromLatin1(check.what));
                 }
             }
@@ -3459,20 +3479,38 @@ private slots:
 
     // R-R3-46 (carried): the DSP > CW page's sidetone row, built after the
     // Core's radio is known, shows that radio's answer at once.
+    // CW transmit (Task 12): the row is enabled, never hidden, for a radio
+    // with a sidetone generator, and disabled with its reason for an HL2.
     void cwSidetoneRowReadsTheCoresRadioAtBuild()
     {
         RadioModel remote(RadioModel::Role::Remote);
-        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::HermesLite).hasSidetoneGenerator);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Saturn).hasSidetoneGenerator);
         StationCapabilities caps;
         caps.macAddress = QStringLiteral("AA:BB:CC:DD:EE:49");
-        caps.board = HPSDRHW::HermesLite;
+        caps.board = HPSDRHW::Saturn;
         caps.radioConnected = true;
         caps.radioIdentityEntries = true;
-        caps.hpsdrModel = HPSDRModel::HERMESLITE;
-        caps.radioProtocol = 1;
+        caps.hpsdrModel = HPSDRModel::ANAN_G2;
+        caps.radioProtocol = 2;
         remote.applyStationCapabilities(caps);
         CwSetupPage page(&remote);
-        QVERIFY(page.sidetoneRowVisibleForTest());
+        // A remote window starts with the CW settings gated until the Core
+        // takes them (version 16); the board's answer shows under the gate.
+        QVERIFY(!page.radioSidetoneEnabledForTest());
+        page.setTransmitSettingsPermittedAt(kTransmitSettingsCwVersion, true, QString());
+        QVERIFY(page.radioSidetoneEnabledForTest());
+
+        RadioModel hl2(RadioModel::Role::Remote);
+        caps.macAddress = QStringLiteral("AA:BB:CC:DD:EE:4A");
+        caps.board = HPSDRHW::HermesLite;
+        caps.hpsdrModel = HPSDRModel::HERMESLITE;
+        caps.radioProtocol = 1;
+        hl2.applyStationCapabilities(caps);
+        CwSetupPage hl2Page(&hl2);
+        hl2Page.setTransmitSettingsPermittedAt(kTransmitSettingsCwVersion, true, QString());
+        QVERIFY(!hl2Page.radioSidetoneEnabledForTest());
+        auto* row = hl2Page.findChild<QWidget*>(QStringLiteral("cwRadioSidetoneCheck"));
+        QVERIFY(row != nullptr && !row->isHidden() && !row->toolTip().isEmpty());
     }
 
     // A remote window that does not know the Core's radio yet: its
@@ -4777,6 +4815,26 @@ private slots:
             QTRY_VERIFY(proc->isEnabled());
             QVERIFY(!vox->isEnabled());
             QCOMPARE(vox->toolTip(), remoteReason);
+            // CW transmit (R-CW-49): the Core takes CW from this window
+            // (remoteCwVersion 2) but this session may not transmit, so
+            // CWX's starts are disabled with the Core's words, never
+            // hidden; its speed and repeat are version-16 settings, live.
+            auto* const cwx = window->findChild<CwxApplet*>();
+            QVERIFY(cwx != nullptr);
+            QVERIFY(client->remoteCwAvailable());
+            // Release remains available even when a start is not permitted.
+            auto* const cwxStop = cwx->findChild<QPushButton*>(QStringLiteral("cwxStop"));
+            QVERIFY(cwxStop != nullptr);
+            QVERIFY(cwxStop->isEnabled());
+            QVERIFY(!cwxStop->isHidden());
+            for (const char* name : {"cwxSend", "cwxKey", "cwxKeyboard", "cwxMemory1"}) {
+                QPushButton* const b = cwx->findChild<QPushButton*>(QString::fromLatin1(name));
+                QVERIFY2(b != nullptr, name);
+                QVERIFY2(!b->isEnabled(), name);
+                QVERIFY2(!b->isHidden(), name);
+            }
+            QCOMPARE(cwx->findChild<QPushButton*>(QStringLiteral("cwxSend"))->toolTip(), remoteReason);
+            QTRY_VERIFY(cwx->findChild<QSlider*>(QStringLiteral("cwxSpeedSlider"))->isEnabled());
             MoxController* const coreMox = station.moxController();
             QVERIFY(coreMox != nullptr);
             coreMox->setMoxCheck({});

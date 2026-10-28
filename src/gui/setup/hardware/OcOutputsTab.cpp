@@ -41,6 +41,14 @@
 //                the tab, so the sub-tab strip stays at the top; the VHF
 //                note wraps. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Anvelina DX Outputs group (DX OUT 7..10, names, All on /
+//                All off) under User Dig Out, on an ANVELINAPRO3 only; held
+//                disabled with the reason while the radio is stopped
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - Fix wave: a name saves when its edit finishes, not per
+//                keystroke; setDxOutputsAvailable gates the group in a
+//                remote window at radioHardwareVersion 14 (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -88,7 +96,9 @@
 #include "gui/UnbuiltFeatures.h"
 #include "gui/setup/SetupFit.h"
 
+#include "core/AnvelinaDxOutputs.h"
 #include "core/BoardCapabilities.h"
+#include "core/HpsdrModel.h"
 #include "core/OcMatrix.h"
 #include "core/accessories/PennyLaneController.h"
 #include "core/RadioDiscovery.h"
@@ -99,6 +109,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -131,6 +144,13 @@ OcOutputsTab::OcOutputsTab(RadioModel* model, QWidget* parent)
     // task if/when bench testing identifies a real user need.
     buildUserDigOutGroup();
     layout->addWidget(m_userDigOutGroup);
+
+    // ── Anvelina DX Outputs (DX OUT 7..10) ──────────────────────────────────
+    // Directly under User Dig Out, above the HF / SWL sub-tabs: like User
+    // Dig Out these are global outputs, not per band (Spec:
+    // Open_Collector_Anvelina_DX for Thetis (EU2AV, 2026-05-21), page 2).
+    buildDxGroup();
+    layout->addWidget(m_dxSection);
 
     m_subTabs = new QTabWidget(this);
 
@@ -213,6 +233,18 @@ void OcOutputsTab::populate(const RadioInfo& info, const BoardCapabilities& caps
     if (m_model != nullptr) {
         onModelUserDigOutChanged(m_model->transmitModel().userDigOut());
     }
+
+    // Anvelina DX Outputs: the radio's own state and names, per MAC (as the
+    // OC matrix above, so a window that did not connect the radio itself
+    // reads the radio's keys too). load() fires changed() -> syncDxFromModel.
+    if (m_model != nullptr) {
+        AnvelinaDxOutputs& dx = m_model->anvelinaDxOutputsMutable();
+        dx.setMacAddress(info.macAddress);
+        dx.load();
+    }
+    applyDxVisibility();
+    syncDxFromModel();
+    applyDxRunning();
 }
 
 // ── restoreSettings ───────────────────────────────────────────────────────────
@@ -352,6 +384,190 @@ void OcOutputsTab::onModelUserDigOutChanged(int nibble)
     m_syncingFromModel = false;
 }
 
+// ── Anvelina DX Outputs (DX OUT 7..10) ──────────────────────────────────────
+
+namespace {
+
+int dxOutputAt(int column)
+{
+    return AnvelinaDxOutputs::kFirstOutput + column;
+}
+
+} // namespace
+
+void OcOutputsTab::buildDxGroup()
+{
+    static_assert(kDxOutputs == AnvelinaDxOutputs::kOutputCount,
+                  "one column per Anvelina DX output");
+
+    m_dxSection = new QWidget(this);
+    auto* section = new QVBoxLayout(m_dxSection);
+    section->setContentsMargins(0, 0, 0, 0);
+    section->setSpacing(0);
+
+    m_dxGroup = new QGroupBox(tr("Anvelina DX Outputs"), m_dxSection);
+    auto* row = new QHBoxLayout(m_dxGroup);
+    row->setContentsMargins(8, 4, 8, 4);
+    row->setSpacing(12);
+
+    // One column per output: the box, then its name under it. A name field
+    // is 124 px where the row has room and narrows (not the page widens)
+    // when the Settings window is at its own size or smaller.
+    constexpr int kNameFieldWidth = 124;
+    for (int column = 0; column < kDxOutputs; ++column) {
+        const int out = dxOutputAt(column);
+        auto* col = new QVBoxLayout;
+        col->setSpacing(4);
+
+        auto* cb = new QCheckBox(tr("DX OUT %1").arg(out), m_dxGroup);
+        m_dxChecks[static_cast<std::size_t>(column)] = cb;
+        col->addWidget(cb);
+
+        auto* name = new QLineEdit(m_dxGroup);
+        name->setPlaceholderText(tr("Name"));
+        name->setToolTip(tr("Your name for this output, shown here only"));
+        name->setAccessibleName(tr("Name for DX OUT %1").arg(out));
+        name->setMaximumWidth(kNameFieldWidth);
+        m_dxNames[static_cast<std::size_t>(column)] = name;
+        col->addWidget(name);
+
+        row->addLayout(col);
+
+        if (m_model != nullptr) {
+            connect(cb, &QCheckBox::toggled, this, [this, out](bool on) {
+                m_model->anvelinaDxOutputsMutable().setOutputOn(out, on);
+            });
+            // Saved when the edit finishes (Return or leaving the field),
+            // not per keystroke: in a remote window each save is a Core
+            // write and an "ocDx" reload whose echo would land mid-word.
+            connect(name, &QLineEdit::editingFinished, this, [this, out, name]() {
+                name->setModified(false);
+                m_model->anvelinaDxOutputsMutable().setLabel(out, name->text());
+            });
+        }
+    }
+    row->addStretch();
+
+    auto* buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    m_dxAllOn = new QPushButton(tr("All on"), m_dxGroup);
+    m_dxAllOff = new QPushButton(tr("All off"), m_dxGroup);
+    buttons->addWidget(m_dxAllOn);
+    buttons->addWidget(m_dxAllOff);
+    row->addLayout(buttons);
+    row->setAlignment(buttons, Qt::AlignBottom);
+
+    if (m_model != nullptr) {
+        connect(m_dxAllOn, &QPushButton::clicked, this, [this]() {
+            m_model->anvelinaDxOutputsMutable().setAll(true);
+        });
+        connect(m_dxAllOff, &QPushButton::clicked, this, [this]() {
+            m_model->anvelinaDxOutputsMutable().setAll(false);
+        });
+    }
+
+    section->addWidget(m_dxGroup);
+
+    // The gateware drives the outputs only while the radio runs
+    // (Gateware n1gp-Anvelina_PROIII Orion.v:920-923 [@8e86a61]); stopped,
+    // the choices stay saved and the line says why the boxes are grey.
+    m_dxReason = new QLabel(tr("The radio holds these outputs off while it is stopped. "
+                               "Your choices are kept and come back when it runs."),
+                            m_dxSection);
+    m_dxReason->setWordWrap(true);
+    m_dxReason->setContentsMargins(2, 4, 0, 0);
+    m_dxReason->setStyleSheet(QStringLiteral("font-style: italic;"));
+    section->addWidget(m_dxReason);
+
+    if (m_model != nullptr) {
+        connect(&m_model->anvelinaDxOutputsMutable(), &AnvelinaDxOutputs::changed,
+                this, &OcOutputsTab::syncDxFromModel);
+        // The same connected-and-streaming state the HF tab's live OC pin
+        // row follows (OcOutputsHfTab, connectionStateChanged).
+        connect(m_model, &RadioModel::connectionStateChanged,
+                this, &OcOutputsTab::applyDxRunning);
+    }
+
+    applyDxVisibility();
+    syncDxFromModel();
+    applyDxRunning();
+}
+
+void OcOutputsTab::syncDxFromModel()
+{
+    if (m_model == nullptr) {
+        return;
+    }
+    const AnvelinaDxOutputs& dx = m_model->anvelinaDxOutputs();
+    for (int column = 0; column < kDxOutputs; ++column) {
+        const int out = dxOutputAt(column);
+        if (QCheckBox* cb = m_dxChecks[static_cast<std::size_t>(column)]) {
+            const QSignalBlocker block(cb);
+            cb->setChecked(dx.outputOn(out));
+        }
+        if (QLineEdit* name = m_dxNames[static_cast<std::size_t>(column)]) {
+            // Only on a real change, so typing keeps its cursor, and never
+            // over an edit not yet finished (it saves on editingFinished).
+            const QString label = dx.label(out);
+            if (name->text() != label && !name->isModified()) {
+                const QSignalBlocker block(name);
+                name->setText(label);
+            }
+        }
+    }
+}
+
+void OcOutputsTab::setDxOutputsAvailable(bool available, const QString& reason)
+{
+    m_dxAvailable = available;
+    m_dxUnavailableReason = reason;
+    applyDxRunning();
+}
+
+void OcOutputsTab::applyDxRunning()
+{
+    const bool running = m_model != nullptr && m_model->isConnected();
+    const QString stopped = tr("The radio holds the DX outputs off while it is stopped.");
+    // A remote window on a Core that cannot apply the outputs: everything
+    // is a Core write, so all of it closes, and that reason wins.
+    const bool switchable = m_dxAvailable && running;
+    const QString closed = m_dxAvailable ? stopped : m_dxUnavailableReason;
+    for (int column = 0; column < kDxOutputs; ++column) {
+        if (QCheckBox* cb = m_dxChecks[static_cast<std::size_t>(column)]) {
+            cb->setEnabled(switchable);
+            cb->setToolTip(switchable
+                               ? tr("Switches USEROUT%1 on the Anvelina's DX connector.")
+                                     .arg(dxOutputAt(column))
+                               : closed);
+        }
+        if (QLineEdit* name = m_dxNames[static_cast<std::size_t>(column)]) {
+            name->setEnabled(m_dxAvailable);
+            name->setToolTip(m_dxAvailable ? tr("Your name for this output, shown here only")
+                                           : m_dxUnavailableReason);
+        }
+    }
+    for (QPushButton* button : {m_dxAllOn, m_dxAllOff}) {
+        if (button != nullptr) {
+            button->setEnabled(switchable);
+            button->setToolTip(switchable ? QString() : closed);
+        }
+    }
+    if (m_dxReason != nullptr) {
+        m_dxReason->setVisible(m_dxAvailable && !running);
+    }
+}
+
+void OcOutputsTab::applyDxVisibility()
+{
+    // Hardware the radio lacks is hidden: only the Anvelina PRO III has the
+    // DX connector. Its board reads OrionMKII, so the model decides.
+    const bool anvelina = m_model != nullptr
+        && m_model->hardwareProfile().model == HPSDRModel::ANVELINAPRO3;
+    if (m_dxSection != nullptr) {
+        m_dxSection->setVisible(anvelina);
+    }
+}
+
 // ── Test seams (P1 full-parity §4.3) ─────────────────────────────────────────
 
 bool OcOutputsTab::userDigOutGroupVisibleForTest() const
@@ -383,6 +599,36 @@ void OcOutputsTab::toggleUserDigOutCheckboxForTest(int bit, bool checked)
     // setChecked() fires the same toggled() signal path as a user click,
     // so this exercises the full wire-up to TransmitModel::setUserDigOut.
     cb->setChecked(checked);
+}
+
+// ── Test seams (Anvelina DX Outputs) ────────────────────────────────────────
+
+bool OcOutputsTab::dxGroupVisibleForTest() const
+{
+    return m_dxSection != nullptr && !m_dxSection->isHidden();
+}
+
+QCheckBox* OcOutputsTab::dxCheckboxForTest(int out) const
+{
+    const int column = out - AnvelinaDxOutputs::kFirstOutput;
+    if (column < 0 || column >= kDxOutputs) {
+        return nullptr;
+    }
+    return m_dxChecks[static_cast<std::size_t>(column)];
+}
+
+QLineEdit* OcOutputsTab::dxNameFieldForTest(int out) const
+{
+    const int column = out - AnvelinaDxOutputs::kFirstOutput;
+    if (column < 0 || column >= kDxOutputs) {
+        return nullptr;
+    }
+    return m_dxNames[static_cast<std::size_t>(column)];
+}
+
+bool OcOutputsTab::dxReasonVisibleForTest() const
+{
+    return m_dxReason != nullptr && !m_dxReason->isHidden();
 }
 
 } // namespace NereusSDR

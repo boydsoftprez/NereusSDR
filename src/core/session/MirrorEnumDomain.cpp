@@ -40,11 +40,14 @@
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel's driver, axes,
 //                endStop and motion. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableClient::LinkState.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorEnumDomain.h"
 
 #include "core/WdspTypes.h"
+#include "core/roundtable/RoundtableClient.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
@@ -202,6 +205,15 @@ const DomainTable& table()
             RotorLink::RotorModel::Motion::Stopped,
             RotorLink::RotorModel::Motion::Turning,
             RotorLink::RotorModel::Motion::Nudging,
+        });
+        // Roundtable plan Task 11: the `roundtable` object's linkState.
+        declare<RoundtableClient::LinkState>(&t, {
+            RoundtableClient::LinkState::Off,
+            RoundtableClient::LinkState::Connecting,
+            RoundtableClient::LinkState::Live,
+            RoundtableClient::LinkState::Reconnecting,
+            RoundtableClient::LinkState::Offline,
+            RoundtableClient::LinkState::Hidden,
         });
 
         // R-R3-49 (parity Task 2): the tune drive source on `transmit`.

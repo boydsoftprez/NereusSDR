@@ -113,6 +113,11 @@ boydsoftprez@gmail.com
 //                 Core log; RxChannel records DFNR and MNR the same way.
 //                 Measures only; NR behaviour is unchanged. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - WdspWaitDrainFlush (channel.c's timed-out drain waits for
+//                 the flush its down-slew asked for) and the test-only drain
+//                 hook (WDSPSetTestDrainHook, WdspTestDrainHook). By J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #ifndef _dsplock_h
@@ -184,6 +189,11 @@ void WdspWorkerTestProcessDelay (int channel);
 // writes a dprintf line for every kWorkerExitLogIntervalMs of waiting.
 // Returns at once, after one dprintf line, if the worker never started.
 void WdspWaitWorkerExit (int channel);
+
+// SetChannelState's timed-out drain (channel.c): returns once the channel's
+// flush thread has cleared flushflag. Never gives up; writes a dprintf line
+// for every kWorkerExitLogIntervalMs of waiting, on the monotonic clock.
+void WdspWaitDrainFlush (int channel);
 
 // One channel's worker load since the process started. Every field only
 // grows except blockPeriodUs, which is the block period (dsp_size / dsp_rate)
@@ -361,6 +371,33 @@ static __inline void WdspTestExchangeHook (int channel)
 	const WdspTestExchangeHookFn hook = wdsp_test_exchange_hook;
 #else
 	const WdspTestExchangeHookFn hook = __atomic_load_n (&wdsp_test_exchange_hook, __ATOMIC_ACQUIRE);
+#endif
+	if (hook != 0)
+	{
+		hook (channel);
+	}
+}
+
+// Test-only: install (or, with 0, remove) a function SetChannelState
+// (channel.c) calls when it starts a drain (state 0), after it raises the
+// down-slew and before it raises flushflag, while it holds csEXCH. A test
+// that blocks in it holds the drain at that point while other threads call
+// fexchange0. The hook must not call into WDSP. Never call it in production
+// code.
+typedef void (*WdspTestDrainHookFn) (int channel);
+PORT void WDSPSetTestDrainHook (WdspTestDrainHookFn hook);
+
+// The installed drain hook (0 = none); written only by WDSPSetTestDrainHook.
+extern WdspTestDrainHookFn volatile wdsp_test_drain_hook;
+
+// SetChannelState's call: one pointer load and one null test when none is
+// installed.
+static __inline void WdspTestDrainHook (int channel)
+{
+#ifdef _WIN32
+	const WdspTestDrainHookFn hook = wdsp_test_drain_hook;
+#else
+	const WdspTestDrainHookFn hook = __atomic_load_n (&wdsp_test_drain_hook, __ATOMIC_ACQUIRE);
 #endif
 	if (hook != 0)
 	{

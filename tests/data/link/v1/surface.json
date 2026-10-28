@@ -208,7 +208,7 @@
         {
             "kind": "i64",
             "name": "radioHardwareVersion",
-            "value": 13
+            "value": 14
         },
         {
             "kind": "i64",
@@ -263,7 +263,7 @@
         {
             "kind": "i64",
             "name": "transmitSettingsVersion",
-            "value": 15
+            "value": 16
         },
         {
             "kind": "i64",
@@ -373,6 +373,11 @@
             "kind": "i64",
             "name": "txReadingsVersion",
             "value": 4
+        },
+        {
+            "kind": "i64",
+            "name": "remoteCwVersion",
+            "value": 2
         },
         {
             "kind": "i64",
@@ -578,6 +583,11 @@
             "kind": "i64",
             "name": "displayCodecVersion",
             "value": 2
+        },
+        {
+            "kind": "i64",
+            "name": "stationRoundtableVersion",
+            "value": 1
         },
         {
             "kind": "utf8",
@@ -1878,6 +1888,195 @@
         },
         {
             "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "text",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "clientId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.post"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "messageId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.delete"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "turnId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.name"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "kind",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "target",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "reason",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.report"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.read"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.unread"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "hidden",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.setHidden"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "live",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.answerFirstRun"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "callsign",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.mute"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "callsign",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.unmute"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "upToMs",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.markMentionRead"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.webSignIn"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "confirm",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.deleteArchive"
+        },
+        {
+            "arguments": [
             ],
             "capability": "radioHardwareVersion",
             "capabilityVersion": 2,
@@ -2055,6 +2254,11 @@
                     "kind": "i64",
                     "name": "epoch",
                     "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwEpoch",
+                    "optional": true
                 }
             ],
             "capability": "remoteTxVersion",
@@ -2092,6 +2296,53 @@
             "capabilityVersion": 2,
             "minMinor": 11,
             "verb": "tx.tunerTune"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "text",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.send"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "number",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.memory"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.stop"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "down",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "cw.key"
         },
         {
             "arguments": [
@@ -6205,6 +6456,54 @@
                 }
             ]
         },
+        "RoundtableState": {
+            "properties": [
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5
+                    ],
+                    "kind": "enum",
+                    "name": "linkState",
+                    "ordinal": 0
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "linkSince",
+                    "ordinal": 1
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "firstRunAnswered",
+                    "ordinal": 2
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "hidden",
+                    "ordinal": 3
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "mentionCounts",
+                    "ordinal": 4
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "sliceRooms",
+                    "ordinal": 5
+                }
+            ]
+        },
         "SetupDescription": {
             "properties": [
                 {
@@ -7589,6 +7888,18 @@
                     "kind": "bool",
                     "name": "freedvReporterHidden",
                     "ordinal": 10
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "roundtableState",
+                    "ordinal": 11
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "roundtableText",
+                    "ordinal": 12
                 }
             ]
         },
@@ -8653,6 +8964,192 @@
                     "kind": "utf8",
                     "name": "cfcProfile",
                     "ordinal": 88
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwKeyerSpeed",
+                    "ordinal": 89
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwKeyerMode",
+                    "ordinal": 90
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwKeyerWeight",
+                    "ordinal": 91
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwReversePaddles",
+                    "ordinal": 92
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwStrictSpacing",
+                    "ordinal": 93
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwBreakInMode",
+                    "ordinal": 94
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwBreakInDelayMs",
+                    "ordinal": 95
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwKeyDownDelayMs",
+                    "ordinal": 96
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwKeyUpDelayMs",
+                    "ordinal": 97
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwSidetone",
+                    "ordinal": 98
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwRadioSidetone",
+                    "ordinal": 99
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwComputerSidetone",
+                    "ordinal": 100
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwAutoModeSwitch",
+                    "ordinal": 101
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwAutoModeReturn",
+                    "ordinal": 102
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwAutoModeReturnMs",
+                    "ordinal": 103
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwSerialPort",
+                    "ordinal": 104
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwSerialPaddles",
+                    "ordinal": 105
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwSerialKeyLine",
+                    "ordinal": 106
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwSerialPttLine",
+                    "ordinal": 107
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwxSpeed",
+                    "ordinal": 108
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "cwxRepeat",
+                    "ordinal": 109
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "cwxRepeatDelayS",
+                    "ordinal": 110
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory1",
+                    "ordinal": 111
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory2",
+                    "ordinal": 112
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory3",
+                    "ordinal": 113
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory4",
+                    "ordinal": 114
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory5",
+                    "ordinal": 115
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory6",
+                    "ordinal": 116
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory7",
+                    "ordinal": 117
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "cwxMemory8",
+                    "ordinal": 118
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "cwQskUnavailableReason",
+                    "ordinal": 119
                 }
             ]
         },
@@ -8957,6 +9454,48 @@
                     "kind": "f64",
                     "name": "cfcPeakDb",
                     "ordinal": 49
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "rfHeld",
+                    "ordinal": 50
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "rfHeldReason",
+                    "ordinal": 51
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "rfHoldSerial",
+                    "ordinal": 52
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "rfLastHoldMs",
+                    "ordinal": 53
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "remoteCwDeviceId",
+                    "ordinal": 54
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "remoteCwEpoch",
+                    "ordinal": 55
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "remoteCwActive",
+                    "ordinal": 56
                 }
             ]
         },
@@ -9171,6 +9710,10 @@
             "key": "rotor"
         },
         {
+            "class": "RoundtableState",
+            "key": "roundtable"
+        },
+        {
             "class": "StationDevicesFacade",
             "key": "devices"
         },
@@ -9264,6 +9807,22 @@
             {
                 "key": "FreeDvReporter/FrequencyAsKhz",
                 "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/EarlierTurnsShown",
+                "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/PanelOpensOn",
+                "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/FirstRunSeen",
+                "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/WindowGeometry",
+                "scope": "operatorLocal"
             }
         ],
         "operatorLocalKeys": [
@@ -9344,6 +9903,7 @@
             "Pota",
             "PskReporter",
             "FreeDv",
+            "Roundtable",
             "User/",
             "Notch",
             "DspOptions",

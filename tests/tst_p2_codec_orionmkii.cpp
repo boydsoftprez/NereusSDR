@@ -1,7 +1,12 @@
 // no-port-check: test fixture cites Thetis source for expected values, not a port itself
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CmdTx CW byte cases and edge length 9
+//               (R-CW-16). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest/QtTest>
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/CwWireState.h"
 #include "core/P2RadioConnection.h"
 
 #include <array>
@@ -90,6 +95,47 @@ private slots:
         QCOMPARE(int(buf[4]) & 0x01, 0x01);  // run bit set
     }
 
+    // CmdHighPriority byte 1397 — the Anvelina DX open collector outputs,
+    // ANVELINAPRO3 only, masked with kDxWireMask (0x1E).
+    // Source: network.c:1016-1020 [v2.10.3.15]; mask per the Anvelina DX
+    // spec page 2 (NereusSDR-divergence from Thetis's 0x0f).
+    void cmdHighPriority_byte1397_anvelina_dx() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        ctx.model = HPSDRModel::ANVELINAPRO3;
+        ctx.ocExtrasByte = 0x0A;
+        ctx.ocByte = 0x05;
+        quint8 buf[1444] = {};
+        codec.composeCmdHighPriority(ctx, buf);
+        QCOMPARE(int(buf[1397]), 0x0A);
+        // Byte 1401 is the band OC byte, unchanged by the extras.
+        QCOMPARE(int(buf[1401]), 0x0A);  // (0x05 << 1) & 0xfe
+
+        CodecContext bandOnly;
+        bandOnly.model = HPSDRModel::ANVELINAPRO3;
+        bandOnly.ocByte = 0x05;
+        quint8 ref[1444] = {};
+        codec.composeCmdHighPriority(bandOnly, ref);
+        QCOMPARE(int(ref[1401]), int(buf[1401]));
+        QCOMPARE(int(ref[1397]), 0x00);
+
+        // Bit 4 (DX OUT 10) reaches the wire; bit 0 and bits 5-7 do not.
+        ctx.ocExtrasByte = 0xFF;
+        quint8 all[1444] = {};
+        codec.composeCmdHighPriority(ctx, all);
+        QCOMPARE(int(all[1397]), 0x1E);
+    }
+
+    void cmdHighPriority_byte1397_zero_on_other_models() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        ctx.model = HPSDRModel::ANAN7000D;
+        ctx.ocExtrasByte = 0x0A;
+        quint8 buf[1444] = {};
+        codec.composeCmdHighPriority(ctx, buf);
+        QCOMPARE(int(buf[1397]), 0x00);
+    }
+
     // CmdHighPriority bytes 1432-1435 — Alex0 HPF 13 MHz (bit 1 in reg = 0x02)
     // Source: network.c:1040-1050 [@501e3f5]
     void cmdHighPriority_alex0_hpf_13MHz() {
@@ -128,6 +174,67 @@ private slots:
         quint8 buf[1444] = {};
         codec.composeCmdHighPriority(ctx, buf);
         QCOMPARE(int(buf[1442]), 10);  // ADC1 attenuation raw value
+    }
+
+    // CmdTx CW bytes from the p2Cw* fields (R-CW-16): byte 5 the mode
+    // control, 6 level, 7-8 frequency, 9 speed, 10 weight, 11-12 hang,
+    // 13 RF delay, 17 edge length.
+    // From Thetis network.c:1190-1222 [v2.10.3.15]
+    void cmdTx_cwBytes_fromTheCwFields() {
+        CwWireState cw;
+        cw.enable = true;
+        cw.breakIn = true;
+        cw.keyerMode = int(CwKeyerMode::IambicA);
+        cw.speedWpm = 30;
+        cw.weight = 55;
+        cw.strictSpacing = true;
+        cw.reversePaddles = true;
+        cw.sidetoneLevel = 90;
+        cw.sidetoneFreqHz = 600;
+        cw.rfDelayMs = 12;
+        cw.hangMs = 310;
+
+        CodecContext ctx;
+        ctx.p2CwModeControl   = composeP2CwModeControl(cw, true);
+        ctx.p2CwSidetoneLevel = cw.sidetoneLevel;
+        ctx.p2CwSidetoneFreq  = cw.sidetoneFreqHz;
+        ctx.p2CwKeyerSpeed    = cw.speedWpm;
+        ctx.p2CwKeyerWeight   = cw.weight;
+        ctx.p2CwHangDelay     = cw.hangMs;
+        ctx.p2CwRfDelay       = cw.rfDelayMs;
+
+        P2CodecOrionMkII codec;
+        quint8 buf[60] = {};
+        codec.composeCmdTx(ctx, buf);
+        // eer, enable, reverse, iambic, sidetone, strict, break-in; not mode B.
+        QCOMPARE(int(buf[5]), 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x40 | 0x80);
+        QCOMPARE(int(buf[5]), int(composeP2CwModeControl(cw, true)));
+        QCOMPARE(int(buf[6]), 90);
+        QCOMPARE(int(buf[7]), 600 >> 8);
+        QCOMPARE(int(buf[8]), 600 & 0xFF);
+        QCOMPARE(int(buf[9]), 30);
+        QCOMPARE(int(buf[10]), 55);
+        QCOMPARE(int(buf[11]), 310 >> 8);
+        QCOMPARE(int(buf[12]), 310 & 0xFF);
+        QCOMPARE(int(buf[13]), 12);
+        QCOMPARE(int(buf[17]), 9);
+    }
+
+    // Edge length 9 by default, in the codec and from the connection.
+    // From Thetis setup.cs:29327 [v2.10.3.15]: NetworkIO.SetCWEdgeLength(9);
+    // Upstream comment preserved verbatim (setup.cs:29326): // for DL1YCF CW Edge
+    void cmdTx_edgeLength_is9() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        quint8 buf[60] = {};
+        codec.composeCmdTx(ctx, buf);
+        QCOMPARE(int(buf[17]), 9);
+
+        P2RadioConnection conn(nullptr);
+        conn.setBoardForTest(HPSDRHW::OrionMKII);
+        quint8 tx[60] = {};
+        conn.composeCmdTxForTest(tx);
+        QCOMPARE(int(tx[17]), 9);
     }
 
     // CmdTx bytes 57-59 — TX ATT per ADC

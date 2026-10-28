@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NereusSDR — Reporter applet</title>
+<style>
+/* Colours sampled from docs/images/nereussdr-v016-screenshot.jpg, not guessed:
+     app bg   #0a0a14      applet body #0f0f1b
+     header   #354252 (gradient #3a4a5a -> #1a2a38 per StyleConstants.h)
+     buttons  #141d2c / #111520,  border ~#2a3a4a,  bold 11px text
+     cyan     #00b4d8,  bright rule #3f9bb0,  amber NYI #d8b800                */
+:root{
+  --mono:ui-monospace,"SF Mono",Consolas,Menlo,monospace;
+  --body:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --app:#0a0a14; --abdy:#0f0f1b; --btn:#141d2c; --btn2:#111520;
+  --bbord:#2a3a4a; --hdrtop:#3a4a5a; --hdrmid:#2a3a4a; --hdrbot:#1a2a38;
+  --txt:#c8d8e8; --txt2:#8090a0; --txt3:#708090; --txt4:#607080; --txt5:#405060;
+  --acc:#00b4d8; --accrule:#3f9bb0; --green:#00ff88; --greenbg:#00301f;
+  --amber:#d8b800; --red:#ff4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;font-family:var(--body);font-size:11px}
+#win{width:1280px;height:800px;margin:0 auto;display:flex;flex-direction:column;
+  background:var(--app);overflow:hidden;border:1px solid #1a1a2a}
+.body{flex:1;display:flex;min-height:0}
+
+/* ── LEFT: chunky bordered button stack ── */
+.left{width:46px;flex:none;background:var(--abdy);border-right:1px solid #1a1a2a;
+  padding:6px 4px;display:flex;flex-direction:column;gap:4px;overflow:hidden}
+.vb{background:var(--btn);border:1px solid var(--bbord);border-radius:3px;
+  font-family:var(--body);font-size:9.5px;font-weight:700;color:var(--txt);
+  padding:6px 2px;text-align:center;position:relative;cursor:pointer;letter-spacing:.02em}
+.vb:hover{background:#1b2739}
+.vb.dis{color:var(--txt4);background:var(--btn2)}
+.vb.on{background:var(--acc);color:#04121a;border-color:var(--acc)}
+.nyi{position:absolute;top:-4px;left:-4px;background:var(--amber);color:#000;font-size:7px;
+  font-weight:800;padding:0 3px;border-radius:2px;line-height:11px}
+.vcollapse{border:none;background:transparent;color:var(--txt2);font-size:11px;height:14px}
+
+/* ── CENTRE ── */
+.centre{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.specpane{height:296px;position:relative;border-bottom:2px solid var(--accrule);
+  background:var(--app);overflow:hidden}
+.trace{position:absolute;left:34px;right:0;bottom:22px;top:8px}
+.trace svg{width:100%;height:100%}
+/* yellow dB scale down the left edge, as in the screenshot */
+.dbcol{position:absolute;left:2px;top:8px;bottom:22px;width:30px;font-family:var(--mono);
+  font-size:8px;color:var(--amber);text-align:right}
+.dbcol span{position:absolute;right:2px}
+
+/* the frequency panel: cyan rule, tag row, boxed digits, scale+bar */
+.fp{position:absolute;left:50%;top:8px;transform:translateX(-50%);width:270px;
+  border-top:2px solid var(--accrule);background:rgba(11,11,20,.95);padding:5px 6px 6px;z-index:4}
+.fptags{display:flex;align-items:center;gap:4px;margin-bottom:4px}
+.tag{font-family:var(--mono);font-size:11px;font-weight:800;letter-spacing:.02em}
+.tag.a{color:#4a8fd8} .tag.r{color:#ff5566} .tag.c{color:var(--acc)}
+.fptags .sp{flex:1}
+.tbox{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--txt2);
+  background:#1c2432;border:1px solid #2a3a4a;border-radius:2px;padding:1px 5px}
+.tbox.hot{background:var(--acc);color:#04121a;border-color:var(--acc)}
+.fnum{display:flex;align-items:center;justify-content:center;
+  border:1px solid #2f4a5e;border-radius:3px;padding:3px 0;background:#07070f}
+.fnum b{font-family:var(--mono);font-size:30px;font-weight:600;color:var(--acc);
+  letter-spacing:.06em;text-shadow:0 0 16px rgba(0,180,216,.5)}
+.fscale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:8px;
+  color:var(--txt4);margin:4px 1px 2px}
+.fbar{height:13px;border:1px solid #2f4a5e;border-radius:2px;position:relative;overflow:hidden}
+.fbar i{position:absolute;left:0;top:0;bottom:0;background:var(--acc)}
+.fbar span{position:absolute;right:5px;top:-1px;font-family:var(--mono);font-size:9px;
+  color:var(--acc);z-index:2}
+.frow{display:flex;gap:3px;margin-top:5px;justify-content:center}
+.db{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--txt2);
+  background:#16202e;border:1px solid var(--bbord);border-radius:2px;padding:2px 7px;cursor:pointer}
+.db.on{background:var(--acc);color:#04121a;border-color:var(--acc)}
+/* round icon buttons down the left of the freq area */
+.rcol{position:absolute;left:34px;top:8px;display:flex;flex-direction:column;gap:6px;z-index:5}
+.rb{width:20px;height:20px;border-radius:50%;background:#16202e;border:1px solid var(--bbord);
+  color:var(--txt2);font-size:10px;display:flex;align-items:center;justify-content:center}
+.rb.on{background:var(--acc);color:#04121a}
+
+/* ── WATERFALL ── */
+.wf{flex:1;position:relative;background:#000030;overflow:hidden}
+.wfg{position:absolute;inset:0;opacity:.92;
+  background:
+    repeating-linear-gradient(0deg,rgba(0,50,170,.17) 0 2px,transparent 2px 5px),
+    repeating-linear-gradient(90deg,rgba(0,70,190,.13) 0 1px,transparent 1px 4px),
+    radial-gradient(ellipse 7px 130px at 11% 35%,rgba(130,255,140,.8),transparent 70%),
+    radial-gradient(ellipse 4px 160px at 15% 55%,rgba(170,255,120,.7),transparent 70%),
+    radial-gradient(ellipse 6px 110px at 26% 30%,rgba(130,255,180,.65),transparent 70%),
+    radial-gradient(ellipse 8px 140px at 27% 62%,rgba(120,255,130,.55),transparent 70%),
+    radial-gradient(ellipse 5px 125px at 41% 45%,rgba(150,255,150,.6),transparent 70%),
+    radial-gradient(ellipse 6px 150px at 58% 58%,rgba(140,255,140,.5),transparent 70%),
+    radial-gradient(ellipse 5px 115px at 72% 38%,rgba(130,255,170,.5),transparent 70%),
+    radial-gradient(ellipse 7px 145px at 88% 52%,rgba(160,255,130,.5),transparent 70%)}
+/* reporter stations on the waterfall */
+.mk{position:absolute;bottom:0;width:2px;background:linear-gradient(180deg,transparent,var(--green));
+  box-shadow:0 0 7px rgba(0,255,136,.7)}
+.mk.tx{background:linear-gradient(180deg,transparent,var(--red));box-shadow:0 0 8px rgba(255,68,68,.8)}
+.mkl{position:absolute;bottom:1px;font-family:var(--mono);font-size:8px;font-weight:700;
+  color:var(--green);transform:translateX(-50%);white-space:nowrap;
+  background:rgba(0,0,30,.85);padding:0 2px}
+.mkl.tx{color:var(--red)}
+.wfq{position:absolute;bottom:1px;font-family:var(--mono);font-size:9px;color:#e8d000;
+  font-weight:700;transform:translateX(-50%)}
+/* multimeter overlay, as in the screenshot */
+.mm{position:absolute;left:8px;top:8px;width:268px;background:rgba(8,8,18,.94);
+  border:1px solid #24384a;border-radius:3px;padding:5px}
+.mmh{display:flex;align-items:center;gap:4px;margin-bottom:4px}
+.mmt{font-family:var(--mono);font-size:9px;font-weight:800;color:var(--acc)}
+.mmg{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#0d1620;
+  border:1px solid #1e3040;border-radius:2px;padding:2px}
+.mmc{background:#0e1a24;padding:3px 1px;text-align:center;font-family:var(--mono);
+  font-size:10px;font-weight:700;color:var(--txt)}
+.mmc small{display:block;font-size:6.5px;color:var(--txt4);font-weight:600;margin-top:1px}
+.mmc.r{color:var(--red)}
+.mmf{display:flex;justify-content:space-between;margin-top:4px;font-family:var(--mono);
+  font-size:8px;color:var(--txt3)}
+.mmf b{color:var(--green)}
+
+/* ── RIGHT applet panel ── */
+.right{width:286px;flex:none;background:var(--abdy);border-left:1px solid #1a1a2a;
+  display:flex;flex-direction:column;min-height:0}
+/* gradient header bar: drag dots + bold title  (AppletPanelWidget) */
+.ptitle{flex:none;height:15px;display:flex;align-items:center;gap:5px;padding:0 5px;
+  background:linear-gradient(180deg,var(--hdrtop),var(--hdrmid) 50%,var(--hdrbot));
+  border-bottom:1px solid #0a1a28}
+.grip{letter-spacing:-1px;color:#5a7a92;font-size:9px}
+.ptitle .t{font-size:11px;font-weight:700;color:#dce8f2;letter-spacing:.01em}
+.ptitle .cnt{margin-left:auto;font-family:var(--mono);font-size:8.5px;font-weight:800;
+  background:var(--acc);color:#04121a;border-radius:2px;padding:0 4px}
+.hamb{margin-left:5px;width:20px;height:16px;background:transparent;border:none;
+  color:var(--txt2);font-size:11px;cursor:pointer;display:flex;align-items:center;
+  justify-content:center}
+.hamb:hover{color:var(--acc)}
+
+.apt{flex:none;border-bottom:1px solid #1c2230}
+.ah{display:flex;align-items:center;gap:5px;padding:4px 7px;background:#111726;
+  border-bottom:1px solid #1c2230}
+.ah h3{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--acc);font-weight:700}
+.ah .n{font-family:var(--mono);font-size:8px;font-weight:800;background:var(--acc);color:#04121a;
+  border-radius:2px;padding:0 4px}
+.ah .r{margin-left:auto;display:flex;gap:3px}
+.hb{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--txt2);
+  background:#16202e;border:1px solid var(--bbord);border-radius:2px;padding:1px 5px;cursor:pointer}
+.hb.on{background:var(--acc);color:#04121a;border-color:var(--acc)}
+.hb.off{color:var(--txt5)}
+
+/* you-strip: chunky cells like the app's filter cells */
+.you{display:flex;border-bottom:1px solid #1c2230}
+.yc{flex:1;padding:5px 6px;border-right:1px solid #1c2230;background:#101725}
+.yc:last-child{border-right:none}
+.yk{font-family:var(--mono);font-size:6.5px;letter-spacing:.1em;color:var(--txt5);
+  font-weight:700;margin-bottom:3px}
+.yv{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--txt)}
+.yv.big{font-size:16px;color:var(--acc)}
+.yv small{font-size:8px;color:var(--txt4)}
+.heard{display:flex;gap:1px;align-items:flex-end;height:18px}
+.heard i{width:9px;height:100%;background:#1c2634;border-radius:1px;display:block}
+.heard i.q4{background:var(--red)} .heard i.q3{background:var(--green)}
+.heard i.q2{background:#00784f} .heard i.q1{background:#004830}
+.heard i.me{box-shadow:inset 0 0 0 1px var(--txt5)}
+
+/* report rows */
+.rep{display:flex;align-items:center;gap:5px;padding:4px 7px;border-bottom:1px solid #14161f;
+  cursor:pointer}
+.rep:hover{background:#141a28}
+.rep .c{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--txt);width:56px;flex:none}
+.rep .g{font-family:var(--mono);font-size:8.5px;color:var(--txt5);width:36px;flex:none}
+.rep .m{display:flex;gap:1px;flex:none}
+.rep .m i{width:4px;height:11px;background:#1c2634;border-radius:.5px;display:block}
+.rep .m i.lo{background:var(--green)} .rep .m i.mid{background:#ffb800} .rep .m i.hi{background:var(--red)}
+.rep .v{font-family:var(--mono);font-size:9.5px;font-weight:700;color:var(--txt3);width:46px;
+  flex:none;text-align:right}
+.rep .v.l{color:var(--txt)}
+.rep .t{font-family:var(--mono);font-size:7.5px;font-weight:800;border-radius:2px;padding:1px 3px;
+  flex:none}
+.rep .t.n{color:var(--green);background:var(--greenbg)}
+.rep .t.d{color:var(--acc);background:#0a2a36}
+.rep .s{font-family:var(--mono);font-size:8px;color:var(--txt5);margin-left:auto;flex:none}
+
+.sub{font-family:var(--mono);font-size:7px;letter-spacing:.1em;color:var(--txt5);
+  font-weight:700;padding:5px 7px 3px;display:flex;align-items:center;gap:4px}
+.sub .f{margin-left:auto;display:flex;gap:3px}
+.fchip{font-family:var(--mono);font-size:7.5px;font-weight:700;color:var(--txt3);
+  background:#16202e;border:1px solid var(--bbord);border-radius:2px;padding:1px 4px;cursor:pointer}
+.fchip.on{background:var(--acc);color:#04121a;border-color:var(--acc)}
+
+/* band matrix */
+.mmx{border-collapse:separate;border-spacing:1px;padding:0 7px 5px}
+.mmx th{background:none;border:none;padding:0;font-family:var(--mono);font-size:6.5px;
+  color:var(--txt5);text-align:center;width:17px;font-weight:700}
+.mmx td{padding:0;border:none;background:none;width:17px;height:9px}
+.mmx .c{display:block;width:16px;height:8px;background:#1c2634;border-radius:1px;opacity:.55}
+.mmx .c.q1{background:#004830;opacity:1} .mmx .c.q2{background:#00784f;opacity:1}
+.mmx .c.q3{background:var(--green);opacity:1} .mmx .c.q4{background:var(--red);opacity:1}
+.mmx .sp{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--txt3);text-align:right;
+  padding-right:5px;white-space:nowrap;background:none;border:none;width:1px}
+
+/* chat fills the rest */
+.chat{flex:1;display:flex;flex-direction:column;min-height:0}
+.cband{padding:4px 7px;background:#111726;border-bottom:1px solid #1c2230;
+  font-family:var(--mono);font-size:8px;font-weight:700;color:var(--txt3)}
+.cband b{color:var(--acc)}
+.cscroll{flex:1;overflow:hidden}
+.msg{padding:5px 7px;border-bottom:1px solid #14161f}
+.msg .hd{display:flex;align-items:baseline;gap:5px;margin-bottom:2px}
+.msg .who{font-family:var(--mono);font-size:10px;font-weight:800;color:var(--acc)}
+.msg .g{font-family:var(--mono);font-size:7.5px;color:var(--txt5)}
+.msg .sg{margin-left:auto;font-family:var(--mono);font-size:7.5px;color:var(--txt5)}
+.msg .bd{font-size:11px;color:var(--txt);line-height:1.45}
+.msg .bd code{font-family:var(--mono);font-size:10px;background:#16202e;padding:0 3px;
+  border-radius:2px;color:var(--green)}
+.msg .bd strong{font-weight:700} .msg .bd em{color:var(--txt2);font-style:italic}
+.msg.hm{background:rgba(0,255,136,.06);border-left:2px solid var(--green)}
+.msg.hm .who{color:var(--green)}
+.comp{display:flex;gap:5px;padding:6px 7px;background:#111726;border-top:1px solid #1c2230}
+.comp input{flex:1;background:var(--app);border:1px solid var(--bbord);border-radius:2px;
+  color:var(--txt);padding:5px 7px;font-family:var(--body);font-size:11px;outline:none}
+.comp input:focus{border-color:var(--acc)}
+.comp button{background:var(--acc);border:none;color:#04121a;border-radius:2px;padding:5px 12px;
+  font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.06em;cursor:pointer}
+
+/* status bar */
+.sbar{flex:none;height:24px;background:linear-gradient(180deg,#1a2a38,#101020);
+  border-top:1px solid #0a1a28;display:flex;align-items:center;gap:8px;padding:0 8px;
+  font-family:var(--mono);font-size:9px;color:var(--txt3)}
+.sbar .l{display:flex;gap:3px;align-items:center}
+.pill{font-family:var(--mono);font-size:8px;font-weight:800;background:#1a2a3a;
+  border:1px solid var(--bbord);border-radius:2px;padding:1px 4px;color:var(--txt3)}
+.pill.y{background:var(--amber);color:#000;border-color:var(--amber)}
+.pill.c{background:var(--acc);color:#04121a;border-color:var(--acc)}
+.sbar .stn{color:var(--acc);font-weight:800;letter-spacing:.08em;margin-left:auto}
+.sbar .r{margin-left:14px;display:flex;gap:12px;align-items:center}
+.sbar b{color:var(--txt2)}
+.sbar .rpt{color:var(--green);font-weight:800}
+.sbar .tx{color:var(--red);font-weight:800}
+</style>
+</head>
+<body>
+<div id="win">
+ <div class="body">
+
+  <div class="left">
+    <button class="vcollapse">&#9664;</button>
+    <div class="vb dis">+RX<span class="nyi">NYI</span></div>
+    <div class="vb">RX</div>
+    <div class="vb on">TNF</div>
+    <div class="vb">BAND</div>
+    <div class="vb">ANT</div>
+    <div class="vb">DSP<span class="nyi">NYI</span></div>
+    <div class="vb">Display</div>
+    <div class="vb">DAX<span class="nyi">NYI</span></div>
+    <div class="vb dis">ATT</div>
+    <div class="vb dis">MNF</div>
+    <!-- reporter toggle, alongside every other switch -->
+    <div class="vb" style="background:#0f2a36;border-color:var(--acc);color:var(--acc)">RPT</div>
+  </div>
+
+  <div class="centre">
+    <div class="specpane">
+      <div class="dbcol">
+        <span style="top:2px">-17</span><span style="top:52px">-47</span>
+        <span style="top:104px">-77</span><span style="top:156px">-107</span>
+      </div>
+      <div class="rcol">
+        <div class="rb">&#215;</div><div class="rb">&#128274;</div>
+        <div class="rb on"></div><div class="rb">&#9654;</div>
+      </div>
+      <div class="trace">
+        <svg viewBox="0 0 1200 260" preserveAspectRatio="none">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#7f95a8" stop-opacity=".22"/>
+            <stop offset="100%" stop-color="#7f95a8" stop-opacity="0"/></linearGradient></defs>
+          <!-- noise floor: low, roughly flat, with a few real spikes -->
+          <polygon points="0,260 0,244 20,248 40,242 60,250 80,246 100,252 120,244 140,248 160,241 180,249 200,245 220,250 240,243 260,247 280,240 300,251 320,245 340,249 360,242 380,248 400,244 420,252 440,246 460,250 480,243 500,248 520,241 540,251 560,245 580,249 600,243 620,252 640,246 660,250 680,242 700,249 720,244 740,253 760,246 780,250 800,242 820,249 840,244 860,252 880,246 900,250 920,243 940,251 960,245 980,250 1000,242 1020,249 1040,245 1060,252 1080,246 1100,250 1120,242 1140,251 1160,246 1180,250 1200,244 1200,260" fill="url(#g)"/>
+          <polyline points="0,244 20,248 40,242 60,250 80,246 100,252 120,244 140,248 160,241 180,249 200,245 220,250 240,243 260,247 280,240 300,251 320,245 340,249 360,242 380,248 400,244 420,252 440,246 460,250 480,243 500,248 520,241 540,251 560,245 580,249 600,243 620,252 640,246 660,250 680,242 700,249 720,244 740,253 760,246 780,250 800,242 820,249 840,244 860,252 880,246 900,250 920,243 940,251 960,245 980,250 1000,242 1020,249 1040,245 1060,252 1080,246 1100,250 1120,242 1140,251 1160,246 1180,250 1200,244"
+            fill="none" stroke="#7f95a8" stroke-width="1" opacity=".7"/>
+          <!-- narrow spikes: the reporter stations -->
+          <path d="M104,246 L110,140 L116,246 Z" fill="url(#g)"/>
+          <line x1="110" y1="140" x2="110" y2="246" stroke="#9ab4c8" stroke-width="1" opacity=".85"/>
+          <path d="M130,246 L136,96 L142,246 Z" fill="url(#g)"/>
+          <line x1="136" y1="96" x2="136" y2="246" stroke="#9ab4c8" stroke-width="1" opacity=".85"/>
+          <path d="M505,246 L512,180 L519,246 Z" fill="url(#g)"/>
+          <line x1="512" y1="180" x2="512" y2="246" stroke="#9ab4c8" stroke-width="1" opacity=".7"/>
+        </svg>
+      </div>
+
+      <div class="fp">
+        <div class="fptags">
+          <span class="tag a">ANT1</span><span class="tag r">ANT1</span>
+          <span class="tag c">2.9K</span>
+          <span class="sp"></span>
+          <span class="tbox">TX</span><span class="tbox hot">A</span>
+        </div>
+        <div class="fnum"><b>14.212.000</b></div>
+        <div class="fscale"><span>S1</span><span>3</span><span>5</span><span>7</span>
+          <span>9</span><span>+20</span><span>+40</span></div>
+        <div class="fbar"><i style="width:62%"></i><span>S9</span></div>
+        <div class="frow">
+          <span class="db">DSP</span><span class="db on">SSB</span>
+          <span class="db">XFILT</span><span class="db">DAX</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="wf">
+      <div class="wfg"></div>
+      <div class="mk" style="left:9%;height:16%"></div>
+      <div class="mkl" style="left:9%">VK3XYZ</div>
+      <div class="mk" style="left:11.6%;height:11%"></div>
+      <div class="mkl" style="left:11.6%">JA1ABC</div>
+      <div class="mk tx" style="left:74%;height:19%"></div>
+      <div class="mkl tx" style="left:74%">N0CALL</div>
+      <div class="wfq" style="left:2%">7.15</div><div class="wfq" style="left:26%">7.17</div>
+      <div class="wfq" style="left:50%">7.20</div><div class="wfq" style="left:98%">7.25</div>
+
+      <div class="mm">
+        <div class="mmh"><span class="mmt">S-METER</span>
+          <span class="pill">RIT</span><span class="pill">XIT</span></div>
+        <div class="mmg">
+          <div class="mmc">1400.0<small>Hz</small></div>
+          <div class="mmc">6<small>AGC</small></div>
+          <div class="mmc r">+12.0<small>dB</small></div>
+          <div class="mmc r">+18<small>SB</small></div>
+          <div class="mmc">&ndash;3<small>dB</small></div>
+          <div class="mmc r">&ndash;48<small>ALC</small></div>
+        </div>
+        <div class="mmf"><span>CPU 52.1%</span><span>TEMP 46&deg;C</span><b>1.8G</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="ptitle">
+      <span class="grip">&#8942;&#8942;</span><span class="t">Reporter</span>
+      <span class="cnt">7</span><button class="hamb">&#9776;</button>
+    </div>
+
+    <div class="apt">
+      <div class="ah"><h3>REPORTER</h3><span class="n">7</span>
+        <span class="r"><span class="hb on">LIVE</span><span class="hb">ARCH</span>
+          <span class="hb off">&#9881;</span></span></div>
+      <div class="you">
+        <div class="yc"><div class="yk">YOU</div><div class="yv big">N0CALL</div></div>
+        <div class="yc"><div class="yk">HEARING YOU</div>
+          <div class="heard"><i class="q4"></i><i class="q4"></i><i class="q3"></i><i class="q3"></i>
+            <i class="q2"></i><i class="q2"></i><i class="q1"></i><i class="me"></i></div></div>
+        <div class="yc"><div class="yk">BEST</div><div class="yv" style="color:var(--green)">+18</div></div>
+        <div class="yc"><div class="yk">LONG</div><div class="yv">11804<small>k</small></div></div>
+      </div>
+      <div class="sub">WHO IS HEARING YOU
+        <span class="f"><span class="fchip on">20m</span><span class="fchip">ALL</span></span></div>
+      <div>
+        <div class="rep"><span class="c">VK3XYZ</span><span class="t d">DX</span><span class="g">QF22</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><i class="mid"></i></span>
+          <span class="v l">S9 +18</span><span class="t n">BND</span><span class="s">3s</span></div>
+        <div class="rep"><span class="c">JA1ABC</span><span class="t d">DX</span><span class="g">PM95</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><i class="mid"></i></span>
+          <span class="v l">S8 +14</span><span class="t n">BND</span><span class="s">5s</span></div>
+        <div class="rep"><span class="c">DL1ABC</span><span class="t d">DX</span><span class="g">JO62</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="lo"></i><i class="mid"></i><i class="mid"></i><i class="mid"></i></span>
+          <span class="v l">S7 +06</span><span class="t n">CTY</span><span class="s">6s</span></div>
+        <div class="rep"><span class="c">G0ABC</span><span class="g">IO91</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="lo"></i>
+            <i class="mid"></i><i class="mid"></i><i class="mid"></i></span>
+          <span class="v">S5 &minus;04</span><span class="t n">BND</span><span class="s">4s</span></div>
+        <div class="rep"><span class="c">W1AW</span><span class="g">FN31</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i><i class="mid"></i></span>
+          <span class="v">S3 &minus;11</span><span class="t n">CTY</span><span class="s">2s</span></div>
+        <div class="rep"><span class="c">K5ABC</span><span class="g">EM12</span>
+          <span class="m"><i class="lo"></i><i class="lo"></i><i class="lo"></i><i class="mid"></i></span>
+          <span class="v">S1 &minus;18</span><span class="t n">BND</span><span class="s">4s</span></div>
+      </div>
+    </div>
+
+    <div class="apt">
+      <div class="sub">YOUR SIGNAL BY BAND</div>
+      <table class="mmx">
+        <thead><tr><th></th><th>80</th><th>40</th><th>30</th><th>20</th><th>17</th><th>15</th><th>10</th></tr></thead>
+        <tbody>
+          <tr><td class="sp">VK3XYZ</td><td><i class="c"></i></td><td><i class="c q2"></i></td>
+            <td><i class="c q3"></i></td><td><i class="c q4"></i></td><td><i class="c q3"></i></td>
+            <td><i class="c q2"></i></td><td><i class="c"></i></td></tr>
+          <tr><td class="sp">JA1ABC</td><td><i class="c"></i></td><td><i class="c q1"></i></td>
+            <td><i class="c q2"></i></td><td><i class="c q4"></i></td><td><i class="c q3"></i></td>
+            <td><i class="c q3"></i></td><td><i class="c"></i></td></tr>
+          <tr><td class="sp">DL1ABC</td><td><i class="c q1"></i></td><td><i class="c q3"></i></td>
+            <td><i class="c q3"></i></td><td><i class="c q3"></i></td><td><i class="c q2"></i></td>
+            <td><i class="c q2"></i></td><td><i class="c"></i></td></tr>
+          <tr><td class="sp">G0ABC</td><td><i class="c q2"></i></td><td><i class="c q3"></i></td>
+            <td><i class="c q3"></i></td><td><i class="c q2"></i></td><td><i class="c q1"></i></td>
+            <td><i class="c"></i></td><td><i class="c"></i></td></tr>
+          <tr><td class="sp">W1AW</td><td><i class="c q2"></i></td><td><i class="c q3"></i></td>
+            <td><i class="c q3"></i></td><td><i class="c q2"></i></td><td><i class="c q1"></i></td>
+            <td><i class="c"></i></td><td><i class="c"></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="chat">
+      <div class="cband">CHAT &middot; <b>14.212.000</b> &middot; 7 CAN HEAR YOU</div>
+      <div class="cscroll">
+        <div class="msg hm">
+          <div class="hd"><span class="who">VK3XYZ</span><span class="g">QF22 &middot; 11804k</span>
+            <span class="sg">S9 +18</span></div>
+          <div class="bd">Long path and you're <strong>very</strong> strong. Try <em>5 W less</em> and
+            see if JA copies you.</div>
+        </div>
+        <div class="msg">
+          <div class="hd"><span class="who">W1AW</span><span class="g">FN31 &middot; 812k</span>
+            <span class="sg">S3</span></div>
+          <div class="bd">Fading at your end. Pass to <code>JA1ABC</code>? He's waiting on
+            <strong>20m</strong> for you.</div>
+        </div>
+        <div class="msg">
+          <div class="hd"><span class="who">JA1ABC</span><span class="g">PM95 &middot; 10512k</span>
+            <span class="sg">S8 +14</span></div>
+          <div class="bd">Moved from <code>+02</code> to <code>+14</code> in ten min &mdash; that's
+            your ionosphere. <em>Try 17m</em>, wide open.</div>
+        </div>
+      </div>
+      <div class="comp">
+        <input type="text" placeholder="say something to the stations hearing you&hellip;">
+        <button>SEND</button>
+      </div>
+    </div>
+  </div>
+ </div>
+
+ <div class="sbar">
+   <span class="l"><span class="pill">&#9776;</span><span class="pill">TNF</span>
+     <span class="pill">CW</span><span class="pill">DVK</span><span class="pill">FDX</span></span>
+   <span>ANAN-G2 (Saturn)&nbsp;&nbsp;FW 27</span>
+   <span class="stn">STATION: NereusSDR</span>
+   <span class="r">
+     <span>CAT <b>Off</b></span><span>TCI <b>Off</b></span>
+     <span>PA <b>&ndash;V</b></span>
+     <span>CPU 52.1%</span><span class="tx">TX</span><span>17:08:39 UTC</span>
+   </span>
+ </div>
+</div>
+</body>
+</html>

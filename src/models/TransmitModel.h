@@ -121,6 +121,18 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-10-25 - pureSignalActive() is the PS-A state
+//                (PureSignal::isAutoCalEnabled), as Thetis console.cs:
+//                46819-46826 [v2.10.3.15] gates on chkFWCATUBypass.Checked.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - F5 restore correction: retain the selected radio's saved
+//                 serial port while unplugged; validate direct requests
+//                 independently of trusted restore. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - Final fix wave F5: serial-port authority and refusal signal
+//                 for local writes, without client-local validation of the
+//                 remote mirror. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-18 - setTunePowerForTxBand no longer sets the tune drive
 //                source (Thetis parity; Setup alone chooses it). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -326,6 +338,16 @@
 //                 honoured by setPowerUsingTargetDbm's constrain on the PWR
 //                 slider. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - CW transmit, the CW settings (R-CW-01): 30 Q_PROPERTYs
+//                 declared after cfcProfile, mirrored both ways
+//                 (transmitSettingsVersion 16, R-CW-03), with their ranges,
+//                 defaults and hardware/<mac>/tx/ keys. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason,
+//                 the Core's reason QSK is not offered (empty while it is),
+//                 outbound only, declared last; a write of QSK while it is
+//                 not offered is refused with that reason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #pragma once
 
@@ -340,6 +362,7 @@
 #include <QObject>
 #include <QScopeGuard>
 #include "core/CfcEditProfile.h"
+#include "core/CwTypes.h"
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -647,16 +670,16 @@ public:
     /// set, returns false (matches Phase 3A pre-3M-4 behaviour: gate
     /// dormant but present).
     ///
-    /// "Active" tracks PureSignal::correctionsBeingApplied — true ⟺ calcc
-    /// has a valid correction set in flight (PSForm.cs:1100-1102
-    /// CorrectionsBeingApplied [v2.10.3.13]).  Mirrors Thetis's
-    /// chkFWCATUBypass.Checked-and-actively-correcting semantics.
+    /// "Active" is the PS-A button state, PureSignal::isAutoCalEnabled(),
+    /// as Thetis's power-change gate tests chkFWCATUBypass.Checked
+    /// (console.cs:46819-46826 [v2.10.3.15]).  It is not PSEnabled and
+    /// not CorrectionsBeingApplied.
     bool pureSignalActive() const noexcept;
 
     /// Inject the PureSignal coordinator (Phase 3M-4 Task 7).  Non-owning
     /// pointer; RadioModel owns via std::unique_ptr.  Pass nullptr to
     /// detach (e.g. on disconnect).  When non-null, pureSignalActive()
-    /// reads PureSignal::correctionsBeingApplied().
+    /// reads PureSignal::isAutoCalEnabled() (the PS-A state).
     void setPureSignal(PureSignal* ps) noexcept { m_pureSignal = ps; }
     PureSignal* pureSignal() const noexcept { return m_pureSignal; }
 
@@ -891,8 +914,8 @@ public:
     ///      forceAttwhenPowerChangesWhenPSAon && (new_pwr > m_lastPower ||
     ///      _anddecreased), pushes ATT_on_TX = 31 dB via
     ///      stepAttenuatorController->setAttOnTxValue(31).  Updates
-    ///      m_lastPower (console.cs:46740-46748 [v2.10.3.13]
-    ///      //[2.10.3.5]MW0LGE).
+    ///      m_lastPower (console.cs:46819-46826 [v2.10.3.15]
+    ///      //[2.10.3.5]MW0LGE).  pureSignalActive() is the PS-A state.
     ///   3. Emits audioVolumeChanged(audio_volume) signal so RadioModel
     ///      call sites can pump it to TxChannel + RadioConnection.
     ///
@@ -1474,6 +1497,79 @@ public:
     // curve the Core reads, the ten-band values. cfc.setProfile changes it.
     // Declared last so every earlier property keeps its wire ordinal.
     Q_PROPERTY(QString cfcProfile READ cfcProfile NOTIFY cfcProfileChanged)
+    // CW transmit (R-CW-01, R-CW-03, transmitSettingsVersion 16): the CW
+    // settings, mirrored on `transmit` both ways under the other transmit
+    // settings' gates, each under its setter's name. The enums travel as
+    // int (CwTypes.h). Declared last so every earlier property keeps its
+    // wire ordinal. None keys the radio.
+    Q_PROPERTY(int     cwKeyerSpeed         READ cwKeyerSpeed         WRITE setCwKeyerSpeed
+               NOTIFY cwKeyerSpeedChanged)
+    Q_PROPERTY(int     cwKeyerMode          READ cwKeyerMode          WRITE setCwKeyerMode
+               NOTIFY cwKeyerModeChanged)
+    Q_PROPERTY(int     cwKeyerWeight        READ cwKeyerWeight        WRITE setCwKeyerWeight
+               NOTIFY cwKeyerWeightChanged)
+    Q_PROPERTY(bool    cwReversePaddles     READ cwReversePaddles     WRITE setCwReversePaddles
+               NOTIFY cwReversePaddlesChanged)
+    Q_PROPERTY(bool    cwStrictSpacing      READ cwStrictSpacing      WRITE setCwStrictSpacing
+               NOTIFY cwStrictSpacingChanged)
+    Q_PROPERTY(int     cwBreakInMode        READ cwBreakInMode        WRITE setCwBreakInMode
+               NOTIFY cwBreakInModeChanged)
+    Q_PROPERTY(int     cwBreakInDelayMs     READ cwBreakInDelayMs     WRITE setCwBreakInDelayMs
+               NOTIFY cwBreakInDelayMsChanged)
+    Q_PROPERTY(int     cwKeyDownDelayMs     READ cwKeyDownDelayMs     WRITE setCwKeyDownDelayMs
+               NOTIFY cwKeyDownDelayMsChanged)
+    Q_PROPERTY(int     cwKeyUpDelayMs       READ cwKeyUpDelayMs       WRITE setCwKeyUpDelayMs
+               NOTIFY cwKeyUpDelayMsChanged)
+    Q_PROPERTY(bool    cwSidetone           READ cwSidetone           WRITE setCwSidetone
+               NOTIFY cwSidetoneChanged)
+    Q_PROPERTY(bool    cwRadioSidetone      READ cwRadioSidetone      WRITE setCwRadioSidetone
+               NOTIFY cwRadioSidetoneChanged)
+    Q_PROPERTY(bool    cwComputerSidetone   READ cwComputerSidetone   WRITE setCwComputerSidetone
+               NOTIFY cwComputerSidetoneChanged)
+    Q_PROPERTY(bool    cwAutoModeSwitch     READ cwAutoModeSwitch     WRITE setCwAutoModeSwitch
+               NOTIFY cwAutoModeSwitchChanged)
+    Q_PROPERTY(bool    cwAutoModeReturn     READ cwAutoModeReturn     WRITE setCwAutoModeReturn
+               NOTIFY cwAutoModeReturnChanged)
+    Q_PROPERTY(int     cwAutoModeReturnMs   READ cwAutoModeReturnMs   WRITE setCwAutoModeReturnMs
+               NOTIFY cwAutoModeReturnMsChanged)
+    Q_PROPERTY(QString cwSerialPort         READ cwSerialPort         WRITE setCwSerialPort
+               NOTIFY cwSerialPortChanged)
+    Q_PROPERTY(bool    cwSerialPaddles      READ cwSerialPaddles      WRITE setCwSerialPaddles
+               NOTIFY cwSerialPaddlesChanged)
+    Q_PROPERTY(int     cwSerialKeyLine      READ cwSerialKeyLine      WRITE setCwSerialKeyLine
+               NOTIFY cwSerialKeyLineChanged)
+    Q_PROPERTY(int     cwSerialPttLine      READ cwSerialPttLine      WRITE setCwSerialPttLine
+               NOTIFY cwSerialPttLineChanged)
+    Q_PROPERTY(int     cwxSpeed             READ cwxSpeed             WRITE setCwxSpeed
+               NOTIFY cwxSpeedChanged)
+    Q_PROPERTY(bool    cwxRepeat            READ cwxRepeat            WRITE setCwxRepeat
+               NOTIFY cwxRepeatChanged)
+    Q_PROPERTY(int     cwxRepeatDelayS      READ cwxRepeatDelayS      WRITE setCwxRepeatDelayS
+               NOTIFY cwxRepeatDelaySChanged)
+    Q_PROPERTY(QString cwxMemory1           READ cwxMemory1           WRITE setCwxMemory1
+               NOTIFY cwxMemory1Changed)
+    Q_PROPERTY(QString cwxMemory2           READ cwxMemory2           WRITE setCwxMemory2
+               NOTIFY cwxMemory2Changed)
+    Q_PROPERTY(QString cwxMemory3           READ cwxMemory3           WRITE setCwxMemory3
+               NOTIFY cwxMemory3Changed)
+    Q_PROPERTY(QString cwxMemory4           READ cwxMemory4           WRITE setCwxMemory4
+               NOTIFY cwxMemory4Changed)
+    Q_PROPERTY(QString cwxMemory5           READ cwxMemory5           WRITE setCwxMemory5
+               NOTIFY cwxMemory5Changed)
+    Q_PROPERTY(QString cwxMemory6           READ cwxMemory6           WRITE setCwxMemory6
+               NOTIFY cwxMemory6Changed)
+    Q_PROPERTY(QString cwxMemory7           READ cwxMemory7           WRITE setCwxMemory7
+               NOTIFY cwxMemory7Changed)
+    Q_PROPERTY(QString cwxMemory8           READ cwxMemory8           WRITE setCwxMemory8
+               NOTIFY cwxMemory8Changed)
+    // CW transmit final fix wave F2 (R-CW-20, R-CW-50): why QSK is not
+    // offered, in the Core's words (CwKeyerController::qskUnavailableReason),
+    // empty while it is. Outbound only (MirrorPolicy): the Core sets it from
+    // its keyer controller; a remote window's mirror writes it; nothing
+    // persists it. Sent only to a peer that declared cwSettings 1. Declared
+    // last so every earlier property keeps its wire ordinal.
+    Q_PROPERTY(QString cwQskUnavailableReason READ cwQskUnavailableReason
+               WRITE setCwQskUnavailableReason NOTIFY cwQskUnavailableReasonChanged)
 
     /// Bypass PA settings flag. false (default) = use board-specific table.
     bool paSettingsBypass() const noexcept { return m_paSettingsBypass; }
@@ -1612,6 +1708,99 @@ public:
     //   udDEXPHold.Maximum = 2000, udDEXPHold.Minimum = 1  (units: ms)
     static constexpr int kVoxHangTimeMsMin =    1;
     static constexpr int kVoxHangTimeMsMax = 2000;
+
+    // ── CW transmit settings (R-CW-01) ─────────────────────────────────────
+    //
+    // Saved per radio under hardware/<mac>/tx/<Key> (booleans "True" /
+    // "False"), mirrored on `transmit` (transmitSettingsVersion 16). Each
+    // setter clamps to its range and does nothing on an equal value.
+    // From Thetis console.Designer.cs:1358-1359 [v2.10.3.15]: ptbCWSpeed.Maximum = 60, Minimum = 1 (WPM)
+    static constexpr int kCwKeyerSpeedMin = 1;
+    static constexpr int kCwKeyerSpeedMax = 60;
+    static constexpr int kCwKeyerSpeedDefault = 25;
+    // From Thetis setup.designer.cs:38462, 38497 [v2.10.3.15]: straight key, iambic A, iambic B; iambic B is the default
+    static constexpr int kCwKeyerModeMin = static_cast<int>(CwKeyerMode::Straight);
+    static constexpr int kCwKeyerModeMax = static_cast<int>(CwKeyerMode::IambicB);
+    static constexpr int kCwKeyerModeDefault = static_cast<int>(CwKeyerMode::IambicB);
+    // From Thetis setup.designer.cs:38410 [v2.10.3.15]: udCWKeyerWeight 33..66, default 50
+    static constexpr int kCwKeyerWeightMin = 33;
+    static constexpr int kCwKeyerWeightMax = 66;
+    static constexpr int kCwKeyerWeightDefault = 50;
+    // From Thetis console.cs:14752 [v2.10.3.15]: break-in off, semi or QSK; semi is the default
+    static constexpr int kCwBreakInModeMin = static_cast<int>(CwBreakInMode::Off);
+    static constexpr int kCwBreakInModeMax = static_cast<int>(CwBreakInMode::Qsk);
+    static constexpr int kCwBreakInModeDefault = static_cast<int>(CwBreakInMode::Semi);
+    // From Thetis setup.designer.cs:38555-38588 [v2.10.3.15]: udCWBreakInDelay 0..1000 ms, default 300
+    static constexpr int kCwBreakInDelayMsMin = 0;
+    static constexpr int kCwBreakInDelayMsMax = 1000;
+    static constexpr int kCwBreakInDelayMsDefault = 300;
+    // From Thetis setup.designer.cs:9487-9508 [v2.10.3.15]: 0..255 ms, default 7 (spec C10)
+    static constexpr int kCwKeyDownDelayMsMin = 0;
+    static constexpr int kCwKeyDownDelayMsMax = 255;
+    static constexpr int kCwKeyDownDelayMsDefault = 7;
+    // From Thetis setup.designer.cs:9421-9478 [v2.10.3.15]: 0..500 ms, default 10
+    static constexpr int kCwKeyUpDelayMsMin = 0;
+    static constexpr int kCwKeyUpDelayMsMax = 500;
+    static constexpr int kCwKeyUpDelayMsDefault = 10;
+    // From Thetis setup.designer.cs:38362-38388 [v2.10.3.15]: 1..10000 ms in 10 ms steps, default 2000
+    static constexpr int kCwAutoModeReturnMsMin = 1;
+    static constexpr int kCwAutoModeReturnMsMax = 10000;
+    static constexpr int kCwAutoModeReturnMsDefault = 2000;
+    static constexpr int kCwAutoModeReturnMsStep = 10;
+    // From Thetis SDRSerialPortII.cs:246-257 [v2.10.3.15]: none, DSR or CTS; none is the default
+    static constexpr int kCwSerialKeyLineMin = static_cast<int>(CwSerialLine::None);
+    static constexpr int kCwSerialKeyLineMax = static_cast<int>(CwSerialLine::Cts);
+    static constexpr int kCwSerialKeyLineDefault = static_cast<int>(CwSerialLine::None);
+    // From Thetis SDRSerialPortII.cs:246-257 [v2.10.3.15]: none, DSR or CTS; none is the default
+    static constexpr int kCwSerialPttLineMin = static_cast<int>(CwSerialLine::None);
+    static constexpr int kCwSerialPttLineMax = static_cast<int>(CwSerialLine::Cts);
+    static constexpr int kCwSerialPttLineDefault = static_cast<int>(CwSerialLine::None);
+    // NereusSDR-original (spec D12): CWX's own speed, 5..60 WPM, default 22
+    static constexpr int kCwxSpeedMin = 5;
+    static constexpr int kCwxSpeedMax = 60;
+    static constexpr int kCwxSpeedDefault = 22;
+    // NereusSDR-original (spec D12): 1..60 s between repeats, default 3
+    static constexpr int kCwxRepeatDelaySMin = 1;
+    static constexpr int kCwxRepeatDelaySMax = 60;
+    static constexpr int kCwxRepeatDelaySDefault = 3;
+
+    int cwKeyerSpeed() const noexcept { return m_cwKeyerSpeed; }
+    int cwKeyerMode() const noexcept { return m_cwKeyerMode; }
+    int cwKeyerWeight() const noexcept { return m_cwKeyerWeight; }
+    bool cwReversePaddles() const noexcept { return m_cwReversePaddles; }
+    bool cwStrictSpacing() const noexcept { return m_cwStrictSpacing; }
+    int cwBreakInMode() const noexcept { return m_cwBreakInMode; }
+    int cwBreakInDelayMs() const noexcept { return m_cwBreakInDelayMs; }
+    int cwKeyDownDelayMs() const noexcept { return m_cwKeyDownDelayMs; }
+    int cwKeyUpDelayMs() const noexcept { return m_cwKeyUpDelayMs; }
+    bool cwSidetone() const noexcept { return m_cwSidetone; }
+    bool cwRadioSidetone() const noexcept { return m_cwRadioSidetone; }
+    bool cwComputerSidetone() const noexcept { return m_cwComputerSidetone; }
+    bool cwAutoModeSwitch() const noexcept { return m_cwAutoModeSwitch; }
+    bool cwAutoModeReturn() const noexcept { return m_cwAutoModeReturn; }
+    int cwAutoModeReturnMs() const noexcept { return m_cwAutoModeReturnMs; }
+    QString cwSerialPort() const { return m_cwSerialPort; }
+    // F5: only a remote mirror disables local port validation. The Core
+    // validates requests against its own devices before mirroring them.
+    void setCwSerialPortAuthoritative(bool authoritative)
+    {
+        m_cwSerialPortAuthoritative = authoritative;
+    }
+    bool cwSerialPaddles() const noexcept { return m_cwSerialPaddles; }
+    int cwSerialKeyLine() const noexcept { return m_cwSerialKeyLine; }
+    int cwSerialPttLine() const noexcept { return m_cwSerialPttLine; }
+    int cwxSpeed() const noexcept { return m_cwxSpeed; }
+    bool cwxRepeat() const noexcept { return m_cwxRepeat; }
+    int cwxRepeatDelayS() const noexcept { return m_cwxRepeatDelayS; }
+    QString cwxMemory1() const { return m_cwxMemory1; }
+    QString cwxMemory2() const { return m_cwxMemory2; }
+    QString cwxMemory3() const { return m_cwxMemory3; }
+    QString cwxMemory4() const { return m_cwxMemory4; }
+    QString cwxMemory5() const { return m_cwxMemory5; }
+    QString cwxMemory6() const { return m_cwxMemory6; }
+    QString cwxMemory7() const { return m_cwxMemory7; }
+    QString cwxMemory8() const { return m_cwxMemory8; }
+    QString cwQskUnavailableReason() const { return m_cwQskUnavailableReason; }
 
     // ── DEXP envelope properties (3M-3a-iii Task 7) ──────────────────────
     //
@@ -2500,6 +2689,40 @@ public slots:
     void setVoxGainScalar(float scalar);
     void setVoxHangTimeMs(int ms);
 
+    // ── CW transmit setters (R-CW-01) ──────────────────────────────────────
+    void setCwKeyerSpeed(int wpm);
+    void setCwKeyerMode(int mode);
+    void setCwKeyerWeight(int weight);
+    void setCwReversePaddles(bool on);
+    void setCwStrictSpacing(bool on);
+    void setCwBreakInMode(int mode);
+    void setCwBreakInDelayMs(int ms);
+    void setCwKeyDownDelayMs(int ms);
+    void setCwKeyUpDelayMs(int ms);
+    void setCwSidetone(bool on);
+    void setCwRadioSidetone(bool on);
+    void setCwComputerSidetone(bool on);
+    void setCwAutoModeSwitch(bool on);
+    void setCwAutoModeReturn(bool on);
+    void setCwAutoModeReturnMs(int ms);
+    void setCwSerialPort(const QString& text);
+    void setCwSerialPaddles(bool on);
+    void setCwSerialKeyLine(int line);
+    void setCwSerialPttLine(int line);
+    void setCwxSpeed(int wpm);
+    void setCwxRepeat(bool on);
+    void setCwxRepeatDelayS(int seconds);
+    void setCwxMemory1(const QString& text);
+    void setCwxMemory2(const QString& text);
+    void setCwxMemory3(const QString& text);
+    void setCwxMemory4(const QString& text);
+    void setCwxMemory5(const QString& text);
+    void setCwxMemory6(const QString& text);
+    void setCwxMemory7(const QString& text);
+    void setCwxMemory8(const QString& text);
+    // F2: not persisted; see the Q_PROPERTY.
+    void setCwQskUnavailableReason(const QString& reason);
+
     // ── DEXP envelope setters (3M-3a-iii Task 7) ───────────────────────────
     void setDexpEnabled(bool on);
     void setDexpDetectorTauMs(double ms);
@@ -2634,6 +2857,40 @@ signals:
     void voxThresholdDbChanged(int dB);
     void voxGainScalarChanged(float scalar);
     void voxHangTimeMsChanged(int ms);
+
+    // ── CW transmit signals (R-CW-01) ──────────────────────────────────────
+    void cwKeyerSpeedChanged(int wpm);
+    void cwKeyerModeChanged(int mode);
+    void cwKeyerWeightChanged(int weight);
+    void cwReversePaddlesChanged(bool on);
+    void cwStrictSpacingChanged(bool on);
+    void cwBreakInModeChanged(int mode);
+    void cwBreakInDelayMsChanged(int ms);
+    void cwKeyDownDelayMsChanged(int ms);
+    void cwKeyUpDelayMsChanged(int ms);
+    void cwSidetoneChanged(bool on);
+    void cwRadioSidetoneChanged(bool on);
+    void cwComputerSidetoneChanged(bool on);
+    void cwAutoModeSwitchChanged(bool on);
+    void cwAutoModeReturnChanged(bool on);
+    void cwAutoModeReturnMsChanged(int ms);
+    void cwSerialPortChanged(const QString& text);
+    void cwSerialPortRefused(const QString& words);
+    void cwSerialPaddlesChanged(bool on);
+    void cwSerialKeyLineChanged(int line);
+    void cwSerialPttLineChanged(int line);
+    void cwxSpeedChanged(int wpm);
+    void cwxRepeatChanged(bool on);
+    void cwxRepeatDelaySChanged(int seconds);
+    void cwxMemory1Changed(const QString& text);
+    void cwxMemory2Changed(const QString& text);
+    void cwxMemory3Changed(const QString& text);
+    void cwxMemory4Changed(const QString& text);
+    void cwxMemory5Changed(const QString& text);
+    void cwxMemory6Changed(const QString& text);
+    void cwxMemory7Changed(const QString& text);
+    void cwxMemory8Changed(const QString& text);
+    void cwQskUnavailableReasonChanged(const QString& reason);
 
     // ── DEXP envelope signals (3M-3a-iii Task 7) ──────────────────────────
     void dexpEnabledChanged(bool on);
@@ -2794,7 +3051,8 @@ private:
     StepAttenuatorController* m_stepAttCtrl{nullptr};
 
     // 3M-4 Task 7: live PureSignal coordinator.  Non-owning view; owned by
-    // RadioModel via std::unique_ptr.  Read by pureSignalActive() — the
+    // RadioModel via std::unique_ptr.  Read by pureSignalActive() (the
+    // PS-A state, PureSignal::isAutoCalEnabled) — the
     // ATT-on-TX-on-power-change gate inside setPowerUsingTargetDbm uses
     // this to decide whether the safety force-31-dB lift fires.  When
     // null (pre-connect or post-teardown), pureSignalActive() falls back
@@ -2832,6 +3090,11 @@ private:
     /// Write a single key under hardware/<m_persistMac>/tx/<key> to AppSettings.
     /// No-op when m_persistMac is empty (before loadFromSettings is called).
     void persistOne(const QString& key, const QVariant& value) const;
+
+    // Requests validate before applying. A trusted per-radio restore must
+    // retain an unplugged selection, without re-persisting it or temporarily
+    // disabling validation while the changed signal is emitted.
+    void applyCwSerialPort(const QString& text, bool persist);
 
     // ── Mic gain (3M-1b C.1) ──────────────────────────────────────────────
     // From Thetis console.cs:28805-28817 [v2.10.3.13] (setAudioMicGain).
@@ -2896,6 +3159,41 @@ private:
     int   m_voxThresholdDb = -40;    // NereusSDR-original default; ptbVOX range [-80,0]
     float m_voxGainScalar  = 1.0f;   // audio.cs:194: vox_gain = 1.0f
     int   m_voxHangTimeMs  = 500;    // udDEXPHold.Value=500 (setup.designer.cs:45020-45024)
+
+    // ── CW transmit settings (R-CW-01), defaults as the table cites ─────────
+    int  m_cwKeyerSpeed = kCwKeyerSpeedDefault;
+    int  m_cwKeyerMode = kCwKeyerModeDefault;
+    int  m_cwKeyerWeight = kCwKeyerWeightDefault;
+    bool m_cwReversePaddles = false;  // Thetis default (off)
+    bool m_cwStrictSpacing = false;  // Thetis default (off)
+    int  m_cwBreakInMode = kCwBreakInModeDefault;
+    int  m_cwBreakInDelayMs = kCwBreakInDelayMsDefault;
+    int  m_cwKeyDownDelayMs = kCwKeyDownDelayMsDefault;
+    int  m_cwKeyUpDelayMs = kCwKeyUpDelayMsDefault;
+    bool m_cwSidetone = true;  // From Thetis console.Designer.cs:1461 [v2.10.3.15]: on
+    bool m_cwRadioSidetone = true;  // From Thetis setup.designer.cs:38435 [v2.10.3.15]: on
+    bool m_cwComputerSidetone = true;  // NereusSDR default on, unlike Thetis (spec C8)
+    bool m_cwAutoModeSwitch = false;  // From Thetis console.cs:18624 [v2.10.3.15]: off
+    // Upstream tags preserved: //[2.10.3.12]MW0LGE (from cited console.cs:25679) [v2.10.3.15]
+    bool m_cwAutoModeReturn = false;  // From Thetis console.cs:25684 [v2.10.3.15]: off
+    int  m_cwAutoModeReturnMs = kCwAutoModeReturnMsDefault;
+    QString m_cwSerialPort;  // empty = none (spec D14)
+    bool m_cwSerialPortAuthoritative{true};
+    bool m_cwSerialPaddles = false;  // From Thetis SDRSerialPortII.cs:259-263 [v2.10.3.15]: off
+    int  m_cwSerialKeyLine = kCwSerialKeyLineDefault;
+    int  m_cwSerialPttLine = kCwSerialPttLineDefault;
+    int  m_cwxSpeed = kCwxSpeedDefault;
+    bool m_cwxRepeat = false;  // NereusSDR-original (spec D12): off
+    int  m_cwxRepeatDelayS = kCwxRepeatDelaySDefault;
+    QString m_cwxMemory1;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory2;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory3;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory4;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory5;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory6;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory7;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwxMemory8;  // empty (spec D11; Thetis's cwx.cs:774-782 defaults carry its author's callsign)
+    QString m_cwQskUnavailableReason;  // empty while QSK is offered (F2)
 
     // ── DEXP envelope properties (3M-3a-iii Task 7) ─────────────────────
     // From Thetis setup.Designer.cs [v2.10.3.13]:

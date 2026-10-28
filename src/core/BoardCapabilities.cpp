@@ -59,6 +59,11 @@
 //   2026-09-30 — Radio codec lane: radioMicNeedsAddOn (HL2) and
 //                 radioMicSelectable(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26: CW transmit, hasSidetoneGenerator fixed (R-CW-40): true
+//                 for every board whose Thetis path sends the sidetone
+//                 level (P1 bank 13 C2, P2 byte 6), false for both HL2
+//                 rows until the bench check, the wrong IoBoardHl2.cs cite
+//                 replaced. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -374,7 +379,7 @@ const BoardCapabilities kAtlas = {
     .hasPaProfile     = false,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // Atlas bare board — no Apollo port
     .hasAlex          = false,  // Atlas bare board — Alex is external
     .hasPennyLane     = true,   // Penny is the Atlas OC companion; tpPennyCtrl added for all HPSDR models
@@ -448,7 +453,7 @@ const BoardCapabilities kHermes = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = true,   // only board with chkApolloPresent.Enabled=true (setup.cs:19834)
     .hasAlex          = true,   // chkAlexPresent.Enabled=true (setup.cs:19835)
     .hasPennyLane     = true,   // tpPennyCtrl always added; labeled "Hermes Ctrl" for this board
@@ -513,7 +518,7 @@ const BoardCapabilities kHermesII = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN10E/100B (setup.cs:19899)
     .hasAlex          = true,   // chkAlexPresent.Checked=true (setup.cs:19896)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
@@ -597,7 +602,7 @@ const BoardCapabilities kAngelia = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN100D (setup.cs:20009)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20007)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
@@ -677,7 +682,7 @@ const BoardCapabilities kOrion = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN200D (setup.cs:20059)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20057)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
@@ -749,7 +754,7 @@ const BoardCapabilities kOrionMKII = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN7000D/8000D/AnvelinaPro3 (setup.cs:20100)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20098)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
@@ -866,7 +871,7 @@ const BoardCapabilities kHermesC10 = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false (setup.cs:19908 [v2.10.3.15])
     .hasAlex          = true,   // chkAlexPresent.Checked=true (setup.cs:19905 [v2.10.3.15])
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
@@ -900,8 +905,10 @@ const BoardCapabilities kHermesC10 = {
 // hasBandwidthMonitor: HL2 has bandwidth_monitor via IoBoardHl2
 //   (ChannelMaster/bandwidth_monitor.h + IoBoardHl2.cs)
 // hasIoBoardHl2: true — IoBoardHl2.cs present and active for HL2
-// hasSidetoneGenerator: true — HL2 firmware implements sidetone
-//   (IoBoardHl2.cs references sidetone register)
+// hasSidetoneGenerator: false until the bench check (V-HW-6, R-CW-40). The
+//   cite this replaced (IoBoardHl2.cs "references sidetone register") does
+//   not hold: mi0bot IoBoardHl2.cs has no sidetone, and whether a given HL2
+//   build makes a sidetone is not in the reference set.
 // maxReceivers: 4 for HL2 (console.cs GetDDC HermesLite branch:8734, same as Hermes)
 // Firmware floor: NONE — both ramdor and mi0bot accept any HL2 firmware version
 //   (NetworkIO.cs:136-143 [v2.10.3.13] guards only `HermesII && CodeVersion < 103`,
@@ -1041,7 +1048,7 @@ const BoardCapabilities kHermesLite = {
                                      // ANAN10/ANAN10E per setup.cs:5463-5466).
     .hasBandwidthMonitor = true,
     .hasIoBoardHl2    = true,
-    .hasSidetoneGenerator = true,
+    .hasSidetoneGenerator = false,
     .hasMicJack       = false,  // HL2 has no radio-side mic input (3M-1b §11)
     .radioMicNeedsAddOn = true, // the AK4951 audio add-on board (radio codec lane)
     .hasApollo        = false,  // HL2 has no Apollo port; not in RadioModelChanged() switch
@@ -1112,7 +1119,7 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .hasPaProfile     = false,
     .hasBandwidthMonitor = true,
     .hasIoBoardHl2    = true,
-    .hasSidetoneGenerator = true,
+    .hasSidetoneGenerator = false,
     .hasMicJack       = false,  // HL2 RX-only has no radio-side mic input (3M-1b §11)
     .hasApollo        = false,
     .hasAlex          = false,
@@ -1183,7 +1190,7 @@ const BoardCapabilities kSaturn = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN_G2 (setup.cs:20203)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20201)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364); "OC Control"
@@ -1253,7 +1260,7 @@ const BoardCapabilities kSaturnMKII = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN_G2_1K (setup.cs:20256)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20254)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364); "OC Control"
@@ -1322,7 +1329,7 @@ const BoardCapabilities kAndromeda = {
     .hasPaProfile     = true,
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
-    .hasSidetoneGenerator = false,
+    .hasSidetoneGenerator = true,  // From Thetis networkproto1.c:636, network.c:1202 [v2.10.3.15]
     .hasApollo        = false,
     .hasAlex          = true,
     .hasPennyLane     = true,

@@ -15,6 +15,8 @@ import SwiftUI
 struct DisplaySheet: View {
     @ObservedObject var model: DisplaySheetModel
     @ObservedObject var core: CoreDisplayModel
+    /// A line over the rows: why the Display pill's tabs are not here.
+    var topNote: String? = nil
     /// Switches to the Setup tab.
     let openSetup: () -> Void
     @Environment(\.displayScale) private var displayScale
@@ -26,6 +28,10 @@ struct DisplaySheet: View {
                 .tracking(0.44)
                 .foregroundStyle(ChromeColours.textDim)
         } content: {
+            if let topNote {
+                SheetNote(topNote)
+                    .accessibilityIdentifier("displaySheetTopNote")
+            }
             // The View row, and in 3D its five settings and Reset (the 3D View board).
             DisplaySheetStackRows(model: model)
             Rectangle().fill(ChromeColours.sheetBorder).frame(height: 1).padding(.vertical, 2)
@@ -77,9 +83,15 @@ struct DisplaySheet: View {
             fft
             PanelSliderRow(label: "Top", value: model.top,
                            range: model.topLimits, accessibility: "Reference level",
-                           greyed: !model.flatControlsAvailable) { model.setTop($0) }
+                           greyed: !model.flatControlsAvailable || model.scaleGreyed,
+                           notConfirmed: model.scaleUnconfirmed) { model.setTop($0) }
             PanelSliderRow(label: "Range", value: model.range, range: model.rangeRange,
-                           accessibility: "Dynamic range") { model.setRange($0) }
+                           accessibility: "Dynamic range", greyed: model.scaleGreyed,
+                           notConfirmed: model.scaleUnconfirmed) { model.setRange($0) }
+            if let note = model.scaleNote {
+                SheetNote(note)
+                    .accessibilityIdentifier("scaleNote")
+            }
             SheetCaption("While transmitting:")
             HStack(spacing: 8) {
                 // DUP, the desktop's display duplex: greyed with its reason

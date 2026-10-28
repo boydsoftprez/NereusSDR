@@ -8,6 +8,9 @@
 //            answers on them (Discord report: COM-port PTT dead after every
 //            restart until VFO A was picked again). J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-26 An idle pin keeps a CAT TX held during the walk back to
+//            receive; the pin's release edge cancels it. J.J. Boyd
+//            (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include "CatSerialTestDevice.h"
@@ -221,6 +224,50 @@ private slots:
         model.moxController()->setKeyingGate({});
         sample(service, device, 1, true, true); QVERIFY(!model.moxController()->isMox()); // Held refusal never retries.
         sample(service, device, 1, false, false); sample(service, device, 1, true, true); QVERIFY(model.moxController()->isMox());
+        service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
+    void idlePinKeepsHeldCatTx() {
+        RxCatMockConnection connection; RadioModel model; setup(model, connection);
+        MoxController* mox = model.moxController();
+        // ptt_out_delay holds the walk back to receive in TxToRxFlush.
+        mox->setTimerIntervals(0, 0, 0, 0, 1000, 0);
+        model.catService()->txCoordinator().setHeldTxTimeoutMsForTest(10000);
+        const auto device = std::make_shared<CatSerialTestDevice>(); CatService& service = *model.catService();
+        QVERIFY(configure(service, device)); service.startConfigured();
+        const quint64 command = service.sessionIds(1).first();
+        sample(service, device, 1, false, false);
+        QCOMPARE(service.processFrame(command, "TX;"), QByteArray()); QTRY_VERIFY(mox->isMox());
+        QCOMPARE(service.processFrame(command, "RX;"), QByteArray()); QTRY_VERIFY(!mox->isMox());
+        QVERIFY(mox->state() != MoxState::Rx);
+        QCOMPARE(service.processFrame(command, "TX;"), QByteArray()); // held
+        // The pin is configured and idle: its 20 ms samples leave the held TX alone.
+        for (int i = 0; i < 3; ++i) { sample(service, device, 1, false, false); pumpCat(); }
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_VERIFY_WITH_TIMEOUT(mox->isMox(), 5000); QCOMPARE(mox->currentKeyer().source, PttMode::Cat);
+        QCOMPARE(service.processFrame(command, "RX;"), QByteArray()); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 5000);
+        service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
+    void pinReleaseEdgeCancelsHeldCatTx() {
+        RxCatMockConnection connection; RadioModel model; setup(model, connection);
+        MoxController* mox = model.moxController();
+        mox->setTimerIntervals(0, 0, 0, 0, 1000, 0);
+        model.catService()->txCoordinator().setHeldTxTimeoutMsForTest(10000);
+        const auto device = std::make_shared<CatSerialTestDevice>(); CatService& service = *model.catService();
+        QVERIFY(configure(service, device)); service.startConfigured();
+        const quint64 command = service.sessionIds(1).first();
+        // The pin is pressed while its key is refused, so it is down but keys nothing.
+        sample(service, device, 1, false, false);
+        mox->setKeyingGate([](PttMode, const KeyerIdentity&) { return KeyingAnswer{KeyingVerdict::Refuse, TxRefusals::changingHands()}; });
+        sample(service, device, 1, true, true); QVERIFY(!mox->isMox()); QCOMPARE(service.pttState(), QString("PTT request refused"));
+        mox->setKeyingGate({});
+        QCOMPARE(service.processFrame(command, "TX;"), QByteArray()); QTRY_VERIFY(mox->isMox());
+        QCOMPARE(service.processFrame(command, "RX;"), QByteArray()); QTRY_VERIFY(!mox->isMox());
+        QVERIFY(mox->state() != MoxState::Rx);
+        QCOMPARE(service.processFrame(command, "TX;"), QByteArray()); // held
+        // The pin's release edge cancels it, as RX; would.
+        sample(service, device, 1, false, false); QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 5000); QTest::qWait(150); QVERIFY(!mox->isMox());
         service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
     }
     void serialSessionCloseCancelsPinBeforeHandle() {

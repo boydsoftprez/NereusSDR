@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR logical-object typography; upstream studied, no port.
 // Modification history (NereusSDR):
+//   2026-10-26 - drawObjectTextElided: text that does not fit its box at the
+//                 11 px minimum ends in an ellipsis instead of being cut on
+//                 both sides. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
@@ -44,6 +48,25 @@ inline QFont fitObjectText(QFont font, double requested, const QString& text,
         if(fits()) { low=candidate; } else { high=candidate; }
     }
     size(low); return font;
+}
+// The text as drawn in `box` with `font`: whole when it fits, otherwise cut
+// at the end with an ellipsis so it never spills past the box on either side.
+inline QString elideObjectText(const QFont& font,const QString& text,const QRectF& box,
+                               QPaintDevice* device=nullptr) {
+    const QFontMetricsF metrics(font,device);
+    if(metrics.horizontalAdvance(text)<=box.width()) { return text; }
+    return metrics.elidedText(text,Qt::ElideRight,box.width());
+}
+// drawObjectText for a caption: fitted down to the readable minimum, then
+// ended with an ellipsis if it still does not fit. Returns the text drawn.
+inline QString drawObjectTextElided(QPainter& painter,const QRectF& box,const QString& text,
+                                    double requested,int alignment=Qt::AlignCenter) {
+    if(box.isEmpty() || text.isEmpty() || requested<=0) { return QString(); }
+    const QFont font=fitObjectText(painter.font(),requested,text,box,false,Qt::TextSingleLine,painter.device());
+    const QString shown=elideObjectText(font,text,box,painter.device());
+    painter.setFont(font);
+    painter.drawText(box,alignment,shown);
+    return shown;
 }
 inline void drawObjectText(QPainter& painter,const QRectF& box,const QString& text,
                            double requested,int alignment=Qt::AlignCenter) {

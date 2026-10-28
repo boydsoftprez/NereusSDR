@@ -63,6 +63,51 @@ struct SetupWorkspaceShotTests {
         }
     }
 
+    static let spectrumV29: [SetupTree.Route] = [.category("Display"),
+                                                 .described(category: "display", page: "display.spectrumDefaults")]
+
+    /// R-IOS-60, DC12 (spec section 7.3): Display's Spectrum page on a Core
+    /// at description 29, its "Settings for" strip on All pans, on Pan 1
+    /// with an own value, and on Pan 2 not open, at default and
+    /// accessibility extra large. On an iPad the window is the iPad's, so
+    /// Setup draws its split. The pictures are named for the device.
+    @Test("Display's strip on All pans, Pan 1 with its own value and Pan 2 not open, at default and accessibility extra large")
+    func displayStrip() async throws {
+        let rig = try await Described.connected()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let app = rig.app
+        Described.asV12Core(app, setupDescription: 29)
+        // Four pans: the fewer of four slices and four receivers.
+        Described.withCapabilities(app, ["effectiveMaxSlices": .i64(4), "userDdcCount": .i64(4)])
+        await rig.station.deliverSetup(try Described.coreCategories(peer: 29))
+        #expect(await Described.settle {
+            app.setupPages.isCurrent && app.setupPages.categories["display"]?.version == 29
+        })
+        #expect(PanLimits.panCount(capabilities: app.mirror.capabilities) == 4)
+        let iPad = UIDevice.current.userInterfaceIdiom == .pad
+        let device = iPad ? "ipad" : "iphone"
+        let size = iPad ? CGSize(width: 834, height: 1194) : CGSize(width: 402, height: 874)
+        // Pan 1's own fill, so its button carries the dot.
+        app.main.displayEditScope = .pan(.first)
+        let fill = app.main.band.settings.traceFill
+        app.main.changeDisplay(fields: ["traceFill"]) { $0.traceFill = !fill }
+        let states: [(name: String, scope: MainScreenModel.DisplayEditScope)] = [
+            ("all", .all), ("pan1", .pan(.first)), ("pan2", .pan(PanIdentity(number: 2))),
+        ]
+        for (name, size2) in Self.sizes {
+            for state in states {
+                rig.router.path = []
+                rig.router.displayScope = state.scope
+                _ = try await Self.shoot("setup-ws-strip-\(state.name)-\(device)-\(name)", rig: rig,
+                                         path: Self.spectrumV29, dynamicType: size2,
+                                         height: size.height, width: size.width)
+                #expect(rig.router.displayScope == state.scope)
+                #expect(app.main.displayEditScope == state.scope)
+            }
+        }
+        await app.disconnect()
+    }
+
     @Test("A value row's layout follows the text size: under its title only at the accessibility sizes")
     func valueRowStacksAtAccessibilitySizes() {
         for size in DynamicTypeSize.allCases {

@@ -1,10 +1,16 @@
 // NereusSDR for iOS: what sits over the band: the flags and tags, the touches that pan, tune and zoom, the zoom buttons
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, each flag's Roundtable line and the
+// dial's strip under the Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, Roundtable's tags along the foot of
+// the spectrum and the swipes' edge zones. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
 import NereusLink
 import SwiftUI
+import UIKit
 
 /// Everything over one band's Metal view (R-IOS-11, R-IOS-12, D9, D10,
 /// D74, spec section 5.1 items 3, 4, 9 and 17), sized to the band:
@@ -21,7 +27,9 @@ import SwiftUI
 ///   the Core to move the window, as the desktop's remote window does; a
 ///   drag that starts on a flag or its passband tunes that slice in its
 ///   step (with drag to tune on); a tap tunes the active slice, pinch
-///   zooms, and the double tap does Tune, Center or None;
+///   zooms, and the double tap does Tune, Center or None; a half-second
+///   hold on empty band, still within the drag threshold, opens the band
+///   menu at the finger after a light tap (``BandMenuHit``, DC6);
 /// - zoom minus and plus at the bottom right of the waterfall. The bottom
 ///   left stays clear for PTT;
 /// - the tuning dial Setup picked for this phone, if any (``DialLayer``):
@@ -87,11 +95,34 @@ struct BandGestureLayer: View {
     /// The TX badges' take (JJ's ruling of 2026-09-30); nil draws each TX
     /// button as the transmit choice alone (the flag pictures).
     var take: TransmitTakeModel?
+    /// The open band menu's anchor, which a hold on empty band sets; nil
+    /// leaves the band without the hold (the flag pictures). While the menu
+    /// is open the band's taps and drags do nothing.
+    var bandMenu: Binding<BandMenuAnchor?>?
+    /// Each slice's Roundtable line, by slice id (spec 11.3); a slice not
+    /// here draws none.
+    var roundtableLines: [Int: RoundtableFlagLine] = [:]
+    /// A Roundtable line's tap, with its slice.
+    var openRoundtable: ((Int) -> Void)?
+    /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
+    /// strip under it, the knob drawn smaller (spec 11.3).
+    var dialStrip = false
+    /// Roundtable, whose rooms are tags along the foot of the spectrum
+    /// (spec 11.3); nil draws none.
+    var roundtable: RoundtableModel?
+    /// The Panadapter tab's swipes: a drag that starts in an edge zone and
+    /// heads in is the swipe, not the band's; nil leaves the edges to the band.
+    var swipes: SwipeShortcutModel?
     @Environment(\.uprightBandWidth) private var uprightWidth
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// The drag under way, if any (what it moves is settled where it began).
     @State private var dragger = BandDrag()
+    /// What the drag under way is: not yet known, a swipe, or the band's.
+    @State private var dragKind = DragKind.undecided
+    /// A drag is under way; a cancelled one ends here without its onEnded.
+    @GestureState private var dragging = false
     @State private var pinching = false
     /// The band when the pinch began.
     @State private var pinchStart: BandGeometry?
@@ -116,7 +147,7 @@ struct BandGestureLayer: View {
                 GeometryReader { proxy in
                     if let axes = band.pointGeometry(size: proxy.size) {
                         DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
-                                  sideways: sideways, trailingInset: trailingInset)
+                                  sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
                     }
                 }
             }
@@ -148,7 +179,9 @@ struct BandGestureLayer: View {
         let entries = shown.flags
         let large = large
         let jumped = slices.jumped
-        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large)) },
+        let lines = roundtableLines
+        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large,
+                                                                                  roundtable: lines[$0.id] != nil)) },
                                   uniquingKeysWith: { first, _ in first })
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
@@ -215,19 +248,12 @@ struct BandGestureLayer: View {
         let dialKind = tuning == nil ? DialKind.off : settings.dialKind
         let zoomAt = DialLayer.zoomOrigin(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
                                           trailingInset: trailingInset, uprightWidth: uprightWidth)
-        // The band's own controls, which the edge markers keep clear of.
-        var controls = [CGRect(origin: zoomAt, size: ZoomButtons.size),
-                        PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
-        switch dialKind {
-        case .waterfallKnob:
-            controls.append(DialLayer.knobFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                trailingInset: trailingInset))
-        case .thumbwheel:
-            controls.append(DialLayer.wheelFrame(waterfall: layout.waterfall, sideways: sideways,
-                                                 uprightWidth: uprightWidth, trailingInset: trailingInset))
-        case .off, .sheetKnob:
-            break
-        }
+        // The band's own controls, which the edge markers keep clear of:
+        // zoom and the dial as DialLayer places them (the one list the keyed
+        // meters keep clear of too), and PTT.
+        let controls = DialLayer.controlFrames(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
+                                               trailingInset: trailingInset, uprightWidth: uprightWidth)
+            + [PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
                                           large: large, dbmArrows: arrows, controls: controls)
@@ -238,8 +264,22 @@ struct BandGestureLayer: View {
                                      trailingInset: trailingInset, large: large)
         // The active slice's flag on top of the others.
         let ordered = flags.sorted { ($0.0.id == slices.activeSliceId ? 1 : 0) < ($1.0.id == slices.activeSliceId ? 1 : 0) }
+        // Where a hold opens the band menu: clear of every flag and folded
+        // tag, the spots, other devices' labels and the dBm scale, as they
+        // stand when the hold fires.
+        let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
+        let spotsModel = spots
+        let emptyBand: (CGPoint) -> Bool = { point in
+            let spotRects = spotsModel.map { model in
+                BandMenuHit.spotRects(SpotLayout.layout(spots: model.bandSpots, flags: placements, geometry: geometry,
+                                                        settings: model.display))
+            } ?? []
+            let stations = others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
+            return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
+                                           layout: layout)
+        }
         return ZStack(alignment: .topLeading) {
-            touchSurface(geometry: geometry)
+            touchSurface(geometry: geometry, emptyBand: emptyBand)
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
             }
@@ -251,6 +291,20 @@ struct BandGestureLayer: View {
             if let spots {
                 // Spots start under the flags, which draw over them (D13).
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
+            }
+            if let roundtable {
+                // 8 points above the band plan, clear of every flag and folded tag.
+                RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },
+                                   geometryWidth: geometry.size.width, lowHz: geometry.lowHz,
+                                   hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
+                                   top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
+                                   tickFoot: layout.strip.minY,
+                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect), keyed: keyed,
+                                   sliceLetter: slices.active?.slice.letter ?? "A") { room in
+                    // As the sheet's Tune here: the active slice to the room, then back to its own room.
+                    slices.tap(to: Double(room.hz))
+                    Task { await roundtable.backToSlice() }
+                }
             }
             if let flagControls {
                 // Behind the flags: a tap outside them closes an open menu or panel.
@@ -268,9 +322,12 @@ struct BandGestureLayer: View {
             if let flagControls, let store = flagControls.store {
                 WideChipLayer(store: store, controls: flagControls, rect: chipRect, large: large)
             }
-            ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
-                        zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
-                .offset(x: zoomAt.x, y: zoomAt.y)
+            if !dialStrip {
+                // Under the Roundtable sheet zoom waits with the band; the strip keeps PTT and the dial only.
+                ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
+                            zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
+                    .offset(x: zoomAt.x, y: zoomAt.y)
+            }
             if let tuning {
                 // Over the flags: a tap outside the step menu closes it, and a drag there moves the band.
                 StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
@@ -278,6 +335,15 @@ struct BandGestureLayer: View {
             }
         }
         .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: placements))
+        .onChange(of: dragging) { _, now in
+            // A drag cancelled before it ended: its swipe springs back.
+            if !now, dragKind != .undecided {
+                if dragKind == .swipe {
+                    swipes?.cancel(reduceMotion: reduceMotion)
+                }
+                dragKind = .undecided
+            }
+        }
         .overlay(alignment: .topLeading) {
             // Over the band's drag, not inside it: a drag that starts in an
             // open menu or panel (a slider, a scroll) is that control's
@@ -403,7 +469,12 @@ struct BandGestureLayer: View {
                         antennasOpen: controls?.isOpen(.antennas(id)) ?? false,
                         openTab: controls?.openTab(id),
                         bypassOn: controls?.bypassOn ?? false,
-                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } })
+                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } },
+                        roundtable: roundtableLines[id],
+                        openRoundtable: openRoundtable.map { open in {
+                            controls?.close()
+                            open(id)
+                        } })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -490,12 +561,17 @@ struct BandGestureLayer: View {
 
     // MARK: Touches
 
-    private func touchSurface(geometry: BandGeometry) -> some View {
-        Color.clear
+    /// The band's own surface: the taps and the pinch, and under them the
+    /// hold (``BandHoldSurface``), which opens the band menu.
+    private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
+        BandHoldSurface(enabled: bandMenu != nil) { point in
+            held(at: point, geometry: geometry, emptyBand: emptyBand)
+        }
             .contentShape(Rectangle())
             .gesture(taps(geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
             .accessibilityElement()
+            .accessibilityIdentifier("bandSurface")
             .accessibilityLabel("Band")
             .accessibilityHint(settings.tapToTune ? "Tap to tune the active slice, drag to move the band"
                                                   : "Drag to move the band")
@@ -520,8 +596,21 @@ struct BandGestureLayer: View {
     private func drag(layout: BandLayout, geometry: BandGeometry, entries: [BandSlicesModel.Entry],
                       placements: [FlagPlacement]) -> some Gesture {
         DragGesture(minimumDistance: TuneGestures.dragThresholdPoints)
+            .updating($dragging) { _, state, _ in
+                state = true
+            }
             .onChanged { value in
-                guard !pinching else {
+                // While the band menu is open the finger that opened it moves nothing.
+                guard !pinching, !menuOpen || dragger.target != nil else {
+                    return
+                }
+                if dragKind == .undecided {
+                    dragKind = swipeBegins(value, layout: layout) ? .swipe : .band
+                }
+                if dragKind == .swipe {
+                    if let origin = swipes?.drag?.origin {
+                        swipes?.move(SwipeShortcuts.inward(origin, value.translation))
+                    }
                     return
                 }
                 dragger.changed(from: value.startLocation, translation: value.translation.width,
@@ -531,10 +620,63 @@ struct BandGestureLayer: View {
                 // The frequency under the finger, for the cursor readout.
                 band.cursorHz = geometry.hz(forX: Double(value.location.x))
             }
-            .onEnded { _ in
+            .onEnded { value in
+                let kind = dragKind
+                dragKind = .undecided
+                if kind == .swipe {
+                    if let swipes, let origin = swipes.drag?.origin {
+                        swipes.end(distance: SwipeShortcuts.inward(origin, value.translation),
+                                   predicted: SwipeShortcuts.inward(origin, value.predictedEndTranslation),
+                                   reduceMotion: reduceMotion)
+                    }
+                    return
+                }
                 dragger.ended(slices: slices)
                 band.cursorHz = nil
             }
+    }
+
+    /// The band menu is open.
+    private var menuOpen: Bool { bandMenu?.wrappedValue != nil }
+
+    /// The hold has fired: a finger down for ``BandMenuHit/holdSeconds``
+    /// that stayed within the drag threshold. On empty band, with no
+    /// pinch, drag or menu under way, it opens the band menu where the
+    /// finger came down, after a light tap; elsewhere the touch is left
+    /// to the flag, spot or label under it, the drag, the tap or the pinch,
+    /// as before.
+    private func held(at point: CGPoint, geometry: BandGeometry, emptyBand: (CGPoint) -> Bool) -> Bool {
+        guard !pinching, !menuOpen, dragger.target == nil, emptyBand(point) else {
+            return false
+        }
+        bandMenu?.wrappedValue = BandMenuAnchor(point: point, frequencyHz: geometry.hz(forX: Double(point.x)))
+        return true
+    }
+
+    /// What a drag is, settled as it first moves.
+    private enum DragKind {
+        case undecided
+        case swipe
+        case band
+    }
+
+    /// A drag that starts in a live edge zone and heads in begins its
+    /// swipe; any other is the band's (spec 11.3: 18 points at each edge,
+    /// ending above PTT; Off gives the edge back to the band).
+    private func swipeBegins(_ value: DragGesture.Value, layout: BandLayout) -> Bool {
+        guard let swipes else {
+            return false
+        }
+        let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
+            - SwipeShortcuts.aboveControls
+        guard let origin = SwipeShortcuts.edgeOrigin(start: value.startLocation, bandSize: layout.size,
+                                                     zoneFoot: foot, leadingInset: leadingInset,
+                                                     trailingInset: trailingInset),
+              SwipeShortcuts.claims(origin, translation: value.translation), swipes.begin(origin) else {
+            return false
+        }
+        swipes.move(SwipeShortcuts.inward(origin, value.translation))
+        return true
     }
 
     /// A tap tunes at once whenever a double tap would do the same thing;
@@ -562,6 +704,7 @@ struct BandGestureLayer: View {
     private func pinch(geometry: BandGeometry) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                // Two fingers are a pinch, never a hold (``held(at:geometry:emptyBand:)``).
                 let start = pinchStart ?? geometry
                 pinchStart = start
                 pinching = true
@@ -587,6 +730,10 @@ struct BandGestureLayer: View {
     }
 
     private func tap(atX x: CGFloat, geometry: BandGeometry) {
+        // The lift that ends the hold opening the band menu tunes nothing.
+        guard !menuOpen else {
+            return
+        }
         if foreign.openNote != nil {
             // A touch on the band closes an open note, and tunes nothing.
             foreign.openNote = nil
@@ -602,6 +749,9 @@ struct BandGestureLayer: View {
     /// Tune writes to the active slice, even with tap-to-tune off; Center
     /// asks for a new view, as zoom does, and retunes nothing.
     private func doubleTap(_ action: TuneGestures.DoubleTapAction, atX x: CGFloat, geometry: BandGeometry) {
+        guard !menuOpen else {
+            return
+        }
         let step = slices.active.flatMap { snapStep($0) }
         switch TuneGestures.doubleTapped(action, atX: x, geometry: geometry, snap: settings.snapTapToStep,
                                          stepHz: step) {
@@ -626,6 +776,75 @@ struct BandGestureLayer: View {
 
     private var spanLimits: ClosedRange<Double> {
         band.spanLimits(sampleRateHz: slices.active?.sampleRateHz)
+    }
+}
+
+/// The band's touch surface, which times the hold that opens the band
+/// menu (R-IOS-57, DC6) with UIKit's long press: a finger down for
+/// ``BandMenuHit/holdSeconds`` that moves less than
+/// ``BandMenuHit/moveLimitPoints``. A SwiftUI drag cannot time it: a drag
+/// reports nothing while the finger is still, so on the iPad a still
+/// finger's hold was first seen as it lifted, too late to open anything
+/// (no menu on any iPad pan). The long press fires at the half second
+/// whether the finger moves or not, alongside the band's taps, pinch and
+/// drags, and never takes their touches.
+private struct BandHoldSurface: UIViewRepresentable {
+    /// Off while the band has no band menu (the flag pictures).
+    var enabled: Bool
+    /// The hold fired at this point on the band; true when it opened the
+    /// band menu, which then gets the light tap.
+    let held: (CGPoint) -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.fired(_:)))
+        hold.minimumPressDuration = BandMenuHit.holdSeconds
+        hold.allowableMovement = BandMenuHit.moveLimitPoints
+        // The band's own taps, pinch and drags keep every touch.
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.delaysTouchesEnded = false
+        hold.delegate = context.coordinator
+        view.addGestureRecognizer(hold)
+        context.coordinator.hold = hold
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.held = held
+        context.coordinator.hold?.isEnabled = enabled
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var held: ((CGPoint) -> Bool)?
+        weak var hold: UILongPressGestureRecognizer?
+        /// As DialHaptics' detent: a light impact, woken at the touch so it is not late.
+        private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+        @objc func fired(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began, let view = recognizer.view else {
+                return
+            }
+            if held?(recognizer.location(in: view)) == true {
+                haptic.impactOccurred()
+            }
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            haptic.prepare()
+            return true
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
     }
 }
 

@@ -1,6 +1,15 @@
 // no-port-check: Independent numeric oracles and real native rendering fixtures.
 // Modification history (NereusSDR):
+//   2026-10-26 - A new clock face's time is its largest text (Thetis's
+//                 renderClock proportions). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R1: the ANAN face's Dark mode and a legacy image's
+//                 Dark mode are shown disabled when no dark art exists.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A new Contest face's mode grid shows ten modes in two rows
+//                 (SPEC and DRM hidden), and keeps them through a save.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
@@ -13,6 +22,14 @@
 #include <QApplication>
 #include <QScopeGuard>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QTemporaryDir>
+#include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QLabel>
+#include <QCheckBox>
+#include "gui/meters/MeterItem.h"
+#include "gui/containers/meter_property_editors/ImageItemEditor.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CrossNeedleItem.h"
@@ -21,6 +38,8 @@
 #include "gui/meters/presets/MagicEyePresetItem.h"
 #include "gui/meters/presets/SignalTextPresetItem.h"
 #include "gui/meters/presets/ContestPresetItem.h"
+#include "gui/meters/presets/ClockPresetItem.h"
+#include "gui/meters/presets/VfoDisplayPresetItem.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
@@ -32,6 +51,7 @@
 #include "core/RadioStatus.h"
 #include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "models/SliceModel.h"
 #include "models/Band.h"
@@ -119,6 +139,35 @@ private:
     static QJsonArray configuredChannels(CompositePresetItem& face) {
         QJsonArray channels=face.configuration()["channels"].toArray();
         for(int i=0;i<channels.size();++i) { auto c=channels[i].toObject(); c["ignoreHistoryMs"]=0; channels[i]=c; } return channels;
+    }
+    static QJsonArray settledChannels(CompositePresetItem& face,bool peakHold) {
+        QJsonArray channels=configuredChannels(face);
+        for(int i=0;i<channels.size();++i) { auto c=channels[i].toObject(); c["attack"]=1.0; c["decay"]=1.0; c["peakHold"]=peakHold; c["showHistory"]=false; channels[i]=c; } return channels;
+    }
+    static void paintBoth(CompositePresetItem& face,QPaintDevice& device,QSize size) {
+        QPainter painter(&device);
+        face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::Background);
+        face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic);
+    }
+    static QImage rendered(CompositePresetItem& face,QSize size) {
+        QImage image(size,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::transparent); paintBoth(face,image,size); return image;
+    }
+    static bool paintsColour(CompositePresetItem& face,QSize size,const QColor& colour,MeterItem::Layer layer) {
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),layer); }
+        for(const auto& path:device.paths()) {
+            if((path.pen.style()!=Qt::NoPen && path.pen.color()==colour) || (path.brush.style()!=Qt::NoBrush && path.brush.color()==colour)) { return true; }
+        }
+        return false;
+    }
+    // The x of the live PWR marker of a Power/SWR face (yellow 3 px line).
+    static double powerMarkerX(CompositePresetItem& face,QSize size) {
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        for(const auto& path:device.paths()) {
+            if(path.pen.color()==QColor(Qt::yellow) && path.pen.widthF()==3 && path.path.elementCount()==2 && path.path.elementAt(0).x==path.path.elementAt(1).x) { return path.path.elementAt(0).x; }
+        }
+        return -1;
     }
 private slots:
     void ananIdleNeedlesRemainParkedWithoutMeasurements() {
@@ -688,12 +737,245 @@ private slots:
         QVERIFY(loaded.deserialize(custom)); QCOMPARE(loaded.serialize(),custom);
         QCOMPARE(loaded.configuration()["channels"].toArray()[6].toObject()["futureOrbMetadata"],alc["futureOrbMetadata"]);
     }
+    void perItemOptionsAbsentKeepTheEarlierLook() {
+        const QStringList optionKeys{"powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode"};
+        using Face=CompositePresetItem::Face;
+        for(Face type:{Face::PowerSwr,Face::Anan,Face::Cross}) {
+            CompositePresetItem face(type);
+            const QJsonObject config=face.configuration();
+            // The starting values are the earlier look: shared power scale,
+            // the face's own ink, shadows on, no dark art.
+            QCOMPARE(config["powerLimitW"].toDouble(-1),0.0);
+            QCOMPARE(config["peakHoldColor"].toString("x"),QString());
+            if(type!=Face::Cross) { QCOMPARE(config["peakValueColor"].toString("x"),QString()); } else { QVERIFY(!config.contains("peakValueColor")); }
+            if(type!=Face::PowerSwr) { QCOMPARE(config["powerScaleColor"].toString("x"),QString()); QCOMPARE(config["subNeedleColor"].toString("x"),QString()); QCOMPARE(config["shadow"].toBool(false),true); }
+            if(type==Face::Anan) { QCOMPARE(config["darkMode"].toBool(true),false); } else { QVERIFY(!config.contains("darkMode")); }
+            QVERIFY(face.applyConfiguration({{"channels",settledChannels(face,true)}}));
+            // A record saved before the options existed.
+            QJsonObject old=QJsonDocument::fromJson(face.serialize().toUtf8()).object();
+            for(const QString& key:optionKeys) { old.remove(key); }
+            CompositePresetItem restored(type);
+            QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact))));
+            QCOMPARE(restored.serialize(),face.serialize());
+            for(CompositePresetItem* f:{&face,&restored}) {
+                f->setPowerScale(100); f->resetForTxTransition(type!=Face::Anan);
+                for(int binding:f->readingBindings()) { f->setBindingSupport(binding,MeterItem::BindingSupport::Supported); f->pushBindingValue(binding,binding==MeterBinding::SignalAvg?-60:binding==MeterBinding::TxSwr?2:50); }
+                f->advanceMeter(0);
+                for(int binding:f->readingBindings()) { f->pushBindingValue(binding,binding==MeterBinding::SignalAvg?-90:binding==MeterBinding::TxSwr?1.5:10); }
+                f->advanceMeter(100);
+            }
+            QCOMPARE(rendered(restored,QSize(720,420)),rendered(face,QSize(720,420)));
+            // Blank peak hold color keeps the high color marker.
+            if(type!=Face::Anan) { QVERIFY(paintsColour(restored,QSize(720,420),QColor("#ffff4444"),MeterItem::Layer::OverlayDynamic)); }
+        }
+    }
+    void perItemPowerLimitScalesEachItem() {
+        // Two ANAN items, limits 100 and 1000, beside the shared 500 W scale.
+        AnanMultiMeterItem low,high,shared;
+        QVERIFY(low.applyConfiguration({{"powerLimitW",100.0}})); QVERIFY(high.applyConfiguration({{"powerLimitW",1000.0}}));
+        for(auto* face:{&low,&high,&shared}) { face->setPowerScale(500); }
+        QCOMPARE(low.calibratedPoint(3,100),QPointF(.751,.272));
+        QCOMPARE(high.calibratedPoint(3,1000),QPointF(.751,.272));
+        QCOMPARE(high.calibratedPoint(3,100),QPointF(.224,.28));
+        QCOMPARE(shared.calibratedPoint(3,500),QPointF(.751,.272));
+        high.setPowerScale(1500,2000.0); QCOMPARE(high.calibratedPoint(3,1000),QPointF(.751,.272));
+        // Cross: the limit applies to Forward and Reflected, as MaxPower does.
+        CrossNeedleItem cross; QVERIFY(cross.applyConfiguration({{"powerLimitW",50.0}})); cross.setPowerScale(500);
+        QCOMPARE(cross.calibratedPoint(0,50),QPointF(.662,.083));
+        CrossNeedleItem crossShared; crossShared.setPowerScale(100); QCOMPARE(cross.calibratedPoint(1,2),crossShared.calibratedPoint(1,4));
+        // Power/SWR limit 50: 25 W lands where 50 W does on a 100 W scale.
+        PowerSwrPresetItem limited,reference;
+        QVERIFY(limited.applyConfiguration({{"powerLimitW",50.0},{"channels",settledChannels(limited,false)}}));
+        QVERIFY(reference.applyConfiguration({{"channels",settledChannels(reference,false)}}));
+        limited.setPowerScale(500); reference.setPowerScale(100);
+        QCOMPARE(limited.calibratedPoint(0,25),QPointF(.5625,0));
+        limited.resetForTxTransition(true); reference.resetForTxTransition(true);
+        limited.pushBindingValue(MeterBinding::TxPower,25); reference.pushBindingValue(MeterBinding::TxPower,50);
+        limited.advanceMeter(0); reference.advanceMeter(0);
+        const double x=powerMarkerX(limited,QSize(360,144));
+        QVERIFY(x>0); QVERIFY(qAbs(x-powerMarkerX(reference,QSize(360,144)))<1e-6);
+        // Saved, restored and range checked (0 is the radio's rating).
+        PowerSwrPresetItem copy; QVERIFY(copy.deserialize(limited.serialize())); QCOMPARE(copy.configuration()["powerLimitW"].toDouble(),50.0);
+        for(double bad:{0.05,5000.5,-1.0}) { QVERIFY(!copy.applyConfiguration({{"powerLimitW",bad}})); }
+        QVERIFY(!copy.applyConfiguration({{"powerLimitW","50"}}));
+        QVERIFY(copy.applyConfiguration({{"powerLimitW",0.0}})); copy.setPowerScale(100); QCOMPARE(copy.calibratedPoint(0,50),QPointF(.5625,0));
+    }
+    void peakHoldMarkerUsesItsColour() {
+        const QColor green(0,255,0);
+        PowerSwrPresetItem power; QVERIFY(power.applyConfiguration({{"channels",settledChannels(power,true)},{"peakHoldColor","#ff00ff00"}}));
+        CrossNeedleItem cross; QVERIFY(cross.applyConfiguration({{"channels",settledChannels(cross,true)},{"peakHoldColor","#ff00ff00"}}));
+        for(CompositePresetItem* face:{static_cast<CompositePresetItem*>(&power),static_cast<CompositePresetItem*>(&cross)}) {
+            face->setPowerScale(100); face->resetForTxTransition(true);
+            face->pushBindingValue(MeterBinding::TxPower,100); face->advanceMeter(0); face->pushBindingValue(MeterBinding::TxPower,10); face->advanceMeter(100);
+            QVERIFY(face->channelPeak(0)>face->channelValue(0));
+            QVERIFY(paintsColour(*face,QSize(360,260),green,MeterItem::Layer::OverlayDynamic));
+            QVERIFY(face->applyConfiguration({{"peakHoldColor",""}}));
+            QVERIFY(!paintsColour(*face,QSize(360,260),green,MeterItem::Layer::OverlayDynamic));
+        }
+        AnanMultiMeterItem anan; QVERIFY(anan.applyConfiguration({{"channels",settledChannels(anan,true)},{"peakHoldColor","#ff00ff00"}}));
+        for(int binding:anan.readingBindings()) { anan.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+        anan.pushBindingValue(MeterBinding::SignalAvg,-40); anan.advanceMeter(0); anan.pushBindingValue(MeterBinding::SignalAvg,-100); anan.advanceMeter(100);
+        QVERIFY(anan.channelPeak(0)>anan.channelValue(0));
+        QVERIFY(paintsColour(anan,QSize(720,420),green,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!anan.applyConfiguration({{"peakHoldColor","not a color"}}));
+    }
+    void powerScaleColourInksThePowerScale() {
+        const QColor green(0,255,0);
+        CrossNeedleItem cross; AnanMultiMeterItem anan;
+        for(CompositePresetItem* face:{static_cast<CompositePresetItem*>(&cross),static_cast<CompositePresetItem*>(&anan)}) {
+            face->resetForTxTransition(true);
+            QVERIFY(!paintsColour(*face,QSize(720,420),green,MeterItem::Layer::Background));
+            QVERIFY(face->applyConfiguration({{"powerScaleColor","#ff00ff00"}}));
+            QVERIFY(paintsColour(*face,QSize(720,420),green,MeterItem::Layer::Background));
+        }
+        // Power/SWR has no needle power scale.
+        PowerSwrPresetItem power; QVERIFY(!power.editableFields().contains("powerScaleColor"));
+    }
+    void otherNeedlesColourAndShadow() {
+        AnanMultiMeterItem anan; CrossNeedleItem cross;
+        const QString primaryAnan=anan.configuration()["channels"].toArray()[0].toObject()["color"].toString();
+        QVERIFY(anan.applyConfiguration({{"subNeedleColor","#ff112233"}}));
+        const QJsonArray channels=anan.configuration()["channels"].toArray();
+        for(int i=0;i<7;++i) {
+            const QString colour=channels[i].toObject()["color"].toString();
+            if(i==0 || i==3) { QVERIFY(colour!=QStringLiteral("#ff112233")); } else { QCOMPARE(colour,QStringLiteral("#ff112233")); }
+        }
+        QCOMPARE(channels[0].toObject()["color"].toString(),primaryAnan);
+        QVERIFY(cross.applyConfiguration({{"subNeedleColor","#ff112233"}}));
+        QCOMPARE(cross.configuration()["channels"].toArray()[1].toObject()["color"].toString(),QStringLiteral("#ff112233"));
+        QVERIFY(cross.configuration()["channels"].toArray()[0].toObject()["color"].toString()!=QStringLiteral("#ff112233"));
+        // A needle's own color survives restore: the record carries channels.
+        auto edited=cross.configuration()["channels"].toArray(); auto reflected=edited[1].toObject(); reflected["color"]="#ff445566"; edited[1]=reflected;
+        QVERIFY(cross.applyConfiguration({{"channels",edited}}));
+        CrossNeedleItem restored; QVERIFY(restored.deserialize(cross.serialize()));
+        QCOMPARE(restored.configuration()["channels"].toArray()[1].toObject()["color"].toString(),QStringLiteral("#ff445566"));
+        // Shadow off removes every needle shadow.
+        const QColor ananShadow(0,0,0,150),crossShadow(0,0,0,12);
+        for(int binding:anan.readingBindings()) { anan.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+        QVERIFY(anan.applyConfiguration({{"channels",settledChannels(anan,false)}}));
+        anan.pushBindingValue(MeterBinding::SignalAvg,-73); anan.advanceMeter(0);
+        cross.resetForTxTransition(true); QVERIFY(cross.applyConfiguration({{"channels",settledChannels(cross,false)}})); cross.pushBindingValue(MeterBinding::TxPower,50); cross.advanceMeter(0);
+        QVERIFY(paintsColour(anan,QSize(720,420),ananShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(paintsColour(cross,QSize(360,260),crossShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(anan.applyConfiguration({{"shadow",false}})); QVERIFY(cross.applyConfiguration({{"shadow",false}}));
+        QVERIFY(!paintsColour(anan,QSize(720,420),ananShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!paintsColour(cross,QSize(360,260),crossShadow,MeterItem::Layer::OverlayDynamic));
+        QVERIFY(!anan.applyConfiguration({{"shadow","no"}}));
+    }
+    void darkModeUsesTheDarkFaceArtWhenPresent() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString base=dir.filePath("face.png"),dark=dir.filePath("face-dark.png");
+        QImage art(1855,848,QImage::Format_RGB32); art.fill(Qt::blue); QVERIFY(art.save(base));
+        art.fill(Qt::green); QVERIFY(art.save(dark));
+        AnanMultiMeterItem face; face.setFaceArtBaseForTest(base);
+        const QSize size(720,420); const QRectF skin=face.ananNeedleRect(size.width(),size.height());
+        const double scale=skin.width()/1855;
+        const QPoint corner=(skin.topLeft()+QPointF(30*scale,30*scale)).toPoint();
+        QCOMPARE(face.faceArtPath(1000),base);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::blue));
+        QVERIFY(face.applyConfiguration({{"darkMode",true}}));
+        QCOMPARE(face.faceArtPath(1000),dark);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::green));
+        // Without the -dark file the normal art is used.
+        QVERIFY(QFile::remove(dark));
+        QCOMPARE(face.faceArtPath(1000),base);
+        QCOMPARE(rendered(face,size).pixelColor(corner),QColor(Qt::blue));
+        AnanMultiMeterItem copy; QVERIFY(copy.deserialize(face.serialize())); QCOMPARE(copy.configuration()["darkMode"].toBool(),true);
+        CrossNeedleItem cross; QVERIFY(!cross.editableFields().contains("darkMode"));
+    }
+    void newItemsTakeTheThetisDefaults() {
+        ContainerContentRegistry registry;
+        const auto config=[&](const QString& type) {
+            std::unique_ptr<MeterItem> item(registry.createMeterItem(registry.makeEntry(type),nullptr));
+            return qobject_cast<CompositePresetItem*>(item.get())->configuration();
+        };
+        const auto name=[](QRgb rgb) { return QColor::fromRgba(rgb).name(QColor::HexArgb); };
+        const QJsonObject anan=config("meter.ananMulti");
+        QCOMPARE(anan["powerLimitW"].toDouble(-1),kAnanThetisDefaults.powerLimitW);
+        QCOMPARE(anan["powerScaleColor"].toString(),QStringLiteral("#ff808080"));
+        QCOMPARE(anan["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(anan["peakValueColor"].toString("x"),QString());
+        QCOMPARE(anan["subNeedleColor"].toString(),name(kAnanThetisDefaults.subNeedleColour));
+        QCOMPARE(anan["shadow"].toBool(false),true); QCOMPARE(anan["darkMode"].toBool(true),false);
+        const QJsonObject cross=config("meter.crossNeedle");
+        QCOMPARE(cross["powerScaleColor"].toString(),QStringLiteral("#ff808080"));
+        QCOMPARE(cross["subNeedleColor"].toString(),QStringLiteral("#ff000000"));
+        QCOMPARE(cross["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        const QJsonObject power=config("meter.powerSwr");
+        QCOMPARE(power["peakHoldColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(power["peakValueColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(power["powerLimitW"].toDouble(-1),0.0);
+        // A face built in code (a saved record's starting point) keeps blanks.
+        AnanMultiMeterItem plain; QCOMPARE(plain.configuration()["powerScaleColor"].toString("x"),QString());
+    }
+    void mmioVariablesDriveTheirNeedles() {
+        MeterWidget widget;
+        auto* cross=new CrossNeedleItem(&widget); QVERIFY(cross->applyConfiguration({{"channels",settledChannels(*cross,false)}}));
+        cross->setMmioBinding(1,QUuid::createUuid(),QStringLiteral("reflected"));
+        widget.addItem(cross); widget.resetForTxTransition(true);
+        widget.updateMmioValue(cross,1,7.0); widget.updateMeterValue(MeterBinding::TxReversePower,15.0); widget.updateMeterValue(MeterBinding::TxPower,40.0);
+        cross->advanceMeter(0);
+        QVERIFY(cross->channelHasReading(1)); QCOMPARE(cross->channelValue(1),7.0);
+        // Forward still follows the radio.
+        QCOMPARE(cross->channelValue(0),40.0);
+        widget.updateMmioValue(cross,1,-400.0,QStringLiteral("External meter source is unavailable."));
+        cross->advanceMeter(100); QVERIFY(!cross->channelHasReading(1));
+        auto* anan=new AnanMultiMeterItem(&widget); QVERIFY(anan->applyConfiguration({{"channels",settledChannels(*anan,false)}}));
+        anan->setMmioBinding(4,QUuid::createUuid(),QStringLiteral("swr"));
+        widget.addItem(anan);
+        widget.updateMmioValue(anan,4,2.5); widget.updateMeterValue(MeterBinding::TxSwr,1.2);
+        anan->advanceMeter(0); QCOMPARE(anan->channelValue(4),2.5);
+        // Power/SWR reads one variable: index 1 is not a needle.
+        PowerSwrPresetItem power; power.setSecondaryValue(1,3.0); power.advanceMeter(0); QVERIFY(!power.channelHasReading(1));
+    }
+    void editorOffersTheOptions() {
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        ContentEntry edited; connect(&editor,&ContentPropertyEditor::entryEdited,this,[&](const ContentEntry& e) { edited=e; });
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.ananMulti")));
+        auto* limit=editor.findChild<QDoubleSpinBox*>(QStringLiteral("powerLimitW")); QVERIFY(limit);
+        QCOMPARE(limit->specialValueText(),QStringLiteral("Radio rating")); QCOMPARE(limit->value(),0.0); QCOMPARE(limit->maximum(),5000.0);
+        for(const char* key:{"powerScaleColor","peakHoldColor","peakValueColor","subNeedleColor","shadow","darkMode"}) { QVERIFY2(editor.findChild<QWidget*>(QLatin1String(key)),key); }
+        limit->setValue(250); QCOMPARE(edited.config["properties"].toObject()["powerLimitW"].toDouble(),250.0);
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.powerSwr")));
+        QVERIFY(editor.findChild<QDoubleSpinBox*>(QStringLiteral("powerLimitW"))); QVERIFY(editor.findChild<QWidget*>(QStringLiteral("peakValueColor")));
+        QVERIFY(!editor.findChild<QWidget*>(QStringLiteral("subNeedleColor")));
+    }
+    // Fix wave R1: the ANAN face has no dark art, so Dark mode is shown
+    // disabled with the reason; a saved Dark mode still loads and draws as
+    // before. The legacy image item's Dark mode does the same when its image
+    // has no -dark file.
+    void ananDarkModeIsShownDisabledWithItsReason() {
+        const QString reason=QStringLiteral("No artwork is available for this option");
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        auto entry=registry.makeEntry(QStringLiteral("meter.ananMulti"));
+        editor.setEntry(entry);
+        auto* dark=editor.findChild<QCheckBox*>(QStringLiteral("darkMode")); QVERIFY(dark);
+        QVERIFY(!dark->isEnabled()); QCOMPARE(dark->toolTip(),reason);
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
+        auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QVERIFY(!face->darkFaceArtAvailable());
+        auto config=face->configuration(); config["darkMode"]=true; QVERIFY(face->applyConfiguration(config));
+        AnanMultiMeterItem copy; QVERIFY(copy.deserialize(face->serialize()));
+        QVERIFY(copy.configuration()["darkMode"].toBool());
+        // With dark art beside the face's art, the option is live.
+        QTemporaryDir dir; QImage art(8,8,QImage::Format_RGB32); art.fill(Qt::gray);
+        QVERIFY(art.save(dir.filePath("face.png"))); QVERIFY(art.save(dir.filePath("face-dark.png")));
+        face->setFaceArtBaseForTest(dir.filePath("face.png")); QVERIFY(face->darkFaceArtAvailable());
+
+        ImageItem anan; anan.setImagePath(QStringLiteral(":/meters/ananMM.png"));
+        ImageItemEditor imageEditor; imageEditor.setItem(&anan);
+        auto* imageDark=imageEditor.findChild<QCheckBox*>(QStringLiteral("imageDarkMode")); QVERIFY(imageDark);
+        QVERIFY(!imageDark->isEnabled()); QCOMPARE(imageDark->toolTip(),reason);
+        ImageItem own; own.setImagePath(dir.filePath("face.png")); imageEditor.setItem(&own);
+        QVERIFY(imageDark->isEnabled()); QVERIFY(imageDark->toolTip()!=reason);
+    }
     void paletteRoundtrips() {
         ContainerContentRegistry registry; int complete=0;
         for(const auto& descriptor:registry.descriptors()) {
             if(!descriptor.typeId.startsWith("meter.")) { continue; }
             ContentEntry entry=registry.makeEntry(descriptor.typeId);
-            if(descriptor.typeId=="meter.adcMax") { QVERIFY(!descriptor.available); QVERIFY(!registry.createMeterItem(entry,nullptr)); QVERIFY(descriptor.unavailableReason.contains("magnitude")); continue; }
+            // meter.adcMax is created: its bar veils itself with the one reason.
+            if(descriptor.typeId=="meter.adcMax") { QVERIFY(descriptor.available); std::unique_ptr<MeterItem> adc(registry.createMeterItem(entry,nullptr)); QVERIFY(adc); QCOMPARE(adc->bindingUnavailableReason(-1),QStringLiteral("ADC magnitude is not available")); }
             std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); QVERIFY2(item,qPrintable(descriptor.typeId));
             if(auto* face=qobject_cast<CompositePresetItem*>(item.get())) {
                 auto edit=face->configuration(); if(face->editableFields().contains("title")) { edit["title"]="Edited | title"; } if(face->editableFields().contains("backdropColor")) { edit["backdropColor"]="#ff102030"; } edit["future"]=QJsonObject{{"keep",true}}; edit["faceHeight"]=320;
@@ -815,6 +1097,225 @@ private slots:
         QVERIFY(history.applyConfiguration({{"historyCapacity",2}})); QCOMPARE(trace(),0);
         for(int now=3000;now<=3900;now+=300) {history.pushBindingValue(MeterBinding::SignalAvg,now==3900?-30:-100);history.advanceMeter(now);}
         QVERIFY(trace()>100); QCOMPARE(trace(475),0); // Capacity retains only 3600→3900, at the right edge.
+    }
+    // A fixed local 2026-10-25 13:05:09 on a clock face; the painted text runs.
+    static QStringList clockTexts(CompositePresetItem& face,const QJsonObject& edit) {
+        face.clockDisplay()->setTimeSource([] { return QDateTime(QDate(2026,10,25),QTime(13,5,9)); });
+        if(!face.applyConfiguration(edit)) { return {QStringLiteral("rejected")}; }
+        const QSize size(640,240); TextPaintDevice device(size,1);
+        { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        QStringList texts; for(const auto& text:device.texts()) { texts.append(text.value); } return texts;
+    }
+    void newClockTakesThetisFormat() {
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.clock"));
+        QCOMPARE(entry.config["properties"].toObject()["thetisFormat"],QJsonValue(true));
+        QCOMPARE(entry.config["properties"].toObject()["show24Hour"],QJsonValue(kClockPresetThetisDefaults.show24Hour));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QCOMPARE(face->configuration()["thetisFormat"],QJsonValue(true));
+        // 12 hour: "1:05:09" and "pm" are separate runs; the date reads as Thetis's.
+        QStringList texts=clockTexts(*face,{{"show24Hour",false},{"clockMode","Local"}});
+        QVERIFY2(texts.contains("1:05:09"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("pm"),qPrintable(texts.join(" | ")));
+        QVERIFY2(texts.contains("Sun 25 Oct 2026"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("local"),qPrintable(texts.join(" | ")));
+        for(const QString& text:texts) { QVERIFY2(!text.contains("PM") && text!="1:05:09pm" && !text.startsWith("01:"),qPrintable(text)); }
+        // 24 hour draws HH:mm:ss and no am / pm.
+        texts=clockTexts(*face,{{"show24Hour",true}});
+        QVERIFY2(texts.contains("13:05:09"),qPrintable(texts.join(" | "))); QVERIFY(!texts.contains("pm"));
+        // Both: the halves are titled local and utc.
+        texts=clockTexts(*face,{{"clockMode","Both"}});
+        QVERIFY2(texts.contains("local") && texts.contains("utc"),qPrintable(texts.join(" | ")));
+        // The Contest face's clock keeps the earlier format when placed new.
+        const ContentEntry contest=registry.makeEntry(QStringLiteral("meter.contest"));
+        QCOMPARE(contest.config["properties"].toObject()["thetisFormat"],QJsonValue(false));
+    }
+    // A new clock face draws Thetis's proportions: the time is the largest
+    // text, as renderClock's FontSize * 1.9f time over the FontSize title
+    // and FontSize * 0.9f date (MeterManager.cs:40515-40533 [v2.10.3.15]).
+    void newClockFaceTimeIsLargest_data() {
+        QTest::addColumn<QSize>("size"); QTest::addColumn<QString>("mode");
+        QTest::newRow("scene 408x120 both") << QSize(408,120) << QStringLiteral("Both");
+        QTest::newRow("260x120 both") << QSize(260,120) << QStringLiteral("Both");
+        QTest::newRow("640x240 both") << QSize(640,240) << QStringLiteral("Both");
+        QTest::newRow("408x120 local") << QSize(408,120) << QStringLiteral("Local");
+    }
+    void newClockFaceTimeIsLargest() {
+        QFETCH(QSize,size); QFETCH(QString,mode);
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.clock"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        face->clockDisplay()->setTimeSource([] { return QDateTime(QDate(2026,10,7),QTime(14,32,10)); });
+        QVERIFY(face->applyConfiguration({{"clockMode",mode}}));
+        TextPaintDevice device(size,1);
+        { QPainter painter(&device); face->paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+        int title=0,time=0,date=0;
+        for(const auto& text:device.texts()) {
+            if(text.value=="local" || text.value=="utc") { title=qMax(title,text.pixels); }
+            else if(text.value=="14:32:10") { time=qMax(time,text.pixels); }
+            else if(text.value.contains("Oct 2026")) { date=qMax(date,text.pixels); }
+        }
+        QVERIFY2(title>0 && time>0 && date>0,qPrintable(QString("title %1 time %2 date %3").arg(title).arg(time).arg(date)));
+        QVERIFY2(time>title && time>date,qPrintable(QString("title %1 px, time %2 px, date %3 px").arg(title).arg(time).arg(date)));
+    }
+    void savedClockKeepsItsFormat() {
+        // A clock saved before the option: no thetisFormat key.
+        ClockPresetItem saved; QJsonObject record=QJsonDocument::fromJson(saved.serialize().toUtf8()).object();
+        record.remove("thetisFormat"); record["show24Hour"]=false; record["clockMode"]="Local";
+        ClockPresetItem restored; QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
+        QCOMPARE(restored.configuration()["thetisFormat"],QJsonValue(false));
+        QStringList texts=clockTexts(restored,{});
+        QVERIFY2(texts.contains("01:05:09 PM"),qPrintable(texts.join(" | "))); QVERIFY2(texts.contains("2026-10-25"),qPrintable(texts.join(" | ")));
+        QVERIFY2(texts.contains("Local"),qPrintable(texts.join(" | "))); QVERIFY(!texts.contains("pm"));
+        texts=clockTexts(restored,{{"show24Hour",true}}); QVERIFY2(texts.contains("13:05:09"),qPrintable(texts.join(" | ")));
+        // The editor offers the row; a non-boolean value is rejected.
+        QVERIFY(restored.editableFields().contains("thetisFormat")); QVERIFY(!restored.applyConfiguration({{"thetisFormat","yes"}}));
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry); editor.setEntry(registry.makeEntry(QStringLiteral("meter.clock")));
+        QVERIFY(editor.findChild<QWidget*>(QStringLiteral("thetisFormat")));
+    }
+    // The VFO display face's own keys: display mode, layout, band text and
+    // the colour set (Thetis MeterManager.cs:28052-28074 [v2.10.3.15]).
+    static QStringList vfoFaceKeys() {
+        return {"displayMode","vfoLayout","vfoShowBandText","vfoTitleColor","vfoSmallDigitsColor","vfoBandTextColor","vfoSplitBackColor","vfoSplitColor",
+                "vfoDigitHighlightColor","vfoRxColor","vfoTxColor","vfoLockColor","vfoSyncColor","vfoBackgroundColor"};
+    }
+    static VfoSliceState openSlice(int index,qint64 hz,bool transmitting=false,bool active=false) {
+        VfoSliceState s; s.index=index; s.frequencyHz=hz; s.mode=QStringLiteral("USB"); s.filter=QStringLiteral("2.7k"); s.band=QStringLiteral("20m");
+        s.open=true; s.transmitting=transmitting; s.active=active; return s;
+    }
+    void vfoFaceSavedWithoutKeysLooksTheSame() {
+        // A face as it was saved before the keys: built in code.
+        VfoDisplayPresetItem face; face.setFrequency(14200123); face.setModeLabel("USB"); face.setBandLabel("20m");
+        for(const QString& key:vfoFaceKeys()) { QVERIFY2(face.editableFields().contains(key),qPrintable(key)); QVERIFY2(face.configuration().contains(key),qPrintable(key)); }
+        QJsonObject old=QJsonDocument::fromJson(face.serialize().toUtf8()).object();
+        for(const QString& key:vfoFaceKeys()) { old.remove(key); }
+        VfoDisplayPresetItem restored;
+        QVERIFY(restored.deserialize(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact))));
+        restored.setFrequency(14200123); restored.setModeLabel("USB"); restored.setBandLabel("20m");
+        QCOMPARE(restored.serialize(),face.serialize());
+        const VfoDisplayItem* vfo=restored.vfoDisplay();
+        QCOMPARE(vfo->layout(),VfoDisplayItem::Layout::Compact);
+        QCOMPARE(vfo->displayMode(),VfoDisplayItem::DisplayMode::SourceSlice);
+        QCOMPARE(vfo->backgroundColour(),QColor(0x0a,0x0a,0x18));
+        QCOMPARE(vfo->rxColour(),QColor(0x00,0xff,0x00));
+        QCOMPARE(restored.configuration()["displayMode"].toInt(-1),0);
+        QCOMPARE(restored.configuration()["vfoLayout"].toInt(-1),0);
+        QCOMPARE(rendered(restored,QSize(360,120)),rendered(face,QSize(360,120)));
+        // An older "vfo" record on Both (2) and no displayMode key loads
+        // as All slices; one on VFO B (1) loads as Slice B.
+        for(const auto& [saved,expected]:{std::pair{2,int(VfoDisplayItem::DisplayMode::AllSlices)},std::pair{1,VfoDisplayItem::fixedSliceMode(1)}}) {
+            VfoDisplayItem probe; probe.setDisplayModeValue(saved);
+            QJsonObject record=old; record["vfo"]=probe.serialize();
+            VfoDisplayPresetItem loaded; QVERIFY(loaded.deserialize(QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact))));
+            QCOMPARE(loaded.vfoDisplay()->displayModeValue(),expected);
+        }
+    }
+    void contestFaceModeGridKeepsTenModes() {
+        ContestPresetItem contest; ModeButtonItem* modes=contest.modeButtons(); QVERIFY(modes);
+        QCOMPARE(modes->buttonCount(),12);
+        for(int i=0;i<ModeButtonItem::kModeCount;++i) { QCOMPARE(modes->isButtonShown(i),i!=int(DSPMode::SPEC)&&i!=int(DSPMode::DRM)); }
+        QCOMPARE(modes->shownButtonCount(),10);
+        ContestPresetItem copy; QVERIFY(copy.deserialize(contest.serialize()));
+        QVERIFY(!copy.modeButtons()->isButtonShown(int(DSPMode::SPEC))); QVERIFY(!copy.modeButtons()->isButtonShown(int(DSPMode::DRM)));
+        QCOMPARE(copy.modeButtons()->shownButtonCount(),10);
+    }
+    void newVfoFaceTakesThetisDefaults() {
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.vfoDisplay"));
+        const QJsonObject props=entry.config["properties"].toObject();
+        const auto hex=[](QRgb rgb) { return QColor::fromRgb(rgb).name(QColor::HexArgb); };
+        const VfoDisplayThetisDefaults& d=kVfoPresetThetisDefaults.display;
+        QCOMPARE(props["displayMode"].toInt(-1),int(VfoDisplayItem::DisplayMode::SourceSlice));
+        QCOMPARE(props["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Thetis));
+        QCOMPARE(props["vfoShowBandText"],QJsonValue(false));
+        QCOMPARE(props["vfoBackgroundColor"].toString(),QStringLiteral("#ff202020"));
+        QCOMPARE(props["vfoRxColor"].toString(),QStringLiteral("#ff32cd32"));
+        QCOMPARE(props["vfoTxColor"].toString(),QStringLiteral("#ffff0000"));
+        QCOMPARE(props["vfoTitleColor"].toString(),hex(d.titleColour));
+        QCOMPARE(props["vfoSmallDigitsColor"].toString(),hex(d.frequencySmallColour));
+        QCOMPARE(props["vfoSplitBackColor"].toString(),QStringLiteral("#ff404040"));
+        QCOMPARE(props["vfoLockColor"].toString(),hex(d.lockColour));
+        QCOMPARE(props["vfoFrequencyColor"].toString(),QStringLiteral("#ffffa500"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QCOMPARE(face->vfoDisplay()->layout(),VfoDisplayItem::Layout::Thetis);
+        QCOMPARE(face->vfoDisplay()->backgroundColour(),QColor(32,32,32));
+        // The Contest face's VFO keeps its look when placed new.
+        const QJsonObject contest=registry.makeEntry(QStringLiteral("meter.contest")).config["properties"].toObject();
+        QCOMPARE(contest["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Compact));
+        QCOMPARE(contest["vfoBackgroundColor"].toString(),QStringLiteral("#ff0a0a18"));
+    }
+    void vfoFaceDisplayModeShowsItsSlices() {
+        VfoDisplayPresetItem face; VfoDisplayItem* vfo=face.vfoDisplay();
+        vfo->setSliceState(0,openSlice(0,14200000,false,true)); vfo->setSliceState(1,openSlice(1,7150000)); vfo->setSliceState(2,openSlice(2,21300000));
+        // Source slice: the entry's Source picks the slice.
+        QVERIFY(face.applyConfiguration({{"displayMode",int(VfoDisplayItem::DisplayMode::SourceSlice)}}));
+        vfo->setSourceSliceIndex(1);
+        QCOMPARE(vfo->displayedSlices(),QVector<int>{1});
+        QCOMPARE(vfo->publishedReadings().value("sliceB_freq").toString(),QStringLiteral("7.150000"));
+        QVERIFY(!vfo->publishedReadings().contains("sliceA_freq"));
+        // All slices: every open slice.
+        QVERIFY(face.applyConfiguration({{"displayMode",int(VfoDisplayItem::DisplayMode::AllSlices)}}));
+        QCOMPARE(vfo->displayedSlices(),(QVector<int>{0,1,2}));
+        // Slice C shows C whatever the Source is.
+        QVERIFY(face.applyConfiguration({{"displayMode",VfoDisplayItem::fixedSliceMode(2)}}));
+        QCOMPARE(vfo->displayedSlices(),QVector<int>{2});
+        QCOMPARE(vfo->publishedReadings().value("sliceC_freq").toString(),QStringLiteral("21.300000"));
+        QVERIFY(!vfo->publishedReadings().contains("sliceB_freq"));
+        // The mode is saved and restored through the face's record.
+        VfoDisplayPresetItem copy; QVERIFY(copy.deserialize(face.serialize()));
+        QCOMPARE(copy.vfoDisplay()->displayModeValue(),VfoDisplayItem::fixedSliceMode(2));
+        QCOMPARE(copy.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(2));
+        // A 1 (the earlier VFO B) becomes Slice B.
+        QVERIFY(face.applyConfiguration({{"displayMode",1}})); QCOMPARE(face.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(1));
+        // Out of range or the wrong type is rejected and changes nothing.
+        for(const QJsonValue& bad:{QJsonValue(-1),QJsonValue(VfoDisplayItem::fixedSliceMode(VfoDisplayItem::kMaxSliceCount)),QJsonValue(2.5),QJsonValue("Slice C")}) { QVERIFY(!face.applyConfiguration({{"displayMode",bad}})); }
+        QVERIFY(!face.applyConfiguration({{"vfoLayout",2}})); QVERIFY(!face.applyConfiguration({{"vfoShowBandText","yes"}})); QVERIFY(!face.applyConfiguration({{"vfoTxColor","not a color"}}));
+        QCOMPARE(face.configuration()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(1));
+        // The colour keys and layout reach the display.
+        QVERIFY(face.applyConfiguration({{"vfoLayout",int(VfoDisplayItem::Layout::Thetis)},{"vfoShowBandText",true},{"vfoTitleColor","#ff112233"},{"vfoBackgroundColor","#ff010203"},{"vfoLockColor","#ff445566"}}));
+        QCOMPARE(vfo->layout(),VfoDisplayItem::Layout::Thetis); QVERIFY(vfo->showBandText());
+        QCOMPARE(vfo->titleColour(),QColor("#ff112233")); QCOMPARE(vfo->backgroundColour(),QColor("#ff010203")); QCOMPARE(vfo->lockColour(),QColor("#ff445566"));
+    }
+    void vfoFaceTxColourOnTheTransmittingSlice() {
+        VfoDisplayPresetItem face; VfoDisplayItem* vfo=face.vfoDisplay();
+        QVERIFY(face.applyConfiguration({{"displayMode",VfoDisplayItem::fixedSliceMode(2)},{"vfoTxColor","#ff0000ff"},{"vfoRxColor","#ff00ff00"},{"vfoLayout",int(VfoDisplayItem::Layout::Compact)}}));
+        face.setUnavailableText(QString()); vfo->setSourceSliceIndex(0);
+        vfo->setSliceState(0,openSlice(0,14200000,false,true)); vfo->setSliceState(2,openSlice(2,21300000,true));
+        const QSize size(360,120); const QPoint marker(1,60);
+        face.resetForTxTransition(true);
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,0,255));
+        // Transmit comes off Slice A: Slice C shows the RX colour.
+        vfo->setSliceState(0,openSlice(0,14200000,true,true)); vfo->setSliceState(2,openSlice(2,21300000,false));
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,255,0));
+        // Receiving: the RX colour.
+        vfo->setSliceState(2,openSlice(2,21300000,true)); face.resetForTxTransition(false);
+        QCOMPARE(rendered(face,size).pixelColor(marker),QColor(0,255,0));
+        const QString capture=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR");
+        if(!capture.isEmpty()) {
+            QDir().mkpath(capture);
+            for(int layout:{0,1}) {
+                QVERIFY(face.applyConfiguration({{"vfoLayout",layout},{"displayMode",int(VfoDisplayItem::DisplayMode::AllSlices)}}));
+                QVERIFY(rendered(face,QSize(640,120)).save(capture+QStringLiteral("/vfo-face-layout%1.png").arg(layout)));
+            }
+        }
+    }
+    void editorOffersTheVfoFaceRows() {
+        ContainerContentRegistry registry; ContentPropertyEditor editor(registry);
+        ContentEntry edited; connect(&editor,&ContentPropertyEditor::entryEdited,this,[&](const ContentEntry& e) { edited=e; });
+        editor.setEntry(registry.makeEntry(QStringLiteral("meter.vfoDisplay")));
+        auto* mode=editor.findChild<QComboBox*>(QStringLiteral("displayMode")); QVERIFY(mode);
+        QStringList choices; for(int i=0;i<mode->count();++i) { choices.append(mode->itemText(i)); }
+        QCOMPARE(choices,(QStringList{"Source slice","All slices","Slice A","Slice B","Slice C","Slice D","Slice E"}));
+        QCOMPARE(mode->currentText(),QStringLiteral("Source slice"));
+        auto* layout=editor.findChild<QComboBox*>(QStringLiteral("vfoLayout")); QVERIFY(layout);
+        QCOMPARE(layout->itemText(0),QStringLiteral("Compact")); QCOMPARE(layout->itemText(1),QStringLiteral("Detailed")); QCOMPARE(layout->currentText(),QStringLiteral("Detailed"));
+        for(const QString& key:vfoFaceKeys()) { QVERIFY2(editor.findChild<QWidget*>(key),qPrintable(key)); }
+        mode->setCurrentIndex(mode->findText(QStringLiteral("Slice C")));
+        QCOMPARE(edited.config["properties"].toObject()["displayMode"].toInt(-1),VfoDisplayItem::fixedSliceMode(2));
+        layout->setCurrentIndex(0);
+        QCOMPARE(edited.config["properties"].toObject()["vfoLayout"].toInt(-1),int(VfoDisplayItem::Layout::Compact));
+        // Rows name slices, never VFO A / B or RX1 / RX2.
+        QVERIFY(!choices.contains(QStringLiteral("Both")));
+        QStringList shown=choices; for(const QLabel* label:editor.findChildren<QLabel*>()) { shown.append(label->text()); }
+        for(const QString& text:shown) {
+            for(const char* banned:{"VFO A","VFO B","Vfo","RX1","RX2"}) { QVERIFY2(!text.contains(QLatin1String(banned)),qPrintable(text)); }
+        }
+        QVERIFY(shown.contains(QStringLiteral("Display mode"))); QVERIFY(shown.contains(QStringLiteral("TX label color")));
     }
     void primitiveClockSharesCadence() {
         NEREUS_SKIP_WITHOUT_QRHI();

@@ -14,7 +14,7 @@ final class ConnectUITests: XCTestCase {
     func testWelcomeLeadsToAnAddressAndItsPort() {
         let app = XCUIApplication()
         app.launchArguments = ["-NereusFreshWelcome"]
-        app.launch()
+        app.launchFresh()
         let find = app.buttons["findMyCore"]
         XCTAssertTrue(find.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["setUpCore"].exists)

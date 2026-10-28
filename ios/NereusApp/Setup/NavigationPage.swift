@@ -1,5 +1,12 @@
 // NereusSDR for iOS: Setup's Navigation page on this phone: the tuning dial, its haptics and direction, and touch
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 18, the swipes on the panadapter beside
+// the tuning dial, with Reset to defaults. J.J. Boyd (KG4VCF), AI-assisted
+// via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, Reset's line and the note name this
+// device's own defaults, Off on both edges on an iPad. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -10,6 +17,9 @@ import SwiftUI
 /// direction; then Touch, which takes the place of the desktop's Mouse
 /// section (drag, tap, pinch and the double tap), and Tuning (snap a tap to
 /// the step). Each choice is kept on this phone and applies at once.
+/// Between the dial and Touch, the swipes on the panadapter (spec 11.3,
+/// S1): what each edge and the tab bar open, and Reset to defaults, dimmed
+/// until a mapping has changed.
 struct NavigationPage: View {
     @ObservedObject var settings: PhoneSettings
 
@@ -37,6 +47,32 @@ struct NavigationPage: View {
                     .accessibilityIdentifier("dialReversed")
             } footer: {
                 Text(settings.dialKind == .off ? Self.dialOffNote : Self.stepNote)
+            }
+            SetupPanelSection {
+                ForEach(SwipeOrigin.allCases, id: \.self) { origin in
+                    swipeRow(origin)
+                }
+                Button {
+                    settings.resetSwipes()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.swipeResetTitle)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(settings.swipesChanged ? Self.resetLit : Self.resetDim)
+                        Text(settings.swipeDefaultsText)
+                            .font(.footnote)
+                            .foregroundStyle(WorkspacePalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!settings.swipesChanged)
+                .accessibilityIdentifier("swipe.reset")
+            } header: {
+                Text("Swipes on the panadapter")
+            } footer: {
+                Text(settings.isPad ? Self.swipeNoteIPad : Self.swipeNote)
             }
             SetupPanelSection {
                 toggle(Self.dragTitle, Self.dragDetail, isOn: Binding(get: { settings.dragToTune },
@@ -75,6 +111,43 @@ struct NavigationPage: View {
                 SetupTagBadge(tag: .thisPhone)
             }
         }
+    }
+
+    static let swipeResetTitle = "Reset swipes to defaults"
+    static let swipeResetDetail = "RX panel, TX panel, Roundtable, my frequency"
+    static let swipeNote = "Panadapter tab only. A swipe is another way in: the toolbar's RX and TX buttons stay "
+        + "where they are. Saved on this phone."
+    /// On an iPad the RX and TX panels sit in the applet column, so the edges start Off.
+    static let swipeNoteIPad = "Panadapter tab only. The RX and TX panels sit in the applet column, so both edges "
+        + "start Off. Up from the tab bar widens Roundtable. Saved on this iPad."
+    /// Reset lit in the accent's text colour (the board's #4a7ba8 reads under
+    /// 4.5:1 on the panel), dimmed grey until a mapping has changed.
+    private static let resetLit = ChromeColours.accentText
+    private static let resetDim = Color(red: 0x84 / 255, green: 0x84 / 255, blue: 0x8B / 255)
+
+    /// Setup's words for where a swipe starts.
+    static func title(_ origin: SwipeOrigin) -> String {
+        switch origin {
+        case .leftEdge:
+            return "From the left edge"
+        case .rightEdge:
+            return "From the right edge"
+        case .tabBar:
+            return "Up from the tab bar"
+        }
+    }
+
+    private func swipeRow(_ origin: SwipeOrigin) -> some View {
+        Picker(selection: Binding(get: { settings.swipeTarget(origin) },
+                                  set: { settings.setSwipeTarget($0, for: origin) })) {
+            ForEach(SwipeTarget.allCases, id: \.self) { target in
+                Text(target.title).tag(target)
+            }
+        } label: {
+            Text(Self.title(origin))
+        }
+        .accessibilityIdentifier(PhoneSettings.swipeKey(origin))
+        .setupMenuRow(Self.title(origin))
     }
 
     static let stepNote = "The step is set on the dial itself. Each slice keeps its own step on each band."

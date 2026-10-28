@@ -20,6 +20,9 @@
 // Modification history (NereusSDR):
 //   2026-09-25  J.J. Boyd / KG4VCF  R-R3-46 / R-R3-49 (parity Task 13).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
+//                                    16 (the CW settings on `transmit`).
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -303,8 +306,8 @@ void TstRemoteOcCal::keysAreOnTheListAtVersion8()
     Session s(m_securityDir.path(), this, /*coreUsesProcessSettings=*/false);
     QVERIFY(s.connect());
     // 14 since the Core owns Prevent transmitting on a different band, 15
-    // since a remote window edits the CFC bands.
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 15);
+    // since a remote window edits the CFC bands, 16 since the CW settings.
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
     QVERIFY(s.client->transmitSettingsAvailable(8));
     const IStationLink* link = s.window.stationLink();
     QVERIFY(link != nullptr && link->transmitSettingsAvailable(8));

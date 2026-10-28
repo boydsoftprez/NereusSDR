@@ -174,6 +174,33 @@ struct PanSheetTests {
         await model.disconnect()
     }
 
+    @Test("the band column's +RX asks for a slice on its pan by the Core's key, and greys at the radio's slice limit")
+    func addSliceOnPanUpToTheLimit() async throws {
+        let (model, station) = try await connected([])
+        let pan = model.main.pan
+        let limit = try #require(pan.sliceLimit, "The fake Core sends effectiveMaxSlices")
+        func sliceCount() -> Int { model.mirror.objects(ofClass: BandSlicesModel.sliceClass).count }
+        #expect(sliceCount() < limit)
+        #expect(pan.addSliceOnPanReason(radio: "ANAN-G2") == nil)
+        while sliceCount() < limit {
+            let before = sliceCount()
+            pan.addSlice(on: .first)
+            #expect(await settle { sliceCount() == before + 1 }, "The Core did not add the slice")
+        }
+        #expect(await settle { pan.sliceLimitReached })
+        let sent = invokes(station, PanSheetModel.addSliceVerb)
+        #expect(!sent.isEmpty)
+        #expect(sent.allSatisfy { $0.args == [.init(name: "panId", value: .utf8(PanIdentity.first.corePanKey))] })
+        // The number as a word, as the board writes it (Task 9: was digits).
+        #expect(pan.addSliceOnPanReason(radio: "ANAN-G2") == "The ANAN-G2 runs \(RadioWords.number(limit)) slices.")
+        #expect(limit == 5 && RadioWords.number(limit) == "five")
+        // At the limit +RX sends nothing.
+        pan.addSlice(on: .first)
+        await quiet()
+        #expect(invokes(station, PanSheetModel.addSliceVerb).count == sent.count)
+        await model.disconnect()
+    }
+
     @Test("closing this phone's last slice leaves Add a slice here aimed at its former pan")
     func addAfterLastSlice() async throws {
         let (model, station) = try await connected(.all)

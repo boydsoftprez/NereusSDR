@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "post",
+    "room": "usb-14212000",
+    "text": "Good copy here, **S7** in Boston.\nThanks for the QSO.",
+    "clientId": "m-1800000003000-1"
+  },
+  "decodes": true
+}

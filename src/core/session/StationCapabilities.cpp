@@ -7,6 +7,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: merge of main: stationRoundtableVersion moves after main's
+//               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion, after
+//               rxMeterStampsVersion, only for a peer that declared
+//               roundtable. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): after
+//               txReadingsVersion, last in the remoteTx block, only for a
+//               peer that declared remoteCw. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
 //               rxMeterStampsVersion and before coreBuildInfo, for a peer
 //               that declared displayCodec 2. J.J. Boyd (KG4VCF),
@@ -423,6 +434,11 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
             // compression stream), right after txStateVersion and only with
             // it.
             updates.append(intEntry("txReadingsVersion", txReadingsVersion));
+            // CW transmit (R-CW-49): the cw.* verbs, last in the block, only
+            // for a peer that declared remoteCw.
+            if (remoteCwEntry) {
+                updates.append(intEntry("remoteCwVersion", remoteCwVersion));
+            }
         }
         // Task 29 step 2b (R-IOS-16): unpublished media-floor entries
         // follow every previously emitted minor-11 field.
@@ -624,6 +640,14 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (displayCodecVersion > 0) {
         updates.append(intEntry("displayCodecVersion", displayCodecVersion));
     }
+    // Roundtable plan Task 11: the `roundtable` object, its record streams
+    // and the roundtable.* verbs, after displayCodecVersion (when sent) and
+    // before coreBuildInfo (which stays last), only for a peer that declared
+    // roundtable; any other peer is sent no entry, so its capabilities are
+    // today's.
+    if (stationRoundtableVersion > 0) {
+        updates.append(intEntry("stationRoundtableVersion", stationRoundtableVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -649,6 +673,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int radeReasonEntries = 0;
     int rxMeterStampsEntries = 0;
     int displayCodecEntries = 0;
+    int stationRoundtableEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     int coreSpeakerEntries = 0;
@@ -710,6 +735,15 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.displayCodecVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "stationRoundtableVersion") {
+            // Roundtable plan Task 11: one entry, an Int64 of 1 or more.
+            if (++stationRoundtableEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.stationRoundtableVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "stationCatVersion") {
@@ -981,6 +1015,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "txWatchPathVersion"
                    || u.name == "txStateVersion"
                    || u.name == "txReadingsVersion"
+                   || u.name == "remoteCwVersion"
                    || u.name == "waveformVersion"
                    || u.name == "remoteIqVersion"
                    || u.name == "miniDisplayVersion"
@@ -1083,6 +1118,9 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.txStateVersion = version;
                 } else if (u.name == "txReadingsVersion") {
                     caps.txReadingsVersion = version;
+                } else if (u.name == "remoteCwVersion") {
+                    caps.remoteCwEntry = true;
+                    caps.remoteCwVersion = version;
                 } else if (u.name == "remoteTgxlControlVersion") {
                     caps.remoteTgxlControlVersion = version;
                 } else if (u.name == "transmitSettingsVersion") {

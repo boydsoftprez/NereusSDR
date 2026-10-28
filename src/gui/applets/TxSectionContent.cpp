@@ -16,6 +16,10 @@
 //                 AI-assisted via xAI Grok.
 //   2026-10-21 - A preview of a row (ContentRenderMode::Preview) is inert.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Every row hides and orders its parts from the entry config
+//                 (SectionParts), and declares a toggle per part and the
+//                 order. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TxSectionContent.h"
@@ -30,6 +34,9 @@
 #include "TxKeyingSection.h"
 
 #include "gui/containers/ContainerContentRegistry.h"
+
+#include <algorithm>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -62,6 +69,38 @@ bool isPreview(ContentRenderMode mode)
     return mode != ContentRenderMode::Live;
 }
 
+// The properties a row type declares: the ones it declared before (which
+// keep their positions), then a toggle per part and the Order list, from
+// an inert probe row the applet makes and that is gone on return.
+template <typename Section>
+QVector<ContentProperty> partProperties(Section* probe, QVector<ContentProperty> existing = {})
+{
+    const std::unique_ptr<Section> owned(probe);
+    if (!owned) {
+        return existing;
+    }
+    for (const ContentProperty& property : SectionParts::properties(owned->parts())) {
+        const bool known = std::any_of(existing.cbegin(), existing.cend(),
+            [&property](const ContentProperty& p) { return p.key == property.key; });
+        if (!known) {
+            existing.append(property);
+        }
+    }
+    return existing;
+}
+
+// A copy of a row with its entry's parts hidden and ordered.  The factory
+// reads only the entry's config, never its context: the row follows the
+// TX panel.
+template <typename Section>
+QWidget* withParts(Section* section, const ContentEntry& entry)
+{
+    if (section) {
+        section->parts().apply(entry.config);
+    }
+    return static_cast<QWidget*>(section);
+}
+
 } // namespace
 
 void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txApplet)
@@ -77,69 +116,71 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kMonitorType),
         {QLatin1String(kMonitorType), QStringLiteral("TX Monitor"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createMonitorSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createMonitorSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createMonitorSection(nullptr, true)));
 
     // The power rows: the forward-power and SWR gauges, the RF Power row and
     // the Tune Power row.
     registry.registerWidgetFactory(
         QLatin1String(kPowerType),
         {QLatin1String(kPowerType), QStringLiteral("TX Power"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createPowerSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createPowerSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createPowerSection(nullptr, true)));
 
     // The TX bandpass filter rows: the low and high cutoff spinboxes and the
     // filter status label.
     registry.registerWidgetFactory(
         QLatin1String(kFilterType),
         {QLatin1String(kFilterType), QStringLiteral("TX Filter"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createFilterSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createFilterSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createFilterSection(nullptr, true)));
 
     // The TX chain rows: the LEV, EQ and CFC buttons and the TX Profile
     // combo.
     registry.registerWidgetFactory(
         QLatin1String(kChainType),
         {QLatin1String(kChainType), QStringLiteral("TX Chain"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createChainSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createChainSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createChainSection(nullptr, true)));
 
     // The VOX rows: the [VOX] toggle, the threshold and hold sliders, their
     // labels and the peak meter.
     registry.registerWidgetFactory(
         QLatin1String(kVoxType),
         {QLatin1String(kVoxType), QStringLiteral("TX VOX"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createVoxSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createVoxSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createVoxSection(nullptr, true)));
 
     // The processing rows: the 2-TONE, PS-A and DUP buttons and the SWR
     // protection LED.
     registry.registerWidgetFactory(
         QLatin1String(kProcessingType),
         {QLatin1String(kProcessingType), QStringLiteral("TX Processing"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createProcessingSection(parent, isPreview(mode)));
-        });
+        [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts(txApplet->createProcessingSection(parent, isPreview(mode)), entry);
+        },
+        partProperties(txApplet->createProcessingSection(nullptr, true)));
 
     // The keying rows: the TUNE and MOX buttons, the transmit-slice row, the
-    // holder label and the take-transmit button.
+    // holder label and the take-transmit button.  The slice indicators keep
+    // their key, hideSliceIndicators, and their place first in the list.
     registry.registerWidgetFactory(
         QLatin1String(kKeyingType),
         {QLatin1String(kKeyingType), QStringLiteral("TX Keying"), false, true, {}},
         [txApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            auto* section = txApplet->createKeyingSection(parent, isPreview(mode));
-            if (section) {
-                section->setSliceIndicatorsHidden(
-                    entry.config.value(QLatin1String(kHideSliceIndicators)).toBool(false));
-            }
-            return static_cast<QWidget*>(section);
+            return withParts(txApplet->createKeyingSection(parent, isPreview(mode)), entry);
         },
-        keyingProperties());
+        partProperties(txApplet->createKeyingSection(nullptr, true), keyingProperties()));
 }
 
 } // namespace NereusSDR

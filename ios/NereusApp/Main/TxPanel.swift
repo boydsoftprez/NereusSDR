@@ -1,5 +1,12 @@
 // NereusSDR for iOS: the TX panel: RF and tune power, TUNE and MOX, the amp's and tuner's OPERATE, the tuner's antennas, mic level and gain, PROC, VOX and MON
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the CW rows in CW: speed, pitch, break-in and its
+//             delay, the sidetone and its level (R-CW-50). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//             reason; VOX, its level and delay, LEV, EQ and CFC greyed in CW
+//             with the desktop's words. J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import Foundation
 import NereusLink
@@ -136,6 +143,13 @@ struct TxPanel: View {
                 note("PS-A: " + reason)
                     .accessibilityIdentifier("txPsaReason")
             }
+            if transmit.inCw {
+                // CW (R-CW-50): the operator's keyer controls, as the
+                // desktop's CW page; greyed with the update note on a Core
+                // that does not let this phone change them.
+                caption("CW")
+                CwTransmitRows(transmit: transmit, identifierPrefix: "tx")
+            }
             if ampConfigured || tunerConfigured {
                 caption("Equipment")
                 if ampConfigured { ampRow }
@@ -158,15 +172,20 @@ struct TxPanel: View {
                     transmit.toggleProc()
                 }
                 .accessibilityIdentifier("txProc")
+                // In CW the radio's keyer makes the signal: LEV, EQ and CFC
+                // are greyed with the desktop's words (TxApplet's CW layer).
                 PanelButton(label: "LEV", lit: modes.leveler == true, style: .dsp,
-                            disabled: !chainEditable || modes.leveler == nil) { modes.toggleLeveler() }
+                            disabled: !chainEditable || modes.leveler == nil || transmit.inCw) { modes.toggleLeveler() }
                     .accessibilityLabel("Leveler")
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txLeveler")
                 PanelButton(label: "EQ", lit: modes.eq == true, style: .dsp,
-                            disabled: !chainEditable || modes.eq == nil) { modes.toggleEq() }
+                            disabled: !chainEditable || modes.eq == nil || transmit.inCw) { modes.toggleEq() }
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txEq")
                 PanelButton(label: "CFC", lit: modes.cfc == true, style: .dsp,
-                            disabled: !chainEditable || modes.cfc == nil) { modes.toggleCfc() }
+                            disabled: !chainEditable || modes.cfc == nil || transmit.inCw) { modes.toggleCfc() }
+                    .accessibilityHint(transmit.cwNotUsedReason ?? "")
                     .accessibilityIdentifier("txCfc")
                 PanelButton(label: "DEXP", lit: transmit.dexp == true, style: .dsp,
                             disabled: !chainEditable || transmit.dexp == nil) { transmit.toggleDexp() }
@@ -192,7 +211,10 @@ struct TxPanel: View {
                 note("TUNE and MOX: " + reason)
                     .accessibilityIdentifier("txInhibitReason")
             }
-            if let reason = Self.voxReason(transmit) {
+            if let reason = transmit.cwNotUsedReason {
+                note("VOX, LEV, EQ and CFC: " + reason)
+                    .accessibilityIdentifier("txCwNotUsedReason")
+            } else if let reason = Self.voxReason(transmit) {
                 note("VOX: " + reason)
                     .accessibilityIdentifier("txVoxReason")
             }
@@ -286,6 +308,9 @@ struct TxPanel: View {
     /// Why VOX cannot be armed: it keys, so it needs this phone's transmit
     /// permission, and its microphone line to the Core.
     static func voxReason(_ transmit: TransmitModel) -> String? {
+        if let reason = transmit.cwNotUsedReason {
+            return reason
+        }
         if !transmit.offered {
             return TransmitModel.noRemoteTransmitText
         }
@@ -476,13 +501,13 @@ struct TxPanel: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 PanelButton(label: "VOX", lit: transmit.vox, style: .dsp,
-                            disabled: Self.voxReason(transmit) != nil && !transmit.vox) { transmit.toggleVox() }
+                            disabled: (Self.voxReason(transmit) != nil && !transmit.vox) || transmit.inCw) { transmit.toggleVox() }
                     .frame(width: textSize.isAccessibilitySize ? 90 : 76)
                     .accessibilityHint(Self.voxReason(transmit) ?? "")
                     .accessibilityIdentifier("txVox")
                 PanelSliderRow(label: nil, value: transmit.voxThresholdDb, range: TransmitModel.voxThresholdRange,
                                accessibility: "VOX level", format: { "\(Int($0.rounded())) dB" },
-                               greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) { transmit.setVoxThreshold($0) }
+                               greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxThresholdDb")) { transmit.setVoxThreshold($0) }
                     .accessibilityIdentifier("txVoxLevel")
             }
             HStack(spacing: 6) {
@@ -507,7 +532,7 @@ struct TxPanel: View {
             if timingOpen {
                 PanelSliderRow(label: "VOX delay", value: transmit.voxHangMs, range: TransmitModel.voxHangRange,
                                accessibility: "VOX delay", format: { "\(Int($0.rounded())) ms" },
-                               greyed: !chainEditable, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) { transmit.setVoxHang($0) }
+                               greyed: !chainEditable || transmit.inCw, notConfirmed: transmit.isUnconfirmed("voxHangTimeMs")) { transmit.setVoxHang($0) }
                     .accessibilityIdentifier("txVoxDelay")
                 PanelSliderRow(label: "Anti-VOX time", value: transmit.antiVoxTauMs, range: TransmitModel.antiVoxTimeRange,
                                accessibility: "Anti-VOX time", format: { "\(Int($0.rounded())) ms" },
@@ -613,6 +638,105 @@ struct TxPanel: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 4), count: columns), spacing: 4) {
             content()
         }
+    }
+}
+
+/// The CW rows of the TX panel and the Modes tab's Transmit section, while
+/// the transmit slice is in CW (R-CW-50, C13): Speed, Pitch, Break-in (Off,
+/// Semi, QSK) and its Delay, and the Sidetone with its level (the monitor
+/// volume, as the desktop's MON and Mon Vol in CW, C9). Each writes the
+/// Core's setting; against a Core that does not take them from this phone
+/// every row stays shown, greyed, with the update note beneath. Nothing
+/// here keys the radio.
+struct CwTransmitRows: View {
+    @ObservedObject var transmit: TransmitModel
+    /// The rows' accessibility identifiers start with it: "tx" or "modes".
+    let identifierPrefix: String
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    var body: some View {
+        let editable = transmit.cwSettingsEditable
+        VStack(alignment: .leading, spacing: 9) {
+            PanelSliderRow(label: "Speed", value: transmit.cwSpeedWpm, range: TransmitModel.cwSpeedRange,
+                           accessibility: "CW speed", format: { "\(Int($0.rounded())) WPM" },
+                           greyed: !editable, notConfirmed: transmit.isUnconfirmed("cwKeyerSpeed")) {
+                transmit.setCwSpeed($0)
+            }
+            .accessibilityIdentifier(identifierPrefix + "CwSpeed")
+            PanelSliderRow(label: "Pitch", value: Double(transmit.cwPitchHz), range: TransmitModel.cwPitchRange,
+                           accessibility: "CW pitch", format: { "\(Int($0.rounded())) Hz" },
+                           greyed: !editable, notConfirmed: transmit.cwPitchUnconfirmed) {
+                transmit.setCwPitch($0)
+            }
+            .accessibilityIdentifier(identifierPrefix + "CwPitch")
+            HStack(spacing: 4) {
+                Text("Break-in")
+                    .font(.system(size: textSize.isAccessibilitySize ? 17 : 11))
+                    .foregroundStyle(ChromeColours.textDim)
+                    .frame(width: 62, alignment: .leading)
+                ForEach(TransmitModel.cwBreakInChoices, id: \.id) { choice in
+                    // QSK where the Core does not offer it: greyed with the
+                    // Core's reason, never hidden.
+                    PanelButton(label: choice.label, lit: transmit.cwBreakInMode == choice.id, style: .dsp,
+                                disabled: !editable || transmit.cwBreakInMode == nil
+                                    || transmit.cwBreakInChoiceReason(choice.id) != nil) {
+                        transmit.setCwBreakInMode(choice.id)
+                    }
+                    .accessibilityLabel("Break-in " + choice.label)
+                    .accessibilityHint(transmit.cwBreakInChoiceReason(choice.id) ?? "")
+                    .accessibilityAddTraits(transmit.cwBreakInMode == choice.id ? .isSelected : [])
+                    .accessibilityIdentifier(identifierPrefix + "CwBreakIn" + choice.label)
+                }
+            }
+            PanelSliderRow(label: "Delay", value: transmit.cwBreakInDelayMs, range: TransmitModel.cwBreakInDelayRange,
+                           accessibility: "CW break-in delay", format: { "\(Int($0.rounded())) ms" },
+                           greyed: !editable || transmit.cwBreakInDelayReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("cwBreakInDelayMs")) {
+                transmit.setCwBreakInDelay($0)
+            }
+            .accessibilityHint(transmit.cwBreakInDelayReason ?? "")
+            .accessibilityIdentifier(identifierPrefix + "CwDelay")
+            HStack(spacing: 6) {
+                PanelButton(label: "Sidetone", lit: transmit.cwSidetone == true, style: .dsp,
+                            disabled: !editable || transmit.cwSidetone == nil) {
+                    transmit.toggleCwSidetone()
+                }
+                .frame(width: textSize.isAccessibilitySize ? 110 : 76)
+                .accessibilityIdentifier(identifierPrefix + "CwSidetone")
+                PanelSliderRow(label: nil, value: transmit.monitorVolume, range: TransmitModel.monitorVolumeRange,
+                               accessibility: "Sidetone level", format: { "\(Int(($0 * 100).rounded()))%" },
+                               greyed: !editable || transmit.cwSidetoneLevelReason != nil,
+                               notConfirmed: transmit.isUnconfirmed("monitorVolume")) {
+                    transmit.setCwSidetoneLevel($0)
+                }
+                .accessibilityHint(transmit.cwSidetoneLevelReason ?? "")
+                .accessibilityIdentifier(identifierPrefix + "CwSidetoneLevel")
+            }
+            if let reason = transmit.cwSettingsReason {
+                note("Speed, Pitch, Break-in, Delay and Sidetone: " + reason)
+                    .accessibilityIdentifier(identifierPrefix + "CwReason")
+            } else {
+                if let reason = transmit.cwQskReason {
+                    note("QSK: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwQskReason")
+                }
+                if let reason = transmit.cwBreakInDelayReason {
+                    note("Delay: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwDelayReason")
+                }
+                if let reason = transmit.cwSidetoneLevelReason {
+                    note("Sidetone level: " + reason)
+                        .accessibilityIdentifier(identifierPrefix + "CwSidetoneLevelReason")
+                }
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: textSize.isAccessibilitySize ? 17 : 11))
+            .foregroundStyle(ChromeColours.textFaint)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

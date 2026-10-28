@@ -78,7 +78,7 @@ until that readback is ready.
 
 | Category | Implemented pages in the covered source | Detailed instructions |
 | --- | --- | --- |
-| **General** | Startup & Preferences; Options; This Core in a remote window. | [Connect](01-desktop-connect.md), [sharing](08-shared-core.md), [spots and identity](16-spots-reporters.md). |
+| **General** | Startup & Preferences; Options; Filters; This Core in a remote window. | [Connect](01-desktop-connect.md), [sharing](08-shared-core.md), [spots and identity](16-spots-reporters.md), [filter limits](13-receiver-dsp.md#set-filter-edges-and-edit-the-shared-preset-bank). |
 | **Cores** | Your Cores (Overview, Addresses, Radio, Devices); Audio with the Core. Inspection and current connection are distinct. | [Core Settings and audio](01-desktop-connect.md), [sharing](08-shared-core.md). |
 | **Hardware** | Hardware Config, whose tabs depend on the radio. | [Hardware and antennas](17-hardware-antennas-calibration.md). |
 | **PA** | PA Gain; Watt Meter; PA Values, with radio capability reasons. | [Calibration](17-hardware-antennas-calibration.md). |

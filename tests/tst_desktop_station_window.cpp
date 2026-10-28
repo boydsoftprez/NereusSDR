@@ -23,6 +23,10 @@
 //     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
 //     the kernel's ephemeral range, so a parallel test cannot take one between
 //     the pick and the listen.
+//   2026-10-26, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     final review fix wave (I1): a container VFO display's TX box in a
+//     hosting window asks for transmit as the flags do, refused with the
+//     reason while another device holds it; nothing keys.
 
 #include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
@@ -46,6 +50,7 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "gui/meters/VfoDisplayItem.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/AppletVisibilityController.h"
@@ -1297,6 +1302,87 @@ private slots:
     // Slice control plan Task 15 fix round 1: a container set to a slice
     // this window listens to refuses Mute (and the other slice buttons)
     // with the RX applet's reason, naming the device that controls it.
+    // Fix wave I1: a container VFO display's TX box asks as the flags' TX
+    // buttons do (requestTransmitSlice). While another device holds
+    // transmit it is refused with the reason and transmit stays where it
+    // is; once this computer holds it, transmit moves. Nothing keys, and
+    // TransmitModel's MOX and TUNE never change.
+    void hostVfoDisplayTxAsksTheTransmitHolder()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = model->addSlice(QStringLiteral("pan-0"));
+        const int bId = model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(model->sliceById(aId) && model->sliceById(bId));
+        DesktopStationController controller(model, optionsFor(settings, directory.path()));
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        StationServer* server = controller.server();
+        QVERIFY(server);
+        TransmitHolder* holder = server->transmitHolder();
+        QObject phoneSession;
+        DeviceSessionRegistry::Entry phone;
+        phone.deviceId = QByteArrayLiteral("phone-device-id-for-vfo-display-tx");
+        phone.kind = DeviceSessionRegistry::Kind::Paired;
+        phone.name = QStringLiteral("Living room iPhone");
+        phone.shortName = QStringLiteral("iPhone");
+        phone.deviceKind = QStringLiteral("phone");
+        QCOMPARE(server->deviceSessions()->admit(phone, &phoneSession).admission,
+                 DeviceSessionRegistry::Admission::Admitted);
+        auto* manager = window.findChild<ContainerManager*>();
+        QVERIFY(manager);
+        ContainerWidget* container = manager->createContainer(aId + 1, DockMode::Floating);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* vfo = new VfoDisplayItem();
+        vfo->setRect(0, 0, 1, 1);
+        meter->addItem(vfo);
+        const auto destroy = qScopeGuard([manager, container] {
+            manager->destroyContainer(container->id());
+        });
+        QVERIFY(vfo->property("vfoRequestsWired").toBool());
+
+        const int boundBefore = model->txSliceArbiter()->txBoundSliceId();
+        const int target = boundBefore == aId ? bId : aId;
+        TransmitModel& tx = model->transmitModel();
+        QSignalSpy selected(model, &RadioModel::txSliceSelected);
+        QSignalSpy mox(&tx, &TransmitModel::moxChanged);
+        QSignalSpy tune(&tx, &TransmitModel::tuneChanged);
+
+        // The phone holds transmit: refused, with the reason, nothing moves.
+        TransmitHolder::KeyRequest key;
+        key.deviceId = phone.deviceId;
+        QCOMPARE(holder->askKey(key).verdict, KeyingVerdict::Admit);
+        const QString refusal = TxRefusals::notHolder().text;
+        QVERIFY(!refusal.isEmpty());
+        const int before = toastsSaying(window, refusal);
+        emit vfo->txRequested(target);
+        QCOMPARE(toastsSaying(window, refusal), before + 1);
+        QCOMPARE(selected.count(), 0);
+        QCOMPARE(model->txSliceArbiter()->txBoundSliceId(), boundBefore);
+        QVERIFY(holder->isHeldBy(phone.deviceId));
+        holder->release(phone.deviceId, QStringLiteral("test release"));
+
+        // This computer holds transmit: the request moves it, keying nothing.
+        TransmitHolder::KeyRequest own;
+        own.deviceId = SliceOwnership::stationDevice();
+        QCOMPARE(holder->askKey(own).verdict, KeyingVerdict::Admit);
+        emit vfo->txRequested(target);
+        QTRY_COMPARE(model->txSliceArbiter()->txBoundSliceId(), target);
+        QCOMPARE(mox.count(), 0);
+        QCOMPARE(tune.count(), 0);
+        QVERIFY(!model->mox());
+        QVERIFY(!model->isTune());
+        controller.stop();
+    }
+
     void hostContainerOnAListenedSliceRefusesMute()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }

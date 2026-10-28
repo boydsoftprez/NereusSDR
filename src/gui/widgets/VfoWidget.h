@@ -15,6 +15,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - roundtableLineFont and roundtableLineTextRoom: the
+//                 Roundtable line's text is drawn at Normal when it does
+//                 not fit its room at semibold. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5).
+//   2026-10-24 - setRoundtableLine and roundtableLineClicked, the
+//                 Roundtable line on the flag (Roundtable plan Task 14).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5).
+//   2026-10-26 - CW transmit, mode() for the pan's CW passband origin
+//                 (R-CW-24). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21 - setFilterFromDrag, the pan's filter edge drag on this
 //                 flag's slice. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code (Claude Opus 5.5).
@@ -369,6 +380,7 @@ warren@wpratt.com
 #include "ScrollableLabel.h"
 #include "VfoModeContainers.h"
 #include "gui/WheelStepAccumulator.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 #include <QWidget>
 #include <QLabel>
@@ -512,6 +524,9 @@ public:
     /// second flag disappears when not active."
     int filterLow()  const { return m_filterLowHz; }
     int filterHigh() const { return m_filterHighHz; }
+    /// R-CW-24: this flag's slice mode (setMode), for the pan's CW
+    /// passband origin.
+    DSPMode mode() const { return m_currentMode; }
 
     // --- RIT/XIT state setters (S1.8a — guarded against re-emit) ---
     void setRitEnabled(bool v);
@@ -780,7 +795,22 @@ public slots:
     // (Slice B+).
     void setRadioModel(NereusSDR::RadioModel* model);
 
+    // Roundtable (design 11.2): the line at the foot of the flag, "Roundtable
+    // · 9 · K4ABC" with its glyph and @N. Hidden while line.visible is false;
+    // a click emits roundtableLineClicked.
+    void setRoundtableLine(const RoundtableFlagLine& line);
+    RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
+    QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
+    // The room the line's text has on a line lineWidth wide: after the
+    // glyph, before the @N badge or chevron.
+    static int roundtableLineTextRoom(const RoundtableFlagLine& line, int lineWidth);
+    // The font the line draws text in with that room: 11 px semibold when
+    // it fits at semibold, else Normal (then elided if it still does not).
+    static QFont roundtableLineFont(const QString& text, int room);
+
 signals:
+    // The Roundtable line was clicked: open the Roundtable panel.
+    void roundtableLineClicked();
     void frequencyChanged(double hz);
     void modeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
@@ -1042,6 +1072,11 @@ private:
     QLabel* m_snrLabel{nullptr};
     QLabel* m_snrValue{nullptr};
     QWidget* m_snrRow{nullptr};  // parent row for show/hide
+
+    // Roundtable line (Roundtable plan Task 14).
+    void buildRoundtableLine();
+    QAbstractButton* m_roundtableLineButton{nullptr};
+    RoundtableFlagLine m_roundtableLine;
     bool     m_radeActive{false};
 
     // 2026-05-11 bench: cached EOO-decoded speaker callsign + last SNR

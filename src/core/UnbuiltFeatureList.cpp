@@ -8,10 +8,15 @@
 //
 // NereusSDR-original; no upstream port. See header for full
 // Modification history (NereusSDR).
+//   2026-10-26 - ContainerClickBox built (container item parity Task 47:
+//                click box actions). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-09-29 - HL2 port part 1: Hl2TxTiming removed (built). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29 - TciExtras removed (built). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, Cwx built (R-CW-46). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/UnbuiltFeatureList.h"
@@ -152,8 +157,6 @@ const QList<Entry>& all()
          QStringLiteral("Status PA badge: Andromeda/Ganymede CAT trip input is not ported")},
         {F::PbSnr, QStringLiteral("pb-snr"),
          QStringLiteral("Multimeter PBSNR binding has no producer")},
-        {F::ContainerClickBox, QStringLiteral("container-click-box"),
-         QStringLiteral("Container click box has no host action routing")},
         {F::AudioBitDepth, QStringLiteral("audio-bit-depth"),
          QStringLiteral("Audio Devices bit-depth hint has no audio backend")},
         {F::AudioAutoMatch, QStringLiteral("audio-auto-match"),
@@ -182,7 +185,12 @@ QString key(UnbuiltFeature feature)
 
 bool isBuilt(UnbuiltFeature feature)
 {
-    if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::ContainerFilterDisplay) { return true; }
+    // CW transmit (R-CW-46): CWX is built, as CAT is; its entry stays so the
+    // gate sites and the surface checks keep their names.
+    if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::Cwx || feature == UnbuiltFeature::ContainerFilterDisplay
+        || feature == UnbuiltFeature::ContainerClickBox) {
+        return true;
+    }
     return builtForTest().contains(static_cast<int>(feature));
 }
 

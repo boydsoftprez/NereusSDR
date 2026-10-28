@@ -1,0 +1,29 @@
+{
+  "description": "Roundtable id = RFC 4648 base32 (standard alphabet, lowercased, no padding) of SHA-256(\"NereusSDR roundtable id v1\\n\" || SPKI DER), first 26 characters (Roundtable document section 4.1). digestHex is the SHA-256. rendezvousId is the same key's rendezvous id (rendezvous document section 4.2), given to show the two services never share an id for one key.",
+  "prefixHex": "4e657265757353445220726f756e647461626c652069642076310a",
+  "rendezvousPrefixHex": "4e65726575735344522072656e64657a766f75732069642076310a",
+  "cases": [
+    {
+      "name": "a",
+      "fixed": "A fixed test key for these vectors only. It was generated to produce them and is used by nothing else: no Core, station, server or website key holds it. The private scalar is recorded so a runner can sign with it in its own tests; it protects nothing.",
+      "privateKeyHex": "1a358386ef51c0b52c6327a4d2093cfd93d6cef374d75bd70234041a250e52aa",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d030107034200046319596392ae42b0a05704381eb34dd90f1ae303a353637e9e456004d501465aae91121fe38a62fb8f600a4efa3d2d66f29492e58d2a42eb088cc753a93abedf",
+      "digestHex": "265fcbf9fd1f87b73f0afad9ab50ab3ab25e591c39b050164268d647fcb3ac30",
+      "id": "ezp4x6p5d6d3opyk7lm2wuflhk",
+      "rendezvousDigestHex": "04e5b8a9c8e52ca6723a5eb5ee0c9804e030d3e53b3d2cfe82548fef7d069048",
+      "rendezvousId": "ats3rkoi4uwkm4r2l2264deyat"
+    },
+    {
+      "name": "b",
+      "fixed": "A fixed test key for these vectors only. It was generated to produce them and is used by nothing else: no Core, station, server or website key holds it. The private scalar is recorded so a runner can sign with it in its own tests; it protects nothing.",
+      "privateKeyHex": "be6c08187da719489097c36d19aafd43f8fc0fc1cc35ec6000ac71fdf051d8b6",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExujAbZM4S_MV2ziaagK_DQ86d4kC7wgl8OWJGcbZGyXumLZU5HKYtNodTmsoUPQAJU0W1V9-vP95furK5hKthQ",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004c6e8c06d93384bf315db389a6a02bf0d0f3a778902ef0825f0e58919c6d91b25ee98b654e47298b4da1d4e6b2850f400254d16d55f7ebcff797eeacae612ad85",
+      "digestHex": "2ca87d879182cb72b065e085390d3b3810ee09f20d1b761b553c9673e1eab6a5",
+      "id": "fsuh3b4rqlfxfmdf4cctsdj3ha",
+      "rendezvousDigestHex": "a5f108740b87377622781cad1643e0e133939138f260bc29d014f890be0c364a",
+      "rendezvousId": "uxyqq5alq43xmitydswrmq7a4e"
+    }
+  ]
+}

@@ -39,6 +39,9 @@
 //                 Anthropic Claude Code.
 //   2026-09-23 - R-R3-21: applyPersistedSettings() for startup.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - persistedHistoryDurationMs(): the saved history duration
+//                 a history graph without its own length follows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -128,6 +131,9 @@ public:
     // The same for one meter item (unit, decimal, history duration), for an
     // item added while the window runs.
     static void applyPersistedSettingsTo(MeterItem* item);
+    // The saved history duration (ms) a history graph without its own
+    // length follows.
+    static int persistedHistoryDurationMs();
     // The saved meter update interval to the meter poller (the Core's value
     // in a remote window, applied again when its settings arrive).
     static void applyPersistedMeterInterval(RadioModel* model);

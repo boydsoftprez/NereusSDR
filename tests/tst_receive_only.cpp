@@ -57,6 +57,9 @@
 //   2026-10-06: R-SPK-21: Setup > Audio > TX Input is now Microphone.
 //               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-26: CW transmit, the TX applet's CW layer stacks with the
+//               receive-only lock. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -560,6 +563,41 @@ private slots:
         }
         QCOMPARE(mox->toolTip(), moxTip);
         QCOMPARE(tune->toolTip(), tuneTip);
+    }
+
+    // CW transmit (R-CW-42): the CW layer and the receive-only lock stack.
+    // VOX is greyed by both; leaving CW and clearing receive-only, in
+    // either order, gives the button back its own state.
+    void txAppletCwLayerAndReceiveOnlyGiveVoxBack()
+    {
+        Rig rig;
+        TxApplet applet(rig.model.get());
+        QPushButton* vox = applet.voxButton();
+        QVERIFY(vox && vox->isEnabled());
+        const QString voxTip = vox->toolTip();
+        SliceModel* slice = rig.model->activeSlice();
+
+        slice->setDspMode(DSPMode::CWU);
+        QVERIFY(!vox->isEnabled());
+        QCOMPARE(vox->toolTip(), TxApplet::cwNotUsedReason());
+        rig.model->setRxOnly(true);
+        QCOMPARE(vox->toolTip(), rig.model->rxOnlyReason());
+        slice->setDspMode(DSPMode::USB);  // leave CW under receive-only
+        QVERIFY(!vox->isEnabled());
+        QCOMPARE(vox->toolTip(), rig.model->rxOnlyReason());
+        rig.model->setRxOnly(false);
+        QVERIFY(vox->isEnabled());
+        QCOMPARE(vox->toolTip(), voxTip);
+
+        rig.model->setRxOnly(true);
+        slice->setDspMode(DSPMode::CWL);  // enter CW under receive-only
+        rig.model->setRxOnly(false);
+        QVERIFY(!vox->isEnabled());
+        QCOMPARE(vox->toolTip(), TxApplet::cwNotUsedReason());
+        QCOMPARE(vox->accessibleDescription(), TxApplet::cwNotUsedReason());
+        slice->setDspMode(DSPMode::LSB);
+        QVERIFY(vox->isEnabled());
+        QCOMPARE(vox->toolTip(), voxTip);
     }
 
     // Thetis console.cs:15318-15321 [v2.10.3.15] leaves chkMOX.Enabled alone

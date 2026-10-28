@@ -47,6 +47,14 @@ import os
 /// inside the share the Core's capabilities carry. A new budget generation
 /// alone never asks again. A display the Core refused and the band then
 /// drops is unsubscribed, so it stops counting against the others.
+///
+/// Each pan the device shows has its own subscriber (R-IOS-59, spec section
+/// 6.3): its wish offered to the one ``SharedDisplayAllocator`` every pan
+/// shares, and an increase only into the headroom the other pans leave.
+/// Each new endpoint's ID comes from that allocator's one counter for the
+/// media connection (``SharedDisplayAllocator/takeEndpointId()``), never a
+/// range of the pan's own: the Core refuses a new ID at or below the highest
+/// it has seen. A closed pan's subscriber lets its endpoint go (``close()``).
 @MainActor
 final class BandSubscriber: ObservableObject {
     /// How the subscriber reaches the Core; the app's are its media client's.
@@ -98,8 +106,21 @@ final class BandSubscriber: ObservableObject {
     /// what the band asks for because the Core is shared or busy (D54): the
     /// Sharing chip's number. Nil while the band has what it asks for.
     @Published private(set) var sharingFps: Int?
-    /// The quality the phone's half of the budget settled on.
-    private(set) var allocator = DisplayQualityAllocator()
+    /// The pan this subscriber asks for.
+    let pan: PanIdentity
+    /// Every pan's half of the budget: the quality this pan's share settled on.
+    let shared: SharedDisplayAllocator
+    /// The Core refused this pan's display and holds nothing for it: the
+    /// Core's words as it sent them (a second pan's subscribe can be
+    /// refused, for its receiver's window type, coverage, the budget or
+    /// the endpoint limit); nil while the Core holds it or nothing was asked.
+    @Published private(set) var displayRefusal: String?
+    /// The pan closed: it asks for nothing and lets its endpoint go.
+    private(set) var closed = false
+    /// Told when ``session`` changes, so the other pans follow Pan 1's.
+    var sessionChanged: ((SessionPolicy.Request) -> Void)?
+    /// Told when the transmit holder changes, so the other pans ask again too.
+    var askedAgain: (() -> Void)?
     /// What the long session allows the band (R-IOS-22, R-IOS-23): its data
     /// mode's frame rate and detail, or no display at all while the phone
     /// is locked with Sound only on, or on Audio only. The band never asks
@@ -111,6 +132,7 @@ final class BandSubscriber: ObservableObject {
             guard session != oldValue else {
                 return
             }
+            sessionChanged?(session)
             if session.subscribes && !oldValue.subscribes {
                 beginAsking()
             } else {
@@ -146,7 +168,10 @@ final class BandSubscriber: ObservableObject {
     }
 
     private var mediaUp = false
-    private var endpointId: UInt32 = 1
+    /// The endpoint the band subscribes on; nil until the next subscribe
+    /// takes a new ID from the shared counter (after a release, or on a new
+    /// media connection).
+    private var endpointId: UInt32?
     private var revision: UInt32 = 0
     /// What the Core has confirmed it holds, and its charge.
     private var accepted: Holding = .none
@@ -182,8 +207,16 @@ final class BandSubscriber: ObservableObject {
     /// the others until it is asked for again or unsubscribed.
     private var refusedEndpoint: UInt32?
 
+    /// The budget and the wish last offered for this pan, so a change of
+    /// either lets a refused request go again.
+    private var offeredBudget: DisplayQualityAllocator.Budget??
+    private var offeredIntent: DisplayQualityAllocator.Intent?
+
     init(band: BandModel, slices: BandSlicesModel, mirror: MirrorStore, settings: SettingsProxyClient,
-         operations: Operations, deadline: Duration = BandSubscriber.acknowledgementDeadline) {
+         operations: Operations, deadline: Duration = BandSubscriber.acknowledgementDeadline,
+         pan: PanIdentity = .first, shared: SharedDisplayAllocator? = nil) {
+        self.pan = pan
+        self.shared = shared ?? SharedDisplayAllocator()
         self.band = band
         self.slices = slices
         self.mirror = mirror
@@ -193,6 +226,8 @@ final class BandSubscriber: ObservableObject {
         band.$requestedPixels.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$requestedView.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$settings.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
+        // The Core's scale for the band moves the quantisation window as the pan's own does.
+        band.$sharedScale.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$coarseCoreLevels.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$extendedSpanCeilingHz.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$transmit.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
@@ -205,6 +240,33 @@ final class BandSubscriber: ObservableObject {
         slices.$activeSliceId.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         mirror.$capabilities.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         settings.$values.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
+        // Another pan's wish, or the operator's focus, moved this pan's share.
+        self.shared.observe(pan: panId) { [weak self] in self?.queueReplan() }
+    }
+
+    /// This pan's ID in the shared allocator's pan order: its store key.
+    var panId: String { pan.storeKey }
+
+    /// The pan closed: its wish and claim leave the shared budget, and its
+    /// endpoint is let go as the order allows.
+    func close() {
+        guard !closed else {
+            return
+        }
+        closed = true
+        settling?.cancel()
+        settling = nil
+        shared.remove(pan: panId)
+        queueReplan()
+    }
+
+    /// The Core holds nothing for this pan and nothing is waiting: a closed
+    /// pan's subscriber can go.
+    var holdsNothing: Bool {
+        guard case .none = requested, case .none = accepted else {
+            return false
+        }
+        return outstanding.isEmpty && refusedEndpoint == nil
     }
 
     var binDiagnostic: (DisplayBinDiagnostic) -> Void = DisplayBinDiagnostic.log
@@ -223,6 +285,8 @@ final class BandSubscriber: ObservableObject {
             }
         case .mediaState(.closed), .mediaState(.failed):
             mediaUp = false
+            // The next media connection's IDs start again, for every pan.
+            shared.restartEndpointIds()
             startOver()
         case .allocationResult(let result):
             settle(result)
@@ -234,6 +298,7 @@ final class BandSubscriber: ObservableObject {
             }
             // Without the budget wire the Core refused the request outright.
             refused = Self.normalised(held)
+            setRefusal(rejection.reason)
             requested = .none
             accepted = .none
             acceptedPanKey = nil
@@ -286,6 +351,13 @@ final class BandSubscriber: ObservableObject {
     /// Settles what to ask for now and sends what the order allows.
     func replan() {
         noteSharing()
+        if closed {
+            // A closed pan asks for nothing; its endpoint goes.
+            if mediaUp {
+                send(.none, charge: .init(), gates: gates, budget: budget)
+            }
+            return
+        }
         guard let active = slices.active, let sampleRate = active.sampleRateHz, sampleRate > 0 else {
             plannedFftSize = nil
             plannedSampleRateHz = nil
@@ -312,26 +384,31 @@ final class BandSubscriber: ObservableObject {
         if band.gates != gates {
             band.gates = gates
         }
-        band.endpointId = endpointId
-        if allocator.budget != budget {
-            allocator.update(budget: budget)
+        if let endpointId {
+            // Before the next subscribe takes its ID the band keeps what it has.
+            band.endpointId = endpointId
+        }
+        if offeredBudget != .some(budget) {
+            offeredBudget = .some(budget)
             refused = nil
         }
+        shared.update(budget: budget)
         let wish = request(sliceId: active.id, view: view, planned: planned, gates: gates)
-        let intent = DisplayQualityAllocator.Intent(panId: Self.panId, pixels: wish.pixels, fps: wish.fps,
+        let intent = DisplayQualityAllocator.Intent(panId: panId, pixels: wish.pixels, fps: wish.fps,
                                                     includesWidePlane: wish.wideSpanFactor > 1,
                                                     waterfallPeriodMs: min(max(band.settings.waterfallPeriodMs,
                                                         BandDisplaySettings.waterfallPeriodRange.lowerBound),
                                                         BandDisplaySettings.waterfallPeriodRange.upperBound),
                                                     active: true, extras: wish.extras)
-        if allocator.intents != [intent] {
-            allocator.update(intents: [intent])
+        if offeredIntent != intent {
+            offeredIntent = intent
             refused = nil
         }
+        shared.update(intent: intent, forPan: panId)
         noteWish(intent)
         if asking, gates.displayBudget, budget != nil,
            case .success(let whole) = DisplayQualityAllocator.allocate(budget: nil, intents: [intent]),
-           let wanted = whole.quality(forPan: Self.panId) {
+           let wanted = whole.quality(forPan: panId) {
             // Asking: the band as wanted; the Core's answer ends the ask.
             if band.paused {
                 band.paused = false
@@ -341,8 +418,8 @@ final class BandSubscriber: ObservableObject {
             send(.endpoint(target), charge: wanted.charge, gates: gates, budget: budget, asking: true)
             return
         }
-        guard let quality = allocator.allocation.quality(forPan: Self.panId) else {
-            Self.logger.info("The band's display could not be sized: \(String(describing: self.allocator.lastProblem), privacy: .public)")
+        guard let quality = shared.quality(forPan: panId) else {
+            Self.logger.info("The band's display could not be sized: \(String(describing: self.shared.lastProblem), privacy: .public)")
             return
         }
         if band.paused != quality.suspended {
@@ -360,6 +437,7 @@ final class BandSubscriber: ObservableObject {
     /// it wants, since the Core shares its display differently now.
     func transmitHolderChanged() {
         beginAsking()
+        askedAgain?()
     }
 
     private func beginAsking() {
@@ -512,7 +590,8 @@ final class BandSubscriber: ObservableObject {
         // Waterfall Detector and Averaging). With the display extras the
         // Core times the averaging from the phone's settings; an older
         // Core gets both planes unaveraged, as it cannot time them.
-        let display = band.settings
+        // The band's scale as drawn: the Core's for the band when it keeps it.
+        let display = band.scaledSettings
         let trace = DisplaySubscription.Plane(detector: display.spectrumDetector.rawValue,
                                               averageMode: gates.displayExtras ? display.spectrumAveraging.rawValue
                                                                                : Self.noAveraging,
@@ -655,13 +734,14 @@ final class BandSubscriber: ObservableObject {
         }
         if !reduction && byResult {
             // An increase waits for every result, and goes only into
-            // headroom the Core has confirmed. The band is the phone's one
-            // pan, so the others hold nothing.
+            // headroom the Core has confirmed: the budget less what the
+            // device's other pans hold or have asked for.
             if waiting {
                 return
             }
-            if !asking, let budget, charge.applicationBytesPerSecond > budget.applicationBytesPerSecond
-                || charge.spectrumSampleUnitsPerSecond > budget.spectrumSampleUnitsPerSecond {
+            if !asking, budget != nil, let room = shared.headroom(for: ObjectIdentifier(self)),
+               charge.applicationBytesPerSecond > room.applicationBytesPerSecond
+                || charge.spectrumSampleUnitsPerSecond > room.spectrumSampleUnitsPerSecond {
                 return
             }
         }
@@ -672,8 +752,22 @@ final class BandSubscriber: ObservableObject {
                 return
             }
             requested = .none
-            release(endpointId, revision: held.revision, byResult: byResult)
+            release(held.endpointId, revision: held.revision, byResult: byResult)
         case .endpoint(var subscription):
+            if endpointId == nil {
+                // A new endpoint: the next ID on the media connection,
+                // whichever pan takes it (src/gui/RemoteMediaController.cpp:5785;
+                // the Core's high-water rule, src/core/session/media/DaemonMediaController.cpp:3797-3800).
+                guard let next = shared.takeEndpointId() else {
+                    Self.logger.warning("Every display endpoint ID on this media connection is used")
+                    return
+                }
+                endpointId = next
+            }
+            guard let endpointId else {
+                return
+            }
+            band.endpointId = endpointId
             if refusedEndpoint == endpointId {
                 // Asking for the endpoint again replaces the refused request.
                 refusedEndpoint = nil
@@ -705,10 +799,11 @@ final class BandSubscriber: ObservableObject {
     }
 
     /// Unsubscribes endpoint `id`, whose last revision was `revision`; a
-    /// released endpoint ID is never used again on this connection.
+    /// released endpoint ID is never used again on this connection: the
+    /// next subscribe takes a new one.
     private func release(_ id: UInt32, revision held: UInt32, byResult: Bool) {
-        endpointId &+= 1
-        band.endpointId = endpointId
+        endpointId = nil
+        band.endpointId = nil
         var next = held &+ 1
         if next == 0 {
             next = 1
@@ -730,9 +825,11 @@ final class BandSubscriber: ObservableObject {
             accepted = operation.holding
             acceptedPanKey = operation.panKey
             acceptedCharge = operation.charge
+            noteClaim()
             return
         }
         outstanding.append(operation)
+        noteClaim()
         deadlineTask?.cancel()
         let revision = operation.revision
         deadlineTask = Task { @MainActor [weak self, deadline] in
@@ -770,7 +867,7 @@ final class BandSubscriber: ObservableObject {
             return
         }
         let operation = outstanding.remove(at: index)
-        allocator.note(result)
+        shared.note(result)
         if operation.ask {
             // The Core has answered the ask: it ends, and a refusal is
             // answered by planning inside the share.
@@ -780,6 +877,9 @@ final class BandSubscriber: ObservableObject {
             accepted = operation.holding
             acceptedPanKey = operation.panKey
             acceptedCharge = operation.charge
+            if case .endpoint = operation.holding {
+                setRefusal(nil)
+            }
         } else {
             if case .endpoint(let sent) = operation.holding {
                 refused = Self.normalised(sent)
@@ -795,6 +895,8 @@ final class BandSubscriber: ObservableObject {
                 acceptedCharge = .init()
                 if case .endpoint = operation.holding {
                     refusedEndpoint = operation.endpointId
+                    // Nothing held: the pan says why, in the Core's words.
+                    setRefusal(result.reason)
                 }
             }
             // The newest request stands only if it is still waiting.
@@ -807,10 +909,12 @@ final class BandSubscriber: ObservableObject {
             deadlineTask?.cancel()
             deadlineTask = nil
         }
+        noteClaim()
         queueReplan()
     }
 
-    /// A new media connection, or none: nothing is held, and IDs start again.
+    /// A new media connection, or none: nothing is held, and the next
+    /// subscribe takes a new ID.
     private func startOver() {
         lastBinPlan = nil
         lastActive = nil
@@ -829,10 +933,44 @@ final class BandSubscriber: ObservableObject {
         requested = .none
         refused = nil
         stalled = false
-        endpointId = 1
+        if let held = endpointId, band.endpointId == held {
+            // The next connection's IDs start again at 1, so the ID this pan
+            // held may soon be another pan's: the band lets it go and draws
+            // no frame for it. It keeps the picture it last had (the frame
+            // and the waterfall stay) until its own next subscribe.
+            band.endpointId = nil
+        }
+        endpointId = nil
         revision = 0
-        band.endpointId = endpointId
+        setRefusal(nil)
+        noteClaim()
         noteSharing()
+    }
+
+    /// What this pan holds at the Core or has asked it for, for the other
+    /// pans' headroom: the larger of each figure over what is held and
+    /// every operation still waiting.
+    private func noteClaim() {
+        var claim = acceptedCharge
+        for operation in outstanding {
+            claim.applicationBytesPerSecond = max(claim.applicationBytesPerSecond,
+                                                  operation.charge.applicationBytesPerSecond)
+            claim.spectrumSampleUnitsPerSecond = max(claim.spectrumSampleUnitsPerSecond,
+                                                     operation.charge.spectrumSampleUnitsPerSecond)
+            claim.messagesPerSecond = max(claim.messagesPerSecond, operation.charge.messagesPerSecond)
+        }
+        // The claim is this subscriber's own: a closed pan's subscriber and
+        // the same pan reopened never overwrite each other's.
+        shared.claim(closed && holdsNothing ? .init() : claim, by: ObjectIdentifier(self))
+    }
+
+    /// The Core's words for a refused display, or nil to clear them; a
+    /// refusal without words gets the phone's words for any refused request.
+    private func setRefusal(_ reason: String?) {
+        let next = reason.map { $0.isEmpty ? BandSlicesModel.refusedText : $0 }
+        if displayRefusal != next {
+            displayRefusal = next
+        }
     }
 
     /// The Sharing chip's number: the frame rate the Core holds, while it is

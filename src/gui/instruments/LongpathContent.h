@@ -26,6 +26,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a new frequency instrument
+//                 stores "tx" (the transmit slice); a record saved before
+//                 the pick existed loads as "first", the first other slice
+//                 it showed then (D5). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - kCompactKey and kLabelKey; declared editor properties.
@@ -36,6 +41,14 @@
 //   2026-10-24 - Sources::watchSliceAccess: a remote window's slice
 //                 followers rebind when the Core's slice access changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - kSecondSliceKey: the frequency types' second line picks
+//                 its slice (transmit slice by default, none, or Slice A
+//                 to D). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - followAboveS9Frequency: the VHF S9 rule of an entry's
+//                 slice, for content outside this file (the added S-meter
+//                 dial). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -47,6 +60,7 @@
 #include <functional>
 
 class QObject;
+class QWidget;
 
 namespace NereusSDR {
 
@@ -66,13 +80,19 @@ inline constexpr auto kFilterType          = "longpath.filter";
 
 // Entry config keys. "binding" / "secondaryBinding" are MeterBinding ids;
 // "direction" ("rx" or "tx") picks the needle default when "binding" is
-// absent; "form" ("numberOnly", "bandStrip", "flatArc") is the frequency
-// form; "compact" (bool, default true) is the bar's footerless form;
-// "label" overrides the filter pane's slice label. Frequency (Custom)
-// adds "fontSize" (px), "fitWidth", "fontColor" (#rrggbb), "center",
-// "showOwnSlice" and "showOtherSlice". Each type declares the ones the
-// Container Settings property editor offers
-// (ContentDescriptor::properties).
+// absent (a saved entry's "direction" becomes "binding" on load,
+// migrateEntryOnLoad); "form" ("numberOnly", "bandStrip", "flatArc") is
+// the frequency form; "compact" (bool, default true) is the bar's
+// footerless form; "label" overrides the filter pane's slice label.
+// Frequency (Custom) adds "fontSize" (px), "fitWidth", "fontColor"
+// (#rrggbb), "center", "showOwnSlice" and "showOtherSlice". Both
+// frequency types take "secondSlice", the slice the second line shows:
+// "tx" (kSecondSliceTx, what a new instrument gets), the transmit slice;
+// "first" (kSecondSliceFirstOther), the first other open slice, which a
+// record saved before the pick existed gets on load (migrateEntryOnLoad);
+// "none", no second line; "A" to "D", that slice. Absent or null also
+// means the transmit slice. Each type declares the ones the Container Settings property
+// editor offers (ContentDescriptor::properties).
 inline constexpr auto kBindingKey   = "binding";
 inline constexpr auto kSecondaryKey = "secondaryBinding";
 inline constexpr auto kDirectionKey = "direction";
@@ -85,6 +105,9 @@ inline constexpr auto kFontColorKey = "fontColor";
 inline constexpr auto kCenterKey    = "center";
 inline constexpr auto kShowOwnKey   = "showOwnSlice";
 inline constexpr auto kShowOtherKey = "showOtherSlice";
+inline constexpr auto kSecondSliceKey = "secondSlice";
+inline constexpr auto kSecondSliceTx = "tx";
+inline constexpr auto kSecondSliceFirstOther = "first";
 
 struct Sources {
     MeterPoller* poller = nullptr;
@@ -103,6 +126,15 @@ struct Sources {
 
 // Registers the types. Call only with the workspace preview on.
 void registerAll(ContainerContentRegistry& registry, const Sources& sources);
+
+// The VHF S9 rule for the slice behind `context`: calls `changed` with
+// isAboveS9Frequency (gui/meters/AboveS9Frequency.h) of that slice's
+// frequency, false with no slice, now and whenever the slice behind the
+// context or its frequency changes, as a needle's rule follows its slice.
+// `preview` (an inert preview) reads the slice once and follows nothing.
+// The follower is a child of `owner`.
+void followAboveS9Frequency(QWidget* owner, const Sources& sources, const QJsonObject& context,
+                            bool preview, const std::function<void(bool above)>& changed);
 
 // The primary binding an entry asks for (config "binding", else the
 // type's default: SignalPeak for an RX needle, TxPower for a TX needle,

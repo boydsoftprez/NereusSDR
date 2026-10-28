@@ -18,6 +18,8 @@
 //   2026-09-28 - Share the per-SKU Ext 2 relay tooltip with the desktop and
 //                 Setup description. J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via OpenAI Codex.
+//   2026-10-26 - hasBpf2GndOnTx, "Gnd BPF2 on Tx" (J.J. Boyd KG4VCF,
+//                 AI-assisted: Claude Code).
 // =================================================================
 
 //=================================================================
@@ -89,6 +91,7 @@ struct SkuUiProfile {
     bool                    hasExt2OutOnTx  {false};
     bool                    hasRxOutOnTx    {false};
     bool                    hasRxBypassUi   {false};  // chkDisableRXOut
+    bool                    hasBpf2GndOnTx  {false};  // chkBPF2Gnd, "Gnd BPF2 on Tx"
     bool                    hasAntennaTab   {true};   // false on HL2
     std::array<QString, 3>  rxOnlyLabels    {QStringLiteral("RX1"),
                                              QStringLiteral("RX2"),

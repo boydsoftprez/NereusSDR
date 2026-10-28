@@ -58,6 +58,12 @@
 //                 level, AM carrier and DEXP follow the transmit settings
 //                 gate (setTransmitSettingsPermitted), not the keying gate.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the CW page replaces its placeholder
+//               (R-CW-41, R-CW-47): Delay, Speed, Sidetone and its level,
+//               the L/R pan, Break-in, Iambic, Pitch, the KEY, TX and
+//               keyer lamps and the keyer's state line, in AetherSDR's CW
+//               page layout (PhoneCwApplet.cpp:440-724 [@1e0718ad]).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-25 - R-R3-49 (parity Task 3): the mic profile combo follows
 //                 setTxProfilePermitted; in a remote window it picks the
 //                 Core's profiles. J.J. Boyd (KG4VCF), AI-assisted via
@@ -150,6 +156,10 @@
 #include "gui/StyleConstants.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/widgets/TriBtn.h"
+#include "core/CwTypes.h"
+#include "models/CwKeyerController.h"
+#include "models/SliceModel.h"
 
 #include <QButtonGroup>
 #include <QComboBox>
@@ -175,7 +185,14 @@ static constexpr int kLeftColW = 70;
 static constexpr int kValueW   = 36;
 // Issue #289: the visual DEXP marker is an operator-local UI preference.
 static constexpr auto kDexpMarkerKey = "PhoneCw/DexpThresholdMarkerDb";
-// kGap (4) removed — only used by the CW page, now a placeholder (Phase 3M-2).
+// The CW page's gap between a label or button and its slider.
+// From AetherSDR PhoneCwApplet.cpp:465 [@1e0718ad]
+static constexpr int kGap      = 4;
+// The CW page's pitch box and lamp widths, and its row height.
+// From AetherSDR PhoneCwApplet.cpp:675 [@1e0718ad] (m_pitchEdit 48 px)
+static constexpr int kCwPitchValueW = 48;
+static constexpr int kCwLampW       = 52;   // the approved mockup's lamps
+static constexpr int kCwRowH        = 22;   // AetherSDR's 22 px rows
 
 
 // Phone/CW-specific button background — bluer (#1a3a5a) than the
@@ -226,6 +243,7 @@ PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent)
         setTransmitPermitted(false);
         setTransmitSettingsPermitted(false);
         setTxProfilePermitted(false);
+        setCwSettingsPermitted(false);
     }
 }
 
@@ -645,29 +663,478 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     m_monSlider->setEnabled(false);   // #9 slider
 }
 
-// ── CW page — placeholder until Phase 3M-2 ───────────────────────────────────
-// Per docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 7.
-// CW TX (speed, pitch, sidetone, break-in, iambic, firmware keyer) is deferred
-// to Phase 3M-2. The original 9-control NYI page has been replaced with a
-// single placeholder message so users aren't left clicking dead controls.
+// ── CW page (R-CW-41) ────────────────────────────────────────────────────────
+// AetherSDR's CW page (PhoneCwApplet.cpp:440-724 [@1e0718ad]): margins
+// 4,2,4,6, spacing 4, a 70 px label column and 36 px values, with no ALC
+// gauge. Delay, Speed, Sidetone with its level, the L/R pan, then Break-in,
+// Iambic and Pitch with its arrows; under them the KEY, TX and keyer lamps
+// and the keyer's state line, as the approved mockup draws them.
+
+namespace {
+
+// Words the CW page shows (R-CW-47). Plain English, no internal names.
+constexpr auto kCwDelayTip = "Break-in delay: how long the radio stays in transmit after the last element";
+constexpr auto kCwDelayOffReason =
+    "Break-in is off: MOX keys the radio, so there is no break-in delay.";
+constexpr auto kCwDelayQskReason =
+    "QSK returns to receive between elements, so there is no break-in delay.";
+constexpr auto kCwSpeedTip = "Keyer speed in words per minute";
+constexpr auto kCwSidetoneTip = "Sidetone: hear your keying from the radio and the computer";
+constexpr auto kCwSidetoneLevelTip = "Sidetone level, the same level as MON";
+constexpr auto kCwSidetoneLevelOffReason = "Turn Sidetone on to set its level.";
+constexpr auto kCwPanReason = "The sidetone plays centered, in both ears.";
+constexpr auto kCwIambicTip = "Iambic: the radio's keyer times dots and dashes from paddles. "
+                              "Off: a straight key.";
+constexpr auto kCwPitchTip = "CW pitch: the tone you hear and where the receiver listens";
+constexpr auto kCwKeyLampTip = "Lit while the key or paddle is pressed";
+constexpr auto kCwTxLampTip = "Lit while the radio transmits";
+constexpr auto kCwRemoteKeyLampReason =
+    "The key lamp lights in the Core's own window.";
+constexpr auto kCwRemoteStateLine =
+    "The keyer's state shows in the Core's own window.";
+
+QString cwLampStyle(const char* bg, const char* fg, const char* border)
+{
+    return QStringLiteral(
+        "QLabel { font-size: 10px; font-weight: bold; background: %1;"
+        "  border: 1px solid %2; border-radius: 3px; color: %3; }")
+        .arg(QLatin1String(bg), QLatin1String(border), QLatin1String(fg));
+}
+
+void setCwLamp(QLabel* lamp, bool lit, const char* bg, const char* fg, const char* border)
+{
+    if (!lamp) { return; }
+    if (lamp->property("lit").isValid() && lamp->property("lit").toBool() == lit) {
+        return;
+    }
+    lamp->setProperty("lit", lit);
+    lamp->setStyleSheet(lit ? cwLampStyle(bg, fg, border)
+                            : cwLampStyle(NereusSDR::Style::kInsetBg,
+                                          NereusSDR::Style::kTextSecondary,
+                                          NereusSDR::Style::kInsetBorder));
+}
+
+} // namespace
 
 void PhoneCwApplet::buildCwPage(QWidget* page)
 {
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 24, 8, 24);
-    layout->setAlignment(Qt::AlignCenter);
+    // From AetherSDR PhoneCwApplet.cpp:443-445 [@1e0718ad]
+    auto* vbox = new QVBoxLayout(page);
+    vbox->setContentsMargins(4, 2, 4, 6);
+    vbox->setSpacing(4);
 
-    auto* label = new QLabel(QStringLiteral(
-        "NereusSDR does not send CW in this version.\n\n"
-        "Speed, pitch, sidetone, break-in and keyer\n"
-        "controls are not available."
-    ), page);
-    label->setAlignment(Qt::AlignCenter);
-    label->setWordWrap(true);
-    label->setStyleSheet(QStringLiteral(
-        "QLabel { color: %1; font-size: 11px; }"
-    ).arg(NereusSDR::Style::kTextSecondary));
-    layout->addWidget(label);
+    const QString labelStyle = QStringLiteral("QLabel { color: %1; font-size: 10px; }")
+                                   .arg(NereusSDR::Style::kTextSecondary);
+    const auto sliderRow = [&](QWidget* lead, QSlider*& slider, QLabel*& value,
+                               const char* name, int lo, int hi) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        lead->setFixedWidth(kLeftColW);
+        row->addWidget(lead);
+        row->addSpacing(kGap);
+        slider = new QSlider(Qt::Horizontal, page);
+        slider->setObjectName(QLatin1String(name));
+        slider->setRange(lo, hi);
+        slider->setStyleSheet(NereusSDR::Style::sliderHStyle());
+        row->addWidget(slider, 1);
+        value = new QLabel(page);
+        value->setStyleSheet(NereusSDR::Style::insetValueStyle());
+        value->setFixedWidth(kValueW);
+        value->setAlignment(Qt::AlignCenter);
+        row->addWidget(value);
+        vbox->addLayout(row);
+    };
+    const auto label = [&](const QString& text) {
+        auto* lbl = new QLabel(text, page);
+        lbl->setStyleSheet(labelStyle);
+        return lbl;
+    };
+
+    // ── Delay: break-in delay, 0 to 1000 ms (R-CW-01) ────────────────────────
+    sliderRow(label(QStringLiteral("Delay:")), m_cwDelaySlider, m_cwDelayValue,
+              "cwDelaySlider", TransmitModel::kCwBreakInDelayMsMin,
+              TransmitModel::kCwBreakInDelayMsMax);
+    m_cwDelaySlider->setSingleStep(10);
+    m_cwDelaySlider->setPageStep(100);
+    m_cwDelaySlider->setAccessibleName(QStringLiteral("CW break-in delay"));
+
+    // ── Speed: 1 to 60 WPM (R-CW-41) ─────────────────────────────────────────
+    sliderRow(label(QStringLiteral("Speed:")), m_cwSpeedSlider, m_cwSpeedValue,
+              "cwSpeedSlider", TransmitModel::kCwKeyerSpeedMin,
+              TransmitModel::kCwKeyerSpeedMax);
+    m_cwSpeedSlider->setAccessibleName(QStringLiteral("CW speed"));
+
+    // ── Sidetone button and its level (the monitor level, C9) ────────────────
+    m_cwSidetoneBtn = new QPushButton(QStringLiteral("Sidetone"), page);
+    m_cwSidetoneBtn->setObjectName(QStringLiteral("cwSidetoneButton"));
+    m_cwSidetoneBtn->setCheckable(true);
+    m_cwSidetoneBtn->setFixedHeight(kCwRowH);
+    m_cwSidetoneBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
+    m_cwSidetoneBtn->setAccessibleName(QStringLiteral("CW sidetone"));
+    sliderRow(m_cwSidetoneBtn, m_cwSidetoneSlider, m_cwSidetoneValue,
+              "cwSidetoneSlider", 0, 100);
+    m_cwSidetoneSlider->setAccessibleName(QStringLiteral("CW sidetone level"));
+
+    // ── L / R pan ─────────────────────────────────────────────────────────────
+    // From AetherSDR PhoneCwApplet.cpp:612-641 [@1e0718ad]: L and R close to
+    // the slider's ends. No NereusSDR setting holds a sidetone pan, so it is
+    // shown disabled with the reason (the operator's rule: disabled, never
+    // hidden).
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        row->addWidget(label(QStringLiteral("L")));
+        m_cwPanSlider = new QSlider(Qt::Horizontal, page);
+        m_cwPanSlider->setObjectName(QStringLiteral("cwPanSlider"));
+        m_cwPanSlider->setRange(0, 100);
+        m_cwPanSlider->setValue(50);
+        m_cwPanSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
+        m_cwPanSlider->setAccessibleName(QStringLiteral("CW sidetone pan"));
+        m_cwPanSlider->setEnabled(false);
+        m_cwPanSlider->setToolTip(QLatin1String(kCwPanReason));
+        m_cwPanSlider->setAccessibleDescription(QLatin1String(kCwPanReason));
+        row->addWidget(m_cwPanSlider, 1);
+        row->addWidget(label(QStringLiteral("R")));
+        vbox->addLayout(row);
+    }
+
+    // ── Break-in, Iambic, Pitch ──────────────────────────────────────────────
+    // From AetherSDR PhoneCwApplet.cpp:643-724 [@1e0718ad]: the two buttons,
+    // a stretch, then "Pitch:" with its arrows around a 48 px value.
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        m_cwBreakInBtn = new QPushButton(QStringLiteral("Semi BK"), page);
+        m_cwBreakInBtn->setObjectName(QStringLiteral("cwBreakInButton"));
+        m_cwBreakInBtn->setCheckable(true);
+        m_cwBreakInBtn->setFixedHeight(kCwRowH);
+        m_cwBreakInBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_cwBreakInBtn->setAccessibleName(QStringLiteral("CW break-in"));
+        row->addWidget(m_cwBreakInBtn);
+
+        m_cwIambicBtn = new QPushButton(QStringLiteral("Iambic"), page);
+        m_cwIambicBtn->setObjectName(QStringLiteral("cwIambicButton"));
+        m_cwIambicBtn->setCheckable(true);
+        m_cwIambicBtn->setFixedHeight(kCwRowH);
+        m_cwIambicBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_cwIambicBtn->setAccessibleName(QStringLiteral("Iambic keyer"));
+        row->addWidget(m_cwIambicBtn);
+
+        row->addStretch();
+        row->addWidget(label(QStringLiteral("Pitch:")));
+        m_cwPitchDown = new TriBtn(TriBtn::Left, page);
+        m_cwPitchDown->setObjectName(QStringLiteral("cwPitchDownButton"));
+        m_cwPitchDown->setAccessibleName(QStringLiteral("CW pitch down"));
+        row->addWidget(m_cwPitchDown);
+        m_cwPitchValue = new QLabel(page);
+        m_cwPitchValue->setObjectName(QStringLiteral("cwPitchValue"));
+        m_cwPitchValue->setStyleSheet(NereusSDR::Style::insetValueStyle());
+        m_cwPitchValue->setFixedWidth(kCwPitchValueW);
+        m_cwPitchValue->setAlignment(Qt::AlignCenter);
+        m_cwPitchValue->setAccessibleName(QStringLiteral("CW pitch"));
+        row->addWidget(m_cwPitchValue);
+        m_cwPitchUp = new TriBtn(TriBtn::Right, page);
+        m_cwPitchUp->setObjectName(QStringLiteral("cwPitchUpButton"));
+        m_cwPitchUp->setAccessibleName(QStringLiteral("CW pitch up"));
+        row->addWidget(m_cwPitchUp);
+        vbox->addLayout(row);
+    }
+
+    // ── KEY and TX lamps and the keyer lamp ──────────────────────────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        const auto lamp = [&](const QString& text, const char* name, int width) {
+            auto* l = new QLabel(text, page);
+            l->setObjectName(QLatin1String(name));
+            l->setAlignment(Qt::AlignCenter);
+            l->setFixedHeight(kCwRowH);
+            if (width > 0) { l->setFixedWidth(width); }
+            setCwLamp(l, false, nullptr, nullptr, nullptr);
+            return l;
+        };
+        m_cwKeyLamp = lamp(QStringLiteral("KEY"), "cwKeyLamp", kCwLampW);
+        m_cwKeyLamp->setToolTip(QLatin1String(kCwKeyLampTip));
+        m_cwKeyLamp->setAccessibleName(QStringLiteral("Key"));
+        m_cwTxLamp = lamp(QStringLiteral("TX"), "cwTxLamp", kCwLampW);
+        m_cwTxLamp->setToolTip(QLatin1String(kCwTxLampTip));
+        m_cwTxLamp->setAccessibleName(QStringLiteral("Transmit"));
+        m_cwKeyerLamp = lamp(QStringLiteral("RADIO KEYER"), "cwKeyerLamp", -1);
+        m_cwKeyerLamp->setAccessibleName(QStringLiteral("Keyer"));
+        row->addWidget(m_cwKeyLamp);
+        row->addWidget(m_cwTxLamp);
+        row->addWidget(m_cwKeyerLamp, 1);
+        vbox->addLayout(row);
+    }
+
+    // ── The keyer's state line ───────────────────────────────────────────────
+    m_cwStatusLine = new QLabel(page);
+    m_cwStatusLine->setObjectName(QStringLiteral("cwStatusLine"));
+    m_cwStatusLine->setWordWrap(true);
+    m_cwStatusLine->setStyleSheet(labelStyle);
+    vbox->addWidget(m_cwStatusLine);
+    vbox->addStretch();
+}
+
+// The break-in mode the radio uses. A local window asks the keyer
+// controller (QSK and Semi fall back where the radio cannot do them,
+// R-CW-20, R-CW-22); a remote window shows the Core's setting.
+int PhoneCwApplet::cwEffectiveBreakInMode() const
+{
+    if (!m_model) { return TransmitModel::kCwBreakInModeDefault; }
+    if (m_model->ownsLocalDsp()) {
+        if (const CwKeyerController* keyer = m_model->cwKeyerController()) {
+            return static_cast<int>(keyer->effectiveBreakInMode());
+        }
+    }
+    return m_model->transmitModel().cwBreakInMode();
+}
+
+void PhoneCwApplet::wireCwPage()
+{
+    if (!m_model) { return; }
+    TransmitModel& tx = m_model->transmitModel();
+
+    // Page to model. Each write is skipped while the page shows the model.
+    connect(m_cwDelaySlider, &QSlider::valueChanged, this, [this, &tx](int ms) {
+        m_cwDelayValue->setText(QString::number(ms));
+        if (m_updatingFromModel) { return; }
+        tx.setCwBreakInDelayMs(ms);
+    });
+    connect(m_cwSpeedSlider, &QSlider::valueChanged, this, [this, &tx](int wpm) {
+        m_cwSpeedValue->setText(QString::number(wpm));
+        if (m_updatingFromModel) { return; }
+        tx.setCwKeyerSpeed(wpm);
+    });
+    connect(m_cwSidetoneBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+        if (m_updatingFromModel) { return; }
+        tx.setCwSidetone(on);
+    });
+    connect(m_cwSidetoneSlider, &QSlider::valueChanged, this, [this, &tx](int level) {
+        m_cwSidetoneValue->setText(QString::number(level));
+        if (m_updatingFromModel) { return; }
+        tx.setMonitorVolume(static_cast<float>(level) / 100.0f);
+    });
+    connect(m_cwBreakInBtn, &QPushButton::clicked, this, [this](bool) {
+        if (m_updatingFromModel) { return; }
+        stepCwBreakIn();
+    });
+    connect(m_cwIambicBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+        if (m_updatingFromModel) { return; }
+        tx.setCwKeyerMode(on ? m_cwLastIambicMode : static_cast<int>(CwKeyerMode::Straight));
+    });
+    connect(m_cwPitchDown, &QPushButton::clicked, this, [this](bool) {
+        stepCwPitch(-kCwPitchStepHz);
+    });
+    connect(m_cwPitchUp, &QPushButton::clicked, this, [this](bool) {
+        stepCwPitch(kCwPitchStepHz);
+    });
+
+    // Model to page.
+    const auto show = [this]() { showCwFromModel(); };
+    for (auto signal : {&TransmitModel::cwBreakInDelayMsChanged,
+                        &TransmitModel::cwKeyerSpeedChanged,
+                        &TransmitModel::cwBreakInModeChanged,
+                        &TransmitModel::cwKeyerModeChanged}) {
+        connect(&tx, signal, this, show);
+    }
+    connect(&tx, &TransmitModel::cwSidetoneChanged, this, show);
+    connect(&tx, &TransmitModel::monitorVolumeChanged, this, show);
+    connect(m_model, &RadioModel::cwPitchChanged, this, show);
+
+    // The keyer controller's state, the radio's key and MOX.
+    if (CwKeyerController* keyer = m_model->cwKeyerController()) {
+        connect(keyer, &CwKeyerController::keyerStateChanged,
+                this, &PhoneCwApplet::refreshCwKeyerState);
+        connect(keyer, &CwKeyerController::radioKeyStatusChanged,
+                this, &PhoneCwApplet::refreshCwKeyerState);
+    }
+    connect(m_model, &RadioModel::transmittingChanged,
+            this, [this](bool) { refreshCwLamps(); });
+    showCwFromModel();
+}
+
+void PhoneCwApplet::showCwFromModel()
+{
+    if (!m_model || !m_cwDelaySlider) { return; }
+    const TransmitModel& tx = m_model->transmitModel();
+    const bool was = m_updatingFromModel;
+    m_updatingFromModel = true;
+    m_cwDelaySlider->setValue(tx.cwBreakInDelayMs());
+    m_cwDelayValue->setText(QString::number(tx.cwBreakInDelayMs()));
+    m_cwSpeedSlider->setValue(tx.cwKeyerSpeed());
+    m_cwSpeedValue->setText(QString::number(tx.cwKeyerSpeed()));
+    m_cwSidetoneBtn->setChecked(tx.cwSidetone());
+    const int level = qRound(tx.monitorVolume() * 100.0f);
+    m_cwSidetoneSlider->setValue(level);
+    m_cwSidetoneValue->setText(QString::number(level));
+    const int mode = tx.cwKeyerMode();
+    if (mode != static_cast<int>(CwKeyerMode::Straight)) {
+        m_cwLastIambicMode = mode;
+    }
+    m_cwIambicBtn->setChecked(mode != static_cast<int>(CwKeyerMode::Straight));
+    m_cwPitchValue->setText(QString::number(m_model->cwPitchHz()));
+    m_updatingFromModel = was;
+    refreshCwKeyerState();
+}
+
+// Pitch arrows: 10 Hz within 200 to 2250 (R-CW-02, C3).
+void PhoneCwApplet::stepCwPitch(int deltaHz)
+{
+    if (!m_model) { return; }
+    m_model->setCwPitchHz(clampCwPitchHz(m_model->cwPitchHz() + deltaHz));
+}
+
+// Break-in steps Off, Semi, QSK, skipping a mode the radio cannot use now
+// (R-CW-20, R-CW-22; the approved mockup's button).
+void PhoneCwApplet::stepCwBreakIn()
+{
+    if (!m_model) { return; }
+    TransmitModel& tx = m_model->transmitModel();
+    const CwKeyerController* keyer = m_model->ownsLocalDsp() ? m_model->cwKeyerController()
+                                                             : nullptr;
+    const auto available = [keyer](int mode) {
+        if (!keyer) { return true; }
+        if (mode == static_cast<int>(CwBreakInMode::Qsk)) { return keyer->qskAvailable(); }
+        if (mode == static_cast<int>(CwBreakInMode::Semi)) { return keyer->semiAvailable(); }
+        return true;
+    };
+    int mode = cwEffectiveBreakInMode();
+    for (int i = 0; i < 3; ++i) {
+        mode = (mode + 1) % 3;
+        if (available(mode)) { break; }
+    }
+    tx.setCwBreakInMode(mode);
+    // A mode the controller falls back from writes nothing new; show it.
+    refreshCwKeyerState();
+}
+
+void PhoneCwApplet::refreshCwKeyerState()
+{
+    if (!m_model || !m_cwBreakInBtn) { return; }
+    const CwKeyerController* keyer = m_model->ownsLocalDsp() ? m_model->cwKeyerController()
+                                                             : nullptr;
+    const int mode = cwEffectiveBreakInMode();
+    {
+        const bool was = m_updatingFromModel;
+        m_updatingFromModel = true;
+        m_cwBreakInBtn->setChecked(mode != static_cast<int>(CwBreakInMode::Off));
+        m_cwBreakInBtn->setText(mode == static_cast<int>(CwBreakInMode::Qsk)
+                                    ? QStringLiteral("QSK")
+                                    : mode == static_cast<int>(CwBreakInMode::Semi)
+                                        ? QStringLiteral("Semi BK")
+                                        : QStringLiteral("BK Off"));
+        m_updatingFromModel = was;
+    }
+
+    // The break-in button says which steps it offers, and why one is skipped.
+    QString breakInTip = QStringLiteral("Break-in: click to step Off, Semi and QSK.");
+    QString skipped;
+    if (keyer && !keyer->semiAvailable()) {
+        skipped = keyer->semiUnavailableReason();
+        breakInTip = QStringLiteral("Break-in: Off only. ") + skipped;
+    } else if (keyer && !keyer->qskAvailable()) {
+        skipped = keyer->qskUnavailableReason();
+        breakInTip = QStringLiteral("Break-in: click to step Off and Semi. ") + skipped;
+    }
+    m_cwBreakInBtn->setProperty("CwOwnTooltip", breakInTip);
+
+    // The state line: ready, off with the reason, or the refusal words of a
+    // key the keyer refused (R-CW-09, R-CW-41).
+    QString line;
+    bool off = false;
+    if (!m_model->ownsLocalDsp()) {
+        line = QLatin1String(kCwRemoteStateLine);
+    } else if (keyer && !keyer->keyerAllowed()) {
+        off = true;
+        const QString words = keyer->refusal().text;
+        line = keyer->radioKeyDown() ? words : QStringLiteral("Keyer off. ") + words;
+    } else {
+        if (mode == static_cast<int>(CwBreakInMode::Off)) {
+            line = QStringLiteral("Keyer ready. Break-in is off: MOX keys the radio.");
+        } else if (mode == static_cast<int>(CwBreakInMode::Qsk)) {
+            line = QStringLiteral("Keyer ready. QSK: you hear the band between elements.");
+        } else {
+            line = QStringLiteral("Keyer ready. Semi break-in: the radio returns to receive "
+                                  "%1 ms after the last element.")
+                       .arg(m_model->transmitModel().cwBreakInDelayMs());
+        }
+        if (!skipped.isEmpty()) {
+            line += QLatin1Char(' ') + skipped;
+        }
+    }
+    m_cwStatusLine->setText(line);
+    m_cwStatusLine->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }")
+                                      .arg(off ? NereusSDR::Style::kAmberText
+                                               : NereusSDR::Style::kTextSecondary));
+    m_cwKeyerLamp->setText(off ? QStringLiteral("KEYER OFF") : QStringLiteral("RADIO KEYER"));
+    m_cwKeyerLamp->setToolTip(off ? keyer->refusal().text
+                                  : QStringLiteral("The radio's keyer times your keying."));
+    m_cwKeyerLamp->setProperty("lit", QVariant());
+    setCwLamp(m_cwKeyerLamp, off, NereusSDR::Style::kAmberBg, NereusSDR::Style::kAmberText,
+              NereusSDR::Style::kAmberBorder);
+    refreshCwLamps();
+    applyCwSettingsGate();
+}
+
+void PhoneCwApplet::refreshCwLamps()
+{
+    if (!m_model || !m_cwKeyLamp) { return; }
+    const CwKeyerController* keyer = m_model->ownsLocalDsp() ? m_model->cwKeyerController()
+                                                             : nullptr;
+    const bool keyDown = keyer && keyer->radioKeyDown();
+    const bool keyOut = keyer && keyer->radioKeyOut();
+    setCwLamp(m_cwKeyLamp, keyDown, NereusSDR::Style::kGreenBg, NereusSDR::Style::kGreenText,
+              NereusSDR::Style::kGreenBorder);
+    setCwLamp(m_cwTxLamp, m_model->isTransmitting() || keyOut, NereusSDR::Style::kRedBg,
+              NereusSDR::Style::kRedText, NereusSDR::Style::kRedBorder);
+    // Remote parity: the radio's key status reaches only the Core's window,
+    // so a remote window's KEY lamp is shown disabled with the reason.
+    const bool remote = !m_model->ownsLocalDsp();
+    m_cwKeyLamp->setEnabled(!remote);
+    m_cwKeyLamp->setToolTip(remote ? QLatin1String(kCwRemoteKeyLampReason)
+                                   : QLatin1String(kCwKeyLampTip));
+    m_cwKeyLamp->setAccessibleDescription(m_cwKeyLamp->toolTip());
+}
+
+void PhoneCwApplet::setCwSettingsPermitted(bool permitted, const QString& reason)
+{
+    m_cwSettingsPermitted = permitted;
+    m_cwSettingsReason = reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason;
+    applyCwSettingsGate();
+}
+
+// Each control's own state (Delay in Off and QSK, the level with Sidetone
+// off), under the remote window's CW settings gate. Disabled controls say
+// why in their tooltip and accessible description (R-CW-47).
+void PhoneCwApplet::applyCwSettingsGate()
+{
+    if (!m_model || !m_cwDelaySlider) { return; }
+    const auto set = [this](QWidget* control, bool ownEnabled, const QString& ownTip,
+                            const QString& ownReason) {
+        const bool enabled = m_cwSettingsPermitted && ownEnabled;
+        const QString tip = !m_cwSettingsPermitted ? m_cwSettingsReason
+                            : ownEnabled ? ownTip : ownReason;
+        control->setEnabled(enabled);
+        control->setToolTip(tip);
+        control->setAccessibleDescription(tip);
+    };
+    const int mode = cwEffectiveBreakInMode();
+    set(m_cwDelaySlider, mode == static_cast<int>(CwBreakInMode::Semi),
+        QLatin1String(kCwDelayTip),
+        mode == static_cast<int>(CwBreakInMode::Qsk) ? QLatin1String(kCwDelayQskReason)
+                                                     : QLatin1String(kCwDelayOffReason));
+    set(m_cwSpeedSlider, true, QLatin1String(kCwSpeedTip), QString());
+    set(m_cwSidetoneBtn, true, QLatin1String(kCwSidetoneTip), QString());
+    set(m_cwSidetoneSlider, m_model->transmitModel().cwSidetone(),
+        QLatin1String(kCwSidetoneLevelTip), QLatin1String(kCwSidetoneLevelOffReason));
+    set(m_cwBreakInBtn, true, m_cwBreakInBtn->property("CwOwnTooltip").toString(), QString());
+    set(m_cwIambicBtn, true, QLatin1String(kCwIambicTip), QString());
+    // The pitch is a station setting, not a transmit one: no gate.
+    m_cwPitchDown->setToolTip(QLatin1String(kCwPitchTip));
+    m_cwPitchUp->setToolTip(QLatin1String(kCwPitchTip));
+    m_cwPitchValue->setToolTip(QLatin1String(kCwPitchTip));
 }
 
 // ── FM page (8 controls) ──────────────────────────────────────────────────────
@@ -1312,6 +1779,9 @@ void PhoneCwApplet::wireControls()
                                       ControlRanges::kMicLevelMaxDb));
     });
     m_micLevelTimer->start();
+
+    // CW transmit (R-CW-41): the CW page.
+    wireCwPage();
 }
 
 // ── syncFromModel ─────────────────────────────────────────────────────────────
@@ -1383,7 +1853,8 @@ void PhoneCwApplet::syncFromModel()
         m_vaxBtn->setChecked(tx.micSource() == MicSource::Vax);
     }
 
-    // Other controls wired in Phase 3I-1 (Phone/FM) / Phase 3I-2 (CW)
+    // CW transmit (R-CW-41): the CW page.
+    showCwFromModel();
 }
 
 void PhoneCwApplet::setTransmitPermitted(bool permitted, const QString& reason)

@@ -1,8 +1,16 @@
 // no-port-check: NereusSDR-original transactional presentation persistence tests.
+// Modification history (NereusSDR):
+//   2026-10-26 - The two states that refuse every commit until a reload (a
+//                 load error, or the saved bytes changed under the store)
+//                 are reported through blockedReason() and cleared by a
+//                 good load; every refused commit is logged and a saved one
+//                 is not. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QSignalSpy>
+#include <QRegularExpression>
 #include <limits>
 #include "core/AppSettings.h"
 #include "core/settings/ISettingsBackend.h"
@@ -222,6 +230,88 @@ private slots:
         settings.setValue("ContainerWorkspace", QString::fromUtf8(ContainerDocumentCodec::encode(external)));
         QCOMPARE(second.commit(sample(), 1).status, CommitStatus::Conflict);
         QCOMPARE(ContainerDocumentCodec::decode(settings.value("ContainerWorkspace").toString().toUtf8()).document, external);
+    }
+    void bytesChangedUnderTheStoreRefuseEveryCommitUntilReload()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(sample(), 0).status, CommitStatus::Saved);
+        QVERIFY(store.blockedReason().isEmpty());
+        QSignalSpy blocked(&store, &ContainerWorkspaceStore::blockedChanged);
+        // Another writer replaces the saved layout behind the store.
+        WorkspaceDocument external = store.snapshot();
+        external.containers[0].name = "written behind the store";
+        settings.setValue("ContainerWorkspace", QString::fromUtf8(ContainerDocumentCodec::encode(external)));
+        const QString reason = QStringLiteral("Workspace changed; reload before editing");
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+                QStringLiteral("^Container workspace commit refused: Conflict - Workspace changed; reload before editing$")));
+            const CommitResult result = store.commit(sample(), store.snapshot().revision);
+            QCOMPARE(result.status, CommitStatus::Conflict);
+            QCOMPARE(result.error, reason);
+            QCOMPARE(store.blockedReason(), reason);
+        }
+        QCOMPARE(blocked.count(), 1);
+        QCOMPARE(blocked.at(0).at(0).toString(), reason);
+        // Reading the layout again clears it, and commits save.
+        QVERIFY(store.load().ok);
+        QVERIFY(store.blockedReason().isEmpty());
+        QCOMPARE(blocked.count(), 2);
+        QVERIFY(blocked.at(1).at(0).toString().isEmpty());
+        QCOMPARE(store.commit(sample(), store.snapshot().revision).status, CommitStatus::Saved);
+        QCOMPARE(blocked.count(), 2);
+    }
+    void aLoadErrorRefusesEveryCommitUntilAGoodReload()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(sample(), 0).status, CommitStatus::Saved);
+        const QString good = settings.value("ContainerWorkspace").toString();
+        QSignalSpy blocked(&store, &ContainerWorkspaceStore::blockedChanged);
+        settings.setValue("ContainerWorkspace", "{truncated");
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("^Container workspace remains read-only:")));
+        QVERIFY(!store.load().ok);
+        QVERIFY(!store.loadError().isEmpty());
+        QCOMPARE(store.blockedReason(), store.loadError());
+        QCOMPARE(blocked.count(), 1);
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+                QStringLiteral("^Container workspace commit refused: Invalid - %1$")
+                    .arg(QRegularExpression::escape(store.loadError()))));
+            QCOMPARE(store.commit(sample(), store.snapshot().revision).status, CommitStatus::Invalid);
+        }
+        QCOMPARE(blocked.count(), 1);
+        settings.setValue("ContainerWorkspace", good);
+        QVERIFY(store.load().ok);
+        QVERIFY(store.blockedReason().isEmpty());
+        QCOMPARE(blocked.count(), 2);
+        QCOMPARE(store.commit(sample(), store.snapshot().revision).status, CommitStatus::Saved);
+    }
+    void aOneOffRefusalIsLoggedButDoesNotBlock()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings);
+        QSignalSpy blocked(&store, &ContainerWorkspaceStore::blockedChanged);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+            QStringLiteral("^Container workspace commit refused: Conflict - Workspace revision changed$")));
+        QCOMPARE(store.commit(sample(), 7).status, CommitStatus::Conflict);
+        QVERIFY(store.blockedReason().isEmpty());
+        QCOMPARE(blocked.count(), 0);
+        QCOMPARE(store.commit(sample(), 0).status, CommitStatus::Saved);
+    }
+    void aSavedCommitLogsNothing()
+    {
+        QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings);
+        QSignalSpy blocked(&store, &ContainerWorkspaceStore::blockedChanged);
+        QCOMPARE(store.commit(sample(), 0).status, CommitStatus::Saved);
+        QCOMPARE(store.commit(sample(), 1).status, CommitStatus::Saved);
+        QCOMPARE(blocked.count(), 0);
     }
 };
 QTEST_GUILESS_MAIN(TstContainerWorkspaceStore)

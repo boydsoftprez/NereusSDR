@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-23: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
 //   NB Blank is reset when transmit ends, as the desktop's is.
+// 2026-10-26: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
+//   while the screen drives the band, each waterfall line waits for the row clock
+//   (WaterfallRowClock) and goes in on its steady grid, as the desktop's remote pans do.
 
 import Foundation
 import NereusMedia
@@ -13,6 +16,12 @@ import NereusMedia
 /// is committed when its datagram arrives, when the next frame arrives, or
 /// when the band is drawn, whichever comes first. With no extras expected
 /// (an older Core, or nothing asked) a frame is committed at once.
+///
+/// While the screen drives the band's draws (``pacesLines``) and the Core
+/// has said its line period, a committed frame's waterfall line waits for
+/// the row clock (``WaterfallRowClock``) and goes into the waterfall and the
+/// 3D stack on its steady grid (``advanceLines(at:frameSeconds:)``); the
+/// frame's trace, extras and peak hold are still committed at once.
 public struct BandState: Equatable, Sendable {
     public private(set) var history: WaterfallHistory
     /// The latest committed frame.
@@ -92,7 +101,10 @@ public struct BandState: Equatable, Sendable {
     /// the manual levels given colour each line, whatever the Core sent.
     public var phoneSetsLevels = false
     /// The waterfall stands still: no line is added (Stop on TX while keyed).
-    public var waterfallHeld = false
+    /// Lines that came before the hold go in at once when it starts.
+    public var waterfallHeld = false {
+        didSet { if waterfallHeld && !oldValue { flushLines() } }
+    }
     /// The classic peak hold's reset period in milliseconds, or nil while
     /// it is off (``BandDisplaySettings/peakHold``).
     public var peakHoldDelayMs: Int? {
@@ -116,11 +128,209 @@ public struct BandState: Equatable, Sendable {
             if !stacksRows {
                 stack.clear()
                 stackFold.clear()
+                linesSinceStackRow = 0
             }
         }
     }
     /// Now, in seconds since 1970, for each line's time.
     public var clock: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+    /// Now on the steady clock the display link keeps, in seconds, for a
+    /// line put in outside a screen frame (``flushLines(at:)``); the tests
+    /// set their own.
+    public var steadyClock: @Sendable () -> Double = { BandState.steadyNow() }
+
+    // MARK: Lines on the row clock
+
+    /// The screen drives the band's draws on its display's frames: each
+    /// waterfall line waits for the row clock. Off, every waiting line goes
+    /// in at once and lines go in as they come.
+    public var pacesLines = false {
+        didSet { if !pacesLines { flushLines() } }
+    }
+    /// The Core's seconds between two waterfall lines; 0 before it has
+    /// said, when lines go in as they come. A new period starts the grid again.
+    public var linePeriodSeconds = 0.0 {
+        didSet {
+            guard linePeriodSeconds != oldValue else {
+                return
+            }
+            let period = linePeriodSeconds.isFinite && linePeriodSeconds > 0 ? linePeriodSeconds : 0
+            if period == 0 {
+                flushLines()
+            }
+            rowClock.setPeriodNs(Self.nanoseconds(period))
+            frameLock.reset()
+        }
+    }
+    /// The clock the waiting lines go in by.
+    public private(set) var rowClock = WaterfallRowClock()
+    /// Holds the clock's slide starts clear of the screen's frame edges.
+    public private(set) var frameLock = WaterfallFrameLock()
+    /// The lines committed and not yet in, oldest first.
+    private var waitingLines: [WaitingLine] = []
+    /// How many lines wait for the clock.
+    public var linesWaiting: Int { waitingLines.count }
+    /// The most lines that wait (the desktop's row queue without a hold,
+    /// `kMaxRemoteRowQueue`). The desktop drops the oldest past it; the
+    /// phone puts it in at once, so no line the Core sent is lost (a phone
+    /// back from the background catches up rather than leaves a gap).
+    public static let mostLinesWaiting = 32
+    /// The frame time the clock last advanced at, so two views of one band
+    /// advance it once a frame.
+    private var lastAdvanceNs: Int64?
+    /// Waterfall lines put in since the 3D stack's newest row. Like the
+    /// desktop's glide (`m_dssScrollProgressRows`, zeroed in `pushDssRow`
+    /// and when the whole stack clears), it starts again only when a row
+    /// goes in: a fold cleared at a key edge leaves it, so the glide goes
+    /// on to the full row and rests there until the next row, never
+    /// stepping back.
+    public private(set) var linesSinceStackRow = 0
+    /// Lines wait for the clock now: the screen drives the band and the
+    /// Core has said its line period.
+    public var pacingLines: Bool { pacesLines && rowClock.running }
+
+    /// One line put into the waterfall, for the phone's timing trace.
+    public struct PutLine: Equatable, Sendable {
+        /// The Core's frame sequence the line came in.
+        public let sequence: UInt32
+        /// When it was committed and when it went in, on the steady clock.
+        public let arrivedAt: Double
+        public let putAt: Double
+
+        public init(sequence: UInt32, arrivedAt: Double, putAt: Double) {
+            self.sequence = sequence
+            self.arrivedAt = arrivedAt
+            self.putAt = putAt
+        }
+    }
+    /// Keeps each line put in for the timing trace (``takePutLines()``).
+    public var tracesLines = false {
+        didSet { if !tracesLines { putLines.removeAll() } }
+    }
+    private var putLines: [PutLine] = []
+
+    /// The lines put in since the last call, for the timing trace.
+    public mutating func takePutLines() -> [PutLine] {
+        defer { putLines.removeAll(keepingCapacity: true) }
+        return putLines
+    }
+
+    /// How far the 3D stack has glided toward its next row while lines go
+    /// in by the clock: the lines put in since the newest row and the
+    /// clock's glide toward the last, over the lines a row, 0 to 1. Nil
+    /// while lines go in as they come (the glide is then timed from the
+    /// newest row, ``StackedTrace/glide(since:rowPeriod:divider:)``).
+    public var pacedStackGlide: Double? {
+        guard pacingLines else {
+            return nil
+        }
+        return StackedTrace.glide(lines: linesSinceStackRow, progress: rowClock.progress,
+                                  divider: effectiveStackRowDivider)
+    }
+
+    /// Advances the clock to the screen frame at `now` (steady seconds,
+    /// the display link's) of `frameSeconds` length, and puts in the lines
+    /// it says, oldest first. Returns how many went in. A second call for
+    /// the same frame does nothing.
+    @discardableResult
+    public mutating func advanceLines(at now: Double, frameSeconds: Double) -> Int {
+        guard pacingLines, now.isFinite else {
+            return 0
+        }
+        let nowNs = Self.nanoseconds(now)
+        if let last = lastAdvanceNs, nowNs <= last {
+            return 0
+        }
+        lastAdvanceNs = nowNs
+        let read = frameLock.clockTime(frameNs: nowNs)
+        let rows: Int
+        if let front = waitingLines.first {
+            // The phone's Core sends no due times: each line is due as it was committed.
+            let committed = Self.nanoseconds(front.arrivedAt)
+            rows = rowClock.advance(nowNs: read, queuedRows: waitingLines.count, frontDueNs: committed,
+                                    frontQueuedNs: committed)
+        } else {
+            rows = rowClock.advance(nowNs: read, queuedRows: 0, frontDueNs: read, frontQueuedNs: read)
+        }
+        frameLock.follow(rowClock, frameNs: nowNs,
+                         frameLengthNs: frameSeconds.isFinite ? Self.nanoseconds(max(frameSeconds, 0)) : 0)
+        let count = min(rows, waitingLines.count)
+        for _ in 0 ..< count {
+            put(waitingLines.removeFirst(), at: now)
+        }
+        return count
+    }
+
+    /// Puts every waiting line in at once, in order, and starts the grid
+    /// again; `now` is the steady time they go in at (``steadyClock`` when
+    /// nil).
+    public mutating func flushLines(at now: Double? = nil) {
+        guard !waitingLines.isEmpty || rowClock.anchored else {
+            return
+        }
+        let lines = waitingLines
+        waitingLines.removeAll()
+        let now = lines.isEmpty ? 0 : (now ?? steadyClock())
+        for line in lines {
+            put(line, at: now)
+        }
+        rowClock.reset()
+        frameLock.reset()
+    }
+
+    /// A committed frame's waterfall line, waiting for the clock.
+    private struct WaitingLine: Equatable, Sendable {
+        /// The frame as it came, for the 3D stack's fold.
+        let frame: DisplayFrame
+        /// Its line after NB Blank.
+        let line: [Float]
+        /// The levels it is coloured against, as they were when it came.
+        let levels: WaterfallHistory.Levels
+        let coverage: BandCoverage?
+        let wide: BandCoverage?
+        let transmitting: Bool
+        /// When it was committed: on the steady clock, and in seconds since
+        /// 1970 for the waterfall's time readout.
+        let arrivedAt: Double
+        let period: Double
+        let arrivedWall: Double
+    }
+
+    /// One line into the waterfall and, with 3D chosen, the stack's fold.
+    private mutating func put(_ line: WaitingLine, at steadyNow: Double) {
+        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.arrivedAt, presentationPeriod: line.period)
+        foldIntoStack(line.frame, coverage: line.coverage, wide: line.wide, transmitting: line.transmitting)
+        if tracesLines {
+            putLines.append(PutLine(sequence: line.frame.encoderSequence, arrivedAt: line.arrivedAt,
+                                    putAt: steadyNow))
+        }
+    }
+
+    /// Every advancing tick contributes its exact and wide peaks to the
+    /// 3D stack's fold; only a complete capture enters the painted history.
+    private mutating func foldIntoStack(_ frame: DisplayFrame, coverage: BandCoverage?, wide: BandCoverage?,
+                                        transmitting: Bool) {
+        guard stacksRows && frame.waterfallAdvance else {
+            return
+        }
+        linesSinceStackRow += 1
+        if let folded = stackFold.append(frame, coverage: coverage, wide: wide,
+            transmitting: transmitting, divider: effectiveStackRowDivider) {
+            stack.append(frame: folded, coverage: coverage, wide: transmitting ? nil : wide, time: clock())
+            linesSinceStackRow = 0
+        }
+    }
+
+    static func nanoseconds(_ seconds: Double) -> Int64 {
+        Int64((seconds * 1_000_000_000).rounded())
+    }
+
+    /// Now on the steady clock the display link keeps, in seconds: the
+    /// system's uptime, the base of `CACurrentMediaTime` and the display
+    /// link's timestamps.
+    public static func steadyNow() -> Double {
+        ProcessInfo.processInfo.systemUptime
+    }
 
     public static func == (lhs: BandState, rhs: BandState) -> Bool {
         lhs.history == rhs.history && lhs.frame == rhs.frame && lhs.committedSerial == rhs.committedSerial
@@ -136,6 +346,11 @@ public struct BandState: Equatable, Sendable {
             && lhs.stackVisibleWaterfallRows == rhs.stackVisibleWaterfallRows
             && lhs.stackUprightWaterfallPoints == rhs.stackUprightWaterfallPoints
             && lhs.stack == rhs.stack && lhs.stacksRows == rhs.stacksRows && lhs.wideContexts == rhs.wideContexts
+            && lhs.pacesLines == rhs.pacesLines && lhs.linePeriodSeconds == rhs.linePeriodSeconds
+            && lhs.rowClock == rhs.rowClock && lhs.frameLock == rhs.frameLock
+            && lhs.waitingLines == rhs.waitingLines && lhs.lastAdvanceNs == rhs.lastAdvanceNs
+            && lhs.linesSinceStackRow == rhs.linesSinceStackRow && lhs.tracesLines == rhs.tracesLines
+            && lhs.putLines == rhs.putLines
     }
 
     /// The latest contexts' coverage, by context generation.
@@ -170,28 +385,32 @@ public struct BandState: Equatable, Sendable {
         }
     }
 
-    /// A frame for this band.
-    public mutating func receive(frame: DisplayFrame, manualLevels: WaterfallHistory.Levels) {
-        commit(manualLevels: manualLevels)
+    /// A frame for this band, at `now` on the steady clock.
+    public mutating func receive(frame: DisplayFrame, manualLevels: WaterfallHistory.Levels,
+                                 at now: Double = BandState.steadyNow()) {
+        commit(manualLevels: manualLevels, at: now)
         pending = frame
         pendingExtras = nil
         if !expectsExtras {
-            commit(manualLevels: manualLevels)
+            commit(manualLevels: manualLevels, at: now)
         }
     }
 
     /// A datagram for this band: it goes with the waiting frame when it is
     /// that frame's.
-    public mutating func receive(extras: DisplayExtras, manualLevels: WaterfallHistory.Levels) {
+    public mutating func receive(extras: DisplayExtras, manualLevels: WaterfallHistory.Levels,
+                                 at now: Double = BandState.steadyNow()) {
         guard let waiting = pending, WaterfallHistory.belongs(extras, to: waiting) else {
             return
         }
         pendingExtras = extras
-        commit(manualLevels: manualLevels)
+        commit(manualLevels: manualLevels, at: now)
     }
 
-    /// Commits the waiting frame, with its datagram if it came.
-    public mutating func commit(manualLevels: WaterfallHistory.Levels) {
+    /// Commits the waiting frame, with its datagram if it came, at `steady`
+    /// on the steady clock. Its waterfall line goes in now, or waits for
+    /// the row clock while lines are paced (``pacingLines``).
+    public mutating func commit(manualLevels: WaterfallHistory.Levels, at steady: Double = BandState.steadyNow()) {
         guard let waiting = pending else {
             return
         }
@@ -200,7 +419,26 @@ public struct BandState: Equatable, Sendable {
             // The line is dropped, but the Core's levels are still noted.
             history.append(frame: waiting, extras: pendingExtras, manualLevels: manualLevels, coverage: coverage,
                            addsLine: false)
+        } else if pacingLines && waiting.waterfallAdvance && !waiting.waterfallDbm.isEmpty {
+            // The Core's levels are noted now; the line, coloured against
+            // them, waits for the clock.
+            let waterfall = blanker.filtered(waiting.waterfallDbm, enabled: waterfallBlanking,
+                transmitting: transmittingWaterfall, thresholdDb: waterfallBlankingThresholdDb)
+            history.append(frame: waiting, extras: pendingExtras, manualLevels: manualLevels, coverage: coverage,
+                           addsLine: false)
+            let levels = (phoneSetsLevels ? manualLevels : (history.heldLevels ?? manualLevels))
+                .adjusted(by: levelAdjustment)
+            waitingLines.append(WaitingLine(frame: waiting, line: waterfall, levels: levels, coverage: coverage,
+                wide: wideContexts[waiting.contextGeneration], transmitting: transmittingWaterfall,
+                arrivedAt: steady, period: linePeriodSeconds, arrivedWall: clock()))
+            while waitingLines.count > Self.mostLinesWaiting {
+                put(waitingLines.removeFirst(), at: steady)
+            }
         } else {
+            if !pacingLines || waiting.waterfallAdvance {
+                // Lines still waiting go in first, so the waterfall keeps its order.
+                flushLines()
+            }
             let now = clock()
             let waterfall = waiting.waterfallAdvance
                 ? blanker.filtered(waiting.waterfallDbm, enabled: waterfallBlanking,
@@ -211,17 +449,13 @@ public struct BandState: Equatable, Sendable {
                 isKeyframe: waiting.isKeyframe, waterfallAdvance: waiting.waterfallAdvance,
                 minDbm: waiting.minDbm, maxDbm: waiting.maxDbm, traceDbm: waiting.traceDbm,
                 waterfallDbm: waterfall, wideDbm: waiting.wideDbm)
-            history.append(frame: painted, extras: pendingExtras, manualLevels: manualLevels, coverage: coverage,
-                           adjustment: levelAdjustment, phoneLevels: phoneSetsLevels, time: now)
-            if stacksRows && waiting.waterfallAdvance {
-                // Every advancing tick contributes its exact and wide
-                // peaks; only a complete capture enters the painted history.
-                let wide = wideContexts[waiting.contextGeneration]
-                if let folded = stackFold.append(waiting, coverage: coverage, wide: wide,
-                    transmitting: transmittingWaterfall, divider: effectiveStackRowDivider) {
-                    stack.append(frame: folded, coverage: coverage,
-                                 wide: transmittingWaterfall ? nil : wide, time: now)
-                }
+            let added = history.append(frame: painted, extras: pendingExtras, manualLevels: manualLevels,
+                                       coverage: coverage, adjustment: levelAdjustment, phoneLevels: phoneSetsLevels,
+                                       time: now, presentationTime: steady, presentationPeriod: linePeriodSeconds)
+            foldIntoStack(waiting, coverage: coverage, wide: wideContexts[waiting.contextGeneration],
+                          transmitting: transmittingWaterfall)
+            if added && tracesLines {
+                putLines.append(PutLine(sequence: waiting.encoderSequence, arrivedAt: steady, putAt: steady))
             }
         }
         holdPeaks(waiting)
@@ -236,6 +470,8 @@ public struct BandState: Equatable, Sendable {
     /// Retires a frame waiting for extras when its media or endpoint ends.
     /// The already committed picture and waterfall remain visible.
     public mutating func discardPending() {
+        // Lines already committed stay: they go in now.
+        flushLines()
         stackFold.clear()
         pending = nil
         pendingExtras = nil
@@ -275,16 +511,25 @@ public struct BandState: Equatable, Sendable {
     /// At a key and an unkey on this band: the peak hold starts afresh and
     /// the waterfall's held levels are forgotten, so nothing blends from
     /// the receiver into the transmit display or back (the desktop clears
-    /// its averaging and resets its waterfall AGC at both edges). The
-    /// waterfall's lines stay.
+    /// its averaging and resets its waterfall AGC at both edges), and the
+    /// 3D rows smooth afresh. The waterfall's lines stay.
     public mutating func resetSmoothing() {
+        // The lines from before the edge go in before it, as they came.
+        flushLines()
         stackFold.clear()
+        stack.resetSmoothing()
         peakHold = nil
         history.forgetLevels()
     }
 
     /// Starts over: a new session or a new endpoint.
     public mutating func clear() {
+        waitingLines.removeAll()
+        rowClock.reset()
+        frameLock.reset()
+        lastAdvanceNs = nil
+        linesSinceStackRow = 0
+        putLines.removeAll()
         history.clear()
         blanker.reset()
         stackFold.clear()

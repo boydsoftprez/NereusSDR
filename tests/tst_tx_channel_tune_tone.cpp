@@ -47,6 +47,10 @@ warren@wpratt.com
 //                 removed redundant defaultMagnitudeEqualsMaxToneMag test;
 //                 added QFAIL guards to HAVE_WDSP skeleton tests.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the tune tone cites refreshed to
+//                 console.cs:30082/30085 [v2.10.3.15] (R-CW-52); a tone at
+//                 any CW pitch is accepted (R-CW-30). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: Attribution for ported constants and logic lives in
@@ -117,14 +121,14 @@ private slots:
 
     void setTuneToneOnWithPositiveFreq_doesNotCrash() {
         // setTuneTone(true, +600.0) — USB / CWU / DIGU case from Thetis
-        // console.cs:30034 [v2.10.3.13]: TXPostGenToneFreq = +cw_pitch.
+        // console.cs:30085 [v2.10.3.15]: TXPostGenToneFreq = +cw_pitch.
         TxChannel ch(kTxChannelId);
         ch.setTuneTone(true, +600.0);   // no crash, sign preserved
     }
 
     void setTuneToneOnWithNegativeFreq_doesNotCrash() {
         // setTuneTone(true, -600.0) — LSB / CWL / DIGL case from Thetis
-        // console.cs:30031 [v2.10.3.13]: TXPostGenToneFreq = -cw_pitch.
+        // console.cs:30082 [v2.10.3.15]: TXPostGenToneFreq = -cw_pitch.
         TxChannel ch(kTxChannelId);
         ch.setTuneTone(true, -600.0);   // no crash, sign preserved
     }
@@ -168,13 +172,13 @@ private slots:
     // ── Sign-handling contract ─────────────────────────────────────────────
     //
     // Thetis passes ±cw_pitch signed directly to TXPostGenToneFreq
-    // (console.cs:30031-30034 [v2.10.3.13]).  NereusSDR must not clamp,
+    // (console.cs:30082, 30085 [v2.10.3.15]).  NereusSDR must not clamp,
     // abs(), or negate the value — the caller is authoritative.
     // These tests document the contract; in the no-WDSP path they verify
     // no crash (WDSP path would verify txa[ch].gen1.p->tone.freq sign).
 
     void setTuneTonePositiveFreqIsAccepted() {
-        // +600 Hz → USB/CWU/DIGU convention from Thetis console.cs:30034 [v2.10.3.13]
+        // +600 Hz → USB/CWU/DIGU convention from Thetis console.cs:30085 [v2.10.3.15]
         TxChannel ch(kTxChannelId);
         // No assertion on the stored value here — stub path has no WDSP struct.
         // Correctness of the stored sign is verified by the HAVE_WDSP block below.
@@ -182,9 +186,20 @@ private slots:
     }
 
     void setTuneToneNegativeFreqIsAccepted() {
-        // -600 Hz → LSB/CWL/DIGL convention from Thetis console.cs:30031 [v2.10.3.13]
+        // -600 Hz → LSB/CWL/DIGL convention from Thetis console.cs:30082 [v2.10.3.15]
         TxChannel ch(kTxChannelId);
         ch.setTuneTone(true, -600.0);   // must not flip sign (no abs() internally)
+    }
+
+    void setTuneToneAtEveryCwPitchIsAccepted() {
+        // R-CW-30: the tone is plus or minus the station CW pitch, any value
+        // of its 200..2250 Hz range (CwTypes.h), not a fixed 600 Hz.
+        TxChannel ch(kTxChannelId);
+        for (const double pitch : {200.0, 700.0, 2250.0}) {
+            ch.setTuneTone(true, +pitch);
+            ch.setTuneTone(true, -pitch);
+            ch.setTuneTone(false, -pitch);
+        }
     }
 
 #ifdef HAVE_WDSP

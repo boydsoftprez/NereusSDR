@@ -240,20 +240,22 @@ extension BandDisplaySettings {
     public var needsNoiseFloor: Bool { noiseFloorLine || gridFollowsNoiseFloor || spectrumView == .stacked }
 
     /// The spectrum and waterfall back at their defaults, as the desktop's
-    /// Reset to Smooth Defaults leaves them: each band's scale and 3D Floor,
-    /// the band plan's size and the extended view are not touched.
+    /// Reset to Smooth Defaults leaves them: the scale, each band's 3D Floor,
+    /// the band plan's size, the extended view and the zoom are not touched.
     public func resetKeepingPlace() -> BandDisplaySettings {
         var reset = BandDisplaySettings.desktopDefaults
         reset.scaleBand = nil
         reset.scaleTopDbm = scaleTopDbm
         reset.scaleBottomDbm = scaleBottomDbm
-        reset.bandScales = bandScales
-        // Each band's 3D Floor is kept like its scale.
+        // Each band's 3D Floor is kept, and the scale.
         reset.threeDFloors = threeDFloors
         reset.threeDFloorDb = threeDFloorDb
         reset.scaleBand = scaleBand
         reset.bandPlanSize = bandPlanSize
         reset.extendedView = extendedView
+        // The zoom stays where the operator left it, as the desktop's reset
+        // leaves each pan's DisplayBandwidth (spec section 7.4).
+        reset.rxViewSpanHz = rxViewSpanHz
         reset.sideways = sideways
         return reset
     }

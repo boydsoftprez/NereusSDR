@@ -33,6 +33,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, foreignMarkers() takes the station CW pitch
+//               (R-CW-24). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-30: fix wave GUI-I1 and GUI-M6: dialogs close with their
 //               session and are stamped with it; a card's Take it back is
 //               shown off once its session ends. J.J. Boyd (KG4VCF),
@@ -110,8 +112,11 @@ public:
     /// controller of "station" names the desktop that hosts the Core (its
     /// connectedDevices entry with hostsCore), or the Core itself on a Core
     /// no desktop hosts; otherwise nobody controls it.
+    /// R-CW-24: a CW marker's passband sits one `cwPitchHz` off its dial
+    /// (the station pitch the window holds).
     static QVector<SpectrumWidget::ForeignSliceMarker> foreignMarkers(
-        const RemoteDevicesState& devices, const SliceAccessMirror* access = nullptr);
+        const RemoteDevicesState& devices, const SliceAccessMirror* access = nullptr,
+        int cwPitchHz = kCwPitchDefaultHz);
 
     /// The dialog for a confirm.request question: TakeTransmitDialog,
     /// TakeReceiverDialog (takeReceiver, takeSlice) or ConfirmChangeDialog.

@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original transactional client presentation store.
 // Modification history (NereusSDR):
+//   2026-10-27 - Notify consumers after every successful load. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - Every refused commit is logged with its status and
+//                 reason, and the two states that refuse every commit
+//                 until a reload (a load error, or the saved bytes changed
+//                 underneath) are reported through blockedReason(). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - commit removes a pop-out shell that an edit emptied, so
 //                 no blank shell stays open. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -51,13 +58,33 @@ DocumentResult ContainerWorkspaceStore::load()
         // fallback may turn a corrupt/future workspace into an editable empty one.
         m_loadError = result.error;
         qCWarning(lcContainer) << "Container workspace remains read-only:" << result.error;
+        setBlockedReason(m_loadError);
         return result;
     }
     m_document = result.document;
     m_loadedRaw = raw;
     m_loadedPresent = present;
     m_loadError.clear();
+    setBlockedReason({});
+    emit loaded();
     return result;
+}
+
+void ContainerWorkspaceStore::setBlockedReason(const QString& reason)
+{
+    if (reason == m_blockedReason) {
+        return;
+    }
+    m_blockedReason = reason;
+    emit blockedChanged(m_blockedReason);
+}
+
+CommitResult ContainerWorkspaceStore::refuse(CommitStatus status, quint64 revision, const QString& reason) const
+{
+    // A refused change is otherwise only on screen; the log keeps why.
+    qCWarning(lcContainer).noquote() << "Container workspace commit refused:"
+        << (status == CommitStatus::Conflict ? "Conflict" : "Invalid") << "-" << reason;
+    return {status, revision, reason};
 }
 
 WorkspaceDocument ContainerWorkspaceStore::snapshot() const
@@ -68,13 +95,13 @@ WorkspaceDocument ContainerWorkspaceStore::snapshot() const
 CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, quint64 expectedRevision)
 {
     if (m_committing) {
-        return {CommitStatus::Conflict, m_document.revision, QStringLiteral("A workspace commit is in progress")};
+        return refuse(CommitStatus::Conflict, m_document.revision, QStringLiteral("A workspace commit is in progress"));
     }
     if (!m_loadError.isEmpty()) {
-        return {CommitStatus::Invalid, m_document.revision, m_loadError};
+        return refuse(CommitStatus::Invalid, m_document.revision, m_loadError);
     }
     if (expectedRevision != m_document.revision) {
-        return {CommitStatus::Conflict, m_document.revision, QStringLiteral("Workspace revision changed")};
+        return refuse(CommitStatus::Conflict, m_document.revision, QStringLiteral("Workspace revision changed"));
     }
     const bool present = m_settings.contains(m_workspaceKey);
     const QByteArray raw = m_settings.value(m_workspaceKey).toString().toUtf8();
@@ -83,22 +110,27 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
         // overwrite one another even if they reused the same revision number.
         const DocumentResult current = present ? ContainerDocumentCodec::decode(raw)
                                                : DocumentResult{true, {}, {}};
-        return {current.ok ? CommitStatus::Conflict : CommitStatus::Invalid,
-                current.ok ? current.document.revision : m_document.revision,
-                current.ok ? QStringLiteral("Workspace changed; reload before editing") : current.error};
+        // Every later commit meets the same bytes, so it stays refused
+        // until load() reads them again.
+        const QString reason = current.ok ? QStringLiteral("Workspace changed; reload before editing") : current.error;
+        setBlockedReason(reason);
+        return refuse(current.ok ? CommitStatus::Conflict : CommitStatus::Invalid,
+                      current.ok ? current.document.revision : m_document.revision, reason);
     }
     if (!present) {
         const DocumentResult currentLegacy = LegacyContainerImporter::fromSettings(m_settings);
         if (!currentLegacy.ok || currentLegacy.document != m_document) {
-            return {CommitStatus::Conflict,m_document.revision,QStringLiteral("Legacy workspace changed; reload before editing")};
+            const QString reason = QStringLiteral("Legacy workspace changed; reload before editing");
+            setBlockedReason(reason);
+            return refuse(CommitStatus::Conflict, m_document.revision, reason);
         }
     }
     const QString validation = ContainerDocumentCodec::validate(document);
     if (!validation.isEmpty()) {
-        return {CommitStatus::Invalid, m_document.revision, validation};
+        return refuse(CommitStatus::Invalid, m_document.revision, validation);
     }
     if (m_document.revision == std::numeric_limits<quint64>::max()) {
-        return {CommitStatus::Invalid, m_document.revision, QStringLiteral("Workspace revision is exhausted")};
+        return refuse(CommitStatus::Invalid, m_document.revision, QStringLiteral("Workspace revision is exhausted"));
     }
     WorkspaceDocument saved = document;
     saved.revision = m_document.revision + 1;
@@ -147,6 +179,7 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
     m_loadedPresent = true;
     m_committing = false;
     guard.commit();
+    setBlockedReason({});
     emit committed(m_document.revision);
     return {CommitStatus::Saved, saved.revision, {}};
 }

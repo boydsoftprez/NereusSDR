@@ -34,6 +34,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I9): a new frequency instrument
+//                 stores "tx" (the transmit slice); a record saved before
+//                 the pick existed loads as "first", the first other slice
+//                 it showed then (D5). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Picker names: Frequency, Custom frequency, Needle meter,
+//                 Bar meter and Filter passband, listed under the
+//                 "Longpath instruments" heading instead of a suffix.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - The bandwidth pane's centre drag moves the passband with
 //                 SliceModel::shiftFilter, which keeps its width at the
 //                 filter limits (Thetis ConstrainFilter, filterShift true).
@@ -83,6 +92,29 @@
 //                 slice access changes (Sources::watchSliceAccess), so a
 //                 remote window's frequency shows its digits too.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - A needle or bar on reverse power takes the per-instance
+//                 power scale and follows MainPowerMeter::scaleChanged, as
+//                 forward power does. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-25 - The frequency types' second line shows the slice picked
+//                 in "Second line" (secondSlice): the transmit slice by
+//                 default, none, or Slice A to D; hidden when that slice is
+//                 not open or is the item's own. It follows txSliceChanged.
+//                 The Custom line toggles are named for slices.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A needle or bar takes the VHF S9 rule from its entry's
+//                 slice: Signal Peak and Signal Avg are raised 20 dB at or
+//                 above 30 MHz (aboveS9Adjusted, AboveS9Frequency.h), so S9
+//                 sits at -93 dBm there, as Thetis getPerc does. Max Bin
+//                 and the TX readings are unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The five types declare "Fade on RX" and "Fade on TX"
+//                 (ContentFade::properties); the container host gives a
+//                 row with either on its fade overlay. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - followAboveS9Frequency: the needle's slice following for
+//                 the VHF S9 rule, for the added S-meter dial. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -93,10 +125,12 @@
 #include "core/SliceOwnership.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentFade.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
 #include "gui/instruments/NeedleInstrument.h"
 #include "gui/instruments/ReadingSource.h"
+#include "gui/meters/AboveS9Frequency.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/widgets/BandwidthFilterPane.h"
@@ -203,6 +237,10 @@ private:
     }
 
 public:
+    // Runs the refresh again (the own slice is looked up too, as on any
+    // slice change), for a change the three RadioModel signals do not
+    // carry, such as the transmit slice moving.
+    void refreshNow() { rebind(); }
     // A connection that belongs to the own-slice binding.
     void track(const QMetaObject::Connection& c) { m_connections.append(c); }
     // A connection that belongs to the refresh (other slice, active state).
@@ -219,11 +257,37 @@ private:
     bool m_bound = false;
 };
 
-SliceModel* otherSlice(const Sources& sources, const SliceModel* slice)
+// Whether the entry's second line follows the transmit slice ("tx", what
+// a new instrument gets; absent or null also).
+bool secondLineIsTxSlice(const QJsonObject& config)
+{
+    const QJsonValue pick = config.value(QLatin1String(kSecondSliceKey));
+    return pick.isUndefined() || pick.isNull() || pick.toString() == QLatin1String(kSecondSliceTx);
+}
+
+// The slice the second line shows (config "secondSlice"): absent, the
+// slice SliceModel::isTxSlice() marks (the arbiter's binding); "none",
+// nothing; "A" to "D", the open slice with that letter. nullptr when that
+// slice is not open or is the item's own slice, and when the item has no
+// slice.
+SliceModel* secondSlice(const Sources& sources, const SliceModel* slice, const QJsonObject& config)
 {
     if (!sources.radio || !slice) { return nullptr; }
+    // A record saved before the pick existed keeps what it showed then:
+    // the first slice in RadioModel::slices() that is not this one.
+    if (config.value(QLatin1String(kSecondSliceKey)).toString() == QLatin1String(kSecondSliceFirstOther)) {
+        for (SliceModel* s : sources.radio->slices()) {
+            if (s && s != slice) { return s; }
+        }
+        return nullptr;
+    }
+    const bool tx = secondLineIsTxSlice(config);
+    const QString letter = tx ? QString() : config.value(QLatin1String(kSecondSliceKey)).toString();
+    if (!tx && letter.size() != 1) { return nullptr; }
     for (SliceModel* s : sources.radio->slices()) {
-        if (s && s != slice) { return s; }
+        if (!s) { continue; }
+        const bool picked = tx ? s->isTxSlice() : s->sliceLetter() == letter.at(0);
+        if (picked) { return s == slice ? nullptr : s; }
     }
     return nullptr;
 }
@@ -242,6 +306,12 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
     if (form == QLatin1String("bandStrip")) { w->setForm(FrequencyInstrument::Form::BandStrip); }
     else if (form == QLatin1String("flatArc")) { w->setForm(FrequencyInstrument::Form::FlatArc); }
     QPointer<FrequencyInstrument> guard(w);
+    // Frequency (Custom)'s line toggles; hiding through a toggle wins
+    // over the second-line pick. Absent keys show both lines.
+    const bool custom = entry.typeId == QLatin1String(kFrequencyCustomType);
+    const bool showOwn = !custom || entry.config.value(QLatin1String(kShowOwnKey)).toBool(true);
+    const bool showOther = !custom || entry.config.value(QLatin1String(kShowOtherKey)).toBool(true);
+    const QJsonObject config = entry.config;
     SliceFollower* follower = preview ? nullptr : new SliceFollower(w, sources, entry.context);
     auto bind = [guard, follower](SliceModel* slice) {
         if (!guard) { return; }
@@ -257,22 +327,35 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
             if (target) { target->setFrequency(hz); }
         }));
     };
-    auto refresh = [guard, follower, sources](SliceModel* slice) {
+    auto refresh = [guard, follower, sources, config, showOwn, showOther](SliceModel* slice) {
         if (!guard) { return; }
-        SliceModel* other = otherSlice(sources, slice);
+        SliceModel* other = secondSlice(sources, slice, config);
         guard->setOtherFrequency(other ? other->frequency() : 0.0);
-        // The bound slice's own letter first, then the other slice's.
-        // "Other" is otherSlice(): the first slice in RadioModel::slices()
-        // that is not this one. With no other slice the second letter is
-        // B for slice A and A otherwise (no slice keeps upstream "A"/"B").
+        // The bound slice's own letter first, then the second line's.
+        // "Second" is secondSlice(): the transmit slice by default, or the
+        // slice the entry picks. With no second slice the line is hidden;
+        // its letter stays B for slice A and A otherwise (no slice keeps
+        // upstream "A"/"B").
         const QChar own = slice ? slice->sliceLetter() : QLatin1Char('A');
         const QChar fallbackOther = own == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
         guard->setSliceLetters(own, other ? other->sliceLetter() : fallbackOther);
+        // The active marker compares this slice with the slice shown.
         guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
-        if (slice && other && follower) {
+        guard->setSliceLinesVisible(showOwn, showOther && other != nullptr);
+        if (!follower) { return; }
+        if (slice && other) {
             follower->trackRefresh(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
                 if (guard) { guard->setOtherFrequency(hz); }
             }));
+        }
+        // The transmit slice moves without a slice being added, removed
+        // or made active; slice add and remove already refresh.
+        if (sources.radio && secondLineIsTxSlice(config)) {
+            for (SliceModel* s : sources.radio->slices()) {
+                if (!s) { continue; }
+                follower->trackRefresh(QObject::connect(s, &SliceModel::txSliceChanged, follower,
+                                                        [follower](bool) { follower->refreshNow(); }));
+            }
         }
     };
     if (follower) {
@@ -286,7 +369,8 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
 }
 
 // Frequency (Custom). Absent keys are the defaults: 26 px, locked to
-// that size, the amber reading colour, top-left, both slice lines.
+// that size, the amber reading colour, top-left. The slice line toggles
+// are applied with the second-line pick in makeFrequency's refresh.
 void applyFrequencyDisplay(FrequencyInstrument* frequency, const QJsonObject& config)
 {
     const int fontPx = config.value(QLatin1String(kFontSizeKey)).toInt(26);
@@ -301,11 +385,6 @@ void applyFrequencyDisplay(FrequencyInstrument* frequency, const QJsonObject& co
     }
     if (config.value(QLatin1String(kCenterKey)).toBool(false)) {
         frequency->setContentCentered(true);
-    }
-    const bool own = config.value(QLatin1String(kShowOwnKey)).toBool(true);
-    const bool other = config.value(QLatin1String(kShowOtherKey)).toBool(true);
-    if (!own || !other) {
-        frequency->setSliceLinesVisible(own, other);
     }
 }
 
@@ -373,10 +452,12 @@ QVector<ContentProperty> meterProperties(const QString& typeId)
         compact.defaultValue = true;
         out.append(compact);
     }
+    out += ContentFade::properties();
     return out;
 }
 
-QVector<ContentProperty> frequencyProperties()
+// The rows both frequency types share; each appends the fade toggles last.
+QVector<ContentProperty> frequencyBaseProperties()
 {
     ContentProperty form;
     form.key = QLatin1String(kFormKey);
@@ -386,12 +467,33 @@ QVector<ContentProperty> frequencyProperties()
                     {QObject::tr("Band strip"), QStringLiteral("bandStrip"), true, {}},
                     {QObject::tr("Flat arc"), QStringLiteral("flatArc"), true, {}}};
     form.defaultValue = QStringLiteral("numberOnly");
-    return {form};
+
+    // The slice the second line shows. The transmit slice is the default
+    // and is stored as "tx"; "First other slice" is what a record saved
+    // before the pick existed shows.
+    ContentProperty second;
+    second.key = QLatin1String(kSecondSliceKey);
+    second.label = QObject::tr("Second line");
+    second.kind = ContentProperty::Kind::Choice;
+    second.choices = {{QObject::tr("Transmit slice"), QString::fromLatin1(kSecondSliceTx), true, {}},
+                      {QObject::tr("First other slice"), QString::fromLatin1(kSecondSliceFirstOther), true, {}},
+                      {QObject::tr("None"), QStringLiteral("none"), true, {}},
+                      {QObject::tr("Slice A"), QStringLiteral("A"), true, {}},
+                      {QObject::tr("Slice B"), QStringLiteral("B"), true, {}},
+                      {QObject::tr("Slice C"), QStringLiteral("C"), true, {}},
+                      {QObject::tr("Slice D"), QStringLiteral("D"), true, {}}};
+    second.defaultValue = QString::fromLatin1(kSecondSliceTx);
+    return {form, second};
+}
+
+QVector<ContentProperty> frequencyProperties()
+{
+    return frequencyBaseProperties() + ContentFade::properties();
 }
 
 QVector<ContentProperty> frequencyDisplayProperties()
 {
-    QVector<ContentProperty> out = frequencyProperties();
+    QVector<ContentProperty> out = frequencyBaseProperties();
 
     ContentProperty size;
     size.key = QLatin1String(kFontSizeKey);
@@ -422,17 +524,18 @@ QVector<ContentProperty> frequencyDisplayProperties()
 
     ContentProperty own;
     own.key = QLatin1String(kShowOwnKey);
-    own.label = QObject::tr("A/B line: this slice");
+    own.label = QObject::tr("Show this slice's line");
     own.kind = ContentProperty::Kind::Toggle;
     own.defaultValue = true;
 
     ContentProperty other;
     other.key = QLatin1String(kShowOtherKey);
-    other.label = QObject::tr("A/B line: other slice");
+    other.label = QObject::tr("Show the second line");
     other.kind = ContentProperty::Kind::Toggle;
     other.defaultValue = true;
 
     out << size << fit << color << center << own << other;
+    out += ContentFade::properties();
     return out;
 }
 
@@ -443,7 +546,7 @@ QVector<ContentProperty> filterProperties()
     label.label = QObject::tr("Label");
     label.kind = ContentProperty::Kind::Text;
     label.placeholder = QObject::tr("The source slice, for example RX A");
-    return {label};
+    return QVector<ContentProperty>{label} + ContentFade::properties();
 }
 
 } // namespace
@@ -484,14 +587,14 @@ QVector<float> traceFromRendered(const QVector<float>& pixels, double centreHz,
 void registerAll(ContainerContentRegistry& registry, const Sources& sources)
 {
     registry.registerWidgetFactory(QLatin1String(kFrequencyType),
-        {QLatin1String(kFrequencyType), QStringLiteral("Frequency (Longpath)"), false, true, {}},
+        {QLatin1String(kFrequencyType), QStringLiteral("Frequency"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeFrequency(entry, parent, sources, mode == ContentRenderMode::Preview);
         },
         frequencyProperties());
 
     registry.registerWidgetFactory(QLatin1String(kFrequencyCustomType),
-        {QLatin1String(kFrequencyCustomType), QStringLiteral("Frequency (Custom)"), false, true, {}},
+        {QLatin1String(kFrequencyCustomType), QStringLiteral("Custom frequency"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeFrequencyCustom(entry, parent, sources, mode == ContentRenderMode::Preview);
         },
@@ -510,6 +613,13 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         // that does not send it, no transmit source): no value, as a
         // MeterWidget shows the binding disabled.
         auto unavailable = std::make_shared<bool>(false);
+        // Whether the entry's slice is at or above the S9 frequency (30 MHz).
+        // There Thetis raises Signal Strength and Avg Signal Strength by
+        // 20 dB before it positions them (getPerc, MeterManager.cs:41049-41052
+        // [v2.10.3.15]), so S9 reads at -93 dBm; aboveS9Adjusted leaves every
+        // other reading as it is. Set from the slice below, before any
+        // reading arrives.
+        auto aboveS9 = std::make_shared<bool>(false);
         if (entry.typeId == QLatin1String(kBarType)) {
             auto owned = std::make_unique<BarInstrument>(parent);
             owned->setCompact(entry.config.value(QLatin1String(kCompactKey)).toBool(true));
@@ -517,14 +627,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             BarInstrument* bar = owned.release();
             if (secondary >= 0) { bar->setSecondary(secondary); }
             QPointer<BarInstrument> guard(bar);
-            onReading = [guard, primary, unavailable](int binding, double value) {
+            onReading = [guard, primary, unavailable, aboveS9](int binding, double value) {
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); }
                     else { guard->clearSecondValue(); }
                     return;
                 }
-                guard->onReading(binding, value);
+                guard->onReading(binding, aboveS9Adjusted(binding, value, *aboveS9));
             };
             widget = bar;
         } else {
@@ -536,24 +646,28 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             // good when NereusSDR has no producer for the reading.
             needle->setOffline(true);
             QPointer<NeedleInstrument> guard(needle);
-            onReading = [guard, primary, available, unavailable](int binding, double value) {
+            onReading = [guard, primary, available, unavailable, aboveS9](int binding, double value) {
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); guard->setOffline(true); }
                     else { guard->clearSecondValue(); }
                     return;
                 }
-                guard->onReading(binding, value);
+                guard->onReading(binding, aboveS9Adjusted(binding, value, *aboveS9));
                 if (binding == primary && available) { guard->setOffline(false); }
             };
             widget = needle;
         }
         // Per-model or amplifier scale belongs to this instance, not the
         // fixed descriptor table. Keep its binding and current value intact.
-        if (primary == MeterBinding::TxPower && sources.radio) {
+        // Reverse power shares it: Thetis draws it on the forward power
+        // bar's scale (AddREVPWRBar calls AddPWRBar).
+        if ((primary == MeterBinding::TxPower || primary == MeterBinding::TxReversePower) && sources.radio) {
             MainPowerMeter* meter = sources.radio->mainPowerMeter();
-            const auto scale = [widget, meter] {
-                const ReadingDescriptor d = powerReadingDescriptor(meter->visualLimitW(), meter->scaleTopW());
+            const auto scale = [widget, meter, descriptor] {
+                ReadingDescriptor d = powerReadingDescriptor(meter->visualLimitW(), meter->scaleTopW());
+                d.bindingId = descriptor->bindingId;
+                d.label = descriptor->label;
                 if (auto* bar = qobject_cast<BarInstrument*>(widget)) { bar->setPrimaryScale(d); }
                 if (auto* needle = qobject_cast<NeedleInstrument*>(widget)) { needle->setPrimaryScale(d); }
             };
@@ -563,6 +677,21 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             }
         }
         widget->setProperty("longpathPrimaryBinding", primary);
+        // The S9 rule follows the entry's slice: its band changes take
+        // effect on the next reading, and a Follow selected RX entry moves
+        // to the newly selected slice. An inert preview reads the slice once.
+        if (mode == ContentRenderMode::Preview) {
+            SliceModel* slice = sliceNow(sources, entry.context);
+            *aboveS9 = slice && isAboveS9Frequency(slice->frequency());
+        } else {
+            auto* follower = new SliceFollower(widget, sources, entry.context);
+            follower->start([follower, aboveS9](SliceModel* slice) {
+                *aboveS9 = slice && isAboveS9Frequency(slice->frequency());
+                if (!slice) { return; }
+                follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, follower,
+                                                 [aboveS9](double hz) { *aboveS9 = isAboveS9Frequency(hz); }));
+            });
+        }
         if (sources.poller && available && mode == ContentRenderMode::Preview) {
             // Inert preview: the cached readings once, nothing registered.
             *unavailable = !sources.poller->bindingUnavailableReason(primary).isEmpty();
@@ -598,14 +727,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         return widget;
     };
     registry.registerWidgetFactory(QLatin1String(kNeedleType),
-        {QLatin1String(kNeedleType), QStringLiteral("Needle meter (Longpath)"), false, true, {}},
+        {QLatin1String(kNeedleType), QStringLiteral("Needle meter"), false, true, {}},
         meterFactory, meterProperties(QLatin1String(kNeedleType)));
     registry.registerWidgetFactory(QLatin1String(kBarType),
-        {QLatin1String(kBarType), QStringLiteral("Bar meter (Longpath)"), false, true, {}},
+        {QLatin1String(kBarType), QStringLiteral("Bar meter"), false, true, {}},
         meterFactory, meterProperties(QLatin1String(kBarType)));
 
     registry.registerWidgetFactory(QLatin1String(kFilterType),
-        {QLatin1String(kFilterType), QStringLiteral("Filter passband (Longpath)"), false, true, {}},
+        {QLatin1String(kFilterType), QStringLiteral("Filter passband"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             auto* pane = new BandwidthFilterPane(parent);
             QPointer<BandwidthFilterPane> guard(pane);
@@ -716,6 +845,23 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             return pane;
         },
         filterProperties());
+}
+
+void followAboveS9Frequency(QWidget* owner, const Sources& sources, const QJsonObject& context,
+                            bool preview, const std::function<void(bool above)>& changed)
+{
+    if (preview) {
+        SliceModel* slice = sliceNow(sources, context);
+        changed(slice && isAboveS9Frequency(slice->frequency()));
+        return;
+    }
+    auto* follower = new SliceFollower(owner, sources, context);
+    follower->start([follower, changed](SliceModel* slice) {
+        changed(slice && isAboveS9Frequency(slice->frequency()));
+        if (!slice) { return; }
+        follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, follower,
+                                         [changed](double hz) { changed(isAboveS9Frequency(hz)); }));
+    });
 }
 
 } // namespace NereusSDR::LongpathContent

@@ -1,5 +1,11 @@
 // NereusSDR for iOS: transmit on the main screen against a fake Core: the PTT, its keepalive, refusals, stops and the keyed view
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the TX panel's CW rows in CWU, and greyed with the
+//   update note on a version 15 Core (R-CW-50). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//   reason, a later fallback said once, VOX, LEV, EQ and CFC greyed in CW.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -422,6 +428,180 @@ struct TransmitScreenTests {
         #expect(SharingChip.note(reason: .coreBusy, holder: nil) == "The Core is busy. The devices share it.")
     }
 
+    // MARK: The Core's RF hold
+
+    /// The hold's four properties (TransmitState ordinals 50 to 53), in
+    /// the order the Core sends them: the serial before the length.
+    static func hold(held: Bool, reason: String = "", serial: Int64, lastMs: Int64) -> [LinkMessage.PropertyEntry] {
+        [
+            .init(ordinal: 50, name: "rfHeld", value: .bool(held)),
+            .init(ordinal: 51, name: "rfHeldReason", value: .utf8(reason)),
+            .init(ordinal: 52, name: "rfHoldSerial", value: .i64(serial)),
+            .init(ordinal: 53, name: "rfLastHoldMs", value: .i64(lastMs)),
+        ]
+    }
+
+    @Test("a Core that sends none of the hold reads unheld, and the keyed pill reads TX")
+    func olderCoreIsUnheld() async throws {
+        let (model, _) = try await connected()
+        let transmit = model.main.transmit
+        #expect(!transmit.report.rfHeld)
+        #expect(transmit.report.rfHeldReason.isEmpty)
+        #expect(transmit.report.rfHoldSerial == 0)
+        #expect(transmit.report.rfLastHoldMs == 0)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        #expect(!transmit.holdShown)
+        #expect(TxPill.title(held: transmit.holdShown, seconds: 4) == "TX 0:04")
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("keyed and held: the pill reads Held with its reason, PTT stays keyed and Stop still ends the key")
+    func heldWhileKeyed() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        await station.deliver(Self.txStateDelta([.init(ordinal: 0, name: "keyed", value: .bool(true))]
+            + Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShown })
+        #expect(transmit.holdShownReason == "link")
+        #expect(TxPill.title(held: transmit.holdShown, seconds: 12) == "Held 0:12")
+        #expect(TxPill.spoken(held: true, reason: "link", seconds: 12)
+                == "Transmitting, RF held while the link is quiet, 0:12")
+        // The key is still on: the PTT keeps its keyed look and its words.
+        #expect(transmit.ptt.state.isKeyed)
+        #expect(PttButton.look(transmit.ptt) == .keyed)
+        #expect(PttButton.words(transmit.ptt, clock: "0:12") == PttButton.Words(label: "TX", sub: "0:12"))
+
+        await station.deliver(Self.txStateDelta(Self.hold(held: true, reason: "mic", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShownReason == "mic" })
+        #expect(transmit.holdShown)
+        #expect(TxPill.spoken(held: true, reason: "mic", seconds: 3)
+                == "Transmitting, RF held while no microphone audio arrives, 0:03")
+
+        // Stop on the pill ends the key while it is held.
+        transmit.stopAll()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        #expect(!station.keyed)
+        #expect(station.messages.compactMap(Self.invoke).contains { $0.verb == "tx.unkey" })
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        await model.disconnect()
+    }
+
+    @Test("a hold seen live shows nothing once it ends")
+    func seenHoldEnds() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        await station.deliver(Self.txStateDelta(Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShown })
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 1, lastMs: 2600)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 1 })
+        #expect(!transmit.holdShown)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("a hold the phone never saw held: one delta, serial before length, shows Held for its length, then TX")
+    func unseenHoldShowsForItsLength() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        let sent = ContinuousClock.now
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 1, lastMs: 2000)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 1 })
+        // Read whole: the length that came after the serial is the one shown.
+        #expect(transmit.holdShown)
+        #expect(transmit.holdShownReason.isEmpty)
+        #expect(TxPill.spoken(held: true, reason: transmit.holdShownReason, seconds: 5)
+                == "Transmitting, RF held for a moment, 0:05")
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        #expect(ContinuousClock.now - sent >= .milliseconds(1980))
+        #expect(transmit.ptt.state.isKeyed)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("a hold serial that goes down is no hold ended; the next one up shows")
+    func holdSerialGoesDown() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        // Unkeyed, the count reaches 5 and nothing shows.
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 5, lastMs: 2500)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 5 })
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        #expect(!transmit.holdShown)
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 2, lastMs: 900)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 2 })
+        #expect(!transmit.holdShown)
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 3, lastMs: 2000)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 3 })
+        #expect(transmit.holdShown)
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("the whole v2 CW tuple drives CW-only liveness and stale completion cannot end its successor")
+    func cwTupleIsReadWholeAndIndependentOfMox() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.hello(.init(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(.init(properties: [
+            .init(name: "remoteTxVersion", value: .i64(2)),
+            .init(name: "txPermitted", value: .bool(true)),
+            .init(name: "remoteCwVersion", value: .i64(2)),
+        ])))
+        mirror.apply(.authResult(.init(accepted: true, reason: "", retryable: false)))
+        mirror.apply(.objectCreate(.init(key: "txState", className: "TransmitState", properties: [
+            .init(ordinal: 0, name: "keyed", value: .bool(false)),
+        ])))
+        mirror.apply(.snapshotComplete)
+        let slices = BandSlicesModel(store: mirror, commands: nil)
+        let transmit = TransmitModel(mirror: mirror, commands: nil, slices: slices, subscriber: nil,
+                                     platform: platform.platform)
+        transmit.thisDeviceId = Self.thisDeviceId
+        await transmit.sessionChanged(.ready, owner: 1)
+        let request = transmit.remoteCwLease.begin()
+        // The report precedes the command result; read owner/epoch/activity
+        // together after the delta, independently of keyed and RF hold.
+        mirror.apply(Self.txStateDelta([
+            .init(ordinal: 54, name: "remoteCwDeviceId", value: .utf8(Self.thisDeviceId)),
+            .init(ordinal: 55, name: "remoteCwEpoch", value: .i64(72)),
+            .init(ordinal: 56, name: "remoteCwActive", value: .bool(true)),
+        ] + Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        transmit.refresh()
+        #expect(transmit.report.remoteCw?.epoch == 72)
+        #expect(transmit.report.remoteCw?.deviceId == Self.thisDeviceId)
+        #expect(transmit.report.remoteCw?.active == true && transmit.remoteCwLease.epoch == 72)
+        #expect(!transmit.report.keyed && transmit.report.rfHeld)
+        transmit.remoteCwLease.complete(request, acceptedEpoch: 72, active: true)
+        #expect(await settle(seconds: 30) { transmit.ptt.keepaliveRunning })
+        #expect(!transmit.ptt.microphoneWanted && !transmit.ptt.transmitting)
+        mirror.apply(Self.txStateDelta([
+            .init(ordinal: 55, name: "remoteCwEpoch", value: .i64(71)),
+            .init(ordinal: 56, name: "remoteCwActive", value: .bool(false)),
+        ]))
+        transmit.refresh()
+        #expect(transmit.remoteCwLease.epoch == 72)
+        // Microphone loss leaves independent CW alive; the operator's
+        // all-content stop retires it synchronously.
+        await transmit.stopEverythingHere(.microphoneLost)
+        #expect(transmit.remoteCwLease.epoch == 72)
+        await transmit.stopEverythingHere(.unkeyButton)
+        #expect(transmit.remoteCwLease.epoch == nil)
+        #expect(await settle(seconds: 30) { !transmit.ptt.keepaliveRunning })
+        await transmit.sessionChanged(.idle, owner: 1)
+    }
+
     // MARK: Pictures
 
     @Test("listening and keyed, the TX panel, transmit held elsewhere and the time-out, upright and sideways")
@@ -479,6 +659,192 @@ struct TransmitScreenTests {
         #expect(await settle(seconds: 30) { transmit.ptt.state == .heldElsewhere(device: "MacBook", onAir: true) })
         try await shoot("tx-held-elsewhere-on-air-upright", sideways: false, model: model)
         await model.disconnect()
+    }
+
+    // MARK: CW (R-CW-50)
+
+    @Test("in CWU the TX panel shows Speed, Pitch, Break-in, Delay and the sidetone level, each writing its setting")
+    func txPanelCwRows() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        await Self.fillTransmit(station)
+        let catalogue = try #require(ModesTabBindingTests.catalogueJSON(ModesTabBindingTests.anan))
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(catalogue)),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.catalogFeed.catalog != nil })
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+            .init(ordinal: 89, name: "cwKeyerSpeed", value: .i64(25)),
+            .init(ordinal: 94, name: "cwBreakInMode", value: .i64(1)),
+            .init(ordinal: 95, name: "cwBreakInDelayMs", value: .i64(300)),
+            .init(ordinal: 98, name: "cwSidetone", value: .bool(true)),
+        ])))
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 2, name: "dspMode", value: .enumeration(Int64(cwu.id))),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.inCw && transmit.cwSpeedWpm == 25 && transmit.cwSettingsEditable })
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 1400))
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        let host = UIHostingController(rootView: TxPanel(transmit: transmit, accessories: model.main.accessories,
+                                                         micLevel: model.main.micLevel, modes: model.main.modes,
+                                                         meters: nil, scrolls: false).preferredColorScheme(.dark))
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
+        }
+        await ShotWait.laidOut(window)
+        for label in ["CW speed", "CW pitch", "Break-in Off", "Break-in Semi", "Break-in QSK", "CW break-in delay",
+                      "Sidetone", "Sidetone level"] {
+            #expect(!AccessoryPagesTests.elements(labelled: label, in: window).isEmpty, "\(label)")
+        }
+        // Each row writes its own setting at the Core.
+        transmit.setCwSpeed(18)
+        let speed = await station.waitForMessage(within: .seconds(30)) { message in
+            if case .propertyWrite(let write) = message {
+                return write.key == "transmit" && write.properties.first?.name == "cwKeyerSpeed"
+            }
+            return false
+        }
+        guard case .propertyWrite(let write)? = speed else {
+            Issue.record("no cwKeyerSpeed write reached the Core")
+            return
+        }
+        #expect(write.properties.first?.value == .i64(18))
+        #expect(!station.keyed)
+        await model.disconnect()
+    }
+
+    @Test("QSK is greyed with the Core's reason, a later fallback is said once, and VOX, LEV, EQ and CFC grey in CW")
+    func cwQskReasonAndNotUsedInCw() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        await Self.fillTransmit(station)
+        let catalogue = try #require(ModesTabBindingTests.catalogueJSON(ModesTabBindingTests.anan))
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(catalogue)),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.catalogFeed.catalog != nil })
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        // Voice first: nothing is greyed for CW.
+        #expect(transmit.cwNotUsedReason == nil)
+        #expect(TxPanel.voxReason(transmit) != TransmitModel.cwNotUsedText)
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+            .init(ordinal: 89, name: "cwKeyerSpeed", value: .i64(25)),
+            .init(ordinal: 94, name: "cwBreakInMode", value: .i64(2)),
+            .init(ordinal: 95, name: "cwBreakInDelayMs", value: .i64(300)),
+            .init(ordinal: 98, name: "cwSidetone", value: .bool(true)),
+            .init(ordinal: 119, name: "cwQskUnavailableReason", value: .utf8("")),
+        ])))
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 2, name: "dspMode", value: .enumeration(Int64(cwu.id))),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.inCw && transmit.cwSettingsEditable })
+        #expect(transmit.cwQskReason == nil)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInQsk) == nil)
+        #expect(transmit.note == nil)
+        // In CW: VOX, LEV, EQ and CFC do nothing, with the desktop's words.
+        #expect(TransmitModel.cwNotUsedText == "Not used in CW: the radio makes the signal.")
+        #expect(transmit.cwNotUsedReason == TransmitModel.cwNotUsedText)
+        #expect(TxPanel.voxReason(transmit) == TransmitModel.cwNotUsedText)
+
+        // The antenna changes at the Core: QSK falls back, said once.
+        let antenna = "QSK needs the same antenna for receive and transmit."
+        await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
+            .init(ordinal: 119, name: "cwQskUnavailableReason", value: .utf8(antenna)),
+        ])))
+        #expect(await settle(seconds: 30) { transmit.cwQskReason == antenna })
+        #expect(transmit.note == antenna)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInQsk) == antenna)
+        #expect(transmit.cwBreakInChoiceReason(TransmitModel.cwBreakInSemi) == nil)
+        transmit.dismissNotice()
+
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 1600))
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        let host = UIHostingController(rootView: TxPanel(transmit: transmit, accessories: model.main.accessories,
+                                                         micLevel: model.main.micLevel, modes: model.main.modes,
+                                                         meters: nil, scrolls: false).preferredColorScheme(.dark))
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
+        }
+        await ShotWait.laidOut(window)
+        // Greyed, never hidden: every control is still there, with the words.
+        for label in ["Break-in QSK", "VOX", "Leveler", "EQ", "CFC", "QSK: " + antenna,
+                      "VOX, LEV, EQ and CFC: " + TransmitModel.cwNotUsedText] {
+            #expect(!AccessoryPagesTests.elements(labelled: label, in: window).isEmpty, "\(label)")
+        }
+        // QSK and VOX send nothing while greyed; Off still writes.
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInQsk)
+        transmit.toggleVox()
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInOff)
+        let write = await station.waitForMessage(within: .seconds(30)) { message in
+            if case .propertyWrite(let write) = message {
+                return write.key == "transmit"
+                    && (write.properties.first?.name == "cwBreakInMode" || write.properties.first?.name == "voxEnabled")
+            }
+            return false
+        }
+        guard case .propertyWrite(let first)? = write else {
+            Issue.record("no break-in write reached the Core")
+            return
+        }
+        #expect(first.properties.first?.name == "cwBreakInMode")
+        #expect(first.properties.first?.value == .i64(TransmitModel.cwBreakInOff))
+        #expect(!station.keyed)
+        await model.disconnect()
+    }
+
+    @Test("against a version 15 Core the CW settings are greyed with the update note and send nothing")
+    func cwSettingsOnAVersion15Core() async throws {
+        let outbox = SliceListTests.Outbox()
+        let mirror = MirrorStore(send: { message in outbox.record(message) })
+        mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
+            .init(name: "transmitSettingsVersion", value: .i64(15)),
+            .init(name: "remoteTxVersion", value: .i64(2)),
+            .init(name: "txPermitted", value: .bool(true)),
+        ])))
+        mirror.apply(.authResult(LinkMessage.AuthResult(accepted: true, reason: "", retryable: false)))
+        mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "transmit", className: "TransmitModel", properties: [
+            .init(ordinal: 19, name: "monitorVolume", value: .f64(0.5)),
+        ])))
+        mirror.apply(.snapshotComplete)
+        let slices = BandSlicesModel(store: mirror, commands: nil)
+        let transmit = TransmitModel(mirror: mirror, commands: nil, slices: slices, subscriber: nil,
+                                     platform: platform.platform)
+        transmit.refresh()
+        #expect(transmit.settingsVersion == 15)
+        #expect(!transmit.cwSettingsEditable)
+        #expect(transmit.cwSettingsReason == TransmitModel.cwSettingsNotTakenText)
+        #expect(TransmitModel.cwSettingsNotTakenText
+                == "This Core does not let this phone change the CW settings. Updating the Core may help.")
+        transmit.setCwSpeed(20)
+        transmit.setCwBreakInMode(TransmitModel.cwBreakInSemi)
+        transmit.setCwBreakInDelay(200)
+        transmit.toggleCwSidetone()
+        transmit.setCwSidetoneLevel(0.3)
+        transmit.setCwPitch(700)
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(!outbox.messages.contains { message in
+            if case .propertyWrite = message { return true }
+            if case .settingsWrite = message { return true }
+            return false
+        })
     }
 
     // MARK: The fake Core

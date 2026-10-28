@@ -1,5 +1,9 @@
 // NereusSDR for iOS: the approved native TX panel's pinned controls and visible settings route
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 19, the applet column is now one scroll
+// itself, so its scroll is the column or the first one in it. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import XCTest
 
@@ -15,7 +19,7 @@ final class TxPanelUITests: XCTestCase {
         app.launchArguments = ["-NereusShowBand"]
         let lightValidation = ProcessInfo.processInfo.environment["NEREUS_TX_APPEARANCE"] == "light"
         if lightValidation { app.launchArguments.append("-NereusTxPanelLightValidation") }
-        app.launch()
+        app.launchFresh()
         if lightValidation {
             let scheme = app.descendants(matching: .any)["nativeTxValidationScheme"]
             XCTAssertTrue(scheme.waitForExistence(timeout: 10))
@@ -65,7 +69,7 @@ final class TxPanelUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         let column = app.descendants(matching: .any)["appletColumn"]
         XCTAssertTrue(column.waitForExistence(timeout: 30))
         let settings = app.buttons["txSettings"]
@@ -106,11 +110,18 @@ final class TxPanelUITests: XCTestCase {
         try save("native-txpanel-ipad-full-back")
     }
 
+    /// The scroll that moves `element`: itself when it is one (the iPad's
+    /// applet column, one scroll), else the first scroll in it.
+    @MainActor
+    private static func scroll(of element: XCUIElement) -> XCUIElement {
+        element.elementType == .scrollView ? element : element.scrollViews.firstMatch
+    }
+
     /// Hittability can include a target covered by the pinned TX controls.
     /// Use the actual parent viewport, clipped between the toolbar and tab bar.
     @MainActor
     private func iPadColumnViewport(_ app: XCUIApplication, column: XCUIElement) throws -> CGRect {
-        let parent = column.scrollViews.firstMatch
+        let parent = Self.scroll(of: column)
         let toolbar = app.descendants(matching: .any)["toolbarIPad"]
         let tabs = app.descendants(matching: .any)["Sections"]
         let parentFrame = try XCTUnwrap(parent.exists ? parent.frame : nil, "The actual column scroll view exists")
@@ -129,7 +140,7 @@ final class TxPanelUITests: XCTestCase {
     @MainActor
     private func revealIPadTiming(_ timing: XCUIElement, in column: XCUIElement,
                                   app: XCUIApplication) throws {
-        let parent = column.scrollViews.firstMatch
+        let parent = Self.scroll(of: column)
         let keys = ["txTune", "txMox", "txTwoTone", "txPsa", "txSettings"].map { app.buttons[$0] }
         func belowTXKeys(in viewport: CGRect) -> CGRect? {
             guard keys.allSatisfy({ $0.exists }), let keyBottom = keys.map({ $0.frame.maxY }).max() else { return nil }
@@ -184,7 +195,7 @@ final class TxPanelUITests: XCTestCase {
     @MainActor
     private func assertPinnedControls(_ app: XCUIApplication, container: XCUIElement, parentScroll: Bool,
                                       file: StaticString = #filePath, line: UInt = #line) {
-        let parent = parentScroll ? container.scrollViews.firstMatch : container
+        let parent = parentScroll ? Self.scroll(of: container) : container
         XCTAssertTrue(parent.exists, "The actual panel viewport exists", file: file, line: line)
         let toolbar = app.descendants(matching: .any)[parentScroll ? "toolbarIPad" : "toolbar"]
         let tabs = app.descendants(matching: .any)["Sections"]

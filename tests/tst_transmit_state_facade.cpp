@@ -49,8 +49,31 @@
 //  15. (Unkey drain review) So is the keyed device's lost link, whether its
 //      link drops or the same device connects again over a new one.
 //
+// Remote transmit hold then cut (Task 5):
+//  16. On its own, setRfHold publishes a hold once, a reason change once,
+//      and its end clears the reason, advances rfHoldSerial and sets
+//      rfLastHoldMs to the hold's length; a window's copy takes the four.
+//  17. Through the Core: a quiet link holds the keyer's RF (rfHeld, "link")
+//      with MOX on and no stop, and keepalives returning end it; the cut at
+//      3000 ms is today's stop; a starved microphone holds ("mic") until
+//      audio returns; both at once read "link" and the hold ends only when
+//      both have; MOX reaching receive ends one (the key ended), and a
+//      held key that ended keeps the TX channel's Link bit until then; a
+//      hold for a device that is not the keyer publishes nothing; the 10 s
+//      without microphone audio is the starvation's stop; TUNE or two-tone
+//      starting releases a microphone hold. Each start and end is logged.
+//  18. (Fix wave B) A microphone line that ends while its device is keyed
+//      is no audio, never audio returning: a hold stays on (or is set at
+//      250 ms after the last packet in AM), and the Core cuts 10 s after
+//      the last packet in every mode unless a new line delivers first; a
+//      new line that never delivers does not move the cut. A hold the Core
+//      declines (no remote key on the air) is not counted.
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Split cumulative local/remote-hold fixture work into
+//               independent ctest entries, retaining every case/deadline.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 39 (D14, R-IOS-13,
 //               R-IOS-21), with AI-assisted implementation via Anthropic
@@ -82,9 +105,29 @@
 //               not yet measured (it logged 400.0 dB on every key of the
 //               HL2 retest). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the published hold, on its
+//               own and through the Core; the quiet link's stop now comes
+//               at 3000 ms, and the microphone's stop is the 10 s without
+//               audio. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-10-26: Remote transmit hold then cut: a link hold during a key
+//               neither restarts nor pauses the TX time-out. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: a microphone
+//               line that ends mid-key keeps the hold and is cut 10 s after
+//               its last packet (AM and USB), unless a new line delivers; a
+//               replacement that never delivers moves nothing; a hold the
+//               Core declines is not counted; TUNE, two-tone and a new key
+//               each end a hold in their own words; the hold start logs the
+//               measured silence. Round 2: a plain unkey is no mid-key line
+//               end; a change of transmit mode while starved judges the
+//               hold again, both ways; MOX reaching receive makes the
+//               policy forget a hold it did not publish. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "TestFunctionGroups.h"
 
 #include <QElapsedTimer>
 #include <QScopeGuard>
@@ -100,6 +143,7 @@
 #include "core/safety/RemoteTxWatchdog.h"
 #include "core/safety/TxTimeOutTimer.h"
 #include "core/session/TransmitStateFacade.h"
+#include "core/session/media/RemoteMicReceiver.h"
 
 #include <functional>
 #include <memory>
@@ -342,6 +386,115 @@ private:
     static inline QString s_line;
     static inline QtMessageHandler s_previous{nullptr};
 };
+
+// Remote transmit hold then cut: collects the control log's hold lines.
+class HoldLog {
+public:
+    HoldLog()
+    {
+        s_lines.clear();
+        s_previous = qInstallMessageHandler(&HoldLog::handle);
+    }
+    ~HoldLog() { qInstallMessageHandler(s_previous); }
+    QStringList lines() const { return s_lines; }
+
+private:
+    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+    {
+        if (msg.startsWith(QStringLiteral("Transmit hold "))) {
+            s_lines.append(msg);
+            return;
+        }
+        if (s_previous) {
+            s_previous(type, context, msg);
+        }
+    }
+    static inline QStringList s_lines;
+    static inline QtMessageHandler s_previous{nullptr};
+};
+
+// Fix wave B, round 2: counts the log lines that contain `needle`.
+class LineCount {
+public:
+    explicit LineCount(QString needle)
+    {
+        s_needle = std::move(needle);
+        s_count = 0;
+        s_previous = qInstallMessageHandler(&LineCount::handle);
+    }
+    ~LineCount() { qInstallMessageHandler(s_previous); }
+    int count() const { return s_count; }
+
+private:
+    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+    {
+        if (msg.contains(s_needle)) {
+            ++s_count;
+        }
+        if (s_previous) {
+            s_previous(type, context, msg);
+        }
+    }
+    static inline QString s_needle;
+    static inline int s_count{0};
+    static inline QtMessageHandler s_previous{nullptr};
+};
+
+namespace {
+
+// The Core's clock moves 50 ms a step with real time, so the watchdog's
+// real timer finds it moved, until `done` or `maxSteps`. While `keepalive`
+// is set it is called each step.
+bool advanceUntil(Pair& p, const std::function<bool()>& done, int maxSteps,
+                  const std::function<void()>& keepalive = {})
+{
+    for (int i = 0; i < maxSteps && !done(); ++i) {
+        p.core.now += 50;
+        if (keepalive) {
+            keepalive();
+        }
+        QTest::qWait(50);
+    }
+    return done();
+}
+
+QJsonObject keepaliveFrom(Pair& p, LoopbackTransport* app, qint64 sequence)
+{
+    // The first key on a fresh Core is epoch 1.
+    return p.core.invoke(app, "tx.keepalive", {int64("sequence", sequence), int64("epoch", 1)});
+}
+
+QString holdStartLine(const QByteArray& deviceId, const QString& silence)
+{
+    return QStringLiteral("Transmit hold for %1: %2; RF off, still keyed")
+        .arg(QString::fromLatin1(deviceId.toHex()), silence);
+}
+
+QString holdEndLine(const QByteArray& deviceId, qint64 lengthMs, const QString& how)
+{
+    return QStringLiteral("Transmit hold for %1 ended after %2 ms: %3")
+        .arg(QString::fromLatin1(deviceId.toHex()))
+        .arg(lengthMs)
+        .arg(how);
+}
+
+// Fix wave B: moves the Core's clock to `toMs` in steps of at most 100 ms,
+// a keepalive from the phone at each (its link stays live), and judges an
+// ended microphone line at each step on that clock, as its timer would.
+void stepTo(Pair& p, qint64 toMs, qint64& sequence)
+{
+    while (p.core.now < toMs) {
+        p.core.now = std::min(toMs, p.core.now + 100);
+        QVERIFY(keepaliveFrom(p, p.appA, ++sequence).value(QStringLiteral("accepted")).toBool());
+        p.core.server->judgeEndedMicLineForTest();
+        pumpEvents(2);
+    }
+}
+
+const QString kMicStopText = QStringLiteral(
+    "No microphone audio arrived from Grant's iPhone, so the Core stopped transmitting.");
+
+} // namespace
 
 class TstTransmitStateFacade : public QObject {
     Q_OBJECT
@@ -772,6 +925,91 @@ private slots:
         QCOMPARE(copy.stopSerial(), quint32(4));
     }
 
+    // ---- Remote transmit hold then cut, on its own ------------------------
+
+    void theFourHoldPropertiesAreAppendedAfterTheLastReading()
+    {
+        const QMetaObject& meta = TransmitState::staticMetaObject;
+        // Hold ordinals50-53 stay fixed; remote CW appends54-56 rather
+        // than moving the existing readings or hold fields (surface.json).
+        const int reading = meta.indexOfProperty("cfcPeakDb");
+        QCOMPARE(reading - meta.propertyOffset(), 49);
+        const QList<QByteArray> appended{"cfcPeakDb", "rfHeld", "rfHeldReason",
+            "rfHoldSerial", "rfLastHoldMs", "remoteCwDeviceId", "remoteCwEpoch", "remoteCwActive"};
+        for (int i = 0; i < appended.size(); ++i) {
+            QCOMPARE(QByteArray(meta.property(reading + i).name()), appended.at(i));
+        }
+        QCOMPARE(meta.propertyCount(), reading + static_cast<int>(appended.size()));
+    }
+
+    void aHoldIsPublishedOnceAndItsEndCounted()
+    {
+        TransmitState state;
+        qint64 nowMs = 1000;
+        state.setClock([&nowMs]() { return nowMs; });
+        QSignalSpy changed(&state, &TransmitState::holdChanged);
+        QVERIFY(!state.rfHeld());
+        QVERIFY(state.rfHeldReason().isEmpty());
+        QCOMPARE(state.rfHoldSerial(), quint64(0));
+        QCOMPARE(state.rfLastHoldMs(), qint64(0));
+
+        state.setRfHold(true, QStringLiteral("link"));
+        QVERIFY(state.rfHeld());
+        QCOMPARE(state.rfHeldReason(), QStringLiteral("link"));
+        QCOMPARE(changed.count(), 1);
+        state.setRfHold(true, QStringLiteral("link"));
+        QCOMPARE(changed.count(), 1);
+
+        nowMs += 1234;
+        state.setRfHold(false, QString());
+        QVERIFY(!state.rfHeld());
+        QVERIFY(state.rfHeldReason().isEmpty());
+        QCOMPARE(state.rfHoldSerial(), quint64(1));
+        QCOMPARE(state.rfLastHoldMs(), qint64(1234));
+        QCOMPARE(changed.count(), 2);
+        state.setRfHold(false, QString());
+        QCOMPARE(changed.count(), 2);
+
+        // A reason change while held is one change; the serial waits for
+        // the end, and the length covers the whole hold.
+        state.setRfHold(true, QStringLiteral("mic"));
+        QCOMPARE(changed.count(), 3);
+        nowMs += 100;
+        state.setRfHold(true, QStringLiteral("link"));
+        QCOMPARE(changed.count(), 4);
+        QCOMPARE(state.rfHeldReason(), QStringLiteral("link"));
+        QCOMPARE(state.rfHoldSerial(), quint64(1));
+        nowMs += 400;
+        state.setRfHold(false, QString());
+        QCOMPARE(changed.count(), 5);
+        QCOMPARE(state.rfHoldSerial(), quint64(2));
+        QCOMPARE(state.rfLastHoldMs(), qint64(500));
+    }
+
+    void aWindowsCopyTakesTheCoresHold()
+    {
+        TransmitState copy;
+        QSignalSpy changed(&copy, &TransmitState::holdChanged);
+        QVERIFY(copy.applyStationValue("rfHeld", true));
+        QVERIFY(copy.applyStationValue("rfHeldReason", QStringLiteral("mic")));
+        QVERIFY(copy.applyStationValue("rfHoldSerial", qlonglong(3)));
+        QVERIFY(copy.applyStationValue("rfLastHoldMs", qlonglong(1500)));
+        QVERIFY(copy.rfHeld());
+        QCOMPARE(copy.rfHeldReason(), QStringLiteral("mic"));
+        QCOMPARE(copy.rfHoldSerial(), quint64(3));
+        QCOMPARE(copy.rfLastHoldMs(), qint64(1500));
+        QCOMPARE(changed.count(), 4);
+        QVERIFY(copy.applyStationValue("rfHeld", true));
+        QCOMPARE(changed.count(), 4);
+        // A Core that is gone holds nothing; the last hold's numbers stay.
+        copy.clearStationValues();
+        QVERIFY(!copy.rfHeld());
+        QVERIFY(copy.rfHeldReason().isEmpty());
+        QCOMPARE(copy.rfHoldSerial(), quint64(3));
+        QCOMPARE(copy.rfLastHoldMs(), qint64(1500));
+        QCOMPARE(changed.count(), 5);
+    }
+
     // ---- Through the Core ---------------------------------------------------------
 
     void onlyADeviceDeclaringRemoteTxGetsTheObject()
@@ -938,22 +1176,35 @@ private slots:
     }
     // ---- The Core's own stops, over the wire (merge of Tasks 37 to 39) ----
 
-    // The watchdog: the keyed phone sends no keepalive; the Core stops more
-    // than 400 ms later and both devices are told the link went quiet.
+    // The watchdog: the keyed phone sends no keepalive; the Core holds its
+    // RF after 400 ms, stops more than 3000 ms after the last keepalive and
+    // both devices are told the link went quiet, as the 400 ms stop did.
     void aQuietLinkIsTheWatchdogsStopWithItsReason()
     {
         Pair p;
         QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
         QSignalSpy tripped(p.core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy ended(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded);
         QVERIFY(p.keyA());
         QTRY_VERIFY(p.state().keyed());
         // The Core's clock is the harness's; it moves with real time, 50 ms
         // a step, so the watchdog's real timer finds it moved.
-        for (int i = 0; i < 40 && tripped.isEmpty(); ++i) {
-            p.core.now += 50;
-            QTest::qWait(50);
-        }
+        QVERIFY(advanceUntil(p, [&p]() { return p.state().rfHeld(); }, 20));
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QVERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(advanceUntil(p, [&tripped]() { return !tripped.isEmpty(); }, 80));
         QCOMPARE(tripped.count(), 1);
+        QCOMPARE(ended.count(), 1);
+        QCOMPARE(ended.at(0).at(2).value<RemoteTxWatchdog::HoldEnd>(),
+                 RemoteTxWatchdog::HoldEnd::Cut);
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(p.state().rfLastHoldMs(), ended.at(0).at(1).toLongLong());
+        const QByteArray id = p.a.key.fingerprint();
+        QCOMPARE(log.lines().size(), 2);
+        QCOMPARE(log.lines().at(1),
+                 holdEndLine(id, ended.at(0).at(1).toLongLong(), QStringLiteral("cut")));
         QTRY_VERIFY(!p.core.model->moxController()->isMox());
         pumpEvents();
         const QString text = QStringLiteral(
@@ -965,17 +1216,108 @@ private slots:
         verifyStopSent(p.appB, QStringLiteral("linkLost"), text);
     }
 
-    // The starvation action: the keyed phone's microphone line starves in
-    // AM; both devices are told no microphone audio arrived.
-    void aStarvedMicrophoneIsTheStarvationsStopWithItsReason()
+    // A link hold during a key neither restarts nor pauses the TX time-out:
+    // after 500 ms keyed, 2000 ms of link silence (held from about 400 ms)
+    // and the keepalive that ends the hold, the time left is what the key's
+    // own start gives, on the Core's clock.
+    void aLinkHoldNeitherRestartsNorPausesTheTimeOut()
     {
         Pair p;
+        QVERIFY(admitted(p.appA));
+        TxTimeOutTimer* const timeOut = p.core.model->txTimeOutTimer();
+        timeOut->setClock([&p]() { return p.core.now; });
+        timeOut->setPinger([](const QString&, std::function<void(bool)> done) { done(true); });
+        QSignalSpy tripped(p.core.server->txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy held(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        QSignalSpy ended(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded);
+        const qint64 keyedAt = p.core.now;
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(timeOut->isTicking());
+        const int limitSeconds = timeOut->remainingSeconds();
+        QVERIFY2(limitSeconds > 10, qPrintable(QString::number(limitSeconds)));
+        // The time left the key's own start gives at `now`, in whole
+        // seconds as the timer rounds them.
+        const auto leftFromTheKey = [&p, keyedAt, limitSeconds]() {
+            const qint64 leftMs = qint64(limitSeconds) * 1000 - (p.core.now - keyedAt);
+            return static_cast<int>((leftMs + 999) / 1000);
+        };
+
+        qint64 sequence = 0;
+        const auto keepalive = [&p, &sequence]() { keepaliveFrom(p, p.appA, ++sequence); };
+        QVERIFY(advanceUntil(p, [&p, keyedAt]() { return p.core.now - keyedAt >= 500; }, 20,
+                             keepalive));
+        QCOMPARE(held.count(), 0);
+        QCOMPARE(timeOut->remainingSeconds(), leftFromTheKey());
+
+        // 2000 ms with no keepalive: held, still keyed, the time-out going on.
+        QVERIFY(advanceUntil(p, [&p, keyedAt]() { return p.core.now - keyedAt >= 2500; }, 60));
+        QCOMPARE(held.count(), 1);
+        QVERIFY(p.state().rfHeld());
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(tripped.count(), 0);
+        QVERIFY(timeOut->isTicking());
+        QCOMPARE(timeOut->remainingSeconds(), leftFromTheKey());
+
+        // A keepalive ends the hold; the time left is still the key's.
+        QVERIFY(advanceUntil(p, [&ended]() { return !ended.isEmpty(); }, 20, keepalive));
+        QCOMPARE(ended.first().at(2).value<RemoteTxWatchdog::HoldEnd>(),
+                 RemoteTxWatchdog::HoldEnd::Heard);
+        const qint64 holdMs = ended.first().at(1).toLongLong();
+        QVERIFY2(holdMs >= 1500, qPrintable(QString::number(holdMs)));
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(timeOut->isTicking());
+        const int left = timeOut->remainingSeconds();
+        qInfo("time-out after a %lld ms hold: %d s left, %d from the key, limit %d",
+              static_cast<long long>(holdMs), left, leftFromTheKey(), limitSeconds);
+        QCOMPARE(left, leftFromTheKey());
+        // Neither restarted at the hold's end nor paused through it.
+        QVERIFY(left < limitSeconds);
+        QCOMPARE(tripped.count(), 0);
+
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted"))
+                    .toBool());
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
+    }
+
+    // The starvation action: the keyed phone's microphone line sends no
+    // audio for 10 s (held from 250 ms in AM, still keyed in USB); both
+    // devices are told no microphone audio arrived.
+    void aStarvedMicrophoneIsTheStarvationsStopWithItsReason_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<bool>("holds");
+        QTest::newRow("AM holds, then cuts") << static_cast<int>(DSPMode::AM) << true;
+        QTest::newRow("USB stays keyed, then cuts") << static_cast<int>(DSPMode::USB) << false;
+    }
+    void aStarvedMicrophoneIsTheStarvationsStopWithItsReason()
+    {
+        QFETCH(int, mode);
+        QFETCH(bool, holds);
+        Pair p;
         QVERIFY(admitted(p.appA) && admitted(p.appB));
-        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        HoldLog log;
+        p.core.model->sliceById(0)->setDspMode(static_cast<DSPMode>(mode));
         QVERIFY(p.keyA());
         QTRY_VERIFY(p.state().keyed());
-        p.core.server->remoteMicStarved(p.a.key.fingerprint(), true);
+        const QByteArray id = p.a.key.fingerprint();
+        p.core.server->remoteMicStarved(id, true);
+        pumpEvents();
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QCOMPARE(p.state().rfHeld(), holds);
+        QCOMPARE(p.core.model->isRemoteRfHeld(), holds);
+        p.core.now += 200;
+        p.core.server->remoteMicNoAudio(id);
         QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(holds ? 1 : 0));
+        const QStringList expected = holds
+            ? QStringList{holdStartLine(id, QStringLiteral("no microphone audio for 250 ms")),
+                          holdEndLine(id, 200, QStringLiteral("cut"))}
+            : QStringList{};
+        QCOMPARE(log.lines(), expected);
         pumpEvents();
         const QString text = QStringLiteral(
             "No microphone audio arrived from Grant's iPhone, so the Core stopped transmitting.");
@@ -1013,6 +1355,631 @@ private slots:
         QCOMPARE(p.state().stopSerial(), quint32(1));
         verifyStopSent(p.appA, QStringLiteral("timeOut"), text);
         verifyStopSent(p.appB, QStringLiteral("timeOut"), text);
+    }
+
+    // ---- Remote transmit hold then cut, through the Core ------------------
+
+    // A quiet link holds the keyer's RF, still keyed and with no stop; both
+    // devices learn it; keepalives returning end it, with its length.
+    void aQuietLinkHoldsTheKeyersRfAndKeepalivesEndIt()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        QSignalSpy changed(&p.state(), &TransmitState::holdChanged);
+        QSignalSpy started(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        QSignalSpy ended(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        QVERIFY(advanceUntil(p, [&started]() { return !started.isEmpty(); }, 20));
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("link"));
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        QVERIFY(p.core.model->txChannel() == nullptr
+                || (p.core.model->txChannel()->rfHoldMask()
+                    & static_cast<quint32>(TxChannel::RfHold::Link)) != 0u);
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QTRY_COMPARE(latest(p.appB->received(), QStringLiteral("txState"),
+                            QStringLiteral("rfHeld")).toBool(), true);
+        QCOMPARE(latest(p.appB->received(), QStringLiteral("txState"),
+                        QStringLiteral("rfHeldReason")).toString(), QStringLiteral("link"));
+
+        p.core.now += 700;
+        QVERIFY(keepaliveFrom(p, p.appA, 1).value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(ended.count(), 1);
+        QCOMPARE(ended.at(0).at(2).value<RemoteTxWatchdog::HoldEnd>(),
+                 RemoteTxWatchdog::HoldEnd::Heard);
+        const qint64 lengthMs = ended.at(0).at(1).toLongLong();
+        QVERIFY(lengthMs >= 700);
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(p.state().rfHeldReason().isEmpty());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(p.state().rfLastHoldMs(), lengthMs);
+        QCOMPARE(changed.count(), 2);
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QTRY_COMPARE(latest(p.appB->received(), QStringLiteral("txState"),
+                            QStringLiteral("rfHoldSerial")).toInteger(), 1);
+        QCOMPARE(latest(p.appB->received(), QStringLiteral("txState"),
+                        QStringLiteral("rfHeld")).toBool(), false);
+        QCOMPARE(latest(p.appB->received(), QStringLiteral("txState"),
+                        QStringLiteral("rfLastHoldMs")).toInteger(), lengthMs);
+        const QByteArray id = p.a.key.fingerprint();
+        QCOMPARE(log.lines(),
+                 (QStringList{holdStartLine(id, QStringLiteral("no keepalive for %1 ms")
+                                                    .arg(started.at(0).at(1).toLongLong())),
+                              holdEndLine(id, lengthMs, QStringLiteral("keepalives returned"))}));
+    }
+
+    // A starved microphone in AM holds ("mic") until audio returns.
+    void aStarvedMicrophoneHoldsUntilAudioReturns()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        QSignalSpy changed(&p.state(), &TransmitState::holdChanged);
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        p.core.server->remoteMicStarved(id, true);
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("mic"));
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        p.core.now += 300;
+        p.core.server->remoteMicStarved(id, false);
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(p.state().rfLastHoldMs(), qint64(300));
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        pumpEvents();
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QCOMPARE(log.lines(),
+                 (QStringList{holdStartLine(id, QStringLiteral("no microphone audio for 250 ms")),
+                              holdEndLine(id, 300, QStringLiteral("audio returned"))}));
+    }
+
+    // Both at once read "link", and the hold ends only when both have.
+    void aLinkAndAMicrophoneHoldAtOnceReadLinkAndEndTogether()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        QSignalSpy changed(&p.state(), &TransmitState::holdChanged);
+        QSignalSpy started(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        const qint64 startMs = p.core.now;
+        p.core.server->remoteMicStarved(id, true);
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("mic"));
+        QVERIFY(advanceUntil(p, [&started]() { return !started.isEmpty(); }, 20));
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("link"));
+        QCOMPARE(changed.count(), 2);
+        QVERIFY(keepaliveFrom(p, p.appA, 1).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("mic"));
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        p.core.server->remoteMicStarved(id, false);
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(p.state().rfLastHoldMs(), p.core.now - startMs);
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+    }
+
+    // MOX reaching receive during a hold ends it as "the key ended". A held
+    // link whose key ends keeps the Link bit until then, so the unkey's
+    // drain sends no real samples.
+    void moxReachingReceiveEndsAHold_data()
+    {
+        QTest::addColumn<bool>("link");
+        QTest::newRow("microphone") << false;
+        QTest::newRow("link") << true;
+    }
+    void moxReachingReceiveEndsAHold()
+    {
+        QFETCH(bool, link);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        QSignalSpy started(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        bool bitKeptAtKeyEnd = false;
+        int keyEnds = 0;
+        connect(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdEnded, this,
+                [&](const QByteArray&, qint64, RemoteTxWatchdog::HoldEnd how) {
+                    if (how == RemoteTxWatchdog::HoldEnd::KeyEnded) {
+                        ++keyEnds;
+                        bitKeptAtKeyEnd = p.core.model->isRemoteRfHeld();
+                    }
+                });
+        if (link) {
+            QVERIFY(advanceUntil(p, [&started]() { return !started.isEmpty(); }, 20));
+        } else {
+            p.core.server->remoteMicStarved(id, true);
+        }
+        QVERIFY(p.state().rfHeld());
+        const QJsonObject r = p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)});
+        QVERIFY(r.value(QStringLiteral("accepted")).toBool(false));
+        QTRY_COMPARE(p.core.model->moxController()->state(), MoxState::Rx);
+        QTRY_VERIFY(!p.state().rfHeld());
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        // The device's own unkey is no stop.
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        if (link) {
+            QCOMPARE(keyEnds, 1);
+            QVERIFY2(bitKeptAtKeyEnd, "the Link bit went before MOX reached receive");
+        }
+        QCOMPARE(log.lines().size(), 2);
+        QVERIFY2(log.lines().at(1).endsWith(QStringLiteral(": the key ended")),
+                 qPrintable(log.lines().at(1)));
+        // A fresh key starts unheld.
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+    }
+
+    // A hold for a device that is not the keyer publishes nothing and holds
+    // nothing.
+    void aHoldForADeviceThatIsNotTheKeyerPublishesNothing()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        QSignalSpy changed(&p.state(), &TransmitState::holdChanged);
+        QSignalSpy started(p.core.server->txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray other = p.b.key.fingerprint();
+        // The other device's line starving is not the keyer's.
+        p.core.server->remoteMicStarved(other, true);
+        // The other device watched as keyed, while the keyer's keepalives
+        // keep coming: only the other is held by the watchdog.
+        p.core.server->txWatchdog()->setKeyed(other, true, 1);
+        qint64 sequence = 0;
+        QVERIFY(advanceUntil(
+            p, [&started]() { return !started.isEmpty(); }, 20,
+            [&]() { QVERIFY(keepaliveFrom(p, p.appA, ++sequence)
+                                .value(QStringLiteral("accepted")).toBool()); }));
+        QCOMPARE(started.count(), 1);
+        QCOMPARE(started.at(0).at(0).toByteArray(), other);
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        p.core.server->txWatchdog()->setKeyed(other, false);
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(log.lines().isEmpty());
+        QVERIFY(p.core.model->moxController()->isMox());
+    }
+
+    // TUNE and two-tone use no microphone: a microphone hold on when either
+    // starts is released.
+    void tuneOrTwoToneStartingReleasesAMicrophoneHold_data()
+    {
+        QTest::addColumn<bool>("tune");
+        QTest::newRow("TUNE") << true;
+        QTest::newRow("two-tone") << false;
+    }
+    void tuneOrTwoToneStartingReleasesAMicrophoneHold()
+    {
+        QFETCH(bool, tune);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        p.core.server->remoteMicStarved(id, true);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        if (tune) {
+            p.core.model->transmitModel().setTune(true);
+        } else {
+            p.core.model->transmitModel().setTwoToneActive(true);
+        }
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(log.lines().size(), 2);
+        QVERIFY2(log.lines().at(1).endsWith(QStringLiteral(": TUNE or two-tone started")),
+                 qPrintable(log.lines().at(1)));
+        // Audio coming back later finds nothing to release.
+        p.core.server->remoteMicStarved(id, false);
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        QCOMPARE(log.lines().size(), 2);
+        if (tune) {
+            p.core.model->transmitModel().setTune(false);
+        } else {
+            p.core.model->transmitModel().setTwoToneActive(false);
+        }
+    }
+
+    // ---- Fix wave B: a microphone line that ends mid-key ----------------
+
+    // The keyed phone's microphone line ends (torn down, replaced, or its
+    // media retired) with the link live. That is no audio, never audio
+    // returning: in AM a hold on stays on, or is set 250 ms after the last
+    // packet; in USB there is none. Either way the Core cuts at last packet
+    // + 10 s, on its own clock, not at 9999 ms.
+    void aMicrophoneLineEndingMidKeyIsNoAudio_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<bool>("starvedFirst");
+        QTest::addColumn<qint64>("endedAtMs");
+        QTest::newRow("AM, starved, then the line ends")
+            << static_cast<int>(DSPMode::AM) << true << qint64(1000);
+        QTest::newRow("AM, the line ends before it starved")
+            << static_cast<int>(DSPMode::AM) << false << qint64(100);
+        QTest::newRow("USB, the line ends") << static_cast<int>(DSPMode::USB) << false
+                                            << qint64(100);
+    }
+    void aMicrophoneLineEndingMidKeyIsNoAudio()
+    {
+        QFETCH(int, mode);
+        QFETCH(bool, starvedFirst);
+        QFETCH(qint64, endedAtMs);
+        const bool holds = static_cast<DSPMode>(mode) == DSPMode::AM;
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        p.core.model->sliceById(0)->setDspMode(static_cast<DSPMode>(mode));
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        qint64 sequence = 0;
+        const qint64 lastPacket = p.core.now;
+        if (starvedFirst) {
+            stepTo(p, lastPacket + 300, sequence);
+            p.core.server->remoteMicStarved(id, true, 300);
+            QVERIFY(p.core.model->isRemoteRfHeld());
+        }
+        stepTo(p, lastPacket + endedAtMs, sequence);
+        p.core.server->remoteMicLineEnded(id, endedAtMs, starvedFirst);
+        pumpEvents();
+        QVERIFY(p.core.server->endedMicLinePendingForTest());
+        QCOMPARE(p.core.model->isRemoteRfHeld(), starvedFirst);
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
+        if (!starvedFirst) {
+            stepTo(p, lastPacket + RemoteMicConfig::kStarvationMs - 1, sequence);
+            QVERIFY(!p.core.model->isRemoteRfHeld());
+            stepTo(p, lastPacket + RemoteMicConfig::kStarvationMs, sequence);
+        }
+        QCOMPARE(p.core.model->isRemoteRfHeld(), holds);
+        QCOMPARE(p.state().rfHeld(), holds);
+        stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs - 1, sequence);
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.core.model->isRemoteRfHeld(), holds);
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs, sequence);
+        QVERIFY(!p.core.server->endedMicLinePendingForTest());
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        const qint64 heldAt = starvedFirst ? 300 : RemoteMicConfig::kStarvationMs;
+        const QStringList expected = holds
+            ? QStringList{holdStartLine(id, QStringLiteral("no microphone audio for %1 ms")
+                                                .arg(heldAt)),
+                          holdEndLine(id, RemoteMicConfig::kNoAudioCutMs - heldAt,
+                                      QStringLiteral("cut"))}
+            : QStringList{};
+        QCOMPARE(log.lines(), expected);
+        QCOMPARE(p.state().rfHoldSerial(), quint64(holds ? 1 : 0));
+        pumpEvents();
+        QCOMPARE(p.state().stopReason(), QStringLiteral("micStarved"));
+        QCOMPARE(p.state().stopText(), kMicStopText);
+        QCOMPARE(p.state().stopSerial(), quint32(1));
+        verifyStopSent(p.appA, QStringLiteral("micStarved"), kMicStopText);
+    }
+
+    // A new line for the key delivers its first packet 5 s after the last
+    // one of the line that ended (or audio after it starved): the hold is
+    // released as audio returned, the Core's cut is cancelled, and the key
+    // goes on past 10 s.
+    void aNewLineDeliveringReleasesTheHoldAndCancelsTheCut_data()
+    {
+        QTest::addColumn<bool>("afterItStarved");
+        QTest::newRow("its first packet") << false;
+        QTest::newRow("audio after it starved") << true;
+    }
+    void aNewLineDeliveringReleasesTheHoldAndCancelsTheCut()
+    {
+        QFETCH(bool, afterItStarved);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        qint64 sequence = 0;
+        const qint64 lastPacket = p.core.now;
+        stepTo(p, lastPacket + 300, sequence);
+        p.core.server->remoteMicStarved(id, true, 300);
+        stepTo(p, lastPacket + 1000, sequence);
+        p.core.server->remoteMicLineEnded(id, 1000, true);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        if (afterItStarved) {
+            stepTo(p, lastPacket + 2500, sequence);
+            p.core.server->remoteMicStarved(id, true, 250);
+        }
+        stepTo(p, lastPacket + 5000, sequence);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        if (afterItStarved) {
+            p.core.server->remoteMicAudioArrived(id);
+            p.core.server->remoteMicStarved(id, false, 0);
+        } else {
+            p.core.server->remoteMicAudioArrived(id);
+        }
+        QVERIFY(!p.core.server->endedMicLinePendingForTest());
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+        stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs + 2000, sequence);
+        QVERIFY(p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        QCOMPARE(log.lines(),
+                 (QStringList{holdStartLine(id, QStringLiteral("no microphone audio for 300 ms")),
+                              holdEndLine(id, 4700, QStringLiteral("audio returned"))}));
+    }
+
+    // A new line for the key that starts, starves and ends without a
+    // packet does not move the cut: it still lands at the first line's last
+    // packet + 10 s.
+    void aNewLineThatNeverDeliversMovesNothing()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        qint64 sequence = 0;
+        const qint64 lastPacket = p.core.now;
+        stepTo(p, lastPacket + 300, sequence);
+        p.core.server->remoteMicStarved(id, true, 300);
+        stepTo(p, lastPacket + 1000, sequence);
+        p.core.server->remoteMicLineEnded(id, 1000, true);
+        // The new line starts at 1500 ms, starves 250 ms later and ends at
+        // 4000 ms, 2500 ms after its own start.
+        stepTo(p, lastPacket + 1750, sequence);
+        p.core.server->remoteMicStarved(id, true, 250);
+        stepTo(p, lastPacket + 4000, sequence);
+        p.core.server->remoteMicLineEnded(id, 2500, true);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs - 1, sequence);
+        QVERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs, sequence);
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        QCOMPARE(p.state().stopReason(), QStringLiteral("micStarved"));
+        QCOMPARE(p.state().stopSerial(), quint32(1));
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+    }
+
+    // A hold the Core declines (no remote device's key on the air: the
+    // device's key has not reached MOX, or the key is the Core's own)
+    // reaches onStarvationHold's own check, holds and publishes nothing, and
+    // is not counted by the policy.
+    void aMicrophoneHoldWithNoRemoteKeyOnTheAirIsDeclined_data()
+    {
+        QTest::addColumn<bool>("stationKey");
+        QTest::newRow("the device's key before MOX") << false;
+        QTest::newRow("the Core's own key") << true;
+    }
+    void aMicrophoneHoldWithNoRemoteKeyOnTheAirIsDeclined()
+    {
+        QFETCH(bool, stationKey);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        QSignalSpy changed(&p.state(), &TransmitState::holdChanged);
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        RadioModel::KeyedBy who;
+        who.deviceId = stationKey ? QByteArray(KeyerIdentity::kStationDeviceId)
+                                  : p.a.key.fingerprint();
+        who.trigger = QByteArrayLiteral("screen");
+        who.epoch = 1;
+        p.core.model->setKeyedBy(who);
+        if (stationKey) {
+            p.core.model->moxController()->setMox(true);
+            QTRY_VERIFY(p.core.model->moxController()->isMox());
+        }
+        QCOMPARE(p.core.model->keyedBy().deviceId, who.deviceId);
+        p.core.server->remoteMicStarved(who.deviceId, true);
+        pumpEvents();
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(log.lines().isEmpty());
+        QVERIFY(!p.core.server->micHoldCountedForTest());
+        if (stationKey) {
+            p.core.model->moxController()->setMox(false);
+            QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        }
+        p.core.model->setKeyedBy({});
+    }
+
+    // A microphone hold whose key a new one replaces before receive ends in
+    // its own words, "a new key".
+    void aNewKeyEndsTheOldKeysMicrophoneHold()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        p.core.server->remoteMicStarved(id, true);
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        RadioModel::KeyedBy next = p.core.model->keyedBy();
+        ++next.epoch;
+        p.core.model->setKeyedBy(next);
+        QVERIFY(!p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(!p.core.server->micHoldCountedForTest());
+        QCOMPARE(log.lines().size(), 2);
+        QVERIFY2(log.lines().at(1).endsWith(QStringLiteral(": a new key")),
+                 qPrintable(log.lines().at(1)));
+    }
+
+    // Fix wave B, round 2: a plain unkey ends the line's watch as MOX goes
+    // off, while keyedBy still names the device (the microphone source
+    // follows the MOX walk before the key's owner clears keyedBy). That is the key's own
+    // end: no "ended while keyed" line, no pending cut, no hold, even in a
+    // Hold mode with the line quiet past 250 ms.
+    void aPlainUnkeyIsNoMidKeyLineEnd()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog holds;
+        LineCount ended(QStringLiteral("ended while keyed"));
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        const QByteArray id = p.a.key.fingerprint();
+        // The phone's microphone line, so the key is on it.
+        p.core.model->openRemoteMicLine(id);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        QTRY_VERIFY(p.core.model->remoteMicInUse());
+        QSignalSpy holdEdges(p.core.model.get(), &RadioModel::remoteRfHoldChanged);
+        bool called = false;
+        bool keyedAtCall = false;
+        bool transmittingAtCall = false;
+        bool pendingAfterCall = true;
+        QObject scope;
+        // Where the media controller ends the watch: the line goes out of
+        // use as MOX leaves transmit (RadioModel's source follows the MOX
+        // walk, ahead of the key's owner clearing keyedBy).
+        QObject::connect(p.core.model.get(), &RadioModel::remoteMicInUseChanged, &scope,
+                         [&](bool inUse) {
+            if (inUse || called) {
+                return;
+            }
+            called = true;
+            keyedAtCall = p.core.model->keyedBy().deviceId == id;
+            transmittingAtCall = p.core.model->isTransmitting();
+            // What the media controller does as the watch ends here.
+            p.core.server->remoteMicLineEnded(id, 300, false);
+            pendingAfterCall = p.core.server->endedMicLinePendingForTest();
+        });
+        p.core.now += 300;
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted")).toBool(false));
+        QTRY_VERIFY(!p.state().keyed());
+        pumpEvents();
+        QVERIFY(called);
+        QVERIFY2(keyedAtCall, "keyedBy no longer named the device as MOX went off");
+        QVERIFY2(transmittingAtCall, "the Core no longer read transmitting as MOX went off");
+        QVERIFY(!pendingAfterCall);
+        QCOMPARE(ended.count(), 0);
+        QCOMPARE(holdEdges.count(), 0);
+        QVERIFY(holds.lines().isEmpty());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        p.core.model->closeRemoteMicLine(id);
+    }
+
+    // Fix wave B, round 2: a line starved in a mode that keeps keyed (USB),
+    // live or ended, is held the moment the transmit mode becomes a Hold
+    // mode (AM), not left a bare carrier until the cut; a hold on in AM
+    // stays on when the mode becomes USB, until audio or the cut.
+    void aModeChangeWhileStarvedJudgesTheHoldAgain_data()
+    {
+        QTest::addColumn<bool>("toHold");
+        QTest::addColumn<bool>("lineEnded");
+        QTest::newRow("USB to AM, the line live") << true << false;
+        QTest::newRow("USB to AM, the line ended") << true << true;
+        QTest::newRow("AM to USB, the line live") << false << false;
+        QTest::newRow("AM to USB, the line ended") << false << true;
+    }
+    void aModeChangeWhileStarvedJudgesTheHoldAgain()
+    {
+        QFETCH(bool, toHold);
+        QFETCH(bool, lineEnded);
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        HoldLog log;
+        SliceModel* const slice = p.core.model->sliceById(0);
+        slice->setDspMode(toHold ? DSPMode::USB : DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        const QByteArray id = p.a.key.fingerprint();
+        qint64 sequence = 0;
+        const qint64 lastPacket = p.core.now;
+        stepTo(p, lastPacket + 300, sequence);
+        p.core.server->remoteMicStarved(id, true, 300);
+        if (lineEnded) {
+            stepTo(p, lastPacket + 600, sequence);
+            p.core.server->remoteMicLineEnded(id, 600, true);
+            QVERIFY(p.core.server->endedMicLinePendingForTest());
+        }
+        QCOMPARE(p.core.model->isRemoteRfHeld(), !toHold);
+        stepTo(p, lastPacket + 1000, sequence);
+        slice->setDspMode(toHold ? DSPMode::AM : DSPMode::USB);
+        QCOMPARE(slice->dspMode(), toHold ? DSPMode::AM : DSPMode::USB);
+        pumpEvents();
+        QVERIFY(p.core.model->moxController()->isMox());
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        QVERIFY(p.state().rfHeld());
+        QCOMPARE(p.state().rfHeldReason(), QStringLiteral("mic"));
+        QCOMPARE(p.state().stopSerial(), quint32(0));
+        const qint64 heldAt = toHold ? 1000 : 300;
+        QCOMPARE(log.lines(),
+                 (QStringList{holdStartLine(
+                     id, QStringLiteral("no microphone audio for %1 ms").arg(heldAt))}));
+        if (lineEnded) {
+            // The cut still lands at the last packet + 10 s.
+            stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs - 1, sequence);
+            QVERIFY(p.core.model->moxController()->isMox());
+            QVERIFY(p.core.model->isRemoteRfHeld());
+            stepTo(p, lastPacket + RemoteMicConfig::kNoAudioCutMs, sequence);
+            QTRY_VERIFY(!p.core.model->moxController()->isMox());
+            QCOMPARE(p.state().stopReason(), QStringLiteral("micStarved"));
+            QCOMPARE(p.state().stopSerial(), quint32(1));
+        } else {
+            p.core.server->remoteMicStarved(id, false, 0);
+            QVERIFY(!p.core.model->isRemoteRfHeld());
+            QVERIFY(p.core.model->moxController()->isMox());
+        }
+        QCOMPARE(p.state().rfHoldSerial(), quint64(1));
+    }
+
+    // Fix wave B, round 2: the policy counting a hold whose Mic bit was set
+    // but never published forgets it when MOX reaches receive and clears
+    // the bit.
+    void theReceiveClearForgetsAHoldItDidNotPublish()
+    {
+        Pair p;
+        QVERIFY(admitted(p.appA) && admitted(p.appB));
+        p.core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        QVERIFY(p.keyA());
+        QTRY_VERIFY(p.state().keyed());
+        p.core.server->holdMicWithoutPublishingForTest();
+        QVERIFY(p.core.server->micHoldCountedForTest());
+        QVERIFY(p.core.model->isRemoteRfHeld());
+        QVERIFY(!p.state().rfHeld());
+        QVERIFY(p.core.invoke(p.appA, "tx.unkey", {int64("epoch", 1)})
+                    .value(QStringLiteral("accepted")).toBool(false));
+        QTRY_VERIFY(!p.core.model->moxController()->isMox());
+        QTRY_VERIFY(!p.core.model->isRemoteRfHeld());
+        pumpEvents();
+        QVERIFY(!p.core.server->micHoldCountedForTest());
+        QCOMPARE(p.state().rfHoldSerial(), quint64(0));
     }
 
     // ---- Fix wave I4: txState names the holder (ruling 8.1) -------------
@@ -1146,5 +2113,33 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TstTransmitStateFacade)
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    TstTransmitStateFacade test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // The full binary made continuous progress through45 cases before
+    // ctest's120s aggregate limit on Linux. Each whole function (including
+    // all data rows) belongs to one entry; future functions default to rest.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_TRANSMIT_STATE_GROUP",
+        {{QStringLiteral("remote_holds"),
+          {QStringLiteral("aLinkHoldNeitherRestartsNorPausesTheTimeOut"),
+           QStringLiteral("aStarvedMicrophoneIsTheStarvationsStopWithItsReason"),
+           QStringLiteral("aQuietLinkHoldsTheKeyersRfAndKeepalivesEndIt"),
+           QStringLiteral("aStarvedMicrophoneHoldsUntilAudioReturns"),
+           QStringLiteral("aLinkAndAMicrophoneHoldAtOnceReadLinkAndEndTogether"),
+           QStringLiteral("moxReachingReceiveEndsAHold"),
+           QStringLiteral("aHoldForADeviceThatIsNotTheKeyerPublishesNothing"),
+           QStringLiteral("tuneOrTwoToneStartingReleasesAMicrophoneHold"),
+           QStringLiteral("aMicrophoneLineEndingMidKeyIsNoAudio"),
+           QStringLiteral("aNewLineDeliveringReleasesTheHoldAndCancelsTheCut"),
+           QStringLiteral("aNewLineThatNeverDeliversMovesNothing"),
+           QStringLiteral("aMicrophoneHoldWithNoRemoteKeyOnTheAirIsDeclined"),
+           QStringLiteral("aNewKeyEndsTheOldKeysMicrophoneHold"),
+           QStringLiteral("aPlainUnkeyIsNoMidKeyLineEnd"),
+           QStringLiteral("aModeChangeWhileStarvedJudgesTheHoldAgain"),
+           QStringLiteral("theReceiveClearForgetsAHoldItDidNotPublish")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_transmit_state_facade.moc"

@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Container item editors' colour swatches (a sheet that is
+//                 only a #AARRGGBB background in the swatch border) keep
+//                 the user's colour, as ColorSwatchButton does. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 //   2026-10-08 - themeOnShow() installs its filter once per dialog.
@@ -83,6 +87,7 @@
 #include <QScopedValueRollback>
 #include <QMetaObject>
 #include <QObject>
+#include <QPushButton>
 #include <QSet>
 #include <QStackedWidget>
 #include <QStyle>
@@ -180,9 +185,28 @@ bool skippedClass(const QMetaObject* meta)
     return skip;
 }
 
+// A container item editor's colour swatch: a push button whose own sheet
+// is only the colour the user chose (#AARRGGBB) inside the swatch border,
+// "QPushButton { background: %1; border: 1px solid #205070; }" (Clock,
+// LED, Text overlay and the other meter_property_editors). Like a
+// ColorSwatchButton it shows a user colour, which the look never
+// translates: a grey or white the item draws must read as that colour.
+bool colourSwatchSheet(const QWidget* w)
+{
+    if (qobject_cast<const QPushButton*>(w) == nullptr) {
+        return false;
+    }
+    static const QRegularExpression swatch(QStringLiteral(
+        "^\\s*QPushButton\\s*\\{\\s*background:\\s*#[0-9A-Fa-f]{8};\\s*border:\\s*1px solid #205070;\\s*\\}\\s*$"));
+    return swatch.match(w->styleSheet()).hasMatch();
+}
+
 bool skipped(const QWidget* w)
 {
     if (w->property(kSkipProperty).toBool()) {
+        return true;
+    }
+    if (colourSwatchSheet(w)) {
         return true;
     }
     return skippedClass(w->metaObject());

@@ -1,5 +1,23 @@
 // NereusSDR for iOS: transmit on the main screen: the PTT, the TX panel's controls and the keyed view's readings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, PTT press and hold while the
+// Roundtable sheet is open. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the UI tests' record of every ask to
+// key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave, unkeyFromHold: a quick tap on the hold
+// PTT takes off a key it does not hold. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+// 2026-10-26: CW transmit, the CW controls of the TX panel and Modes: speed,
+//             pitch, break-in and its delay, the sidetone and its level, at
+//             transmitSettingsVersion 16 (R-CW-50). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F2: QSK greyed with the Core's
+//             reason (cwQskUnavailableReason), a later fallback said once,
+//             and VOX, LEV, EQ, CFC and the TX filter greyed in CW as on the
+//             desktop. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Combine
 import Foundation
@@ -63,6 +81,12 @@ final class TransmitModel: ObservableObject {
     @Published private(set) var compressionDb: Double?
     /// How long the key on now has been on, as the Core counts it.
     @Published private(set) var keyedForSeconds: Int64 = 0
+    /// The TX pill reads "Held": the Core holds RF off for this phone's key,
+    /// or did for a moment it never saw (spec section 5.3).
+    @Published private(set) var holdShown = false
+    /// Why, while the Core says it holds RF (`link` or `mic`); empty for a
+    /// hold shown after it ended, whose reason the Core no longer sends.
+    @Published private(set) var holdShownReason = ""
     /// Whole seconds before the Core's transmit time-out stops the key now
     /// on, -1 when none applies (`txState.timeOutRemainingSeconds`); the
     /// opened island counts it down (R-IOS-21).
@@ -170,6 +194,151 @@ final class TransmitModel: ObservableObject {
     func setMonitorVolume(_ value: Double) {
         guard settingsEditable(2), monitorVolume != nil, value.isFinite else { return }
         write(Self.transmitKey, "monitorVolume", .double(min(max(value, 0), 1)))
+    }
+
+    // MARK: CW (R-CW-50, C13)
+
+    /// The transmit slice is in CWL or CWU (the active slice while this
+    /// phone has no transmit slice): the TX panel and Modes show the CW
+    /// controls, as the desktop's Phone/CW applet turns to its CW page.
+    @Published private(set) var inCw = false
+    /// The Core's CW settings on `transmit`, nil where it has not sent them
+    /// (a Core below `transmitSettingsVersion` 16, or one that does not send
+    /// them to this phone): `cwKeyerSpeed` in WPM, `cwBreakInMode` (0 off,
+    /// 1 semi, 2 QSK), `cwBreakInDelayMs` and `cwSidetone`.
+    @Published private(set) var cwSpeedWpm: Double?
+    @Published private(set) var cwBreakInMode: Int64?
+    @Published private(set) var cwBreakInDelayMs: Double?
+    @Published private(set) var cwSidetone: Bool?
+    /// Why the Core does not offer QSK (`cwQskUnavailableReason`), nil while
+    /// it does or where the Core has not sent it.
+    @Published private(set) var cwQskReason: String?
+    /// The CW settings were applied before this update (F2's fallback notice).
+    private var cwQskKnown = false
+    /// The station pitch (the Core's `CWPitch`), as the desktop reads it.
+    @Published private(set) var cwPitchHz: Int = BandSlice.cwPitchDefaultHz
+
+    /// The CW settings come with `transmitSettingsVersion` 16.
+    static let cwSettingsVersion: Int64 = 16
+    /// The Core's ranges (link document section 7.1, `transmit` at
+    /// `transmitSettingsVersion` 16): speed 1 to 60 WPM, the break-in delay
+    /// 0 to 1000 ms (the desktop's delay slider steps 10 ms,
+    /// PhoneCwApplet.cpp:757), and the pitch 200 to 2250 Hz in 10 Hz steps.
+    static let cwSpeedRange = StationCatalog.Range(min: 1, max: 60, step: 1)
+    static let cwBreakInDelayRange = StationCatalog.Range(min: 0, max: 1000, step: 10)
+    static let cwPitchRange = StationCatalog.Range(min: Double(BandSlice.cwPitchMinHz),
+                                                   max: Double(BandSlice.cwPitchMaxHz),
+                                                   step: Double(BandSlice.cwPitchStepHz))
+    /// `cwBreakInMode`'s values.
+    static let cwBreakInOff: Int64 = 0
+    static let cwBreakInSemi: Int64 = 1
+    static let cwBreakInQsk: Int64 = 2
+    static let cwBreakInChoices: [(id: Int64, label: String)] = [(0, "Off"), (1, "Semi"), (2, "QSK")]
+    /// A Core that does not let this phone change the CW settings.
+    static let cwSettingsNotTakenText =
+        "This Core does not let this phone change the CW settings. Updating the Core may help."
+    /// The desktop CW page's words for a greyed Delay and Sidetone level
+    /// (PhoneCwApplet.cpp:677-684).
+    static let cwDelayOffReason = "Break-in is off: MOX keys the radio, so there is no break-in delay."
+    static let cwDelayQskReason = "QSK returns to receive between elements, so there is no break-in delay."
+    static let cwSidetoneLevelOffReason = "Turn Sidetone on to set its level."
+    /// The desktop TX applet's words for VOX, LEV, EQ, CFC and the TX filter
+    /// in CW (TxApplet::cwNotUsedReason): the radio's keyer makes the signal.
+    static let cwNotUsedText = "Not used in CW: the radio makes the signal."
+
+    /// Why VOX, LEV, EQ, CFC and the TX filter are greyed: in CW they do nothing.
+    var cwNotUsedReason: String? {
+        inCw ? Self.cwNotUsedText : nil
+    }
+
+    /// Why a Break-in choice is greyed while the CW settings may change:
+    /// QSK where the Core does not offer it, with the Core's words.
+    func cwBreakInChoiceReason(_ mode: Int64) -> String? {
+        mode == Self.cwBreakInQsk ? cwQskReason : nil
+    }
+
+    /// The CW settings may change: the Core takes them at version 16 and
+    /// has sent them to this phone.
+    var cwSettingsEditable: Bool {
+        settingsEditable(Self.cwSettingsVersion) && cwSpeedWpm != nil
+    }
+
+    /// Why the CW settings cannot change, or nil when they can (or while
+    /// the Core is still sending its state).
+    var cwSettingsReason: String? {
+        guard mirror.isSnapshotComplete else {
+            return nil
+        }
+        if settingsVersion < Self.cwSettingsVersion || cwSpeedWpm == nil {
+            return Self.cwSettingsNotTakenText
+        }
+        return settingsReason(Self.cwSettingsVersion)
+    }
+
+    /// Why Delay is greyed while the CW settings may change: Off and QSK have no break-in delay.
+    var cwBreakInDelayReason: String? {
+        switch cwBreakInMode {
+        case Self.cwBreakInOff?: return Self.cwDelayOffReason
+        case Self.cwBreakInQsk?: return Self.cwDelayQskReason
+        default: return nil
+        }
+    }
+
+    /// Why the sidetone level is greyed while the CW settings may change.
+    var cwSidetoneLevelReason: String? {
+        cwSidetone == false ? Self.cwSidetoneLevelOffReason : nil
+    }
+
+    /// The pitch's write waits for the Core's answer.
+    var cwPitchUnconfirmed: Bool {
+        settings?.isUnconfirmed(BandSlice.cwPitchKey) ?? false
+    }
+
+    /// The keyer speed, in WPM (`cwKeyerSpeed`).
+    func setCwSpeed(_ value: Double) {
+        guard cwSettingsEditable, value.isFinite else { return }
+        write(Self.transmitKey, "cwKeyerSpeed", .int(Int64(RxPanelModel.snapped(value, to: Self.cwSpeedRange).rounded())))
+    }
+
+    /// Break-in: Off, Semi or QSK (`cwBreakInMode`). QSK is greyed with the
+    /// Core's reason while the Core does not offer it, and not sent; the
+    /// Core refuses such a write with the same words in any case.
+    func setCwBreakInMode(_ mode: Int64) {
+        guard cwSettingsEditable, (Self.cwBreakInOff...Self.cwBreakInQsk).contains(mode), mode != cwBreakInMode,
+              cwBreakInChoiceReason(mode) == nil else {
+            return
+        }
+        write(Self.transmitKey, "cwBreakInMode", .int(mode))
+    }
+
+    /// The break-in delay, in milliseconds (`cwBreakInDelayMs`), in Semi.
+    func setCwBreakInDelay(_ value: Double) {
+        guard cwSettingsEditable, cwBreakInDelayReason == nil, value.isFinite else { return }
+        write(Self.transmitKey, "cwBreakInDelayMs",
+              .int(Int64(RxPanelModel.snapped(value, to: Self.cwBreakInDelayRange).rounded())))
+    }
+
+    /// The sidetone on and off (`cwSidetone`), as the desktop's MON in CW.
+    func toggleCwSidetone() {
+        guard cwSettingsEditable, let cwSidetone else { return }
+        write(Self.transmitKey, "cwSidetone", .bool(!cwSidetone))
+    }
+
+    /// The sidetone level: the monitor volume, as the desktop's Mon Vol in CW (C9).
+    func setCwSidetoneLevel(_ value: Double) {
+        guard cwSettingsEditable, cwSidetone == true, monitorVolume != nil, value.isFinite else { return }
+        write(Self.transmitKey, "monitorVolume", .double(min(max(value, 0), 1)))
+    }
+
+    /// The pitch, in hertz: the Core's station setting `CWPitch`, clamped
+    /// and rounded to 10 Hz as the desktop's setter does.
+    func setCwPitch(_ value: Double) {
+        guard cwSettingsEditable, let settings, value.isFinite else { return }
+        let hz = BandSlice.clampedCwPitchHz(Int(value.rounded()))
+        Task { [weak self] in
+            let outcome = await settings.write(BandSlice.cwPitchKey, String(hz)).propertyOutcome
+            self?.noteWrite(outcome)
+        }
     }
 
     /// Anti-VOX values mirrored by the Core, independent of VOX arming.
@@ -381,10 +550,17 @@ final class TransmitModel: ObservableObject {
         }
     }
 
+    /// Shared across CWX page lifetimes; reports and Stop fence one CW lease.
+    let remoteCwLease = RemoteCwLease()
+    private var remoteCwSession = 0
     private let mirror: MirrorStore
     private let settings: SettingsProxyClient?
     private let commands: CommandClient?
     private let slices: BandSlicesModel
+    /// The slices the RX panel follows, whose active slice's receive filter
+    /// Match RX copies: on the iPad, the pan last touched's; nil for this
+    /// band's own.
+    weak var receiveSlices: BandSlicesModel?
     private let subscriber: BandSubscriber?
     private let platform: Platform
     private let band: BandModel?
@@ -435,6 +611,11 @@ final class TransmitModel: ObservableObject {
     /// two-tone. The lock-screen card reads it (I16); the settings gate
     /// reads `coreOnAir`, the desktop's rule (I1).
     private var txStateOnAir = false
+    /// When "Held" shows (TransmitStateReport.HoldDisplay), the `txState`
+    /// object it reads, and the end of an after-hold display.
+    private var holdDisplay = TransmitStateReport.HoldDisplay()
+    private var holdObject: ObjectIdentifier?
+    private var holdTimer: Task<Void, Never>?
     /// Asks the media connection for the transmit monitor's route; set by
     /// the app, nil where there is no media connection (screen tests).
     var monitorRouteSender: (@Sendable (MonitorRoute) async -> Void)?
@@ -472,19 +653,32 @@ final class TransmitModel: ObservableObject {
         } else {
             startMicrophone = { .started }
         }
-        // The keepalive rides the media connection's "tx" channel while it is open.
+        // Legacy TX prefers media; CW v2 fans the same record to both open paths.
         var keepaliveOnMedia: (@Sendable (Int64, Int64) -> Bool)?
+        var keepaliveOnMediaV2: (@Sendable (Int64, Int64, Int64) -> Bool)?
         if let uplink {
             keepaliveOnMedia = { sequence, epoch in uplink.sendKeepalive(sequence: sequence, epoch: epoch) }
+            keepaliveOnMediaV2 = { sequence, epoch, cwEpoch in
+                uplink.sendKeepalive(sequence: sequence, epoch: epoch, cwEpoch: cwEpoch)
+            }
         }
         if let controller {
             self.controller = controller
         } else if let commands {
-            self.controller = PttController(commands: TransmitCommandClient(commands: commands,
-                                                                            keepaliveOnMedia: keepaliveOnMedia),
-                                            startMicrophone: startMicrophone)
+            let adapter = TransmitCommandClient(commands: commands, keepaliveOnMedia: keepaliveOnMedia,
+                keepaliveOnMediaV2: keepaliveOnMediaV2,
+                remoteCwV2: { await MainActor.run { mirror.capabilityVersion("remoteCwVersion") >= 2 } })
+            self.controller = PttController(commands: adapter, startMicrophone: startMicrophone)
         } else {
             self.controller = PttController(commands: NoTransmitCommands(), startMicrophone: startMicrophone)
+        }
+        remoteCwLease.onActivity = { [weak self] activity in
+            guard let self else { return }
+            let controller = self.controller
+            Task {
+                await controller.setRemoteCwActivity(epoch: activity.epoch, session: activity.session,
+                                                     authority: activity.authority)
+            }
         }
         let snapshots = self.controller.snapshots
         pump = Task { [weak self] in
@@ -514,6 +708,10 @@ final class TransmitModel: ObservableObject {
             let protection = Self.swrProtection(values)
             if self?.swrProtection != protection {
                 self?.swrProtection = protection
+            }
+            let pitch = BandSlice.cwPitchHz(setting: values[BandSlice.cwPitchKey])
+            if self?.cwPitchHz != pitch {
+                self?.cwPitchHz = pitch
             }
         }.store(in: &watches)
         // The microphone stopping by itself ends the key it was carrying.
@@ -597,6 +795,7 @@ final class TransmitModel: ObservableObject {
     func sessionChanged(_ state: StationSession.State, owner: UInt64) async {
         let up = state == .ready
         if microphoneOwner != owner || !up {
+            remoteCwLease.stop()
             localStopAuthority.revoke()
             localStopAuthority = CommandSendPermit()
             microphoneOwner = owner
@@ -605,12 +804,31 @@ final class TransmitModel: ObservableObject {
         }
         await controller.logicalSessionChanged(owner)
         await controller.linkChanged(up: up)
+        let cwSession = await controller.sessionGeneration
+        if remoteCwSession != cwSession {
+            remoteCwSession = cwSession
+            remoteCwLease.reset(session: cwSession)
+        }
+        if !up {
+            // The link went: a hold's press ends with it, and never keys again by itself.
+            releaseHeldPtt()
+        }
     }
 
     // MARK: The operator
 
+    #if DEBUG
+    /// Told each ask to key (PTT, MOX, the hold PTT, TUNE, the tuner's
+    /// TUNE), before anything decides whether it may: the UI tests' record
+    /// that opening the TX panel by a swipe asks nothing.
+    var keyObserver: ((String) -> Void)?
+    #endif
+
     /// The PTT, and the TX panel's MOX.
     func tapPtt() {
+        #if DEBUG
+        keyObserver?("tap")
+        #endif
         guard offered else {
             heldNote = Self.noRemoteTransmitText
             return
@@ -636,8 +854,102 @@ final class TransmitModel: ObservableObject {
         Task { await controller.tap(trigger: TransmitVerb.screenTrigger) }
     }
 
+    // MARK: Press and hold (the Roundtable sheet's PTT)
+
+    /// A press of the hold PTT owns the key: its release, or anything that
+    /// ends the press (the sheet closing, the app leaving the screen, the
+    /// link going), unkeys it.
+    @Published private(set) var holding = false
+    /// The hold's sends, in order: a release waits for its press, so a
+    /// quick press and release can never leave the radio keyed.
+    private var holdChain: Task<Void, Never>?
+
+    /// The hold PTT pressed long enough (spec 11.3, U2): keys when nothing
+    /// of this device's is keyed; a key already on (a tap's) becomes the
+    /// hold's, so letting go unkeys it. Never toggles: a press while a key
+    /// is on its way keys nothing more.
+    func holdPtt() {
+        #if DEBUG
+        keyObserver?("hold")
+        #endif
+        guard offered else {
+            heldNote = Self.noRemoteTransmitText
+            return
+        }
+        switch ptt.state {
+        case .heldElsewhere, .waiting:
+            heldNote = permission?.reason
+            return
+        default:
+            heldNote = nil
+        }
+        guard !holding else {
+            return
+        }
+        holding = true
+        let controller = controller
+        let previous = holdChain
+        holdChain = Task {
+            await previous?.value
+            switch await controller.state {
+            case .idle, .refused:
+                await controller.tap(trigger: TransmitVerb.screenTrigger)
+            default:
+                break
+            }
+        }
+    }
+
+    /// The hold PTT let go, its touch cancelled, or the press ended by the
+    /// sheet, the scene or the link: unkeys the hold's key, after its press
+    /// has reached the PTT. Nothing while no press holds the key.
+    func releaseHeldPtt() {
+        guard holding else {
+            return
+        }
+        stopAfterHold()
+    }
+
+    /// A quick tap on the hold PTT while this device's key is on (a tap's,
+    /// TUNE's, or the hold's own under VoiceOver): unkeys it, after any
+    /// press still on its way, whether or not a press holds it. The sheet's
+    /// PTT is then never one that cannot take a key off.
+    func unkeyFromHold() {
+        stopAfterHold()
+    }
+
+    /// Ends the hold and stops this device's key behind the hold's sends.
+    private func stopAfterHold() {
+        holding = false
+        let controller = controller
+        let owner = microphoneOwner
+        let authority = CommandSendPermit(parents: [localStopAuthority])
+        let previous = holdChain
+        holdChain = Task {
+            await previous?.value
+            await controller.stopAll(owner: owner, authority: authority)
+        }
+    }
+
+    /// The app's scene changed: a held PTT lets go once the scene is not
+    /// active (it lost focus to Control Center, the app switcher or a
+    /// call, or left the screen).
+    func sceneChanged(active: Bool) {
+        if !active {
+            releaseHeldPtt()
+        }
+    }
+
+    /// Waits for the hold's sends to reach the PTT (the tests).
+    func settleHold() async {
+        await holdChain?.value
+    }
+
     /// The TX panel's TUNE.
     func toggleTune() {
+        #if DEBUG
+        keyObserver?("tune")
+        #endif
         let controller = controller
         let operation = Task { await controller.toggleTune() }
         #if DEBUG
@@ -651,6 +963,9 @@ final class TransmitModel: ObservableObject {
     /// it too. Greyed with ``tunerTuneReason`` it starts nothing; this
     /// phone's own tune always ends.
     func toggleTunerTune() {
+        #if DEBUG
+        keyObserver?("tunerTune")
+        #endif
         guard tunerTuneReason == nil else {
             return
         }
@@ -695,10 +1010,28 @@ final class TransmitModel: ObservableObject {
 
     /// Stop, on the TX pill: everything of this phone's that is on ends.
     func stopAll() {
+        stopRemoteCw()
         let controller = controller
         let owner = microphoneOwner
         let authority = CommandSendPermit(parents: [localStopAuthority])
         Task { await controller.stopAll(owner: owner, authority: authority) }
+    }
+
+    /// Retire locally before the asynchronous command can borrow another
+    /// session. Mic-only loss deliberately does not call this all-content off.
+    @discardableResult
+    private func stopRemoteCw() -> Task<Void, Never>? {
+        let wanted = remoteCwLease.hasActivity
+        remoteCwLease.stop()
+        guard wanted, let commands, mirror.capabilityVersion("remoteCwVersion") >= 1 else { return nil }
+        let authority = remoteCwLease.releaseAuthority
+        let finish = platform.backgroundWork("Stop sending CW")
+        return remoteCwLease.enqueueSend {
+            defer { finish() }
+            let started = await commands.start("cw.stop", arguments: [], copies: CwxModel.copies,
+                                                timeout: CwxModel.timeout, authority: authority)
+            await started.sent()
+        }
     }
 
     /// Clears the refusal or stop the band shows.
@@ -943,8 +1276,9 @@ final class TransmitModel: ObservableObject {
     /// low edge above the high one. A transmit setting: nothing is sent
     /// while the settings may not change.
     func matchRxFilter() {
-        guard settingsEditable(1), let slice = RxPanelModel.sliceObject(slices.activeSliceId, in: mirror),
-              let edges = TxFilterMatch.edges(slice: slice, modes: slices.catalog?.modes ?? []) else {
+        let receive = receiveSlices ?? slices
+        guard settingsEditable(1), let slice = RxPanelModel.sliceObject(receive.activeSliceId, in: mirror),
+              let edges = TxFilterMatch.edges(slice: slice, modes: receive.catalog?.modes ?? []) else {
             return
         }
         let writes = TxFilterMatch.writes(edges, currentHighHz: txFilterHighHz)
@@ -981,6 +1315,8 @@ final class TransmitModel: ObservableObject {
     /// starts the microphone first, so the Core's VOX hears this phone
     /// from the moment it is on; a refused arm stops it again.
     func toggleVox() {
+        // In CW the radio's keyer makes the signal, so VOX does nothing (F2).
+        guard !inCw else { return }
         guard microphoneLine else {
             note = Self.voxNeedsMicrophone
             return
@@ -1354,9 +1690,11 @@ final class TransmitModel: ObservableObject {
     }
 
     private func queueLocalStop(_ cause: StopCause, intent: LocalStopIntent, microphoneLoss: String? = nil) {
+        let cwStop = cause == .microphoneLost ? nil : stopRemoteCw()
         let operation = Task { [weak self] in
             guard let self else { return }
             await self.completeLocalStop(cause, intent: intent, microphoneLoss: microphoneLoss)
+            await cwStop?.value
         }
         #if DEBUG
         lastLocalStopOperationForTesting = operation
@@ -1364,7 +1702,9 @@ final class TransmitModel: ObservableObject {
     }
 
     func stopEverythingHere(_ cause: StopCause) async {
+        let cwStop = cause == .microphoneLost ? nil : stopRemoteCw()
         await completeLocalStop(cause, intent: beginLocalStop())
+        await cwStop?.value
     }
 
     private func completeLocalStop(_ cause: StopCause, intent: LocalStopIntent, microphoneLoss: String? = nil) async {
@@ -1680,6 +2020,43 @@ final class TransmitModel: ObservableObject {
         }
     }
 
+    /// Reads the whole report once its delta has applied (a refresh runs
+    /// after the mirror merges a delta), so a hold's serial and its length
+    /// are read together. Another `txState` object, or none, starts the
+    /// count again.
+    private func observeHold(_ state: MirrorObject?) {
+        let object = state.map(ObjectIdentifier.init)
+        if object != holdObject {
+            holdObject = object
+            holdDisplay.reset()
+        }
+        let keyed = ptt.transmitting
+        if state != nil {
+            holdDisplay.observe(report, keyed: keyed, now: .now)
+        } else {
+            holdDisplay.reset()
+        }
+        showHold()
+    }
+
+    private func showHold() {
+        let keyed = ptt.transmitting
+        let shown = holdDisplay.showsHeld(report, keyed: keyed, now: .now)
+        set(\.holdShown, shown)
+        set(\.holdShownReason, shown && report.rfHeld ? report.rfHeldReason : "")
+        holdTimer?.cancel()
+        holdTimer = nil
+        if shown, !report.rfHeld, let until = holdDisplay.afterHoldUntil {
+            holdTimer = Task { @MainActor [weak self] in
+                try? await Task.sleep(until: until, clock: .continuous)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.showHold()
+            }
+        }
+    }
+
     private func watch(_ key: String) -> MirrorObject? {
         let object = mirror.object(key)
         let id = object.map(ObjectIdentifier.init)
@@ -1738,6 +2115,16 @@ final class TransmitModel: ObservableObject {
             next.holderEpoch = state["holderEpoch"].whole ?? 0
             next.holderAway = state["holderAway"].flag ?? false
             next.holderTransferring = state["holderTransferring"].flag ?? false
+            if mirror.capabilityVersion("remoteCwVersion") >= 2 {
+                next.remoteCw = .init(deviceId: state["remoteCwDeviceId"].text,
+                                      epoch: state["remoteCwEpoch"].whole,
+                                      active: state["remoteCwActive"].flag)
+            }
+            // An older Core sends none of the hold: unheld.
+            next.rfHeld = state["rfHeld"].flag ?? false
+            next.rfHeldReason = state["rfHeldReason"].text ?? ""
+            next.rfHoldSerial = UInt64(max(state["rfHoldSerial"].whole ?? 0, 0))
+            next.rfLastHoldMs = state["rfLastHoldMs"].whole ?? 0
             set(\.forwardWatts, state["forwardPowerWatts"].number ?? 0)
             set(\.swr, state["swr"].number ?? 1)
             set(\.micLevelDb, state["micLevelDb"].number ?? -400)
@@ -1751,6 +2138,9 @@ final class TransmitModel: ObservableObject {
         txStateOnAir = next.keyed || state?["tuning"].flag == true || state?["twoTone"].flag == true
         if next != report {
             report = next
+            if mirror.isSnapshotComplete && !mirror.isStale {
+                remoteCwLease.observe(next.remoteCw, thisDeviceId: thisDeviceId)
+            }
             updateTransmittingHere()
             if state != nil {
                 let controller = controller
@@ -1762,6 +2152,7 @@ final class TransmitModel: ObservableObject {
             }
         }
         updateTransmittingHere()
+        observeHold(state)
         if state != nil {
             let holder = (next.holderEpoch, next.holderAway)
             if let last = lastHolder, last != holder {
@@ -1818,6 +2209,25 @@ final class TransmitModel: ObservableObject {
         set(\.monitorVolume, transmit?["monitorVolume"].number)
         set(\.dexp, transmit?["dexpEnabled"].flag)
         set(\.amCarrier, transmit?["amCarrierLevel"].number)
+        // The CW controls (R-CW-50): the transmit slice's mode, and the
+        // Core's CW settings, sent at version 16 to a phone that declared them.
+        let cwEntry = slices.entries.first(where: { $0.slice.txSlice }) ?? slices.active
+        set(\.inCw, cwEntry.map { BandSlice.isCw(modeLabel: $0.modeLabel) } ?? false)
+        set(\.cwSpeedWpm, transmit?["cwKeyerSpeed"].number)
+        set(\.cwBreakInMode, RxPanelModel.whole(transmit?["cwBreakInMode"]))
+        set(\.cwBreakInDelayMs, transmit?["cwBreakInDelayMs"].number)
+        set(\.cwSidetone, transmit?["cwSidetone"].flag)
+        // F2: why QSK is not offered. Once the CW settings were known, QSK
+        // selected and in CW, the reason arriving is a fallback to Semi:
+        // said once, as the desktop says it.
+        let cwKnown = cwQskKnown
+        let qskWas = cwQskReason
+        let qskWords = transmit?["cwQskUnavailableReason"].text ?? ""
+        set(\.cwQskReason, qskWords.isEmpty ? nil : qskWords)
+        cwQskKnown = cwSpeedWpm != nil
+        if cwKnown, qskWas == nil, let reason = cwQskReason, inCw, cwBreakInMode == Self.cwBreakInQsk {
+            note = reason
+        }
         set(\.activeProfile, transmit?["activeTxProfile"].text.flatMap { $0.isEmpty ? nil : $0 })
         set(\.profiles, Self.profileNames(transmit?["txProfilesJson"].text))
 

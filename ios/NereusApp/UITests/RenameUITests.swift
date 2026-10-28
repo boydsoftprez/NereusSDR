@@ -20,7 +20,7 @@ final class RenameUITests: XCTestCase {
         let app = XCUIApplication()
         // Your Cores with made-up Cores kept in memory (a debug build's launch argument).
         app.launchArguments = ["-NereusShotCores"]
-        app.launch()
+        app.launchFresh()
 
         let shack = app.descendants(matching: .any)["core-KG4VCF/shack"]
         XCTAssertTrue(shack.waitForExistence(timeout: 30))
@@ -65,7 +65,7 @@ final class RenameUITests: XCTestCase {
         let app = XCUIApplication()
         // Your Cores with made-up Cores kept in memory (a debug build's launch argument).
         app.launchArguments = ["-NereusShotCores"]
-        app.launch()
+        app.launchFresh()
 
         let actions = app.buttons["coreActions-KG4VCF/shack"]
         XCTAssertTrue(actions.waitForExistence(timeout: 30))

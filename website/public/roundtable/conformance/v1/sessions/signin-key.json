@@ -1,0 +1,72 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "keys": [
+      {
+        "name": "w",
+        "callsign": "W4XYZ",
+        "grid": "EM73"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "Example Logger",
+        "softwareVersion": "3.1",
+        "key": "$websiteKey:w"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "welcome",
+        "station": "$websiteKey:w:id",
+        "kind": "key",
+        "callsign": "W4XYZ",
+        "grid": "EM73",
+        "time": 1800000000000,
+        "limits": {
+          "readingsPerSecond": 2,
+          "presencePerSecond": 1,
+          "messagesPerMinute": 6,
+          "messagesPerHour": 60,
+          "messageCodePoints": 500,
+          "messageLines": 10,
+          "namesPerMinute": 10,
+          "reportsPerHour": 10,
+          "slices": 4,
+          "reads": 4
+        },
+        "mentions": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": []
+      }
+    }
+  ]
+}

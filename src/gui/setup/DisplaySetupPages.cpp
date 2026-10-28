@@ -2291,10 +2291,9 @@ void WaterfallDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(10, 500, 50, QStringLiteral(" ms"), dispGroup);
         m_updatePeriodSlider = row.slider;
-        // Approved native Rate selector uses10ms keyboard/spin steps,
-        // preserving the original10..500ms range and existing setter.
-        m_updatePeriodSlider->setSingleStep(10);
-        row.spin->setSingleStep(10);
+        // Rate changes by one millisecond, preserving the original range and setter.
+        m_updatePeriodSlider->setSingleStep(1);
+        row.spin->setSingleStep(1);
         m_updatePeriodSlider->setProperty("nereusSetupId", "display.waterfallDefaults.updatePeriod");
         // Thetis: setup.designer.cs:34145 (udDisplayWaterfallUpdatePeriod)
         m_updatePeriodSlider->setToolTip(QStringLiteral("How often to update (scroll another pixel line) on the waterfall display.  Note that this is tamed by the FPS setting."));

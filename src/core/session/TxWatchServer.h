@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // no-port-check: NereusSDR-original auxiliary session protocol.
 
 #include <QByteArray>
@@ -44,6 +45,9 @@ public:
     explicit TxWatchServer(Current current, Deliver deliver, QObject* parent = nullptr,
                            Clock clock = {});
     ~TxWatchServer() override;
+    void setKeepaliveV2(std::function<bool(SessionTransport*)> allowed,
+                        std::function<void(const QByteArray&, const TxKeepalive&)> deliver)
+    { m_v2Allowed = std::move(allowed); m_deliverV2 = std::move(deliver); }
 
     std::optional<Ticket> issue(SessionTransport* primary, quint64 sessionId,
                                 const QByteArray& deviceId, quint64 generation,
@@ -88,6 +92,8 @@ private:
 
     Current m_current;
     Deliver m_deliver;
+    std::function<bool(SessionTransport*)> m_v2Allowed;
+    std::function<void(const QByteArray&, const TxKeepalive&)> m_deliverV2;
     Clock m_clock;
     QHash<SessionTransport*, Binding> m_bindings;
     QHash<SessionTransport*, Socket> m_sockets;

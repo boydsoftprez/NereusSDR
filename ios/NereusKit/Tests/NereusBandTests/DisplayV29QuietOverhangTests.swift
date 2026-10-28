@@ -87,7 +87,8 @@ import Testing
         let wide = BandCoverage(centerHz: 7_200_000, spanHz: 100_000)
         var exact = [Float](repeating: -120, count: 80)
         exact[40] = -50
-        var history = StackedTraceHistory()
+        // The samples as taken, before the rows are smoothed.
+        var history = StackedTraceHistory(smoothsRows: false)
         history.append(frame: frame(exact, wide: [Float](repeating: -70, count: 200)), coverage: view, wide: wide, time: 1)
         #expect(history.sample(age: 0, frequencyHz: view.centerHz, view: view, currentFloor: -150).dbm == -50)
         #expect(history.sample(age: 0, frequencyHz: view.highHz + 10_000, view: view, currentFloor: -150).dbm == -70)

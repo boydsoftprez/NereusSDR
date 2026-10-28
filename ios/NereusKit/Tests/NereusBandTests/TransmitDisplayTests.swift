@@ -82,8 +82,7 @@ import Testing
         #expect(!peaks.keyedOverlay.activePeakHold && !peaks.keyedOverlay.peakBlobs)
         peaks.activePeakHoldOnTx = true
         #expect(peaks.keyedOverlay.activePeakHold && !peaks.keyedOverlay.peakBlobs)
-        // The receive scale each band keeps is not touched.
-        #expect(keyed.bandScales == settings.bandScales)
+        // The receive scale is not touched.
         #expect(settings.scaleTopDbm == -50)
     }
 

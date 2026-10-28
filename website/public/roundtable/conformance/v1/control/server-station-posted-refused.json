@@ -1,0 +1,13 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "posted",
+    "clientId": "c2",
+    "ok": false,
+    "msg": null,
+    "code": "too-long",
+    "reason": "A message can be up to 500 characters and 10 lines."
+  },
+  "decodes": true
+}

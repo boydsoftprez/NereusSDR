@@ -1,6 +1,9 @@
 // NereusSDR for iOS: other devices' slices on this band, read from the Core's markers, never tuned from here
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), V2 opt-in/authority gate; AI-assisted via OpenAI Codex.
+// 2026-10-26: CW transmit, the CW passband drawn at its origin from the mode and
+//             the station pitch (R-CW-24, D5). J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import Combine
 import Foundation
@@ -35,6 +38,16 @@ final class ForeignSlicesModel: ObservableObject {
     var catalog: StationCatalog? {
         didSet {
             if catalog != oldValue {
+                rebuild()
+            }
+        }
+    }
+
+    /// The station pitch (the Core's `CWPitch`, clamped as the desktop
+    /// reads it), from which a CW slice's passband is drawn (R-CW-24).
+    var cwPitchHz: Int = BandSlice.cwPitchDefaultHz {
+        didSet {
+            if cwPitchHz != oldValue {
                 rebuild()
             }
         }
@@ -90,7 +103,8 @@ final class ForeignSlicesModel: ObservableObject {
                 colour: BandSlice.colour(forIndex: marker.sliceId, in: catalog?.sliceColours ?? []),
                 ownerName: marker.ownerName, ownerShortName: marker.ownerShortName, ownerKind: marker.ownerKind,
                 txSlice: marker.txSlice,
-                away: marker.ownerAway)
+                away: marker.ownerAway,
+                passbandOffsetHz: BandSlice.cwShiftHz(modeLabel: modeLabel(marker.mode), pitchHz: cwPitchHz))
             let owner = devices.first { $0.deviceId == marker.ownerDeviceId }
             return Entry(slice: slice, marker: marker, modeLabel: modeLabel(marker.mode),
                          awayForSeconds: owner?.state == .away ? owner?.awayForSeconds : nil)

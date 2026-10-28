@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Shadow, peak hold, peak hold color and ignore history
+//                 rows; history and power limit ranges from Thetis setup.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -100,9 +103,15 @@ private:
     QDoubleSpinBox* m_spinStrokeWidth{nullptr};
     QComboBox*      m_comboDirection{nullptr};
 
+    // Shadow and peak hold
+    QCheckBox*      m_chkShadow{nullptr};
+    QCheckBox*      m_chkPeakHold{nullptr};
+    QPushButton*    m_btnPeakHoldColor{nullptr};
+
     // History
     QCheckBox*      m_chkHistory{nullptr};
     QSpinBox*       m_spinHistoryDuration{nullptr};
+    QSpinBox*       m_spinIgnoreHistory{nullptr};
     QPushButton*    m_btnHistoryColor{nullptr};
 
     // Power normalisation

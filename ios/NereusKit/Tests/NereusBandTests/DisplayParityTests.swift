@@ -283,29 +283,28 @@ import Testing
 
     // MARK: Row 11: each band's own range
 
-    @Test func eachBandKeepsItsOwnTopAndBottom() {
+    // Each band's dB Max and dB Min are the Core's now (DC3; the app's
+    // CoreBandScale): the phone keeps one scale, for an older Core, that a
+    // new band leaves as it is.
+    @Test func aNewBandLeavesThePhonesOwnTopAndBottom() {
         var settings = BandDisplaySettings.desktopDefaults
         settings.scaleTopDbm = -50
         settings.scaleBottomDbm = -120
-        // The first band named keeps the scale as it was.
         settings.enterBand("5")
         #expect(settings.scaleTopDbm == -50 && settings.scaleBottomDbm == -120)
         settings.scaleTopDbm = -45
-        #expect(settings.bandScales["5"] == .init(topDbm: -45, bottomDbm: -120))
-        // A band that kept none starts at the defaults, and keeps its own.
         settings.enterBand("1")
-        #expect(settings.scaleTopDbm == -40 && settings.scaleBottomDbm == -140)
-        settings.scaleBottomDbm = -150
-        // Back on the first band, its own comes back; and the other's stays kept.
-        settings.enterBand("5")
+        #expect(settings.scaleBand == "1")
         #expect(settings.scaleTopDbm == -45 && settings.scaleBottomDbm == -120)
-        #expect(settings.bandScales["1"] == .init(topDbm: -40, bottomDbm: -150))
+        settings.scaleBottomDbm = -150
+        settings.enterBand("5")
+        #expect(settings.scaleTopDbm == -45 && settings.scaleBottomDbm == -150)
         // An unnamed band changes nothing.
         settings.enterBand(nil)
         #expect(settings.scaleBand == "5")
     }
 
-    @Test func eachBandsRangeIsKeptOnThePhone() throws {
+    @Test func thePhonesOwnRangeIsKeptOnThePhone() throws {
         let suite = "band-scales-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }

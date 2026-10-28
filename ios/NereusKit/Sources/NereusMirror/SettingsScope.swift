@@ -1,5 +1,8 @@
 // NereusSDR for iOS: which setting keys the Core keeps and which each app keeps itself
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: the Roundtable/ prefix and its four device-own keys, as the Core's table.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 /// Whether a setting key is kept by the Core (station-scoped, proxied to
 /// the app) or by each app itself (operator-local, never sent), by the
@@ -47,6 +50,14 @@ public enum SettingsScope: Sendable, Equatable {
         Rule(text: "FreeDvReporter/DistanceMiles", scope: .operatorLocal),
         Rule(text: "FreeDvReporter/DirectionAsCardinal", scope: .operatorLocal),
         Rule(text: "FreeDvReporter/FrequencyAsKhz", scope: .operatorLocal),
+        // Roundtable: how many earlier turns a panel shows, what it opens
+        // on, whether this device asked the first-run question and where
+        // its window sits are each device's own; every other Roundtable/
+        // key is the Core's (the prefix rule below).
+        Rule(text: "Roundtable/EarlierTurnsShown", scope: .operatorLocal),
+        Rule(text: "Roundtable/PanelOpensOn", scope: .operatorLocal),
+        Rule(text: "Roundtable/FirstRunSeen", scope: .operatorLocal),
+        Rule(text: "Roundtable/WindowGeometry", scope: .operatorLocal),
     ]
 
     // Tier 2, in the order the Core checks them.
@@ -68,6 +79,8 @@ public enum SettingsScope: Sendable, Equatable {
         Rule(text: "Pota", scope: .station),
         Rule(text: "PskReporter", scope: .station),
         Rule(text: "FreeDv", scope: .station),
+        // The Core runs Roundtable, so its answers are the Core's.
+        Rule(text: "Roundtable", scope: .station),
         // WSJT-X and SpotCollector listen on the computer they run on, so
         // each device keeps its own (link 8; parity Task 19).
         Rule(text: "SpotCollector", scope: .operatorLocal),

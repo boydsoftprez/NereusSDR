@@ -1,4 +1,20 @@
 // Modification history (NereusSDR):
+//   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//                 overlayTargetBlend(), the GPU overlay's premultiplied
+//                 blend, so a test can composite as the GPU path does.
+//   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the tags
+//                 are drawn again when the pan's toolbar moves, resizes,
+//                 shows or hides (childEvent; Roundtable plan Task 15).
+//   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 the Roundtable room tags along the foot of the spectrum
+//                 (setRoundtableTags, roundtableRoomClicked, the fold list)
+//                 and their test seams (Roundtable plan Task 14).
+//   2026-10-26: CW transmit, every passband drawer and the filter-edge grab
+//                 draw from the passband origin, the dial plus the CW
+//                 receive shift (setCwPitchHz, cwPassbandOffsetHz,
+//                 SliceMarkerGeometry::originHz,
+//                 ForeignSliceMarker::passbandOffsetHz; R-CW-24, R-CW-45).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //                 remoteTraceStartShareForTest().
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
@@ -180,6 +196,11 @@
 //                 spot menu's Turn beam (setSpotBeamTurner,
 //                 buildSpotContextMenu) and spotTuned for auto-turn.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 : setBackgroundImageOverride, a picture a web image item
+//                 supplies for this pan's spectrum background (container
+//                 item parity Task 42). With none set the spectrum looks
+//                 as it did. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 : Opt-in numeric diagnostics for actual waterfall rows and
 //                 applied Core extras. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. No display behavior changes.
@@ -473,6 +494,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/NereusGuiExport.h"
 #include "gui/WaterfallImpulseBlanker.h"
 #include "gui/WheelStepAccumulator.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -497,6 +519,7 @@ mw0lge@grange-lane.co.uk
 #include <optional>
 #include <QStringList>
 
+#include "core/CwTypes.h"
 #include "core/spectrum/ActivePeakHoldTrace.h"
 #include "core/spectrum/DisplayFollowers.h"
 #include "core/spectrum/PeakBlobDetector.h"
@@ -1149,6 +1172,15 @@ public:
     void    setBackgroundOpacity(int pct);
     QColor  backgroundFillColor() const { return m_bgFillColor; }
     void    setBackgroundFillColor(const QColor& c);
+    // Container item parity Task 42: a picture a web image item supplies
+    // for this pan (Thetis sets the display's background image from a web
+    // image, MeterManager.cs:15620-15640). While set it takes the place of
+    // the chosen picture and is drawn even with the background off, then
+    // at full strength over the fill colour; with the background on, the
+    // pan's opacity applies. Never saved. A null image clears it, and the
+    // pan's own background is back exactly as before.
+    void    setBackgroundImageOverride(const QImage& image);
+    bool    hasBackgroundImageOverride() const { return !m_bgOverride.isNull(); }
 
     // ---- Waterfall renderer controls (Phase 3G-8 commit 4) ----
 
@@ -2280,6 +2312,18 @@ public:
     // ---- VFO / filter overlay ----
     void setVfoFrequency(double hz);
     void setFilterOffset(int lowHz, int highHz);  // updates filter passband overlay
+    /// R-CW-24 (D5): the station CW pitch, cached here so a drawer never
+    /// reads settings per frame. In CWU and CWL a passband is drawn from the
+    /// dial plus cwPassbandOffsetHz (minus the pitch in CWU, plus it in
+    /// CWL), as SliceModel::passbandOriginHz() puts it; the VFO line and the
+    /// TX marker stay on the dial.
+    void setCwPitchHz(int hz);
+    int cwPitchHz() const { return m_cwPitchHz; }
+    /// SliceModel::cwShiftHz() from a mode and a pitch.
+    static double cwPassbandOffsetHz(DSPMode mode, int pitchHz);
+    /// Where the pan's own filter pair is drawn from (m_vfoHz plus the CW
+    /// shift of the pan's own slice mode).
+    double ownPassbandOriginHz() const;
 
     // ---- CTUN mode (SmartSDR-style independent pan) ----
     void setCtunEnabled(bool enabled);
@@ -2379,6 +2423,10 @@ public:
         bool   active{true};
         QColor lineColor;  // VFO centre line and triangle
         QColor edgeColor;  // filter edge lines
+        // R-CW-24: filter offset 0, the dial plus the CW receive shift
+        // (centreHz outside CW). The passband and its edges are drawn from
+        // here; the centre line stays on centreHz.
+        double originHz{0.0};
     };
 
     /// iPhone app plan Task 78 (the several-devices design, section 12
@@ -2392,6 +2440,9 @@ public:
         double  centreHz{0.0};
         int     filterLowHz{0};
         int     filterHighHz{0};
+        // R-CW-24: the CW receive shift of the slice's mode; its passband
+        // is drawn from centreHz plus this.
+        double  passbandOffsetHz{0.0};
         QColor  color;
         QString letter;
         QString ownerShortName;
@@ -2769,6 +2820,40 @@ public:
         drawSpotMarkers(p, specRect);
     }
 
+    // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
+    // One tag per room along the foot of the spectrum, above the band
+    // plan: the state glyph, the talker (or Unknown, Doubled, Quiet) and
+    // the member count. Crowded tags fold into +N (layoutRoundtableTags).
+    // `display` Hidden draws none, Stale greys them as last known. Display
+    // only: a click asks for a tune through roundtableRoomClicked.
+    void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
+    const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
+    RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
+    /// A drawn tag or fold, in this widget's coordinates.
+    struct RoundtableTagHit {
+        QRect rect;
+        QStringList roomIds;
+        bool folded = false;
+    };
+    /// What the last tag pass drew (it is redrawn with the overlay).
+    const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
+    void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
+#ifdef NEREUS_GPU_SPECTRUM
+    /// How the GPU path composites its overlay textures onto the frame.
+    /// The textures are premultiplied, so the source color takes One.
+    static QRhiGraphicsPipeline::TargetBlend overlayTargetBlend();
+#endif
+    /// The rows a fold's list holds: a heading, then one row per room in
+    /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
+    void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
+    /// The spectrum rectangle the tags are drawn against, and the band
+    /// plan strip's height at its foot.
+    QRect roundtableTagSpectrumRectForTest() const;
+    int bandPlanStripHeightForTest(const QPaintDevice* device = nullptr) const
+    {
+        return bandPlanStripHeight(device);
+    }
+
     // Phase 3J-2 + 3R M2 test seams. Read-only views into the Spot
     // Display knob state so the M2 round-trip test can pin the
     // loadSpotDisplaySettings push-path without driving a paint cycle.
@@ -3041,6 +3126,10 @@ signals:
     // sources (Memory, DX cluster, RBN, etc.) can react.
     // From AetherSDR src/gui/SpectrumWidget.h:327 [@0cd4559]
     void spotTriggered(int spotIndex);
+    // Roundtable plan Task 14: the operator clicked a Roundtable tag, or a
+    // row of a fold's list: tune the active slice to that room. Never
+    // emitted while the transmit view shows (as requestTune).
+    void roundtableRoomClicked(const QString& roomId);
     // Rotor control plan Task 8: the operator tuned to a spot (a label
     // click, a cluster popup entry or the menu's Tune), with its call and
     // its Core-served bearing (-1 when none). MainWindow hands it to
@@ -3187,6 +3276,10 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;  // mouse overlay forwarding
+    // Roundtable plan Task 15: every child widget is watched, so the room
+    // tags (which keep clear of the pan's toolbar) are drawn again when
+    // the toolbar collapses or moves.
+    void childEvent(QChildEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -3433,6 +3526,10 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
+    // Roundtable plan Task 14: the room tags, after the spots in both
+    // paint paths, and a click on one (true when it took the click).
+    void drawRoundtableTags(QPainter& p, const QRect& specRect);
+    bool roundtableTagClick(const QPoint& pos, const QPoint& globalPos);
 
     // ---- TNF / notch overlay (design section 8.2) ----
     // Geometry ported unchanged from AetherSDR drawTnfMarkers
@@ -3806,6 +3903,8 @@ private:
     QColor  m_bgFillColor{QColor(0x0a, 0x0a, 0x14)};
     // NereusSDR: the background is drawn only while this is on (S6).
     bool    m_bgEnabled{false};
+    // Task 42: a web image's picture for this pan; null when none.
+    QImage  m_bgOverride;
     // Whether this frame gets the background: on, and the 2D spectrum.
     bool drawsSpectrumBackground() const;
     // The fill colour, then the picture over it. Shared by paintEvent() and
@@ -4443,6 +4542,10 @@ private:
     QPointer<SpotBeamTurner> m_spotBeamTurner;  // rotor control plan Task 8
     QVector<SpotHitRect> m_spotClickRects;
     QVector<SpotCluster> m_spotClusters;
+    // Roundtable plan Task 14: the room tags and what the last pass drew.
+    QList<RoundtableTag> m_roundtableTags;
+    RoundtableTagDisplay m_roundtableTagDisplay{RoundtableTagDisplay::Hidden};
+    QList<RoundtableTagHit> m_roundtableTagHits;
     bool   m_showSpots{true};
     int    m_spotFontSize{16};
     int    m_spotMaxLevels{3};
@@ -4985,6 +5088,8 @@ private:
     int     m_txFilterLow{100};   // default matches TransmitModel::m_filterLow
     int     m_txFilterHigh{2900}; // default matches TransmitModel::m_filterHigh
     DSPMode m_txMode{DSPMode::USB};
+    // R-CW-24: the station CW pitch (setCwPitchHz).
+    int     m_cwPitchHz{kCwPitchDefaultHz};
     // Signed Hz offset added to m_vfoHz for the TX overlay position so the
     // orange band tracks XIT shifts (xitEnabled ? xitHz : 0).  Updated via
     // setTxVfoOffsetHz from MainWindow on SliceModel xit signals.

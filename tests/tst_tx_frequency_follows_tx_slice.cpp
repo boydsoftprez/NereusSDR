@@ -3,6 +3,9 @@
 // =================================================================
 // 2026-09-27: XIT-shifted carrier band-plan gate regression for positive,
 // negative and disabled XIT. J.J. Boyd (KG4VCF), AI-assisted via Codex.
+// 2026-10-26: CW transmit, CW rows: TX stays the dial plus XIT while the
+// receiver moves one pitch (R-CW-23). J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 // no-port-check: NereusSDR-original test infrastructure. Expected
 // behaviour is cited to Thetis in comments, but nothing here is a port.
 //
@@ -293,6 +296,54 @@ private slots:
         for (const quint64 hz : mock->txFreqCalls) {
             QCOMPARE(hz, quint64(k80mHz) + 1200);
         }
+
+        delete mock;
+    }
+
+    // CW transmit (R-CW-23): in CW the receiver moves one pitch off the dial
+    // and the carrier does not. With the radio's keyer Thetis's tx_freq has
+    // no pitch term (console.cs:31826-31838 [v2.10.3.15]: the pitch reaches
+    // tx_freq only with the host keyer or TUNE), so TX is the dial plus XIT.
+    void cwMovesTheReceiverNotTheTxFrequency_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<double>("rxTerm");
+        QTest::newRow("CWU") << static_cast<int>(DSPMode::CWU) << -600.0;
+        QTest::newRow("CWL") << static_cast<int>(DSPMode::CWL) << 600.0;
+        QTest::newRow("USB") << static_cast<int>(DSPMode::USB) << 0.0;
+        QTest::newRow("LSB") << static_cast<int>(DSPMode::LSB) << 0.0;
+    }
+    void cwMovesTheReceiverNotTheTxFrequency()
+    {
+        QFETCH(int, mode);
+        QFETCH(double, rxTerm);
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new TxFreqMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int b = model.addSlice();
+        SliceModel* s = model.slices().at(b);
+        s->setFrequency(k20mHz);
+        model.setActiveSlice(b);
+        model.wireSliceSignalsForTest();
+        QVERIFY(model.txSliceArbiter()->requestHandoff(b));
+
+        mock->txFreqCalls.clear();
+        s->setDspMode(static_cast<DSPMode>(mode));
+        s->setFrequency(k20mHz + 1000.0);
+        QVERIFY(!mock->txFreqCalls.isEmpty());
+        QCOMPARE(mock->txFreqCalls.last(), quint64(k20mHz) + 1000);
+        QCOMPARE(model.txFrequencyForSliceForTest(s), quint64(k20mHz) + 1000);
+        QCOMPARE(s->demodulatedRxFrequency(), k20mHz + 1000.0 + rxTerm);
+
+        mock->txFreqCalls.clear();
+        s->setXitHz(250);
+        s->setXitEnabled(true);
+        QVERIFY(!mock->txFreqCalls.isEmpty());
+        QCOMPARE(mock->txFreqCalls.last(), quint64(k20mHz) + 1250);
+        QCOMPARE(s->demodulatedRxFrequency(), k20mHz + 1000.0 + rxTerm);
 
         delete mock;
     }

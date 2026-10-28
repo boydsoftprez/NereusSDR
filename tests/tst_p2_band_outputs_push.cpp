@@ -24,12 +24,19 @@
 // byte changed.
 //
 // Against the fake Protocol 2 radio (an Orion MkII), over loopback.
+//
+// Modification history (NereusSDR):
+//   2026-10-26 - Anvelina filter/OC fix wave: the OC TX pin actions' TUNE
+//                flag while keyed (onOcTxModesChanged), and the Anvelina DX
+//                byte (onOcExtrasChanged) each send at once while running
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <functional>
 
+#include "core/AnvelinaDxOutputs.h"
 #include "core/AppSettings.h"
 #include "core/OcMatrix.h"
 #include "core/P2RadioConnection.h"
@@ -191,6 +198,66 @@ private slots:
         // The band shown with the byte still follows (RadioModel).
         QTRY_COMPARE(core.model.bandOutputsBand(), int(Band::Band15m));
         QCOMPARE(core.model.bandOutputsByte(), 0);
+    }
+
+    // ── OC TX pin actions: the TUNE flag reaches the wire while keyed ────
+    //
+    // RadioConnection::setOcTxModes -> onOcTxModesChanged ->
+    // pushBandOutputsIfChanged. Unkeyed the byte is the RX pins', so a TUNE
+    // flag changes nothing and nothing is sent. Keyed against the fake
+    // radio only (loopback; no radio is keyed).
+    void ocTxModes_tuneFlagReachesTheWireWhileKeyed()
+    {
+        P2Core core;
+        core.m->setPin(Band::Band20m, 2, /*tx=*/true, true);   // MOX-only pin 3
+        core.m->setPin(Band::Band20m, 3, /*tx=*/true, true);   // TUNE-only pin 4
+        core.m->setPinAction(2, OcMatrix::TXPinAction::Mox);
+        core.m->setPinAction(3, OcMatrix::TXPinAction::Tune);
+        core.conn.setTxFrequency(k20mHz);
+        QTest::qWait(kQuietMs);
+
+        const int before = core.fake.highPriorityDatagrams();
+        core.conn.setOcTxModes(/*tune=*/true, /*twoTone=*/false);
+        QTest::qWait(kQuietMs);
+        QCOMPARE(core.fake.highPriorityDatagrams(), before);
+        QCOMPARE(core.fake.lastHighPriorityOcByte(), 0x01);   // RX pin 1 on 20 m
+        core.conn.setOcTxModes(false, false);
+
+        core.conn.setMox(true);
+        QVERIFY(waitUntil([&core]() { return core.fake.lastHighPriorityOcByte() == 0x04; }, 1000));
+        core.conn.setOcTxModes(true, false);
+        QVERIFY(waitUntil([&core]() { return core.fake.lastHighPriorityOcByte() == 0x08; }, 1000));
+        core.conn.setOcTxModes(false, false);
+        QVERIFY(waitUntil([&core]() { return core.fake.lastHighPriorityOcByte() == 0x04; }, 1000));
+        core.conn.setMox(false);
+        QVERIFY(waitUntil([&core]() { return (core.fake.lastHighPriorityFlags() & 0x02) == 0; }, 1000));
+    }
+
+    // ── Anvelina DX outputs: a change is sent at once while running ──────
+    //
+    // RadioModel's AnvelinaDxOutputs -> RadioConnection::setOcExtrasByte ->
+    // onOcExtrasChanged -> sendCmdHighPriority, as Thetis's SetOCExtraBits
+    // (netInterface.c:409-418 [v2.10.3.15]). Unkeyed, so no heartbeat:
+    // each change is exactly one packet, and an unchanged byte none.
+    void dxOutputs_changeIsSentAtOnce()
+    {
+        P2Core core;
+        const int before = core.fake.highPriorityDatagrams();
+
+        core.model.anvelinaDxOutputsMutable().setOutputOn(8, true);
+        QVERIFY(waitUntil([&core, before]() {
+            return core.fake.highPriorityDatagrams() == before + 1; }, 1000));
+        QCOMPARE(int(core.conn.ocExtrasByte()), 0x04);
+
+        // The same byte again: nothing sent.
+        core.conn.setOcExtrasByte(0x04);
+        QTest::qWait(kQuietMs);
+        QCOMPARE(core.fake.highPriorityDatagrams(), before + 1);
+
+        core.model.anvelinaDxOutputsMutable().setAll(false);
+        QVERIFY(waitUntil([&core, before]() {
+            return core.fake.highPriorityDatagrams() == before + 2; }, 1000));
+        QCOMPARE(int(core.conn.ocExtrasByte()), 0x00);
     }
 };
 

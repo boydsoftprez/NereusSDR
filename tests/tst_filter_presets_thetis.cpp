@@ -30,6 +30,9 @@
 //   2026-10-24 - DIGU/DIGL default on F1 3.0k, and saved presets kept
 //                as saved, by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-26 - CW transmit, a stored CW pitch of 150 and 2400 Hz builds
+//                the 200 and 2250 Hz slots (R-CW-02). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -252,6 +255,37 @@ private slots:
         QCOMPARE(cwl[3], Edges(-550, -50));
         for (const Edges& e : cwu) { QVERIFY(e.first >= 0); }
         for (const Edges& e : cwl) { QVERIFY(e.second <= 0); }
+    }
+
+    // R-CW-02: a stored pitch outside Setup's 200..2250 Hz reads clamped
+    // (stationCwPitchHz), so 150 Hz builds the 200 Hz slots and 2400 Hz the
+    // 2250 Hz ones.
+    void cwPitchBelowTheRangeBehavesAs200()
+    {
+        AppSettings::instance().setValue(QStringLiteral("CWPitch"), 200);
+        const QList<Edges> cwuAt200 = SliceModel::presetsForMode(DSPMode::CWU);
+        const QList<Edges> cwlAt200 = SliceModel::presetsForMode(DSPMode::CWL);
+        const Edges defAt200 = SliceModel::defaultFilterForMode(DSPMode::CWU);
+        AppSettings::instance().setValue(QStringLiteral("CWPitch"), 150);
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWU), cwuAt200);
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWL), cwlAt200);
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::CWU), defAt200);
+        // F10 (+/-13 Hz) sits on 200 Hz.
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWU).at(9), Edges(187, 213));
+    }
+
+    void cwPitchAboveTheRangeBehavesAs2250()
+    {
+        AppSettings::instance().setValue(QStringLiteral("CWPitch"), 2250);
+        const QList<Edges> cwuAt2250 = SliceModel::presetsForMode(DSPMode::CWU);
+        const QList<Edges> cwlAt2250 = SliceModel::presetsForMode(DSPMode::CWL);
+        const Edges defAt2250 = SliceModel::defaultFilterForMode(DSPMode::CWL);
+        AppSettings::instance().setValue(QStringLiteral("CWPitch"), 2400);
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWU), cwuAt2250);
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWL), cwlAt2250);
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::CWL), defAt2250);
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWU).at(9), Edges(2237, 2263));
+        QCOMPARE(SliceModel::presetsForMode(DSPMode::CWU).at(0), Edges(1750, 2750));
     }
 };
 

@@ -284,7 +284,7 @@ final class DiversityApprovedUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-NereusDiversityFixture", "-NereusDiversityEnvironmentProbe"] + extra
         if light { app.launchArguments.append("-NereusDiversityLightValidation") }
-        app.launch()
+        app.launchFresh()
         let probe = app.otherElements["diversity.fixture.scheme"]
         XCTAssertTrue(probe.waitForExistence(timeout: 10))
         XCTAssertEqual(probe.value as? String, light ? "light" : "dark") // Actual SwiftUI environment, not launch intent.

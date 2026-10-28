@@ -52,6 +52,9 @@
 //   2026-10-11 -- Max Bin with several slices: each slice takes its own
 //                 reading (setMaxBinSource). J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-25 -- Roundtable fix wave: a clear's new stamp comes after its
+//                 no-reading values. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -234,6 +237,36 @@ private slots:
         QCOMPARE(slice->signalStrengthDbm(), kNoReadingDbm);
         QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
         QCOMPARE(slice->signalAverageDbm(), kNoReadingDbm);
+    }
+
+    // Roundtable fix wave: RadioModel pushes the Roundtable meter on
+    // meterReadingNsChanged with a direct connection and reads
+    // signalStrengthDbm() there. A clear must move the stamp only after the
+    // no-reading values are in place, or that push sends the last real
+    // reading under the clear's stamp.
+    void aClearMovesItsStampAfterTheNoReadingValues()
+    {
+        RadioModel model{RadioModel::Role::Local};
+        SliceMeterPump* pump = model.sliceMeterPump();
+        QVERIFY(pump != nullptr);
+        const int sliceId = model.addSlice();
+        SliceModel* slice = model.sliceById(sliceId);
+        QVERIFY(slice != nullptr);
+        slice->setSignalStrengthDbm(-73.0);
+        slice->setSignalPeakDbm(-70.0);
+        slice->setSignalAverageDbm(-75.0);
+        slice->setMeterReadingNs(1);
+
+        QList<double> seenAtStamp;
+        connect(slice, &SliceModel::meterReadingNsChanged, this,
+                [slice, &seenAtStamp]() { seenAtStamp.append(slice->signalStrengthDbm()); });
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        pollSettled(model, pump);
+
+        QVERIFY(!seenAtStamp.isEmpty());
+        for (double dbm : std::as_const(seenAtStamp)) {
+            QCOMPARE(dbm, kNoReadingDbm);
+        }
     }
 
     // R-R3-13: LinkLost with a live channel. A local LinkLost keeps the

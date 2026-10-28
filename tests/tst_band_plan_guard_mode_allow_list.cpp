@@ -1,5 +1,7 @@
 // no-port-check: test-only — exercises NereusSDR-native BandPlanGuard mode allow-list
 // 3M-1b Task K.1: isModeAllowedForTx + checkMoxAllowed parametrized over all 12 DSPModes.
+// 2026-10-26: CW transmit, CWL and CWU are allowed (R-CW-05). J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #include "core/safety/BandPlanGuard.h"
 #include "core/WdspTypes.h"
@@ -35,8 +37,8 @@ private slots:
     void radeL_isAllowed();   // Phase 3R K-bench: ride LSB carrier
 
     // ── isModeAllowedForTx: rejected modes ────────────────────────────────
-    void cwl_isRejected();
-    void cwu_isRejected();
+    void cwl_isAllowed();   // CW transmit (R-CW-05)
+    void cwu_isAllowed();
     void am_isAllowed();
     void sam_isAllowed();
     void dsb_isAllowed();
@@ -45,8 +47,8 @@ private slots:
     void spec_isRejected();
 
     // ── checkMoxAllowed: reason strings ───────────────────────────────────
-    void cwl_checkMox_reasonIsCwPhase();
-    void cwu_checkMox_reasonIsCwPhase();
+    void cwl_checkMox_isAllowed();
+    void cwu_checkMox_isAllowed();
     void am_checkMox_isAllowed();
     void sam_checkMox_isAllowed();
     void dsb_checkMox_isAllowed();
@@ -114,16 +116,16 @@ void TestBandPlanGuardModeAllowList::radeL_isAllowed()
 // isModeAllowedForTx — rejected modes (expect false)
 // ---------------------------------------------------------------------------
 
-void TestBandPlanGuardModeAllowList::cwl_isRejected()
+void TestBandPlanGuardModeAllowList::cwl_isAllowed()
 {
     BandPlanGuard guard;
-    QVERIFY(!guard.isModeAllowedForTx(DSPMode::CWL));
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::CWL));
 }
 
-void TestBandPlanGuardModeAllowList::cwu_isRejected()
+void TestBandPlanGuardModeAllowList::cwu_isAllowed()
 {
     BandPlanGuard guard;
-    QVERIFY(!guard.isModeAllowedForTx(DSPMode::CWU));
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::CWU));
 }
 
 void TestBandPlanGuardModeAllowList::am_isAllowed()
@@ -172,22 +174,22 @@ static constexpr Region   kRegion  = Region::UnitedStates;
 static constexpr std::int64_t kValidHz = 14'200'000; // US 20m, well in-band
 static constexpr Band     kBand20m = Band::Band20m;
 
-void TestBandPlanGuardModeAllowList::cwl_checkMox_reasonIsCwPhase()
+void TestBandPlanGuardModeAllowList::cwl_checkMox_isAllowed()
 {
     BandPlanGuard guard;
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::CWL,
                                    kBand20m, kBand20m, false, false);
-    QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("CW transmit is not available on this Core"));
+    QVERIFY2(r.ok, qPrintable(r.reason));
+    QVERIFY(r.reason.isEmpty());
 }
 
-void TestBandPlanGuardModeAllowList::cwu_checkMox_reasonIsCwPhase()
+void TestBandPlanGuardModeAllowList::cwu_checkMox_isAllowed()
 {
     BandPlanGuard guard;
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::CWU,
                                    kBand20m, kBand20m, false, false);
-    QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("CW transmit is not available on this Core"));
+    QVERIFY2(r.ok, qPrintable(r.reason));
+    QVERIFY(r.reason.isEmpty());
 }
 
 void TestBandPlanGuardModeAllowList::am_checkMox_isAllowed()

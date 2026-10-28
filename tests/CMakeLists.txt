@@ -603,6 +603,20 @@ if(TARGET wdsp_static)
     # runs ahead leaves a real TX channel's output bit-identical. Not
     # REALTIME: the hold waits for the caller's stall, not a wall-clock bound.
     nereus_add_test(tst_wdsp_dexchange_order EXTRA_LABELS core)
+    # 2026-10-27: a drain (SetChannelState(ch, 0, 1)) that reaches its 100 ms
+    # timeout with a flush already requested waits for that flush, so it
+    # never lands after the next SetChannelState(ch, 1, 0) and leaves a
+    # running channel bypassed (tst_hl2_tune_magnitude_replay's CI hang).
+    # The worker is held in dsplock.c's test-only exchange hook until the
+    # re-key; the hold's 2 s valve only frees the fixed drain's wait, so the
+    # test cannot fail on time alone and is not REALTIME. A second case holds
+    # the drain itself (dsplock.c's test-only drain hook) between raising the
+    # down-slew and raising flushflag; its 1 s valve likewise only frees the
+    # fixed drain.
+    nereus_add_test(tst_wdsp_drain_timeout_flush WdspChannelStateProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspChannelStateProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_drain_timeout_flush PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_drain_timeout_flush PRIVATE WDSP_STATIC_BUILD)
     # R-R3-39: the DSP control lanes (ordering, keyed jobs, barriers,
     # request completion) and the WDSP caller check that counts WDSP calls
     # made from the event loop. wdsp_static arrives through the core
@@ -634,6 +648,15 @@ if(TARGET wdsp_static)
     # (Thetis's order). REALTIME: wall-clock bounds on real channels; it
     # plans through the shared wisdom cache, so the default 120 s holds.
     nereus_add_test(tst_stop_transmit_now EXTRA_LABELS core REALTIME)
+    # Remote transmit hold then cut (2026-10-26): the TX channel's RF hold.
+    # A held key still sends every block at the same cadence, all zeros, to
+    # the connection and the AM monitor tap; the gate, the run sequence and
+    # rfGateOpened are untouched; the last reason off sends real output on
+    # the next block; closeRfGate still stops everything; RadioModel's
+    # setRemoteRfHold emits on the mask's edges, MOX's return to receive
+    # clears it, and the TX time-out does not see it. REALTIME, as
+    # tst_stop_transmit_now: a real TX channel runs.
+    nereus_add_test(tst_tx_rf_hold EXTRA_LABELS core REALTIME)
     if(NOT WIN32)
         # R-R3-41: linux_port.c's thread-start hook fires once per channel
         # worker and flush thread, on that thread, with its kind and channel.
@@ -726,7 +749,12 @@ nereus_add_test(tst_container_remembered_place)
 nereus_add_test(tst_container_window_monitors)
 # Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
 nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
+# A refused container change says why: the stuck states stay on screen until
+# a reload, New Container says why in a box, refusals are logged (offscreen).
+nereus_add_test(tst_mainwindow_container_refused_save fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
+# ADC bars read the ADC behind their slice; the ADC maximum bar names why it is empty.
+nereus_add_test(tst_meter_adc_slice)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
 # A scrolled docked stack shows no black band over its GPU
@@ -775,16 +803,69 @@ nereus_add_test(tst_longpath_instruments)
 # Workspace preview: added copies of the SIGNAL STRENGTH dial (per-copy settings, own source).
 nereus_add_test(tst_smeter_dial_content)
 nereus_add_test(tst_container_document)
+# Container picker: every type's plain name and heading, the grouped
+# Available list, and old default names taking the new ones on load.
+nereus_add_test(tst_container_picker_catalog)
 # Container item colours and button grid styling survive a save and reload;
 # records saved before those fields existed still load.
 nereus_add_test(tst_container_item_persistence)
+# CLOCK: Thetis layout and defaults for new clocks; saved clocks keep theirs.
+nereus_add_test(tst_clock_item_layout)
+# Text overlay: RX/TX swap and Thetis defaults for new items, both lines for
+# saved ones; panel MOX flip fade, copy font, auto scroll.
+nereus_add_test(tst_text_overlay_item)
+# Text overlay tokens: case-insensitive table, precision, time and date
+# integers, slice-letter tokens, the Thetis text translator and the picker.
+nereus_add_test(tst_text_overlay_tokens)
+# Every meter item record fills every field it declares and round-trips; free
+# text holding %1, %20 and %% survives a save, load and save in every
+# registry type's record (offscreen).
+nereus_add_test(tst_meter_item_serialize_placeholders)
+# New container items take Thetis defaults; saved items keep their look.
+nereus_add_test(tst_meter_new_item_defaults)
+# The workspace look for container and item colours: every registry item
+# type's default colours are in the table, mapped or kept; the look on, off
+# and a user's colour; byte-for-byte records; the editors' swatches
+# (offscreen).
+nereus_add_test(tst_meter_item_colour_look)
+# Per-item update interval: throttle, saved entries, new-item default, editor.
+nereus_add_test(tst_meter_item_update_interval)
+# Container item parity Task 28: the building-block Reading list offers the
+# six TX stage peak readings under plain labels, and choosing one saves its id.
+nereus_add_test(tst_meter_reading_list)
+# Thetis reading names for meter bindings and the readings a clock publishes.
+nereus_add_test(tst_meter_published_readings)
+# Data out: Thetis-format payload by slice and radio, send interval, endpoint
+# by 4-char ID, and nothing sent to a direction-In endpoint.
+nereus_add_test(tst_data_out_item_send)
+# Web image item: known-host lock, file:// URLs with no network request,
+# "No Image", aspect drawing, intervals, 4-char ID; loopback server only.
+nereus_add_test(tst_web_image_item)
+# VHF S9 rule per slice: the 30 MHz boundary, every S-unit item, two slices
+# in one container and a Follow selected RX entry (real MainWindow offscreen).
+nereus_add_test(tst_meter_vhf_s9)
 # Transmit state reaches fade covers, VFO displays and button grids through ContainerManager (offscreen).
 nereus_add_test(tst_container_item_tx_state)
+# Fade on RX / TX for every item: Thetis fade() steps, the item ramp, the
+# veil, persistence, legacy composite fade, fade cover, widget overlay,
+# preview transmit look, repaint and history clearing (offscreen).
+nereus_add_test(tst_meter_item_fade)
+# TX stage bars (EQ, Leveler, CFC, compander) dim while the stage is off
+# (Thetis DisableMeterType).
+nereus_add_test(tst_meter_tx_stage_disabled)
+# Several data source (MMIO) variables per item (Thetis MeterVariables):
+# the second variable's marker, the mmioVariables key and the editor rows.
+nereus_add_test(tst_meter_mmio_variables)
+# A saved meter.adcMax entry is kept and shown unavailable; Image and Magic
+# eye records with an empty image path load without a file warning.
+nereus_add_test(tst_container_item_load)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)
 nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
 nereus_add_test(tst_container_preview NATIVE_WINDOW)
+# Item settings paste between compatible bar meters (Thetis canPasteSettings).
+nereus_add_test(tst_container_copy_paste)
 nereus_add_test(tst_free_canvas NATIVE_WINDOW)
 # The free canvas minimum follows its views where they are now (offscreen).
 nereus_add_test(tst_free_canvas_extent)
@@ -807,6 +888,7 @@ if(APPLE)
     target_compile_definitions(tst_qt_cocoa_accessibility_ownership PRIVATE NEREUS_BUILD_TESTS)
 endif()
 nereus_add_test(tst_meter_composite_dispatch)
+nereus_add_test(tst_mmio_four_char)
 nereus_add_test(tst_meter_responsive_fonts NATIVE_WINDOW)
 nereus_add_test(tst_meter_bar_face NATIVE_WINDOW)
 nereus_add_test(tst_meter_composite_presets NATIVE_WINDOW)
@@ -814,10 +896,58 @@ nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
+# Container item parity Task 16: TEXT tokens, font and centring; IMAGE
+# dark and size variants; new-item defaults.
+nereus_add_test(tst_meter_item_text_image)
+# Container item parity Task 18: NEEDLE shadow, peak hold, history arc,
+# ignore history and power limit; NEEDLESCALEPWR power limit; new-item
+# defaults.
+nereus_add_test(tst_meter_item_needle)
+# Container item parity Task 19: magic eye preset and building block:
+# attack and decay, eye and bezel size, bezel image, calibration and the
+# VHF S9 rule, history, saved records and new-item defaults.
+nereus_add_test(tst_meter_magic_eye)
+# Container item parity: signal text (SIGNALTEXT and meter.signalText): the
+# PK / AVG / FFT type glyph, the uV and dBm sub lines, the peak value without
+# peak hold, the background, history, saved records and new-item defaults.
+nereus_add_test(tst_meter_signal_text)
+# Container item parity Task 24: spacer RX/TX colours with the transmit-flip
+# fade, padding sets height, saved records keep the gradient, and new-item
+# defaults.
+nereus_add_test(tst_meter_spacer)
+# Container item parity Task 25: LED options. The placed look (offset and
+# size, the 250 ms colour fade, blink and pulsate, the panel RX/TX colour),
+# show true / show false, the update interval floor, saved records keep the
+# fill look and thresholds, and new-item defaults.
+nereus_add_test(tst_meter_led_options)
+# Container item parity Task 26: the LED condition. The expression language
+# over a table (its subset, errors and malformed input), and LEDItem reading
+# slice readings, clock values and a loopback meter data source; the
+# editor's inline error; no condition keeps the thresholds; save and load.
+nereus_add_test(tst_led_condition_expression)
+# Container item parity Task 27: LED No TX. One stop per transition to true
+# while transmitting, with Thetis's message; none with No TX off, receiving,
+# another session's entry, a preview copy or a hidden meter (unless processed
+# when hidden). The session rule; a local radio's MOX stopped through
+# stopAllTx; a remote window's stop reaching the Core over the in-process
+# loopback session. It never keys. No device.
+nereus_add_test(tst_meter_led_no_tx
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_meter_led_no_tx PRIVATE NEREUS_BUILD_TESTS)
 # Rotor control plan Task 5: drag to turn on the compass meter item
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
 nereus_add_test(tst_rotator_item_drag)
+# Container item parity Task 46: the Thetis rotator MMIO command path beside
+# the rotor link: the AZ, ELE and STOP messages, Allow control off by default,
+# a direction-In data source and preview copies send nothing. Loopback UDP
+# data sources inside the test only; no rotor.
+nereus_add_test(tst_rotator_item_mmio)
+# Container item parity Task 47: the click box's button mask and its go to
+# group, change group and cycle units actions (Thetis clsClickBox,
+# clsMeter.MouseUp); preview copies never act on the live container.
+nereus_add_test(tst_click_box_item)
 # Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.
@@ -829,6 +959,15 @@ nereus_add_test(tst_rotor_applet)
 # open, which freed the stack menu twice before.
 nereus_add_test(tst_scoped_child_widget)
 nereus_add_test(tst_meter_presets)
+# Standalone PWR, Reverse PWR and SWR bars (Thetis AddPWRBar/AddSWRBar).
+nereus_add_test(tst_meter_power_swr_bars)
+# HISTORY building block: axis 1 fed from MeterWidget and data source
+# variable 2, per-axis update interval, manual range, v3 record, older
+# records' look, clsHistoryItem defaults for new items.
+nereus_add_test(tst_meter_history_item)
+# Signal history: trace 2 on its own slice (D2), a saved one-trace face,
+# data source variable 2, HISTORY axis 1 beside a data source.
+nereus_add_test(tst_meter_history_two_trace)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
 # Verifies the existing 3G-8 widget machinery (setTransmitting / isTransmitting
@@ -839,6 +978,19 @@ nereus_add_test(tst_meter_presets)
 # directly to MoxController and drive setMox to exercise the Pre/Post emit
 # walk completion.
 nereus_add_test(tst_vfo_display_item_tx_badge)
+# VFO display: slice-letter modes (saved VFO B / Both), Thetis import map,
+# new-item colours, inactive slice fade, band text, split box, sliceX_*
+# readings and editor wording.
+nereus_add_test(tst_vfo_display_item_modes)
+# VFO display Task 36: wheel, clicks and typed digits by slice, the lock,
+# the long press, the BAND / MODE / FILTER / TUNE_STEP screens and their
+# close, the meter's key and hover-leave dispatch, and MainWindow's routing
+# (TX is a handoff, never MOX).
+nereus_add_test(tst_vfo_display_item_input)
+# Container item parity Task 37: the dial tunes by drag and wheel, with
+# acceleration and its undo, the lock and slice select; MainWindow routes
+# each request to its slice (nothing keys).
+nereus_add_test(tst_dial_item_tuning)
 
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)
@@ -1035,6 +1187,82 @@ target_compile_definitions(tst_p1_wire_format PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-A AlexFilterMap shared freq→bits helpers (Task 3+4) ──
 nereus_add_test(tst_alex_filter_map)
+
+# CW transmit (R-CW-11, R-CW-13, R-CW-16, R-CW-38): the CW wire state, its
+# clamps and the hang, RF delay, sidetone level and P2 mode-control helpers.
+nereus_add_test(tst_cw_wire_state)
+
+# CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line, the P1 key
+# overlay on the EP2 sender's frame, and the P2 CW wire through a loopback
+# fake radio, the transmit cut included.
+nereus_add_test(tst_cw_key_line)
+# Remote CW hold: pure epoch/mask safety value. No radio, sender or clock;
+# CORE_ONLY keeps the behavioral RED target independent of the GUI library.
+nereus_add_test(tst_remote_cw_safety CORE_ONLY EXTRA_LABELS session)
+nereus_add_test(tst_p1_cw_key_overlay)
+target_compile_definitions(tst_p1_cw_key_overlay PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_p2_cw_wire fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_cw_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# CW transmit (R-CW-05 to R-CW-07, R-CW-10, R-CW-20, R-CW-22, D16): the
+# keyer gate's truth table, and the CW keyer controller's inputs,
+# availability, fallbacks, composition, push and the QSK time-out against a
+# RadioModel with a fake connection.
+nereus_add_test(tst_cw_keyer_gate)
+nereus_add_test(tst_cw_keyer_controller)
+
+# CW transmit Task 12 (R-CW-41 to R-CW-43, R-CW-47): the Phone/CW applet's
+# CW page, the TX applet in CW and Setup > DSP > CW against a fake
+# connection; nothing keys the radio.
+nereus_add_test(tst_cw_page)
+
+# CW transmit Task 13 (R-CW-44): the CWX applet on the CWX sender, and Tools >
+# CWX, the status label and CAT ZZKO in the window.
+nereus_add_test(tst_cwx_applet)
+
+# CW transmit Task 13 (R-CW-24, R-CW-45): passbands drawn from the passband
+# origin, the dial plus the CW receive shift.
+nereus_add_test(tst_passband_origin_drawing)
+
+# CW transmit Task 8 (R-CW-15, R-CW-31 to R-CW-33): the CWX sender's element
+# timing with an injected clock, its key line writes, the HL2 CWX PTT, the
+# Key watchdog, repeat and refusals; RadioModel's request gate, aborts and
+# key-line release; and one wall-clock case (each key edge within 2 ms on
+# the sender's own thread), hence REALTIME.
+nereus_add_test(tst_cwx_sender REALTIME)
+
+# CW transmit Task 9 (R-CW-35): the TCI CW commands (macros, cw_msg, the
+# terminal, speeds, keyer with its 3 s watchdog and timed releases, stop,
+# the owner and refusals) on a local model with a fake connection. The
+# keyer timings run on the wall clock (3 s watchdog), hence REALTIME.
+nereus_add_test(tst_tci_cw REALTIME)
+
+# CW transmit Task 14 (R-CW-48, R-CW-49): the remote CW verbs (cw.send,
+# cw.memory, cw.stop, cw.key) on a test Core with a fake connection, the
+# remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
+# watchdog runs on the wall clock, hence REALTIME.
+nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+
+# CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
+# injected line source (paddles, the key and PTT lines, the gate, stops,
+# the cut, fresh edges, the thread's join) and its RadioModel wiring (port
+# conflicts with CAT, the PTT line in Semi, connection swaps).
+nereus_add_test(tst_cw_serial_key_input)
+# CW transmit Task 10 (R-CW-37): the auto mode switch and its return on a
+# RadioModel. The return waits run on the wall clock (300 ms and less).
+nereus_add_test(tst_cw_auto_mode_switch)
+
+# CW transmit Task 11 (R-CW-39, R-CW-40): the computer sidetone (the
+# sidetone.c port alone, then in the audio engine on a RadioModel with a
+# fake speakers bus and a fake connection for the paddle status).
+nereus_add_test(tst_cw_sidetone)
+target_compile_definitions(tst_cw_sidetone PRIVATE NEREUS_BUILD_TESTS)
+
+# CW transmit Task 5 (R-CW-09, R-CW-18 to R-CW-22): MOX in CW, break-in and
+# QSK on a bare MoxController, and QSK's side effects, the QSK memory, the
+# fallback notice and the TX channel skip on a RadioModel.
+nereus_add_test(tst_mox_controller_cw)
+nereus_add_test(tst_cw_qsk_side_effects)
 
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
@@ -1500,6 +1728,11 @@ endif()
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
 nereus_add_test(tst_rxchannel_audio_panel)
+# Issue #650: reads rxa[].panel.p->copy back to see what WDSP received.
+if(FFTW3_FOUND AND WDSP_FOUND)
+    target_include_directories(tst_rxchannel_audio_panel PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_rxchannel_audio_panel PRIVATE WDSP_STATIC_BUILD)
+endif()
 nereus_add_test(tst_slice_audio_panel)
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — NB2 polish (S2.7) ───────────────────
@@ -2493,11 +2726,25 @@ nereus_add_test(tst_preamp_mode)
 # under hardware/<mac>/oc/{rx,tx}/<band>/pin<n> and .../actions/pin<n>/action.
 nereus_add_test(tst_oc_matrix)
 
+# ── Anvelina PRO3 DX open collector outputs (DX OUT 7..10) ───────────────────
+# Wire byte (bits 1-4, kDxWireMask 0x1E), per-MAC persistence under
+# hardware/<mac>/oc/dx/out<N>/{enabled,label}, and a Core's "ocDx" reload
+# applying a window's change at once, keyed or not.
+nereus_add_test(tst_anvelina_dx_outputs)
+target_compile_definitions(tst_anvelina_dx_outputs PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-D Task 2: OC Outputs HF sub-sub-tab UI + matrix wiring ──────────
 # Smoke-tests construction, RX/TX pin sync (matrix→UI via changed()), reset
 # flow, GEN band row disabled state, and default TXPinAction (MoxTuneTwoTone).
 nereus_add_test(tst_oc_outputs_hf_tab)
 target_compile_definitions(tst_oc_outputs_hf_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Anvelina DX Outputs group on OC Outputs (DX OUT 7..10) ───────────────────
+# Shown on an ANVELINAPRO3 only; boxes / All on / All off reach the model's
+# wire byte; model to UI sync without write-back; held with the reason while
+# the radio is stopped.
+nereus_add_test(tst_oc_outputs_dx_group)
+target_compile_definitions(tst_oc_outputs_dx_group PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3L: OC Outputs SWL sub-sub-tab UI + matrix wiring ──────────────────
 # Smoke-tests construction, row 0 ↔ Band120m and row 12 ↔ Band11m sync,
@@ -2538,6 +2785,14 @@ target_compile_definitions(tst_hl2_options_wiring_thread PRIVATE NEREUS_BUILD_TE
 #   - Detaching matrix (setOcMatrix(nullptr)) reverts to legacy 0.
 nereus_add_test(tst_p1_oc_matrix_wiring)
 target_compile_definitions(tst_p1_oc_matrix_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── OC transmit pin actions (2026-10-26) ─────────────────────────────────────
+# OcMatrix::maskFor(band, tx, tune, twoTone) masks each TX pin by its TX pin
+# action (Thetis Penny.cs adjustForTXAction); receive is unchanged. Also the
+# P1 OC byte with setOcTxModes, and RadioModel's TUNE flag order (raised
+# before the key, dropped after MOX off, at once on a re-key or handover).
+nereus_add_test(tst_oc_matrix_tx_pin_action)
+target_compile_definitions(tst_oc_matrix_tx_pin_action PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-E Task 1: IoBoardHl2 model ──────────────────────────────────────
 # Verifies the 32-slot circular I2C FIFO (enqueue/dequeue/depth/clear/overflow),
@@ -2719,6 +2974,12 @@ nereus_add_test(tst_shared_input_filters)
 nereus_add_test(tst_p1_band_outputs_follow_tx_slice)
 nereus_add_test(tst_p2_band_outputs_and_rx_lpf)
 nereus_add_test(tst_hpf_bypass_on_tx)
+# Anvelina filter/OC plan Task 5: "Gnd BPF2 on Tx" (Thetis chkBPF2Gnd)
+# grounds the BPF2 input while keyed (P2 Alex1 bit 8), taken at the TX
+# edge, shown where Thetis shows it, saved per MAC, applied on a Core from
+# a remote window (radioHardwareVersion 14). NereusSDR-original test.
+nereus_add_test(tst_bpf2_gnd_on_tx)
+target_compile_definitions(tst_bpf2_gnd_on_tx PRIVATE NEREUS_BUILD_TESTS)
 # Plan Task 14 fix wave (R-R3-49): the Alex tab's other high-pass switches
 # (HPF Bypass on PureSignal feedback, HPF Bypass, Disable 6m LNA on TX / RX)
 # reach the wire as Thetis's setAlexHPF / setBPF1ForOrionIISaturn apply them
@@ -3445,8 +3706,8 @@ nereus_add_test(tst_nf_aware_grid)
 nereus_add_test(tst_band_plan_guard)
 
 # ── Phase 3M-1b Task K.1: BandPlanGuard SSB-mode allow-list for TX ─────────
-# isModeAllowedForTx: 4 allowed (LSB/USB/DIGL/DIGU) + 8 rejected
-# (CWL/CWU/AM/SAM/DSB/FM/DRM/SPEC). checkMoxAllowed: reason strings for each
+# isModeAllowedForTx: allowed (LSB/USB/DIGL/DIGU/AM/SAM/DSB/CWL/CWU) and
+# rejected (FM/DRM/SPEC). checkMoxAllowed: reason strings for each
 # rejection class + ok path (LSB/USB on valid freq) + freq/band reject on
 # an otherwise-allowed mode. ~20 test cases.
 nereus_add_test(tst_band_plan_guard_mode_allow_list)
@@ -3456,8 +3717,8 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #   MoxController::setMoxCheck(fn) + moxRejected(QString) signal.
 #
 # MoxController cases (8):
-#   1. CWL → moxRejected("CW transmit is not available on this Core"); state stays Rx.
-#   2. CWU → moxRejected with CW reason.
+#   1. CWL → accepted (CW transmit, R-CW-05); the carrier alone is checked.
+#   2. CWU → accepted.
 #   3. AM  → accepted (AM/SAM/DSB TX enabled); FM still rejected.
 #   4. FM  → moxRejected with audio-modes reason.
 #   5. LSB (allowed) → MOX engages; moxRejected NOT emitted.
@@ -3469,7 +3730,7 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #
 # TxApplet::tooltipForMode static helper (12):
 #   USB/LSB/DIGL/DIGU → normal "Manual transmit (MOX)" tooltip.
-#   CWL/CWU → "CW transmit is not available on this Core".
+#   CWL/CWU → normal "Manual transmit (MOX)" tooltip.
 #   AM/SAM/DSB → allowed; FM → "FM transmit is not available on this Core";
 #   DRM → "DRM transmit is not available on this Core".
 #   SPEC → "Mode not supported for TX".
@@ -4379,8 +4640,9 @@ nereus_add_test(tst_mox_controller_prime_wdsp_state)
 #     onX2Ptt — each press emits pttModeChanged(Xxx) then moxStateChanged(true);
 #     each release emits moxStateChanged(false); the unkey clears PttMode
 #     (Task 7: chkMOX_CheckedChanged2 console.cs:29547 [v2.10.3.15]).
-#   onTciPtt keys with PttMode::Tci (Task 7). Rejected slot: onCwPtt
-#     (deferred to 3M-2): press and release emit no signals.
+#   onTciPtt keys with PttMode::Tci (Task 7). onCwPtt, the serial PTT line,
+#     keys only in CW with Semi break-in (CW transmit Task 5); outside CW its
+#     press and release emit no signals.
 #   Cross-source rules (§G): PollPTT keys only from receive and releases only
 #     in the source's own mode (Task 7).
 #   Idempotency (§H): repeated press does not double-emit.
@@ -6129,6 +6391,10 @@ nereus_add_test(tst_filter_high_resolution)
 # bindRxChannel(nullptr) safety, paint-with-nullptr-channel no-crash,
 # bind-and-clear lifecycle.
 nereus_add_test(tst_filter_display_high_resolution)
+# Task 44: the Thetis filter display's edge drags (RX to the slice, TX to
+# TransmitModel), notches, MNF/+MNF (refused while transmitting), SNAP/FIT,
+# inert preview copies and old records painting as before.
+nereus_add_test(tst_filter_display_item_input)
 nereus_add_test(tst_mini_display_composition fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_mini_filter_response_lifecycle)
 
@@ -9129,6 +9395,32 @@ endif()
 # behind them are hidden through the unbuilt list.
 nereus_add_test(tst_other_button_item)
 target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 58: other buttons use Thetis button numbers
+# and every button's visibility is saved; older records still load.
+nereus_add_test(tst_other_button_ids)
+# Container item parity Task 50: the antenna grid follows its slice with
+# Thetis's on-state rules; a Tx Ant click writes the transmit slice only and
+# never keys.
+nereus_add_test(tst_antenna_button_item)
+target_compile_definitions(tst_antenna_button_item PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 51: the filter grid has 12 buttons on every
+# slice; a click sets the entry's slice's RX filter only and leaves the
+# transmit filter alone; a preview copy never acts.
+nereus_add_test(tst_filter_button_item)
+target_compile_definitions(tst_filter_button_item PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 59: Alt-drag reorders the other buttons (Shift
+# swaps), the order is saved, and the editor lists every offered button.
+nereus_add_test(tst_other_button_reorder)
+target_compile_definitions(tst_other_button_reorder PRIVATE NEREUS_BUILD_TESTS)
+# Container item parity Task 60: the receive buttons (NR, NB, AGC, RIT,
+# XIT, Lock, tune step, Mute All, Voice SQL, AF, BAL, MNF+) act on the
+# container's slice; none keys, and a preview's click never reaches them.
+# Task 61: and the transmit setting buttons follow the TX applet's setters
+# and gates; a remote TUN+ reaches a loopback Core.
+nereus_add_test(tst_other_button_actions
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_other_button_actions PRIVATE NEREUS_BUILD_TESTS)
 # R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
 # builds, local or remote, carries a not-yet-implemented mark or tooltip,
 # including the surfaces hidden until their feature is built.
@@ -9767,6 +10059,11 @@ nereus_add_test(tst_tx_meter_pump)
 nereus_add_test(tst_transmit_state_facade
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Continuous progress through45 cases exceeded the aggregate120s limit
+# in Linux CI. Retain the limit and every assertion; isolate whole remote
+# hold functions through TestFunctionGroups, like tst_station_session.
+nereus_split_test(tst_transmit_state_facade
+    ENV NEREUS_TRANSMIT_STATE_GROUP GROUPS remote_holds)
 # iPhone app Task 73 (R-IOS-02): whose each slice is (owners, held for,
 # adoption, each owner's active slice and the station-level one), and each
 # device's closed slices kept for its return.
@@ -9883,6 +10180,95 @@ nereus_add_test(tst_record_stream EXTRA_LABELS session)
 # refusals, a remote window's forwarding, a spot record's fields and the
 # listeners' settings scope. Loopback ports only.
 nereus_add_test(tst_spot_source_host EXTRA_LABELS session)
+# Roundtable plan Task 10 (R-RT-1): the Core's runner of the Roundtable
+# conformance suite (roundtable/conformance/v1/): control fixtures and the
+# crypto vectors.
+nereus_add_test(tst_roundtable_wire)
+target_compile_definitions(tst_roundtable_wire PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 10 (R-RT-6): a slice's signal-present decision.
+nereus_add_test(tst_roundtable_signal_floor)
+# Roundtable plan Task 10 (R-RT-6, R-RT-12 to R-RT-14): the Core's
+# Roundtable connection against a fake server on the loopback, with fake
+# clocks. No network beyond 127.0.0.1.
+nereus_add_test(tst_roundtable_client)
+target_compile_definitions(tst_roundtable_client PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 11: RoundtableModel holds the same rooms fed from the
+# Core's own client (Everything) and from the Core's record streams (a
+# window), and sends a window's actions over the link.
+nereus_add_test(tst_roundtable_model)
+# Roundtable plan Task 12 (R-RT-14, R-RT-16): the Spot Hub's Roundtable tab
+# writes the Core's Roundtable/* settings through RoundtableModel and shows
+# the Core's values; Hide, Unmute, Archive and Delete my archive go through
+# the model's actions; the first-run sheet's words, its switch and the
+# one-time note; and, against a fake Roundtable server on 127.0.0.1, nothing
+# about the station before Go live.
+nereus_add_test(tst_roundtable_spothub)
+target_compile_definitions(tst_roundtable_spothub PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 13 (design 11.1, 11.2 Panel): the room panel the
+# applet and the pop-out show: its order, readings, earlier turns and Name,
+# the read bar, keyed, the connection line, drafts, the counter, Not sent,
+# the message menus, the mute fold, the pills and the keyboard.
+nereus_add_test(tst_roundtable_panel)
+# PR 657 container bugs: the Roundtable applet as a container item like any
+# other in the real MainWindow, workspace look on: Move to a new container
+# applies, a drag drops, the container Pop Out is the pop-out container (its
+# own window stays on its own arrow), the container snaps, and a rooms
+# refresh leaves the saved workspace alone (offscreen).
+nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
+# Roundtable plan Task 14: the Roundtable tags on a panadapter: where they
+# go, which fold into +N (your room and rooms that name you never do, a
+# lone neighbor moves aside, folds widen only when the tags don't fit),
+# the tags a model gives, and how each link state shows them.
+nereus_add_test(tst_roundtable_tag_layout)
+# Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
+# who talks, @N, "N hear you" while keyed, the link state when not live,
+# its fit at the flag's width, the fold, and a click asking for the panel.
+nereus_add_test(tst_roundtable_flag_line)
+# Roundtable plan Task 15: one operator's whole Roundtable session in a real
+# MainWindow against a fake Roundtable server on 127.0.0.1: first run, Go
+# live, a tag, readings, a post, a mention read on two windows, the pop-out
+# list, keyed, a named turn, hidden and the Archive link; in the Everything
+# placement and again in a remote window of a Core, with the same screens.
+nereus_add_test(tst_roundtable_desktop_flow
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_desktop_flow PRIVATE NEREUS_BUILD_TESTS
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 11: Roundtable on the station link: the
+# stationRoundtableVersion capability and `roundtable` object only for a
+# peer that declared roundtable, the thirteen verbs, the room streams and
+# their sweep, and two remote windows sharing the Core's answers. The
+# Core's client is mostly fed its views directly; one test signs it in to a
+# fake Roundtable server on 127.0.0.1.
+nereus_add_test(tst_station_roundtable_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_station_roundtable_link PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 20 (R-RT-24, R-RT-26's software half): end to end
+# against the real Roundtable server, started as `NEREUS_TEST_PYTHON -m
+# nereus_roundtable` (above; python3 then python on PATH when CMake found
+# none) on free 127.0.0.1 ports with a temporary database, and
+# three in-process Cores on one frequency: a reading in the talker's room
+# within 2 s, the turn's credit, an unknown turn named, AWAY refused, and
+# the archive through the web sign-in link. Skips with the reason when no
+# Python is found or it lacks websockets or cryptography. REALTIME: the 2 s window is
+# measured on the wall clock.
+nereus_add_test(tst_roundtable_e2e REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_roundtable_e2e PRIVATE
+    NEREUS_ROUNDTABLE_SERVER_DIR="${CMAKE_SOURCE_DIR}/roundtable/server"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# With no usable Python the whole test skips in initTestCase and exits 0;
+# ctest reports that as Skipped, not Passed, so a run that tested nothing
+# says so (the Windows combined build f run "passed" in 0.1 s).
+if(TEST tst_roundtable_e2e)
+    set_tests_properties(tst_roundtable_e2e PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIP +: TstRoundtableE2e::initTestCase\\(\\)")
+endif()
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.
@@ -9985,6 +10371,17 @@ nereus_add_test(tst_tx_eq_set_curve
 nereus_add_test(tst_cfc_set_profile
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CW transmit (R-CW-01, R-CW-02, R-CW-03): the CW settings on TransmitModel,
+# the CW pitch accessor and property, and the settings on `transmit`
+# (transmitSettingsVersion 16). Loopback only, no RF, no audio device.
+nereus_add_test(tst_cw_settings
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# CW transmit (R-CW-23, R-CW-24, R-CW-27, R-CW-28): the CW receive shift in
+# the composed WDSP shift and the demodulated frequency, passbandOriginHz,
+# and a pitch change moving the CW filters, the shift and the APF but never
+# the dial. A never-opened connection, no RF, no audio device.
+nereus_add_test(tst_cw_pitch_follow)
 # Control logging lane: the Core's log lines for each control write and
 # command, its answer and handling time, and the gaps between a device's
 # control messages, rate-limited. Loopback only, no RF, no audio device.
@@ -11388,6 +11785,9 @@ nereus_split_test(tst_cat_rx_commands ENV NEREUS_CAT_RX_COMMANDS_GROUP
 
 nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
 nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+# CW transmit Task 9 (R-CW-02, R-CW-34): the CAT CW and CWX commands on a
+# local model with a fake connection; the sender runs on the wall clock.
+nereus_add_test(tst_cat_cw_commands CORE_ONLY)
 nereus_add_test(tst_cat_coverage CORE_ONLY)
 # CI load round, 2026-10-26: 783 fixture rows took 84 s of the 120 s limit
 # on a quiet Linux runner and timed out on a busy one; the test's main()

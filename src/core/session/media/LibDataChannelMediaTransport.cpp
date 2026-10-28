@@ -6,6 +6,8 @@
 // See LibDataChannelMediaTransport.h for the boundary contract.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): the microphone line, a
 //               second audio m-line (mid "mic") receive-only at the Core,
 //               offered only when asked. J.J. Boyd (KG4VCF), AI-assisted
@@ -457,7 +459,8 @@ void queueTx(const std::weak_ptr<CallbackBridge>& weak, rtc::binary data)
     // Remote transmit cut off the main thread: heard now, on this thread,
     // whatever the owner's event loop is doing. Any "tx" message counts.
     if (bridge->txReceiptHook) {
-        bridge->txReceiptHook(receivedAt);
+        bridge->txReceiptHook(QByteArray(reinterpret_cast<const char*>(data.data()),
+                                        static_cast<qsizetype>(data.size())), receivedAt);
     }
     bridge->receivedTxPayloadBytes.fetch_add(
         static_cast<quint64>(data.size()), std::memory_order_relaxed);

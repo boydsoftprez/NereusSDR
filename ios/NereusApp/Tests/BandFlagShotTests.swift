@@ -142,14 +142,14 @@ struct BandFlagShotTests {
     }
 
     /// A context for endpoint 1, as the Core sends it.
-    static func context(centreHz: Double = centre) -> MediaControlEvent.DisplayContext? {
+    static func context(centreHz: Double = centre, fps: Int = 30) -> MediaControlEvent.DisplayContext? {
         let payload: [String: LinkJSON] = [
             "op": .string("context"), "connectionId": .string("shots"), "endpointId": .number(1),
             "revision": .number(1), "contextGeneration": .number(1), "sourceStream": .number(0),
             "sourceCentreHz": .number(centreHz), "sampleRateHz": .number(192_000), "centreHz": .number(centreHz),
             "spanHz": .number(span), "wideCentreHz": .number(0), "wideSpanHz": .number(0),
             "traceSamples": .number(1_206), "waterfallSamples": .number(1_206), "wideSamples": .number(0),
-            "minDbm": .number(-160), "maxDbm": .number(0), "fps": .number(30), "framesPerLine": .number(1),
+            "minDbm": .number(-160), "maxDbm": .number(0), "fps": .number(Double(fps)), "framesPerLine": .number(1),
         ]
         return MediaControlDecoder.context(payload, wideband: false, grant: false)
     }

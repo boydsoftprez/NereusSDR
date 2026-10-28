@@ -12,6 +12,9 @@
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code. Extends P1CodecStandard with the bank 17
 //                extra OC carve-out for ANAN-8000DLE / G8NJJ AnvelinaPro3.
+//   2026-10-26 - Bank 17 C1 carries the DX open collector outputs
+//                (ocExtrasByte, mask kDxWireMask), no longer the band OC
+//                byte (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -46,9 +49,26 @@ void P1CodecAnvelinaPro3::composeCcForBank(int bank, const CodecContext& ctx,
 {
     if (bank == 17) {
         // Bank 17 — AnvelinaPro3 extra OC outputs (4 bits in C1)
-        // Source: networkproto1.c:668-674 [@501e3f5]
+        // From Thetis ChannelMaster/networkproto1.c:668-674 [v2.10.3.15]
+        // From Thetis-Enhanced (EU2AV) ChannelMaster/networkproto1.c:668-674 [@567a7ec]
+        //   case 17: // HPSDRModel_ANVELINAPRO3 only, extra OC pins
+        //       C0 |= 0x26; //C0 0010 011x
+        //       C1 = prn->oc_output_extras & 0x0f;  // [4:0]
+        //       C2 = 0;
+        //       C3 = 0;
+        //       C4 = 0;
+        //       break;
+        // C1 is the DX outputs' own byte (prn->oc_output_extras), not the
+        // band OC byte this bank used to repeat.
+        // NereusSDR-divergence: masked with kDxWireMask (0x1E, bits 1-4),
+        // not 0x0f, so DX OUT 10 (bit 4) would reach the radio. See
+        // kDxWireMask in CodecContext.h (Spec page 2, "Structure of Byte
+        // 1397"; Orion.v:923 [@8e86a61]). Both sources describe Protocol 2
+        // byte 1397 only: no Protocol 1 Anvelina gateware is known, so this
+        // bank's bit layout follows the P2 spec by analogy, unverified on a
+        // radio.
         out[0] = (ctx.mox ? 0x01 : 0x00) | 0x26;
-        out[1] = quint8(ctx.ocByte & 0x0F);
+        out[1] = quint8(ctx.ocExtrasByte & kDxWireMask);
         out[2] = 0;
         out[3] = 0;
         out[4] = 0;

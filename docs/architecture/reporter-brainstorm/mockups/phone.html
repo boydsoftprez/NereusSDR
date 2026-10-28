@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable on iPhone</title>
+<style>
+:root{
+  --bg:#06080d;--panel:#11161f;--card:#161c26;--bd:#263040;--bd2:#1c2533;
+  --tx:#e8eef4;--dim:#8e9aa8;--dim2:#5f6b79;--acc:#22b8ea;--blue:#0a74d0;
+  --grn:#2fd07a;--amb:#f2b53a;--red:#ff5050;--mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#0d0f14;color:var(--tx);font-family:var(--sans);min-height:100%}
+button{font-family:inherit;color:inherit}
+
+#chooser{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:12px 16px;border-bottom:1px solid #222;background:#15161b;position:sticky;top:0;z-index:50}
+#chooser .lbl{color:#9a9aa6;font-size:11px;letter-spacing:.12em;margin-right:6px}
+#chooser button{background:#2a2a33;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;color:#ddd;font-size:13px}
+#chooser button.on{background:#0d5a6e;border-color:var(--acc);color:#fff}
+#chooser .rec{font-size:9px;color:var(--grn);margin-left:6px;letter-spacing:.08em}
+#stage{display:flex;gap:40px;justify-content:center;align-items:flex-start;padding:24px 16px 40px;flex-wrap:wrap}
+#notes{max-width:360px;font-size:13px;line-height:1.5;color:#c8d0d8}
+#notes h2{font-size:15px;margin-bottom:8px;color:#fff}
+#notes ul{padding-left:18px}
+#notes li{margin-bottom:6px}
+#notes .try{margin-top:14px;padding:10px 12px;border:1px solid #2a3442;border-radius:8px;background:#11151c}
+#notes b{color:#fff}
+
+/* phone */
+.phone{width:426px;height:898px;border-radius:62px;background:#1a1b20;padding:12px;box-shadow:0 30px 80px rgba(0,0,0,.7),inset 0 0 0 2px #333;flex:none}
+.screen{position:relative;width:402px;height:874px;border-radius:50px;overflow:hidden;background:var(--bg)}
+.sbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 40px;font-size:16px;font-weight:600;z-index:30}
+.notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:124px;height:36px;border-radius:20px;background:#000;z-index:31}
+.tabbar{position:absolute;left:0;right:0;bottom:0;height:84px;background:#0e1118;border-top:1px solid #1f2633;display:flex;justify-content:space-around;padding-top:6px;z-index:28}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:#9aa4b0;cursor:pointer;width:72px}
+.tab.on{color:var(--acc)}
+.tab svg{width:30px;height:26px}
+.tabbar.six .tab{width:62px;font-size:10px}
+.home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:140px;height:5px;border-radius:3px;background:#ddd;z-index:40}
+
+/* panadapter tab */
+.tool{position:absolute;top:54px;left:0;right:0;height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:16px;font-weight:500}
+.tool .tag{display:inline-block;background:var(--acc);color:#002;border-radius:4px;padding:0 5px;font-size:12px;font-weight:800;margin-left:4px}
+.tool .dot{width:30px;height:30px;border-radius:8px;background:#1b2330;display:flex;align-items:center;justify-content:center}
+.tool .dot i{width:10px;height:10px;border-radius:50%;background:var(--grn)}
+.net{position:absolute;top:102px;left:0;right:0;height:20px;font-family:var(--mono);font-size:11px;color:#c8d0d8;padding:2px 10px;display:flex;justify-content:space-between;border-bottom:1px solid #1a2230}
+#spec{position:absolute;top:122px;left:0;width:402px;height:238px}
+#wf{position:absolute;top:386px;left:0;width:402px;height:432px}
+.plan{position:absolute;top:360px;left:0;right:0;height:10px;background:#8a4a14;font-size:7px;text-align:center;color:#fff;line-height:10px}
+.scale{position:absolute;top:370px;left:0;right:0;height:16px;background:#05070b;font-family:var(--mono);font-size:11px;color:#ffe066}
+.scale span{position:absolute;top:1px;transform:translateX(-50%)}
+.dbs{position:absolute;top:122px;right:2px;height:238px;width:30px;font-family:var(--mono);font-size:10px;color:#c8d0d8;text-align:right}
+.dbs span{position:absolute;right:2px}
+.sliceline{position:absolute;top:122px;width:2px;background:#22b8ea;height:696px;opacity:.85;z-index:5}
+.passband{position:absolute;top:122px;height:238px;background:rgba(34,184,234,.16);z-index:4}
+.flag{position:absolute;top:130px;width:182px;background:rgba(8,12,20,.92);border:1px solid #2b3a4c;border-radius:4px;padding:4px 6px;z-index:12;font-size:10px}
+.flag .r1{display:flex;gap:6px;align-items:center}
+.flag .a1{color:#5aa8ff;font-weight:700}.flag .a2{color:#ff6060;font-weight:700}
+.flag .bw{color:var(--acc);font-weight:700}
+.flag .txb{margin-left:auto;border:1px solid #ff5050;color:#ff8080;border-radius:2px;padding:0 3px;font-weight:700}
+.flag .txb.on{background:#c02020;color:#fff}
+.flag .ab{background:var(--acc);color:#002;border-radius:2px;padding:0 4px;font-weight:800}
+.flag .fq{font-family:var(--mono);font-size:22px;color:var(--acc);text-align:right;border:1px solid #2b3a4c;border-radius:3px;margin:3px 0;padding:0 4px;background:#060a10}
+.flag .sm{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:#9fb0c0}
+.flag .sm .b{flex:1;height:7px;background:#0d1622;border:1px solid #1c2a3a;position:relative}
+.flag .sm .b i{position:absolute;left:0;top:0;bottom:0;background:#22b8ea}
+.flag .btns{display:flex;justify-content:space-between;color:#c8d0d8;margin-top:3px;font-size:10px}
+.flag .rtline{margin-top:4px;padding:5px 0 1px;border-top:1px solid #22303f;display:flex;align-items:center;gap:5px;color:#cfe;cursor:pointer;font-size:10.5px}
+.flag .rtline .ring{width:9px;height:9px;border-radius:50%;border:2px solid var(--grn);flex:none}
+.flag .rtline .chev{margin-left:auto;color:var(--acc);font-size:14px}
+.rt{position:absolute;z-index:10;display:flex;align-items:center;gap:4px;background:rgba(6,10,16,.88);border:1px solid currentColor;border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
+.rt .ring{width:8px;height:8px;border-radius:50%;border:2px solid currentColor}
+.rt .cnt{border:1px solid currentColor;border-radius:3px;padding:0 3px;font-size:9px}
+.rt.mine{box-shadow:0 0 0 2px rgba(34,184,234,.6)}
+.stem{position:absolute;z-index:9;width:0;border-left:1px dashed currentColor;opacity:.6}
+.st-talk{color:var(--grn)}.st-unknown{color:var(--amb)}.st-double{color:var(--red)}.st-quiet{color:#8e9aa8}.st-you{color:#ff6b6b}
+.ptt{position:absolute;left:14px;bottom:100px;width:80px;height:80px;border-radius:50%;background:radial-gradient(#5a1a1a,#3a0f0f);border:2px solid #b04040;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;font-size:19px;color:#ffb0b0;cursor:pointer;z-index:26;box-shadow:0 4px 18px rgba(0,0,0,.6)}
+.ptt small{font-size:11px;font-weight:500;color:#e0a0a0}
+.ptt.on{background:#d02020;border-color:#ff7070;color:#fff}
+.ptt.on small{color:#fff}
+.zoombtn{position:absolute;right:14px;bottom:100px;display:flex;background:#1c2330;border:1px solid #2c3646;border-radius:8px;z-index:20}
+.zoombtn span{width:44px;height:40px;display:flex;align-items:center;justify-content:center;font-size:22px}
+
+/* tuning dial (Setup, General, Navigation on main: Off, knob on the waterfall, thumbwheel) */
+.knob{position:absolute;border-radius:50%;background:radial-gradient(circle at 40% 35%,#2a3446,#141a24 70%);border:1px solid #33405a;z-index:21;box-shadow:0 4px 14px rgba(0,0,0,.6)}
+.knob .grip{position:absolute;inset:9%;border-radius:50%;background:repeating-conic-gradient(#1b2230 0 4deg,#232c3c 4deg 8deg);border:1px solid #2c3850}
+.knob .dimple{position:absolute;left:50%;top:13%;width:15%;height:15%;transform:translateX(-50%);border-radius:50%;background:radial-gradient(#0a0e15,#1a2230)}
+.knob .step{position:absolute;left:50%;top:50%;width:46%;height:46%;transform:translate(-50%,-50%);border-radius:50%;background:#0e131c;border:1px solid #2c3850;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--acc)}
+.knob .idx{position:absolute;left:50%;top:-1px;width:3px;height:9%;transform:translateX(-50%);background:var(--acc);border-radius:2px}
+.twheel{position:absolute;height:52px;display:flex;gap:6px;z-index:21}
+.twheel .step{width:62px;flex:none;border-radius:8px;background:#0e131c;border:1px solid #2c3850;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:var(--acc)}
+.twheel .w{flex:1;border-radius:8px;border:1px solid #2c3850;background:linear-gradient(90deg,rgba(6,8,13,.9),rgba(30,38,52,.9) 50%,rgba(6,8,13,.9)),#141a24;position:relative;overflow:hidden}
+.twheel .w:before{content:"";position:absolute;inset:6px 0;background:repeating-linear-gradient(90deg,#4a5870 0 1px,transparent 1px 12px);opacity:.8}
+.twheel .w:after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--acc)}
+.foot{position:absolute;left:0;right:0;bottom:84px;height:92px;background:#0b0f16;border-top:1px solid #2a3546;z-index:23}
+.sheet.withfoot .sbody{padding-bottom:0}
+.sheet.withfoot .sbody .compose{padding-left:12px}
+.sheet.withfoot.keyedsheet .compose{display:none}
+.ptt.infoot{bottom:90px}
+.foot~.knob,.foot~.twheel{z-index:25}
+#dialpick{margin-top:12px;display:flex;gap:6px;align-items:center;font-size:12px;color:#9a9aa6}
+#dialpick button{background:#2a2a33;border:1px solid #444;border-radius:6px;padding:4px 10px;cursor:pointer;color:#ddd;font-size:12px}
+#dialpick button.on{background:#0d5a6e;border-color:var(--acc);color:#fff}
+/* swipe shortcuts: a page over from either edge, a page up from the tab bar */
+.gzone{position:absolute;z-index:33;background:rgba(34,184,234,.13);border:1px dashed rgba(34,184,234,.55);pointer-events:none;display:flex;align-items:center;justify-content:center}
+.gzone span{font-size:10px;color:#9fe3ff;letter-spacing:.08em;white-space:nowrap}
+.gzone.v span{transform:rotate(-90deg)}
+.scrim{position:absolute;top:102px;bottom:84px;left:0;right:0;background:rgba(0,0,0,.45);z-index:34}
+.side{position:absolute;top:102px;bottom:84px;width:344px;background:var(--bg);z-index:35;display:flex;flex-direction:column;box-shadow:0 0 30px rgba(0,0,0,.7);transition:transform .22s ease-out}
+.side.l{left:0;border-right:1px solid var(--bd)}
+.side.r{right:0;border-left:1px solid var(--bd)}
+.side.drag,.upsheet.drag{transition:none}
+.side .pb{flex:1;overflow-y:auto}
+.side .nav .x,.upsheet .nav .x{margin-left:auto;width:30px;height:30px;border-radius:50%;background:#1f2734;display:flex;align-items:center;justify-content:center;color:#aab;cursor:pointer;font-size:15px}
+.upsheet{position:absolute;left:0;right:0;bottom:84px;background:#10151e;border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid #2a3546;z-index:35;display:flex;flex-direction:column;box-shadow:0 -10px 30px rgba(0,0,0,.6);transition:top .22s ease-out}
+.upsheet .pb{flex:1;overflow-y:auto}
+.spot{display:grid;grid-template-columns:86px 44px 1fr 56px;gap:6px;align-items:center;padding:9px 12px;border-bottom:1px solid #141c28;font-size:13px}
+.spot .f{font-family:var(--mono);color:var(--acc)}
+.spot .m{font-size:10px;border:1px solid #3a4a5a;color:#b8c4d0;padding:0 3px;border-radius:2px;text-align:center}
+.spot .c{font-family:var(--mono);font-weight:800}
+.spot .s{color:var(--dim);font-size:11px;text-align:right}
+.setgrp{margin:6px 12px 14px;border:1px solid var(--bd);border-radius:10px;background:var(--panel);overflow:hidden}
+.setcap{margin:10px 24px 4px;font-size:12px;color:var(--dim);letter-spacing:.06em}
+.setrow{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--bd2);font-size:15px}
+.setrow:last-child{border-bottom:0}
+.setrow select{margin-left:auto;background:#0b0f16;color:var(--acc);border:1px solid #2c3646;border-radius:6px;padding:4px 6px;font-size:13px;max-width:190px}
+.pnl .grp{padding:10px 12px;border-bottom:1px solid var(--bd2)}
+.pnl .lbl{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:6px}
+.pnl .lbl b{color:var(--tx);font-family:var(--mono);font-weight:600}
+.pnl .sl{height:6px;border-radius:3px;background:#1c2533;position:relative}
+.pnl .sl i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--acc)}
+.pnl .sl i:after{content:"";position:absolute;right:-8px;top:-6px;width:18px;height:18px;border-radius:50%;background:#dfe7ef}
+.pnl .bt{display:grid;gap:6px}
+.pnl .bt span{height:36px;display:flex;align-items:center;justify-content:center;border:1px solid #2c3646;background:#161c26;border-radius:6px;font-size:13px;font-weight:600}
+.pnl .bt span.on{background:rgba(34,184,234,.2);border-color:var(--acc);color:#cfefff}
+.pnl .bt span.red{border-color:#b04040;color:#ffb0b0}
+.pnl .mic{height:8px;background:#0d1622;border:1px solid #1c2a3a;position:relative}
+.pnl .mic i{position:absolute;left:0;top:0;bottom:0;width:62%;background:linear-gradient(90deg,var(--grn) 0 80%,var(--red) 80%)}
+.tool .card{cursor:pointer;padding:6px}
+.tool .card.on{color:var(--acc)}
+.setbtn{margin:0 24px 16px;background:#1f2734;border:1px solid #2c3646;border-radius:8px;color:var(--acc);padding:8px 12px;font-size:14px;cursor:pointer}
+.setnote{margin:-6px 24px 10px;font-size:12px;color:var(--dim);line-height:1.45}
+/* sheet */
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#10151e;border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid #2a3546;z-index:24;display:flex;flex-direction:column;box-shadow:0 -10px 30px rgba(0,0,0,.6)}
+.sheet .grab{height:22px;flex:none;display:flex;justify-content:center;align-items:center;cursor:pointer}
+.sheet .grab i{width:40px;height:5px;border-radius:3px;background:#4a5566}
+.sheet .shead{display:flex;align-items:center;gap:8px;padding:0 14px 8px;border-bottom:1px solid var(--bd2)}
+.sheet .shead .t{font-size:17px;font-weight:700}
+.sheet .shead .x{margin-left:auto;width:30px;height:30px;border-radius:50%;background:#1f2734;display:flex;align-items:center;justify-content:center;color:#aab;cursor:pointer;font-size:15px}
+.sheet .sbody{flex:1;overflow-y:auto;padding-bottom:84px}
+.sheet .sbody .compose{bottom:0;padding:8px 12px 8px 100px;min-height:70px;align-items:center}
+.ptt.withsheet{width:62px;height:62px;left:14px;bottom:88px;font-size:16px}
+.ptt.withsheet small{font-size:10px}
+.ptt.withsheet:not(.on){border-style:dashed}
+.ptt.holding{transform:scale(.94)}
+
+/* pages */
+.page{position:absolute;top:54px;left:0;right:0;bottom:84px;overflow-y:auto;background:var(--bg)}
+.nav{height:46px;display:flex;align-items:center;padding:0 12px;position:relative;border-bottom:1px solid var(--bd2);flex:none}
+.nav .back{color:#cfd8e0;font-size:15px;cursor:pointer}
+.nav .ttl{position:absolute;left:50%;transform:translateX(-50%);font-weight:700;font-size:17px}
+.nav .right{margin-left:auto}
+.bigttl{font-size:20px;font-weight:700;text-align:center;padding:14px 0 12px}
+.tlist{margin:6px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--panel);overflow:hidden}
+.trow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--bd2);cursor:pointer}
+.trow:last-child{border-bottom:0}
+.trow .tt{font-weight:700;font-size:16px}
+.trow .ts{font-size:12px;color:var(--dim)}
+.trow .pill{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--acc);background:#13202c;border:1px solid #23394c;border-radius:4px;padding:1px 6px}
+.trow .pill.both{color:#c8d0d8;background:#1a1f28;border-color:#333c4a}
+.trow .chev{color:#7d8794;font-size:18px}
+.trow.new{background:#0f2230}
+.newtag{font-size:9px;background:var(--grn);color:#012;border-radius:3px;padding:0 4px;margin-left:6px;font-weight:800;vertical-align:2px}
+.chips{display:flex;gap:6px;padding:10px 12px;overflow-x:auto}
+.chips span{border:1px solid #2c3646;background:#161c26;border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;white-space:nowrap}
+.chips span.on{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* room pieces */
+.fband{display:flex;justify-content:space-between;padding:8px 12px 4px;background:#0c1220;border-bottom:1px solid var(--bd2);font-size:12px}
+.fband b{font-family:var(--mono);color:#dfe8f0}
+.fband span{color:var(--dim2)}
+.frow{padding:8px 12px;border-bottom:1px solid #141c28;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.frow.sel{background:#0d2a36}
+.frow .ff{font-family:var(--mono);color:var(--acc);font-size:16px;display:flex;gap:6px;align-items:center}
+.frow .m{font-size:10px;border:1px solid #3a4a5a;color:#b8c4d0;padding:0 3px;border-radius:2px;font-family:var(--sans)}
+.frow .you{font-size:10px;background:var(--acc);color:#002;border-radius:3px;padding:0 4px;font-family:var(--sans);font-weight:800}
+.frow .cn{color:var(--dim);font-family:var(--mono);align-self:center;font-size:14px}
+.frow .ss{font-size:13px}
+.unread{background:var(--acc);color:#002;border-radius:8px;padding:0 6px;font-size:10px;margin-left:5px;font-weight:700}
+.rhead{display:flex;align-items:center;gap:8px;padding:10px 14px 6px}
+.rhead .f{font-family:var(--mono);font-size:24px;color:var(--acc)}
+.rhead .mm{font-size:11px;border:1px solid #3a4a5a;color:#b8c4d0;padding:0 4px;border-radius:2px}
+.rhead .n{margin-left:auto;color:var(--dim);font-size:12px;text-align:right}
+.rhead .tagA{background:var(--acc);color:#002;border-radius:3px;padding:0 5px;font-weight:800;font-size:12px}
+.tunebtn{margin:0 14px 6px;background:var(--blue);border:0;border-radius:8px;padding:9px;width:calc(100% - 28px);font-size:15px;font-weight:600;cursor:pointer}
+.talker{padding:4px 14px 8px;border-bottom:1px solid var(--bd2)}
+.smallcap{font-size:10px;letter-spacing:.14em;color:var(--dim);font-weight:800}
+.big{font-size:22px;font-weight:800;font-family:var(--mono);display:flex;align-items:center;gap:8px;margin-top:2px}
+.big .grid{font-size:12px;color:var(--dim);font-weight:500}
+.big .txb{background:#c02020;color:#fff;font-size:11px;padding:1px 4px;border-radius:2px;font-family:var(--sans)}
+.sub{font-size:12px;color:var(--dim);margin-top:2px}
+.names{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.chip{border:1px solid #6a5420;color:#ffd27a;background:#1d1708;border-radius:6px;padding:5px 9px;font-family:var(--mono);font-size:13px;cursor:pointer}
+.namegiven{font-size:12px;color:#ffd27a;margin-top:4px}
+.sec{display:flex;justify-content:space-between;align-items:baseline;padding:10px 14px 4px}
+.sec .note{font-size:11px;color:var(--dim2)}
+.rd{display:grid;grid-template-columns:110px 64px 1fr 50px;gap:6px;align-items:center;height:26px;padding:0 14px;font-size:13px}
+.rd .c{font-family:var(--mono);font-weight:800;white-space:nowrap;overflow:hidden}
+.rd .c.away{color:#8e9aa8}
+.rd .k{color:var(--dim);font-family:var(--mono);font-size:11px;text-align:right}
+.rd .b{height:9px;background:#0d1622;border:1px solid #1c2a3a;position:relative}
+.rd .b i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#118a5a,#1fd08a)}
+.rd .b.str i{background:repeating-linear-gradient(135deg,#d24848 0 4px,#6a1d1d 4px 8px)}
+.rd .v{font-family:var(--mono);font-size:12px;text-align:right}
+.rd.me{background:rgba(34,184,234,.08)}
+.awaytag{font-size:9px;border:1px solid #3a4a5a;color:#9aa6b2;border-radius:2px;padding:0 3px;margin-left:4px;font-family:var(--sans);font-weight:700;vertical-align:1px}
+.awaynote{font-size:11px;color:var(--dim);padding:4px 14px 6px}
+.msgs{padding:2px 14px}
+.msg{padding:8px 0;border-bottom:1px solid #182030}
+.msg .h{display:flex;gap:6px;align-items:baseline;font-size:13px}
+.msg .h .c{font-family:var(--mono);font-weight:800}
+.msg .h .g{color:var(--dim2);font-size:11px}
+.msg .h .t{margin-left:auto;color:var(--dim2);font-family:var(--mono);font-size:11px}
+.msg .h .mm{color:#9aa4b0;padding:0 7px;border:1px solid #2a3442;border-radius:5px;cursor:pointer;font-weight:800;margin-left:4px}
+.msg .chipr{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9fb0c0;background:#101826;border:1px solid #1f2c3c;border-radius:4px;padding:0 5px;margin:3px 0}
+.msg .chipr.txing{color:#ffb0b0;border-color:#6a2020}
+.msg .x{font-size:15px;line-height:1.35}
+.msg.me .h .c{color:var(--acc)}
+.msgmenu{display:flex;gap:8px;margin:5px 0}
+.msgmenu a{flex:1;text-align:center;font-size:14px;border:1px solid #2c3646;border-radius:8px;padding:7px;background:#161c26;cursor:pointer}
+.msg.muted{font-size:13px;color:var(--dim2);font-style:italic}
+.msg.muted a{color:var(--acc);font-style:normal;cursor:pointer}
+.reported{font-size:12px;color:var(--amb);margin-top:3px}
+.compose{position:sticky;bottom:0;background:#10151e;padding:8px 12px 10px;border-top:1px solid var(--bd2);display:flex;gap:8px}
+.compose input{flex:1;min-width:0;background:#060a10;border:1px solid #2c3646;border-radius:8px;padding:9px 10px;color:var(--tx);font-size:15px}
+.compose button{background:var(--blue);border:0;border-radius:8px;padding:0 16px;font-weight:600;font-size:15px;cursor:pointer}
+.compose input:disabled,.compose button:disabled{opacity:.4}
+.elsewhere{padding:10px 14px;font-size:12px;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;border-top:1px solid var(--bd2)}
+.elsewhere b{color:#c8d0d8;font-family:var(--mono);cursor:pointer}
+.keyed{position:absolute;left:36px;top:394px;width:330px;padding:6px 8px;background:rgba(17,22,31,.94);border:1px solid #2a3546;border-radius:4px;z-index:25;display:flex;flex-direction:column;gap:4px}
+.keyed .tabs{display:flex;gap:4px}
+.keyed .tabs span{flex:1;height:44px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;background:#0e1118;border:1px solid #2a3546;border-radius:4px}
+.keyed .tabs span.on{background:rgba(47,208,122,.24);border-color:var(--grn)}
+.keyed .tabs span.off{opacity:.4}
+.keyed .row{display:flex;gap:10px}
+.keyed .g{flex:1;min-height:44px;display:flex;flex-direction:column;justify-content:center;gap:3px}
+.keyed .g .l{display:flex;justify-content:space-between;font-size:11px;color:var(--dim)}
+.keyed .g .l b{font-family:var(--mono);color:var(--tx);font-size:12px}
+.keyed .g .bar{height:8px;background:#0d1622;border:1px solid #1c2a3a;position:relative}
+.keyed .g .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--grn)}
+.keyed .g .bar i.hi{background:linear-gradient(90deg,var(--grn) 0 80%,var(--red) 80%)}
+.keyed .g .sc{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--dim2)}
+.txline{display:flex;align-items:center;gap:8px;padding:6px 14px;border-bottom:1px solid var(--bd2);font-size:13px}
+.txline .txb{background:#c02020;color:#fff;font-size:11px;padding:1px 4px;border-radius:2px;font-weight:700}
+.txline .f{font-family:var(--mono);color:var(--acc)}
+.txline .n{margin-left:auto;color:var(--dim);font-size:12px}
+.sheet.keyedsheet .shead{display:none}
+.sheet.keyedsheet .grab{height:16px}
+.sheet.keyedsheet .msgs .msg:not(:last-child){display:none}
+.readbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 14px;background:#0d2a36;border-bottom:1px solid #1f5a6e;font-size:12px;color:#cfe}
+.readbar a{color:var(--acc);font-weight:600;cursor:pointer;white-space:nowrap}
+.empty{padding:12px 14px;color:var(--dim);font-size:13px;line-height:1.5}
+.empty .t{color:#e8eef4;font-size:15px;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="chooser">
+  <span class="lbl">ROUNDTABLE ON IPHONE</span>
+  <button data-opt="1">1 · Like the desktop<span class="rec">RECOMMENDED</span></button>
+  <button data-opt="2">2 · Tools page only</button>
+  <button data-opt="3">3 · Its own tab</button>
+</div>
+<div id="stage">
+  <div class="phone"><div class="screen" id="screen"></div></div>
+  <div id="notes"></div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function sText(d){const o=Math.round(d+73);if(o<1)return 'S'+Math.max(0,Math.min(9,Math.round(9-(-73-d)/6)));return 'S9 +'+o}
+function sFrac(d){return Math.max(.03,Math.min(1,(d+127)/100))}
+function fmtF(f){const hz=Math.round(f*1e6);const s=String(hz).padStart(7,'0');return s.slice(0,-6)+'.'+s.slice(-6,-3)+'.'+s.slice(-3)}
+function utc(m=0){const d=new Date(Date.now()+m*60000);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')}
+function mmss(s){return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
+
+const YOU={call:'N0CALL',grid:'FN42'};
+const BANDS={'40M':{lo:7.170,hi:7.280,mode:'LSB'},'20M':{lo:14.180,hi:14.300,mode:'USB'}};
+// [call, km from the talker (0 = talker location unknown), dBm, away]
+const R=[
+ {id:'a',band:'40M',f:7.185,state:'talk',talker:'K4ABC',tgrid:'EM73',keyed:78,
+  st:[['N4XYZ',215,-58],['K4QRS',593,-72],['K0ABC',775,-80],['AA5ABC',1121,-82,1],['W5ABC',1179,-79],['K2ABC',1318,-83],['KC1ABC',1380,-80],['G0ABC',6773,-89]],
+  msgs:[['W9ABC','EN61',-6,'hearing K4ABC · S9 +4','Good signal into Chicago, K4ABC.'],['N3ABC','FM29',-4,'hearing W9ABC · S8','W9ABC, some fading here but readable.'],['K0ABC','EM48',-3,'hearing K4ABC · S6','Skip is long here, you are weak but solid.'],['K4ABC','EM73',-1,'tx','Thanks all. Fifteen more minutes, then I am off. N0CALL you are next.']]},
+ {id:'b',band:'40M',f:7.200,state:'double',talker:'K7ABC + W0ABC',keyed:4,
+  st:[['N6ABC',0,-70],['VE7ABC',0,-66],['KH6ABC',0,-74,1],['W7ABC',0,-71],['K5ABC',0,-75],['W3ABC',0,-73]],
+  msgs:[['KH6ABC','BL01',-1,'hearing both · S9','You two just doubled. K7ABC go first, then W0ABC.']]},
+ {id:'c',band:'40M',f:7.240,state:'unknown',keyed:20,used:['W4NET','KC3ABC'],names:[],
+  st:[['KD4ABC',0,-61],['W3ABC',0,-63],['N2ABC',0,-79],['K4QRS',0,-65,1],['W1ABC',0,-77],['VE3ABC',0,-84],['N8ABC',0,-75],['K0ABC',0,-88],['WB8ABC',0,-72]],
+  msgs:[['KD4ABC','FM17',-5,'hearing unknown · S9','Net control today is W4NET.'],['W3ABC','FM19',-3,'hearing unknown · S9','That was KC3ABC checking in. Named it.']]},
+ {id:'d',band:'40M',f:7.268,state:'quiet',last:'W2ABC',st:[['K2ABC',0,0],['N2ABC',0,0,1],['W1ABC',0,0]],msgs:[]},
+ {id:'e',band:'20M',f:14.212,state:'talk',talker:'VK3XYZ',tgrid:'QF22',keyed:42,
+  st:[['G0ABC',16900,-96],['K5ABC',14300,-79],['W6ABC',12900,-70],['KH6ABC',8400,-66,1],['JA1ABC',8100,-72],['ZL2ABC',2500,-60],['VK2ABC',710,-55]],
+  msgs:[['K5ABC','EM12',-5,'hearing VK3XYZ · S7','@VK3XYZ I am next after N0CALL if you have time.'],['VK3XYZ','QF22',-3,'tx','Thanks all. Working the list: N0CALL, K5ABC, W6ABC.']]},
+ {id:'f',band:'20M',f:14.258,state:'unknown',keyed:31,used:['K8DX'],names:[],st:[['W8ABC',0,-74],['N8ABC',0,-70],['K9ABC',0,-79,1],['W3ABC',0,-83]],msgs:[]},
+ {id:'g',band:'20M',f:14.285,state:'talk',talker:'W6ABC',tgrid:'DM04',keyed:12,st:[['KH6ABC',4100,-73],['K7ABC',1300,-62],['N6ABC',300,-55],['VE7ABC',1600,-66]],msgs:[]},
+];
+let MID=0;R.forEach(r=>{r.msgs=r.msgs.map(m=>({id:'m'+(++MID),call:m[0],grid:m[1],time:utc(m[2]),chip:m[3],text:m[4]}));r.unread=r.msgs.length?Math.min(2,r.msgs.length):0});
+
+// Swipe defaults (JJ 2026-10-20): each edge opens the card its toolbar button already opens from that side.
+const GEST_DEFAULTS={left:'rx',right:'tx',up:'rtsheet'};
+const S={opt:1,tab:'pan',band:'40M',slice:7.185,mox:false,tx:0,sheet:null,page:null,pageRoom:null,chip:'All',
+  muted:{},showMuted:{},reported:{},menu:null,drafts:{},read:null,readBand:null,dial:'off',
+  side:null,sidePage:null,sideRoom:null,up:null,gz:true,gest:{...GEST_DEFAULTS}};
+{const m=location.hash.match(/~(knob|wheel)/);if(m)S.dial=m[1]}
+{const h=location.hash.match(/^#(\d)(?:-([a-z]+))?/);if(h){S.opt=+h[1];const k=h[2];
+  if(k==='sheet')S.sheet='half';if(k==='full')S.sheet='full';if(k==='tools')S.tab='tools';
+  if(k==='page'){S.tab='tools';S.page='list'}if(k==='tab')S.tab='rt';
+  if(k==='room'){S.tab=S.opt===3?'rt':'tools';S.page='room';S.pageRoom='c'}
+  if(k==='tx'){S.mox=true;S.sheet='half'}
+  if(k==='left'){S.side='l';S.sidePage=S.gest.left}if(k==='right'){S.side='r';S.sidePage=S.gest.right}if(k==='up')S.up=S.gest.up;if(k==='setup')S.tab='setup'}}
+
+const isTuned=r=>r.band===S.band&&Math.abs(S.slice-r.f)*1e6<=1500;
+const myRoom=()=>R.find(isTuned)||null;
+const count=r=>r.st.length+(isTuned(r)?1:0);
+const state=r=>S.mox&&isTuned(r)?'you':r.state;
+function stateText(r){const s=state(r);
+  if(s==='you')return '<span class="st-you">● You are talking</span>';
+  if(s==='talk')return `<span class="st-talk">● ${r.talker} talking</span>`;
+  if(s==='double')return `<span class="st-double">● ${r.talker} doubled</span>`;
+  if(s==='unknown')return `<span class="st-unknown">${r.names.length?esc(r.names[0])+' (named)':'unknown talker'}</span>`;
+  return '<span class="st-quiet">quiet 6 min</span>'}
+function tagText(r){const s=state(r);return s==='you'?'TX YOU':s==='talk'?r.talker:s==='double'?r.talker.replace(' + ','+'):s==='unknown'?(r.names[0]||'UNKNOWN'):'QUIET'}
+
+/* ---------- one frequency ---------- */
+function roomBody(r,opts={}){
+  const tuned=isTuned(r);const s=state(r);const away=r.st.filter(x=>x[3]).length;
+  if(opts.elsewhere&&s==='you'&&S.sheet){
+    const heard=r.st.length;
+    let h=`<div class="txline"><span class="txb">TX</span><b>${YOU.call}</b><span data-k>${mmss(S.tx)}</span><span class="f">${fmtF(r.f)}</span><span class="n">hearing you: ${heard}</span></div>`;
+    return h+roomBody(r,{keyedRest:true});
+  }
+  let h=opts.keyedRest?'':`<div class="rhead">${tuned?'<span class="tagA">A</span>':''}<span class="f">${fmtF(r.f)}</span><span class="mm">${BANDS[r.band].mode}</span><span class="n">${count(r)} stations${away?`<br>${away} away`:''}</span></div>`;
+  if(!tuned)h+=`<button class="tunebtn" data-tune="${r.id}">Tune slice A here</button>`;
+  if(opts.keyedRest){}
+  else if(s==='you')h+=`<div class="talker"><div class="smallcap">YOU ARE TALKING</div><div class="big st-you"><span class="txb">TX</span>${YOU.call}<span class="grid">${YOU.grid}</span></div><div class="sub">keyed <span data-k>${mmss(S.tx)}</span> · below is who is hearing you</div></div>`;
+  else if(s==='talk')h+=`<div class="talker"><div class="smallcap">TALKING NOW</div><div class="big st-talk"><span class="txb">TX</span>${r.talker}<span class="grid">${r.tgrid}</span></div><div class="sub">keyed ${mmss(r.keyed)} · on NereusSDR</div></div>`;
+  else if(s==='double')h+=`<div class="talker"><div class="smallcap">TWO STATIONS AT ONCE</div><div class="big st-double" style="font-size:18px"><span class="txb">TX</span>${r.talker}</div><div class="sub">each meter reads both signals added together</div></div>`;
+  else if(s==='unknown')h+=`<div class="talker"><div class="smallcap">TALKING NOW</div><div class="big st-unknown">? Unknown</div><div class="sub">not on NereusSDR · nobody knows who this is until a listener names the turn</div>
+    ${r.names.length?`<div class="namegiven">Named <b>${esc(r.names[0])}</b> by you</div>`:''}
+    <div class="names"><span class="smallcap">NAME THIS TURN</span>${r.used.map(n=>`<span class="chip" data-name="${n}" data-room="${r.id}" style="${tuned?'':'opacity:.4'}">${n}</span>`).join('')}</div></div>`;
+  else h+=`<div class="talker"><div class="smallcap">QUIET</div><div class="big st-quiet" style="font-size:16px">Nobody is talking</div><div class="sub">last turn by ${r.last}, 6 min ago</div></div>`;
+  if(s!=='quiet'){
+    const title=s==='you'?'WHO IS HEARING YOU':s==='talk'?'HOW EACH STATION HEARS '+r.talker:s==='double'?'HOW EACH STATION HEARS BOTH':'HOW EACH STATION HEARS THE TALKER';
+    let rows=r.st.map(x=>({c:x[0],km:x[1],v:x[2]+(s==='you'?-6:0),away:x[3]}));
+    if(tuned&&s!=='you')rows.push({c:YOU.call,km:r.tgrid?1579:0,v:-73,me:1});
+    rows.sort((a,b)=>a.km&&b.km?a.km-b.km:a.c.localeCompare(b.c));
+    if(!opts.keyedRest)h+=`<div class="sec"><span class="smallcap">${title}</span></div>`;
+    else h+=`<div style="height:6px"></div>`;
+    h+=rows.map(x=>`<div class="rd${x.me?' me':''}"><span class="c${x.away?' away':''}">${x.c}${x.me?' <span style="font-size:9px;color:#7fd">YOU</span>':''}${x.away?'<span class="awaytag">AWAY</span>':''}</span><span class="k">${x.km?x.km.toLocaleString()+' km':''}</span><span class="b${s==='double'?' str':''}"><i style="width:${(sFrac(x.v)*100).toFixed(0)}%"></i></span><span class="v">${sText(x.v)}</span></div>`).join('');
+    if(rows.some(x=>x.away))h+=`<div class="awaynote"><span class="awaytag" style="margin:0 4px 0 0">AWAY</span>nobody at the radio. Its readings still count.</div>`;
+  }else h+=`<div class="sec"><span class="smallcap">LISTENING HERE</span></div><div class="empty" style="padding-top:0">${r.st.map(x=>x[0]+(x[3]?' (away)':'')).join(', ')}</div>`;
+  h+=`<div class="sec"><span class="smallcap">MESSAGES</span><span class="note">${fmtF(r.f)}</span></div><div class="msgs">`;
+  if(!r.msgs.length)h+=`<div class="empty" style="padding:4px 0">No messages here yet.</div>`;
+  h+=r.msgs.map(m=>{
+    const mine=m.call===YOU.call;
+    if(!mine&&S.muted[m.call]&&!S.showMuted[m.id])return `<div class="msg muted">Message from ${m.call} hidden, you muted this station. <a data-showm="${m.id}">Show</a> · <a data-unmute="${m.call}">Unmute</a></div>`;
+    const rep=S.reported[m.id];
+    return `<div class="msg${mine?' me':''}"><div class="h"><span class="c">${m.call}</span><span class="g">${m.grid}</span><span class="t">${m.time}</span>${mine?'':`<span class="mm" data-menu="${m.id}">⋯</span>`}</div>
+      ${S.menu===m.id?`<div class="msgmenu"><a data-mute="${m.call}">${S.muted[m.call]?'Unmute':'Mute'} ${m.call}</a><a data-report="${m.id}" style="${rep?'opacity:.4':''}">${rep?'Reported':'Report'}</a></div>`:''}
+      ${m.chip==='tx'?'<span class="chipr txing">transmitting</span>':m.chip?`<span class="chipr">${m.chip}</span>`:''}
+      <div class="x">${esc(m.text)}</div>${rep?'<div class="reported">You reported this. It is in the review list.</div>':''}</div>`}).join('');
+  h+=`</div>`;
+  if(opts.elsewhere){const o=Object.keys(BANDS).filter(b=>b!==S.band).map(b=>`<b data-readband="${b}">${b} ${R.filter(x=>x.band===b).length}</b>`).join(' ');h+=`<div class="elsewhere">BUSY ELSEWHERE ${o}</div>`}
+  h+=`<div class="compose"><input id="in-${r.id}" placeholder="${tuned?'Message '+fmtF(r.f):'Tune slice A here to post'}" ${tuned?'':'disabled'} value="${esc(S.drafts[r.id]||'')}"><button data-send="${r.id}" ${tuned?'':'disabled'}>Send</button></div>`;
+  return h;
+}
+function freqList(){
+  let h='';const mine=myRoom();
+  if(mine)h+=`<div class="fband"><b style="color:var(--acc)">YOUR SLICE</b><span>A</span></div>`+frow(mine);
+  for(const b of Object.keys(BANDS)){
+    if(S.chip!=='All'&&S.chip!==b)continue;
+    const rs=R.filter(r=>r.band===b);
+    h+=`<div class="fband"><b>${b}</b><span>${rs.length} frequencies · ${rs.reduce((a,r)=>a+count(r),0)} stations</span></div>`+rs.map(r=>frow(r)).join('');
+  }
+  if(S.chip!=='All'&&!BANDS[S.chip])h+=`<div class="empty">Nobody on Roundtable is on ${S.chip.toLowerCase()} right now.</div>`;
+  return h;
+}
+function frow(r){return `<div class="frow" data-open="${r.id}"><span class="ff">${fmtF(r.f)}<span class="m">${BANDS[r.band].mode}</span>${isTuned(r)?'<span class="you">YOU · A</span>':''}</span><span class="cn">${count(r)}${r.unread&&!isTuned(r)?`<span class="unread">${r.unread}</span>`:''}</span><span class="ss">${stateText(r)}</span></div>`}
+
+/* ---------- screens ---------- */
+const ICON={
+ pan:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="26" height="20" rx="2"/><path d="M4 18 L8 16 L10 8 L12 17 L15 14 L17 5 L19 16 L23 15 L26 17"/></svg>',
+ modes:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="2" width="20" height="22" rx="2"/><text x="15" y="11" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">RX</text><text x="15" y="20" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">TX</text></svg>',
+ tools:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 3a5 5 0 0 0-5 6.5L6 18.5a2 2 0 0 0 3 3l9-9A5 5 0 0 0 24.5 7l-3 3-3-1-1-3z"/></svg>',
+ radio:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="8" width="24" height="15" rx="2"/><circle cx="20" cy="15.5" r="4"/><path d="M7 13h7M7 17h7M8 8l14-5"/></svg>',
+ setup:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="15" cy="13" r="4"/><path d="M15 2v4M15 20v4M4 13h4M22 13h4M7 5l3 3M20 18l3 3M7 21l3-3M20 8l3-3"/></svg>',
+ rt:'<svg viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="15" cy="13" r="10"/><circle cx="15" cy="13" r="3.5"/><circle cx="15" cy="3" r="1.6" fill="currentColor"/><circle cx="24" cy="18" r="1.6" fill="currentColor"/><circle cx="6" cy="18" r="1.6" fill="currentColor"/></svg>'
+};
+function tabbar(){
+  const tabs=[['pan','Panadapter'],['modes','Modes'],['tools','Tools'],['radio','Radio'],['setup','Setup']];
+  if(S.opt===3)tabs.splice(3,0,['rt','Roundtable']);
+  return `<div class="tabbar${S.opt===3?' six':''}">${tabs.map(([k,n])=>`<div class="tab${S.tab===k?' on':''}" data-tab="${k}">${ICON[k]}<span>${n}</span></div>`).join('')}</div>`;
+}
+const W=402,SPH=238;
+const fx=f=>{const b=BANDS[S.band];return (f-b.lo)/(b.hi-b.lo)*W};
+function ringCol(r){if(!r)return '#5f6b79';const s=state(r);return s==='you'?'#ff6b6b':s==='talk'?'var(--grn)':s==='unknown'?'var(--amb)':s==='double'?'var(--red)':'#8e9aa8'}
+function panScreen(){
+  const b=BANDS[S.band];const r=myRoom();const sx=fx(S.slice);
+  let h=`<div class="tool"><span class="card${S.side==='l'&&S.sidePage==='rx'?' on':''}" data-card="rx" title="RX panel">▯</span><span>🔈</span><span>Slice<span class="tag">A</span></span><span>Pan 1</span><span>Display</span><span class="dot"><i></i></span><span class="card${S.side==='r'&&S.sidePage==='tx'?' on':''}" data-card="tx" title="TX panel">▯</span></div>
+  <div class="net"><span>Wi-Fi · Control direct</span><span>38 ms</span></div>
+  <canvas id="spec" width="${W}" height="${SPH}"></canvas><canvas id="wf" width="${W}" height="432"></canvas>
+  <div class="dbs">${[-70,-80,-90,-100,-110,-120].map((v,i)=>`<span style="top:${30+i*36}px">${v}</span>`).join('')}</div>
+  <div class="plan">PHONE General</div>
+  <div class="scale">${[0.12,0.32,0.52,0.72,0.9].map(t=>{const f=b.lo+(b.hi-b.lo)*t;return `<span style="left:${t*W}px">${f.toFixed(3)}</span>`}).join('')}</div>
+  <div class="passband" style="left:${sx-9}px;width:9px"></div><div class="sliceline" style="left:${sx}px"></div>`;
+  const flagLeft=Math.min(W-190,Math.max(4,sx+4));
+  const hearing=r&&state(r)!=='you'&&state(r)!=='quiet';
+  const rtline=S.opt===1?`<div class="rtline" data-sheet="1"><span class="ring" style="border-color:${ringCol(r)}"></span>${r?`Roundtable · ${count(r)} · ${state(r)==='you'?'you are talking':state(r)==='talk'?r.talker+' talking':state(r)==='unknown'?(r.names[0]?esc(r.names[0])+' (named)':'unknown talker'):state(r)==='double'?'doubled':'quiet'}`:'Roundtable · nobody here'}<span class="chev">›</span></div>`:'';
+  h+=`<div class="flag" style="left:${flagLeft}px"><div class="r1"><span class="a1">ANT1</span><span class="a2">ANT1</span><span class="bw">2.7K</span><span class="txb${S.mox?' on':''}">TX</span><span class="ab">A</span></div>
+    <div class="fq">${fmtF(S.slice)}</div><div class="sm"><span>S1 3 5 7 9 +20</span><span class="b"><i style="width:${hearing?62:12}%"></i></span><span>${hearing?'-73':'-118'} dBm</span></div>
+    <div class="btns"><span>🔈</span><span>DSP</span><span>${b.mode}</span><span>X/RIT</span><span>VAX</span></div>${rtline}</div>`;
+  if(S.opt===1){
+    const rows=[];const fb={l:flagLeft-4,r:flagLeft+190};
+    R.filter(x=>x.band===S.band).forEach(x=>{
+      const t=tagText(x);const w=t.length*7.3+44;const cx=fx(x.f);const l=Math.max(2,Math.min(W-36-w,cx-w/2));
+      let row=0;while((rows[row]||[]).some(o=>!(l+w+4<o.l||l>o.r+4)))row++;
+      (rows[row]=rows[row]||[]).push({l,r:l+w});
+      const y=122+204-row*28;const cls='st-'+state(x);
+      h+=`<div class="stem ${cls}" style="left:${cx}px;top:${y+20}px;height:${122+SPH-y-20}px"></div>`;
+      h+=`<div class="rt ${cls}${isTuned(x)?' mine':''}" style="left:${l}px;top:${y}px" data-tag="${x.id}"><span class="ring"></span>${t}<span class="cnt">${count(x)}</span></div>`;
+    });
+  }
+  const foot=S.opt===1&&S.sheet&&S.dial!=='off';
+  h+=dialHtml(foot);
+  h+=`<div class="ptt${S.mox?' on':''}${S.opt===1&&S.sheet?' withsheet':''}${foot?' infoot':''}" data-ptt="1">${S.mox?'TX':'PTT'}<small>${S.mox?mmss(S.tx):S.opt===1&&S.sheet?'Hold':'Tap'}</small></div>`;
+  // Zoom moves up above the knob or the wheel, as DialLayer does; behind the sheet it is not needed.
+  if(!(S.opt===1&&S.sheet))h+=`<div class="zoombtn" style="bottom:${S.dial==='knob'?279:S.dial==='wheel'?153:100}px"><span>−</span><span>+</span></div>`;
+  // The keyed gauges are the app's today (KeyedOverlay.swift on main): Radio/Amp/Tuner/Custom
+  // tabs and three gauges, 330 pt wide, at the top of the waterfall. Roundtable never covers them.
+  if(S.mox)h+=keyedGauges();
+  if(S.opt===1&&S.sheet){
+    const keyedSheet=S.mox&&!!r&&isTuned(r)&&!S.read&&!S.readBand;
+    const top=S.mox?556:S.sheet==='full'?60:foot?386:430;
+    h+=`<div class="sheet${keyedSheet?' keyedsheet':''}${foot?' withfoot':''}" style="top:${top}px${foot?';bottom:176px':''}"><div class="grab" data-grab="1" title="Tap to pull up or down"><i></i></div>
+      <div class="shead"><span class="t">Roundtable</span><span class="x" data-closesheet="1">✕</span></div>
+      <div class="sbody">${sheetBody(r)}</div></div>`;
+  }
+  return h;
+}
+// A list or link reads a frequency; only a panadapter tag (or Tune slice A here) tunes.
+// The tuning dial the phone chose. With the Roundtable sheet up, the sheet stops above a foot
+// that keeps PTT at the left and the dial at the right, so one thumb keys and the other tunes.
+function dialHtml(foot){
+  if(S.dial==='off')return foot?'<div class="foot"></div>':'';
+  const knob=(x,y,d)=>`<div class="knob" style="left:${x}px;top:${y}px;width:${d}px;height:${d}px"><div class="grip"><div class="dimple"></div></div><div class="idx"></div><div class="step">${d>100?'100 Hz':'100'}</div></div>`;
+  const wheel=(x,y,w)=>`<div class="twheel" style="left:${x}px;top:${y}px;width:${w}px"><div class="step">100 Hz</div><div class="w"></div></div>`;
+  if(!foot)return S.dial==='knob'?knob(402-12-136,790-9-136,136):wheel(100,790-8-52,402-100-12);
+  return '<div class="foot"></div>'+(S.dial==='knob'?knob(402-12-76,698+8,76):wheel(100,698+20,402-100-12));
+}
+const TARGETS={off:'Off',rx:'RX panel',tx:'TX panel',rtsheet:'Roundtable, my frequency',rtlist:'Roundtable, all frequencies',spots:'Spot Hub',tools:'Tools'};
+const TARGET_LIST=['off','rx','tx','rtsheet','rtlist','spots','tools'];
+const SPOTS=[[7.074,'FT8','JA1ABC','RBN',1],[7.0255,'CW','VK2ABC','DXC',2],[7.185,'LSB','K4ABC','POTA',3],[7.2,'LSB','W4XYZ','DXC',4],[14.074,'FT8','ZL1ABC','PSK',4],[14.2125,'USB','EA8XYZ','DXC',6],[14.025,'CW','P5ABC','DXC',7],[3.916,'LSB','K5ABC','POTA',9],[21.074,'FT8','PY2ABC','PSK',11],[7.03,'CW','S79ABC','RBN',12]];
+// What a swipe shortcut opens. Every one of these is also reached by a visible control
+// (Tools, the flag's Roundtable line), so each swipe is only an extra way in (D114).
+function pageContent(t,side){
+  const x='<span class="x" data-closeside="1">✕</span>';
+  const ttl=(a,b='')=>`<div class="nav"><span class="ttl" style="position:static;transform:none">${a}</span>${b}${x}</div>`;
+  const sl=(l,v,w)=>`<div class="grp"><div class="lbl">${l}<b>${v}</b></div><div class="sl"><i style="width:${w}%"></i></div></div>`;
+  const bt=(cols,items)=>`<div class="bt" style="grid-template-columns:repeat(${cols},1fr)">${items.map(i=>`<span class="${i[1]||''}">${i[0]}</span>`).join('')}</div>`;
+  // RX and TX panels as the app draws them today, simplified (RxPanel.swift, TxPanel.swift on main).
+  if(t==='rx')return ttl('RX <span class="tag" style="background:var(--acc);color:#002;border-radius:4px;padding:0 5px;font-size:12px">A</span>')+`<div class="pb pnl">
+    ${sl('AF Gain','60',60)}
+    <div class="grp"><div class="lbl">AGC</div>${bt(5,[['Off'],['Long'],['Slow'],['Med','on'],['Fast']])}</div>
+    <div class="grp"><div class="lbl">Filter<b>2.7K</b></div>${bt(5,[['5K'],['4.4K'],['3.8K'],['3.2K'],['2.9K'],['2.7K','on'],['2.4K'],['2.1K'],['1.8K'],['1.0K']])}</div>
+    <div class="grp"><div class="lbl">Noise</div>${bt(3,[['NB'],['NB2'],['NR','on'],['NR2'],['ANF'],['DFNR']])}</div>
+    ${sl('Squelch','Off',0)}</div>`;
+  if(t==='tx')return ttl('TX')+`<div class="pb pnl">
+    ${sl('RF Power','50',50)}${sl('Tune Pwr','20',20)}
+    <div class="grp">${bt(2,[['TUNE'],['MOX','red']])}</div>
+    <div class="grp"><div class="lbl">Mic level<b>-9 dB</b></div><div class="mic"><i></i></div></div>
+    ${sl('Mic Gain','+6 dB',62)}
+    <div class="grp">${bt(3,[['PROC','on'],['VOX'],['MON']])}</div>
+    <div class="empty">Opening this panel never keys the radio.</div></div>`;
+  if(t==='rtsheet'){const r=myRoom();return ttl('Roundtable')+`<div class="pb">${r?roomBody(r):sheetBody(null)}</div>`}
+  if(t==='rtlist'){
+    const r=S.sideRoom&&R.find(q=>q.id===S.sideRoom);
+    if(r)return `<div class="nav"><span class="back" data-sideback="1">‹ All frequencies</span>${x}</div><div class="pb">${isTuned(r)?'':`<div class="readbar"><span>Reading ${fmtF(r.f)}, your slice is on ${fmtF(S.slice)}</span></div>`}${roomBody(r)}</div>`;
+    const total=R.reduce((a,r)=>a+count(r),0);
+    return `<div class="nav"><span class="ttl" style="position:static;transform:none">Roundtable</span><span style="font-size:12px;color:var(--dim);margin-left:8px">${total} on air</span>${x}</div>
+      <div class="chips">${['All','80M','40M','20M','15M'].map(c=>`<span class="${S.chip===c?'on':''}" data-chip="${c}">${c==='All'?'All':c.toLowerCase()}</span>`).join('')}</div><div class="pb">${freqList()}</div>`;
+  }
+  if(t==='spots')return `<div class="nav"><span class="ttl" style="position:static;transform:none">Spot Hub</span><span style="font-size:12px;color:var(--dim);margin-left:8px">DXC, RBN, POTA, PSK</span>${x}</div>
+      <div class="pb">${SPOTS.map(q=>`<div class="spot"><span class="f">${q[0].toFixed(q[0]*1000%1?4:3)}</span><span class="m">${q[1]}</span><span class="c">${q[2]}</span><span class="s">${q[3]} · ${q[4]}m</span></div>`).join('')}<div class="empty">Spot Hub as it is today; drawn here only to show the swipe.</div></div>`;
+  if(t==='tools')return `<div class="nav"><span class="ttl" style="position:static;transform:none">Tools</span>${x}</div><div class="pb">${toolsScreen().replace('<div class="page"><div class="bigttl">Tools</div>','<div>')}</div>`;
+  return '';
+}
+function gestureLayer(){
+  let h='';
+  if(S.gz&&!S.side&&!S.up&&!S.sheet){
+    if(S.gest.left!=='off')h+=`<div class="gzone v" style="left:0;top:122px;width:18px;height:560px"><span>${TARGETS[S.gest.left]} ›</span></div>`;
+    if(S.gest.right!=='off')h+=`<div class="gzone v" style="right:0;top:122px;width:18px;height:560px"><span>‹ ${TARGETS[S.gest.right]}</span></div>`;
+    if(S.gest.up!=='off')h+=`<div class="gzone" style="left:0;right:0;top:790px;height:60px;z-index:29"><span style="margin-top:-38px;background:rgba(6,8,13,.8);padding:1px 6px;border-radius:4px">swipe up · ${TARGETS[S.gest.up]}</span></div>`;
+  }
+  if(S.side){
+    const t=S.sidePage;
+    h+=`<div class="scrim" data-closeside="1"></div><div class="side ${S.side}${G&&G.live?' drag':''}" id="side" style="transform:translateX(${G&&G.live&&G.k!=='close'?G.off:0}px)">${pageContent(t)}</div>`;
+  }
+  if(S.up&&S.up!=='rtsheet'){
+    h+=`<div class="scrim" data-closeside="1"></div><div class="upsheet${G&&G.live?' drag':''}" id="upsheet" style="top:${G&&G.live?G.top:60}px"><div class="grab"><i></i></div>${pageContent(S.up)}</div>`;
+  }
+  return h;
+}
+function setupScreen(){
+  const sel=(k,opts)=>`<select data-gsel="${k}">${opts.map(o=>`<option value="${o}"${S.gest[k]===o?' selected':''}>${TARGETS[o]}</option>`).join('')}</select>`;
+  return `<div class="page"><div class="bigttl">Setup</div>
+   <div class="setcap">GENERAL · NAVIGATION</div>
+   <div class="setgrp">
+    <div class="setrow">Tuning dial<select data-dialsel="1">${['off','knob','wheel'].map(k=>`<option value="${k}"${S.dial===k?' selected':''}>${{off:'Off',knob:'Knob on the waterfall',wheel:'Thumbwheel'}[k]}</option>`).join('')}</select></div>
+   </div>
+   <div class="setcap">SWIPES ON THE PANADAPTER</div>
+   <div class="setgrp">
+    <div class="setrow">From the left edge${sel('left',TARGET_LIST)}</div>
+    <div class="setrow">From the right edge${sel('right',TARGET_LIST)}</div>
+    <div class="setrow">Up from the tab bar${sel('up',TARGET_LIST)}</div>
+   </div>
+   <div class="setnote">Each swipe opens its page from the side you swipe from; swipe it back or tap the band to close. The toolbar's buttons stay RX on the left and TX on the right, and every page is also in Tools or on your VFO flag. Off gives that edge back to dragging the band. Saved on this phone.</div>
+   ${Object.keys(GEST_DEFAULTS).some(k=>S.gest[k]!==GEST_DEFAULTS[k])?'<button class="setbtn" data-greset="1">Reset swipes to defaults</button>':'<div class="setnote" style="margin-top:-2px">Using the defaults: RX panel, TX panel, Roundtable on my frequency.</div>'}
+   <div class="empty" style="text-align:center">The rest of Setup is not part of this mockup.</div></div>`;
+}
+function keyedGauges(){
+  const j=(a,b)=>a+Math.round(Math.random()*b);
+  const pw=j(58,9),mic=-(j(4,6));
+  const g=(l,v,w,sc,cls='')=>`<div class="g"><div class="l">${l}<b>${v}</b></div><div class="bar"><i class="${cls}" style="width:${w}%"></i></div><div class="sc">${sc.map(x=>`<span>${x}</span>`).join('')}</div></div>`;
+  return `<div class="keyed"><div class="tabs"><span class="on">Radio</span><span>Amp</span><span class="off">Tuner</span><span>Custom</span></div>
+    <div class="row">${g('Radio RF power',pw+' W',pw,['0','25','50','75','100'])}${g('Radio SWR','1.3',13,['1','1.5','2','3','∞'])}</div>
+    ${g('Mic level',mic+' dB',Math.max(0,100+mic*3),['-30','-20','-10','0','+5'],'hi')}</div>`;
+}
+function sheetBody(r){
+  const bar=what=>`<div class="readbar"><span>Reading ${what}, your slice is on ${fmtF(S.slice)}</span><a data-backmine="1">Back to my slice</a></div>`;
+  if(S.readBand)return bar(S.readBand)+R.filter(x=>x.band===S.readBand).map(frow).join('');
+  const rr=S.read&&R.find(x=>x.id===S.read);
+  if(rr&&!isTuned(rr))return bar(fmtF(rr.f))+roomBody(rr,{elsewhere:true});
+  return r?roomBody(r,{elsewhere:true}):`<div class="empty"><div class="t">Nobody on Roundtable is tuned here.</div>Tap a callsign on the panadapter to tune there, or one of these to read it.</div>${R.filter(x=>x.band===S.band).map(frow).join('')}`;
+}
+function toolsScreen(){
+  if(S.page)return rtPage(true);
+  const rows=[['Spot Hub','DX cluster, RBN, WSJT-X, POTA and PSK Reporter spots','Both'],
+    ['Roundtable','Who is on each frequency, how every station hears the talker, and messages','Both','new'],
+    ['FreeDV Reporter','Stations on the air, as the Core hears them','Core'],['TX Equalizer','Ten-band transmit equalizer and profiles','Core'],
+    ['PureSignal','On, off and status; calibration stays at the Core','Core'],['Diversity','Two-receiver diversity and phasing','Core'],
+    ['VAX Audio',"Audio for digital-mode apps on the Core's computer",'Core'],['Connection and performance','Live routes, traffic, audio and Core history','Both'],['Support Bundle',"This phone's log and the Core's bundle, to share",'Both']];
+  const show=S.opt!==3;
+  return `<div class="page"><div class="bigttl">Tools</div><div class="tlist">${rows.filter(x=>show||x[0]!=='Roundtable').map(x=>`<div class="trow${x[3]?' new':''}" ${x[0]==='Roundtable'?'data-openpage="1"':''}><div><div class="tt">${x[0]}${x[3]?'<span class="newtag">NEW</span>':''}</div><div class="ts">${x[1]}</div></div><span class="pill${x[2]==='Both'?' both':''}">${x[2]}</span><span class="chev">›</span></div>`).join('')}</div></div>`;
+}
+function rtPage(fromTools){
+  if(S.page==='room'){
+    const r=R.find(x=>x.id===S.pageRoom);
+    return `<div class="page" style="display:flex;flex-direction:column;overflow:hidden"><div class="nav"><span class="back" data-pageback="1">‹ Roundtable</span></div><div id="roomscroll" style="flex:1;overflow-y:auto">${roomBody(r)}</div></div>`;
+  }
+  const total=R.reduce((a,r)=>a+count(r),0);
+  return `<div class="page"><div class="nav">${fromTools?'<span class="back" data-toolsback="1">‹ Tools</span>':''}<span class="ttl">Roundtable</span><span class="right" style="font-size:12px;color:var(--dim)">${total} on air</span></div>
+   <div class="chips">${['All','80M','40M','20M','15M'].map(c=>`<span class="${S.chip===c?'on':''}" data-chip="${c}">${c==='All'?'All':c.toLowerCase()}</span>`).join('')}</div>
+   ${freqList()}</div>`;
+}
+function render(){
+  document.querySelectorAll('#chooser [data-opt]').forEach(b=>b.classList.toggle('on',+b.dataset.opt===S.opt));
+  const ae=document.activeElement;const aid=ae&&ae.id;
+  let h=`<div class="sbar"><span>${utc()}</span><span style="font-size:13px">▮▮▮ ᯤ ▭</span></div><div class="notch"></div>`;
+  if(S.tab==='pan')h+=panScreen();
+  else if(S.tab==='tools')h+=toolsScreen();
+  else if(S.tab==='rt')h+=rtPage(false);
+  else if(S.tab==='setup')h+=setupScreen();
+  else h+=`<div class="page"><div class="bigttl">${{modes:'Modes',radio:'Radio',setup:'Setup'}[S.tab]}</div><div class="empty" style="text-align:center">Not part of this mockup.</div></div>`;
+  if(S.tab==='pan')h+=gestureLayer();
+  h+=tabbar()+'<div class="home"></div>';
+  $('#screen').innerHTML=h;
+  if(S.tab==='pan')drawPan(true);
+  notes();
+  if(aid){const e=document.getElementById(aid);if(e&&!e.disabled)e.focus()}
+}
+function notes(){
+  const N={
+   1:`<h2>1 · Like the desktop</h2><ul>
+     <li><b>Tags on the panadapter</b> at every busy frequency, colored as on the desktop. Tap one and slice A tunes there.</li>
+     <li><b>A Roundtable line on your VFO flag</b> says what is happening on your frequency. Tap it and a sheet slides up with the talker, everyone's readings and the messages. Tap the handle to pull it up full height or back down.</li>
+     <li><b>PTT stays on screen</b> beside the sheet, so you can talk while you watch who is hearing you. With the sheet open it is <b>press and hold</b> (a dashed ring, labelled Hold) and sits 24 px clear of the message box, so a thumb reaching for Send can't key the radio. With the sheet closed it is a tap, as today.</li>
+     <li><b>While you transmit</b> the keyed gauges stay exactly where they are today (Radio, Amp, Tuner, Custom and three gauges on the waterfall). The sheet drops below them, the talker becomes one TX line, and who is hearing you fills the rest.</li>
+     <li><b>With a tuning dial on</b> (knob or thumbwheel), the sheet stops above a strip that keeps PTT at the left and the dial at the right, so one thumb keys and the other tunes while you watch the readings. The knob is drawn smaller there. While you are keyed with a dial on, the message box steps aside so the readings have room; your draft is kept.</li>
+     <li><b>Swipe shortcuts on the Panadapter tab</b> (shaded here; invisible in the app): by default the left edge brings the RX panel and the right edge the TX panel, the same cards the toolbar's left and right buttons open from those sides, and a swipe up from the tab bar brings Roundtable on your frequency. Setup, General, Navigation maps each swipe to the RX or TX panel, either Roundtable page, Spot Hub, Tools, or Off, with Reset to defaults. A short drag springs back; swipe a panel back to close it. Opening the TX panel never keys the radio.</li>
+     <li><b>Tools, then Roundtable</b> is the full list of busy frequencies, for looking around without tuning.</li></ul>`,
+   2:`<h2>2 · Tools page only</h2><ul>
+     <li>Roundtable is a page under Tools, like FreeDV Reporter on the phone today.</li>
+     <li>Nothing changes on the panadapter. To see your own frequency you leave the panadapter for Tools, and PTT is not on that page.</li></ul>`,
+   3:`<h2>3 · Its own tab</h2><ul>
+     <li>A sixth tab, between Tools and Radio, one tap from anywhere.</li>
+     <li>Six tabs makes every tab narrower, nothing shows on the panadapter, and PTT is not on that tab.</li></ul>`};
+  const pick=S.opt===1?`<div id="dialpick">Swipe zones: <button data-gz="1" class="${S.gz?'on':''}">${S.gz?'Shown':'Hidden'}</button> <span>set them in Setup</span></div><div id="dialpick">Tuning dial on this phone: ${['off','knob','wheel'].map(k=>`<button data-dial="${k}" class="${S.dial===k?'on':''}">${{off:'Off',knob:'Knob',wheel:'Thumbwheel'}[k]}</button>`).join('')}</div>`:'';
+  $('#notes').innerHTML=N[S.opt]+pick+`<div class="try"><b>Try:</b> ${S.opt===1?'tap the green K4ABC tag or the amber UNKNOWN tag, tap the Roundtable line on the flag, tap PTT, tap ⋯ on a message. ':S.opt===2?'Tools, then Roundtable, then a frequency. ':'the Roundtable tab, then a frequency. '}On 7.240 you can name the unknown talker.</div>`;
+}
+
+/* ---------- panadapter drawing ---------- */
+let wfBand=null;
+function drawPan(full){
+  const c=$('#spec');if(!c)return;const g=c.getContext('2d');g.clearRect(0,0,W,SPH);
+  g.strokeStyle='#14202c';g.lineWidth=1;for(let i=0;i<6;i++){g.beginPath();g.moveTo(0,30+i*36);g.lineTo(W,30+i*36);g.stroke()}
+  const ss=R.filter(x=>x.band===S.band&&state(x)!=='quiet').map(x=>({f:x.f,d:state(x)==='you'?-120:x.state==='double'?-78:x.state==='unknown'?-80:-84}));
+  g.beginPath();
+  for(let x=0;x<W;x++){let d=-121+Math.random()*7;
+    for(const s of ss){const dx=Math.abs(x-fx(s.f)+4);if(dx<6)d=Math.max(d,s.d-dx*.6+Math.random()*4)}
+    const y=(-60-d)/70*SPH+18;x?g.lineTo(x,y):g.moveTo(x,y)}
+  g.strokeStyle='#4fd8ff';g.stroke();g.lineTo(W,SPH);g.lineTo(0,SPH);g.fillStyle='rgba(34,150,200,.25)';g.fill();
+  const w=$('#wf');const wg=w.getContext('2d');
+  wg.fillStyle='#08104a';wg.fillRect(0,0,W,432);
+  let seed=S.band==='40M'?7:13;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+  for(let y=0;y<432;y+=3)for(const s of R.filter(x=>x.band===S.band&&x.state!=='quiet')){const on=rnd()>.18;wg.fillStyle=on?(s.state==='talk'?'#7de04a':'#3a8ae0'):'#1a3a9a';wg.fillRect(fx(s.f)-8,y,9,2)}
+  for(let i=0;i<600;i++){wg.fillStyle='rgba(60,90,220,.5)';wg.fillRect(rnd()*W,rnd()*432,1,1)}
+}
+setInterval(()=>{if(S.tab==='pan')drawPan();if(S.mox){S.tx++;document.querySelectorAll('.ptt small,[data-k]').forEach(e=>e.textContent=mmss(S.tx))}},1000);
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-opt],[data-tab],[data-tag],[data-sheet],[data-grab],[data-closesheet],[data-ptt],[data-tune],[data-open],[data-openpage],[data-pageback],[data-toolsback],[data-chip],[data-readband],[data-backmine],[data-name],[data-menu],[data-mute],[data-unmute],[data-report],[data-showm],[data-send],[data-dial],[data-gz],[data-closeside],[data-sideback],[data-card],[data-greset]');
+  if(!t)return;const d=t.dataset;
+  if(d.dial){S.dial=d.dial;render();return}
+  if(d.gz){S.gz=!S.gz;render();return}
+  if(d.card){const sd=d.card==='rx'?'l':'r';if(S.side===sd&&S.sidePage===d.card){S.side=null}else{S.side=sd;S.sidePage=d.card;S.sideRoom=null;S.up=null;S.sheet=null}render();return}
+  if(d.greset){S.gest={...GEST_DEFAULTS};render();return}
+  if(d.closeside){S.side=null;S.up=null;S.sideRoom=null;render();return}
+  if(d.sideback){S.sideRoom=null;render();return}
+  if(d.open&&(S.side||S.up)){S.sideRoom=d.open;render();return}
+  if(d.opt){S.opt=+d.opt;S.tab='pan';S.page=null;S.sheet=null;render();return}
+  if(d.tab){if(G&&G.moved)return;S.tab=d.tab;S.page=null;S.side=null;S.up=null;render();return}
+  if(d.tag){tuneTo(R.find(x=>x.id===d.tag));if(!S.sheet)S.sheet='half';render();return}
+  if(d.sheet){S.sheet=S.sheet?null:'half';render();return}
+  if(d.grab){if(S.mox)return;S.sheet=S.sheet==='full'?'half':'full';render();return}
+  if(d.closesheet){S.sheet=null;render();return}
+  if(d.ptt){if(S.opt===1&&S.sheet)return;S.mox=!S.mox;S.tx=0;render();return}
+  if(d.tune){S.side=null;S.up=null;S.sideRoom=null;tuneTo(R.find(x=>x.id===d.tune));render();return}
+  if(d.open){const r=R.find(x=>x.id===d.open);r.unread=0;if(S.tab==='pan'){S.read=isTuned(r)?null:r.id;S.readBand=null;render();return}S.page='room';S.pageRoom=r.id;render();return}
+  if(d.openpage){S.page='list';render();return}
+  if(d.pageback){S.page='list';render();return}
+  if(d.toolsback){S.page=null;render();return}
+  if(d.chip){S.chip=d.chip;render();return}
+  if(d.readband){S.readBand=d.readband;S.read=null;render();return}
+  if(d.backmine){S.read=null;S.readBand=null;render();return}
+  if(d.name){const r=R.find(x=>x.id===d.room);if(!isTuned(r))return;r.names=[d.name];render();return}
+  if(d.menu){S.menu=S.menu===d.menu?null:d.menu;render();return}
+  if(d.mute){if(S.muted[d.mute])delete S.muted[d.mute];else S.muted[d.mute]=1;S.menu=null;render();return}
+  if(d.unmute){delete S.muted[d.unmute];render();return}
+  if(d.report){S.reported[d.report]=1;S.menu=null;render();return}
+  if(d.showm){S.showMuted[d.showm]=1;render();return}
+  if(d.send){send(d.send);return}
+});
+let holding=false;
+let G=null;
+document.addEventListener('change',e=>{const t=e.target;
+  if(t.dataset.gsel){S.gest[t.dataset.gsel]=t.value;render()}
+  if(t.dataset.dialsel){S.dial=t.value;render()}});
+document.addEventListener('pointerdown',e=>{
+  const sc=$('#screen');if(!sc||S.tab!=='pan'||!e.target.closest||e.target.closest('[data-ptt]'))return;
+  const b=sc.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;
+  if(S.side&&e.target.closest('#side')){G={k:'close',side:S.side,x0:e.clientX,y0:e.clientY,live:false,moved:false,off:0};return}
+  if(S.side||S.up||S.sheet)return;
+  let k=null;
+  if(x<18&&y>122&&y<682&&S.gest.left!=='off')k='l';
+  else if(x>384&&y>122&&y<682&&S.gest.right!=='off')k='r';
+  else if(y>790&&y<850&&S.gest.up!=='off')k='u';
+  if(k){G={k,x0:e.clientX,y0:e.clientY,live:false,moved:false,off:0,top:874};if(k!=='u')e.preventDefault()}
+});
+document.addEventListener('pointermove',e=>{
+  if(!G)return;const dx=e.clientX-G.x0,dy=e.clientY-G.y0;
+  if(!G.live){
+    const go=G.k==='close'?(G.side==='l'?dx<-10:dx>10)&&Math.abs(dx)>Math.abs(dy):G.k==='l'?dx>10:G.k==='r'?dx<-10:dy<-10;
+    if(!go){if(G.k==='close'&&Math.abs(dy)>10)G=null;return}G.live=true;G.moved=true;
+    if(G.k==='close'){}
+    else if(G.k==='u'){if(S.gest.up==='rtsheet'){S.sheet='half'}else S.up=S.gest.up}else{S.side=G.k;S.sidePage=G.k==='l'?S.gest.left:S.gest.right;S.sideRoom=null}
+    if(G.k!=='close')render();
+  }
+  if(G.k==='close'){G.off=G.side==='l'?Math.min(0,dx):Math.max(0,dx);const el=$('#side');if(el){el.classList.add('drag');el.style.transform=`translateX(${G.off}px)`}}
+  if(G.k==='l'){G.off=Math.min(0,-344+dx);const el=$('#side');if(el){el.classList.add('drag');el.style.transform=`translateX(${G.off}px)`}}
+  if(G.k==='r'){G.off=Math.max(0,344+dx);const el=$('#side');if(el){el.classList.add('drag');el.style.transform=`translateX(${G.off}px)`}}
+  if(G.k==='u'){G.top=Math.max(60,850+dy);const el=$('#upsheet')||$('.sheet');if(el){el.classList.add('drag');el.style.top=G.top+'px'}}
+});
+document.addEventListener('pointerup',()=>{
+  if(!G)return;const g=G;
+  if(g.live){
+    if(g.k==='close'){G=null;if(Math.abs(g.off)>90)S.side=null;render();G={moved:true};setTimeout(()=>{G=null},0);return}
+    const far=g.k==='u'?g.top<700:Math.abs(g.off)<230;
+    G=null;
+    if(!far){S.side=null;S.up=null;if(g.k==='u'&&S.gest.up==='rtsheet')S.sheet=null}
+    render();
+    if(g.moved){G={moved:true};setTimeout(()=>{G=null},0)}
+  }else G=null;
+});
+document.addEventListener('pointerdown',e=>{if(!(e.target.closest('[data-ptt]')&&S.opt===1&&S.sheet))return;e.preventDefault();holding=true;S.mox=true;S.tx=0;render();document.querySelector('.ptt').classList.add('holding')});
+const unkey=()=>{if(!holding)return;holding=false;S.mox=false;render()};
+document.addEventListener('pointerup',unkey);document.addEventListener('pointercancel',unkey);
+function tuneTo(r){S.band=r.band;S.slice=r.f;r.unread=0;S.read=null;S.readBand=null}
+function send(id){const r=R.find(x=>x.id===id);const v=(S.drafts[id]||'').trim();if(!v||!isTuned(r))return;
+  r.msgs.push({id:'m'+(++MID),call:YOU.call,grid:YOU.grid,time:utc(),chip:S.mox?'tx':(r.state==='talk'?`hearing ${r.talker} · S9`:''),text:v});S.drafts[id]='';render();
+  const b=document.querySelector('.sbody,#roomscroll');if(b)b.scrollTop=b.scrollHeight}
+document.addEventListener('input',e=>{if(e.target.id&&e.target.id.startsWith('in-'))S.drafts[e.target.id.slice(3)]=e.target.value});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id&&e.target.id.startsWith('in-'))send(e.target.id.slice(3))});
+render();
+</script>
+</body>
+</html>

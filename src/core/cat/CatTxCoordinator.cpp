@@ -1,6 +1,23 @@
 // no-port-check: NereusSDR-original CAT accepted-activation ownership.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-26 - A CAT TX during the walk back to receive is held and runs again
+//              at Rx (JJ's ruling, like Thetis). J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-26 - Review fixes: any stop drops a held TX and no TX is held
+//              during a stop's walk; the bound is MoxController's
+//              remaining walk (txToRxRemainingMaxMs) on a precise timer,
+//              armed again while the walk's phase timers run, so only a
+//              stalled walk drops it; a walk that turns back to transmit
+//              drops it; a replay queued by an earlier walk is ignored; an
+//              idle serial pin keeps it.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26 - Every Stop All TX drops a held TX, also one in the walk's
+//              ptt_out phase or at Rx before the replay (stopAllTxRequested);
+//              a TX during a stop's walk is refused with no reply, as Thetis
+//              answers a TX set; the stall warning gives the time held.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatTxCoordinator.h"
+#include "core/LogCategories.h"
 #include "core/TwoToneController.h"
 #include "core/TxSliceArbiter.h"
 #include "core/session/SliceAccessPolicy.h"
@@ -11,8 +28,51 @@
 namespace NereusSDR {
 CatTxCoordinator::CatTxCoordinator(RadioModel& model) : QObject(&model), m_model(&model)
 {
+    // How long a TX held during the walk back to receive waits for Rx: the
+    // longest the walk can still run on its own phase bounds when the TX
+    // is held (MoxController::txToRxRemainingMaxMs). When that runs out
+    // while one of the walk's phase timers still runs, the walk is late,
+    // not stuck (a timer that fires late under load): the bound is armed
+    // again from the walk that remains, with no margin added. Only a walk
+    // that has stalled, with no phase timer running short of Rx, drops the
+    // TX. Thetis has no such bound: its CATPTT level simply waits for
+    // PollPTT (console.cs:25476-25517 [v2.10.3.15]).
+    m_heldTimer.setSingleShot(true);
+    m_heldTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_heldTimer, &QTimer::timeout, this, [this] {
+        if (!m_heldSession || !m_model) { return; }
+        const MoxController* mox = m_model->moxController();
+        if (mox->isTxToRxPhaseTimed()) {
+            m_heldTimer.start(mox->txToRxRemainingMaxMs());
+            return;
+        }
+        qCWarning(lcCat) << "held CAT TX dropped: the return to receive stalled after"
+                         << m_heldSince.elapsed() << "ms";
+        m_heldSession = 0; m_heldReplay = {};
+    });
+    connect(model.moxController(), &MoxController::stateChanged, this, [this](MoxState state) {
+        if (!m_heldSession) { return; }
+        if (state == MoxState::TxToRxInFlight || state == MoxState::TxToRxFlush) { return; }
+        if (state != MoxState::Rx) { dropHeld("the walk turned back to transmit"); return; }
+        // The walk reached receive in time. Act once it has fully ended,
+        // and only on this hold: a later walk's hold is not this one.
+        m_heldTimer.stop();
+        const quint64 serial = m_heldSerial;
+        QMetaObject::invokeMethod(this, [this, serial] { runHeld(serial); }, Qt::QueuedConnection);
+    });
+    // Any stop (Stop All TX, the time-out, the unkey gate's emergency
+    // stop) drops a held TX at the stop, as Thetis's _stop_all_tx keeps
+    // PollPTT from keying a CAT PTT level until it is released
+    // (console.cs:25479-25492 [v2.10.3.15]).
+    connect(&model, &RadioModel::transmitStopBegan, this, [this] { dropHeld("transmit was stopped"); });
+    // Stop All TX also stops nothing when it lands in the walk's ptt_out
+    // phase (TxToRxFlush) or at Rx before the replay runs; it still drops
+    // a held TX.
+    connect(&model, &RadioModel::stopAllTxRequested, this, [this] { dropHeld("Stop All TX"); });
     connect(model.moxController(), &MoxController::requestAccepted, this,
         [this](const KeyerIdentity& requester, quint64 generation, bool requestedOn) {
+            // Another keyer took transmit while a TX was held: it keeps it.
+            if (requestedOn && !m_replaying) { dropHeld("another keyer took transmit"); }
             if (!m_tag) { return; }
             if (requester.requestTag == m_tag) {
                 m_stamp = generation;
@@ -55,6 +115,12 @@ bool CatTxCoordinator::targetValid() const
 bool CatTxCoordinator::requestPtt(quint64 id, int sliceId)
 { return requestTransmit(id, sliceId, CatTransmitKind::Ptt); }
 void CatTxCoordinator::releasePtt(quint64 id) { releaseTransmit(id,CatTransmitKind::Ptt); }
+void CatTxCoordinator::releasePttClaim(quint64 id)
+{
+    // releaseTransmit(id, Ptt) without its dropHeld: the claim's release
+    // is unchanged.
+    if (m_kind == CatTransmitKind::Ptt) { releaseTransmit(id); }
+}
 bool CatTxCoordinator::requestTxSelection(quint64 id, int sliceId)
 {
     if (!id || m_tag || m_requestInFlight || m_releasing || !idle()) { return false; }
@@ -71,8 +137,74 @@ bool CatTxCoordinator::requestTxSelection(quint64 id, int sliceId)
         && m_model->txSliceArbiter()->txBoundSliceId() == sliceId
         && m_model->moxController()->acceptedRequestGeneration() == before;
 }
+bool CatTxCoordinator::inReleaseWalk() const
+{
+    if (!m_model || m_tag || m_requestInFlight || m_releasing || m_replaying) { return false; }
+    const MoxState state = m_model->moxController()->state();
+    return m_model->ownsLocalDsp() && m_model->isConnected()
+        && (state == MoxState::TxToRxInFlight || state == MoxState::TxToRxFlush)
+        && !m_model->moxController()->isMox()
+        && m_model->txSliceArbiter()->pendingHandoffSliceId() < 0;
+}
+bool CatTxCoordinator::inStopWalk() const
+{
+    // A stop's walk, or Stop All TX's latch waiting.
+    return inReleaseWalk()
+        && (m_model->transmitStopHeld() || m_model->moxController()->isStopAllTxLatched());
+}
+bool CatTxCoordinator::mayHold() const
+{
+    // Never during a stop's walk, nor while Stop All TX's latch waits.
+    return inReleaseWalk() && !inStopWalk();
+}
+void CatTxCoordinator::dropHeld(const char* reason)
+{
+    if (!m_heldSession) { return; }
+    qCDebug(lcCat) << "held CAT TX cancelled:" << reason;
+    m_heldSession = 0; m_heldReplay = {};
+    m_heldTimer.stop();
+}
+void CatTxCoordinator::runHeld(quint64 serial)
+{
+    if (!m_heldSession || !m_model || serial != m_heldSerial) { return; }
+    if (m_model->moxController()->state() != MoxState::Rx) { dropHeld("transmit is busy again"); return; }
+    if (m_model->transmitStopHeld()) { dropHeld("transmit was stopped"); return; }
+    const std::function<void()> replay = std::move(m_heldReplay);
+    m_heldSession = 0; m_heldReplay = {};
+    const QPointer<CatTxCoordinator> lifetime(this);
+    m_replaying = true;
+    const auto replaying = qScopeGuard([lifetime] { if (lifetime) { lifetime->m_replaying = false; } });
+    if (replay) { replay(); }
+}
+bool CatTxCoordinator::requestTransmit(quint64 id, int sliceId, CatTransmitKind kind,
+    std::function<void()> replayAtRx)
+{
+    if (id && kind == CatTransmitKind::Ptt && replayAtRx && mayHold()) {
+        // One held request: a newer one, from any session, replaces it. The
+        // walk's bound runs from the first one held.
+        m_heldSession = id; m_heldReplay = std::move(replayAtRx); ++m_heldSerial;
+        if (!m_heldTimer.isActive()) {
+            m_heldSince.start();
+            m_heldTimer.start(m_heldTimeoutForTestMs >= 0 ? m_heldTimeoutForTestMs
+                : m_model->moxController()->txToRxRemainingMaxMs());
+        }
+        return true;
+    }
+    if (id && kind == CatTransmitKind::Ptt && replayAtRx && inStopWalk()) {
+        // Refused, and nothing keys: Thetis's _stop_all_tx keeps PollPTT
+        // from keying (console.cs:25479-25492 [v2.10.3.15]). The reply is a
+        // TX set's, nothing, as Thetis's TX() returns ""
+        // (CAT/CATCommands.cs:970-975 [v2.10.3.15]).
+        dropHeld("a newer request");
+        qCDebug(lcCat) << "CAT TX refused: transmit was stopped";
+        return true;
+    }
+    return requestTransmit(id, sliceId, kind);
+}
 bool CatTxCoordinator::requestTransmit(quint64 id, int sliceId, CatTransmitKind kind)
 {
+    // A newer transmit request wins over a held one.
+    if (!m_replaying) { dropHeld("a newer request"); }
     if (!id || m_requestInFlight || m_releasing || !m_model) { return false; }
     if (m_tag) {
         if (m_kind != kind || m_target.sliceId != sliceId || !targetValid()
@@ -165,10 +297,18 @@ void CatTxCoordinator::releaseTransmit(quint64 id)
 }
 void CatTxCoordinator::releaseTransmit(quint64 id,CatTransmitKind kind)
 {
+    // A PTT release from any session clears a held TX, as RX; clears
+    // Thetis's CATPTT level (CAT/CATCommands.cs:822-827 [v2.10.3.15]).
+    if (kind == CatTransmitKind::Ptt) { dropHeld("released"); }
     // A command-specific OFF only releases that operation's claim. The
     // existing retire path still verifies activation generation and keyer.
     if (m_kind == kind) { releaseTransmit(id); }
 }
-void CatTxCoordinator::cancelSession(quint64 id) { releaseTransmit(id); }
-void CatTxCoordinator::cancelAll() { retire(true); }
+void CatTxCoordinator::cancelSession(quint64 id)
+{
+    if (id && id == m_heldSession) { dropHeld("its session closed"); }
+    releaseTransmit(id);
+}
+void CatTxCoordinator::cancelAll() { dropHeld("cancelled"); retire(true); }
+void CatTxCoordinator::setHeldTxTimeoutMsForTest(int ms) { m_heldTimeoutForTestMs = ms; }
 } // namespace NereusSDR

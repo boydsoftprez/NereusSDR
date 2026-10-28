@@ -1,8 +1,21 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-27: a receiver stream's new context (the lossless trial's
+//               fallback to Opus among them) and its restart no longer
+//               invalidate the slice's TCI stage, so apps keep every
+//               sample they were owed and all apps on a receiver hear one
+//               stream; a context that stops the stream still does, so a
+//               reused slice id never starts with the old slice's audio.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: passive audioRestartTimingForTest captures the exact retry
 //               scheduling inputs and selected delay. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
+//   2026-10-27: retry an accepted MediaNotReady audio refusal on the
+//               existing restart backoff, and cancel that retry when a
+//               newer context supersedes it. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -1841,6 +1854,9 @@ struct RemoteMediaController::Private {
     bool preparingAudio = false;
     bool audioEnabled = false;
     bool audioRetryPending = false;
+    // Only a retry scheduled for a Core MediaNotReady answer is superseded
+    // by a later accepted context; speaker failure retries are independent.
+    bool audioRetryForMediaNotReady = false;
     // Direct media: the pending restart's fence. Bumped wherever the
     // pending flag is cleared outside the restart itself, so a stale
     // restart does nothing; a media move leaves it alone, so a restart
@@ -2294,6 +2310,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // moves the revision on, so it could never run); the failure's own
         // retry, below, takes the next step.
         d->audioRetryPending = false;
+        d->audioRetryForMediaNotReady = false;
         ++d->audioRetryGeneration;
         d->audioHeldForTransmit = false; // R-R3-51: the failure's retry asks, not the unkey
         const QPointer<RemoteMediaController> self(this);
@@ -2450,9 +2467,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // (unordered, never retransmitted) while it is open; otherwise the
         // transmit client sends it on the session.
         const QPointer<RemoteMediaController> self(this);
-        transmit->setChannelKeepalive([self](quint64 sequence, quint32 epoch) {
+        transmit->setChannelCwKeepalive([self](const TxKeepalive& value) {
             return self && self->d->peer && self->d->peer->isReady()
-                && self->d->peer->sendTx(RemoteTxWatchdog::channelKeepalive(sequence, epoch));
+                && self->d->peer->sendTx(RemoteTxWatchdog::channelKeepalive(value));
         });
     }
     // ClientAudio can also be VAX. Follow the local source separately,
@@ -2697,7 +2714,7 @@ RemoteMediaController::~RemoteMediaController()
         // RX meter stamps: readings apply on arrival again.
         d->client->setRxMeterHoldClock({}, {});
         if (RemoteTransmitClient* transmit = d->client->remoteTransmit()) {
-            transmit->setChannelKeepalive({});
+            transmit->setChannelCwKeepalive({});
         }
     }
     stop();
@@ -4175,6 +4192,7 @@ void RemoteMediaController::stop()
     d->audio->stop();
     d->audioEnabled = false;
     d->audioRetryPending = false;
+    d->audioRetryForMediaNotReady = false;
     ++d->audioRetryGeneration;
     d->audioRetryRevision = 0;
     d->audioAwaitingDevicesSinceMs = -1;
@@ -6935,6 +6953,7 @@ void RemoteMediaController::scheduleAudioRetry()
         if (generation != d->audioRetryGeneration
             || revision != d->audioRevision) { return; }
         d->audioRetryPending = false;
+        d->audioRetryForMediaNotReady = false;
         const QPointer<RemoteMediaController> self(this);
         requestAudio();
         if (!self) { return; }
@@ -6983,6 +7002,7 @@ void RemoteMediaController::requestAudio()
     d->audio->stop();
     d->audioEnabled = false;
     d->audioRetryPending = false;
+    d->audioRetryForMediaNotReady = false;
     ++d->audioRetryGeneration;
     d->audioHeldForTransmit = false; // R-R3-51: this request answers a hold
     // Every request follows a mute, speaker, radio or retry change (or the
@@ -7509,7 +7529,16 @@ void RemoteMediaController::receiveReceiverAudioContext(const QJsonObject& paylo
     stream.generation = context.generation;
     stream.context = context;
     stream.retryPending = false;
-    stream.tciStage->invalidate();
+    // 2026-10-27: the apps' TCI streams go on through a new context (the
+    // lossless trial's fallback to Opus among them): the ended run leaves
+    // the next one each app's unconverted audio and part block
+    // (RemoteTciAudioStage::createRun). Invalidating here
+    // dropped a different part block for each app, so two apps on one
+    // receiver stopped hearing one stream. A context that stops the
+    // stream (its slice removed, no room, no encoder) ends the apps'
+    // streams: the Core reuses slice ids, and a later slice must not
+    // start with this one's audio.
+    if (!context.enabled) { stream.tciStage->invalidate(); }
     stream.receiver->stop();
     stream.ssrc = 0;
     stream.runningProfile.reset();
@@ -7577,7 +7606,9 @@ void RemoteMediaController::onReceiverRestart(int sliceId, RemoteAudioReceiver* 
     Private::ReceiverStream& stream = found->second;
     qCWarning(lcRemoteMedia).noquote()
         << QStringLiteral("Remote receiver audio for slice %1: %2").arg(sliceId).arg(reason);
-    stream.tciStage->invalidate();
+    // 2026-10-27: a restart keeps the apps' TCI streams too, as a new
+    // context does (receiveReceiverAudioContext): nothing they were owed
+    // is dropped while the stream is asked for again.
     stream.receiver->stop();
     stream.ssrc = 0;
     // R-R3-23: a lossless receiver stream's restart counts against the one
@@ -7917,6 +7948,13 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         if (!context || context->revision != d->audioRevision
             || !isNewerGeneration(context->generation, d->audioGeneration)
             || context->ssrc != d->logicalSsrcs.value(0, d->peer->audioSsrc())) { return; }
+        const bool mediaNotReady = !context->enabled
+            && context->offReason == RemoteAudioOffReason::MediaNotReady;
+        if (!mediaNotReady && d->audioRetryForMediaNotReady) {
+            d->audioRetryPending = false;
+            d->audioRetryForMediaNotReady = false;
+            ++d->audioRetryGeneration;
+        }
         d->audioGeneration = context->generation;
         d->acceptedAudioContext = context;
         // R-R3-35: the Core's capture of the previous context no longer
@@ -7930,6 +7968,11 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         // start() can report a speaker failure synchronously, and a listener
         // to that report, or to the status change, may retire this controller.
         const QPointer<RemoteMediaController> self(this);
+        if (mediaNotReady && d->model && d->model->isConnected()
+            && !d->model->audioEngine()->masterMuted() && !d->audioRetryPending) {
+            d->audioRetryForMediaNotReady = true;
+            scheduleAudioRetry();
+        }
         if (context->enabled && d->model
             && d->model->isConnected() && !d->model->audioEngine()->masterMuted()) {
             d->preparingAudio = true;

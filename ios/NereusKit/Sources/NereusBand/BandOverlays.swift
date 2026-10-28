@@ -32,6 +32,8 @@ public struct BandOverlays: Equatable, Sendable {
     public var peakHold: [Float]?
     /// How many lines back the waterfall is looked at; 0 shows it live.
     public var lookBackLines: Int = 0
+    /// The visual time axis; nil derives a stationary axis from timed history (untimed history keeps legacy mapping).
+    public var waterfallTimeAxis: WaterfallTimeAxis?
     /// The 3D view, while the pan draws it; nil draws the flat spectrum.
     public var stacked: StackedTraceOverlay?
 

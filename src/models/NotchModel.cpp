@@ -56,6 +56,10 @@
 //                 its refusal reaches notchAddRejected as notch.add's does.
 //                 NereusSDR-original session code. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26: CW transmit, the CW-pitch comments in notchSidebandShift
+//                 and addNotch say where the CW receive shift now lives
+//                 (comments only, R-CW-25). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 // =================================================================
 
 // --- From radio.cs ---
@@ -298,10 +302,13 @@ const Notch* NotchModel::notchSurrounding(double centreHz, int lowHz,
 // the caller supplies the active slice's edges (SliceModel::filterLow() /
 // filterHigh()).
 //
-// The Thetis CW-pitch term is deliberately absent (design section 1.2):
-// upstream TNFAdd's +cw_pitch and AddNotch's -cw_pitch cancel, and
-// NereusSDR keeps the CW pitch in the filter passband rather than on the
-// DDC, so this shift alone is already correct.
+// The Thetis CW-pitch term is deliberately absent (design section 1.2,
+// R-CW-25): upstream TNFAdd's +cw_pitch and AddNotch's -cw_pitch cancel.
+// NereusSDR's CW receive shift is not here either: it is in the slice's
+// demodulated frequency (SliceModel::demodulatedRxFrequency, the same term
+// RadioModel::composedShiftHz feeds WDSP), so in CWU the caller passes
+// dial - pitch, the pitch-centered filter's middle adds the pitch back,
+// and +TNF lands on the dial, the carrier, as Thetis's does.
 int NotchModel::notchSidebandShift(int filterLowHz, int filterHighHz)
 {
     int middle = filterLowHz + ((filterHighHz - filterLowHz) / 2);
@@ -340,7 +347,11 @@ double NotchModel::tnfAddCenterHz(double effectiveRxFrequencyHz,
 // round-before-constrain ordering that //[2.10.3.7]MW0LGE introduced. The
 // CW-pitch shift (:40228, GetDSPcwPitchShiftToZero) and the XVTR min/max
 // override (:40232-40254, //MW0LGE_21e XVTR) are deliberately not ported;
-// see design sections 1.2 and 5.4.
+// see design sections 1.2 and 5.4. In CW the term stays out (R-CW-25):
+// Thetis's spectrum is drawn from a DDC moved by the pitch, NereusSDR's is
+// RF-true, so a clicked frequency is already the RF the notch belongs at,
+// and WDSP maps it against tunefreq + shift, which carries the CW receive
+// shift (RadioModel::composedShiftHz).
 int NotchModel::addNotch(double centerHz, double widthHz)
 {
     // R-R3-21: a window's add names the receiver it was made on, which only

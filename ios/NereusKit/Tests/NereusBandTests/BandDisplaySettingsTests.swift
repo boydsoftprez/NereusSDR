@@ -282,6 +282,53 @@ import Testing
         #expect(store.settings(forPan: "kept-off").showTxFilterOnWaterfall, "a reset pan takes the default")
     }
 
+    /// Spec section 12 item 9: each band's Top and Bottom an earlier build
+    /// kept (`bandScales`) are dropped as the pan loads, now that the Core
+    /// keeps each band's dB Max and dB Min; every other field stays.
+    @Test func eachBandsScaleKeptByAnEarlierBuildIsDroppedAndTheRestKept() throws {
+        let suite = "band-settings-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = BandDisplaySettingsStore(defaults: defaults)
+        let scales: [String: Any] = ["5": ["topDbm": -60.0, "bottomDbm": -130.0], "3": ["topDbm": -50.0, "bottomDbm": -120.0]]
+        // Kept before the settings were scoped.
+        defaults.set(try JSONSerialization.data(withJSONObject: [
+            "bandScales": scales, "scaleBand": "5", "scaleTopDbm": -60.0, "scaleBottomDbm": -130.0,
+            "threeDFloors": ["5": 9], "threeDFloorDb": 9, "bandPlanSize": BandPlanSize.huge.rawValue,
+        ] as [String: Any]), forKey: BandDisplaySettingsStore.keyPrefix + "1")
+        let legacy = store.settings(forPan: "1")
+        #expect(legacy.scaleBand == "5" && legacy.scaleTopDbm == -60 && legacy.scaleBottomDbm == -130)
+        #expect(legacy.threeDFloors == ["5": 9] && legacy.threeDFloorDb == 9 && legacy.bandPlanSize == .huge)
+        let migratedData = try #require(defaults.data(forKey: BandDisplaySettingsStore.keyPrefix + "1"))
+        let migrated = try #require(try JSONSerialization.jsonObject(with: migratedData) as? [String: Any])
+        #expect(migrated["bandScales"] == nil)
+        #expect(migrated["threeDFloors"] as? [String: Int] == ["5": 9])
+        #expect(migrated["bandPlanSize"] as? String == BandPlanSize.huge.rawValue)
+
+        // Kept after they were scoped, by a build that still kept each band's scale.
+        defaults.set(try JSONSerialization.data(withJSONObject: [
+            "scopeStorageVersion": 29, "bandScales": scales, "scaleBand": "3", "scaleTopDbm": -50.0,
+            "threeDFloors": ["3": 4], "threeDFloorDb": 4, "traceColour": "#123456",
+        ] as [String: Any]), forKey: BandDisplaySettingsStore.keyPrefix + "2")
+        let scoped = store.settings(forPan: "2")
+        #expect(scoped.scaleBand == "3" && scoped.scaleTopDbm == -50 && scoped.threeDFloorDb == 4)
+        #expect(scoped.traceColour == "#123456")
+        let keptData = try #require(defaults.data(forKey: BandDisplaySettingsStore.keyPrefix + "2"))
+        let kept = try #require(try JSONSerialization.jsonObject(with: keptData) as? [String: Any])
+        #expect(kept["bandScales"] == nil)
+        #expect(kept["scopeStorageVersion"] as? Int == 29)
+        #expect(kept["scaleBand"] as? String == "3" && kept["traceColour"] as? String == "#123456")
+        #expect(kept["threeDFloors"] as? [String: Int] == ["3": 4])
+        // Saving again keeps it dropped.
+        var edited = scoped
+        edited.bandPlanSize = .small
+        store.setSettings(edited, forPan: "2")
+        let savedData = try #require(defaults.data(forKey: BandDisplaySettingsStore.keyPrefix + "2"))
+        let saved = try #require(try JSONSerialization.jsonObject(with: savedData) as? [String: Any])
+        #expect(saved["bandScales"] == nil)
+        #expect(store.settings(forPan: "2").bandPlanSize == .small)
+    }
+
     @Test func settingsKeptBeforeTheExtendedViewReadAsOff() throws {
         let suite = "band-settings-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -382,5 +429,18 @@ import Testing
             #expect(kept["bandPlanStrip"] == nil)
             #expect(kept["bandPlanId"] == nil)
         }
+    }
+
+    /// The page reset on All pans keeps the zoom the operator left (spec 7.4).
+    @Test func aResetKeepsTheZoom() {
+        var zoomed = BandDisplaySettings.desktopDefaults
+        zoomed.rxViewSpanHz = 24_000
+        zoomed.traceColour = "#00FF00"
+        let reset = zoomed.resetKeepingPlace()
+        #expect(reset.rxViewSpanHz == 24_000)
+        #expect(reset.traceColour == BandDisplaySettings.desktopDefaults.traceColour)
+        var never = BandDisplaySettings.desktopDefaults
+        never.rxViewSpanHz = nil
+        #expect(never.resetKeepingPlace().rxViewSpanHz == nil)
     }
 }

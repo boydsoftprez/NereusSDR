@@ -10,7 +10,7 @@ final class LinkDiagnosticsLifecycleUITests: XCTestCase {
     func testOfflineLaunchBackgroundAndReactivation() {
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShowBand"]
-        app.launch()
+        app.launchFresh()
         XCTAssertTrue(app.otherElements["Sections"].waitForExistence(timeout: 30))
         XCTAssertEqual(app.state, .runningForeground)
         XCUIDevice.shared.press(.home)

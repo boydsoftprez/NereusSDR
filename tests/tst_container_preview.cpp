@@ -2,6 +2,18 @@
 // Modification history (NereusSDR):
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The VFO row's clipping check looks at the face's last
+//                 columns: the Thetis layout's Hz digits end 0.6% of the
+//                 width short of the edge by design. A focused check pins
+//                 that the frequency ends at Thetis's plot point inside
+//                 the face. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - The VFO display's frequency request names its slice
+//                 (Task 36). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - An OTHERBTNS record edited through field 8 is cut to the
+//                 earlier record (fields 0-14), so field 8 is the one read.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSignalSpy>
@@ -109,6 +121,8 @@ private slots:
         ContainerContentRegistry registry; auto entry=registry.makeEntry(type);
         QStringList fields=entry.config["legacyRecord"].toString().split('|');
         const int visibilityField=type=="OTHERBTNS" ? 8 : 9; QVERIFY(fields.size()>visibilityField);
+        // An earlier OTHERBTNS record (fields 0-14): field 8 is its visibility.
+        if (type=="OTHERBTNS") { fields=fields.mid(0,15); }
         fields[7]=QString::number(columns); fields[visibilityField]=QString::number(bits);
         entry.config["legacyRecord"]=fields.join('|');
         std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Live));
@@ -213,7 +227,7 @@ private slots:
         const int visibilityField=type=="VOICERECPLAY" ? -1 : (type=="OTHERBTNS" || type=="ANTENNABTNS" ? 8 : 9);
         QVERIFY(fields.size()>qMax(7,visibilityField));
         fields[7]="2";
-        if (type=="OTHERBTNS") { fields[8]="1052"; }
+        if (type=="OTHERBTNS") { fields=fields.mid(0,15); fields[8]="1052"; }
         else if (type=="ANTENNABTNS") { fields[8]="7"; }
         else if (type!="VOICERECPLAY") { fields[9]="7"; }
         fields.append("future-tail"); entry.config["legacyRecord"]=fields.join('|');
@@ -378,6 +392,35 @@ private slots:
         QVERIFY2(face->minimumFaceSize().width()>=QFontMetrics(font).horizontalAdvance("-140.0 dBm")+16,"The chosen Signal font must fit the supported reading at minimum width");
         QCOMPARE(face->configuration()["fontSize"].toInt(),56); QCOMPARE(face->configuration()["faceHeight"].toInt(),120);
     }
+    // A new VFO display face draws Thetis's layout: the Hz digits are right
+    // aligned at 0.48 of a frame 2.07 face widths wide (MeterManager.cs:39871,
+    // :40269 [v2.10.3.15]), so they end about 0.6% of the width short of the
+    // face's right edge, on every platform and font. The text is never cut
+    // by the edge: the last columns stay clear and the ink ends at that
+    // point. (The stack test once looked for frequency ink 6 to 9 px inside
+    // the edge, a rule made for the old left-aligned compact layout.)
+    void vfoFaceFrequencyEndsInsideTheFace_data() {
+        QTest::addColumn<int>("width");
+        QTest::newRow("620")<<620; QTest::newRow("360")<<360; QTest::newRow("260")<<260;
+    }
+    void vfoFaceFrequencyEndsInsideTheFace() {
+        QFETCH(int,width); constexpr int kHeight=120;
+        ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(QStringLiteral("meter.vfoDisplay"));
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
+        auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face); QVERIFY(face->vfoDisplay());
+        QCOMPARE(face->vfoDisplay()->layout(),VfoDisplayItem::Layout::Thetis);
+        face->setFrequency(14225000); face->setModeLabel("USB"); face->setBandLabel("20m"); face->setUnavailableText({});
+        QImage image(width,kHeight,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::black);
+        { QPainter p(&image); face->paint(p,width,kHeight); }
+        const auto frequencyInk=[&](int x,int y) { const QColor c=image.pixelColor(x,y); return c.red()>180 && c.green()>70 && c.green()<230 && c.blue()<50; };
+        int rightmost=-1, oldBand=0;
+        for(int y=4;y<int(kHeight*.6);++y) { for(int x=0;x<width;++x) { if(frequencyInk(x,y)) { rightmost=qMax(rightmost,x); if(x>=width-9 && x<width-6) { ++oldBand; } } } }
+        const double plotPoint=width*0.48*2.07;
+        qInfo()<<"VFO frequency ink ends at"<<rightmost<<"of"<<width<<"; Thetis plot point"<<plotPoint<<"; ink 6 to 9 px inside the edge"<<oldBand;
+        QVERIFY2(rightmost>=0,"The frequency must be drawn");
+        QVERIFY2(rightmost<=int(plotPoint),qPrintable(QString("ink ends at %1, past the Thetis plot point %2").arg(rightmost).arg(plotPoint)));
+        QVERIFY2(rightmost<width-1,"The frequency must not reach the face's right edge");
+    }
     void verticalStackKeepsConfiguredRowsInSmallViewport_data() {
         QTest::addColumn<QStringList>("types"); QTest::addColumn<int>("width");
         const QStringList bars{"meter.signalText","meter.comp","meter.eq","meter.leveler","meter.cfc","meter.cfcGain","meter.alcGain"};
@@ -498,9 +541,12 @@ private slots:
             QVERIFY(!image.isNull()); QVERIFY(meters[i]->items()[0]->signalsBlocked());
             if(auto* face=qobject_cast<CompositePresetItem*>(meters[i]->items()[0])) { for(auto* child:face->internalItems()) { QVERIFY(child->signalsBlocked()); } }
             if(types.size()==6 && i==4) {
+                // Text cut by the right edge leaves ink in the face's last
+                // columns. The Thetis layout's Hz digits end about 0.6% of
+                // the width short of the edge (vfoFaceFrequencyEndsInsideTheFace).
                 int clippedFrequencyPixels=0; const qreal scale=qreal(image.width())/meters[i]->width();
-                for(int y=4;y<int(image.height()*.6);++y) { for(int x=image.width()-qRound(9*scale);x<image.width()-qRound(6*scale);++x) { const QColor c=image.pixelColor(x,y); clippedFrequencyPixels+=int(c.red()>180 && c.green()>70 && c.green()<230 && c.blue()<50); } }
-                qInfo()<<"STACK VFO frequency pixels at inner right edge"<<clippedFrequencyPixels;
+                for(int y=4;y<int(image.height()*.6);++y) { for(int x=image.width()-qMax(1,qRound(2*scale));x<image.width();++x) { const QColor c=image.pixelColor(x,y); clippedFrequencyPixels+=int(c.red()>180 && c.green()>70 && c.green()<230 && c.blue()<50); } }
+                qInfo()<<"STACK VFO frequency pixels at the right edge"<<clippedFrequencyPixels;
                 QCOMPARE(clippedFrequencyPixels,0);
             }
             if(!capture.isEmpty()) { QVERIFY(image.save(capture+QString("/preview-row-%1.png").arg(i))); }
@@ -572,6 +618,10 @@ private slots:
         model.radioStatus().setPowerReadings(50,2,1.5); poller.handOutTxReadingForTest(MeterBinding::TxMic,7);
         const auto entryFor=[&](int binding,const QString& session) {
             auto entry=registry.makeEntry("TEXT"); entry.context["bindingId"]=binding; entry.context["sliceId"]=999;
+            // New items take the 100 ms update interval (per-item update
+            // interval task); this test polls twice within it, so its items
+            // take every reading, as a saved item without the key does.
+            entry.context.remove(QStringLiteral("updateIntervalMs"));
             if(!session.isEmpty()) { entry.context["sessionId"]=session; } return entry;
         };
         for(int binding:{MeterBinding::TxPower,MeterBinding::TxMic,MeterBinding::HwVolts}) {
@@ -639,7 +689,8 @@ private slots:
         auto* meter=preview->findChild<MeterWidget*>(); QVERIFY(meter); auto* composite=qobject_cast<CompositePresetItem*>(meter->items()[0]); QVERIFY(composite);
         QCOMPARE(composite->vfoDisplay()->frequency(),int64_t(7074100)); QCOMPARE(poller->targetCountForTest(),targets);
         QSignalSpy frequency(b,&SliceModel::frequencyChanged),mode(b,&SliceModel::dspModeChanged);
-        composite->vfoDisplay()->frequencyChangeRequested(100); composite->modeButtons()->modeClicked(0); QCOMPARE(frequency.count(),0); QCOMPARE(mode.count(),0);
+        QSignalSpy handoff(model,&RadioModel::txSliceSelected);
+        composite->vfoDisplay()->frequencyChangeRequested(1,100); composite->vfoDisplay()->txRequested(1); composite->modeButtons()->modeClicked(0); QCOMPARE(frequency.count(),0); QCOMPARE(mode.count(),0); QCOMPARE(handoff.count(),0);
         dialog.resize(1200,850); dialog.show();
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000)); QVERIFY(!meter->grabFramebuffer().isNull());

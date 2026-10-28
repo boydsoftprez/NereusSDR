@@ -7,6 +7,21 @@
 // 2026-10-26: lastPeerCancelsPttBeforeNotificationAndPreservesNewOwner waits for
 // the TX->RX walk to reach Rx before the second session's TX;, which CAT refuses
 // until then. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26: a CAT TX; during the walk back to receive is held and keys at
+// Rx (JJ's ruling, like Thetis): held, cancelled, replaced, dropped.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26: review fixes: Stop All TX (during its own walk or a release
+// walk), a disconnect and a CAT stop leave nothing to key; the production
+// bound covers a walk at its phase maxima. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
+// 2026-10-26: the bound is armed again while the walk's phase timers run:
+// the instant-start and mid-phase bound cases key, a stalled walk drops.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-26: Stop All TX in the ptt_out window and before the queued replay
+// drops a held TX; each stop-drop path and the turn back to transmit are
+// pinned on their own; the stall warning gives the time held; a TX during a
+// stop's walk is answered with nothing. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/AppSettings.h"
@@ -41,6 +56,53 @@ class TstCatPty : public QObject {
         model.sliceById(0)->setFrequency(14074000); model.sliceById(1)->setFrequency(7074000);
     }
     CatEndpointConfig endpoint(int slice = 0) { CatEndpointConfig config; config.ptyEnabled = true; config.binding.primarySliceId = slice; return config; }
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+    // Held CAT TX: the PTT-out interval holds the TX->RX walk in TxToRxFlush
+    // long enough for a command to land inside it.
+    static constexpr int kHeldWalkMs = 1000;
+    static constexpr int kHeldBoundMs = 10000;
+    static constexpr int kSettleMs = 150;
+    void prepareHeld(RadioModel& model, int boundMs = kHeldBoundMs) {
+        prepare(model);
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, kHeldWalkMs, 0);
+        model.moxController()->setMoxCheck([] { return safety::BandPlanGuard::MoxCheckResult{true, {}}; });
+        model.catService()->txCoordinator().setHeldTxTimeoutMsForTest(boundMs);
+    }
+    // Keys from the peer, then releases it so the walk back to receive runs.
+    bool keyThenRelease(RadioModel& model, PtyPeer& peer) {
+        MoxController* mox = model.moxController();
+        if (!peer.send("TX;")) { return false; }
+        if (!QTest::qWaitFor([mox] { return mox->isMox(); })) { return false; }
+        if (!peer.send("RX;")) { return false; }
+        return QTest::qWaitFor([mox] { return !mox->isMox(); }) && mox->state() != MoxState::Rx;
+    }
+    // The production bound, MoxController::txToRxRemainingMaxMs (no bound
+    // override), on a 600 ms walk, far past the old fixed 130 ms bound. The
+    // TX is sent waitMs into mox_delay.
+    static constexpr int kBoundPhaseMs = 300;
+    void heldTxKeysAtRxOnTheProductionBound(int waitMs) {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection);
+        prepareHeld(model, -1);
+        model.moxController()->setTimerIntervals(0, 0, 0, kBoundPhaseMs, kBoundPhaseMs, 0);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer)); QCOMPARE(mox->state(), MoxState::TxToRxInFlight);
+        QCOMPARE(mox->txToRxRemainingMaxMs(), 2 * kBoundPhaseMs); QVERIFY(mox->isTxToRxPhaseTimed());
+        if (waitMs > 0) { QTest::qWait(waitMs); QCOMPARE(mox->state(), MoxState::TxToRxInFlight); }
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_VERIFY_WITH_TIMEOUT(mox->isMox(), 5000); QCOMPARE(mox->currentKeyer().source, PttMode::Cat);
+        QCOMPARE(exchange(peer, "RX;"), QByteArray("FA00014074000;")); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 5000); model.injectConnectionForTest(nullptr);
+    }
+    // Sends commands and an FA; read: every reply up to and including FA's.
+    QByteArray exchange(PtyPeer& peer, const QByteArray& commands) {
+        QByteArray reply; if (!peer.send(commands + "FA;")) { return reply; }
+        const bool answered = QTest::qWaitFor([&] { reply += peer.take(); return reply.endsWith("FA00014074000;"); });
+        return answered ? reply : reply + "<no FA answer>";
+    }
+#endif
 private slots:
     void init() {
         for (const QString& key : AppSettings::instance().allKeys()) {
@@ -172,8 +234,9 @@ private slots:
         connect(&service, &CatService::sessionClosed, &model, [&](quint64 id) { if (id == old) { QVERIFY(!model.moxController()->isMox()); QVERIFY(!service.session(id)); } });
         peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(!model.moxController()->isMox());
         QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1); QVERIFY(!model.moxController()->isMox());
-        // isMox() drops at the release, but the TX->RX walk still takes event-loop turns,
-        // and CAT TX is refused until it is back at Rx (CatTxCoordinator::idle()).
+        // isMox() drops at the release, but the TX->RX walk still takes event-loop turns.
+        // A CAT TX sent before Rx would be held and key only at Rx; waiting for Rx keeps
+        // this second TX a fresh request, keyed at once by the new session.
         QTRY_VERIFY(model.moxController()->state() == MoxState::Rx);
         QVERIFY(peer.send("TX;")); QTRY_VERIFY(model.moxController()->isMox()); model.moxController()->setMox(true);
         peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(model.moxController()->isMox());
@@ -192,6 +255,287 @@ private slots:
         first.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty());
         QVERIFY(model.moxController()->isMox()); QVERIFY(service.session(other));
         second.close(); QTRY_VERIFY(service.sessionIds(2).isEmpty()); QVERIFY(!model.moxController()->isMox()); model.injectConnectionForTest(nullptr);
+    }
+    void heldTxDuringWalkKeysAtRxForItsSession() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        // Thetis answers a TX set with nothing, never ?;.
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx); QVERIFY(!mox->isMox());
+        QTRY_VERIFY(mox->isMox()); QCOMPARE(mox->currentKeyer().source, PttMode::Cat);
+        // The held request keyed for this session: its RX; releases it.
+        QCOMPARE(exchange(peer, "RX;"), QByteArray("FA00014074000;")); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx); model.injectConnectionForTest(nullptr);
+    }
+    void rxFromAnySessionDuringWalkCancelsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); QVERIFY(service.applyChannelConfig(2, endpoint()));
+        service.startConfigured(); MoxController* mox = model.moxController();
+        PtyPeer first; PtyPeer second; QVERIFY(first.open(service.ptySlavePath(1))); QVERIFY(second.open(service.ptySlavePath(2)));
+        QTRY_COMPARE(service.sessionIds(1).size(), 1); QTRY_COMPARE(service.sessionIds(2).size(), 1);
+        QVERIFY(keyThenRelease(model, first));
+        QCOMPARE(exchange(first, "TX;"), QByteArray("FA00014074000;"));
+        QCOMPARE(exchange(second, "RX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void newerTxFromAnotherSessionReplacesHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); QVERIFY(service.applyChannelConfig(2, endpoint()));
+        service.startConfigured(); MoxController* mox = model.moxController();
+        PtyPeer first; PtyPeer second; QVERIFY(first.open(service.ptySlavePath(1))); QVERIFY(second.open(service.ptySlavePath(2)));
+        QTRY_COMPARE(service.sessionIds(1).size(), 1); QTRY_COMPARE(service.sessionIds(2).size(), 1);
+        QVERIFY(keyThenRelease(model, first));
+        QCOMPARE(exchange(first, "TX;"), QByteArray("FA00014074000;"));
+        QCOMPARE(exchange(second, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_VERIFY(mox->isMox());
+        // The newer request won: the first session holds no claim.
+        first.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(mox->isMox());
+        second.close(); QTRY_VERIFY(service.sessionIds(2).isEmpty()); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx); model.injectConnectionForTest(nullptr);
+    }
+    void closingTheRequesterDuringWalkCancelsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void anotherOwnerDuringWalkKeepsMoxAndCancelsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        // The station's MOX button takes transmit during the walk.
+        mox->setMox(true); QTRY_COMPARE(mox->state(), MoxState::Tx);
+        QVERIFY(mox->currentKeyer().source != PttMode::Cat);
+        peer.close(); QTRY_VERIFY(service.sessionIds(1).isEmpty()); QVERIFY(mox->isMox());
+        QVERIFY(mox->currentKeyer().source != PttMode::Cat);
+        mox->setMox(false); QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void heldTxOutlivesItsBoundWhileTheWalkIsTimed() {
+        // The first bound (100 ms) runs out long before the 1000 ms ptt_out
+        // phase ends. That phase's timer still runs, so the walk is late, not
+        // stuck: the bound is armed again and the TX keys at Rx.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model, kHeldWalkMs / 10);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_VERIFY_WITH_TIMEOUT(mox->isMox(), 5000); QCOMPARE(mox->currentKeyer().source, PttMode::Cat);
+        QCOMPARE(exchange(peer, "RX;"), QByteArray("FA00014074000;")); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 5000); model.injectConnectionForTest(nullptr);
+    }
+    void heldTxDroppedWhenTheWalkStalls() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model, kHeldWalkMs / 10);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        const MoxState stalledIn = mox->state(); QVERIFY(stalledIn != MoxState::Rx);
+        // No phase timer runs any more: the walk is stuck short of Rx.
+        mox->stallTxToRxWalkForTest(); QVERIFY(!mox->isTxToRxPhaseTimed());
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("held CAT TX dropped: the return to receive stalled"));
+        QTest::qWait(3 * (kHeldWalkMs / 10)); QCOMPARE(mox->state(), stalledIn); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void secondTxWhileHeldStaysOneRequest() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_VERIFY(mox->isMox());
+        // One RX; ends it: no second request is left to key after this walk.
+        QCOMPARE(exchange(peer, "RX;"), QByteArray("FA00014074000;")); QTRY_VERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void txDuringStopAllTxWalkIsRefusedAndNeverKeys() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(peer.send("TX;")); QTRY_VERIFY(mox->isMox());
+        // Stop All TX (the button, the time-out, a remote stop) walks back to receive.
+        model.stopAllTx(QStringLiteral("test stop")); QVERIFY(!mox->isMox()); QVERIFY(mox->state() != MoxState::Rx);
+        // Not held: a stop's walk refuses it, as Thetis's _stop_all_tx holds PollPTT off,
+        // and answers with nothing, as Thetis answers a TX set (CATCommands.cs:970-975).
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QVERIFY(!service.txCoordinator().hasHeldTxForTest()); QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void stopAllTxDuringReleaseWalkDropsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        // mox_delay holds the walk in TxToRxInFlight, the release Stop All TX still stops.
+        model.moxController()->setTimerIntervals(0, 0, 0, kHeldWalkMs, 0, 0);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer)); QCOMPARE(mox->state(), MoxState::TxToRxInFlight);
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        QCOMPARE(mox->state(), MoxState::TxToRxInFlight); QVERIFY(model.transmitReleaseInProgress());
+        model.stopAllTx(QStringLiteral("test stop"));
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void stopAllTxInThePttOutWindowDropsHeldTx() {
+        // Stop All TX while the walk is in TxToRxFlush, ptt_out at its production
+        // value (MoxController::kPttOutDelayMs). transmitReleaseInProgress() is
+        // false there, so stopAllTx returns before it stops anything; the held TX
+        // must still be dropped at the stop.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        model.moxController()->setTimerIntervals(0, 0, 0, kHeldWalkMs, MoxController::kPttOutDelayMs, 0);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer)); QCOMPARE(mox->state(), MoxState::TxToRxInFlight);
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        bool stopped = false; bool releasing = true; bool heldAfterStop = true; bool reachedRx = false;
+        connect(mox, &MoxController::stateChanged, &model, [&](MoxState state) {
+            if (state == MoxState::Rx) { reachedRx = true; }
+            if (state != MoxState::TxToRxFlush || stopped) { return; }
+            stopped = true; releasing = model.transmitReleaseInProgress();
+            model.stopAllTx(QStringLiteral("test stop")); heldAfterStop = coordinator.hasHeldTxForTest();
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(reachedRx, 5000); QVERIFY(stopped); QVERIFY(!releasing);
+        QTest::qWait(kSettleMs); QVERIFY(!mox->isMox()); QVERIFY(!heldAfterStop);
+        model.injectConnectionForTest(nullptr);
+    }
+    void stopAllTxBeforeTheQueuedReplayDropsHeldTx() {
+        // Stop All TX in the turn between the walk reaching Rx and the queued
+        // replay: nothing is keyed or releasing, so stopAllTx returns at once.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        // Connected after the coordinator, so its replay is already queued here.
+        bool stopped = false; bool heldAfterStop = true;
+        connect(mox, &MoxController::stateChanged, &model, [&](MoxState state) {
+            if (state != MoxState::Rx || stopped) { return; }
+            stopped = true; model.stopAllTx(QStringLiteral("test stop")); heldAfterStop = coordinator.hasHeldTxForTest();
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(stopped, 5000);
+        QTest::qWait(kSettleMs); QVERIFY(!mox->isMox()); QVERIFY(!heldAfterStop);
+        model.injectConnectionForTest(nullptr);
+    }
+    void stopTransmitNowDropsHeldTxAtTheStop() {
+        // The emergency stop alone (the unkey gate's), not Stop All TX: its
+        // transmitStopBegan drops the hold at the stop, not later at Rx.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        model.stopTransmitNow(QStringLiteral("test stop")); QVERIFY(!coordinator.hasHeldTxForTest());
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void heldTxNeverKeysAtRxAfterAStopItMissed() {
+        // A stop whose notice the holder missed (the model's signals are
+        // blocked for it here): the replay's own stop check keeps the held TX
+        // from keying at Rx.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        {
+            const QSignalBlocker blocker(&model);
+            model.stopTransmitNow(QStringLiteral("test stop"));
+        }
+        QVERIFY(coordinator.hasHeldTxForTest()); QVERIFY(model.transmitStopHeld());
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        QVERIFY(!coordinator.hasHeldTxForTest());
+        model.injectConnectionForTest(nullptr);
+    }
+    void walkTurningBackToTransmitDropsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        // Without the "another keyer took transmit" drop, which comes first in
+        // production, only the walk's own turn back to transmit is left.
+        QVERIFY(QObject::disconnect(mox, &MoxController::requestAccepted, &coordinator, nullptr));
+        mox->setMox(true); QVERIFY(mox->state() != MoxState::TxToRxFlush); QVERIFY(!coordinator.hasHeldTxForTest());
+        QTRY_COMPARE(mox->state(), MoxState::Tx); QVERIFY(mox->currentKeyer().source != PttMode::Cat);
+        mox->setMox(false); QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void stallWarningGivesTheTimeHeld() {
+        // A 100 ms bound on a 1000 ms ptt_out phase is armed again at about
+        // 100 ms with that phase's 1000 ms; then the walk stalls. The warning
+        // comes about 1100 ms after the hold and gives that time, not the
+        // last arm's 1000 ms.
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model, kHeldWalkMs / 10);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController(); CatTxCoordinator& coordinator = service.txCoordinator();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;")); QVERIFY(coordinator.hasHeldTxForTest());
+        QTest::qWait(3 * (kHeldWalkMs / 10)); QCOMPARE(mox->state(), MoxState::TxToRxFlush);
+        mox->stallTxToRxWalkForTest();
+        QTest::ignoreMessage(QtWarningMsg,
+            QRegularExpression("stalled after (10[5-9][0-9]|1[1-9][0-9]{2}|[2-9][0-9]{3}|[0-9]{5,}) ms"));
+        QTRY_VERIFY_WITH_TIMEOUT(!coordinator.hasHeldTxForTest(), 5000); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void heldTxKeysAtRxWithinTheWalksOwnBound() {
+        // The TX lands the instant mox_delay starts: no slack, every phase
+        // at its own maximum. A phase timer that fires late re-arms the
+        // bound rather than dropping the TX.
+        heldTxKeysAtRxOnTheProductionBound(0);
+    }
+    void heldTxSentMidPhaseKeysAtRx() {
+        heldTxKeysAtRxOnTheProductionBound(kBoundPhaseMs / 2);
+    }
+    void disconnectDuringWalkCancelsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        model.setConnectionStateForTest(ConnectionState::Disconnected);
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
+    }
+    void catStopDuringWalkCancelsHeldTx() {
+        RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); prepareHeld(model);
+        CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();
+        MoxController* mox = model.moxController();
+        PtyPeer peer; QVERIFY(peer.open(service.ptySlavePath(1))); QTRY_COMPARE(service.sessionIds(1).size(), 1);
+        QVERIFY(keyThenRelease(model, peer));
+        QCOMPARE(exchange(peer, "TX;"), QByteArray("FA00014074000;"));
+        service.stopAll(); QVERIFY(mox->state() != MoxState::Rx);
+        QTRY_COMPARE(mox->state(), MoxState::Rx); QTest::qWait(kSettleMs); QVERIFY(!mox->isMox());
+        model.injectConnectionForTest(nullptr);
     }
     void multipleSlaveHandlesAreOnePeerStream() {
         RadioModel model; prepare(model); CatService& service = *model.catService(); QVERIFY(service.applyChannelConfig(1, endpoint())); service.startConfigured();

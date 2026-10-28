@@ -168,6 +168,15 @@
 //   2026-10-13 - Expose the window-owned DUP presentation and click signal.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-26: CW transmit, the CW layer (R-CW-42): in CW, MON and its
+//               level show and set cwSidetone and monitorVolume, and VOX,
+//               LEV, EQ, CFC and TX BW are disabled with their reason
+//               through a fourth gate layer with its own saved keys.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): setCwSettingsPermitted,
+//               so in CW a remote window's MON (cwSidetone) waits for a
+//               Core with the CW settings. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -408,6 +417,12 @@ public slots:
     // setTransmitPermitted.
     void setTransmitChainSettingsPermitted(bool permitted,
                                            const QString& unavailableReason = QString());
+    // CW transmit (R-CW-48): in CW, MON shows and sets cwSidetone, one of
+    // the CW settings (transmitSettingsVersion 16). A remote window gives
+    // false with the reason on a Core without them; MON is then disabled
+    // with it in CW, on top of the chain gate. Outside CW MON stays on the
+    // chain gate alone, and its level always does.
+    void setCwSettingsPermitted(bool permitted, const QString& unavailableReason = QString());
     // R-R3-49 (parity Task 3): the profile combo. In a remote window it
     // lists the Core's profiles and selects through the Core
     // (transmitSettingsVersion 3), live while its radio is off the air.
@@ -614,6 +629,22 @@ private:
     // back.
     void removeReceiveOnlyLock();
     void applyReceiveOnlyLock();
+    // CW transmit (R-CW-42): the CW layer. In CW the radio's keyer makes
+    // the signal, so the microphone-chain controls (VOX, LEV, EQ, CFC and
+    // TX BW) are disabled with cwNotUsedReason(). It sits between the
+    // remote layers below and the receive-only lock above: a change to a
+    // layer below takes the receive-only lock and this layer off, changes
+    // the layer, and puts them back in that order.
+    void removeCwLock();
+    void applyCwLock();
+    QList<QWidget*> cwLockedControls() const;
+    // MON's button shows cwSidetone in CW and monEnabled otherwise.
+    void showMonitorForMode();
+    bool m_cwMode{false};
+public:
+    static QString cwNotUsedReason();
+    bool cwLayerActiveForTest() const { return m_cwMode; }
+private:
     // Task 16 fix wave (M3), slice control plan Task 11: follow the
     // transmit slice's mode for the MOX tooltip and the TX filter status,
     // and its frequency for the TX band; the connections are the current
@@ -763,6 +794,9 @@ private:
     QMargins txRowMargins() const;
     QMargins txCopyMargins() const;
     QList<QWidget*> monitorChainControls() const;
+    // The chain gate on MON and its level, and in CW the CW settings gate
+    // on MON (setCwSettingsPermitted).
+    void applyMonitorChainGate();
     QList<QWidget*> monitorOutputControls() const;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup
     //     drops the duplicate PROC button; PROC lives on PhoneCwApplet which
@@ -845,6 +879,8 @@ private:
     QString m_transmitSettingsReason;
     bool m_transmitChainSettingsPermitted{true};
     QString m_transmitChainSettingsReason;
+    bool m_cwSettingsPermitted{true};  // CW transmit (R-CW-48)
+    QString m_cwSettingsReason;
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
     QString m_monitorOutputReason;
     void applyMonitorOutputGate();

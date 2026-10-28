@@ -8,7 +8,16 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 section 5 requirements.
 // =================================================================
+// Ported from Thetis sources:
+//   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
+//     (clsNeedleItem's attack / decay ratios, history and ClearHistory,
+//     and renderNeedle's history wedge, for a container copy's dial)
+// =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I6, M3): Max Bin takes no VHF S9
+//                 offset (only Signal and its average do); ALC Group maps
+//                 through ReadingSource's uneven calibration. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
 //               it is still there after exec(), since a parent that dies
 //               while it is open takes it along. With AI-assisted
@@ -116,10 +125,69 @@
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26 - TX modes Alc, AlcGroup, Volts and Amps (setAlcMeters,
+//                 setSupplyMeters): scales, readouts and both faces' TX
+//                 scales from Thetis ANANMM's needles (MeterManager.cs
+//                 [v2.10.3.15]); a container copy's menu offers them.  The
+//                 VHF S9 rule (setAboveS9Frequency, sScaleDbm/rxFraction):
+//                 S9 at -93 dBm at or above 30 MHz.  J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Per-copy appearance and dynamics: peak hold, needle,
+//                 transmit needle and power scale colours, shadow, dark
+//                 mode, update interval, Thetis attack / decay ratios
+//                 (clsNeedleItem.Update) and the history wedge
+//                 (renderNeedle) with ClearHistory's ignore time, from
+//                 Thetis MeterManager.cs [v2.10.3.15].  J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+// =================================================================
+
+// --- From MeterManager.cs ---
+/*  MeterManager.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
 
 #include "SMeterWidget.h"
+#include "gui/instruments/ReadingSource.h"
+#include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QActionGroup>
@@ -128,15 +196,47 @@
 #include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <QSet>
 #include <QtMath>
 #include <QFontMetrics>
 
 #include "core/AppSettings.h"
 #include "gui/VintageMeterFace.h"
+#include "gui/meters/AboveS9Frequency.h"
+#include "gui/meters/MeterItem.h"
 #include "models/RadioModel.h"
 
 namespace NereusSDR {
+
+namespace {
+
+// The vintage theme a face draws with: in dark mode a face with a light
+// card takes Blackface's card, mirror, ink and pointer, keeping its own
+// bezel, hardware and band colours.  NereusSDR-native.
+VintageFaceTheme shownTheme(SMeterWidget::FaceStyle face, bool darkMode)
+{
+    VintageFaceTheme t = VintageMeterFace::theme(static_cast<int>(face));
+    if (darkMode && face != SMeterWidget::FaceStyle::Classic && qGray(t.faceTop) > 128) {
+        const VintageFaceTheme& dark =
+            VintageMeterFace::theme(static_cast<int>(SMeterWidget::FaceStyle::Blackface));
+        t.faceTop = dark.faceTop;
+        t.faceBottom = dark.faceBottom;
+        t.ink = dark.ink;
+        t.inkSoft = dark.inkSoft;
+        t.mirror = dark.mirror;
+        t.mirrorOpa = dark.mirrorOpa;
+        t.pointer = dark.pointer;
+    }
+    return t;
+}
+
+// The classic face's colours (the AetherSDR paint body's).
+const QColor kClassicNeedle(0xff, 0xff, 0xff);
+const QColor kClassicPeakHold(0xff, 0x44, 0x44, 0xcc);
+const QColor kClassicTxScale(0x00, 0x80, 0xd0);
+
+} // namespace
 
 SMeterSetupFace& SMeterSetupFace::instance()
 {
@@ -179,6 +279,14 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
     m_needleFraction = dbmToFraction(m_levelDbm);
     m_targetNeedleFraction = m_needleFraction;
     m_peakHoldDecayStartDbm = m_peakHoldDbm;
+
+    // NereusSDR: the history's defaults (ANANMM's signal needle; the
+    // ignore time of every Thetis meter item).
+    m_historyColor = QColor::fromRgba(kDefaultHistoryRgba);
+    m_historyDurationMs = kDefaultHistoryDurationMs;
+    m_ignoreHistoryMs = kDefaultBarIgnoreHistoryMs;
+    m_historyTimer.setInterval(kNeedleAnimationIntervalMs);
+    connect(&m_historyTimer, &QTimer::timeout, this, &SMeterWidget::sampleHistory);
 
     m_needleAnimation.setTimerType(Qt::PreciseTimer);
     m_needleAnimation.setInterval(kNeedleAnimationIntervalMs);
@@ -338,7 +446,14 @@ void SMeterWidget::setLevel(float dbm)
     }
 
     // Configurable peak hold line
-    if (m_peakHoldEnabled) {
+    if (m_peakHoldEnabled && ignoringHistory()) {
+        // NereusSDR: within a clear's ignore time the reading does not
+        // reach the peak hold, which rides on the reading (Thetis's peak
+        // marker is the history's maximum, and the history ignores it).
+        m_peakHoldDbm = dbm;
+        m_peakHoldDecayStartDbm = dbm;
+        m_peakHoldTimerRunning = false;
+    } else if (m_peakHoldEnabled) {
         if (dbm > m_peakHoldDbm) {
             m_peakHoldDbm = dbm;
             m_peakHoldDecayStartDbm = dbm;
@@ -386,6 +501,54 @@ void SMeterWidget::setMicMeters(float micLevel, float compLevel, float micPeak, 
     }
 }
 
+// NereusSDR-native: the appended TX modes' readings.
+void SMeterWidget::setAlcMeters(float alcGain, float alcGroup)
+{
+    m_alcGain = alcGain;
+    m_alcGroup = alcGroup;
+    updateNeedleTarget();
+    if (m_transmitting && (m_txMode == TxMode::Alc || m_txMode == TxMode::AlcGroup)) {
+        update();
+    }
+}
+
+void SMeterWidget::setSupplyMeters(float volts, float amps)
+{
+    m_volts = volts;
+    m_amps = amps;
+    updateNeedleTarget();
+    if (m_transmitting && (m_txMode == TxMode::Volts || m_txMode == TxMode::Amps)) {
+        update();
+    }
+}
+
+// The VHF S9 rule for the dial's slice.  NereusSDR-native.
+void SMeterWidget::setAboveS9Frequency(bool above)
+{
+    if (m_aboveS9Frequency == above) {
+        return;
+    }
+    m_aboveS9Frequency = above;
+    updateNeedleTarget();
+    update();
+}
+
+// A reading on the S scale: Thetis raises a signal-strength reading by
+// dbmOffsetForAboveS9Frequency at or above the S9 frequency, so a scale
+// with S9 at -73 dBm shows S9 at -93 dBm (kAboveS9OffsetDb,
+// AboveS9Frequency.h).
+float SMeterWidget::sScaleDbm(float dbm) const
+{
+    // Signal and its average take the offset; Max Bin does not.
+    // From Thetis MeterManager.cs:41049-41052 [v2.10.3.15] (getPerc):
+    //   if (mi.ReadingSource == Reading.SIGNAL_STRENGTH || mi.ReadingSource == Reading.AVG_SIGNAL_STRENGTH)
+    //   {
+    //       value += MeterManager.dbmOffsetForAboveS9Frequency(_rx);
+    //   }
+    if (!m_aboveS9Frequency || m_rxMode == RxMode::MaxBin) { return dbm; }
+    return dbm + static_cast<float>(kAboveS9OffsetDb);
+}
+
 void SMeterWidget::setTransmitting(bool tx)
 {
     m_transmitting = tx;
@@ -406,6 +569,12 @@ void SMeterWidget::setTxMode(const QString& mode)
     else if (mode == "SWR")         m_txMode = TxMode::SWR;
     else if (mode == "Level")       m_txMode = TxMode::Level;
     else if (mode == "Compression") m_txMode = TxMode::Compression;
+    // NereusSDR: the appended modes, by txModeToLabel()'s names.
+    for (TxMode appended : {TxMode::Alc, TxMode::AlcGroup, TxMode::Volts, TxMode::Amps}) {
+        if (mode == txModeToLabel(appended)) {
+            m_txMode = appended;
+        }
+    }
 
     // Persist TX mode selection.
     // Key SMeter_TxSelect (int 0..3): Power=0, SWR=1, Level=2, Compression=3.
@@ -474,11 +643,11 @@ void SMeterWidget::updateNeedleTarget()
     } else if (m_transmitting) {
         m_targetNeedleFraction = txValueToFraction(currentTxValue());
     } else if (m_rxMode == RxMode::SMeterPeak) {
-        m_targetNeedleFraction = dbmToFraction(m_peakDbm);
+        m_targetNeedleFraction = rxFraction(m_peakDbm);
     } else {
         // SMeter, SignalAverage, and MaxBin all use m_levelDbm as target;
         // the *source* of that value differs (caller feeds the right WDSP meter).
-        m_targetNeedleFraction = dbmToFraction(m_levelDbm);
+        m_targetNeedleFraction = rxFraction(m_levelDbm);
     }
 
     const bool needleAtTarget = qAbs(m_targetNeedleFraction - m_needleFraction) <= kNeedleSnapEpsilon;
@@ -514,17 +683,7 @@ void SMeterWidget::animateNeedle()
 
     updatePeakHoldValue();
 
-    const float delta = m_targetNeedleFraction - m_needleFraction;
-    const float elapsedSeconds = static_cast<float>(elapsedMs) / 1000.0f;
-    const float timeConstant = (delta >= 0.0f) ? kNeedleAttackTimeSeconds
-                                                : kNeedleReleaseTimeSeconds;
-    const float alpha = 1.0f - std::exp(-elapsedSeconds / timeConstant);
-    const bool needleAtTarget = qAbs(delta) <= kNeedleSnapEpsilon;
-    if (needleAtTarget) {
-        m_needleFraction = m_targetNeedleFraction;
-    } else {
-        m_needleFraction += delta * alpha;
-    }
+    const bool needleAtTarget = moveNeedle(static_cast<float>(elapsedMs) / 1000.0f);
 
     const bool peakHoldAnimating = m_peakHoldEnabled
         && m_peakHoldTimerRunning
@@ -546,6 +705,28 @@ void SMeterWidget::animateNeedle()
         m_lastDrawnNeedleFraction = m_needleFraction;
         update();
     }
+}
+
+// One step of the needle toward its target, `elapsedSeconds` after the
+// last; true when it is there.  The body is animateNeedle()'s, moved here
+// unchanged (NereusSDR) apart from the copy's ratios.
+bool SMeterWidget::moveNeedle(float elapsedSeconds)
+{
+    const float delta = m_targetNeedleFraction - m_needleFraction;
+    const float timeConstant = (delta >= 0.0f) ? kNeedleAttackTimeSeconds
+                                                : kNeedleReleaseTimeSeconds;
+    // NereusSDR: a copy's own attack or decay ratio moves the needle that
+    // share of the way to the reading on each update, as Thetis does.
+    // From Thetis MeterManager.cs:22013-22016 [v2.10.3.15] (clsNeedleItem.Update)
+    const std::optional<float> ratio = (delta >= 0.0f) ? m_attackRatio : m_decayRatio;
+    const float alpha = ratio ? *ratio : 1.0f - std::exp(-elapsedSeconds / timeConstant);
+    const bool needleAtTarget = qAbs(delta) <= kNeedleSnapEpsilon;
+    if (needleAtTarget) {
+        m_needleFraction = m_targetNeedleFraction;
+    } else {
+        m_needleFraction += delta * alpha;
+    }
+    return needleAtTarget;
 }
 
 // From AetherSDR src/gui/SMeterWidget.cpp:214-231 [@0cd4559]
@@ -587,12 +768,14 @@ QString SMeterWidget::sUnitsText() const
     if (m_noReading) {
         return QStringLiteral("--");
     }
-    if (m_levelDbm <= S0_DBM) return "S0";
-    if (m_levelDbm <= S9_DBM) {
-        const int s = qRound((m_levelDbm - S0_DBM) / DB_PER_S);
+    // NereusSDR: on the S scale (the VHF S9 rule).
+    const float level = sScaleDbm(m_levelDbm);
+    if (level <= S0_DBM) return "S0";
+    if (level <= S9_DBM) {
+        const int s = qRound((level - S0_DBM) / DB_PER_S);
         return QString("S%1").arg(qBound(0, s, 9));
     }
-    const int over = qRound(m_levelDbm - S9_DBM);
+    const int over = qRound(level - S9_DBM);
     return QString("S9+%1").arg(over);
 }
 
@@ -607,7 +790,8 @@ QString SMeterWidget::rxSUnitsReadout() const
     if (m_noReading) {
         return QStringLiteral("--");
     }
-    const float displayDbm = (m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm;
+    // NereusSDR: on the S scale (the VHF S9 rule); the dBm readout is not.
+    const float displayDbm = sScaleDbm((m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm);
     if (displayDbm <= S0_DBM) {
         return QStringLiteral("S0");
     }
@@ -637,7 +821,7 @@ bool SMeterWidget::peakMarkerVisible() const
 bool SMeterWidget::peakHoldLineVisible() const
 {
     return !m_noReading && m_peakHoldEnabled && !m_transmitting
-        && m_peakHoldDbm > S0_DBM + 1.0f;
+        && sScaleDbm(m_peakHoldDbm) > S0_DBM + 1.0f;
 }
 
 // --- Mapping -----------------------------------------------------------------
@@ -672,6 +856,21 @@ float SMeterWidget::txValueToFraction(float value) const
     case TxMode::Compression:
         // Gain reduction: 0 = none, -25 = heavy compression
         return qBound(0.0f, (value + 25.0f) / 25.0f, 1.0f);
+    // NereusSDR: the appended modes, linear over Thetis's calibration range.
+    case TxMode::Alc:
+        return qBound(0.0f, (value - kAlcMinDb) / (kAlcMaxDb - kAlcMinDb), 1.0f);
+    case TxMode::AlcGroup:
+        // Thetis's uneven ALC group calibration, the one table the bars and
+        // the Longpath needle use (ReadingSource, MeterManager.cs:24817-24819
+        // [v2.10.3.15]).
+        if (const ReadingDescriptor* alcGroup = readingFor(static_cast<int>(MeterBinding::TxAlcGroup))) {
+            return qBound(0.0f, static_cast<float>(alcGroup->fraction(value)), 1.0f);
+        }
+        return qBound(0.0f, (value - kAlcGroupMinDb) / (kAlcGroupMaxDb - kAlcGroupMinDb), 1.0f);
+    case TxMode::Volts:
+        return qBound(0.0f, (value - kVoltsMin) / (kVoltsMax - kVoltsMin), 1.0f);
+    case TxMode::Amps:
+        return qBound(0.0f, (value - kAmpsMin) / (kAmpsMax - kAmpsMin), 1.0f);
     }
     return 0.0f;
 }
@@ -690,6 +889,11 @@ QString SMeterWidget::txReadout(bool swrRatio) const
                                               : QString("%1").arg(m_txSwr, 0, 'f', 1);
     case TxMode::Level:       return QString("%1 dB").arg(m_micLevel, 0, 'f', 0);
     case TxMode::Compression: return QString("%1 dB").arg(m_compLevel, 0, 'f', 0);
+    // Units from Thetis MeterManager.cs:2333-2334, 2337, 2366 [v2.10.3.15] (ReadingUnits)
+    case TxMode::Alc:         return QString("%1 dB").arg(m_alcGain, 0, 'f', 0);
+    case TxMode::AlcGroup:    return QString("%1 dB").arg(m_alcGroup, 0, 'f', 0);
+    case TxMode::Volts:       return QString("%1 V").arg(m_volts, 0, 'f', 1);
+    case TxMode::Amps:        return QString("%1 A").arg(m_amps, 0, 'f', 1);
     }
     return QString();
 }
@@ -730,6 +934,10 @@ float SMeterWidget::currentTxValue() const
     case TxMode::SWR:         return m_txSwr;
     case TxMode::Level:       return m_micLevel;
     case TxMode::Compression: return m_compLevel;
+    case TxMode::Alc:         return m_alcGain;
+    case TxMode::AlcGroup:    return m_alcGroup;
+    case TxMode::Volts:       return m_volts;
+    case TxMode::Amps:        return m_amps;
     }
     return 0.0f;
 }
@@ -801,6 +1009,9 @@ void SMeterWidget::paintClassic(QPainter& p)
     const float arcGap = 6.0f;
     const QColor blueColor(0x00, 0x80, 0xd0);
     const QColor redColor(0xff, 0x44, 0x44);
+    // NereusSDR: a copy's power scale colour below the red zone.
+    const QColor powerColor = m_powerScaleColor.isValid() ? m_powerScaleColor : blueColor;
+    const QColor& lowArcColor = (m_txMode == TxMode::Power) ? powerColor : blueColor;
     {
         const float innerR = radius - arcGap;
         const QRectF innerArc(cx - innerR, cy - innerR, innerR * 2, innerR * 2);
@@ -812,6 +1023,11 @@ void SMeterWidget::paintClassic(QPainter& p)
         case TxMode::SWR:         redFrac = (2.5f - 1.0f) / 2.0f; break; // 0.75
         case TxMode::Level:       redFrac = (0.0f + 40.0f) / 45.0f; break; // ~0.89
         case TxMode::Compression: redFrac = -1.0f; break; // all blue
+        // NereusSDR: Thetis's needles for these carry no red zone.
+        case TxMode::Alc:
+        case TxMode::AlcGroup:
+        case TxMode::Volts:
+        case TxMode::Amps:        redFrac = -1.0f; break;
         }
 
         if (redFrac < 0.0f) {
@@ -822,7 +1038,7 @@ void SMeterWidget::paintClassic(QPainter& p)
                       static_cast<int>((ARC_END_DEG - ARC_START_DEG) * 16));
         } else {
             const float splitDeg = qRadiansToDegrees(fractionToAngle(redFrac));
-            p.setPen(QPen(blueColor, 3));
+            p.setPen(QPen(lowArcColor, 3));
             p.drawArc(innerArc,
                       static_cast<int>(splitDeg * 16),
                       static_cast<int>((ARC_END_DEG - splitDeg) * 16));
@@ -927,7 +1143,7 @@ void SMeterWidget::paintClassic(QPainter& p)
         }
         for (int pw = 0; pw <= maxW; pw += tickStep) {
             const float frac = static_cast<float>(pw) / m_powerScaleMax;
-            const QColor& tc = (pw >= redW) ? redColor : blueColor;
+            const QColor& tc = (pw >= redW) ? redColor : powerColor;
             const QColor& lc = (pw >= redW) ? redColor : whiteColor;
             bool isLabeled = (pw % labelStep == 0) || pw == maxW || pw == redW;
             QString label = (pw >= 1000) ? QString("%1k").arg(pw / 1000.0f, 0, 'f', (pw % 1000) ? 1 : 0)
@@ -969,12 +1185,64 @@ void SMeterWidget::paintClassic(QPainter& p)
         }
         break;
     }
+    // NereusSDR: the appended modes, ticks at Thetis's calibration keys
+    // (all blue, no red zone).
+    case TxMode::Alc: {
+        for (float db = kAlcMinDb; db <= kAlcMaxDb; db += kAlcStepDb) {
+            drawInsideTick(txValueToFraction(db), QString::number(static_cast<int>(db)),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::AlcGroup: {
+        for (float db : {kAlcGroupMinDb, kAlcGroupMidDb, kAlcGroupMaxDb}) {
+            drawInsideTick(txValueToFraction(db), QString::number(static_cast<int>(db)),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::Volts: {
+        for (float v : {kVoltsMin, kVoltsMid, kVoltsMax}) {
+            drawInsideTick(txValueToFraction(v), QString::number(static_cast<double>(v), 'g', 3),
+                           blueColor, whiteColor, true);
+        }
+        break;
+    }
+    case TxMode::Amps: {
+        // Every key ticked, every second one labelled.
+        for (float a = kAmpsMin; a <= kAmpsMax; a += kAmpsStep) {
+            const bool labelled = std::fmod(a - kAmpsMin, 2.0f * kAmpsStep) == 0.0f;
+            drawInsideTick(txValueToFraction(a), QString::number(static_cast<int>(a)),
+                           blueColor, whiteColor, labelled);
+        }
+        break;
+    }
     }
 
     // -- Draw needle ----------------------------------------------------------
     // Needle originates from needleCy (just below widget) rather than the
     // arc center, so the pivot is barely out of frame.
     // When transmitting, needle tracks the selected TX meter instead of RX.
+    // NereusSDR: the history wedge, from the needle's origin out to its
+    // tip between the lowest and highest positions in the history, filled
+    // in the history colour; drawn under the needle as Thetis does.
+    // From Thetis MeterManager.cs:40785-40852 [v2.10.3.15] (renderNeedle)
+    if (m_showHistory) {
+        const auto [lo, hi] = historyRange();
+        const float tipR = radius + 14;
+        QPolygonF wedge;
+        wedge << QPointF(cx, needleCy);
+        const int steps = std::max(1, static_cast<int>(std::ceil((hi - lo) * 100.0f)));
+        for (int i = 0; i <= steps; ++i) {
+            const float angle = fractionToAngle(lo + (hi - lo) * static_cast<float>(i) / steps);
+            wedge << QPointF(cx + tipR * std::cos(angle), cy - tipR * std::sin(angle));
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_historyColor);
+        p.drawPolygon(wedge);
+        p.setBrush(Qt::NoBrush);
+    }
+
     {
         const float angle = fractionToAngle(m_needleFraction);
 
@@ -984,17 +1252,21 @@ void SMeterWidget::paintClassic(QPainter& p)
         const float tipY = cy - tipR * std::sin(angle);
 
         // Needle shadow
-        p.setPen(QPen(QColor(0, 0, 0, 80), 3));
-        p.drawLine(QPointF(cx + 1, needleCy + 1), QPointF(tipX + 1, tipY + 1));
+        // NereusSDR: unless the copy turns it off.
+        if (m_shadow) {
+            p.setPen(QPen(QColor(0, 0, 0, 80), 3));
+            p.drawLine(QPointF(cx + 1, needleCy + 1), QPointF(tipX + 1, tipY + 1));
+        }
 
         // Needle
-        p.setPen(QPen(QColor(0xff, 0xff, 0xff), 2));
+        // NereusSDR: in the copy's receive or transmit needle colour.
+        p.setPen(QPen(shownNeedleColor(kClassicNeedle), 2));
         p.drawLine(QPointF(cx, needleCy), QPointF(tipX, tipY));
     }
 
     // Draw peak marker (small triangle) - only in RX S-Meter Peak mode
     if (peakMarkerVisible()) {
-        const float frac = dbmToFraction(m_peakDbm);
+        const float frac = rxFraction(m_peakDbm);
         const float angle = fractionToAngle(frac);
         const float markerR = radius - 2;
 
@@ -1020,7 +1292,7 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     // -- Draw peak hold line (configurable overlay, independent of RX mode) ---
     if (peakHoldLineVisible()) {
-        float frac = dbmToFraction(m_peakHoldDbm);
+        float frac = rxFraction(m_peakHoldDbm);
         if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
             frac = m_needleFraction;
         } else {
@@ -1035,7 +1307,8 @@ void SMeterWidget::paintClassic(QPainter& p)
         const QPointF outer(cx + (radius + 10) * cosA,
                             cy - (radius + 10) * sinA);
 
-        p.setPen(QPen(QColor(0xff, 0x44, 0x44, 0xcc), 2));
+        // NereusSDR: in the copy's peak hold colour.
+        p.setPen(QPen(m_peakHoldColor.isValid() ? m_peakHoldColor : kClassicPeakHold, 2));
         p.drawLine(inner, outer);
     }
 
@@ -1052,8 +1325,8 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     if (m_transmitting) {
         // TX mode: show TX source label (center), mode name (left), value (right)
-        static const char* txLabels[] = {"Power", "SWR", "Level", "Compression"};
-        const QString srcLabel = txLabels[static_cast<int>(m_txMode)];
+        // NereusSDR: txModeToLabel(), which names the appended modes too.
+        const QString srcLabel = txModeToLabel(m_txMode);
         p.setFont(srcFont);
         p.setPen(QColor(0x80, 0x90, 0xa0));
         p.drawText((w - sfm.horizontalAdvance(srcLabel)) / 2, topY, srcLabel);
@@ -1095,7 +1368,11 @@ void SMeterWidget::paintClassic(QPainter& p)
 
 void SMeterWidget::paintVintage(QPainter& p)
 {
-    const VintageFaceTheme& theme = VintageMeterFace::theme(static_cast<int>(m_faceStyle));
+    // NereusSDR: the copy's dark mode and power scale colour.
+    VintageFaceTheme theme = shownTheme(m_faceStyle, m_darkMode);
+    if (m_powerScaleColor.isValid()) {
+        theme.green = m_powerScaleColor.rgb();
+    }
     // NereusSDR-native: the plate keeps the Main Panel dial's proportions.
     const QRectF bounds = plateRect();
 
@@ -1110,10 +1387,12 @@ void SMeterWidget::paintVintage(QPainter& p)
     // (the user's colour when set) shows at the corners and beside a
     // centred plate.
     const QColor surround(Qt::transparent);
-    const QString key = QString("%1x%2@%3|%4|%5|%6|%7")
+    const QString key = QString("%1x%2@%3|%4|%5|%6|%7|%8|%9")
         .arg(width()).arg(height()).arg(dpr)
         .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width())
-        .arg(WorkspacePreview::enabled());
+        .arg(WorkspacePreview::enabled())
+        .arg(m_darkMode)
+        .arg(m_powerScaleColor.isValid() ? m_powerScaleColor.name() : QString());
 
     if (key != m_faceCacheKey || m_faceCache.isNull()) {
         VintageScale scale;
@@ -1169,6 +1448,12 @@ void SMeterWidget::paintVintage(QPainter& p)
                     tick(static_cast<float>(pw) / m_powerScaleMax, major,
                          major ? label : QString());
                 }
+                // NereusSDR: a copy's power scale colour below the red
+                // zone (the theme's green carries it).
+                if (m_powerScaleColor.isValid()) {
+                    scale.bands.append({0.0f, m_powerRedStart / m_powerScaleMax - 0.001f,
+                                        VintageScaleBand::Color::Green});
+                }
                 redFrom(m_powerRedStart / m_powerScaleMax);
                 break;
             }
@@ -1198,6 +1483,47 @@ void SMeterWidget::paintVintage(QPainter& p)
                 for (int db = -25; db <= 0; ++db) {
                     const bool major = (db % 5) == 0;
                     tick((db + 25.0f) / 25.0f, major, major ? QString::number(db) : QString());
+                }
+                break;
+            // NereusSDR: the appended modes.  Titles from Thetis
+            // MeterManager.cs:2272-2273, 2276, 2305 [v2.10.3.15] (ReadingName);
+            // majors at the calibration keys, no red zone.
+            case TxMode::Alc:
+                title  = QStringLiteral("ALC COMPRESSION");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = static_cast<int>(kAlcMinDb); db <= static_cast<int>(kAlcMaxDb); ++db) {
+                    const bool major = (db % static_cast<int>(kAlcStepDb)) == 0;
+                    tick(txValueToFraction(static_cast<float>(db)), major,
+                         major ? QString::number(db) : QString());
+                }
+                break;
+            case TxMode::AlcGroup:
+                title  = QStringLiteral("ALC GROUP");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = static_cast<int>(kAlcGroupMinDb); db <= static_cast<int>(kAlcGroupMaxDb); db += 5) {
+                    const bool major = db == static_cast<int>(kAlcGroupMinDb)
+                        || db == static_cast<int>(kAlcGroupMidDb) || db == static_cast<int>(kAlcGroupMaxDb);
+                    tick(txValueToFraction(static_cast<float>(db)), major,
+                         major ? QString::number(db) : QString());
+                }
+                break;
+            case TxMode::Volts:
+                title  = QStringLiteral("VOLTS");
+                legend = QStringLiteral("VOLTS DC");
+                for (int tenths = static_cast<int>(kVoltsMin * 10.0f); tenths <= static_cast<int>(kVoltsMax * 10.0f);
+                     tenths += 5) {
+                    const bool major = (tenths % 25) == 0;
+                    tick(txValueToFraction(tenths / 10.0f), major,
+                         major ? QString::number(tenths / 10.0, 'f', (tenths % 10) ? 1 : 0) : QString());
+                }
+                break;
+            case TxMode::Amps:
+                title  = QStringLiteral("AMPS");
+                legend = QStringLiteral("AMPERES");
+                for (int a = static_cast<int>(kAmpsMin); a <= static_cast<int>(kAmpsMax); a += static_cast<int>(kAmpsStep)) {
+                    const bool major = (a % (2 * static_cast<int>(kAmpsStep))) == 0;
+                    tick(txValueToFraction(static_cast<float>(a)), major,
+                         major ? QString::number(a) : QString());
                 }
                 break;
             }
@@ -1251,7 +1577,7 @@ void SMeterWidget::paintVintage(QPainter& p)
 
     // -- Peak marker (RX Signal Peak mode): wedge riding outside the arc ------
     if (peakMarkerVisible()) {
-        const float frac = dbmToFraction(m_peakDbm);
+        const float frac = rxFraction(m_peakDbm);
         const double a = qDegreesToRadians(VintageMeterFace::angleDeg(frac));
         const QPointF radial(std::sin(a), -std::cos(a));
         const QPointF across(std::cos(a), std::sin(a));
@@ -1268,20 +1594,40 @@ void SMeterWidget::paintVintage(QPainter& p)
         p.drawPath(wedge);
     }
 
+    // -- History wedge (same rules as the classic face) -----------------------
+    if (m_showHistory) {
+        const auto [lo, hi] = historyRange();
+        QPolygonF wedge;
+        wedge << g.pivot;
+        const int steps = std::max(1, static_cast<int>(std::ceil((hi - lo) * 100.0f)));
+        for (int i = 0; i <= steps; ++i) {
+            wedge << VintageMeterFace::pointAt(g, lo + (hi - lo) * static_cast<float>(i) / steps, g.radius);
+        }
+        p.save();
+        p.setClipRect(g.face);
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_historyColor);
+        p.drawPolygon(wedge);
+        p.restore();
+    }
+
     // -- Peak hold line (same rules as the classic face) ----------------------
     if (peakHoldLineVisible()) {
-        float frac = dbmToFraction(m_peakHoldDbm);
+        float frac = rxFraction(m_peakHoldDbm);
         if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
             frac = m_needleFraction;
         } else {
             frac = qMax(frac, m_needleFraction);
         }
-        p.setPen(QPen(QColor(theme.red), std::max(1.6, 3.0 * u), Qt::SolidLine, Qt::FlatCap));
+        p.setPen(QPen(m_peakHoldColor.isValid() ? m_peakHoldColor : QColor(theme.red),
+                      std::max(1.6, 3.0 * u), Qt::SolidLine, Qt::FlatCap));
         p.drawLine(VintageMeterFace::pointAt(g, frac, g.radius + 1.5 * u),
                    VintageMeterFace::pointAt(g, frac, g.radius + 15.0 * u));
     }
 
-    VintageMeterFace::paintPointer(p, g, theme, m_needleFraction);
+    // NereusSDR: the copy's needle colour and shadow.
+    theme.pointer = shownNeedleColor(QColor(theme.pointer)).rgb();
+    VintageMeterFace::paintPointer(p, g, theme, m_needleFraction, m_shadow);
     VintageMeterFace::paintHub(p, g, theme);
 }
 
@@ -1476,6 +1822,180 @@ void SMeterWidget::resetPeak()
     update();
 }
 
+// --- Per-copy appearance and dynamics ----------------------------------------
+// NereusSDR-native setters for the Thetis meter item settings a container
+// copy keeps (SMeterDialContent).  None touches AppSettings.
+
+void SMeterWidget::setPeakHoldColor(const QColor& color)
+{
+    m_peakHoldColor = color;
+    update();
+}
+
+void SMeterWidget::setNeedleColor(const QColor& color)
+{
+    m_needleColor = color;
+    update();
+}
+
+void SMeterWidget::setSubNeedleColor(const QColor& color)
+{
+    m_subNeedleColor = color;
+    update();
+}
+
+void SMeterWidget::setShadow(bool on)
+{
+    m_shadow = on;
+    update();
+}
+
+void SMeterWidget::setPowerScaleColor(const QColor& color)
+{
+    m_powerScaleColor = color;
+    m_faceCache = QPixmap();
+    m_faceCacheKey.clear();
+    update();
+}
+
+void SMeterWidget::setDarkMode(bool on)
+{
+    m_darkMode = on;
+    m_faceCache = QPixmap();
+    m_faceCacheKey.clear();
+    update();
+}
+
+int SMeterWidget::updateIntervalMs() const
+{
+    return m_needleAnimation.interval();
+}
+
+// The needle's update and the history's sampling run at the interval, as
+// Thetis's Update does.
+void SMeterWidget::setUpdateIntervalMs(int ms)
+{
+    const int interval = std::clamp(ms, kMinUpdateIntervalMs, kMaxUpdateIntervalMs);
+    m_needleAnimation.setInterval(interval);
+    m_historyTimer.setInterval(interval);
+}
+
+void SMeterWidget::setAttackRatio(std::optional<float> ratio)
+{
+    m_attackRatio = ratio ? std::optional<float>(std::clamp(*ratio, 0.0f, 1.0f)) : std::nullopt;
+}
+
+void SMeterWidget::setDecayRatio(std::optional<float> ratio)
+{
+    m_decayRatio = ratio ? std::optional<float>(std::clamp(*ratio, 0.0f, 1.0f)) : std::nullopt;
+}
+
+void SMeterWidget::setShowHistory(bool on)
+{
+    m_showHistory = on;
+    if (on) {
+        m_historyTimer.start();
+    } else {
+        m_historyTimer.stop();
+        m_history.clear();
+    }
+    update();
+}
+
+void SMeterWidget::setHistoryColor(const QColor& color)
+{
+    m_historyColor = color.isValid() ? color : QColor::fromRgba(kDefaultHistoryRgba);
+    update();
+}
+
+void SMeterWidget::setHistoryDurationMs(int ms)
+{
+    m_historyDurationMs = std::clamp(ms, kMinBarHistoryDurationMs, kMaxBarHistoryDurationMs);
+}
+
+void SMeterWidget::setIgnoreHistoryMs(int ms)
+{
+    m_ignoreHistoryMs = std::clamp(ms, kMinBarIgnoreHistoryMs, kMaxBarIgnoreHistoryMs);
+}
+
+// From Thetis MeterManager.cs:22018-22029 [v2.10.3.15] (clsNeedleItem.Update):
+// one value per update, the list sized by the duration.  NereusSDR keeps
+// the needle's position (Thetis keeps its value), so the wedge spans the
+// scale as the needle moved over it.
+void SMeterWidget::sampleHistory()
+{
+    if (ignoringHistory()) {
+        return;
+    }
+    const std::pair<float, float> before = historyRange();
+    // signal history
+    m_history.append(m_needleFraction); // adds to end of the list
+    // HistoryDuration is never less than UpdateInterval, so the list keeps
+    // one value at least.
+    // From Thetis MeterManager.cs:22100-22108 [v2.10.3.15] (HistoryDuration)
+    const int keep = std::max(1, m_historyDurationMs / updateIntervalMs());
+    const int numberToRemove = static_cast<int>(m_history.size()) - keep;
+    // the list is sized based on delay
+    if (numberToRemove > 0) {
+        m_history.remove(0, numberToRemove); // remove the oldest, the head of the list
+    }
+    if (historyRange() != before) {
+        update();
+    }
+}
+
+// From Thetis MeterManager.cs:22140-22154 [v2.10.3.15] (History): the
+// value itself while the list is empty.
+std::pair<float, float> SMeterWidget::historyRange() const
+{
+    if (m_history.isEmpty()) {
+        return {m_needleFraction, m_needleFraction};
+    }
+    const auto [lo, hi] = std::minmax_element(m_history.cbegin(), m_history.cend());
+    return {*lo, *hi};
+}
+
+// Thetis counts the readings it ignores (IgnoreHistoryDuration /
+// UpdateInterval); NereusSDR times the same span.
+bool SMeterWidget::ignoringHistory() const
+{
+    return m_ignoreTimer.isValid()
+        && m_ignoreTimer.elapsed() + m_testTimeOffsetMs - m_ignoreStartOffsetMs < m_ignoreHistoryMs;
+}
+
+// From Thetis MeterManager.cs:22131-22139 [v2.10.3.15] (clsNeedleItem.ClearHistory)
+void SMeterWidget::clearHistory()
+{
+    m_history.clear();
+    // ignore next N readings to make up 2 second of ignore
+    m_ignoreTimer.start();
+    m_ignoreStartOffsetMs = m_testTimeOffsetMs;
+    // NereusSDR: Thetis's peak hold marker is the history's maximum
+    // (renderNeedle, MeterManager.cs:40785-40801), so it clears with it.
+    resetPeak();
+}
+
+QColor SMeterWidget::faceNeedleColor(FaceStyle face, bool darkMode)
+{
+    return face == FaceStyle::Classic ? kClassicNeedle : QColor(shownTheme(face, darkMode).pointer);
+}
+
+QColor SMeterWidget::facePeakHoldColor(FaceStyle face)
+{
+    return face == FaceStyle::Classic ? kClassicPeakHold : QColor(shownTheme(face, false).red);
+}
+
+QColor SMeterWidget::facePowerScaleColor(FaceStyle face, bool darkMode)
+{
+    return face == FaceStyle::Classic ? kClassicTxScale : QColor(shownTheme(face, darkMode).ink);
+}
+
+QColor SMeterWidget::shownNeedleColor(const QColor& faceColor) const
+{
+    const QColor& own = m_transmitting ? m_subNeedleColor : m_needleColor;
+    return own.isValid() ? own : faceColor;
+}
+
 // --- Context menu ------------------------------------------------------------
 // NereusSDR-native UX per design doc ss5.4.2. AetherSDR does not have a
 // contextMenuEvent; it uses an inline settings strip in AppletPanel (removed
@@ -1512,8 +2032,31 @@ QMenu* SMeterWidget::buildContextMenu(QObject* parent)
         {"Level",       TxMode::Level},
         {"Compression", TxMode::Compression},
     };
+    // NereusSDR: a container copy (SettingsStore::Instance), whose owner
+    // feeds every TX reading, also offers the appended modes.  Its menu is
+    // sectioned by Thetis ANANMM's display groups (MeterManager.cs:
+    // 24131-24135 [v2.10.3.15]: PWR/SWR, Comp, ALC, Volts/Amps), with Level
+    // and Compression in the Comp section.  The Main Panel's dial offers
+    // the four modes it is fed, unsectioned, as before.
+    struct TxSection { QString label; TxMode mode; int group; };
+    QVector<TxSection> txOrder;
     for (const auto& e : txEntries) {
-        auto* a = txMenu->addAction(QLatin1String(e.label));
+        txOrder.append({QLatin1String(e.label), e.mode,
+                        (e.mode == TxMode::Power || e.mode == TxMode::SWR) ? 1 : 2});
+    }
+    if (m_settingsStore == SettingsStore::Instance) {
+        txOrder.append({txModeToLabel(TxMode::Alc), TxMode::Alc, 2});
+        txOrder.append({txModeToLabel(TxMode::AlcGroup), TxMode::AlcGroup, 3});
+        txOrder.append({txModeToLabel(TxMode::Volts), TxMode::Volts, 4});
+        txOrder.append({txModeToLabel(TxMode::Amps), TxMode::Amps, 4});
+    }
+    int lastGroup = 0;
+    for (const TxSection& e : txOrder) {
+        if (m_settingsStore == SettingsStore::Instance && lastGroup != 0 && e.group != lastGroup) {
+            txMenu->addSeparator();
+        }
+        lastGroup = e.group;
+        auto* a = txMenu->addAction(e.label);
         a->setCheckable(true);
         a->setChecked(m_txMode == e.mode);
         txGroup->addAction(a);
@@ -1619,6 +2162,11 @@ QString SMeterWidget::txModeToLabel(TxMode mode)
     case TxMode::SWR:         return "SWR";
     case TxMode::Level:       return "Level";
     case TxMode::Compression: return "Compression";
+    // Thetis MeterManager.cs:2272-2273, 2276, 2305 [v2.10.3.15] (ReadingName)
+    case TxMode::Alc:         return "ALC Compression";
+    case TxMode::AlcGroup:    return "ALC Group";
+    case TxMode::Volts:       return "Volts";
+    case TxMode::Amps:        return "Amps";
     }
     return "Power";
 }

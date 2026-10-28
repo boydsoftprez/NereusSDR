@@ -244,7 +244,7 @@ extension PhoneSetupKeysV29Tests {
         rig.main.displayEditScope = .all
         #expect(rig.main.displayEditingSettings.traceFill)
         #expect(!rig.main.band.settings.traceFill) // Drawing remains the effective focusedPan.
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         #expect(!rig.main.displayEditingSettings.traceFill)
         rig.main.changeDisplay(fields: ["traceFill"]) { $0.traceFill = true }
         #expect(rig.main.ownDisplayFields(among: ["traceFill"]).isEmpty)
@@ -297,7 +297,7 @@ extension PhoneSetupKeysV29Tests {
         for readout in [SetupDescription.EffectiveReadout.waterfallLow, .waterfallHigh, .spectrumMax, .spectrumMin] {
             #expect(rig.main.displayEffectiveValue(readout) == nil)
         }
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         rig.main.changeDisplay { $0.gridFollowsNoiseFloor = true; $0.gridKeepsRange = false }
         #expect(keys.unavailableReason(forPhoneKey: "DisplayGridMin")?.isEmpty == false)
         let minAccepted = keys.set(.integer(-90), forPhoneKey: "DisplayGridMin")
@@ -312,13 +312,15 @@ extension PhoneSetupKeysV29Tests {
         #expect(rig.recorded.settingsSent.isEmpty)
     }
 
-    @Test func version29TreeKeepsNativeEntryThenAllEightCanonicalPagesAndLegacyTreeKeepsItsNames() throws {
+    // Rewritten for spec section 7.1: version 29 lists the eight pages without "On this phone".
+    @Test func version29TreeListsTheEightCanonicalPagesAndLegacyTreeKeepsItsNames() throws {
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("resources/setup")
         let live = try SetupDescription.parse(json: String(contentsOf: folder.appendingPathComponent("display.json"), encoding: .utf8))
         let tree = SetupTree.categories(described: ["display": live], order: ["display"], unreadable: [:], stackOffered: true)
         let display = try #require(tree.first { $0.title == "Display" })
-        #expect(display.pages.map(\.title) == ["On this phone", "Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"])
+        #expect(display.pages.map(\.title) == ["Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"])
+        #expect(!display.pages.contains { $0.page == .displayOnThisPhone })
         let frozen = try SetupDescription.parse(json: String(contentsOf: folder.appendingPathComponent("legacy/display-v28.json"), encoding: .utf8))
         let legacy = SetupTree.categories(described: ["display": frozen], order: ["display"], unreadable: [:], stackOffered: true)
         #expect(legacy.first { $0.title == "Display" }?.pages.map(\.title) == ["On this phone", "Spectrum Defaults", "Spectrum Peaks", "Waterfall Defaults", "Grid & Scales", "Multimeter", "TX Display", "3D View"])
@@ -327,6 +329,9 @@ extension PhoneSetupKeysV29Tests {
 
 
 extension PhoneSetupKeysV29Tests {
+    // Each band's dB Max and dB Min are the Core's now (CoreBandScale); on
+    // this older Core the phone keeps one scale for every band, so All's
+    // band choice edits that one scale, and 3D Floor still per band.
     @Test func allBandPickerEditsAnInactiveKeptBandWithoutRetuningOrChangingTheLivePicture() throws {
         let rig = try Rig()
         let defaults = try #require(UserDefaults(suiteName: rig.suite))
@@ -346,7 +351,7 @@ extension PhoneSetupKeysV29Tests {
         rig.main.displayEditScope = .all
         rig.main.displayBandChoice = "5"
         #expect(rig.main.displayEditingBand == "5")
-        #expect(keys.value(forPhoneKey: "DisplayGridMax") == .integer(-40))
+        #expect(keys.value(forPhoneKey: "DisplayGridMax") == .integer(-30))
         #expect(keys.unavailableReason(forPhoneKey: "DisplayGridMax") == nil)
         let maxAccepted = keys.set(.integer(-52), forPhoneKey: "DisplayGridMax")
         let minAccepted = keys.set(.integer(-142), forPhoneKey: "DisplayGridMin")
@@ -356,9 +361,10 @@ extension PhoneSetupKeysV29Tests {
         stored.enterBand("5")
         #expect(stored.scaleTopDbm == -52 && stored.scaleBottomDbm == -142 && stored.threeDFloorDb == 11)
         stored.enterBand("7")
-        #expect(stored.scaleTopDbm == -30 && stored.scaleBottomDbm == -130 && stored.threeDFloorDb == 8)
+        #expect(stored.scaleTopDbm == -52 && stored.scaleBottomDbm == -142 && stored.threeDFloorDb == 8)
         #expect(rig.main.band.settings.scaleBand == live.scaleBand)
-        #expect(rig.main.band.settings.scaleTopDbm == live.scaleTopDbm && rig.main.band.settings.scaleBottomDbm == live.scaleBottomDbm)
+        #expect(rig.main.band.settings.scaleTopDbm == -52 && rig.main.band.settings.scaleBottomDbm == -142)
+        #expect(rig.main.band.settings.threeDFloorDb == live.threeDFloorDb)
         #expect(rig.main.band.state.frame == frame && rig.main.band.requestedView == view)
         #expect(rig.mirror.object("slice:0")?["frequency"] == vfo)
         #expect(rig.sent.count == subscriptions && rig.retunes.isEmpty && rig.recorded.settingsSent.isEmpty)
@@ -381,9 +387,10 @@ extension PhoneSetupKeysV29Tests {
         restarted.main.displayEditScope = .all
         restarted.main.displayBandChoice = "5"
         #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-55))
-        restarted.main.displayEditScope = .pan
+        restarted.main.displayEditScope = .pan(.first)
         #expect(restarted.main.displayEditingBand == "7")
-        #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-30))
+        // The phone's one scale, on this older Core.
+        #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-55))
         #expect(restarted.recorded.settingsSent.isEmpty && restarted.retunes.isEmpty)
     }
 }
@@ -644,7 +651,7 @@ extension PhoneSetupKeysV29Tests {
         #expect(allMode && allScale && allBlack)
         #expect(rig.store.masterSettings(forPan: "1").waterfallBlackLevel == 65)
         #expect(rig.main.band.transmitOverlay)
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         rig.mirror.apply(.delta(.init(key: "txState", properties: [.init(ordinal: 0, name: "keyed", value: .bool(false))])))
         for _ in 0..<100 {
             if !rig.main.band.transmitOverlay { break }

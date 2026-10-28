@@ -1,7 +1,8 @@
 # Display codec v2: every row stands alone
 
 Status: approved by JJ on 2026-10-22 (after two spec reviews); his decisions
-are in section 13. No code yet.
+are in section 13. Implemented for the desktop and Core, merged to main in
+PR 631 (2026-10-23); the phone's decoder merged in PR 632 (2026-10-23).
 
 JJ's decision of 2026-10-22: "yes do C then build A". Step 1 (C) is a Core
 setting that sends every v1 display frame as a keyframe, with no wire change,

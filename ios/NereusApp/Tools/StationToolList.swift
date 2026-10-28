@@ -1,5 +1,11 @@
 // NereusSDR for iOS: the Tools tab's list, in the desktop's order from the Core's catalogue, each marked where it runs
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 18, Roundtable's row after FreeDV
+// Reporter. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, CWX opens its page; a Core that lists it unbuilt
+//             leaves it out (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import NereusModels
 
@@ -30,12 +36,14 @@ enum StationToolList {
         case txEqualizer
         case pureSignal
         case diversity
+        case cwx
         case catControl
         case tciServer
         case vaxAudio
         case performance
         case supportBundle
         case rotor
+        case roundtable
     }
 
     /// One row of the list.
@@ -73,11 +81,16 @@ enum StationToolList {
     /// The tools a radio without their hardware leaves out when the Core
     /// does not offer them (the hardware-presence exception).
     static let hardwareTools: Set<String> = ["pureSignal", "diversity"]
+    /// The tools a Core lists unoffered while its desktop has not built
+    /// them: left out, as a tool the desktop lacks (D41). CWX was such a
+    /// tool before CW transmit.
+    static let unbuiltTools: Set<String> = [cwxId]
+    static let cwxId = "cwx"
 
     /// Why a tool this app has a page for cannot open when the Core does
     /// not offer it, or nil when it is left out instead.
     static func reasonWhenNotOffered(_ id: String) -> String? {
-        if hardwareTools.contains(id) {
+        if hardwareTools.contains(id) || unbuiltTools.contains(id) {
             return nil
         }
         switch id {
@@ -114,6 +127,8 @@ enum StationToolList {
               tag: .core, page: .pureSignal),
         Known(id: "diversity", title: "Diversity", detail: "Two-receiver diversity and phasing",
               tag: .core, page: .diversity),
+        Known(id: cwxId, title: "CWX", detail: "Send CW from text and the Core's eight memories",
+              tag: .core, page: .cwx),
         Known(id: "catControl", title: "CAT Control",
               detail: "The Core's CAT channels for logging and digital-mode apps", tag: .core, page: .catControl),
         Known(id: "tciServer", title: "TCI Server", detail: "TCI apps connected to the Core",
@@ -176,6 +191,25 @@ enum StationToolList {
             entries.append(entry(rotor, tag: rotor.tag, reason: connected ? rotorOlderCoreReason : notConnectedReason))
         }
         return entries
+    }
+
+    // MARK: Roundtable
+
+    static let roundtableId = "roundtable"
+    static let roundtableTitle = "Roundtable"
+    static let roundtableDetail = "Who hears whom on every frequency, and messages"
+
+    /// The list with Roundtable's row after FreeDV Reporter (spec 11.3),
+    /// greyed with `reason` while the Core's Roundtable can't be reached.
+    /// Roundtable's page reads the Core's link, not its tool catalogue, so
+    /// the row is added here whatever the catalogue lists.
+    static func withRoundtable(_ entries: [Entry], reason: String?) -> [Entry] {
+        var next = entries.filter { $0.id != roundtableId }
+        let row = Entry(id: roundtableId, title: roundtableTitle, detail: reason ?? roundtableDetail, tag: .core,
+                        page: .roundtable, reason: reason)
+        let after = next.firstIndex { $0.id == "freedvReporter" } ?? next.firstIndex { $0.id == "spotHub" }
+        next.insert(row, at: after.map { $0 + 1 } ?? 0)
+        return next
     }
 
     private static func entry(_ tool: Known, tag: SetupTag, reason: String?) -> Entry {

@@ -14,6 +14,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Click focus and keyPressEvent: a key goes to the item last
+//                 under the pointer (MeterItem::handleKeyPress); moving off
+//                 an item tells it the pointer left (handleMouseLeave).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - updateMmioValue(item, index, ...): a data source reading
+//                 for each of an item's variables. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / TX for every item: setItemTxState reaches
+//                 every item and clears history on a change;
+//                 clearItemHistory(); drawFadeVeils(). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - lastBindingValues(): the latest value of each binding, for
+//                 data out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - Per-item update interval: updateMeterValue delivers a
+//                 reading to an item only when its interval has passed
+//                 (MeterItem::acceptsUpdate), on a monotonic clock a test
+//                 can replace. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - setItemTxState: the transmit state ContainerManager
 //                 receives reaches fade covers, VFO displays and button
 //                 grids, including items added later. J.J. Boyd (KG4VCF),
@@ -86,6 +105,7 @@ mw0lge@grange-lane.co.uk
 #include <QImage>
 #include <QVector>
 #include <QPointer>
+#include <functional>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
@@ -116,12 +136,23 @@ public:
     QVector<MeterItem*> items() const { return m_items; }
 
     void updateMeterValue(int bindingId, double value);
+    // The latest value of each binding this meter has received (data out
+    // sends them).
+    QHash<int, double> lastBindingValues() const { return m_lastBindingValue; }
     // MMIO remains an individual item's cached endpoint source.
     void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {},
+                         MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
+    // A reading for data source variable `index` (Thetis MeterVariables).
+    // Index 0 is the call above; index 1 and up reach setSecondaryValue.
+    void updateMmioValue(MeterItem* item, int index, double value, const QString& unavailableReason = {},
                          MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
     void advanceMeters(qint64 monotonicMs);
 #ifdef NEREUS_BUILD_TESTS
     quint64 readingInvalidationsForTest() const { return m_readingInvalidations; }
+    // Replaces the monotonic ms clock updateMeterValue throttles on.
+    void setMonotonicClockForTest(std::function<qint64()> clock) { m_monotonicClock = std::move(clock); }
+    // The fade veils drawItems and the GPU overlay draw.
+    void drawFadeVeilsForTest(QPainter& p) const { drawFadeVeils(p); }
 #ifdef NEREUS_GPU_SPECTRUM
     void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
     bool backgroundDirtyForTest() const { return m_bgDirty; }
@@ -176,13 +207,18 @@ public:
     void setDisplayGroup(int group);
     int  displayGroup() const { return m_displayGroup; }
 
-    // NereusSDR: the transmit state for items that change on transmit
-    // (FadeCoverItem::setTxState, VfoDisplayItem and ButtonBoxItem
-    // setTransmitting). ContainerManager::setTransmitting feeds it; every
-    // item added later takes it at once. Applied to every item on each call
-    // (an item's own default need not match), then the widget repaints.
+    // NereusSDR: the transmit state for items (MeterItem::setTransmitting:
+    // every item's Fade on RX / TX; fade covers, VFO displays and button
+    // grids also change on transmit). ContainerManager::setTransmitting
+    // feeds it; every item added later takes it at once. Applied to every
+    // item on each call (an item's own default need not match), then the
+    // widget repaints. A change of state clears every item's history
+    // (clearItemHistory), as Thetis does on MOX.
     void setItemTxState(bool tx);
     bool itemTxState() const { return m_itemTxState; }
+    // Every item's ClearHistory (Thetis ZeroOut): on a transmit change and
+    // on a band change (ContainerManager::clearItemHistory).
+    void clearItemHistory();
 
     // Returns true if an item should paint under the current mode/group.
     // Mirrors Thetis MeterManager.cs:31366-31368 verbatim.
@@ -244,7 +280,9 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
 
 private:
@@ -253,9 +291,14 @@ private:
     static bool applyItemTxState(MeterItem* item, bool tx);
     // Task 39: dims each drawn item whose binding is unavailable.
     void drawUnavailableVeils(QPainter& p) const;
+    // Fade on RX / TX: each item's fade veil (ContentFade).
+    void drawFadeVeils(QPainter& p) const;
     QHash<int, QString> m_unavailableBindings;
     QHash<int, MeterItem::BindingSupport> m_bindingSupport;
     QVector<MeterItem*> m_items;
+    // The item last under the pointer: keys go to it, and it hears that
+    // the pointer left when the pointer moves off it or leaves the meter.
+    QPointer<MeterItem> m_hoverItem;
     struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
     QVector<LegacyRecord> m_legacyRecords;
 
@@ -270,6 +313,9 @@ private:
     struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
     QHash<QString, MmioReading> m_lastMmioReading;
     quint64 m_readingInvalidations{0};
+    // Per-item update interval clock; empty means the steady clock.
+    std::function<qint64()> m_monotonicClock;
+    qint64 monotonicNowMs() const;
     void invalidateItemLayers(const MeterItem* item);
     int m_powerScale{0};
     double m_powerScaleTop{0.0};

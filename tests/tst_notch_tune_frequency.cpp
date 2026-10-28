@@ -26,6 +26,11 @@
 // never-opened-channel hatch is an out-of-bounds read here, not a no-op.
 // Every slot uses a really opened channel through the NEREUS_BUILD_TESTS
 // friend seam, the pattern at tests/tst_stream_pool_binding.cpp:1018,1033.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CW receive shift rides every shift writer
+//               with the invariant intact; voice and digital rows unchanged
+//               (R-CW-23). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
@@ -582,6 +587,68 @@ private slots:
         // accident on the bench.
         model.bindSliceToStream(b, b->frequency() + 4000.0);
         QVERIFY2(invariantHolds("after retune"), "invariant broken at retune");
+    }
+
+    // CW transmit R-CW-23: in CW the demodulated RF is the dial minus the
+    // pitch (CWU) or plus it (CWL), and the invariant holds against that
+    // through a mode change, a CTUN drag and a bind. The voice and digital
+    // rows keep today's demodulated RF.
+    void the_cw_term_rides_every_writer_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<double>("modeTerm");
+        QTest::newRow("CWU") << static_cast<int>(DSPMode::CWU) << -600.0;
+        QTest::newRow("CWL") << static_cast<int>(DSPMode::CWL) << 600.0;
+        QTest::newRow("USB") << static_cast<int>(DSPMode::USB) << 0.0;
+        QTest::newRow("LSB") << static_cast<int>(DSPMode::LSB) << 0.0;
+        QTest::newRow("AM") << static_cast<int>(DSPMode::AM) << 0.0;
+        QTest::newRow("DIGU") << static_cast<int>(DSPMode::DIGU) << 1500.0;
+        QTest::newRow("DIGL") << static_cast<int>(DSPMode::DIGL) << 2210.0;
+    }
+    void the_cw_term_rides_every_writer()
+    {
+        QFETCH(int, mode);
+        QFETCH(double, modeTerm);
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+        model.sliceById(model.addSlice())->setFrequency(kSliceAFreqHz);
+        SliceModel* b = model.sliceById(model.addSlice());
+        QVERIFY(b != nullptr);
+        b->setFrequency(kSliceBFreqHz);
+        b->setDiguOffsetHz(1500);
+        b->setDiglOffsetHz(2210);
+        b->setDspMode(static_cast<DSPMode>(mode));
+        RxChannel* ch = engine->rxChannel(b->sliceIndex());
+        QVERIFY(ch != nullptr);
+
+        const auto holds = [&](const char* when) {
+            if (!laneIdle(model)) {
+                return false;
+            }
+            const double want = b->frequency() + modeTerm;
+            if (std::abs(b->demodulatedRxFrequency() - want) > 0.5
+                || std::abs(ch->notchTuneFrequencyHz() + ch->shiftOffsetHz() - want) > 0.5
+                || std::abs(ch->notchTuneFrequencyHz() + ch->notchShiftHz() - want) > 0.5) {
+                qWarning("%s: tunefreq %.1f + shift %.1f, demod %.1f, want %.1f", when,
+                         ch->notchTuneFrequencyHz(), ch->shiftOffsetHz(),
+                         b->demodulatedRxFrequency(), want);
+                return false;
+            }
+            return true;
+        };
+        QVERIFY2(holds("after the mode change"), "invariant broken at the mode change");
+        QCOMPARE(ch->shiftOffsetHz(), (kSliceBFreqHz - kSliceAFreqHz) + modeTerm);
+        model.reshiftSlicesOnStream(b->streamIndex(), b->frequency() - 12000.0);
+        QVERIFY2(holds("after CTUN drag"), "invariant broken at a CTUN drag");
+        model.bindSliceToStream(b, b->frequency() + 4000.0);
+        QVERIFY2(holds("after retune"), "invariant broken at a retune");
     }
 };
 

@@ -1,0 +1,94 @@
+# systemd unit for the NereusSDR Roundtable server.
+#
+# Installed as /etc/systemd/system/nereus-roundtable.service by
+# roundtable/deploy/setup-server.sh. The code lives in /opt/nereus-roundtable
+# (put there by roundtable/deploy.sh), the configuration in
+# /etc/nereus-roundtable/roundtable.conf (written by setup-server.sh from
+# server/roundtable.conf.sample when there is none) and the database and its
+# snapshots in /var/lib/nereus-roundtable (StateDirectory below).
+# The wire is docs/architecture/2026-10-23-roundtable-v1.md.
+
+[Unit]
+Description=NereusSDR Roundtable server
+Documentation=https://github.com/boydsoftprez/NereusSDR/tree/main/roundtable
+After=network.target
+
+[Service]
+Type=exec
+# Ubuntu's own python3 with its python3-websockets and python3-cryptography;
+# nothing from pip.
+ExecStart=/usr/bin/python3 -m nereus_roundtable --config /etc/nereus-roundtable/roundtable.conf
+Environment=PYTHONPATH=/opt/nereus-roundtable
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=5
+# SIGTERM makes the server close every connection and the database.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# --- Identity and state -------------------------------------------------
+# A transient account made for each run. The database and the nightly
+# snapshots are the one place it writes: /var/lib/nereus-roundtable, which
+# systemd keeps across runs for this account name (the daily and snapshot
+# units use the same name and the same directory).
+DynamicUser=yes
+User=nereus-roundtable
+Group=nereus-roundtable
+StateDirectory=nereus-roundtable
+StateDirectoryMode=0700
+
+# --- Network ------------------------------------------------------------
+# The server listens on loopback only (127.0.0.1 and ::1, ports 8720 and
+# 8721); Caddy on the same host is its only peer. It makes no outgoing
+# connection, so nothing else is allowed.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# --- Memory and files -----------------------------------------------------
+# The ceiling (design C12): 500 stations in 150 rooms with 500 live viewers
+# stay well under it (roundtable/tests/load_probe.py). Past it the kernel
+# ends the server, systemd starts it again (Restart=on-failure), and the
+# stations sign in again on their own. Under memory pressure on the whole
+# host the kernel picks this server before Caddy (OOMScoreAdjust below, and
+# -100 in Caddy's drop-in), so the website keeps running.
+MemoryMax=256M
+MemorySwapMax=0
+OOMScoreAdjust=500
+TasksMax=64
+# One descriptor per connection: 500 live sockets, the stations, the
+# listening sockets, the database and a margin for connections refused on
+# arrival. systemd's default of 1024 would stop the server accepting first.
+LimitNOFILE=8192
+
+# --- Sandboxing ---------------------------------------------------------
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Not set, as for the rendezvous service, because no systemd was at hand to
+# prove them against Python, OpenSSL and libffi (cryptography's callbacks):
+# MemoryDenyWriteExecute= and SystemCallFilter=. Candidates once
+# `systemd-analyze security nereus-roundtable` and a full check have run on
+# the server.
+
+[Install]
+WantedBy=multi-user.target

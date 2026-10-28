@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // =================================================================
 // src/core/session/SessionCommandDispatcher.h  (NereusSDR)
 // =================================================================
@@ -85,6 +86,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send,
+//                                    cw.memory, cw.stop and cw.key, read
+//                                    here and answered by the Core's
+//                                    TransmitAccess::cw. AI-assisted via
+//                                    Claude Code.
 //   2026-09-29  J.J. Boyd / KG4VCF  Level Cal: startLevelCalibration and
 //                                    cancelLevelCalibration. AI-assisted via
 //                                    Anthropic Claude Code.
@@ -239,6 +247,10 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4b: the seven
 //                                    rotor verbs, and a session's end ends
 //                                    its rotor hold. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11: the thirteen
+//                                    roundtable.* verbs (handleRoundtable,
+//                                    setRoundtableAccess). AI-assisted via
 //                                    Anthropic Claude Code.
 // =================================================================
 
@@ -441,6 +453,17 @@ public:
     /// Task 36: the answer comes through the reply, at once or later (a key
     /// waiting for its microphone buffer); a later one is emitted then, and
     /// the Core routes it by verb and id to the session that asked.
+    /// CW transmit (R-CW-49): a cw.* request, its arguments read.
+    struct CwRequest {
+        enum class Kind { Send, Memory, Stop, Key };
+        Kind kind{Kind::Stop};
+        /// cw.send's text.
+        QString text;
+        /// cw.memory's number (the sender refuses one outside 1 to 8).
+        int number{0};
+        /// cw.key's down.
+        bool down{false};
+    };
     struct TransmitAccess {
         std::function<SessionMessage(const SessionMessage&, const QString&, const QByteArray&,
                                      std::optional<RemoteMicSource>)> micSource;
@@ -456,6 +479,7 @@ public:
         /// refused stationReceiveOnly.
         std::function<void(const QByteArray& requester, quint64 sequence, quint32 epoch)>
             keepalive;
+        std::function<void(const QByteArray&, const TxKeepalive&)> keepaliveV2;
         /// Fix wave M2 (ruling 8.5): a release of the transmission (the
         /// PureSignal two-tone test off) from `requester`: empty when it may
         /// (it holds transmit, or nobody does), or the refusal naming the
@@ -482,6 +506,14 @@ public:
         /// PA profile verbs on the air (RadioModel::paOnAirEditRefusal).
         /// Unset, no requester holds it.
         std::function<bool(const QByteArray& requester)> holdsTransmit;
+        /// CW transmit (R-CW-49): cw.send, cw.memory, cw.stop and cw.key
+        /// from `requester` on the session `owner`, its arguments read.
+        /// Returns the command.result to send (the Core's rules: the
+        /// session's gate, the holder, the CWX sender and the copies).
+        /// Unset, every one is refused stationReceiveOnly.
+        std::function<SessionMessage(const SessionMessage& invoke, const QString& owner,
+                                     const QByteArray& requester, const CwRequest& request)>
+            cw;
     };
     void setTransmitAccess(TransmitAccess access) { m_transmitAccess = std::move(access); }
     /// iPhone app Task 74 (R-IOS-30): the Core's confirm step, which
@@ -501,6 +533,13 @@ public:
     /// answers them (and sends the backlog) through this; true when it did.
     using RecordAccess = std::function<bool(const NereusSDR::SessionMessage& invoke)>;
     void setRecordAccess(RecordAccess access) { m_recordAccess = std::move(access); }
+    /// Roundtable plan Task 11 (stationRoundtableVersion 1): a roundtable.*
+    /// verb whose arguments read, for the station server, which answers it
+    /// for the asking connection (a read opens that connection's room
+    /// stream; a post and a web sign-in are answered later); true when it
+    /// did.
+    using RoundtableAccess = std::function<bool(const NereusSDR::SessionMessage& invoke)>;
+    void setRoundtableAccess(RoundtableAccess access) { m_roundtableAccess = std::move(access); }
     /// R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     /// txEq.resetCurve are the asking connection's txEqParaEqData write,
     /// so the station server applies and answers them; true when it did.
@@ -707,6 +746,7 @@ private:
     bool m_requesterSharesSlices = false;
     ConfirmAnswer m_confirmAnswer;
     RecordAccess m_recordAccess;
+    RoundtableAccess m_roundtableAccess;
     TxEqCurveAccess m_txEqCurveAccess;
     CfcProfileAccess m_cfcProfileAccess;
     SupportInputs m_supportInputs;
@@ -722,6 +762,8 @@ private:
     // R-IOS-26 (iPhone plan Task 22, parity Task 20): freedv.setMessage,
     // freedv.sendQsy and freedv.setHidden.
     void handleFreedv(const NereusSDR::SessionMessage& invoke);
+    // Roundtable plan Task 11: the roundtable.* verbs.
+    void handleRoundtable(const NereusSDR::SessionMessage& invoke);
     /// Refuses (and answers) a verb whose sliceId names another device's
     /// slice. True when it did.
     bool refusedForAnotherDevice(const NereusSDR::SessionMessage& invoke);
@@ -739,6 +781,8 @@ private:
     // Task 35: tx.key, tx.unkey, tx.tune, tx.twoTone.
     void handleTxMicSource(const NereusSDR::SessionMessage& invoke);
     void handleTxKeying(const NereusSDR::SessionMessage& invoke);
+    // CW transmit (R-CW-49): cw.send, cw.memory, cw.stop, cw.key.
+    void handleCw(const NereusSDR::SessionMessage& invoke);
     TransmitAccess m_transmitAccess;
     struct PendingPureSignalCommand {
         quint32 commandId;

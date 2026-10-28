@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Capture the current remoteCw v2 provider and negotiated
+//               activity tuple. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): the capture declares
+//               remoteCw 1 and cwSettings 1, and captures remoteCwVersion.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the capture
 //                                    declares displayCodec 2, so
 //                                    displayCodecVersion and the start's
@@ -236,6 +241,10 @@
 //   2026-10-22: the capture declares radioAntennaRows 2, so the Core's
 //               RX-only checkbox sums (0..5) are captured unnarrowed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11: the capture declares roundtable,
+//               so stationRoundtableVersion and the `roundtable` object
+//               (RoundtableState) are captured. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -321,6 +330,7 @@
 #include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
+#include "core/roundtable/RoundtableState.h"
 #include "models/TransmitModel.h"
 #include "models/TunerModel.h"
 
@@ -698,6 +708,9 @@ std::optional<QList<QByteArray>> liveSessionWire(
     clientEnd->sendText(SessionMessages::encode(SessionMessages::hello(
         kSessionProtocolMajor, kSessionProtocolMinor, 0, QStringLiteral("link-surface"),
         {kSessionProtocolMajor}, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"remoteTx", 1},
+                                  // CW transmit (R-CW-48): remoteCwVersion
+                                  // and transmit's CW settings.
+                                  {"remoteCw", 2}, {"cwSettings", 1},
                                   {"settingsHygiene", 2}, {"coreBuildInfo", 1},
                                   {"settingsBackup", 1},
                                   {"setupDescription", 1}, {"miniDisplay", 1},
@@ -782,7 +795,11 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"rxMeterStamps", 1},
                                   // NSDC v2: displayCodecVersion and the
                                   // start's declaration.
-                                  {"displayCodec", 2}})));
+                                  {"displayCodec", 2},
+                                  // Roundtable plan Task 11:
+                                  // stationRoundtableVersion and
+                                  // `roundtable`.
+                                  {"roundtable", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -812,6 +829,9 @@ QJsonArray captureCapabilities()
     caps.sessionHolderEntry = true;
     // iPhone app plan Task 34: sent to a peer that declared remoteTx.
     caps.remoteTxEntry = true;
+    // CW transmit (R-CW-48): sent inside it to a peer that declared remoteCw.
+    caps.remoteCwEntry = true;
+    caps.remoteCwVersion = 2; // StationServer::remoteCwVersion(), StationServer.h:1656.
     // Declaration version 1: StationCapabilities.h:731-733 and
     // StationServer.cpp:13156-13157. This is not a sampled live value.
     caps.txWatchPathVersion = 1;
@@ -889,6 +909,8 @@ QJsonArray captureCapabilities()
     caps.rxMeterStampsVersion = 1;
     // NSDC v2: sent to a peer that declared displayCodec 2.
     caps.displayCodecVersion = 2;
+    // Roundtable plan Task 11: sent to a peer that declared roundtable.
+    caps.stationRoundtableVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
@@ -2065,7 +2087,8 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &TransmitState::staticMetaObject,
             &StationVax::staticMetaObject,
             &PaProfilesFacade::staticMetaObject,
-            &RotorLink::RotorModel::staticMetaObject};
+            &RotorLink::RotorModel::staticMetaObject,
+            &RoundtableState::staticMetaObject};
 }
 
 QJsonObject LinkSurface::capture()

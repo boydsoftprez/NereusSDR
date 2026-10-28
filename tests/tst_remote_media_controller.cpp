@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-27  J.J. Boyd / KG4VCF  retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop:
+//                                    a TCI app on the retired stream hears
+//                                    none of the removed slice's audio on
+//                                    the reused id: no more frames than the
+//                                    new slice sent, each block sample for
+//                                    sample the new slice's. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-27  J.J. Boyd / KG4VCF  Check every restart's exact scheduling
 //                                    age, selected step and due time,
 //                                    including healthy and operator resets.
@@ -18,6 +25,19 @@
 //                                    the waiting restart and the media
 //                                    stage. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-27  J.J. Boyd / KG4VCF  Stabilize MediaNotReady recovery and
+//                                    cover repeated refusals and supersession.
+//                                    AI-assisted via OpenAI Codex.
+//   2026-10-27  J.J. Boyd / KG4VCF  Include the MediaNotReady recovery cases
+//                                    in the audio test groups, preserving
+//                                    the existing cases' group positions.
+//                                    AI-assisted via OpenAI Codex.
+//   2026-10-27  J.J. Boyd / KG4VCF  R-R3-21: aMediaNotReadyAnswerIsAskedForAgain
+//                                    and aMuteEndsAMediaNotReadyRetry: a
+//                                    Core answer of media-not-ready is asked
+//                                    for again on the restart backoff, once,
+//                                    and a mute ends that retry.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  Load findings from PR 654's CI.
 //                                    PacedRemoteAudio's speaker plays on the
 //                                    steady clock, as hardware does, not on
@@ -366,6 +386,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <numbers>
@@ -1244,6 +1265,36 @@ bool acceptedOff(const RemoteMediaController& media, quint32 generation,
     const std::optional<RemoteAudioContextMessage> context = media.acceptedAudioContext();
     return context && context->generation != generation && !context->enabled
         && context->offReason == reason;
+}
+
+// Count locally sent enabled audio requests at the synchronous transport boundary.
+std::shared_ptr<int> observeEnabledAudioRequests(Test::RewritingTransport* link, QObject* receiver)
+{
+    const auto count = std::make_shared<int>(0);
+    QObject::connect(link, &Test::LoopbackTransport::outboundText, receiver,
+                     [count](const QByteArray& wire) {
+        SessionMessage message;
+        if (SessionMessages::decode(wire, &message)
+            && message.kind == SessionMessageKind::MediaControl
+            && message.mediaPayload.value(QStringLiteral("op")) == QLatin1String("audio")
+            && message.mediaPayload.value(QStringLiteral("enabled")).toBool()) {
+            ++*count;
+        }
+    });
+    return count;
+}
+
+// 2026-10-27 (R-R3-21): the Core's real context answered off for
+// media-not-ready instead, as a Core whose media connection is not ready
+// at that moment answers (DaemonMediaController::reconcileAudio).
+QJsonObject mediaNotReadyContext(const QJsonObject& real)
+{
+    QJsonObject off = real;
+    off.insert(QStringLiteral("enabled"), false);
+    off.remove(QStringLiteral("encoder"));
+    off.insert(QStringLiteral("reason"),
+               remoteAudioOffReasonToWire(RemoteAudioOffReason::MediaNotReady));
+    return off;
 }
 
 // What the controller logs when this computer's speaker cannot start remote
@@ -12290,6 +12341,258 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-10-27 (R-R3-21): the Core can answer a request off for
+    // media-not-ready (its media connection said it was not ready at that
+    // moment, with no move), and it sends nothing more once the connection
+    // is ready again. The window asks again on the restart backoff, so the
+    // audio plays with no mute and unmute and no Retry. Before, the window
+    // took the off context, stopped, and nothing asked again. The retry is
+    // a backoff step, not an immediate request, and only one is made.
+    void aMediaNotReadyAnswerIsAskedForAgain()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        int requests = 0;
+        connect(&h.server, &StationServer::mediaControlReceived, this,
+                [&](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                && control.value(QStringLiteral("enabled")).toBool()) {
+                ++requests;
+            }
+        });
+        PacedRemoteAudio audio(h);
+        remoteMedia.holdAudioRestartForTest(true);
+        h.forgeReplacesFirstContext = true;
+        h.connectSession(std::nullopt, mediaNotReadyContext);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QCOMPARE(h.stationLink->forgedContexts, 1);
+        QCOMPARE(requests, 1);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        const QString connectionId = remoteMedia.mediaConnectionId();
+        QVERIFY(!connectionId.isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        QCOMPARE(requests, 1);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(requests, 2);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QVERIFY(errors.isEmpty());
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Repeated refusals each wait for one due step; the third request recovers
+    // on the same peer, with a fresh request revision each time.
+    void repeatedMediaNotReadyAnswersRecoverOnTheSamePeer()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        QList<qint64> revisions;
+        connect(&h.server, &StationServer::mediaControlReceived, this,
+                [&](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                && control.value(QStringLiteral("enabled")).toBool()) {
+                revisions.append(control.value(QStringLiteral("revision")).toInteger());
+                if (revisions.size() == 2) {
+                    h.stationLink->forgeNextAudioContext = mediaNotReadyContext;
+                }
+            }
+        });
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        PacedRemoteAudio audio(h);
+        remoteMedia.holdAudioRestartForTest(true);
+        h.forgeReplacesFirstContext = true;
+        h.connectSession(std::nullopt, mediaNotReadyContext);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                 h.kMediaConnectionWaitMs);
+        const QString connectionId = remoteMedia.mediaConnectionId();
+        QVERIFY(!connectionId.isEmpty());
+        QCOMPARE(revisions.size(), 1);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        const quint32 firstGeneration = remoteMedia.acceptedAudioContext()->generation;
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        QCOMPARE(revisions.size(), 1);
+        remoteMedia.holdAudioRestartForTest(false);
+        remoteMedia.holdAudioRestartForTest(true);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, firstGeneration,
+                                             RemoteAudioOffReason::MediaNotReady), 5000);
+        QCOMPARE(revisions.size(), 2);
+        QVERIFY(revisions.at(1) > revisions.at(0));
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(remoteMedia.audioRestartStepsHeldForTest(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        QCOMPARE(revisions.size(), 2);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(revisions.size(), 3);
+        QVERIFY(revisions.at(2) > revisions.at(1));
+        QCOMPARE(h.stationLink->forgedContexts, 2);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QVERIFY(errors.isEmpty());
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A newer enabled context for the same request supersedes the refusal.
+    // Its obsolete due step must not ask again or stop recovered playback.
+    void enabledContextSupersedesMediaNotReadyRetry()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        int requests = 0;
+        connect(&h.server, &StationServer::mediaControlReceived, this,
+                [&](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                && control.value(QStringLiteral("enabled")).toBool()) { ++requests; }
+        });
+        QJsonObject enabledContext;
+        PacedRemoteAudio audio(h);
+        remoteMedia.holdAudioRestartForTest(true);
+        h.forgeReplacesFirstContext = true;
+        h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            enabledContext = real;
+            return mediaNotReadyContext(real);
+        });
+        const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                 h.kMediaConnectionWaitMs);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(requests, 1);
+        QVERIFY(!enabledContext.isEmpty());
+        const QString connectionId = remoteMedia.mediaConnectionId();
+        const qint64 revision = enabledContext.value(QStringLiteral("revision")).toInteger();
+        const qint64 generation = enabledContext.value(QStringLiteral("generation")).toInteger() + 1;
+        enabledContext.insert(QStringLiteral("generation"), double(generation));
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        QVERIFY(h.server.sendMediaControl(enabledContext, h.server.mediaSessionEpoch()));
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.acceptedAudioContext()
+                                 && remoteMedia.acceptedAudioContext()->enabled
+                                 && remoteMedia.acceptedAudioContext()->generation == generation, 5000);
+        QCOMPARE(qint64(remoteMedia.acceptedAudioContext()->revision), revision);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        const int outboundBeforeRelease = *outboundRequests;
+        remoteMedia.holdAudioRestartForTest(false);
+        QCOMPARE(*outboundRequests, outboundBeforeRelease);
+        QCOMPARE(requests, 1);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QCOMPARE(remoteMedia.audioStatus().state, State::Playing);
+        QVERIFY(errors.isEmpty());
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Other accepted off reasons supersede the MediaNotReady-owned step.
+    void otherOffReasonsSupersedeMediaNotReadyRetry()
+    {
+        for (const RemoteAudioOffReason reason : {RemoteAudioOffReason::RadioOffline,
+                                                  RemoteAudioOffReason::EncoderUnavailable,
+                                                  RemoteAudioOffReason::ClientDisabled}) {
+            Test::RemoteAudioSessionHarness h;
+            RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+            DaemonMediaController daemonMedia(&h.server, &h.station);
+            int requests = 0;
+            connect(&h.server, &StationServer::mediaControlReceived, this,
+                    [&](const QJsonObject& control) {
+                if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                    && control.value(QStringLiteral("enabled")).toBool()) { ++requests; }
+            });
+            QJsonObject offContext;
+            PacedRemoteAudio audio(h);
+            remoteMedia.holdAudioRestartForTest(true);
+            h.forgeReplacesFirstContext = true;
+            h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+                offContext = mediaNotReadyContext(real);
+                return offContext;
+            });
+            const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
+            QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                     h.kMediaConnectionWaitMs);
+            QVERIFY(remoteMedia.audioRestartPendingForTest());
+            QCOMPARE(requests, 1);
+            const quint32 generation = remoteMedia.acceptedAudioContext()->generation;
+            QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+            offContext.insert(QStringLiteral("generation"), double(generation + 1));
+            offContext.insert(QStringLiteral("reason"), remoteAudioOffReasonToWire(reason));
+            QVERIFY(h.server.sendMediaControl(offContext, h.server.mediaSessionEpoch()));
+            QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, generation, reason), 5000);
+            QVERIFY(!remoteMedia.audioRestartPendingForTest());
+            const int outboundBeforeRelease = *outboundRequests;
+            remoteMedia.holdAudioRestartForTest(false);
+            QCOMPARE(*outboundRequests, outboundBeforeRelease);
+            QCOMPARE(requests, 1);
+            QVERIFY(!remoteMedia.audioRestartPendingForTest());
+            audio.stop();
+            h.client.disconnectFromStation(QStringLiteral("test complete"));
+        }
+    }
+
+    // 2026-10-27 (R-R3-21): a mute while that retry waits ends it. The
+    // step, come due after the mute, asks for nothing; the unmute asks once
+    // and plays.
+    void aMuteEndsAMediaNotReadyRetry()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        int requests = 0;
+        connect(&h.server, &StationServer::mediaControlReceived, this,
+                [&](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                && control.value(QStringLiteral("enabled")).toBool()) {
+                ++requests;
+            }
+        });
+        PacedRemoteAudio audio(h);
+        remoteMedia.holdAudioRestartForTest(true);
+        h.forgeReplacesFirstContext = true;
+        h.connectSession(std::nullopt, mediaNotReadyContext);
+        const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(requests, 1);
+
+        const quint32 beforeMute = remoteMedia.acceptedAudioContext()->generation;
+        h.remote.audioEngine()->setMasterMuted(true);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, beforeMute,
+                                             RemoteAudioOffReason::ClientDisabled), 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        const int outboundBeforeRelease = *outboundRequests;
+        remoteMedia.holdAudioRestartForTest(false);
+        QCOMPARE(*outboundRequests, outboundBeforeRelease);
+        QCOMPARE(requests, 1);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(remoteMedia.audioStatus().state, State::MutedHere);
+
+        h.remote.audioEngine()->setMasterMuted(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(requests, 2);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // 2026-10-16 (review): a device format remote playback cannot play (here
     // six channels) is told once and not asked for again: asking cannot
     // change the format. The operator's change of device or format asks
@@ -14324,7 +14627,9 @@ private slots:
     // reason, and the app plays silence: nothing asks again in a loop. A
     // slice id that never existed is answered once. When the Core brings
     // the slice id back, the waiting app is asked for once more, with a
-    // revision above every one sent for that id.
+    // revision above every one sent for that id. A TCI app on the stream
+    // hears none of the removed slice's audio on the reused id: the stop
+    // ends its stream, where a stream restart carries it on.
     void retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop()
     {
         Test::RemoteAudioSessionHarness h;
@@ -14347,9 +14652,33 @@ private slots:
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
 
-        remoteMedia.requestReceiverAudio(sliceB, &app);
+        const std::shared_ptr<RemoteTciAudioStage> tci =
+            remoteMedia.requestReceiverAudio(sliceB, &app);
+        QVERIFY(tci);
+        tci->publish({{1, 1, 48000, 2, 3, 2048, 1.0f}});
+        int tciFrames = 0;
+        bool keepTciBlocks = false;
+        QList<QVector<float>> tciBlocks;
+        const auto takeTci = [&tci, &tciFrames, &keepTciBlocks, &tciBlocks] {
+            RemoteTciAudioStage::Result result;
+            while (tci->popNext(&result)) {
+                const int samples =
+                    int(qFromLittleEndian<quint32>(result.bytes.constData() + 20));
+                tciFrames += samples / 2;
+                if (keepTciBlocks) {
+                    QVector<float> block(samples);
+                    std::memcpy(block.data(), result.bytes.constData() + 64,
+                                std::size_t(samples) * sizeof(float));
+                    tciBlocks.append(block);
+                }
+            }
+        };
         QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceB) >= 9600, 10000);
         QVERIFY(receivesIn(remoteMedia, sliceB, RemoteAudioProfile::Opus));
+        QTRY_VERIFY_WITH_TIMEOUT((takeTci(), tciFrames >= 4096), 5000);
+        // The TCI app stops taking its audio a while before the slice goes:
+        // its mailbox fills and the slice's audio waits in the stage.
+        QTest::qWait(300);
 
         // The slice goes away at the station.
         h.station.removeSlice(sliceB);
@@ -14390,8 +14719,37 @@ private slots:
         const int reused = h.station.addSlice();
         QCOMPARE(reused, sliceB);
         h.station.sliceById(reused)->setAudioPan(0.95);
-        QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceB) >= framesAtStop + 9600, 15000);
+        tciFrames = 0;
+        keepTciBlocks = true;
+        QTRY_VERIFY_WITH_TIMEOUT((takeTci(), app.frames(sliceB) >= framesAtStop + 9600), 15000);
         QVERIFY(receivesIn(remoteMedia, sliceB, RemoteAudioProfile::Opus));
+        // The TCI app heard no more than the new slice has sent: nothing of
+        // what waited for it when the old slice went.
+        takeTci();
+        QVERIFY2(tciFrames > 0 && tciFrames <= app.frames(sliceB) - framesAtStop,
+                 qPrintable(QStringLiteral("TCI app %1 frames, the new slice %2")
+                                .arg(tciFrames).arg(app.frames(sliceB) - framesAtStop)));
+        // And each block it heard is the new slice's audio, sample for
+        // sample, in order: the app's sink gets the same PCM first.
+        const QVector<float> heard = app.audio(sliceB);
+        qsizetype from = qsizetype(framesAtStop) * 2;
+        for (qsizetype b = 0; b < tciBlocks.size(); ++b) {
+            const QVector<float>& block = tciBlocks.at(b);
+            qsizetype at = -1;
+            for (qsizetype i = from; i + block.size() <= heard.size(); i += 2) {
+                if (std::memcmp(heard.constData() + i, block.constData(),
+                                std::size_t(block.size()) * sizeof(float)) == 0) {
+                    at = i;
+                    break;
+                }
+            }
+            QVERIFY2(at >= 0,
+                     qPrintable(QStringLiteral("TCI block %1 of %2 (%3 frames) is not the new "
+                                               "slice's audio after frame %4")
+                                    .arg(b + 1).arg(tciBlocks.size())
+                                    .arg(block.size() / 2).arg(from / 2)));
+            from = at + block.size();
+        }
         const QList<QJsonObject> requests = receiverRequests(coreControls, sliceB);
         QCOMPARE(requests.size(), qsizetype(requestsAtStop + 1));
         for (qsizetype i = 1; i < requests.size(); ++i) {
@@ -16443,6 +16801,11 @@ const QStringList kAudioFunctions{
     QStringLiteral("aShortAudioGapKeepsTheContextAndPlaysOn"),
     QStringLiteral("anAudioGapPastTheBoundAsksForAFreshContext"),
     QStringLiteral("aTransportFailureDuringAGapRestartsAtOnce"),
+    QStringLiteral("aMediaNotReadyAnswerIsAskedForAgain"),
+    QStringLiteral("aMuteEndsAMediaNotReadyRetry"),
+    QStringLiteral("repeatedMediaNotReadyAnswersRecoverOnTheSamePeer"),
+    QStringLiteral("enabledContextSupersedesMediaNotReadyRetry"),
+    QStringLiteral("otherOffReasonsSupersedeMediaNotReadyRetry"),
 };
 
 } // namespace

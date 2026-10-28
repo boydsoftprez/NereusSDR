@@ -189,6 +189,11 @@ mw0lge@grange-lane.co.uk
 // 2026-10-06 - AI and ZZAI change automatic information for this run only and
 //              are never saved, as Thetis does. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
+// 2026-10-27 - CW transmit, CAT CW and CWX commands (R-CW-34): KY, KS,
+//              ZZKY, ZZKS, ZZKM, ZZKO, ZZSS, ZZCS, ZZCL, ZZCB, ZZQK, ZZCD
+//              and ZZCI on the Core's CWX sender, keyer controller and
+//              CW settings; KY switches the mode only on a set (D13).
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatGlobalCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -202,6 +207,10 @@ mw0lge@grange-lane.co.uk
 #include "core/StepAttenuatorFacade.h"
 #include "core/StepAttenuatorController.h"
 #include "core/BoardCapabilities.h"
+#include "core/CwTypes.h"
+#include "core/CwxSender.h"
+#include "models/Band.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -219,6 +228,198 @@ CatCommandResult payload(QByteArray data) { return {CatResultKind::Payload,data}
 // From Thetis CAT/CATParser.cs:1590-1592 [v2.10.3.15]. Capability classification fact.
 constexpr int kUnavailable = 7;
 QByteArray number(qint64 value,int width) { return QByteArray::number(value).rightJustified(width,'0'); }
+
+// CW transmit (R-CW-34): the CW and CWX commands. They act on this model's
+// own CWX sender, CW keyer controller and CW settings, so a remote window
+// (whose copies follow its Core) answers ?; and the Core answers for the
+// station. A keying request passes the sender's request gate (R-CW-33),
+// which emits the gate's words on a refusal; the CAT answer is then what
+// Thetis answers for that form (silence for a send: RemoteMessage and
+// StartQueue always return "", cwx.cs:650-660 [v2.10.3.15]).
+// From Thetis CAT/CATParser.cs:1590-1592 [v2.10.3.15]: 7, Feature Not
+// Available (kUnavailable above), for ZZKO with no window.
+// From Thetis CAT/CATCommands.cs:3639-3644 [v2.10.3.15]: ZZKY's read
+// answers 0 below 72 waiting, 1 at 72 and above, 2 when empty.
+constexpr int kCwxBufferFull = 72;
+CatCommandResult cwCommand(CatModelAdapter& adapter, CatService& service, const CatBinding& binding,
+                           const CatRequest& request, const CatSessionContext& context, int width)
+{
+    const QPointer<RadioModel> model(&adapter.radioModel());
+    const QByteArray code=request.code;
+    const bool get=request.form == CatForm::Get;
+    CwxSender* const cwx=model->cwxSender();
+    CwKeyerController* const keyer=model->cwKeyerController();
+    if (!model->ownsLocalDsp() || !cwx || !keyer) { return error(); }
+    const QPointer<SliceModel> primary(adapter.resolveSlice(binding,CatVfo::Primary));
+    if (!primary || !adapter.mayRead(binding,CatVfo::Primary)) { return error(); }
+    TransmitModel& tx=model->transmitModel();
+    // As the TX family (CatTxCommands): no change while another device
+    // holds transmit or a key other than the station's is down.
+    const auto mayChange=[&]() {
+        if (!model || !service.session(context.sessionId) || !model->otherDeviceHoldsRefusal().isEmpty()) { return false; }
+        const MoxController* mox=model->moxController();
+        return !mox || !mox->isMox() || mox->currentKeyer().isStation();
+    };
+    bool parsed=false;
+    const int input=request.suffix.toInt(&parsed);
+    const auto onOff=[&]() { return request.suffix == "0" || request.suffix == "1"; };
+
+    // From Thetis CAT/CATCommands.cs:468-499,3559-3579 [v2.10.3.15]: KS is
+    // ZZKS. The speed is the CWX speed, clamped 5 to 60 by the setter (D12);
+    // Thetis's form clamps it to udWPM.
+    if (code == "KS" || code == "ZZKS") {
+        if (get) { return payload(number(tx.cwxSpeed(),width)); }
+        if (!parsed || !mayChange()) { return error(); }
+        //cws = Math.Max(1, cws);
+        //cws = Math.Min(99, cws);
+        //[2.10.3.4]MW0LGE put in the property WPM where it should be
+        tx.setCwxSpeed(input);
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:502-562,3582-3645 [v2.10.3.15].
+    if (code == "KY" || code == "ZZKY") {
+        if (get) {
+            // Characters2Send counts the elements waiting in Thetis; NereusSDR
+            // counts the characters not yet started, against the same 72.
+            const int waiting=cwx->queuedCharacters();
+            if (code == "KY") { return payload(waiting < kCwxBufferFull ? "0":"1"); }
+            if (waiting > 0 && waiting < kCwxBufferFull) { return payload("0"); }
+            if (waiting >= kCwxBufferFull) { return payload("1"); }
+            return payload("2");
+        }
+        if (!context.transmitAllowed || !mayChange()) { return error(); }
+        // D13: Thetis's KY switches to CW on a read as well, before it looks
+        // at the form (CATCommands.cs:505-525), so a logger polling the
+        // buffer changed the mode. Here, as Thetis's own ZZKY does, only a
+        // set switches. The transmit slice switches, as it is the one CWX
+        // keys; it must be one of this channel's slices.
+        const QPointer<SliceModel> target(model->txBoundSlice());
+        if (!target) { return error(); }
+        CatVfo vfo=CatVfo::Primary;
+        if (target != primary) {
+            if (adapter.resolveSlice(binding,CatVfo::Secondary) != target) { return error(); }
+            vfo=CatVfo::Secondary;
+        }
+        const CatWriteToken write=adapter.prepareWrite(binding,vfo,"dspMode");
+        if (!adapter.revalidateWrite(write)) { return error(); }
+        // Make sure we are in a cw mode.
+        // [original inline comment from CATCommands.cs:3586]
+        switch (target->dspMode()) {
+        case DSPMode::AM:
+        case DSPMode::DRM:
+        case DSPMode::DSB:
+        case DSPMode::FM:
+        case DSPMode::SAM:
+        case DSPMode::SPEC:
+        case DSPMode::LSB:
+        case DSPMode::USB:
+            // From Thetis enums.cs:280-283 [v2.10.3.15]: B160M to B40M are
+            // 160, 80, 60 and 40 m, Band160m to Band40m here.
+            if (static_cast<int>(target->band()) >= static_cast<int>(Band::Band160m)
+                && static_cast<int>(target->band()) <= static_cast<int>(Band::Band40m)) {
+                target->setDspMode(DSPMode::CWL);
+            } else {
+                target->setDspMode(DSPMode::CWU);
+            }
+            break;
+        case DSPMode::CWL:
+        case DSPMode::CWU:
+            break;
+        default:
+            target->setDspMode(DSPMode::CWU);
+            break;
+        }
+        if (!model || !target || !adapter.revalidateWrite(write)) { return error(); }
+        const QByteArray x=request.suffix.trimmed();
+        QByteArray trms=request.suffix;
+        while (!trms.isEmpty() && QChar::isSpace(uchar(trms.back()))) { trms.chop(1); }
+        if (x.isEmpty()) { trms=" "; }
+        cwx->sendText(QString::fromLatin1(trms));
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:3539-3556 [v2.10.3.15]. Thetis tests
+    // `qn > 0 || qn < 10`, always true; NereusSDR has memories 1 to 8 (D11)
+    // and answers ?; for 0 and 9.
+    if (code == "ZZKM") {
+        if (get || !parsed || input < 1 || input > CwxSender::kMemoryCount) { return error(); }
+        if (!context.transmitAllowed || !mayChange()) { return error(); }
+        cwx->sendMemory(input);
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:3509-3535 [v2.10.3.15] and console.cs
+    // CATCWXForm:11705-11724 [v2.10.3.15]: the CWX window shown or not.
+    if (code == "ZZKO") {
+        if (!model->hasCwxAppletHost()) { return {CatResultKind::Error,"?;",kUnavailable}; }
+        if (get) { return payload(model->cwxAppletShown() ? "1":"0"); }
+        if (!onOff()) { return error(); }
+        model->setCwxAppletShown(request.suffix == "1");
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:6470-6474 [v2.10.3.15]: CWXStop. Thetis
+    // empties the CAT buffer only; here it stops what CWX sends (R-CW-32).
+    // Any channel may stop.
+    if (code == "ZZSS") {
+        cwx->stop();
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:1879-1900 [v2.10.3.15] and console.cs
+    // CATCWSpeed:16645-16658 [v2.10.3.15]: 1 to 60, the setter's range.
+    if (code == "ZZCS") {
+        if (get) { return payload(number(tx.cwKeyerSpeed(),width)); }
+        if (!parsed || !mayChange()) { return error(); }
+        tx.setCwKeyerSpeed(input);
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:1753-1773 [v2.10.3.15] and setup.cs
+    // CATCWPitch:5729-5738 [v2.10.3.15]: clamped to the pitch control's
+    // range, here setCwPitchHz's 200 to 2250 Hz in 10 Hz steps (R-CW-02).
+    if (code == "ZZCL") {
+        if (get) { return payload(number(model->cwPitchHz(),width)); }
+        if (!parsed || !mayChange()) { return error(); }
+        model->setCwPitchHz(input);
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:1651-1667 [v2.10.3.15] and console.cs
+    // CATBreakIn:16159-16175 [v2.10.3.15]: reads 1 for Semi and QSK
+    // (chkQSK.Checked), 0 sets Off ("manual break-in"), 1 sets Semi.
+    if (code == "ZZCB") {
+        if (get) { return payload(tx.cwBreakInMode() != static_cast<int>(CwBreakInMode::Off) ? "1":"0"); }
+        if (!onOff() || !mayChange()) { return error(); }
+        tx.setCwBreakInMode(static_cast<int>(request.suffix == "1" ? CwBreakInMode::Semi : CwBreakInMode::Off));
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:5776-5792 [v2.10.3.15] and console.cs
+    // CATQSKBreakIn:16177-16192 [v2.10.3.15]: 1 sets QSK, 0 sets Semi. QSK
+    // only where it is available (R-CW-20), else ?;.
+    if (code == "ZZQK") {
+        if (get) { return payload(tx.cwBreakInMode() == static_cast<int>(CwBreakInMode::Qsk) ? "1":"0"); }
+        if (!onOff() || !mayChange()) { return error(); }
+        if (request.suffix == "1" && !keyer->qskAvailable()) { return error(); }
+        tx.setCwBreakInMode(static_cast<int>(request.suffix == "1" ? CwBreakInMode::Qsk : CwBreakInMode::Semi));
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:1671-1694 [v2.10.3.15]. Thetis clamps
+    // to 150..5000 against a delay control of 0 to 1000 ms; NereusSDR
+    // follows the control (R-CW-34), 0 to 1000.
+    if (code == "ZZCD") {
+        if (get) { return payload(number(tx.cwBreakInDelayMs(),width)); }
+        if (!parsed || !mayChange()) { return error(); }
+        tx.setCwBreakInDelayMs(std::clamp(input,TransmitModel::kCwBreakInDelayMsMin,TransmitModel::kCwBreakInDelayMsMax));
+        return silence();
+    }
+    // From Thetis CAT/CATCommands.cs:1728-1750 [v2.10.3.15] and console.cs
+    // CWIambic:12502-12513 [v2.10.3.15]. Thetis keeps iambic on or off and
+    // the A or B mode apart; NereusSDR has one keyer mode, so 1 from the
+    // straight key restores the default, Iambic B.
+    if (code == "ZZCI") {
+        if (get) { return payload(tx.cwKeyerMode() != static_cast<int>(CwKeyerMode::Straight) ? "1":"0"); }
+        if (!onOff() || !mayChange()) { return error(); }
+        if (request.suffix == "0") { tx.setCwKeyerMode(static_cast<int>(CwKeyerMode::Straight)); }
+        else if (tx.cwKeyerMode() == static_cast<int>(CwKeyerMode::Straight)) { tx.setCwKeyerMode(TransmitModel::kCwKeyerModeDefault); }
+        return silence();
+    }
+    return error();
+}
 } // namespace
 CatGlobalCommands::CatGlobalCommands(CatModelAdapter& adapter, CatSettings& settings) : m_adapter(adapter), m_settings(settings) {}
 QList<QByteArray> CatGlobalCommands::codes() { return {"AI","CN","CT","ID","KS","KY","OF","OS","PR","PS","SM","ZZAI","ZZBR","ZZBY","ZZCB","ZZCD","ZZCF","ZZCI","ZZCL","ZZCM","ZZCS","ZZCU","ZZDU","ZZDX","ZZFD","ZZFM","ZZFV","ZZFW","ZZFX","ZZFY","ZZGL","ZZID","ZZIO","ZZJP","ZZJQ","ZZJR","ZZJS","ZZKM","ZZKO","ZZKS","ZZKY","ZZMF","ZZMR","ZZMS","ZZMT","ZZMU","ZZMV","ZZMW","ZZMX","ZZMY","ZZMZ","ZZOA","ZZOB","ZZOC","ZZOD","ZZOE","ZZOF","ZZOG","ZZOH","ZZOJ","ZZOS","ZZOT","ZZOV","ZZOW","ZZOX","ZZOZ","ZZPS","ZZQK","ZZRM","ZZRS","ZZRV","ZZSM","ZZSN","ZZSS","ZZTA","ZZTB","ZZTF","ZZTS","ZZUA","ZZUP","ZZUX","ZZUY","ZZVA","ZZVB","ZZVC","ZZVD","ZZVF","ZZVH","ZZVI","ZZVJ","ZZVK","ZZVM","ZZVN","ZZVO","ZZVP","ZZVQ","ZZVR","ZZVT","ZZVU","ZZVV","ZZVW","ZZVX","ZZVY","ZZVZ","ZZWA","ZZWB","ZZWC","ZZWD","ZZWE","ZZWF","ZZWG","ZZWH","ZZWJ","ZZWK","ZZWL","ZZWM","ZZWN","ZZWO","ZZWP","ZZWQ","ZZWR","ZZWS","ZZWT","ZZWU","ZZWV","ZZWW","ZZXA","ZZXN","ZZXO","ZZYA","ZZYB","ZZYC","ZZZA","ZZZB","ZZZD","ZZZE","ZZZM","ZZZN","ZZZO","ZZZP","ZZZS","ZZZU","ZZZV","ZZZW","ZZZZ"}; }
@@ -303,15 +504,15 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // [original inline comment from CATCommands.cs:496]
     //				return parser.Error1;
     // [original inline comment from CATCommands.cs:497]
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "KS") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "KS") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:502-562 [v2.10.3.15].
     //Sends text data to CWX for conversion to Morse
     // [original inline comment from CATCommands.cs:501]
     // Make sure we are in a cw mode.
     // [original inline comment from CATCommands.cs:504]
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "KY") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "KY") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:685-688 [v2.10.3.15].
     //Sets or reads the FM repeater offset frequency
     // [original inline comment from CATCommands.cs:684]
@@ -332,13 +533,13 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // From Thetis CAT/CATCommands.cs:1651-1667 [v2.10.3.15].
     // Sets or reads the CW Break In Enabled checkbox
     // [original inline comment from CATCommands.cs:1650]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZCB") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZCB") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:1671-1694 [v2.10.3.15].
     // Sets or reads the CW Break In Delay
     // [original inline comment from CATCommands.cs:1670]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZCD") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZCD") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:1697-1725 [v2.10.3.15].
     // Sets or reads the Show CW Frequency checkbox
     // [original inline comment from CATCommands.cs:1696]
@@ -347,13 +548,13 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // From Thetis CAT/CATCommands.cs:1728-1750 [v2.10.3.15].
     // Sets or reads the CW Iambic checkbox
     // [original inline comment from CATCommands.cs:1727]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZCI") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZCI") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:1753-1773 [v2.10.3.15].
     // Sets or reads the CW Pitch thumbwheel
     // [original inline comment from CATCommands.cs:1752]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZCL") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZCL") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:1776-1798 [v2.10.3.15].
     // Sets or reads the CW Monitor Disable button status
     // [original inline comment from CATCommands.cs:1775]
@@ -362,8 +563,8 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // From Thetis CAT/CATCommands.cs:1879-1900 [v2.10.3.15].
     // Sets or reads the CW Speed thumbwheel
     // [original inline comment from CATCommands.cs:1878]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZCS") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZCS") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:1929-1934 [v2.10.3.15].
     // Reads the CPU Usage
     // [original inline comment from CATCommands.cs:1928]
@@ -550,11 +751,11 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // From Thetis CAT/CATCommands.cs:3539-3556 [v2.10.3.15].
     //Sends a CWX macro
     // [original inline comment from CATCommands.cs:3538]
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "ZZKM") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZKM") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:3509-3535 [v2.10.3.15].
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "ZZKO") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZKO") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:3559-3579 [v2.10.3.15].
     //Sets or reads the CWX CW speed
     // [original inline comment from CATCommands.cs:3558]
@@ -564,15 +765,15 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // [original inline comment from CATCommands.cs:3567]
     //[2.10.3.4]MW0LGE put in the property WPM where it should be
     // [original inline comment from CATCommands.cs:3568]
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "ZZKS") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZKS") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:3582-3645 [v2.10.3.15].
     //Sends text to CWX for conversion to Morse
     // [original inline comment from CATCommands.cs:3581]
     // Make sure we are in a cw mode.
     // [original inline comment from CATCommands.cs:3586]
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "ZZKY") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZKY") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:4023-4042 [v2.10.3.15].
     // ZZMFcccccccccccccccccccc;  Set multifunction encoder text 
     // [original inline comment from CATCommands.cs:4021]
@@ -709,16 +910,16 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // From Thetis CAT/CATCommands.cs:5776-5792 [v2.10.3.15].
     // Sets or reads the CW Break-In for Semi/QSK modes
     // [original inline comment from CATCommands.cs:5775]
-    // Current MoxController.h1145 documents CW keyer/sidetone/QSK deferred; cpp2932-2936 rejects. CWPitch AppSettings only influences SliceModel filter edges (cpp2322-2353), no functional keyer/pitch/sidetone or CW-frequency-display API. CodecContext raw P2 CW fields have no production model setters; reject every form before mutation.
-    if (code == "ZZQK") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZQK") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:6057-6078 [v2.10.3.15].
     //Sets or reads the RX2 button status
     // [original inline comment from CATCommands.cs:6056]
     // Receiver enable has no production model capability within the approved ordinary endpoint scope.
     if (code == "ZZRS") { return {CatResultKind::Error,"?;",kUnavailable}; }
     // From Thetis CAT/CATCommands.cs:6470-6474 [v2.10.3.15].
-    // Current CwxApplet.cpp22 explicitly all controls NYI; MoxController.cpp2932-2936 still rejects CW PTT; UnbuiltFeatureList.h60 lists Cwx. No functional queue/macros backend; TCI static/stored CW states are not implementation. Reject KY before automatic mode-change side effect.
-    if (code == "ZZSS") { return {CatResultKind::Error,"?;",kUnavailable}; }
+    // CW transmit (R-CW-34): cwCommand above.
+    if (code == "ZZSS") { return cwCommand(m_adapter,*service,binding,request,context,width); }
     // From Thetis CAT/CATCommands.cs:6620-6645 [v2.10.3.15].
     //Sets or reads the CTCSS enable button
     // [original inline comment from CATCommands.cs:6619]
