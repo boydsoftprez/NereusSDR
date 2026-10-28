@@ -20,6 +20,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A new slice takes the noise-reduction setup of the slice
+//                it is opened from, including NNR suppression and the
+//                other reducers' knobs, whether or not the letter's own
+//                receiver state is restored. NereusSDR-original. J.J.
+//                Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-27 - A saved receiver letter is restored when its slice is
 //                minted, including +RX, a session verb, and a Core that
 //                manages the receive layout. The Core's save of the new
@@ -16302,12 +16307,22 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
-    if (!restoreSeed && !restoredSavedState && seedFrom && seedFrom != slice) {
-        const double seedFrequency = seedFrom->frequency();
-        const DSPMode seedMode = seedFrom->dspMode();
-        slice->setFrequency(seedFrequency);
-        if (!currentAdded()) { return -1; }
-        slice->setDspMode(seedMode);
+    if (!restoreSeed && seedFrom && seedFrom != slice) {
+        // A letter with nothing saved opens on this slice's frequency and
+        // mode. Either way the new slice takes this slice's noise
+        // reduction: which reducer is on, and that family's knobs, NNR
+        // suppression included. A restored letter keeps its own frequency,
+        // mode and receiver settings, and still matches the reducer the
+        // operator had open.
+        if (!restoredSavedState) {
+            const double seedFrequency = seedFrom->frequency();
+            const DSPMode seedMode = seedFrom->dspMode();
+            slice->setFrequency(seedFrequency);
+            if (!currentAdded()) { return -1; }
+            slice->setDspMode(seedMode);
+            if (!currentAdded()) { return -1; }
+        }
+        slice->copyNoiseReductionFrom(*seedFrom);
         if (!currentAdded()) { return -1; }
     }
 

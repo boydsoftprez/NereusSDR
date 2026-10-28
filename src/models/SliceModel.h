@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-28 - copyNoiseReductionFrom: a new slice takes the open
+//              slice's noise-reduction setup, including NNR suppression.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              xAI Grok.
 // 2026-10-24 - applyFilterRequest, setFilter's body, so shiftFilter re-sends
 //              the stored pair when its constrain changed the request and
 //              the stored pair did not move. J.J. Boyd (KG4VCF), with
@@ -1328,6 +1332,9 @@ public:
     QString nnrSettingsPrefix() const;
     void saveNnrSettings() const;
     void restoreNnrSettings();
+    /// Copy the noise-reduction setup (which reducer is on, and that
+    /// family's knobs, including NNR suppression) from `source`.
+    void copyNoiseReductionFrom(const SliceModel& source);
 
 
     // NR1

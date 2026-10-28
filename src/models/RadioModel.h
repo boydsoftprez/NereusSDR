@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A new slice takes the open slice's noise reduction,
+//                including NNR suppression. NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-27 - addSlice and addSliceOnPan restore a saved receiver
 //                letter on every local mint, including when
 //                restoreSavedState is false and when the Core manages

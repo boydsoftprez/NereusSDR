@@ -195,6 +195,59 @@ private slots:
                  QStringLiteral("True"));
         QCOMPARE(settings.value(QStringLiteral("Slice1/AgcAutoOffset")).toDouble(), 12.5);
     }
+
+    // The open slice's reducer and its knobs, NNR suppression included,
+    // move onto a slice that has nothing saved.
+    void aNewSliceTakesTheOpenSlicesNoiseReduction()
+    {
+        RadioModel model;
+        model.configureStreamPool(2, 2, kRateHz);
+        SliceModel* a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(a);
+        a->setNnrMaskFloorDb(-31.25);
+        a->setNnrAlpha(2.25);
+        a->setNr1Taps(96);
+        a->setDfnrAttenLimit(18.0);
+        a->setMnrStrength(0.4);
+        a->setActiveNr(NrSlot::NNR);
+
+        SliceModel* b = model.sliceById(model.addSlice(QStringLiteral("pan-1")));
+        QVERIFY(b);
+        QCOMPARE(b->nnrMaskFloorDb(), -31.25);
+        QCOMPARE(b->nnrAlpha(), 2.25);
+        QCOMPARE(b->nr1Taps(), 96);
+        QCOMPARE(b->dfnrAttenLimit(), 18.0);
+        QCOMPARE(b->mnrStrength(), 0.4);
+        QCOMPARE(b->activeNr(), NrSlot::NNR);
+        QCOMPARE(a->nnrMaskFloorDb(), -31.25);
+        QCOMPARE(a->activeNr(), NrSlot::NNR);
+    }
+
+    // A saved letter keeps its receiver state and still takes the open
+    // slice's NNR suppression.
+    void aRestoredLetterTakesTheOpenSlicesNoiseReduction()
+    {
+        saveSliceB();
+
+        RadioModel model;
+        model.configureStreamPool(2, 2, kRateHz);
+        SliceModel* a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(a);
+        a->setPanKey(QStringLiteral("pan-0"));
+        a->setFrequency(kSliceAFreqHz);
+        a->setNnrMaskFloorDb(-31.25);
+        a->setActiveNr(NrSlot::NNR);
+
+        MainWindow::populatePanSlices(&model,
+                                      {QStringLiteral("pan-0"), QStringLiteral("pan-1")},
+                                      true, false);
+
+        SliceModel* b = model.sliceById(1);
+        QVERIFY(expectSliceBRestored(b));
+        QCOMPARE(b->nnrMaskFloorDb(), -31.25);
+        QCOMPARE(b->activeNr(), NrSlot::NNR);
+        QCOMPARE(a->frequency(), kSliceAFreqHz);
+    }
 };
 
 QTEST_MAIN(TestStandaloneSliceRestore)
