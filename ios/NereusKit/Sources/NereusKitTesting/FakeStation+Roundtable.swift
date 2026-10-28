@@ -354,12 +354,14 @@ extension FakeStation {
         let stream = text("stream") ?? ""
         let ownStream = ["records.subscribe", "records.unsubscribe"].contains(invoke.verb)
             && (stream == Self.roundtableRoomsStream || stream.hasPrefix(Self.roundtableRoomStreamPrefix))
-        guard ownVerb || ownStream else {
+        let ownSource = ["spots.connect", "spots.disconnect"].contains(invoke.verb)
+            && text("source") == "roundtable"
+        guard ownVerb || ownStream || ownSource else {
             return nil
         }
         guard additions.contains(.roundtable) else {
             // A Core before Roundtable knows none of its verbs; its streams are another part's.
-            return ownVerb ? [result(false, Self.unknownVerbReason)] : nil
+            return ownVerb || ownSource ? [result(false, Self.unknownVerbReason)] : nil
         }
         if let reason = takeRefusal(invoke.verb) {
             return [result(false, reason)]
@@ -371,6 +373,9 @@ extension FakeStation {
             let live = inside.scene.link == .live
             let listed = Set(inside.scene.rooms.map(Self.roomId(of:)))
             switch invoke.verb {
+            case "spots.connect", "spots.disconnect":
+                inside.scene.link = invoke.verb == "spots.connect" ? .live : .off
+                return [result(true), Self.roundtableDelta(Self.roundtableValues(inside.scene))]
             case "records.subscribe":
                 inside.followed.insert(stream)
                 return [result(true), Self.roundtableReset(inside.scene, stream: stream)]
@@ -442,9 +447,11 @@ extension FakeStation {
                 inside.scene.hidden = hidden
                 return [result(true), Self.roundtableDelta(Self.roundtableValues(inside.scene))]
             case "roundtable.answerFirstRun":
-                guard flag("live") != nil else {
+                guard let live = flag("live") else {
                     return [result(false, Self.roundtableUnreadableReason)]
                 }
+                // RoundtableState::answerFirstRun sets Hidden before accepting the answer (D25).
+                inside.scene.hidden = !live
                 inside.scene.firstRunAnswered = true
                 return [result(true), Self.roundtableDelta(Self.roundtableValues(inside.scene))]
             case "roundtable.mute", "roundtable.unmute":

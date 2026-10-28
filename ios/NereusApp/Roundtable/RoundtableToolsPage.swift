@@ -162,9 +162,14 @@ enum RoundtableToolsList {
 struct RoundtableToolsPage: View {
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var slices: BandSlicesModel
+    var stationCallsign = ""
+    var stationGrid = ""
     let open: (RoundtableModel.RoomSummary) -> Void
 
+    @Environment(\.bandOnScreen) private var onScreen
     @State private var chip: String?
+    @State private var startedHere = false
+    @State private var firstRunForm = false
 
     private static let chipFill = Color(red: 0x1C / 255, green: 0x1C / 255, blue: 0x20 / 255)
     private static let chipEdge = Color(red: 0x26 / 255, green: 0x26 / 255, blue: 0x2B / 255)
@@ -191,7 +196,7 @@ struct RoundtableToolsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let reason = roundtable.coreReason {
+            if let reason = roundtable.sourceControlReason {
                 Text(reason)
                     .font(.system(size: 13))
                     .foregroundStyle(RoundtableColours.dim)
@@ -200,6 +205,16 @@ struct RoundtableToolsPage: View {
             }
             chips
             connection
+            if let note = roundtable.note, note != roundtable.sourceControlReason {
+                Text(note)
+                    .font(.system(size: 12))
+                    .foregroundStyle(RoundtableColours.unknown)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("roundtableTools.controlNote")
+            }
+            if roundtable.askingFirstRun {
+                RoundtableFirstRunPrompt { firstRunForm = true }
+            }
             if roundtable.rooms.isEmpty {
                 Text("Nobody on Roundtable is on the air.")
                     .font(.system(size: 13))
@@ -229,6 +244,35 @@ struct RoundtableToolsPage: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 2)
                 .accessibilityIdentifier("roundtableTools.note")
+        }
+        .onChange(of: roundtable.askingFirstRun) { _, asking in
+            if !asking {
+                firstRunForm = false
+                startedHere = false
+            } else if startedHere && onScreen {
+                firstRunForm = true
+            }
+        }
+        .onChange(of: roundtable.connectionGeneration) { _, _ in
+            firstRunForm = false
+            startedHere = false
+        }
+        .onChange(of: onScreen) { _, shown in
+            if !shown {
+                firstRunForm = false
+                startedHere = false
+            }
+        }
+        .onDisappear {
+            firstRunForm = false
+            startedHere = false
+        }
+        .sheet(isPresented: $firstRunForm) {
+            RoundtableFirstRunSheet(roundtable: roundtable, callsign: stationCallsign, grid: stationGrid) {
+                firstRunForm = false
+                startedHere = false
+            }
+            .background(RoundtableColours.ground)
         }
     }
 
@@ -274,14 +318,39 @@ struct RoundtableToolsPage: View {
             case .you: RoundtableColours.you
             case .dim: RoundtableColours.dim
             }
-            HStack(spacing: 6) {
-                Circle().fill(colour).frame(width: 6, height: 6)
-                Text(line.text).font(.system(size: 12))
-                    .foregroundStyle(line.tone == .live ? RoundtableColours.dim : colour)
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Circle().fill(colour).frame(width: 6, height: 6)
+                    Text(line.text).font(.system(size: 12))
+                        .foregroundStyle(line.tone == .live ? RoundtableColours.dim : colour)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("roundtableTools.connection")
                 Spacer(minLength: 0)
+                Button(roundtable.sourceControlTitle) {
+                    let start = !roundtable.sourceRunning
+                    let generation = roundtable.connectionGeneration
+                    startedHere = start
+                    Task {
+                        guard roundtable.connectionGeneration == generation else { return }
+                        let reason = await roundtable.setRunning(start)
+                        guard roundtable.connectionGeneration == generation else { return }
+                        if reason != nil {
+                            startedHere = false
+                        }
+                        if startedHere && onScreen && roundtable.askingFirstRun {
+                            firstRunForm = true
+                        }
+                        if roundtable.firstRunAnswered {
+                            startedHere = false
+                        }
+                    }
+                }
+                .frame(minWidth: 72, minHeight: 44)
+                .buttonStyle(RoundtableButtonStyle(main: !roundtable.sourceRunning))
+                .disabled(roundtable.sourceControlReason != nil)
+                .accessibilityIdentifier("roundtableTools.control")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("roundtableTools.connection")
         }
     }
 

@@ -368,6 +368,118 @@ struct RoundtableToolsPageTests {
 
     // MARK: Against a fake Core
 
+    @Test("the Tools control starts and stops Roundtable on the Core")
+    func controlStartsAndStopsCore() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation()
+        try await station.deliverRoundtable(.init(rooms: [], link: .off))
+        #expect(await settle { model.roundtable.linkState == .off && model.roundtable.available })
+        let (window, _) = try host(RoundtableToolsPage(roundtable: model.roundtable,
+                                                      slices: model.main.slices, open: { _ in }))
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        var button: NSObject?
+        #expect(await settle(seconds: 3) {
+            button = SetupTypedEntryTests.element("roundtableTools.control", in: window)
+            return button != nil
+        })
+        let control = try #require(button)
+        #expect(control.accessibilityLabel == "Start")
+        #expect(control.accessibilityActivate())
+        #expect(await settle { model.roundtable.linkState == .live })
+        #expect(await settle {
+            SetupTypedEntryTests.element("roundtableTools.control", in: window)?.accessibilityLabel == "Stop"
+        })
+        #expect(SetupTypedEntryTests.element("roundtableTools.control", in: window)?.accessibilityActivate() == true)
+        #expect(await settle { model.roundtable.linkState == .off })
+        let commands = station.messages.compactMap(AccessoryPagesTests.invoke)
+            .filter { $0.verb == "spots.connect" || $0.verb == "spots.disconnect" }
+        #expect(commands.map(\.verb) == ["spots.connect", "spots.disconnect"])
+        #expect(commands.allSatisfy { $0.args == [.init(name: "source", value: .utf8("roundtable"))] })
+    }
+
+    @Test("starting from Tools offers the existing first-run choice here without going live")
+    func startOffersFirstRunHere() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation()
+        try await station.deliverRoundtable(.init(rooms: [], link: .off, firstRunAnswered: false))
+        #expect(await settle { model.roundtable.available && model.roundtable.linkState == .off })
+        let flow = Self.flow(model, station)
+        let (window, _) = try host(ToolsTab(app: model, flow: flow, spots: model.spots, route: [.roundtable]))
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        var control: NSObject?
+        #expect(await settle {
+            control = SetupTypedEntryTests.element("roundtableTools.control", in: window)
+            return control != nil
+        })
+        #expect(try #require(control).accessibilityActivate())
+        #expect(await settle { model.roundtable.askingFirstRun })
+        var stayHidden: NSObject?
+        #expect(await settle {
+            stayHidden = SetupTypedEntryTests.element("roundtableStayHidden", in: window)
+            return stayHidden != nil
+        })
+        #expect(!station.roundtableAnswered.contains("answerFirstRun"))
+        #expect(try #require(stayHidden).accessibilityActivate())
+        #expect(await settle { model.roundtable.firstRunAnswered && model.roundtable.hidden })
+        #expect(station.roundtableAnswered.filter { $0 == "answerFirstRun" }.count == 1)
+        let answer = station.messages.compactMap(AccessoryPagesTests.invoke).last { $0.verb == "roundtable.answerFirstRun" }
+        #expect(answer?.args == [.init(name: "live", value: .bool(false))])
+        #expect(await settle { SetupTypedEntryTests.element("roundtableStayHidden", in: window) == nil })
+    }
+
+    @Test("a Tools first-run form closes with its Core and does not follow a replacement session")
+    func firstRunFormRetiresWithCore() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation()
+        try await station.deliverRoundtable(.init(rooms: [], link: .off, firstRunAnswered: false))
+        #expect(await settle { model.roundtable.available && model.roundtable.linkState == .off })
+        let (window, _) = try host(RoundtableToolsPage(roundtable: model.roundtable,
+                                                      slices: model.main.slices, open: { _ in }))
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        var control: NSObject?
+        #expect(await settle {
+            control = SetupTypedEntryTests.element("roundtableTools.control", in: window)
+            return control != nil
+        })
+        #expect(try #require(control).accessibilityActivate())
+        #expect(await settle { SetupTypedEntryTests.element("roundtableStayHidden", in: window) != nil })
+        await model.disconnect()
+        #expect(await settle {
+            !model.roundtable.connected && SetupTypedEntryTests.element("roundtableStayHidden", in: window) == nil
+        })
+        let replacement = try FakeStation(additions: [.roundtable])
+        await model.connect(to: replacement.endpoint, trust: replacement.trust, authenticator: replacement.authenticator,
+                            transportFactory: replacement.transportFactory)
+        #expect(await replacement.waitUntilLive())
+        try await replacement.deliverRoundtable(.init(rooms: [], link: .live, firstRunAnswered: false))
+        #expect(await settle {
+            model.roundtable.askingFirstRun
+                && SetupTypedEntryTests.element("roundtableFirstRunChoose", in: window) != nil
+        })
+        #expect(SetupTypedEntryTests.element("roundtableStayHidden", in: window) == nil)
+        #expect(!station.roundtableAnswered.contains("answerFirstRun"))
+        #expect(!replacement.roundtableAnswered.contains("answerFirstRun"))
+        await model.disconnect()
+    }
+
     @Test("a row on the Tools page reads its room and opens it; no slice moves")
     func aRowReadsAndNeverTunes() async throws {
         let accessibility = SetupTypedEntryTests.applicationAccessibility()

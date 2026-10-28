@@ -189,6 +189,10 @@ final class RoundtableModel: ObservableObject {
     @Published private(set) var version: Int64 = 0
     /// The snapshot is complete and fresh.
     @Published private(set) var connected = false
+    /// Changes across disconnect/reconnect, even when a view coalesces those state changes.
+    @Published private(set) var connectionGeneration: UInt64 = 0
+    /// Start and Stop use the existing spot-source verbs, gated separately by recordStreamVersion.
+    @Published private(set) var sourceControlVersion: Int64 = 0
     /// The band list, by center frequency, then id.
     @Published private(set) var rooms: [RoomSummary] = []
     /// Each slice's room, by slice id; a slice in no room is left out.
@@ -229,6 +233,25 @@ final class RoundtableModel: ObservableObject {
             return Self.notConnectedReason
         }
         return version >= 1 ? nil : Self.olderCoreReason
+    }
+
+    /// As on the desktop, any state other than Off can be stopped, including a reconnect.
+    var sourceRunning: Bool { linkState != .off }
+    var sourceControlTitle: String { sourceRunning ? "Stop" : "Start" }
+
+    var sourceControlReason: String? {
+        coreReason ?? (sourceControlVersion >= 1 ? nil : Self.olderCoreReason)
+    }
+
+    /// The same Core source commands as SpotSourceHost::startRoundtable/stopRoundtable.
+    /// The mirrored link state remains authoritative; accepting Start is not proof it is live.
+    func setRunning(_ running: Bool) async -> String? {
+        if let reason = sourceControlReason {
+            note = reason
+            return reason
+        }
+        return await act(running ? "spots.connect" : "spots.disconnect",
+                         [CommandArgument(name: "source", value: .text("roundtable"))])
     }
 
     // MARK: Inside
@@ -342,8 +365,13 @@ final class RoundtableModel: ObservableObject {
         if next != version {
             version = next
         }
+        let sourceVersion = alive ? mirror.capabilityVersion("recordStreamVersion") : 0
+        if sourceVersion != sourceControlVersion {
+            sourceControlVersion = sourceVersion
+        }
         let up = alive && mirror.isSnapshotComplete && !mirror.isStale
         if up != connected {
+            connectionGeneration &+= 1
             if !up {
                 // The Core forgets this phone's reading with the session.
                 readStream = nil

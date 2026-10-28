@@ -38,6 +38,56 @@ struct RoundtableModelTests {
     private static let minute: Int64 = 60 * 1000
     private static let hour: Int64 = 60 * minute
 
+    @Test("Core source controls follow every authoritative Roundtable state", arguments: [
+        (FakeStation.RoundtableLink.off, "Start", "spots.connect"),
+        (.connecting, "Stop", "spots.disconnect"), (.live, "Stop", "spots.disconnect"),
+        (.reconnecting, "Stop", "spots.disconnect"), (.offline, "Stop", "spots.disconnect"),
+        (.hidden, "Stop", "spots.disconnect"),
+    ])
+    func sourceControlFollowsCoreState(state: FakeStation.RoundtableLink, title: String, verb: String) async throws {
+        let (_, station, rt, _) = try await connected()
+        try await station.deliverRoundtable(.init(rooms: [], link: state))
+        #expect(await settle { rt.linkState.rawValue == state.rawValue })
+        #expect(rt.sourceControlReason == nil && rt.sourceControlTitle == title)
+        #expect(await rt.setRunning(title == "Start") == nil)
+        #expect(await sent(station, verb) == [.init(name: "source", value: .utf8("roundtable"))])
+        #expect(await settle { rt.sourceControlTitle == (title == "Start" ? "Stop" : "Start") })
+    }
+
+    @Test("a refused start keeps the Core's state and words")
+    func sourceControlRefusal() async throws {
+        let (_, station, rt, _) = try await connected()
+        try await station.deliverRoundtable(.init(rooms: [], link: .off))
+        #expect(await settle { rt.linkState == .off })
+        let reason = "Enter your callsign and grid square in Spot Hub first."
+        station.refuseNext("spots.connect", reason: reason)
+        #expect(await rt.setRunning(true) == reason)
+        #expect(rt.note == reason && rt.linkState == .off && rt.sourceControlTitle == "Start")
+    }
+
+    @Test("disconnection and missing source capability send no source controls")
+    func unavailableSourceControl() async throws {
+        let (model, station, rt, _) = try await connected()
+        // Roundtable's normal fake correctly implies record streams. Feed a partial capability set
+        // explicitly to exercise a Core that does not offer the source-control verb surface.
+        model.mirror.apply(.capabilities(.init(properties: [
+            .init(name: "stationRoundtableVersion", value: .i64(1)),
+            .init(name: "recordStreamVersion", value: .i64(0)),
+        ])))
+        #expect(await settle { rt.sourceControlVersion == 0 })
+        #expect(rt.available && rt.sourceControlReason == RoundtableModel.olderCoreReason)
+        #expect(await rt.setRunning(true) == RoundtableModel.olderCoreReason)
+        #expect(await rt.setRunning(false) == RoundtableModel.olderCoreReason)
+        await TransmitScreenTests.barrier(model, station)
+        await model.disconnect()
+        #expect(await settle { !rt.connected })
+        #expect(await rt.setRunning(true) == RoundtableModel.notConnectedReason)
+        #expect(await rt.setRunning(false) == RoundtableModel.notConnectedReason)
+        #expect(!station.messages.compactMap(AccessoryPagesTests.invoke).contains {
+            $0.verb == "spots.connect" || $0.verb == "spots.disconnect"
+        })
+    }
+
     // MARK: The band list and the slice's room
 
     @Test("the band list comes from roundtableRooms, by center, and the slice's room reads as the desktop's")
@@ -229,6 +279,8 @@ struct RoundtableModelTests {
         #expect(await settle { model.records.available })
         #expect(rt.version == 0 && !rt.available)
         #expect(rt.coreReason == RoundtableModel.olderCoreReason)
+        #expect(await rt.setRunning(true) == RoundtableModel.olderCoreReason)
+        #expect(await rt.setRunning(false) == RoundtableModel.olderCoreReason)
         #expect(await rt.post("hello", in: Self.usb) == .refused(RoundtableModel.olderCoreReason))
         #expect(await rt.read(Self.usb) == RoundtableModel.olderCoreReason)
         #expect(await rt.markMentionRead(upToMs: 5) == RoundtableModel.olderCoreReason)
@@ -238,7 +290,8 @@ struct RoundtableModelTests {
         #expect(!model.records.isWanted("roundtableRooms"))
         #expect(!model.records.isWanted("roundtableRoom:\(Self.usb)"))
         let sent = station.messages.compactMap(AccessoryPagesTests.invoke)
-        #expect(!sent.contains { $0.verb.hasPrefix("roundtable.") })
+        #expect(!sent.contains { $0.verb.hasPrefix("roundtable.")
+            || $0.verb == "spots.connect" || $0.verb == "spots.disconnect" })
         #expect(!sent.contains { invoke in
             guard case .utf8(let stream)? = invoke.args.first?.value else {
                 return false

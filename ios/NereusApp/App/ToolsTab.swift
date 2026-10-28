@@ -263,7 +263,8 @@ struct ToolsTab: View {
         case .spotHub?:
             SpotHubPage(spots: spots) { route.append(.spotHubPage($0)) }
         case .roundtable?:
-            RoundtableToolsPage(roundtable: app.roundtable, slices: app.main.slices) { room in
+            RoundtableToolsPage(roundtable: app.roundtable, slices: app.main.slices,
+                                stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare) { room in
                 // A row reads the room; no slice moves.
                 open(.roundtableRoom(id: room.id, title: RoundtableText.headerFrequency(room.hz) + " "
                                          + RoundtableText.modeLabel(room.family)))
