@@ -20,6 +20,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - A saved receiver letter is restored when its slice is
+//                minted, including +RX, a session verb, and a Core that
+//                manages the receive layout. The Core's save of the new
+//                slice was writing the defaults (Auto AGC off, offset
+//                +20, and the rest of the letter) over the saved keys.
+//                A letter with nothing saved still opens on the active
+//                slice. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via xAI Grok.
 //   2026-10-26 - governNnrLoadForTest takes the governor over: the load
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
@@ -16196,18 +16204,21 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         if (!restored) { delete slice; return -1; }
     }
-    // Settings restore (2026-10-11): without a Core, receivers B to D come
-    // back at connect like A. loadSliceState restores only the active slice
-    // (A); the slices the window then makes for its other pans started
-    // fresh although their keys were always written. Same restore as
+    // A letter that has been saved comes back on every local mint, before
+    // the slice binds and before a Core saves it. Same restore as
     // loadSliceState: the band the slice was last saved on, then that
-    // band's stored state, frequency and mode included, before the slice
-    // binds, so it binds where it was. The slice is not wired to a channel
-    // yet; activateSliceChannel pushes the restored state when it is. A
-    // station that manages a receive layout (the Core) restores through
-    // restoreSeed above and never takes this branch.
+    // band's stored state, frequency and mode included.
+    //
+    // Callers that pass restoreSavedState false (+RX, a layout change, the
+    // session verbs) and a Core that manages the receive layout used to
+    // skip this, so Auto AGC, its offset and the rest of the letter stayed
+    // at their defaults. The Core then saved those defaults over the
+    // letter. A layout hydration still restores through restoreSeed above
+    // and does not take this branch. A letter with nothing saved still
+    // opens on the active slice's frequency and mode.
     bool restoredSavedState = false;
-    if (restoreSavedState && !restoreSeed && role() == Role::Local && !m_receiveLayoutManaged) {
+    const bool letterWasSaved = SliceModel::loadLastBandFromSettings(index).has_value();
+    if (!restoreSeed && role() == Role::Local && (restoreSavedState || letterWasSaved)) {
         if (const auto lastBand = SliceModel::loadLastBandFromSettings(index)) {
             slice->restoreFromSettings(*lastBand);
             if (!self || !added) { return -1; }

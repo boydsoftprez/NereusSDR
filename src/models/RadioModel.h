@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27 - addSlice and addSliceOnPan restore a saved receiver
+//                letter on every local mint, including when
+//                restoreSavedState is false and when the Core manages
+//                the receive layout. NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
@@ -3075,12 +3080,12 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    // `restoreSavedState` (2026-10-11): the slice comes back as it was last
-    // saved (Slice<N>/LastBand and that band's keys) instead of starting on
-    // the active slice's frequency and mode. The standalone app asks for it
-    // for the slices it makes for empty pans at connect, so receivers B to D
-    // return like A. A slice with nothing saved, and every slice asked for
-    // without it (+RX, a layout change, a session verb), starts fresh.
+    // A saved letter (Slice<N>/LastBand and that band's keys, plus the
+    // letter's own keys such as Auto AGC) comes back on every local mint,
+    // whether or not `restoreSavedState` is set and whether or not a Core
+    // manages the receive layout. A letter with nothing saved still opens
+    // on the active slice's frequency and mode. The remote client only
+    // sends the verb; the Core mints the slice and mirrors it back.
     Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one

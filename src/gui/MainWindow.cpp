@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: The note on populatePanSlices no longer says an
+//               operator-asked slice starts fresh. A saved letter comes
+//               back from addSliceOnPan. J.J. Boyd (KG4VCF), AI-assisted
+//               via xAI Grok.
 //   2026-10-25: A CTUN tune that stays on the view takes its shift from
 //               the pan's DDC centre, not the view's centre, which the
 //               refused off-view move leaves off the DDC. J.J. Boyd
@@ -19010,10 +19014,9 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         if (hosting) {
             hosting->addOnPan(emptyPan);
         } else {
-            // Settings restore (2026-10-11): the slices made here at
-            // connect (not asked for by the operator) come back as they
-            // were saved, so receivers B to D return like A without a
-            // Core. A layout change or +RX still makes a new slice.
+            // A saved letter comes back whether or not the operator asked
+            // for the slice. addSliceImpl restores it. A letter with
+            // nothing saved still opens on the active slice.
             model->addSliceOnPan(emptyPan, !operatorRequested);
         }
     }
