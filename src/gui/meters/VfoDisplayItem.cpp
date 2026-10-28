@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A digit's wheel takes one step per mouse notch, or per
+//                 about 15 px of trackpad travel (WheelStepAccumulator).
+//                 A smaller tick is kept until it adds up to a step.
+//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - Contrast round: with the workspace look the split-off text
 //                 and the RX/TX boxes take role pairs that read at 4.5:1.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1141,15 +1145,16 @@ void VfoDisplayItem::paintScreen(QPainter& p, const QRect& col, const VfoSliceSt
 
 bool VfoDisplayItem::handleWheel(QWheelEvent* event, int widgetW, int widgetH)
 {
-    const int direction = (event->angleDelta().y() > 0) ? 1 : -1;
     if (m_layout == Layout::Thetis) {
         const Hit hit = thetisHitAt(event->position(), widgetW, widgetH);
         if (hit.region != Region::Digit || !interactive(stateFor(hit.sliceIndex))) { return false; }
         // From Thetis MeterManager.cs:14581 [v2.10.3.15]:
         // adjustVfo(sign * _adjust_step * 1e-6); which a locked VFO refuses
         // (if (abortForLockedVFO()) return;). The wheel is still taken.
-        if (!stateFor(hit.sliceIndex).locked) {
-            emit frequencyChangeRequested(hit.sliceIndex, direction * hit.step);
+        // One notch, or about 15 px of trackpad travel, is one digit.
+        const int steps = m_wheelSteps.stepsFor(*event);
+        if (!stateFor(hit.sliceIndex).locked && steps != 0) {
+            emit frequencyChangeRequested(hit.sliceIndex, static_cast<qint64>(steps) * hit.step);
         }
         return true;
     }
@@ -1165,8 +1170,9 @@ bool VfoDisplayItem::handleWheel(QWheelEvent* event, int widgetW, int widgetH)
 
         const float xFrac = static_cast<float>(event->position().x() - freqRect.left()) / freqRect.width();
         const int64_t weight = digitWeightAt(xFrac);
-        if (!state.locked) {
-            emit frequencyChangeRequested(state.index, direction * weight);
+        const int steps = m_wheelSteps.stepsFor(*event);
+        if (!state.locked && steps != 0) {
+            emit frequencyChangeRequested(state.index, static_cast<qint64>(steps) * weight);
         }
         return true;
     }

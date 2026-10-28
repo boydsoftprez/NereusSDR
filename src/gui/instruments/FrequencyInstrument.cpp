@@ -83,6 +83,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A digit's wheel takes one step per mouse notch, or per
+//                 about 15 px of trackpad travel (WheelStepAccumulator).
+//                 The 2 in 7.124.000 is 10 kHz, and a small tick was
+//                 stepping it every time. J.J. Boyd (KG4VCF), AI-assisted
+//                 via xAI Grok.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - minimumSizeHint() adds the strip or arc reservation:
@@ -634,13 +639,15 @@ bool FrequencyInstrument::eventFilter(QObject* watched, QEvent* ev)
 
     if (ev->type() == QEvent::Wheel) {
         auto* we = static_cast<QWheelEvent*>(ev);
-        const int steps = we->angleDelta().y() > 0 ? 1 : -1;
-        // Diese Dekade, nicht die eingestellte Schrittweite. Das ist der
-        // Sinn der eigenen Trefferflaeche: man greift die Stelle an, die
-        // man drehen will.
-        const double next = m_hz + steps * m_decades.at(idx);
-        if (next >= 0.0) {
-            emit frequencyEdited(next);
+        // One notch, or about 15 px of trackpad travel, moves this digit
+        // by its own place. A small tick used to count as a whole step,
+        // so the 2 in 7.124.000 (10 kHz) raced.
+        const int steps = m_digitWheel.stepsFor(*we);
+        if (steps != 0) {
+            const double next = m_hz + steps * m_decades.at(idx);
+            if (next >= 0.0) {
+                emit frequencyEdited(next);
+            }
         }
         return true;
     }

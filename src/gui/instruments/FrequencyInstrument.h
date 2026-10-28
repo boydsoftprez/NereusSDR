@@ -73,6 +73,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A digit's wheel takes one step per mouse notch, or per
+//                 about 15 px of trackpad travel. J.J. Boyd (KG4VCF),
+//                 AI-assisted via xAI Grok.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - setSliceLetters(): the VFO row labels come from the
@@ -87,6 +90,8 @@
 // =================================================================
 
 #pragma once
+
+#include "gui/WheelStepAccumulator.h"
 
 #include <QColor>
 #include <QList>
@@ -291,6 +296,10 @@ private:
     // From Longpath src/gui/instruments/FrequencyInstrument.h:205 [@551576e3]
     /// Acht Ziffern: 7.139.700 — zehn MHz bis Einer-Hertz.
     static constexpr int kDigitCount = 8;
+
+    // One place-value step per mouse notch, or per about 15 px of trackpad
+    // travel. A bare sign of angleDelta made every tick a full decade.
+    WheelStepAccumulator m_digitWheel;
 };
 
 } // namespace NereusSDR
