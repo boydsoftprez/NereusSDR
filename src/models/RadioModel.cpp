@@ -5403,6 +5403,8 @@ RadioModel::~RadioModel()
     // The serial key reader first: its straight key keys through the
     // sender.
     m_cwSerialKey.reset();
+    // Detach retained sender/callback targets before sender lifetime ends.
+    m_transmitCutLine->setRemoteCwTargets(nullptr, {}, {});
     m_cwxSender.reset();
     m_cwKeyerController.reset();
     // The transmit cut line may outlive this model (RemoteTxCutGuard holds

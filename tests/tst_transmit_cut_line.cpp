@@ -41,6 +41,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Propose unused isolated CW bridge RED bootstrap for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
@@ -70,6 +72,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <QEvent>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -77,6 +81,8 @@
 
 #include "RealtimeTestLoad.h"
 #include "core/AppSettings.h"
+#include "core/CwxSender.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "core/MoxController.h"
 #include "core/RadioConnection.h"
 #include "core/TxChannel.h"
@@ -94,6 +100,23 @@
 #include <memory>
 
 using namespace NereusSDR;
+
+#ifdef NEREUS_BUILD_TESTS
+namespace NereusSDR {
+// Reuses existing guarded friendship; READS immutable real setup only.
+struct CwxSenderMailboxTestAccess {
+    static std::shared_ptr<RemoteCwSafetyState> safety(const CwxSender& s) { return s.m_remoteSafetyState; }
+    static quint64 word(const CwxSender& s) { return s.m_remoteRequests.load(std::memory_order_acquire); }
+};
+struct TransmitCutLineTestAccess {
+    static bool lifetimeLockAvailable(TransmitCutLine& line)
+    {
+        const std::unique_lock<std::mutex> lock(line.m_mutex, std::try_to_lock);
+        return lock.owns_lock();
+    }
+};
+} // namespace NereusSDR
+#endif
 
 namespace {
 
@@ -244,6 +267,92 @@ Clock::time_point runOffMainWhileMainSleeps(const std::function<void()>& fn)
     worker.join();
     return Clock::time_point(Clock::duration(startedNs.load()));
 }
+
+#ifdef NEREUS_BUILD_TESTS
+struct BridgeLatch {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered{false};
+    bool released{false};
+    void enterAndWait()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        entered = true; cv.notify_all();
+        cv.wait(lock, [this]() { return released; });
+    }
+    void signalEntered()
+    {
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+            entered = true;
+        }
+        cv.notify_all();
+    }
+    bool waitEntered()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(2), [this]() { return entered; });
+    }
+    void release()
+    {
+        { const std::lock_guard<std::mutex> lock(mutex); released = true; }
+        cv.notify_all();
+    }
+};
+struct BridgeLockProbe {
+    std::atomic<bool> released{false}, cutLeft{false};
+    std::atomic<bool> contended{false}, enteredWhileClosed{false};
+    std::atomic<bool> acquiredAfterRelease{false}, returnedWhileClosed{false};
+    std::atomic<bool> fallbackFired{false};
+};
+struct BridgeProbe {
+    std::atomic<bool> mute{false}, entryMute{false}, entryCut{false};
+    std::atomic<quint32> entries{0}, requestEpoch{0}, entryMask{0}, entryTxMask{0};
+    std::atomic<quint32> recoveryCount{0}, recoveryEpoch{0};
+};
+class BridgeConnection : public RecordingConnection {
+public:
+    std::vector<RemoteCwSafetySnapshot> applies; // connection stays on main
+protected:
+    void applyRemoteRfHold() override { applies.push_back(remoteCwSafetyState()->snapshot()); }
+};
+struct RemoteBridgeRig {
+    std::unique_ptr<BridgeConnection> conn{std::make_unique<BridgeConnection>()};
+    std::unique_ptr<TxChannel> tx;
+    std::unique_ptr<CwxSender> sender{std::make_unique<CwxSender>()};
+    std::shared_ptr<TransmitCutLine> line;
+    std::shared_ptr<RemoteCwSafetyState> safety{conn->remoteCwSafetyState()};
+    std::shared_ptr<BridgeProbe> probe{std::make_shared<BridgeProbe>()};
+    explicit RemoteBridgeRig(bool withTx = true,
+        std::shared_ptr<TransmitCutLine> bridge = std::make_shared<TransmitCutLine>()) : line(std::move(bridge))
+    {
+        if (withTx) {
+            tx = std::make_unique<TxChannel>(WdspEngine::kTxChannelId);
+        }
+        // Real installation takes sender mutex, BEFORE bridge reachability.
+        sender->setRemoteSafetyState(safety);
+        sender->setKeyLine(conn->cwKeyLine());
+        sender->setRemoteRequestObserverForTest([state = safety, p = probe, c = conn.get(), t = tx.get()]
+            (CwxSender::RemoteRequestKindForTest, quint32 epoch) noexcept {
+                const RemoteCwSafetySnapshot snapshot = state->snapshot();
+                p->requestEpoch.store(epoch); p->entryMask.store(snapshot.holdMask);
+                p->entryTxMask.store(t ? t->rfHoldMask() : 0);
+                p->entryCut.store(c->transmitCut()); p->entryMute.store(p->mute.load());
+                p->entries.fetch_add(1);
+            }); // actual nonvirtual ENTRY, no wait/Qt/mutex/re-entry
+        line->setTargets(conn.get(), tx.get());
+        line->setRemoteCwTargets(sender.get(), [p = probe](bool held) noexcept { p->mute.store(held); },
+            [p = probe](quint32 epoch) noexcept { p->recoveryEpoch.store(epoch); p->recoveryCount.fetch_add(1); });
+    }
+    bool admit(quint32 epoch) { return line->beginRemoteCw(epoch); }
+    void detach()
+    {
+        line->setRemoteCwTargets(nullptr, {}, {});
+        line->setTargets(nullptr, nullptr);
+    }
+    ~RemoteBridgeRig() { detach(); } // before sender/connection/TX destruction
+};
+#endif
 
 // A local model with a slice on 20 m USB, a recording connection on a
 // QThread of its own (as the radio connection lives), a TX channel wrapper
@@ -529,6 +638,288 @@ private slots:
         rig.model.setTune(false);
         QTRY_VERIFY_WITH_TIMEOUT(rig.model.moxController()->state() == MoxState::Rx, 5000);
     }
+
+#ifdef NEREUS_BUILD_TESTS
+    void remoteBridgeFixtureSharesRealStateAndBinding()
+    {
+        RemoteBridgeRig rig;
+        QCOMPARE(CwxSenderMailboxTestAccess::safety(*rig.sender).get(), rig.safety.get());
+        QCOMPARE(rig.conn->remoteCwSafetyState().get(), rig.safety.get());
+        QVERIFY(rig.admit(11));
+        QVERIFY(rig.safety->snapshot().valid);
+        QCOMPARE(rig.safety->snapshot().epoch, 11u);
+        QCOMPARE(quint32(CwxSenderMailboxTestAccess::word(*rig.sender) >> 32), 11u);
+        QCOMPARE(rig.sender->queuedCharacters(), 0); // reserved, NO accepted remote content
+    }
+
+    void remoteHoldMutesBeforeActualPauseEntry()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11)); // prerequisite, never RED
+        // Hold actual sender mutex through existing listener, not a fake sender.
+        const auto held = std::make_shared<BridgeLatch>();
+        std::thread locker([&rig, held]() { rig.sender->setKeyListener([held](bool) { held->enterAndWait(); }); });
+        const bool entered = held->waitEntered();
+        const auto done = std::make_shared<BridgeLatch>();
+        std::thread holder;
+        if (entered) {
+            holder = std::thread([&rig, done]() {
+                rig.line->hold(11, true);
+                { const std::lock_guard<std::mutex> lock(done->mutex); done->entered = true; }
+                done->cv.notify_all();
+            });
+        }
+        const bool returned = entered && done->waitEntered();
+        held->release();
+        locker.join();
+        if (holder.joinable()) {
+            holder.join();
+        }
+        rig.sender->setKeyListener({});
+        QVERIFY2(entered, "actual sender mutex setup failed");
+        QVERIFY2(returned, "bridge hold waited for sender mutex/main");
+        QCOMPARE(rig.probe->entries.load(), 1u);
+        QCOMPARE(rig.probe->requestEpoch.load(), 11u);
+        QCOMPARE(rig.probe->entryMask.load(), kGuardBit);
+        QCOMPARE(rig.probe->entryTxMask.load(), kGuardBit);
+        QVERIFY(rig.probe->entryMute.load()); // intended missing-mute ordering RED
+        QVERIFY(!rig.probe->entryCut.load());
+        QCOMPARE(quint32(CwxSenderMailboxTestAccess::word(*rig.sender) & 3u), 1u);
+    }
+
+    void remoteHoldOffRequestsRecoveryWithoutUnmask()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        QVERIFY(rig.conn->setRemoteCwHold(11, TxChannel::RfHold::Guard, true));
+        rig.tx->setRfHold(TxChannel::RfHold::Guard, true);
+        rig.probe->mute.store(true); // injected audio target's initial held state
+        rig.line->hold(11, false);
+        QCOMPARE(rig.probe->recoveryCount.load(), 1u); // intended recovery-request RED
+        QCOMPARE(rig.probe->recoveryEpoch.load(), 11u);
+        QCOMPARE(rig.safety->snapshot().holdMask, kGuardBit);
+        QCOMPARE(rig.tx->rfHoldMask(), kGuardBit);
+        QVERIFY(rig.probe->mute.load());
+        QCOMPARE(rig.probe->entries.load(), 0u);
+    }
+
+    void remoteCutCheckpointPrecedesImmediateLatch()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        const auto barrier = std::make_shared<BridgeLatch>();
+        const auto captured = std::make_shared<std::atomic<quint32>>(0);
+        rig.line->setRemoteCwCutValidatedObserverForTest([barrier, captured](quint32 epoch) {
+            captured->store(epoch); barrier->enterAndWait();
+        });
+        std::thread cutter([&rig]() { rig.line->cut(11); });
+        const bool entered = barrier->waitEntered();
+        const bool invalidated = rig.safety->snapshot().invalidated;
+        const bool latchBeforeRelease = rig.conn->transmitCut();
+        const bool lockAvailable = entered && TransmitCutLineTestAccess::lifetimeLockAvailable(*rig.line);
+        barrier->release(); cutter.join();
+        QVERIFY2(entered, "actual invalidate-to-latch checkpoint missing");
+        QCOMPARE(captured->load(), 11u);
+        QVERIFY(invalidated); QVERIFY(!latchBeforeRelease); QVERIFY(!lockAvailable);
+        QVERIFY(rig.conn->transmitCut()); // intended immediate-latch RED
+        QCOMPARE(rig.probe->entries.load(), 1u);
+        QVERIFY(rig.probe->entryCut.load()); QVERIFY(rig.probe->entryMute.load());
+        QCOMPARE(quint32(CwxSenderMailboxTestAccess::word(*rig.sender) & 3u), 2u);
+    }
+
+    void replacedRemoteTargetsRejectStaleEpoch_data()
+    {
+        QTest::addColumn<int>("event");
+        QTest::newRow("hold-on") << 0; QTest::newRow("hold-off") << 1; QTest::newRow("cut") << 2;
+    }
+    void replacedRemoteTargetsRejectStaleEpoch()
+    {
+        QFETCH(int, event);
+        const auto line = std::make_shared<TransmitCutLine>();
+        auto old = std::make_unique<RemoteBridgeRig>(true, line);
+        QVERIFY(old->admit(11));
+        const auto retiredProbe = old->probe;
+        // Reserved binding has NO accepted sender content. This is fixture
+        // retirement, NOT proof of cancel consumption/remote message cleanup.
+        old->detach(); old->safety->finish(11); old.reset(); // main-thread destruction
+        RemoteBridgeRig next(true, line);
+        QVERIFY(next.admit(12));
+        QVERIFY(next.conn->setRemoteCwHold(12, TxChannel::RfHold::Link, true));
+        next.tx->setRfHold(TxChannel::RfHold::Mic, true);
+        if (event == 0) {
+            line->hold(11, true);
+        } else if (event == 1) {
+            line->hold(11, false);
+        } else {
+            line->cut(11);
+        }
+        QCOMPARE(next.safety->snapshot().epoch, 12u);
+        QCOMPARE(next.safety->snapshot().holdMask, quint32(TxChannel::RfHold::Link));
+        QVERIFY(next.safety->snapshot().valid); QVERIFY(!next.conn->transmitCut());
+        QCOMPARE(next.tx->rfHoldMask(), quint32(TxChannel::RfHold::Mic));
+        QCOMPARE(next.probe->entries.load(), 0u); QCOMPARE(next.probe->recoveryCount.load(), 0u);
+        QVERIFY(!next.probe->mute.load()); QCOMPARE(retiredProbe->entries.load(), 0u);
+    }
+
+    void remoteHoldWithoutTxUsesSharedSuppression()
+    {
+        RemoteBridgeRig rig(false);
+        QVERIFY(rig.admit(11));
+        rig.line->hold(11, true);
+        QCOMPARE(rig.probe->entryMask.load(), kGuardBit);
+        QCOMPARE(rig.probe->entries.load(), 1u);
+        QVERIFY(rig.probe->entryMute.load()); // intended no-TX mute RED
+    }
+
+    void queuedRemoteApplyReadsCurrentEpoch()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        QVERIFY(rig.conn->setRemoteCwHold(11, TxChannel::RfHold::Guard, true));
+        // Empty reserved binding ONLY: no accepted remote message is seeded.
+        rig.safety->finish(11);
+        QVERIFY(rig.admit(12));
+        QCoreApplication::sendPostedEvents(rig.conn.get(), QEvent::MetaCall);
+        QCOMPARE(rig.conn->applies.size(), std::size_t(1));
+        QCOMPARE(rig.conn->applies.front().epoch, 12u);
+        QCOMPARE(rig.conn->applies.front().holdMask, 0u); // state seam, NOT RF proof
+    }
+
+    void sameConnectionSuccessorRejectsOldCut()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        QCOMPARE(rig.sender->queuedCharacters(), 0); // empty reserved binding only
+        rig.safety->finish(11);
+        QVERIFY(rig.admit(12));
+        QVERIFY(rig.conn->setRemoteCwHold(12, TxChannel::RfHold::Link, true));
+        rig.tx->setRfHold(TxChannel::RfHold::Mic, true);
+        rig.line->cut(11); // SAME physical connection, captured stale epoch
+        QCOMPARE(rig.safety->snapshot().epoch, 12u);
+        QVERIFY(rig.safety->snapshot().valid);
+        QCOMPARE(rig.safety->snapshot().holdMask, quint32(TxChannel::RfHold::Link));
+        QCOMPARE(rig.tx->rfHoldMask(), quint32(TxChannel::RfHold::Mic));
+        QCOMPARE(quint32(CwxSenderMailboxTestAccess::word(*rig.sender) >> 32), 12u);
+        QCOMPARE(rig.probe->entries.load(), 0u);
+        QVERIFY(!rig.conn->transmitCut());
+    }
+
+    void beginAndOldCutUseSameLifetimeCriticalSection()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        const auto cut = std::make_shared<BridgeLatch>();
+        const auto observed = std::make_shared<BridgeLockProbe>();
+        const auto teardown = std::make_shared<BridgeLatch>();
+        rig.line->setRemoteCwCutValidatedObserverForTest([cut, observed](quint32) {
+            cut->enterAndWait();
+            observed->cutLeft.store(true);
+        });
+        rig.line->setRemoteCwLockObserverForTest([cut, observed, teardown](TransmitCutLine::RemoteCwLockPointForTest point) {
+            if (point == TransmitCutLine::RemoteCwLockPointForTest::BeginContended) {
+                observed->contended.store(true);
+                observed->enteredWhileClosed.store(!observed->released.load() && !observed->cutLeft.load());
+                observed->released.store(true);
+                cut->release(); // Actual failed try_lock already happened.
+                teardown->signalEntered();
+            } else if (point == TransmitCutLine::RemoteCwLockPointForTest::BeginAcquired) {
+                observed->acquiredAfterRelease.store(observed->released.load() && observed->cutLeft.load());
+            }
+        });
+        std::thread cutter([&rig]() { rig.line->cut(11); });
+        const bool entered = cut->waitEntered();
+        std::thread fallback;
+        bool admitted12 = false;
+        if (entered) {
+            fallback = std::thread([cut, observed, teardown]() {
+                if (!teardown->waitEntered()) {
+                    observed->fallbackFired.store(true);
+                    observed->released.store(true);
+                    cut->release(); // Teardown ONLY; invalidates this fixture.
+                }
+            });
+            // Empty reserved binding only: NOT accepted-message cleanup.
+            rig.safety->finish(11);
+            admitted12 = rig.line->beginRemoteCw(12); // MAIN, actual contended call
+            observed->returnedWhileClosed.store(!observed->released.load());
+        }
+        // Cleanup must release/join even if fixture/acquisition regresses.
+        observed->released.store(true);
+        cut->release();
+        teardown->signalEntered(); // Also cancel watchdog if main returned unexpectedly.
+        cutter.join();
+        if (fallback.joinable()) {
+            fallback.join();
+        }
+        QVERIFY2(entered, "actual cut checkpoint missing");
+        QVERIFY2(!observed->fallbackFired.load(), "watchdog teardown fired: invalid fixture, NOT RED");
+        QVERIFY(observed->contended.load());
+        QVERIFY(observed->enteredWhileClosed.load());
+        QVERIFY(observed->acquiredAfterRelease.load());
+        QVERIFY(!observed->returnedWhileClosed.load());
+        QVERIFY(rig.conn->transmitCut()); // baseline first latch RED, NOT completed race GREEN
+        QVERIFY(!admitted12);
+        // Same-connection opposite order has its own real control above.
+    }
+
+    void detachWaitsForActualCutBeforeTargetDestruction()
+    {
+        RemoteBridgeRig rig;
+        QVERIFY(rig.admit(11));
+        const auto cut = std::make_shared<BridgeLatch>();
+        const auto observed = std::make_shared<BridgeLockProbe>();
+        const auto teardown = std::make_shared<BridgeLatch>();
+        rig.line->setRemoteCwCutValidatedObserverForTest([cut, observed](quint32) {
+            cut->enterAndWait();
+            observed->cutLeft.store(true);
+        });
+        rig.line->setRemoteCwLockObserverForTest([cut, observed, teardown](TransmitCutLine::RemoteCwLockPointForTest point) {
+            if (point == TransmitCutLine::RemoteCwLockPointForTest::TargetsContended) {
+                observed->contended.store(true);
+                observed->enteredWhileClosed.store(!observed->released.load() && !observed->cutLeft.load());
+                observed->released.store(true);
+                cut->release();
+                teardown->signalEntered();
+            } else if (point == TransmitCutLine::RemoteCwLockPointForTest::TargetsAcquired) {
+                observed->acquiredAfterRelease.store(observed->released.load() && observed->cutLeft.load());
+            }
+        });
+        std::thread cutter([&rig]() { rig.line->cut(11); });
+        const bool entered = cut->waitEntered();
+        std::thread fallback;
+        if (entered) {
+            fallback = std::thread([cut, observed, teardown]() {
+                if (!teardown->waitEntered()) {
+                    observed->fallbackFired.store(true);
+                    observed->released.store(true);
+                    cut->release(); // Teardown ONLY; invalidates this fixture.
+                }
+            });
+            rig.detach(); // MAIN actual setter fails try_lock, then blocks on SAME mutex
+            observed->returnedWhileClosed.store(!observed->released.load());
+        }
+        observed->released.store(true);
+        cut->release();
+        teardown->signalEntered(); // Also cancel watchdog if main returned unexpectedly.
+        cutter.join();
+        if (fallback.joinable()) {
+            fallback.join();
+        }
+        QVERIFY2(entered, "actual cut checkpoint missing");
+        QVERIFY2(!observed->fallbackFired.load(), "watchdog teardown fired: invalid fixture, NOT RED");
+        QVERIFY(observed->contended.load());
+        QVERIFY(observed->enteredWhileClosed.load());
+        QVERIFY(observed->acquiredAfterRelease.load());
+        QVERIFY(!observed->returnedWhileClosed.load());
+        QVERIFY(rig.conn->transmitCut()); // baseline first latch RED; later lifetime assertions pending
+        const auto retained = rig.line;
+        const auto p = rig.probe;
+        rig.sender.reset(); rig.tx.reset(); rig.conn.reset(); // MAIN after detach+join
+        const quint32 mark = p->entries.load();
+        retained->hold(11, true); retained->hold(11, false); retained->cut(11);
+        QCOMPARE(p->entries.load(), mark);
+    }
+#endif
 
     void lineHoldSetsOnlyTheGuardBit()
     {

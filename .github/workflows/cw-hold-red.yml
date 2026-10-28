@@ -1,15 +1,15 @@
-# Focused mailbox unit GREEN verification; root-reviewed publication/runtime required.
-name: CW hold sender mailbox unit GREEN verification
+# Isolated bridge RED plus frozen mailbox GREEN; root-reviewed publication/runtime required.
+name: CW hold isolated bridge RED verification
 on:
   push:
     branches: [codex/remote-cw-hold-union]
 permissions:
   contents: read
 concurrency:
-  group: cw-hold-mailbox-green-${{ github.ref }}
+  group: cw-hold-bridge-red-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  sender-mailbox-green:
+  bridge-red:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -30,18 +30,18 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-mailbox-green-artifacts
+          mkdir -p cw-bridge-red-artifacts/bridge cw-bridge-red-artifacts/mailbox
           test "$GITHUB_EVENT_NAME" = push
           test "$GITHUB_REF" = refs/heads/codex/remote-cw-hold-union
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git --no-optional-locks status --porcelain --untracked-files=no)"
-          git merge-base --is-ancestor 05e497c030991b2ffc3dd3359f958cadc9491860 HEAD
-          git show -s --format='%H%n%T%n%P' HEAD > cw-mailbox-green-artifacts/source-identity.txt
-          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-mailbox-green-artifacts/run-binding.txt
-          git diff --name-only 05e497c030991b2ffc3dd3359f958cadc9491860 HEAD -z | xargs -0 -r sha256sum > cw-mailbox-green-artifacts/reviewed-path-hashes.txt
-          uname -a > cw-mailbox-green-artifacts/runner.txt
-          df -k . > cw-mailbox-green-artifacts/disk-start.txt
-          uptime > cw-mailbox-green-artifacts/load-start.txt
+          git merge-base --is-ancestor 65b5b129e913ad4a37913e561342d2cc44c41f20 HEAD
+          git show -s --format='%H%n%T%n%P' HEAD > cw-bridge-red-artifacts/source-identity.txt
+          printf '%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REF" "$WORKFLOW_REF" "$WORKFLOW_SHA" > cw-bridge-red-artifacts/run-binding.txt
+          git diff --name-only 65b5b129e913ad4a37913e561342d2cc44c41f20 HEAD -z | xargs -0 -r sha256sum > cw-bridge-red-artifacts/reviewed-path-hashes.txt
+          uname -a > cw-bridge-red-artifacts/runner.txt
+          df -k . > cw-bridge-red-artifacts/disk-start.txt
+          uptime > cw-bridge-red-artifacts/load-start.txt
       - name: Restore dependency downloads
         uses: actions/cache/restore@v4
         with:
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
-          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-mailbox-green-artifacts/dependencies.log
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" -P cmake/FetchDependencyArchives.cmake 2>&1 | tee cw-bridge-red-artifacts/dependencies.log
           git config --global --add include.path "$mirrors"
       - name: Install system dependencies
         run: |
@@ -99,13 +99,13 @@ jobs:
           ccache --set-config=hash_dir=false
           ccache --set-config=compiler_check=content
           ccache --zero-stats
-      - name: Configure normal Core and GUI for the focused sender target
+      - name: Configure normal Core and GUI for bridge and sender targets
         run: |
           set -euo pipefail
-          cmake --version > cw-mailbox-green-artifacts/tool-versions.txt
-          g++ --version >> cw-mailbox-green-artifacts/tool-versions.txt
-          qmake -query QT_VERSION >> cw-mailbox-green-artifacts/tool-versions.txt
-          cp cmake/NereusDependencyArchives.cmake cw-mailbox-green-artifacts/
+          cmake --version > cw-bridge-red-artifacts/tool-versions.txt
+          g++ --version >> cw-bridge-red-artifacts/tool-versions.txt
+          qmake -query QT_VERSION >> cw-bridge-red-artifacts/tool-versions.txt
+          cp cmake/NereusDependencyArchives.cmake cw-bridge-red-artifacts/
           set +e
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
@@ -115,35 +115,40 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_TEST_SHARDS=0 -DNEREUS_TEST_SHARD=0 -DNEREUS_TESTS_OFFSCREEN=ON \
-            2>&1 | tee cw-mailbox-green-artifacts/configure.log
+            2>&1 | tee cw-bridge-red-artifacts/configure.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-mailbox-green-artifacts/configure.status
+          printf '%s\n' "$result" > cw-bridge-red-artifacts/configure.status
           test "$result" -eq 0
-          cp build/CMakeCache.txt cw-mailbox-green-artifacts/
-          ninja -C build -t query tests/tst_cwx_sender > cw-mailbox-green-artifacts/target-query.txt
-          ninja -C build -t commands tests/tst_cwx_sender > cw-mailbox-green-artifacts/target-commands.txt
-      - name: Build exact existing Core and GUI sender target
+          cp build/CMakeCache.txt cw-bridge-red-artifacts/
+          ninja -C build -t query tests/tst_transmit_cut_line > cw-bridge-red-artifacts/bridge-target-query.txt
+          ninja -C build -t commands tests/tst_transmit_cut_line > cw-bridge-red-artifacts/bridge-target-commands.txt
+          ninja -C build -t query tests/tst_cwx_sender > cw-bridge-red-artifacts/target-query.txt
+          ninja -C build -t commands tests/tst_cwx_sender > cw-bridge-red-artifacts/target-commands.txt
+      - name: Build exact existing Core and GUI bridge and sender targets
         id: build
         run: |
           set -euo pipefail
           set +e
-          nice -n 20 cmake --build build --target tst_cwx_sender --parallel 2 2>&1 | tee cw-mailbox-green-artifacts/build.log
+          nice -n 20 cmake --build build --target tst_transmit_cut_line tst_cwx_sender --parallel 2 2>&1 | tee cw-bridge-red-artifacts/build.log
           result=${PIPESTATUS[0]}
           set -e
-          printf '%s\n' "$result" > cw-mailbox-green-artifacts/build.status
+          printf '%s\n' "$result" > cw-bridge-red-artifacts/build.status
           test "$result" -eq 0
-      - name: Run exact all52 mailbox unit GREEN cases
+      - name: Run exact bridge then frozen mailbox regressions serially
         run: |
           set -euo pipefail
           set +e
-          ctest --test-dir build -R '^tst_cwx_sender$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-mailbox-green-artifacts/ctest-junit.xml" 2>&1 | tee cw-mailbox-green-artifacts/ctest.log
+          ctest --test-dir build -R '^tst_transmit_cut_line$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-bridge-red-artifacts/bridge/ctest-junit.xml" 2>&1 | tee cw-bridge-red-artifacts/bridge/ctest.log
           result=${PIPESTATUS[0]}
+          printf '%s\n' "$result" > cw-bridge-red-artifacts/bridge/ctest.status
+          cp build/Testing/Temporary/LastTest.log cw-bridge-red-artifacts/bridge/LastTest.log || true
+          ctest --test-dir build -R '^tst_cwx_sender$' --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/cw-bridge-red-artifacts/mailbox/ctest-junit.xml" 2>&1 | tee cw-bridge-red-artifacts/mailbox/ctest.log
+          result=${PIPESTATUS[0]}
+          printf '%s\n' "$result" > cw-bridge-red-artifacts/mailbox/ctest.status
+          cp build/Testing/Temporary/LastTest.log cw-bridge-red-artifacts/mailbox/LastTest.log || true
           set -e
-          printf '%s\n' "$result" > cw-mailbox-green-artifacts/ctest.status
-          # Preserve actual Qt records BEFORE guard; missing log is rejected.
-          cp build/Testing/Temporary/LastTest.log cw-mailbox-green-artifacts/LastTest.log || true
-      - name: Validate all52 mailbox unit cases PASS
+      - name: Validate exact bridge RED and frozen mailbox GREEN
         id: expected-evidence-guard
         if: always()
         env:
@@ -151,118 +156,109 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          mkdir -p cw-mailbox-green-artifacts
-          cat > cw-mailbox-green-artifacts/green_guard.py <<'PY_GUARD'
+          mkdir -p cw-bridge-red-artifacts
+          cat > cw-bridge-red-artifacts/bridge_mailbox_guard.py <<'PY_GUARD'
           import json
-          expected = {'schemaVersion': 1, 'status': 'SOURCE-PREDICTED ONLY; APPLY REQUIRES ROOT-OBSERVED MATCHING612RED', 'class': 'TestCwxSender', 'ctestName': 'tst_cwx_sender', 'workflowName': 'CW hold sender mailbox unit GREEN verification', 'reviewedSourceAncestor': '05e497c030991b2ffc3dd3359f958cadc9491860', 'expectedRef': 'refs/heads/codex/remote-cw-hold-union', 'workflowPath': '.github/workflows/cw-hold-red.yml', 'approvedSourcePatchSHA256': 'f1c9fe72ec750ff055e5e343ecdf58f1353726c6357f94061802001e5cc6f5eb', 'originalTestSourceSHA256': '59b20de44806952626eb16e1eae5dfdd1a6f06e9c0f2b70b0727d806a2799056', 'proposedTestSourceSHA256': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962', 'reviewedSourceHashes': {'src/core/safety/RemoteCwSafetyState.h': 'b04cd686caab3f308bb44976c681c20c1ddf0a00ab70b2c689b5589c5c509c22', 'src/core/safety/RemoteCwSafetyState.cpp': 'af03e8d247b85c503385d0029a9abde7fa7b328a1543ae45e4c6fbfb85fd758a', 'docs/architecture/2026-10-27-remote-cw-hold-plan.md': '8221cce294141d0455dd0eb9b7d7d2548ca5c056ceca5965daec407d1b065670', 'CMakeLists.txt': '0277e9f5224e372d2bf9a159fd49cfc07785372acd2d1d38c0df2c930de27ff1', 'tests/CMakeLists.txt': '1c8a84a0f618d6ccdbc191a071fb892d20ec6366996680fe0e3efc0404b01223', 'cmake/NereusDependencyArchives.cmake': '3cf622e8a482ff8942c94af6db53e1f4e713d9fa6d69ed9e233fd1397f1c76b3', 'cmake/FetchDependencyArchives.cmake': '28a62b0f7271c3a508b9df93e1a82a1de2bb1f9773bbec113182030ae9fec084', 'src/core/CwxSender.h': 'e2ddb944eaf181af9f93cbef0e610970fcf40ac24b2168e4435e84d7f720ed90', 'src/core/CwxSender.cpp': '653dc3d4637f8f42c0c1b8e01eec39c380e1aac67f7645858f8b1ea8a3bc9b5a', 'tests/tst_cwx_sender.cpp': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962'}, 'allowedChangedPathsFromAncestor': ['.github/workflows/cw-hold-red.yml', 'src/core/CwxSender.cpp'], 'expectedCounts': {'total': 52, 'passed': 52, 'failed': 0, 'skipped': 0, 'blacklisted': 0, 'publicationPositiveControls': 6, 'matchingConsumptionControls': 1, 'postPublicationStaleControls': 3, 'originalPassing': 40, 'newLocalPassing': 2}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-after-invalidate)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause-then-cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-then-pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteBindAndPublicationDoNotWaitForSenderMutex', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteStaleRequestsAfterBindTwelvePreserveTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteCapturedElevenCannotPublishOverTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteTakeRetainsBindingAndAllowsLaterCancel', 'result': 'PASS', 'classification': 'matching-consumption-control', 'firstFailure': None}, {'case': 'remoteStaleTakeCannotClearTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteUnboundRequestsDoNotAdoptLocalWork', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'remoteBareBindingAndOldCancelLeaveLocalQueueAlone', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'elementTimeIs1200OverWpm', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'eAt20KeysSixtyMsThenTheCharacterGap', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'parisAt20TakesFiftyElementsOnSchedule', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'speedMarkRaisesTheNextSegmentByFive', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'prosignBetweenBarsSendsItsCharacter', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'memoryEndingInQuoteRepeatsAfterTheDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptSwitchRepeatsWithoutTheMarker', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptOffMemoryWithoutTheMarkerSendsOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'stopMidElementReleasesAtOnceAndClears', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'queuedCharactersCountsWhatHasNotStarted', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyHeldDropsThreeSecondsAfterTheLastPress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseDropsAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterFallsThatLongAfterThePress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterATimeAlreadyPassedReleasesAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterNeverOutlastsTheWatchdog', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2PttLeadsTheKeyAndHangsAfterTheLastElement', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2MemoryAt60LeadsPttByThePttDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(text)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(memory)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nonHl2NeverSetsThePtt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'inOffCwxKeysOnlyWhileMoxIsHeld', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'gateWordsRefuseEverySendAndTheKey', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nothingToSendIsRefusedWithWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'swappingTheLineReleasesTheOldOneAndAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'testAt30KeysEachEdgeWithinTwoMs', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesOutsideCw', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesWithTheKeyerGatesWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelGateTurningFalseMidMessageAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelLeavingCwAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelTeardownReleasesTheLineAndLetsGo', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelConnectionSwapReleasesTheOldLine', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelCutMidMessageThenClearKeysNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithMox_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInQsk_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxStopsCwx', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}], 'scope': 'all52 frozen mailbox unit/regression cases PASS only; real worker/key/accepted-content/admission/bridge/physical and fullTask3A remain unproved/pending', 'sourceTransition': 'Mailbox take helper-only CAS+truthful preface; no wake/run/queue/admission/checkpoint implementation.', 'consumerSourcePatchSHA256': 'be6943f44f3fe64d142827b85b22ec795cc190526cf40796c33258cf78a16761'}
-          import collections, hashlib, os, pathlib, re, subprocess, sys, xml.etree.ElementTree as ET
-          out = pathlib.Path("cw-mailbox-green-artifacts")
+          expected = {'schemaVersion': 1, 'status': 'PROPOSED/UNRUN; root sourcea428 accepted', 'workflowName': 'CW hold isolated bridge RED verification', 'reviewedSourceAncestor': '65b5b129e913ad4a37913e561342d2cc44c41f20', 'expectedRef': 'refs/heads/codex/remote-cw-hold-union', 'workflowPath': '.github/workflows/cw-hold-red.yml', 'approvedBridgePatchSHA256': 'a4285798f61b9474d70d5c5a692385762401624f5db4f34412dafa353f37f5f9', 'reviewedSourceHashes': {'src/core/safety/RemoteCwSafetyState.h': 'b04cd686caab3f308bb44976c681c20c1ddf0a00ab70b2c689b5589c5c509c22', 'src/core/safety/RemoteCwSafetyState.cpp': 'af03e8d247b85c503385d0029a9abde7fa7b328a1543ae45e4c6fbfb85fd758a', 'docs/architecture/2026-10-27-remote-cw-hold-plan.md': '8221cce294141d0455dd0eb9b7d7d2548ca5c056ceca5965daec407d1b065670', 'CMakeLists.txt': '0277e9f5224e372d2bf9a159fd49cfc07785372acd2d1d38c0df2c930de27ff1', 'tests/CMakeLists.txt': '1c8a84a0f618d6ccdbc191a071fb892d20ec6366996680fe0e3efc0404b01223', 'cmake/NereusDependencyArchives.cmake': '3cf622e8a482ff8942c94af6db53e1f4e713d9fa6d69ed9e233fd1397f1c76b3', 'cmake/FetchDependencyArchives.cmake': '28a62b0f7271c3a508b9df93e1a82a1de2bb1f9773bbec113182030ae9fec084', 'src/core/CwxSender.h': 'e2ddb944eaf181af9f93cbef0e610970fcf40ac24b2168e4435e84d7f720ed90', 'src/core/CwxSender.cpp': '653dc3d4637f8f42c0c1b8e01eec39c380e1aac67f7645858f8b1ea8a3bc9b5a', 'tests/tst_cwx_sender.cpp': 'bb770fddabd4315da50f24181c497ad9451ca7acd453b81309e141e524e6d962', 'src/core/RadioConnection.h': '0e5e61074946ae6fd3a52b4ee42ca3dc3956942cd2cccd9dab698c484f35c474', 'src/core/RadioConnection.cpp': '76cc457a7489df0204fd4f68ebcc6685d5056544cfb21ddb484d1a4e423d72c9', 'src/core/safety/TransmitCutLine.h': '222e3478c8a3c335eceb0fc4fd0f5db080d2ec526f568ecc80d1ad7b88e635c9', 'src/core/safety/TransmitCutLine.cpp': '8a6b56317ca4885f80c272fc73d20cf34773653c8a169e14f0aef00e86908f2a', 'src/models/RadioModel.cpp': '124551a0d796ec43660c69bde01129865082ffd1cd9f1ec6113c0ea24907d9d6', 'tests/tst_transmit_cut_line.cpp': 'c3bfc7ee0ddab53075e07fd0f9314d9024772d3a8547cad9a2463bb5d540839b'}, 'allowedChangedPathsFromAncestor': ['.github/workflows/cw-hold-red.yml', 'src/core/RadioConnection.cpp', 'src/core/RadioConnection.h', 'src/core/safety/TransmitCutLine.cpp', 'src/core/safety/TransmitCutLine.h', 'src/models/RadioModel.cpp', 'tests/tst_transmit_cut_line.cpp'], 'suites': {'bridge': {'class': 'TestTransmitCutLine', 'ctestName': 'tst_transmit_cut_line', 'ctestExit': '8', 'testSourcePath': 'tests/tst_transmit_cut_line.cpp', 'expectedCounts': {'total': 22, 'passed': 16, 'failed': 6, 'skipped': 0, 'blacklisted': 0}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cutRunsOnTheConnectionThreadWhileMainSleeps', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'lineCutsAKeyedModelThenCatchUpRestores', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'catchUpWithNothingKeyedEmitsNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'clearedTargetsAreNotCut', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'aServerGoneBeforeTheCutsPostClearsTheCut', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteBridgeFixtureSharesRealStateAndBinding', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'remoteHoldMutesBeforeActualPauseEntry', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 685, 'assertion': 'QVERIFY(rig.probe->entryMute.load()); // intended missing-mute ordering RED', 'kind': 'QVERIFY', 'expression': 'rig.probe->entryMute.load()'}}, {'case': 'remoteHoldOffRequestsRecoveryWithoutUnmask', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 698, 'assertion': 'QCOMPARE(rig.probe->recoveryCount.load(), 1u); // intended recovery-request RED', 'kind': 'QCOMPARE', 'actualExpression': 'rig.probe->recoveryCount.load()', 'expectedExpression': '1u', 'actualValue': '0', 'expectedValue': '1'}}, {'case': 'remoteCutCheckpointPrecedesImmediateLatch', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 724, 'assertion': 'QVERIFY(rig.conn->transmitCut()); // intended immediate-latch RED', 'kind': 'QVERIFY', 'expression': 'rig.conn->transmitCut()'}}, {'case': 'replacedRemoteTargetsRejectStaleEpoch(hold-on)', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'replacedRemoteTargetsRejectStaleEpoch(hold-off)', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'replacedRemoteTargetsRejectStaleEpoch(cut)', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'remoteHoldWithoutTxUsesSharedSuppression', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 771, 'assertion': 'QVERIFY(rig.probe->entryMute.load()); // intended no-TX mute RED', 'kind': 'QVERIFY', 'expression': 'rig.probe->entryMute.load()'}}, {'case': 'queuedRemoteApplyReadsCurrentEpoch', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'sameConnectionSuccessorRejectsOldCut', 'result': 'PASS', 'classification': 'new-setup-or-stale-control', 'firstFailure': None}, {'case': 'beginAndOldCutUseSameLifetimeCriticalSection', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 860, 'assertion': 'QVERIFY(rig.conn->transmitCut()); // baseline first latch RED, NOT completed race GREEN', 'kind': 'QVERIFY', 'expression': 'rig.conn->transmitCut()'}}, {'case': 'detachWaitsForActualCutBeforeTargetDestruction', 'result': 'FAIL!', 'classification': 'intended-bridge-behavior-red', 'firstFailure': {'file': 'tests/tst_transmit_cut_line.cpp', 'line': 914, 'assertion': 'QVERIFY(rig.conn->transmitCut()); // baseline first latch RED; later lifetime assertions pending', 'kind': 'QVERIFY', 'expression': 'rig.conn->transmitCut()'}}, {'case': 'lineHoldSetsOnlyTheGuardBit', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'aServerGuardHoldsWithinTheHoldBound', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'aServerGoneDuringAGuardHoldClearsTheGuardBit', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}]}, 'mailbox': {'class': 'TestCwxSender', 'ctestName': 'tst_cwx_sender', 'ctestExit': '0', 'testSourcePath': 'tests/tst_cwx_sender.cpp', 'expectedCounts': {'total': 52, 'passed': 52, 'failed': 0, 'skipped': 0, 'blacklisted': 0}, 'expectedRecordsInOrder': [{'case': 'initTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-after-invalidate)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(pause-then-cancel)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteMailboxPublicationWhileActualSenderMutexHeld(cancel-then-pause)', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteBindAndPublicationDoNotWaitForSenderMutex', 'result': 'PASS', 'classification': 'publication-positive-control', 'firstFailure': None}, {'case': 'remoteStaleRequestsAfterBindTwelvePreserveTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteCapturedElevenCannotPublishOverTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteTakeRetainsBindingAndAllowsLaterCancel', 'result': 'PASS', 'classification': 'matching-consumption-control', 'firstFailure': None}, {'case': 'remoteStaleTakeCannotClearTwelve', 'result': 'PASS', 'classification': 'post-publication-stale-control', 'firstFailure': None}, {'case': 'remoteUnboundRequestsDoNotAdoptLocalWork', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'remoteBareBindingAndOldCancelLeaveLocalQueueAlone', 'result': 'PASS', 'classification': 'new-local-negative-control', 'firstFailure': None}, {'case': 'elementTimeIs1200OverWpm', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'eAt20KeysSixtyMsThenTheCharacterGap', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'parisAt20TakesFiftyElementsOnSchedule', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'speedMarkRaisesTheNextSegmentByFive', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'prosignBetweenBarsSendsItsCharacter', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'memoryEndingInQuoteRepeatsAfterTheDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptSwitchRepeatsWithoutTheMarker', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'rptOffMemoryWithoutTheMarkerSendsOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'stopMidElementReleasesAtOnceAndClears', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'queuedCharactersCountsWhatHasNotStarted', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyHeldDropsThreeSecondsAfterTheLastPress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseDropsAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterFallsThatLongAfterThePress', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterATimeAlreadyPassedReleasesAtOnce', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'keyReleaseAfterNeverOutlastsTheWatchdog', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2PttLeadsTheKeyAndHangsAfterTheLastElement', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2MemoryAt60LeadsPttByThePttDelay', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(text)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOffWithoutMox_messageAndHangStayOff(memory)', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'hl2InOff_heldKeyNeedsMoxAndReleasesBothBitsWithIt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nonHl2NeverSetsThePtt', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'inOffCwxKeysOnlyWhileMoxIsHeld', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'gateWordsRefuseEverySendAndTheKey', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'nothingToSendIsRefusedWithWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'swappingTheLineReleasesTheOldOneAndAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'testAt30KeysEachEdgeWithinTwoMs', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesOutsideCw', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelRefusesWithTheKeyerGatesWords', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelGateTurningFalseMidMessageAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelLeavingCwAborts', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelTeardownReleasesTheLineAndLetsGo', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelConnectionSwapReleasesTheOldLine', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelCutMidMessageThenClearKeysNothing', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsLogicalSendQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithoutMox_clearsPostMessageHangQuietly', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInOffWithMox_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxInQsk_announcesAndClearsSender', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'modelStopAllTxStopsCwx', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}, {'case': 'cleanupTestCase', 'result': 'PASS', 'classification': 'original-regression', 'firstFailure': None}]}}, 'scope': 'isolated bridge bootstrap intended6behaviorRED with allpremises/controls/oldregressions PASS plus frozen52mailboxGreen; no RF/actualworker/contentadmission/guard/physical/fullCW acceptance'}
+          import hashlib, os, pathlib, re, subprocess, sys, xml.etree.ElementTree as ET
+          out = pathlib.Path("cw-bridge-red-artifacts")
           out.mkdir(parents=True, exist_ok=True)
-          (out / "expected-behavioral-green.json").write_text(json.dumps(expected, indent=2) + "\n")
-          verdict = {"acceptedMailboxUnitGreen": False, "actualWorkerAdmissionOrPhysicalAccepted": False,
-                     "task3aComplete": False, "scope": expected["scope"]}
-          observed = []
-          def require(condition, message):
+          (out / "expected-bridge-and-mailbox.json").write_text(json.dumps(expected, indent=2) + "\n")
+          verdict = {"acceptedIsolatedBridgeRed": False, "mailbox52Green": False,
+                     "rfWorkerAdmissionGuardPhysicalAccepted": False, "scope": expected["scope"]}
+          observed = {}
+          def need(condition, reason):
               if not condition:
-                  raise AssertionError(message)
+                  raise AssertionError(reason)
           def git(*args):
               return subprocess.check_output(["git", "--no-optional-locks", *args], text=True).strip()
           def digest(path):
               return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+          def suite(label, spec):
+              folder = out / label
+              need((folder / "ctest.status").read_text().strip() == spec["ctestExit"], label + " wrong CTest exit")
+              junit = ET.parse(folder / "ctest-junit.xml").getroot()
+              wrappers = list(junit.iter("testcase"))
+              need(len(wrappers) == 1 and wrappers[0].attrib.get("name") == spec["ctestName"], label + " wrong/no/extra target")
+              need(not list(junit.iter("error")) and not list(junit.iter("skipped")), label + " JUnit error/skip")
+              failures = list(junit.iter("failure"))
+              need(len(failures) == (1 if spec["expectedCounts"]["failed"] else 0), label + " wrong failure wrapper")
+              text = (folder / "LastTest.log").read_text()
+              console = (folder / "ctest.log").read_text()
+              need(not re.search(r"QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*\s*Timeout|Test timeout|\bNot Run\b|XFAIL|XPASS|SKIP\s*:|No tests were found|No tests to run", text + "\n" + console, re.I), label + " fatal/timeout/skip/no-test")
+              need(re.findall(r"^\d+/\d+ Test:\s*(\S+)\s*$", text, re.M) == [spec["ctestName"]], label + " wrong copied LastTest")
+              need(text.count("Start testing of " + spec["class"]) == 1 and text.count("Finished testing of " + spec["class"]) == 1, label + " incomplete/duplicate Qt run")
+              pattern = r"^(PASS|FAIL!)\s*:\s*" + re.escape(spec["class"]) + r"::([A-Za-z0-9_]+)\(([^)]*)\)([^\n]*)$"
+              entries = list(re.finditer(pattern, text, re.M))
+              need(len(entries) == spec["expectedCounts"]["total"], label + " missing/extra Qt record")
+              need(len(re.findall(r"^(?:PASS|FAIL!)\s*:.*$", text, re.M)) == len(entries), label + " foreign/malformed Qt record")
+              result = []
+              for index, entry in enumerate(entries):
+                  kind, function, row, detail = entry.groups()
+                  case = function + ("(" + row + ")" if row else "")
+                  wanted = spec["expectedRecordsInOrder"][index]
+                  need(case == wanted["case"] and kind == wanted["result"], label + " wrong/duplicate/missing case/result: " + case)
+                  block = text[entry.end():entries[index + 1].start() if index + 1 < len(entries) else len(text)]
+                  locs = re.findall(r"Loc:\s*\[([^\]]+)\]", block)
+                  item = {"case": case, "result": kind, "classification": wanted["classification"]}
+                  if kind == "FAIL!":
+                      first = wanted["firstFailure"]
+                      need(len(locs) == 1, label + " missing/duplicate FIRST location: " + case)
+                      loc = re.fullmatch(r"(.+?)[/\\]" + re.escape(pathlib.Path(first["file"]).name) + r"\((\d+)\)", locs[0])
+                      need(loc is not None and pathlib.Path(loc.group(1)).resolve() == pathlib.Path("tests").resolve(), label + " foreign failure file")
+                      need(int(loc.group(2)) == first["line"], label + " wrong FIRST assertion: " + case)
+                      if first["kind"] == "QVERIFY":
+                          need("'" + first["expression"] + "' returned FALSE" in detail, label + " wrong QVERIFY expression: " + case)
+                      else:
+                          need("Compared values are not the same" in detail, label + " wrong comparison kind")
+                          need(re.search(r"Actual\s+\(" + re.escape(first["actualExpression"]) + r"\)\s*:\s*" + re.escape(first["actualValue"]) + r"\s*(?:\n|$)", block), label + " wrong recovery actual")
+                          need(re.search(r"Expected\s+\(" + re.escape(first["expectedExpression"]) + r"\)\s*:\s*" + re.escape(first["expectedValue"]) + r"\s*(?:\n|$)", block), label + " wrong recovery expected")
+                      item["location"] = locs[0]
+                  else:
+                      need(not locs, label + " assertion under PASS")
+                  result.append(item)
+              count = spec["expectedCounts"]
+              need(len(re.findall(r"Loc:\s*\[", text)) == count["failed"], label + " unassociated location")
+              need(re.findall(r"Totals:\s+(\d+) passed, (\d+) failed, (\d+) skipped, (\d+) blacklisted", text) == [(str(count["passed"]), str(count["failed"]), "0", "0")], label + " wrong totals")
+              completion = "Failed" if count["failed"] else "Passed"
+              need(len(re.findall(r"^Test " + completion + r"\.", text, re.M)) == 1, label + " missing CTest completion")
+              return {"records": result, "counts": count, "rawSHA256": {name: digest(folder / name) for name in ("LastTest.log", "ctest.log", "ctest-junit.xml")}}
           try:
               env = os.environ
-              require(env["GITHUB_EVENT_NAME"] == "push", "wrong event")
-              require(env["GITHUB_REF"] == expected["expectedRef"], "wrong ref")
-              require(env["GITHUB_WORKFLOW"] == expected["workflowName"], "old/wrong workflow")
-              require(env["RUNNER_OS"] == "Linux", "wrong runner OS")
-              require(re.fullmatch(r"[0-9a-f]{40}", env["GITHUB_SHA"]), "invalid source SHA")
-              require(env["GITHUB_RUN_ID"].isdigit() and int(env["GITHUB_RUN_ATTEMPT"]) > 0, "invalid run/attempt")
-              workflow_ref = env["GITHUB_REPOSITORY"] + "/" + expected["workflowPath"] + "@" + expected["expectedRef"]
-              require(env["WORKFLOW_REF"] == workflow_ref, "workflow ref mismatch")
-              require(env["WORKFLOW_SHA"] == env["GITHUB_SHA"], "workflow/source SHA mismatch")
-              require(git("rev-parse", "HEAD") == env["GITHUB_SHA"], "checkout/source SHA mismatch")
-              require(not git("status", "--porcelain", "--untracked-files=no"), "tracked source dirt")
-              subprocess.run(["git", "--no-optional-locks", "merge-base", "--is-ancestor",
-                              expected["reviewedSourceAncestor"], "HEAD"], check=True)
-              changed = git("diff", "--name-only", expected["reviewedSourceAncestor"], "HEAD").splitlines()
-              require(sorted(changed) == expected["allowedChangedPathsFromAncestor"], "unreviewed/missing changed path")
-              require((out / "source-identity.txt").read_text().strip() == git("show", "-s", "--format=%H%n%T%n%P", "HEAD"),
-                      "source head/tree/parent receipt mismatch")
-              wanted_binding = [env[key] for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REF", "WORKFLOW_REF", "WORKFLOW_SHA")]
-              require((out / "run-binding.txt").read_text().splitlines() == wanted_binding, "source/run receipt mismatch")
-              actual_hashes = {path: digest(path) for path in expected["reviewedSourceHashes"]}
-              require(actual_hashes == expected["reviewedSourceHashes"], "wrong reviewed source bytes")
-              require(actual_hashes["tests/tst_cwx_sender.cpp"] == expected["proposedTestSourceSHA256"], "wrong final test")
-              source_lines = pathlib.Path("tests/tst_cwx_sender.cpp").read_text().splitlines()
-              for record in expected["expectedRecordsInOrder"]:
-                  first = record["firstFailure"]
-                  if first:
-                      require(source_lines[first["line"] - 1].strip() == first["assertion"], "assertion source/line mismatch")
-              for phase, status in (("configure", "0"), ("build", "0"), ("ctest", "0")):
-                  require((out / (phase + ".status")).read_text().strip() == status, phase + " failed/missing/wrong status")
+              need(env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == expected["expectedRef"], "wrong event/ref")
+              need(env["GITHUB_WORKFLOW"] == expected["workflowName"] and env["RUNNER_OS"] == "Linux", "wrong workflow/runner")
+              need(re.fullmatch(r"[0-9a-f]{40}", env["GITHUB_SHA"]) and env["GITHUB_RUN_ID"].isdigit() and int(env["GITHUB_RUN_ATTEMPT"]) > 0, "invalid source/run")
+              need(env["WORKFLOW_REF"] == env["GITHUB_REPOSITORY"] + "/" + expected["workflowPath"] + "@" + expected["expectedRef"], "wrong workflowref")
+              need(env["WORKFLOW_SHA"] == env["GITHUB_SHA"] == git("rev-parse", "HEAD"), "wrong source/workflow SHA")
+              need(not git("status", "--porcelain", "--untracked-files=no"), "tracked source dirt")
+              subprocess.run(["git", "--no-optional-locks", "merge-base", "--is-ancestor", expected["reviewedSourceAncestor"], "HEAD"], check=True)
+              need(sorted(git("diff", "--name-only", expected["reviewedSourceAncestor"], "HEAD").splitlines()) == expected["allowedChangedPathsFromAncestor"], "wrong seven-path delta")
+              need((out / "source-identity.txt").read_text().strip() == git("show", "-s", "--format=%H%n%T%n%P", "HEAD"), "source receipt mismatch")
+              need((out / "run-binding.txt").read_text().splitlines() == [env[k] for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REF", "WORKFLOW_REF", "WORKFLOW_SHA")], "run receipt mismatch")
+              actual = {path: digest(path) for path in expected["reviewedSourceHashes"]}
+              need(actual == expected["reviewedSourceHashes"], "wrong reviewed source bytes")
+              for phase in ("configure", "build"):
+                  need((out / (phase + ".status")).read_text().strip() == "0", phase + " failed/missing")
               cache = (out / "CMakeCache.txt").read_text()
-              for name, value in {"ENABLE_DFNR": "ON", "ENABLE_WDSP": "ON", "NEREUS_USE_PCH": "ON",
-                                  "NEREUS_BUILD_TESTS": "ON", "NEREUS_TESTS_OFFSCREEN": "ON",
-                                  "NEREUS_TEST_SHARDS": "0", "NEREUS_TEST_SHARD": "0", "CMAKE_BUILD_TYPE": "RelWithDebInfo"}.items():
-                  require(re.search(r"^" + re.escape(name) + r":[^=\n]+=" + re.escape(value) + r"$", cache, re.M),
-                          "wrong normal configuration: " + name)
-              require(re.search(r"^6\.8\.\d+\s*$", (out / "tool-versions.txt").read_text(), re.M), "wrong/missing Qt6.8")
-              root = ET.parse(out / "ctest-junit.xml").getroot()
-              wrappers = list(root.iter("testcase"))
-              require(len(wrappers) == 1 and wrappers[0].attrib.get("name") == expected["ctestName"], "wrong/no/extra CTest selection")
-              require(not list(root.iter("failure")), "unexpected CTest failure")
-              require(not list(root.iter("error")) and not list(root.iter("skipped")), "CTest error/skip")
-              text = (out / "LastTest.log").read_text()
-              console = (out / "ctest.log").read_text()
-              reject = r"QFATAL|Received signal|Segmentation fault|Subprocess aborted|\*\*\*\s*Timeout|Test timeout|\bNot Run\b|XFAIL|XPASS|SKIP\s*:|No tests were found|No tests to run"
-              require(not re.search(reject, text + "\n" + console, re.I), "fatal/timeout/skip/no-test/non-assertion result")
-              require(re.findall(r"^\d+/\d+ Test:\s*(\S+)\s*$", text, re.M) == [expected["ctestName"]], "wrong LastTest selection")
-              require(text.count("Start testing of " + expected["class"]) == 1 and text.count("Finished testing of " + expected["class"]) == 1,
-                      "incomplete/duplicate Qt execution")
-              pattern = r"^(PASS|FAIL!)\s*:\s*" + re.escape(expected["class"]) + r"::([A-Za-z0-9_]+)\(([^)]*)\)([^\n]*)$"
-              entries = list(re.finditer(pattern, text, re.M))
-              require(len(entries) == expected["expectedCounts"]["total"], "missing/extra/duplicate Qt result")
-              all_result_lines = re.findall(r"^(?:PASS|FAIL!)\s*:.*$", text, re.M)
-              require(len(all_result_lines) == len(entries), "malformed/foreign Qt result")
-              for index, entry in enumerate(entries):
-                  kind, name, row, detail = entry.groups()
-                  case = name + ("(" + row + ")" if row else "")
-                  wanted = expected["expectedRecordsInOrder"][index]
-                  require(case == wanted["case"] and kind == wanted["result"], "unexpected/missing/duplicate/wrong case/result: " + case)
-                  block = text[entry.end():entries[index + 1].start() if index + 1 < len(entries) else len(text)]
-                  locations = re.findall(r"Loc:\s*\[([^\]]+)\]", block)
-                  actual = {"case": case, "result": kind, "classification": wanted["classification"]}
-                  if kind == "FAIL!":
-                      require("Compared values are not the same" in detail, "unexpected assertion kind: " + case)
-                      require(len(locations) == 1, "missing/duplicate assertion location: " + case)
-                      loc = re.fullmatch(r"(.+?)[/\\]tst_cwx_sender\.cpp\((\d+)\)", locations[0])
-                      require(loc is not None, "wrong assertion file: " + case)
-                      require(pathlib.Path(loc.group(1)).resolve() == pathlib.Path("tests").resolve(), "foreign assertion path: " + case)
-                      require(int(loc.group(2)) == wanted["firstFailure"]["line"], "wrong FIRST assertion line: " + case)
-                      actual["location"] = locations[0]
-                  else:
-                      require(not locations, "assertion under passing case: " + case)
-                  observed.append(actual)
-              require(len(re.findall(r"Loc:\s*\[", text)) == expected["expectedCounts"]["failed"], "unassociated assertion location")
-              totals = re.findall(r"Totals:\s+(\d+) passed, (\d+) failed, (\d+) skipped, (\d+) blacklisted", text)
-              require(totals == [("52", "0", "0", "0")], "wrong/incomplete totals")
-              require(len(re.findall(r"^Test Passed\.", text, re.M)) == 1, "missing/wrong CTest passing completion")
-              verdict.update(acceptedMailboxUnitGreen=True, sourceSHA=env["GITHUB_SHA"], sourceTree=git("rev-parse", "HEAD^{tree}"),
-                             runId=env["GITHUB_RUN_ID"], runAttempt=env["GITHUB_RUN_ATTEMPT"], reviewedSourceHashes=actual_hashes,
-                             workflowSHA256=digest(expected["workflowPath"]), guardSHA256=digest(__file__),
-                             publicationPositiveControls=[r["case"] for r in observed if r["classification"] == "publication-positive-control"],
-                             matchingConsumptionControls=[r["case"] for r in observed if r["classification"] == "matching-consumption-control"],
-                             postPublicationStaleControls=[r["case"] for r in observed if r["classification"] == "post-publication-stale-control"],
-                             originalPassing=40, localNegativePassing=2, counts=expected["expectedCounts"],
-                             rawEvidenceSHA256={name: digest(out / name) for name in ("LastTest.log", "ctest.log", "ctest-junit.xml")})
+              for key, value in {"ENABLE_DFNR":"ON","ENABLE_WDSP":"ON","NEREUS_USE_PCH":"ON","NEREUS_BUILD_TESTS":"ON","NEREUS_TESTS_OFFSCREEN":"ON","NEREUS_TEST_SHARDS":"0","NEREUS_TEST_SHARD":"0","CMAKE_BUILD_TYPE":"RelWithDebInfo"}.items():
+                  need(re.search(r"^" + re.escape(key) + r":[^=\n]+=" + re.escape(value) + "$", cache, re.M), "wrong normal configuration " + key)
+              need(re.search(r"^6\.8\.\d+\s*$", (out / "tool-versions.txt").read_text(), re.M), "wrong Qt6.8")
+              for label, spec in expected["suites"].items():
+                  lines = pathlib.Path(spec["testSourcePath"]).read_text().splitlines()
+                  for record in spec["expectedRecordsInOrder"]:
+                      if record["firstFailure"]:
+                          first = record["firstFailure"]
+                          need(lines[first["line"] - 1].strip() == first["assertion"], "wrong frozen assertion source")
+                  observed[label] = suite(label, spec)
+              verdict.update(acceptedIsolatedBridgeRed=True, mailbox52Green=True, sourceSHA=env["GITHUB_SHA"], sourceTree=git("rev-parse","HEAD^{tree}"), runId=env["GITHUB_RUN_ID"], runAttempt=env["GITHUB_RUN_ATTEMPT"], counts={k:v["counts"] for k,v in observed.items()}, reviewedSourceHashes=actual, guardSHA256=digest(__file__), workflowSHA256=digest(expected["workflowPath"]))
           except Exception as error:
               verdict["rejection"] = str(error)
-          (out / "qt-records.json").write_text(json.dumps(observed, indent=2) + "\n")
-          (out / "green-guard-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+          (out / "suite-records.json").write_text(json.dumps(observed, indent=2) + "\n")
+          (out / "bridge-mailbox-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
           print(json.dumps(verdict, indent=2))
-          sys.exit(0 if verdict["acceptedMailboxUnitGreen"] else 1)
+          sys.exit(0 if verdict["acceptedIsolatedBridgeRed"] and verdict["mailbox52Green"] else 1)
           PY_GUARD
-          python3 cw-mailbox-green-artifacts/green_guard.py
+          python3 cw-bridge-red-artifacts/bridge_mailbox_guard.py
       - name: Save isolated CW compiler cache after expected evidence passes
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.expected-evidence-guard.outcome == 'success' && steps.ccache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
@@ -272,18 +268,18 @@ jobs:
       - name: Capture final diagnostics
         if: always()
         run: |
-          mkdir -p cw-mailbox-green-artifacts
-          df -k . > cw-mailbox-green-artifacts/disk-end.txt
-          uptime > cw-mailbox-green-artifacts/load-end.txt
-          ccache -s > cw-mailbox-green-artifacts/ccache-final.txt 2>&1 || true
-          cp build/CMakeCache.txt cw-mailbox-green-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTest.log cw-mailbox-green-artifacts/ 2>/dev/null || true
-          cp build/Testing/Temporary/LastTestsFailed.log cw-mailbox-green-artifacts/ 2>/dev/null || true
-      - name: Upload focused mailbox unit GREEN evidence
+          mkdir -p cw-bridge-red-artifacts
+          df -k . > cw-bridge-red-artifacts/disk-end.txt
+          uptime > cw-bridge-red-artifacts/load-end.txt
+          ccache -s > cw-bridge-red-artifacts/ccache-final.txt 2>&1 || true
+          cp build/CMakeCache.txt cw-bridge-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTest.log cw-bridge-red-artifacts/ 2>/dev/null || true
+          cp build/Testing/Temporary/LastTestsFailed.log cw-bridge-red-artifacts/ 2>/dev/null || true
+      - name: Upload isolated bridge RED and mailbox GREEN evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cw-mailbox-green-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cw-mailbox-green-artifacts/
+          name: cw-bridge-red-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cw-bridge-red-artifacts/
           retention-days: 7
           if-no-files-found: error

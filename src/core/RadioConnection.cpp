@@ -5,6 +5,8 @@
 // implemented from the Thetis console.cs interface specification.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Propose unused isolated CW bridge RED bootstrap for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: The transmit cut latch: cutTransmit, clearTransmitCut and
 //               the default applyTransmitCut. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -16,6 +18,7 @@
 //               Claude Code.
 
 #include "RadioConnection.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "P1RadioConnection.h"
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
@@ -26,6 +29,7 @@ namespace NereusSDR {
 
 RadioConnection::RadioConnection(QObject* parent)
     : QObject(parent)
+    , m_remoteCwSafetyState(std::make_shared<RemoteCwSafetyState>())
 {
 }
 
@@ -58,6 +62,25 @@ void RadioConnection::cutTransmit()
     }
     QMetaObject::invokeMethod(this, [this]() { applyTransmitCut(); },
                               Qt::QueuedConnection);
+}
+
+std::shared_ptr<RemoteCwSafetyState> RadioConnection::remoteCwSafetyState() const
+{
+    return m_remoteCwSafetyState;
+}
+
+bool RadioConnection::setRemoteCwHold(quint32 expectedEpoch, TxChannel::RfHold reason, bool held)
+{
+    const bool accepted = held ? m_remoteCwSafetyState->setHold(expectedEpoch, reason)
+                               : m_remoteCwSafetyState->clearHold(expectedEpoch, reason);
+    if (!accepted) { return false; }
+    QMetaObject::invokeMethod(this, [this]() { applyRemoteRfHold(); }, Qt::QueuedConnection);
+    return true;
+}
+
+void RadioConnection::applyRemoteRfHold()
+{
+    // UNUSED bridge-RED bootstrap: no P1/P2 packet or hardware control.
 }
 
 void RadioConnection::clearTransmitCut()

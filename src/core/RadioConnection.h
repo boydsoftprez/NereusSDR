@@ -7,6 +7,8 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Propose unused isolated CW bridge RED bootstrap for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Carry the same longest wake interval's worker/acquire split.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
@@ -72,6 +74,7 @@
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
 #include "CwKeyLine.h"
+#include "core/TxChannel.h"
 #include "codec/CwWireState.h"
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
@@ -94,6 +97,8 @@
 #include <optional>
 
 namespace NereusSDR {
+
+class RemoteCwSafetyState;
 
 // Structured failure taxonomy for the initial connect attempt — design §4.1.
 // Emitted by connectFailed() when connectToRadio() cannot reach Connected state.
@@ -1007,6 +1012,9 @@ public:
     // the wire reads it as unkeyed. setMox(false) never clears it.
     void cutTransmit();
     bool transmitCut() const noexcept { return m_transmitCut.load(std::memory_order_acquire); }
+    // Immutable connection-owned value; state flags are NOT RF-output proof.
+    std::shared_ptr<RemoteCwSafetyState> remoteCwSafetyState() const;
+    bool setRemoteCwHold(quint32 expectedEpoch, TxChannel::RfHold reason, bool held);
 
 public slots:
     // This object's thread; queued from the main thread's catch-up
@@ -1046,6 +1054,9 @@ protected:
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
     // once and keeps re-sending MOX off for its grace window.
     virtual void applyTransmitCut();
+    // Queued onto connection thread; overrides must read CURRENT effective
+    // state. P1/P2 wire composition is deliberately NOT implemented here.
+    virtual void applyRemoteRfHold();
     // This object's thread, from clearTransmitCut when it cleared a set
     // latch (early fix wave I1). The default does nothing: P1 sends the
     // restored state on its next frames. P2 sends CmdTx and high priority,
@@ -1374,6 +1385,7 @@ private:
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
     // The transmit cut latch (cutTransmit / clearTransmitCut).
     std::atomic<bool> m_transmitCut{false};
+    const std::shared_ptr<RemoteCwSafetyState> m_remoteCwSafetyState;
     // publishRadioKeyStatus's last bits: dot 0x1, dash 0x2, keyOut 0x4.
     quint8 m_radioKeyStatusBits{0};
 
