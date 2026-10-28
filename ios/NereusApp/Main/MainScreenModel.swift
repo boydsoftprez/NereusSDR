@@ -445,36 +445,17 @@ final class MainScreenModel: ObservableObject {
     }
 
     private func queueRefresh() {
-        #if DEBUG
-        let diagnostic = slices.writerResumeDiagnosticForTesting
-        diagnostic?.count("mainRefreshRequests")
-        let diagnosticRequestedAt = diagnostic?.timestamp()
-        if refreshQueued { diagnostic?.count("mainRefreshCoalesced") }
-        #endif
         guard !refreshQueued else {
             return
         }
         refreshQueued = true
         Task { @MainActor [weak self] in
-            #if DEBUG
-            diagnostic?.count("mainRefreshJobs")
-            if let diagnosticRequestedAt {
-                diagnostic?.recordDuration("mainRefreshQueueWait", since: diagnosticRequestedAt)
-            }
-            #endif
             self?.refreshQueued = false
             self?.refresh()
         }
     }
 
     private func refresh() {
-        #if DEBUG
-        let diagnostic = slices.writerResumeDiagnosticForTesting
-        let diagnosticStarted = diagnostic?.timestamp()
-        defer {
-            if let diagnosticStarted { diagnostic?.recordDuration("mainRefresh", since: diagnosticStarted) }
-        }
-        #endif
         let devices = mirror.object(Self.devicesKey)
         if devices !== watchedDevices {
             watchedDevices = devices

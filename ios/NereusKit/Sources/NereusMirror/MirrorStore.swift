@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Combine
-#if DEBUG
-import Foundation
-#endif
 import NereusLink
 import os
 
@@ -37,17 +34,6 @@ import os
 /// goes to lateAnswers.
 @MainActor
 public final class MirrorStore: ObservableObject {
-    #if DEBUG
-    /// Temporary test-host timing seam. A sequence is the actual pending
-    /// write's identity; this callback never allocates a wire/write ID.
-    public enum WriterResumeDiagnosticEvent {
-        case resolved(key: String, property: String, value: MirrorValue, edit: UInt64?,
-                      sequence: UInt64, at: Double, answeredByCore: Bool)
-        case sessionStopped
-    }
-    public var writerResumeDiagnosticForTesting: (@MainActor (WriterResumeDiagnosticEvent) -> Void)?
-    #endif
-
     /// Sends one message to the Core.
     public typealias Sender = @Sendable (LinkMessage) async throws -> Void
     public typealias BoundSender = @Sendable (LinkMessage, CommandSendPermit) async throws -> Void
@@ -288,9 +274,6 @@ public final class MirrorStore: ObservableObject {
             if wasUp && !up {
                 linkLost()
             }
-            #if DEBUG
-            if state == .stopped { writerResumeDiagnosticForTesting?(.sessionStopped) }
-            #endif
         case .refused:
             break
         }
@@ -773,18 +756,7 @@ public final class MirrorStore: ObservableObject {
     private func finish(_ pending: PendingWrite, _ outcome: PropertyWriteOutcome) {
         let current = isCurrent(pending)
         if let resolve = pending.resolve {
-            #if DEBUG
-            let diagnostic = writerResumeDiagnosticForTesting
-            let resolvedAt = diagnostic.map { _ in ProcessInfo.processInfo.systemUptime }
-            #endif
             resolve.resume(returning: current ? outcome : outcome.superseded())
-            #if DEBUG
-            if let diagnostic, let resolvedAt {
-                diagnostic(.resolved(key: pending.key, property: pending.property, value: pending.requested,
-                                     edit: pending.edit, sequence: pending.sequence, at: resolvedAt,
-                                     answeredByCore: outcome.answeredByCore))
-            }
-            #endif
         } else if current {
             pending.onLateOutcome?(outcome)
             lateAnswers.send(LateAnswer(key: pending.key, property: pending.property, outcome: outcome))
@@ -822,17 +794,7 @@ public final class MirrorStore: ObservableObject {
             restoreCore(pending.key, property: pending.property, hold: hold)
             setUnconfirmed(pending.key, pending.property, true)
         }
-        #if DEBUG
-        let diagnostic = writerResumeDiagnosticForTesting
-        let resolvedAt = diagnostic.map { _ in ProcessInfo.processInfo.systemUptime }
-        #endif
         resolve.resume(returning: isCurrent(pending) ? .notConfirmed : .notConfirmed.superseded())
-        #if DEBUG
-        if let diagnostic, let resolvedAt {
-            diagnostic(.resolved(key: pending.key, property: pending.property, value: pending.requested,
-                                 edit: pending.edit, sequence: pending.sequence, at: resolvedAt, answeredByCore: false))
-        }
-        #endif
     }
 
     private func setUnconfirmed(_ key: String, _ property: String, _ on: Bool) {

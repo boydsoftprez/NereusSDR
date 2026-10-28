@@ -1,5 +1,5 @@
-# TEMPORARY causal diagnostic; source probes and this workflow must be removed before final uninstrumented acceptance.
-name: iOS writer resume timing diagnostic
+# Temporary verification only; keep this workflow out of the final product candidate.
+name: iOS ordered intake uninstrumented verification
 'on':
   push:
     branches:
@@ -7,7 +7,7 @@ name: iOS writer resume timing diagnostic
 permissions:
   contents: read
 jobs:
-  writer-resume-diagnostic:
+  ordered-intake:
     runs-on: xcode-27
     timeout-minutes: 60
     steps:
@@ -19,7 +19,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         mkdir -p "$evidence"
         {
           printf 'event=%s\nref=%s\nsha=%s\nhead=%s\nrunner_os=%s\nrunner_arch=%s\nrunner_name=%s\n' \
@@ -33,8 +33,8 @@ jobs:
         test -z "$(git status --porcelain)"
         shasum -a 256 \
           ios/NereusApp/App/AppModel.swift \
-          ios/NereusApp/Band/BandSlicesModel.swift \
-          ios/NereusApp/Main/MainScreenModel.swift \
+  ios/NereusApp/Band/BandSlicesModel.swift \
+  ios/NereusApp/Main/MainScreenModel.swift \
           ios/NereusApp/App/SessionEventLanes.swift \
           ios/NereusApp/Tests/SessionEventLanesTests.swift \
           ios/NereusKit/Sources/NereusMedia/MediaControlClient.swift \
@@ -57,7 +57,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         xcode=$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)
         sudo xcode-select -s "$xcode"
         { xcode-select -p; xcodebuild -version; swift --version; } > "$evidence/toolchain.txt"
@@ -88,10 +88,10 @@ jobs:
       run: |
         set +e
         set -uo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
           -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
-          -derivedDataPath "$RUNNER_TEMP/writer-resume-dd" \
+          -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
           -jobs 2 -parallel-testing-enabled NO build-for-testing \
           2>&1 | tee "$evidence/build.log"
         status=${PIPESTATUS[0]}
@@ -102,23 +102,23 @@ jobs:
       run: |
         set +e
         set -uo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         ios/scripts/sim-settle.sh 'iPhone 18 Pro Max' 2>&1 | tee "$evidence/settle.log"
         status=${PIPESTATUS[0]}
         printf '%s\n' "$status" > "$evidence/boot.exit"
         xcrun simctl list devices available --json > "$evidence/devices-after-settle.json"
         exit "$status"
-    - name: Enumerate exactly the four unchanged original Tune methods
+    - name: Enumerate and validate 17 functional plus 4 original Tune identities
       shell: bash
       run: |
         set +e
         set -uo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         # Apple's xcodebuild manual defines flat enumeration as identifiers
         # suitable for subsequent -only-testing arguments; enumeration runs no tests.
         xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
           -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
-          -derivedDataPath "$RUNNER_TEMP/writer-resume-dd" \
+          -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
           -jobs 2 -parallel-testing-enabled NO test-without-building \
           -enumerate-tests -test-enumeration-style flat \
           -test-enumeration-format json \
@@ -134,7 +134,7 @@ jobs:
         root=pathlib.Path(sys.argv[1])
         enumeration=json.loads((root/'enumeration.json').read_text())
         if enumeration.get('errors'): raise SystemExit('INVALID: enumeration errors')
-        SUITES = {'tune': ('TuneUnderLoadTests', ['idleDragKeepsPace()', 'heldMainDragKeepsPace()', 'flatDragKeepsPace()', 'stackedDragKeepsPace()'])}
+        SUITES = {'functional': ('SessionEventLanesTests', ['laneKeepsOrderUnderABurst()', 'stoppedLaneSkipsAndFinishedLaneDrainsAtOnce()', 'inboxReadyPrefixDoesNotWaitToFill()', 'inboxCapacitySuspendsAndResumesLosslessly()', 'intakeCancellationWhileFullReleasesAndJoins()', 'intakeCancellationWhileEmptyReleasesAndJoins()', 'cancellationBeforeWaiterRegistrationCannotLoseWake(full:)', 'actualPumpPreservesEveryReadingAndRelevantEventAcrossFullInbox()', 'barrierInsideReadyPrefixPreservesTransmitOrdering()', 'eachConsumerKeepsArrivalOrderUnderABurst()', 'writeAnswerIsAppliedAtOnceWhileReadingsFlood()', 'relevantEventsBackpressurePump()', 'mediaEventsBackpressurePump()', 'meterFloodBypassesHeldLane()', 'heldOldLaneFencesReconnect(media:)', 'lanesEndWithTheirSession()', 'transmitSilenceKeepsItsSequence()']), 'tune': ('TuneUnderLoadTests', ['idleDragKeepsPace()', 'heldMainDragKeepsPace()', 'flatDragKeepsPace()', 'stackedDragKeepsPace()'])}
         for phase,(suite,methods) in SUITES.items():
             prefix='NereusSDRTests/'+suite+'/'
             expected={prefix+method for method in methods}; enabled=[]; disabled=[]
@@ -144,40 +144,45 @@ jobs:
             if disabled or len(enabled)!=len(expected) or set(enabled)!=expected:
                 raise SystemExit(f'INVALID: {phase} missing/extra/duplicate/disabled identities: {enabled!r}, {disabled!r}')
             (root/(phase+'-identifiers.txt')).write_text('\n'.join(sorted(enabled))+'\n')
-        (root/'enumeration-validation.txt').write_text('VALID: 4 original Tune methods\n')
+        (root/'enumeration-validation.txt').write_text('VALID: 17 functional and 4 original Tune methods\n')
         PYIDS
-    - name: Run unchanged original Tune4 once with temporary host-only probes
+    - name: Run functional then original Tune4 sequentially on the same build
       shell: bash
       run: |
         set +e
         set -uo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
-        test "$(cat "$evidence/enumeration-validation.txt")" = 'VALID: 4 original Tune methods' || exit 1
-        selection=()
-        while IFS= read -r identifier; do selection+=("-only-testing:$identifier"); done < "$evidence/tune-identifiers.txt"
-        test "${#selection[@]}" -eq 4 || exit 1
-        xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
-          -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
-          -derivedDataPath "$RUNNER_TEMP/writer-resume-dd" \
-          -resultBundlePath "$evidence/tune.xcresult" -jobs 2 -parallel-testing-enabled NO \
-          "${selection[@]}" test-without-building 2>&1 | tee "$evidence/tune.log"
-        status=${PIPESTATUS[0]}
-        printf '%s\n' "$status" > "$evidence/tune.exit"
-        exit "$status"
-    - name: Always collect bounded diagnostic evidence, including failed Tune assertions
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
+        test "$(cat "$evidence/enumeration-validation.txt")" = 'VALID: 17 functional and 4 original Tune methods' || exit 1
+        overall=0
+        for phase in functional tune; do
+          selection=()
+          while IFS= read -r identifier; do selection+=("-only-testing:$identifier"); done < "$evidence/$phase-identifiers.txt"
+          case "$phase" in functional) expected=17 ;; tune) expected=4 ;; esac
+          test "${#selection[@]}" -eq "$expected" || exit 1
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination "platform=iOS Simulator,id=$DEVICE_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/ordered-intake-dd" \
+            -resultBundlePath "$evidence/$phase.xcresult" -jobs 2 -parallel-testing-enabled NO \
+            "${selection[@]}" test-without-building 2>&1 | tee "$evidence/$phase.log"
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > "$evidence/$phase.exit"
+          if [ "$status" -ne 0 ]; then overall=$status; fi
+         done
+        exit "$overall"
+    - name: Always retain results and enforce method, argument, device and drawing evidence
       if: always()
       shell: bash
       run: |
         set +e
         set -uo pipefail
-        evidence="$RUNNER_TEMP/writer-resume-diagnostic"
+        evidence="$RUNNER_TEMP/ordered-intake-verification"
         mkdir -p "$evidence"
         if [ -f "$evidence/sources-before.sha256" ]; then
           shasum -a 256 -c "$evidence/sources-before.sha256" > "$evidence/sources-after-check.txt" 2>&1
           printf '%s\n' "$?" > "$evidence/sources-after-check.exit"
           sed 's/^[^ ]*  //' "$evidence/sources-before.sha256" | while IFS= read -r path; do shasum -a 256 "$path"; done > "$evidence/sources-after.sha256"
         fi
-        for phase in tune; do
+        for phase in functional tune; do
           if [ -d "$evidence/$phase.xcresult" ]; then
             for kind in summary tests; do
               xcrun xcresulttool get test-results "$kind" --path "$evidence/$phase.xcresult" > "$evidence/$phase-$kind.json" 2> "$evidence/$phase-$kind.error"
@@ -187,93 +192,77 @@ jobs:
         done
         git status --short > "$evidence/status-after.txt"
         python3 - "$evidence" <<'RESULTS'
-        import json,pathlib,re,sys,math
-        root=pathlib.Path(sys.argv[1]); report={'evidence':'INVALID / NEEDS INSPECTION','acceptance':'DIAGNOSTIC ONLY. Instrumented execution never qualifies uninstrumented performance, physical-phone or operator acceptance.'}
+        import json,pathlib,re,sys
+        root=pathlib.Path(sys.argv[1]); report={'execution':'INVALID / NEEDS INSPECTION','acceptance':'No physical-phone or operator acceptance. Main-held activity requires raw busy-span review.'}
         def read(name):
-            try:return (root/name).read_text().strip()
-            except OSError:return ''
+            try: return (root/name).read_text().strip()
+            except OSError: return ''
         def nodes(value):
             if isinstance(value,list):
-                for item in value:yield from nodes(item)
+                for item in value: yield from nodes(item)
             elif isinstance(value,dict):
                 yield value
-                for item in value.values():yield from nodes(item)
+                for item in value.values(): yield from nodes(item)
         try:
-            device=json.loads(read('selected-device.json')); summary=json.loads(read('tune-summary.json')); tests=json.loads(read('tune-tests.json'))
-            expected={s.removeprefix('NereusSDRTests/') for s in read('tune-identifiers.txt').splitlines()}
-            methods=[n for n in nodes(tests) if n.get('nodeType')=='Test Case']
-            assert len(expected)==4 and len(methods)==4 and {n.get('nodeIdentifier') for n in methods}==expected
-            assert all(n.get('result') in ('Passed','Failed') for n in methods)
-            assert not any(n.get('nodeType')=='Arguments' for n in nodes(tests))
-            assert summary.get('totalTestCount')==4 and summary.get('passedTests',-10)+summary.get('failedTests',-10)==4
-            assert summary['passedTests']==sum(n['result']=='Passed' for n in methods) and summary['failedTests']==sum(n['result']=='Failed' for n in methods)
-            assert all(summary.get(k)==0 for k in ('skippedTests','expectedFailures'))
-            configurations=summary['devicesAndConfigurations'];assert len(configurations)==1
-            configuration=configurations[0]
-            assert configuration.get('passedTests')==summary['passedTests'] and configuration.get('failedTests')==summary['failedTests']
-            assert all(configuration.get(k)==0 for k in ('skippedTests','expectedFailures'))
-            assert configuration['device']['deviceId']==device['udid'] and configuration['device']['modelName']=='iPhone 18 Pro Max'
-            assert configuration['device']['platform']=='iOS Simulator' and configuration['device']['osVersion'].startswith('27.')
-            assert read('tune.exit')==('0' if summary['failedTests']==0 else '65')
-            assert all(read(name)=='0' for name in ('build.exit','boot.exit','enumeration.exit','sources-after-check.exit','tune-summary.exit','tune-tests.exit'))
-            assert read('enumeration-validation.txt')=='VALID: 4 original Tune methods'
-            log=read('tune.log'); lines=log.splitlines(); prefix='PhoneWriterResumeDiagnostic '
-            flushes=[]; phases=[]; pending_phase=None
-            for line in lines:
-                if line.startswith('TuneUnderLoad '):
-                    match=re.match(r'TuneUnderLoad (.+?) \(simulator\):',line)
-                    if match: pending_phase={'phase':match[1],'tuneMetricLine':line}
-                elif line.startswith(prefix):
-                    flush=json.loads(line[len(prefix):]); flushes.append(flush)
-                    assert pending_phase is not None
-                    phases.append({**pending_phase,'diagnostic':flush}); pending_phase=None
-            (root/'writer-resume-flushes.json').write_text(json.dumps(phases,indent=2)+'\n')
-            assert {phase['phase'] for phase in phases}=={'nothing drawn','main held 15.0 ms a frame','2D','3D'}
-            assert len(flushes)==4 and len({f['modelIdentity'] for f in flushes})==4
-            required_counts=('truncatedRecords','unmatchedResolutions','unmatchedResumes','outstandingAtFlush','resolvedButNotResumedAtFlush','completedMatches')
-            for flush in flushes:
-                assert flush['schema']==1 and flush['flushReason']=='sessionStopped' and flush['recordLimit']==64
-                assert 0<len(flush['records'])<=64
-                assert all(isinstance(flush[key],int) and flush[key]>=0 for key in required_counts)
-                assert isinstance(flush['counts'],dict) and all(isinstance(n,int) and n>=0 for n in flush['counts'].values())
-                assert {'rebuildRequests','rebuildJobs'}.issubset(flush['counts'])
-                assert isinstance(flush['metrics'],dict)
-                assert {'drag','rebuild','rebuildQueueWait','mainRefresh','mainRefreshQueueWait'}.issubset(flush['metrics'])
-                for metric in flush['metrics'].values():
-                    assert metric['count']>=0 and metric['totalMs']>=0 and metric['maxMs']>=0
-                completed=[]
-                for row in flush['records']:
-                    assert isinstance(row['key'],str) and math.isfinite(row['frequencyHz']) and math.isfinite(row['writerBeforeAwaitAt'])
-                    if all(key in row for key in ('sequence','resolvedAt','writerResumedAt','resolveToResumeMs')):
-                        assert isinstance(row['sequence'],int) and row['writerResumedAt']>=row['resolvedAt'] and row['resolveToResumeMs']>=0
-                        completed.append(row)
-                assert len(completed)>0 and flush['completedMatches']==len(completed)
-            tune_lines=[line for line in lines if line.startswith('TuneUnderLoad ')]
-            (root/'tune-observations.txt').write_text('\n'.join(tune_lines)+'\nFixed original viewport402x874 points. These sources are temporarily instrumented; retain original assertions and interpret this run only as causal evidence.\n')
+            selected_device=json.loads(read('selected-device.json'))
+            for phase,method_count,case_count in [('functional',17,19),('tune',4,4)]:
+                summary=json.loads(read(phase+'-summary.json')); tests=json.loads(read(phase+'-tests.json'))
+                expected={s.removeprefix('NereusSDRTests/') for s in read(phase+'-identifiers.txt').splitlines()}
+                methods=[n for n in nodes(tests) if n.get('nodeType')=='Test Case']
+                assert len(expected)==method_count and len(methods)==method_count
+                assert {n.get('nodeIdentifier') for n in methods}==expected and all(n.get('result')=='Passed' for n in methods)
+                parameter_ids=({'SessionEventLanesTests/heldOldLaneFencesReconnect(media:)', 'SessionEventLanesTests/cancellationBeforeWaiterRegistrationCannotLoseWake(full:)'} if phase=='functional' else set())
+                arguments=[n for n in nodes(tests) if n.get('nodeType')=='Arguments']
+                assert len(arguments)==2*len(parameter_ids)
+                for identifier in parameter_ids:
+                    method=next(n for n in methods if n.get('nodeIdentifier')==identifier)
+                    children=[n for n in method.get('children',[]) if n.get('nodeType')=='Arguments']
+                    assert len(children)==2 and {n.get('name') for n in children}=={'false','true'}
+                    urls=[n.get('nodeIdentifierURL','') for n in children]
+                    assert all(n.get('result')=='Passed' for n in children) and len(set(urls))==2
+                    assert all(url.startswith('test://com.apple.xcode/NereusSDR/NereusSDRTests/'+identifier+'?args=') for url in urls)
+                assert summary.get('totalTestCount')==method_count and summary.get('passedTests')==method_count
+                assert all(summary.get(k)==0 for k in ('failedTests','skippedTests','expectedFailures'))
+                configurations=summary['devicesAndConfigurations']; assert len(configurations)==1
+                device=configurations[0]; assert device.get('passedTests')==case_count
+                assert all(device.get(k)==0 for k in ('failedTests','skippedTests','expectedFailures'))
+                assert device['device']['deviceId']==selected_device['udid'] and device['device']['modelName']=='iPhone 18 Pro Max'
+                assert device['device']['platform']=='iOS Simulator' and device['device']['osVersion'].startswith('27.')
+                assert all(read(phase+suffix)=='0' for suffix in ('.exit','-summary.exit','-tests.exit'))
+                report[phase]={'methods':method_count,'cases':case_count,'device':device['device']}
+            assert all(read(name)=='0' for name in ('build.exit','boot.exit','enumeration.exit','sources-after-check.exit'))
+            assert read('enumeration-validation.txt')=='VALID: 17 functional and 4 original Tune methods'
+            tune_lines=[line for line in read('tune.log').splitlines() if line.startswith('TuneUnderLoad ')]
+            (root/'tune-observations.txt').write_text('\n'.join(tune_lines)+'\nFixed source viewport: 402 x 874 points. Original MainHolder has no callback counter; inspect main-held busy spans, do not infer activity from four PASS results.\n')
             assert len(tune_lines)==4
             for label in ('2D','3D'):
-                matched=[line for line in tune_lines if line.startswith('TuneUnderLoad '+label+' (simulator):')];assert len(matched)==1
+                lines=[line for line in tune_lines if line.startswith('TuneUnderLoad '+label+' (simulator):')]; assert len(lines)==1
+                line=lines[0]
                 patterns=[r'; draws (\d+) ',r', link (\d+), skipped',r'link frames (\d+)',r'lines in (\d+)']
-                counts=[int(re.search(pattern,matched[0])[1]) for pattern in patterns];assert all(count>0 for count in counts)
+                counts=[int(re.search(pattern,line)[1]) for pattern in patterns]
+                assert all(count>0 for count in counts), (label,counts)
                 report[label]={'draws_linkDraws_linkFrames_rows':counts}
-            report.update(evidence='COMPLETE: four executed Tune methods and four bounded model flushes',testResult=summary.get('result'),passedMethods=summary['passedTests'],failedMethods=summary['failedTests'],device=configuration['device'],methodResults={n['nodeIdentifier']:n['result'] for n in methods})
+            held=[line for line in tune_lines if line.startswith('TuneUnderLoad main held ')]; assert len(held)==1
+            assert int(re.search(r'spans (\d+)',held[0])[1])>0
+            report['execution']='PASS: 21 methods / 23 cases; no skips; positive 2D/3D drawing evidence'
         except (AssertionError,ValueError,TypeError,KeyError,AttributeError,StopIteration) as error:
             report['detail']=repr(error)
-        (root/'classification.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+        (root/'classification.json').write_text(json.dumps(report,indent=2)+'\n')
+        print(json.dumps(report,indent=2))
         RESULTS
     - name: Always upload bounded verification evidence
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ios-writer-resume-diagnostic-${{ github.sha }}
-        path: ${{ runner.temp }}/writer-resume-diagnostic/
+        name: ios-ordered-intake-${{ github.sha }}
+        path: ${{ runner.temp }}/ordered-intake-verification/
         retention-days: 3
         if-no-files-found: error
-    - name: Require complete diagnostic evidence; retain actual test failures
+    - name: Require complete execution evidence; acceptance remains a separate review
       if: always()
       shell: bash
       run: |
-        python3 - "$RUNNER_TEMP/writer-resume-diagnostic/classification.json" <<'GATE'
+        python3 - "$RUNNER_TEMP/ordered-intake-verification/classification.json" <<'GATE'
         import json,sys
-        assert json.load(open(sys.argv[1]))['evidence']=='COMPLETE: four executed Tune methods and four bounded model flushes'
+        assert json.load(open(sys.argv[1]))['execution']=='PASS: 21 methods / 23 cases; no skips; positive 2D/3D drawing evidence'
         GATE
