@@ -85,12 +85,6 @@ async def run(config_path: str, stop_on_stdin_eof: bool = False) -> int:
     app = App(service, store, config)
     web = Web(service, store, config, app)
     Moderation(web, app)
-    listeners = await transport.start(service, app, config)
-    log.info(
-        "listening on %d WebSocket and %d HTTP addresses",
-        len(listeners.ws_servers),
-        len(listeners.http_servers),
-    )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -99,6 +93,14 @@ async def run(config_path: str, stop_on_stdin_eof: bool = False) -> int:
         except NotImplementedError:
             # Windows event loops do not implement add_signal_handler().
             signal.signal(sig, lambda _signum, _frame: loop.call_soon_threadsafe(stop.set))
+    # Listener readiness must imply that SIGTERM can take the cleanup path.
+    # start() awaits while opening sockets, so install handlers before it.
+    listeners = await transport.start(service, app, config)
+    log.info(
+        "listening on %d WebSocket and %d HTTP addresses",
+        len(listeners.ws_servers),
+        len(listeners.http_servers),
+    )
     if stop_on_stdin_eof:
         _watch_stdin(loop, stop)
     await stop.wait()

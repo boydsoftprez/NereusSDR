@@ -377,7 +377,7 @@
         {
             "kind": "i64",
             "name": "remoteCwVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
@@ -2254,6 +2254,11 @@
                     "kind": "i64",
                     "name": "epoch",
                     "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cwEpoch",
+                    "optional": true
                 }
             ],
             "capability": "remoteTxVersion",
@@ -9473,6 +9478,24 @@
                     "kind": "i64",
                     "name": "rfLastHoldMs",
                     "ordinal": 53
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "remoteCwDeviceId",
+                    "ordinal": 54
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "remoteCwEpoch",
+                    "ordinal": 55
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "remoteCwActive",
+                    "ordinal": 56
                 }
             ]
         },

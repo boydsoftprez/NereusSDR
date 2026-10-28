@@ -1261,7 +1261,7 @@ table.
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
 | `txReadingsVersion` | 4 |
-| `remoteCwVersion` | 1 |
+| `remoteCwVersion` | 2 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -2749,7 +2749,7 @@ older window sees only the values it was built for.
 | 116 | `rxMeterStampsVersion` | `i64` |
 | 117 | `displayCodecVersion` | `i64` |
 | 118 | `stationRoundtableVersion` | `i64` |
-| 118 | `coreBuildInfo` | `utf8` |
+| 119 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3567,7 +3567,7 @@ An enum property lists the values its domain allows.
 | 118 | `cwxMemory8` | `utf8` | bidirectional |  |
 | 119 | `cwQskUnavailableReason` | `utf8` | outbound |  |
 
-**TransmitState** (54 properties)
+**TransmitState** (57 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3625,9 +3625,9 @@ An enum property lists the values its domain allows.
 | 51 | `rfHeldReason` | `utf8` | outbound |  |
 | 52 | `rfHoldSerial` | `i64` | outbound |  |
 | 53 | `rfLastHoldMs` | `i64` | outbound |  |
-| 54 | `remoteCwDeviceId` | `utf8` | outbound | remoteCw 2 only |
-| 55 | `remoteCwEpoch` | `i64` | outbound | remoteCw 2 only |
-| 56 | `remoteCwActive` | `bool` | outbound | remoteCw 2 only |
+| 54 | `remoteCwDeviceId` | `utf8` | outbound |  |
+| 55 | `remoteCwEpoch` | `i64` | outbound |  |
+| 56 | `remoteCwActive` | `bool` | outbound |  |
 
 **TunerModel** (21 properties)
 
@@ -6497,7 +6497,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `tx.tune` | `on` bool | `remoteTxVersion` | 1 | 11 |
 | `tx.twoTone` | `on` bool | `remoteTxVersion` | 1 | 11 |
 | `tx.twoTonePreset` | `name` utf8 | `setupDescriptionVersion` | 1 | 11 |
-| `tx.keepalive` | `sequence` i64, `epoch` i64 | `remoteTxVersion` | 1 | 11 |
+| `tx.keepalive` | `sequence` i64, `epoch` i64, `cwEpoch` i64 (optional) | `remoteTxVersion` | 1 | 11 |
 | `tx.take` | `holderEpoch` i64 (optional), `shownKeyed` bool (optional) | `remoteTxVersion` | 2 | 11 |
 | `tx.tunerTune` | `on` bool | `remoteTxVersion` | 2 | 11 |
 | `cw.send` | `text` utf8 | `remoteCwVersion` | 1 | 11 |

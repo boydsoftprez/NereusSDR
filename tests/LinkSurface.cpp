@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Capture the current remoteCw v2 provider and negotiated
+//               activity tuple. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): the capture declares
 //               remoteCw 1 and cwSettings 1, and captures remoteCwVersion.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -708,7 +710,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
         {kSessionProtocolMajor}, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"remoteTx", 1},
                                   // CW transmit (R-CW-48): remoteCwVersion
                                   // and transmit's CW settings.
-                                  {"remoteCw", 1}, {"cwSettings", 1},
+                                  {"remoteCw", 2}, {"cwSettings", 1},
                                   {"settingsHygiene", 2}, {"coreBuildInfo", 1},
                                   {"settingsBackup", 1},
                                   {"setupDescription", 1}, {"miniDisplay", 1},
@@ -829,7 +831,7 @@ QJsonArray captureCapabilities()
     caps.remoteTxEntry = true;
     // CW transmit (R-CW-48): sent inside it to a peer that declared remoteCw.
     caps.remoteCwEntry = true;
-    caps.remoteCwVersion = 1;
+    caps.remoteCwVersion = 2; // StationServer::remoteCwVersion(), StationServer.h:1656.
     // Declaration version 1: StationCapabilities.h:731-733 and
     // StationServer.cpp:13156-13157. This is not a sampled live value.
     caps.txWatchPathVersion = 1;
