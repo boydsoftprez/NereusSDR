@@ -39,7 +39,7 @@ extension DisplayOnThisPhonePage {
                 .disabled(!extras)
             }
             SetupNumberRow(title: "Update period", value: Double(settings.waterfallPeriodMs),
-                           range: Self.range(BandDisplaySettings.waterfallPeriodRange), step: 10, unit: "ms",
+                           range: Self.range(BandDisplaySettings.waterfallPeriodRange), step: 1, unit: "ms",
                            id: "waterfallPeriod") { value in change { $0.waterfallPeriodMs = Int(value) } }
             SetupNumberRow(title: "Opacity", value: Double(settings.waterfallOpacityPercent),
                            range: Self.range(BandDisplaySettings.waterfallOpacityRange), step: 5, unit: "%",

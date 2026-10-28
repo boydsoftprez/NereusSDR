@@ -232,7 +232,13 @@ void compareControl(QWidget& page, const QJsonObject& control)
                 ? slider->property("nereusSetupScale").toDouble() : 1.0;
             QCOMPARE(slider->minimum() / scale, control.value("min").toDouble());
             QCOMPARE(slider->maximum() / scale, control.value("max").toDouble());
-            QCOMPARE(slider->singleStep() / scale, control.value("step").toDouble());
+            if (id == QLatin1String("display.waterfallDefaults.updatePeriod")) {
+                // Preserve V29 wire metadata for existing phones; native Rate now moves by 1 ms.
+                QCOMPARE(control.value("step").toDouble(), 10.0);
+                QCOMPARE(slider->singleStep() / scale, 1.0);
+            } else {
+                QCOMPARE(slider->singleStep() / scale, control.value("step").toDouble());
+            }
         }
     } else if (kind == "choice") {
         if (auto* combo = qobject_cast<QComboBox*>(object)) {

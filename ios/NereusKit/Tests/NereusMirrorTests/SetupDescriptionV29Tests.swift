@@ -21,6 +21,23 @@ import Testing
             .first { $0["id"] as? String == id })
     }
 
+    @Test func waterfallRateKeepsHistoricalWireAndUsesLocalMillisecondStep() throws {
+        let raw = try Self.raw("display.waterfallDefaults.updatePeriod")
+        #expect(raw["step"] as? Int == 10) // Existing phones still receive their exact V29 contract.
+        let row = try SetupDescriptionV12Tests.single(raw, category: "display", version: 29)
+        #expect(row.metadataIssue == nil)
+        #expect(row.range == .init(minimum: 10, maximum: 500, step: 1))
+        #expect(row.defaultValue == .integer(30))
+        for (field, value) in [("step", 1 as Any), ("step", 2 as Any), ("max", 600 as Any), ("owner", "station" as Any)] {
+            var malformed = raw
+            malformed[field] = value
+            #expect(try SetupDescriptionV12Tests.single(malformed, category: "display", version: 29).metadataIssue != nil)
+        }
+        var unrelated = try Self.raw("display.waterfallDefaults.opacity")
+        unrelated["step"] = 10
+        #expect(try SetupDescriptionV12Tests.single(unrelated, category: "display", version: 29).metadataIssue != nil)
+    }
+
     @Test func theLiveV29DisplayParsesEveryApprovedPageAndClosedRow() throws {
         let display = try SetupDescriptionV12Tests.parse(try Self.document("display"))
         #expect(display.version == 29)
