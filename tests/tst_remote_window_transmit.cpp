@@ -2231,7 +2231,7 @@ private slots:
         h.connectSession();
         QTRY_VERIFY(h.client.capabilities().txPermitted);
         QTRY_VERIFY(h.client.remoteCwAvailable());
-        QCOMPARE(h.client.capabilities().remoteCwVersion, 1);
+        QCOMPARE(h.client.capabilities().remoteCwVersion, 2);
         const QByteArray device = h.windowKey->fingerprint();
         CwxSender* const coreCwx = h.station.cwxSender();
         QVERIFY(coreCwx != nullptr);

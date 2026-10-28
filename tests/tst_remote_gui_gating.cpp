@@ -4816,13 +4816,18 @@ private slots:
             QVERIFY(!vox->isEnabled());
             QCOMPARE(vox->toolTip(), remoteReason);
             // CW transmit (R-CW-49): the Core takes CW from this window
-            // (remoteCwVersion 1) but this session may not transmit, so
-            // CWX's requests are disabled with the Core's words, never
+            // (remoteCwVersion 2) but this session may not transmit, so
+            // CWX's starts are disabled with the Core's words, never
             // hidden; its speed and repeat are version-16 settings, live.
             auto* const cwx = window->findChild<CwxApplet*>();
             QVERIFY(cwx != nullptr);
             QVERIFY(client->remoteCwAvailable());
-            for (const char* name : {"cwxSend", "cwxStop", "cwxKey", "cwxKeyboard", "cwxMemory1"}) {
+            // Release remains available even when a start is not permitted.
+            auto* const cwxStop = cwx->findChild<QPushButton*>(QStringLiteral("cwxStop"));
+            QVERIFY(cwxStop != nullptr);
+            QVERIFY(cwxStop->isEnabled());
+            QVERIFY(!cwxStop->isHidden());
+            for (const char* name : {"cwxSend", "cwxKey", "cwxKeyboard", "cwxMemory1"}) {
                 QPushButton* const b = cwx->findChild<QPushButton*>(QString::fromLatin1(name));
                 QVERIFY2(b != nullptr, name);
                 QVERIFY2(!b->isEnabled(), name);

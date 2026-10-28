@@ -926,12 +926,16 @@ private slots:
     void theFourHoldPropertiesAreAppendedAfterTheLastReading()
     {
         const QMetaObject& meta = TransmitState::staticMetaObject;
-        const int last = meta.propertyCount() - 1;
-        QCOMPARE(QByteArray(meta.property(last - 4).name()), QByteArray("cfcPeakDb"));
-        QCOMPARE(QByteArray(meta.property(last - 3).name()), QByteArray("rfHeld"));
-        QCOMPARE(QByteArray(meta.property(last - 2).name()), QByteArray("rfHeldReason"));
-        QCOMPARE(QByteArray(meta.property(last - 1).name()), QByteArray("rfHoldSerial"));
-        QCOMPARE(QByteArray(meta.property(last).name()), QByteArray("rfLastHoldMs"));
+        // Hold ordinals50-53 stay fixed; remote CW appends54-56 rather
+        // than moving the existing readings or hold fields (surface.json).
+        const int reading = meta.indexOfProperty("cfcPeakDb");
+        QCOMPARE(reading - meta.propertyOffset(), 49);
+        const QList<QByteArray> appended{"cfcPeakDb", "rfHeld", "rfHeldReason",
+            "rfHoldSerial", "rfLastHoldMs", "remoteCwDeviceId", "remoteCwEpoch", "remoteCwActive"};
+        for (int i = 0; i < appended.size(); ++i) {
+            QCOMPARE(QByteArray(meta.property(reading + i).name()), appended.at(i));
+        }
+        QCOMPARE(meta.propertyCount(), reading + static_cast<int>(appended.size()));
     }
 
     void aHoldIsPublishedOnceAndItsEndCounted()

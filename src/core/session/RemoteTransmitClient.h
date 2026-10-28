@@ -227,10 +227,12 @@ public:
     void tunerTuneEnded();
 
     // ---- CW transmit (R-CW-48): the Core's CWX sender ----
-    /// The Core told this window remoteCwVersion 1 or later.
+    /// The Core told this window remoteCwVersion 2 or later.
     void setCwAvailable(bool available) { m_cwAvailable = available; m_cwReleaseAvailable = available; }
-    /// The cw.* verbs can go now (remote transmit and remoteCwVersion).
+    /// CW starts can go now (remote transmit and remoteCwVersion 2).
     bool cwAvailable() const { return m_available && m_cwAvailable; }
+    /// Stop and key-up remain available with remoteCwVersion 1.
+    bool cwReleaseAvailable() const { return m_available && m_cwReleaseAvailable; }
     /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
     /// {down}, each kCopies times under one id. They return the id, or 0
     /// when nothing could be sent. A refusal arrives as cwRefused.

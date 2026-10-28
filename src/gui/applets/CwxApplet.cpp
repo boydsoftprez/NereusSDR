@@ -335,7 +335,7 @@ CwxApplet::RemoteSender CwxApplet::remoteSenderFor(std::function<RemoteTransmitC
         if (transmit == nullptr || !transmit->available()) {
             return QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
         }
-        if (!release && !transmit->cwAvailable()) {
+        if (!(release ? transmit->cwReleaseAvailable() : transmit->cwAvailable())) {
             return newerCoreReason;
         }
         return call(*transmit) != 0 ? QString()

@@ -36,6 +36,7 @@
 #include "core/SliceOwnership.h"
 #include "core/cat/CatService.h"
 #include "core/cat/CatSession.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "gui/MainWindow.h"
 #include "gui/applets/CwxApplet.h"
@@ -329,6 +330,62 @@ private slots:
         QCOMPARE(refused.count(), 1);
         QVERIFY(!refused.at(0).at(0).toString().isEmpty());
         QVERIFY(!rig.button("cwxSend")->isChecked());
+    }
+
+    void remoteSenderDistinguishesUnsupportedCwFromDisconnection_data()
+    {
+        QTest::addColumn<bool>("connected");
+        QTest::addColumn<int>("cwVersion");
+        QTest::addColumn<QString>("startReason");
+        QTest::addColumn<QString>("releaseReason");
+        QTest::addColumn<QStringList>("expectedVerbs");
+        const QString newer = QStringLiteral("Sending CW from a remote window needs a newer Core.");
+        const QString noLink = QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
+        QTest::newRow("disconnected") << false << 2 << noLink << noLink << QStringList{};
+        QTest::newRow("connected without CW") << true << 0 << newer << newer << QStringList{};
+        QTest::newRow("v1 releases only") << true << 1 << newer << QString()
+            << QStringList{QStringLiteral("cw.stop"), QStringLiteral("cw.key")};
+        QTest::newRow("v2 starts and releases") << true << 2 << QString() << QString()
+            << QStringList{QStringLiteral("cw.send"), QStringLiteral("cw.memory"),
+                           QStringLiteral("cw.stop"), QStringLiteral("cw.key"),
+                           QStringLiteral("cw.key")};
+    }
+
+    void remoteSenderDistinguishesUnsupportedCwFromDisconnection()
+    {
+        QFETCH(bool, connected);
+        QFETCH(int, cwVersion);
+        QFETCH(QString, startReason);
+        QFETCH(QString, releaseReason);
+        QFETCH(QStringList, expectedVerbs);
+        QStringList verbs;
+        QList<MirrorUpdate> lastArguments;
+        quint32 nextId = 0;
+        RemoteTransmitClient transmit([&](const QByteArray& verb,
+                                          const QList<MirrorUpdate>& arguments) {
+            verbs.append(QString::fromLatin1(verb));
+            lastArguments = arguments;
+            return ++nextId;
+        });
+        transmit.setAvailable(connected);
+        transmit.setCwAvailable(cwVersion >= 2);
+        transmit.setCwReleaseAvailable(cwVersion >= 1);
+        const CwxApplet::RemoteSender remote = CwxApplet::remoteSenderFor(
+            [&transmit]() { return &transmit; },
+            QStringLiteral("Sending CW from a remote window needs a newer Core."));
+
+        QCOMPARE(remote.sendText(QStringLiteral("CQ")), startReason);
+        QCOMPARE(remote.sendMemory(1), startReason);
+        QCOMPARE(remote.stop(), releaseReason);
+        QCOMPARE(remote.setKey(true), startReason);
+        QCOMPARE(remote.setKey(false), releaseReason);
+        QCOMPARE(verbs, expectedVerbs);
+        if (!verbs.isEmpty()) {
+            QCOMPARE(lastArguments.size(), 1);
+            QCOMPARE(lastArguments.first().name, QByteArray("down"));
+            QCOMPARE(lastArguments.first().kind, MirrorWireKind::Bool);
+            QVERIFY(!lastArguments.first().value.toBool());
+        }
     }
 
     void sendNotPermittedGreysTheSendControlsWithTheReason()

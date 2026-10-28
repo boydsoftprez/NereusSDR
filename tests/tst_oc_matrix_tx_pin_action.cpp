@@ -17,6 +17,9 @@
 //   2026-10-26 - The TUNE hold moved from the connection to RadioModel:
 //                p1_tune_off_held_until_unkey replaced by RadioModel-level
 //                tests (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-28 - Observe D6's TX-only CW TUNE swap for the competing-key
+//                handover; the receive slice stays CWU (J.J. Boyd KG4VCF,
+//                AI-assisted: OpenAI Codex).
 
 #include <QtTest/QtTest>
 
@@ -391,10 +394,14 @@ private slots:
         SliceModel* const slice = model.sliceById(0);
         slice->setDspMode(DSPMode::CWU);
 
-        // The other source keys while TUNE's CW-to-SSB swap is under way.
+        // D6 changes only the TX mode. Inject the other source at the
+        // real TX-mode push while TUNE's CW-to-SSB swap is under way.
         bool cut = false;
-        connect(slice, &SliceModel::dspModeChanged, &model, [&model, &cut](DSPMode mode) {
-            if (!cut && mode == DSPMode::USB) {
+        connect(&model, &RadioModel::txModeAndBandpassPushed, &model,
+                [&model, slice, &cut](DSPMode mode, int, int) {
+            if (!cut && model.tuneTxModeSwapped()) {
+                QCOMPARE(mode, DSPMode::USB);
+                QCOMPARE(slice->dspMode(), DSPMode::CWU);
                 cut = true;
                 model.moxController()->setMox(true);
             }
@@ -403,6 +410,7 @@ private slots:
         tx.requestTransmit(1, 0, CatTransmitKind::Tune);
         pump();
         QVERIFY(cut);
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
         QTRY_VERIFY(!model.isTune());
         QVERIFY(!model.transmitModel().isTune());
         QVERIFY(model.moxController()->isMox());   // the other source's key stays

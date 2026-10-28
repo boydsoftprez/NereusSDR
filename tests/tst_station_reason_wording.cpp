@@ -1139,12 +1139,15 @@ const QList<ReasonSource>& reasonSources()
           // (TxRefusal.cpp's words, scanned there).
           QStringLiteral("TxRefusals::notHolder()"),
           QStringLiteral("TxRefusals::notHolder().text"),
-          // RadioModel::requestCwxFor's refusal: the sender's own words
-          // (CwxSender.h) or TxRefusal.cpp's, each scanned.
-          QStringLiteral("m_radioModel->requestCwxFor(requester, start)")}},
+          // The remote epoch wrapper returns requestCwxFor's sender words
+          // (CwxSender.h) or TxRefusals::notReady(), all scanned below.
+          QStringLiteral("m_radioModel->requestRemoteCwxFor( requester, request.kind != Kind::Send, start)")}},
         // CW transmit Task 14: the CWX sender's refusals, which the remote
         // CW verbs send an app (memory numbers are plain).
         {"src/core/CwxSender.h", {}, {}, 4},
+        // This exact boolean helper validates hold-mask enum bits. It
+        // carries no operator words; future reason sites remain unplaced.
+        {"src/core/safety/RemoteCwSafetyState.cpp", {QStringLiteral("isHoldReason")}, {}, 0},
         // CW transmit: the break-in fallback notices, which the keying gate
         // reports as a refusal (RadioModel, MoxController::reportCwRefusal).
         // The getters return the reason CwKeyerController.cpp stored.
@@ -3058,6 +3061,12 @@ private slots:
         QVERIFY(unplacedReasonSites(QStringLiteral("src/models/RadioModel.cpp"),
             QStringLiteral("void futureSender() { commandResult(v, id, false, why, {}); }"))
             .contains(QStringLiteral("src/models/RadioModel.cpp: sends a reason")));
+        // Registering the enum predicate does not exempt the whole file.
+        QVERIFY(unplacedReasonSites(QStringLiteral("src/core/safety/RemoteCwSafetyState.cpp"),
+            QStringLiteral("bool isHoldReason(quint64 bit) { return bit == 1; }")).isEmpty());
+        QVERIFY(unplacedReasonSites(QStringLiteral("src/core/safety/RemoteCwSafetyState.cpp"),
+            QStringLiteral("QString futureReason() { return QStringLiteral(\"The Core refused it.\"); }"))
+            .contains(QStringLiteral("src/core/safety/RemoteCwSafetyState.cpp: futureReason")));
         // Named on the app side, it is placed.
         QVERIFY(unplacedReasonSites(QStringLiteral("src/core/session/StationClient.cpp"), planted)
                     .isEmpty());
