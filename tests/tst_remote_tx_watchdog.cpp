@@ -193,6 +193,37 @@ class TestRemoteTxWatchdog : public QObject {
     Q_OBJECT
 
 private slots:
+    void cwCodecKeepsLegacyAndCarriesExplicitEpoch()
+    {
+        const TxKeepalive value{0x0102030405060708ULL, 0x11223344u, 0x55667788u};
+        const QByteArray legacy = RemoteTxWatchdog::channelKeepalive(value.sequence, value.epoch);
+        QCOMPARE(RemoteTxWatchdog::channelKeepalive({value.sequence, value.epoch, 0}), legacy);
+        const QByteArray cw = RemoteTxWatchdog::channelKeepalive(value);
+        QCOMPARE(cw.toHex(), QByteArray("0201020304050607081122334455667788"));
+        TxKeepalive decoded;
+        QVERIFY(RemoteTxWatchdog::readChannelKeepalive(cw, &decoded));
+        QCOMPARE(decoded.cwEpoch, value.cwEpoch);
+        QVERIFY(!RemoteTxWatchdog::readChannelKeepalive(cw.left(16), &decoded));
+        QVERIFY(!RemoteTxWatchdog::readChannelKeepalive(cw + 'x', &decoded));
+    }
+
+    void cwOnlyWatchSurvivesMicReleaseAndRejectsOldEpoch()
+    {
+        Rig rig;
+        rig.watchdog.setKeyed(kPhone, true, 7);
+        rig.watchdog.setCwActive(kPhone, true, 11);
+        rig.watchdog.setKeyed(kPhone, false);
+        QVERIFY(rig.watchdog.isWatching(kPhone));
+        QVERIFY(!rig.watchdog.keepalive(kPhone, {1, 7, 10}, RemoteTxWatchdog::Path::Session));
+        rig.advanceTo(401);
+        QVERIFY(rig.watchdog.isHeld(kPhone));
+        QVERIFY(rig.watchdog.keepalive(kPhone, {1, 7, 11}, RemoteTxWatchdog::Path::Session));
+        QVERIFY(!rig.watchdog.keepalive(kPhone, {1, 7, 11}, RemoteTxWatchdog::Path::Auxiliary));
+        QVERIFY(!rig.watchdog.isHeld(kPhone));
+        rig.advanceTo(3402);
+        QCOMPARE(rig.stops.size(), size_t{1});
+    }
+
     void theNumbersAreStatedTogether();
     void aQuietKeyHoldsAfter400AndCutsAfter3000();
     void keepalivesHoldTenMinutesAndOneMissedHoldsThenCuts();

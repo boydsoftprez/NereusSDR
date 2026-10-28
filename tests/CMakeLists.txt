@@ -1196,6 +1196,9 @@ nereus_add_test(tst_cw_wire_state)
 # overlay on the EP2 sender's frame, and the P2 CW wire through a loopback
 # fake radio, the transmit cut included.
 nereus_add_test(tst_cw_key_line)
+# Remote CW hold: pure epoch/mask safety value. No radio, sender or clock;
+# CORE_ONLY keeps the behavioral RED target independent of the GUI library.
+nereus_add_test(tst_remote_cw_safety CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_p1_cw_key_overlay)
 target_compile_definitions(tst_p1_cw_key_overlay PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p2_cw_wire fakes/P2FakeRadio.cpp)

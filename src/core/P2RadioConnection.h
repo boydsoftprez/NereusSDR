@@ -48,6 +48,8 @@
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
 //                 public, so a test reads the product's watchdogs instead of
 //                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
@@ -796,6 +798,7 @@ private:
     // then CmdTx and high priority at once, so the radio's keyer, break-in
     // and key bits are off on the wire with MOX.
     void applyTransmitCut() override;
+    void applyRemoteRfHold() override;
     // Early fix wave I1: the cut cleared. CmdTx and high priority go out at
     // once with the CW enable, break-in and key bits the cut held at 0;
     // the wire state did not change, so setCwWireState sends nothing, and

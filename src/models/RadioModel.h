@@ -35,6 +35,8 @@
 //   2026-10-26 - wireOcTxModes and m_ocTuneHold: TUNE's OC flag falls after
 //                MOX off is queued (J.J. Boyd KG4VCF, AI-assisted: Claude
 //                Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27 - F3: constructor-only CWX sender injection for controlled
 //                test time, with normal model wiring. J.J. Boyd (KG4VCF),
 //                AI-assisted via OpenAI Codex.
@@ -3011,6 +3013,14 @@ public:
     /// when it was taken; otherwise the transmit refusal: the keyer gate's
     /// own, otherDeviceHolds for the holder rule's words, notReady for the
     /// sender's other words (not CW, nothing to send, an empty memory).
+    struct RemoteCwActivity { QByteArray deviceId; quint32 epoch{0}; };
+    RemoteCwActivity remoteCwActivity() const { return m_remoteCwActivity; }
+    bool remoteCwActivityMatches(const QByteArray& device, quint32 epoch) const;
+    bool pauseRemoteCw(quint32 epoch);
+    bool resumeRemoteCw(quint32 epoch);
+    void cancelRemoteCw(quint32 epoch);
+    TxRefusal requestRemoteCwxFor(const QByteArray& device, bool replacement,
+        const std::function<bool(CwxSender&, quint32, const std::function<bool()>&)>& request);
     TxRefusal requestCwxFor(const QByteArray& device,
                             const std::function<bool(CwxSender& sender)>& request);
     /// A device's session ended (its link dropped, it left): what the
@@ -3018,7 +3028,7 @@ public:
     void stopCwxFor(const QByteArray& device);
     /// The device whose request the sender took last: empty for the
     /// station's own (this window's applet, CAT, TCI, the serial key).
-    QByteArray cwxSendingFor() const { return m_cwxSendingFor; }
+    QByteArray cwxSendingFor() const;
     /// The sender is sending, or holding the Key, for `device` now.
     bool cwxActiveFor(const QByteArray& device) const;
     /// The holder rule for a CWX request (R-CW-33, R-CW-49): the words
@@ -3473,6 +3483,8 @@ public:
         emit spectrumWidgetChanged(w);
     }
 signals:
+    void remoteCwActivityChanged();
+    void remoteCwRecoveryRequested(quint32 epoch);
     void clarityEnabledChanged(bool enabled);
     // 3D Stacked-Trace Spectrum Plan Task 22: lets a surface that follows
     // the active panadapter (DisplayApplet) rebind when MainWindow
@@ -10139,6 +10151,8 @@ private:
     // CW transmit (R-CW-49): the device a request is asked for while
     // requestCwxFor runs (empty: the station's own), the one whose request
     // the sender took last, and the Core's holder rule.
+    RemoteCwActivity m_remoteCwActivity;
+    quint32 m_nextRemoteCwEpoch{0};
     QByteArray m_cwxRequestDevice;
     QByteArray m_cwxSendingFor;
     CwxHolderRefusalFn m_cwxHolderRefusal;

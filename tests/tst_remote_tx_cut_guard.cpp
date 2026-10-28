@@ -49,6 +49,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -227,6 +228,80 @@ class TestRemoteTxCutGuard : public QObject {
     Q_OBJECT
 
 private slots:
+#ifdef NEREUS_BUILD_TESTS
+    void cwWithoutMediaIsJudgedAndRejectsUnqualifiedReceipts()
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::vector<quint32> heldEpochs;
+        std::vector<quint32> cutEpochs;
+        RemoteTxCutGuard guard(
+            [&](quint64 media, quint64, quint32 cw, qint64 silent) {
+                const std::lock_guard<std::mutex> lock(mutex);
+                if (media == 0 && silent == 3001) { cutEpochs.push_back(cw); }
+                changed.notify_all();
+            },
+            [&](quint64, quint32 cw, bool held) {
+                const std::lock_guard<std::mutex> lock(mutex);
+                if (held) { heldEpochs.push_back(cw); }
+                changed.notify_all();
+            });
+        const Clock::time_point start{};
+        guard.useControlledClockForTest(start);
+        guard.arm(0, 0, 11);
+        QVERIFY(guard.isJudging());
+        guard.advanceClockForTest(401ms);
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            QVERIFY(changed.wait_for(lock, 2s, [&]() { return heldEpochs.size() == 1; }));
+        }
+        QVERIFY(!guard.heardKeepaliveOffMain(0, {1, 0, 11}, start + 401ms));
+        QVERIFY(!guard.heardKeepaliveOnMain({2, 0, 10}, start + 401ms));
+        guard.heardOnMain(start + 401ms); // generic receipts do not refresh CW
+        guard.heardOffMain(7, start + 401ms);
+        guard.advanceClockForTest(2600ms);
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            QVERIFY(changed.wait_for(lock, 2s, [&]() { return cutEpochs.size() == 1; }));
+        }
+        QCOMPARE(heldEpochs.front(), 11u);
+        QCOMPARE(cutEpochs.front(), 11u);
+    }
+
+    void cwHoldBoundSurvivesStaleButNewerReceipts()
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool held = false;
+        bool cut = false;
+        RemoteTxCutGuard guard(
+            [&](quint64, quint64, quint32, qint64) {
+                const std::lock_guard<std::mutex> lock(mutex);
+                cut = true; changed.notify_all();
+            },
+            [&](quint64, quint32, bool on) {
+                const std::lock_guard<std::mutex> lock(mutex);
+                held = on; changed.notify_all();
+            });
+        const Clock::time_point start{};
+        guard.useControlledClockForTest(start);
+        guard.arm(7, 3, 11);
+        guard.advanceClockForTest(401ms);
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            QVERIFY(changed.wait_for(lock, 2s, [&]() { return held; }));
+        }
+        // Newer sequences arrived behind a stalled main thread. Their old
+        // receipts cannot prolong the original held interval past2600ms.
+        guard.advanceClockForTest(599ms); // now1000; receipt500 is stale by500
+        QVERIFY(guard.heardKeepaliveOnMain({1, 3, 11}, start + 500ms));
+        guard.advanceClockForTest(2002ms); // held401→3002, cut by original bound
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            QVERIFY(changed.wait_for(lock, 2s, [&]() { return cut; }));
+        }
+    }
+#endif
     void cleanup() { RealtimeTestLoad::printLoadAverageIfFailed(); }
 
     void cutsOnTimeWithMainHeld();

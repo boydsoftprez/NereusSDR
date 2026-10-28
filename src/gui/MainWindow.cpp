@@ -89,6 +89,8 @@
 //               when the layout is read again. A refused New Container
 //               shows the box alone, with no toast on top. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): a remote
 //               window's CWX applet sends through the Core's CWX sender,
 //               gated on remoteCwVersion and the transmit holder, and the
@@ -19174,6 +19176,9 @@ void MainWindow::applyRemoteRoleGating()
             cwSendReason = holderReason.isEmpty() ? TxRefusals::notHolder().text : holderReason;
         }
         m_cwxApplet->setSendPermitted(cwSend, cwSendReason);
+        m_cwxApplet->setReleasePermitted(m_stationClient != nullptr
+            && m_stationClient->remoteTransmitAvailable()
+            && m_stationClient->capabilities().remoteCwVersion >= 1);
     }
     // R-CW-48: in CW the TX applet's MON is cwSidetone, a version-16 setting.
     if (m_txApplet) {

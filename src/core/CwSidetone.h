@@ -18,6 +18,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, the computer sidetone (R-CW-39, R-CW-51):
 //               reimplemented in C++20 for NereusSDR from sidetone.c and
 //               sidetone.h, lock-free for the audio drain. J.J. Boyd
@@ -128,6 +130,7 @@ public:
     void setEdge(int edgeType, double edgeSeconds);
     // 0 = KEY-UP; 1 = KEY-DOWN. Atomic, any thread.
     void setKey(bool down);
+    void setRemoteHeld(bool held) noexcept { m_remoteHeld.store(held, std::memory_order_release); }
 
     // Audio thread. Fills interleaved stereo float frames; returns false
     // when not running (and writes nothing).
@@ -156,6 +159,7 @@ private:
     std::atomic<double> m_pitchHz{kDefaultPitchHz};
     std::atomic<double> m_volume{kDefaultVolume};
     std::atomic<bool> m_run{false};
+    std::atomic<bool> m_remoteHeld{false};
     std::atomic<bool> m_key{false};
     std::atomic<int> m_edgeTypeWanted{kRaisedCosineEdge};
     std::atomic<double> m_edgeSecondsWanted{kDefaultEdgeSeconds};

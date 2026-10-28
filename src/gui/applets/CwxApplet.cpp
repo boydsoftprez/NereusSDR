@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-18 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -327,12 +329,13 @@ CwxApplet::RemoteSender CwxApplet::remoteSenderFor(std::function<RemoteTransmitC
                                                    const QString& newerCoreReason)
 {
     const auto request = [client = std::move(client), newerCoreReason](
-                             const std::function<quint32(RemoteTransmitClient&)>& call) {
+                             const std::function<quint32(RemoteTransmitClient&)>& call,
+                             bool release = false) {
         RemoteTransmitClient* const transmit = client ? client() : nullptr;
         if (transmit == nullptr || !transmit->available()) {
             return QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
         }
-        if (!transmit->cwAvailable()) {
+        if (!release && !transmit->cwAvailable()) {
             return newerCoreReason;
         }
         return call(*transmit) != 0 ? QString()
@@ -346,10 +349,10 @@ CwxApplet::RemoteSender CwxApplet::remoteSenderFor(std::function<RemoteTransmitC
         return request([number](RemoteTransmitClient& c) { return c.sendCwMemory(number); });
     };
     remote.stop = [request]() {
-        return request([](RemoteTransmitClient& c) { return c.stopCw(); });
+        return request([](RemoteTransmitClient& c) { return c.stopCw(); }, true);
     };
     remote.setKey = [request](bool down) {
-        return request([down](RemoteTransmitClient& c) { return c.setCwKey(down); });
+        return request([down](RemoteTransmitClient& c) { return c.setCwKey(down); }, !down);
     };
     return remote;
 }
@@ -493,7 +496,8 @@ void CwxApplet::applyPermissions()
     const QString sendReason = m_sendReason;
     if (!m_sendPermitted) {
         apply(m_sendBtn, false, sendReason);
-        apply(m_stopBtn, false, sendReason);
+        apply(m_stopBtn, m_releasePermitted, m_releasePermitted
+            ? QStringLiteral("Stop sending and clear what is left") : sendReason);
         apply(m_keyBtn, false, sendReason);
         apply(m_kbCwBtn, false, sendReason);
     } else {

@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: CW transmit, the CWX sender (R-CW-15, R-CW-31 to
 //               R-CW-33): reimplemented in C++20/Qt6 for NereusSDR on a
 //               thread of its own, keying the host key line. J.J. Boyd
@@ -186,11 +190,17 @@ mw0lge@grange-lane.co.uk
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <semaphore>
 #include <thread>
 
 #include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
+
+class RemoteCwSafetyState;
+#ifdef NEREUS_BUILD_TESTS
+struct CwxSenderMailboxTestAccess;
+#endif
 
 class CwKeyLine;
 
@@ -273,6 +283,34 @@ public:
     CwxSender(Clock clock, Sleeper sleeper, QObject* parent = nullptr); // tests
     ~CwxSender() override;                         // stops and joins its thread
 
+
+    // Install shared state before any producer is
+    // exposed, outside the cut-line lifetime lock; keep it immutable until
+    // all producers are detached. Binding itself MUST NOT take m_mutex.
+    void setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state);
+    void bindRemoteActivity(quint32 epoch);
+    void requestRemotePause(quint32 epoch) noexcept;
+    void requestRemoteCancel(quint32 epoch) noexcept;
+    bool pauseRemoteActivity(quint32 epoch);
+    bool prepareRemoteResume(quint32 epoch);
+    bool resumeRemoteActivity(quint32 epoch);
+    void cancelRemoteActivity(quint32 epoch);
+#ifdef NEREUS_BUILD_TESTS
+    enum class RemoteRequestKindForTest { Pause, Cancel };
+    using RemoteRequestObserverForTest =
+        std::function<void(RemoteRequestKindForTest, quint32)>;
+    // Actual ENTRY only. Install once before reachability, never replace
+    // concurrently. No wait, throw, Qt, sender re-entry or main dispatch.
+    void setRemoteRequestObserverForTest(RemoteRequestObserverForTest observer);
+    enum class RemoteMailboxCasKindForTest { Pause, Cancel, Consume };
+    using RemoteMailboxBeforeCasObserverForTest =
+        std::function<void(RemoteMailboxCasKindForTest, quint32, quint64)>;
+    // Separate TEST-only scheduling barrier at the actual candidate read,
+    // before the first CAS attempt. May wait ONLY in controlled tests.
+    // Install once before producers; never called from audio rendering.
+    void setRemoteMailboxBeforeCasObserverForTest(RemoteMailboxBeforeCasObserverForTest observer);
+#endif
+
     void setKeyLine(std::shared_ptr<CwKeyLine> line);
     void setHl2(bool hl2);                         // drive cwxPtt (R-CW-15)
     void setSpeedWpm(int wpm);                     // 5..60
@@ -284,6 +322,14 @@ public:
     // Returns false with words when refused (not CW, or nothing to send).
     bool sendText(const QString& text);
     bool sendMemory(int number);                   // 1..8, using the memory texts
+    // Main-thread admission callback runs only after parsing/gate succeeds,
+    // under the sender mutex. It arms the watch OUTSIDE the bridge lock,
+    // then binds under the bridge lock. It must never call back into sender.
+    using RemoteAdmission = std::function<bool()>;
+    bool sendRemoteText(quint32 epoch, const QString& text, RemoteAdmission admit);
+    bool sendRemoteMemory(quint32 epoch, int number, RemoteAdmission admit);
+    bool holdRemoteKey(quint32 epoch, RemoteAdmission admit);
+    quint32 acceptedRemoteEpoch() const noexcept { return m_acceptedRemoteEpoch.load(std::memory_order_acquire); }
     void setMemories(const QStringList& eight);
     void stop();                                   // abort and clear
     void setKeyHeld(bool down);                    // the Key hand key, 3 s watchdog
@@ -318,6 +364,7 @@ public:
     static int elementMs(int wpm);
 
 signals:
+    void remoteActivityEnded(quint32 epoch);
     void characterStarted(int index);              // for the applet's sent/current text
     void sendingChanged(bool sending);
     void emptied();                                // TCI cw_macros_empty
@@ -329,12 +376,24 @@ private:
 
     // One entry of Thetis's element fifo.
     struct Element {
+        quint32 remoteEpoch{0}; // 0 is always local; binding cannot adopt it
         quint8 code{0};
         qint8 speedDelta{0};     // WPM from '>' and '<', added to the speed
         int charIndex{-1};       // index in the request's text
+        bool replayOfChar{false}; // checkpoint replay never counts a character twice
         bool firstOfChar{false}; // the character starts with this element
     };
 
+    bool sendTextWithEpoch(const QString& text, quint32 epoch, const RemoteAdmission& admit);
+    bool sendMemoryWithEpoch(int number, quint32 epoch, const RemoteAdmission& admit);
+    bool admitRemoteLocked(quint32 epoch, const RemoteAdmission& admit, bool replace);
+    bool remoteMayKeyLocked(quint32 epoch) const;
+    bool pauseRemoteLocked(quint32 epoch);
+    void cancelRemoteLocked(quint32 epoch);
+    void finishRemoteLocked(quint32 epoch);
+    void consumeRemoteRequestsLocked();
+    void wakeWorker() noexcept;
+    void parkWorker(TimePoint until, bool timed);
     void run();
     void tickLocked();
     void releaseKeyHeldLocked();
@@ -357,6 +416,39 @@ private:
     std::deque<Element> elementsForMemory(const QString& text, int baseWpm, int* characters,
                                           bool* loops) const;
 
+    // Proposed atomic mailbox: upper32 captured binding, lower Pause=1 or
+    // Cancel=2. Cancel supersedes Pause. Draining flags retains binding.
+    static constexpr unsigned kRemoteEpochShift = 32;
+    static constexpr quint32 kRemotePauseRequest = 1;
+    static constexpr quint32 kRemoteCancelRequest = 2;
+    static_assert(std::atomic<quint64>::is_always_lock_free,
+                  "Remote CW requests require lock-free 64-bit atomics");
+    std::atomic<quint64> m_remoteRequests{0};
+    // Immutable while atomic-only binding/request producers are reachable.
+    std::shared_ptr<RemoteCwSafetyState> m_remoteSafetyState;
+    void publishRemoteRequest(quint32 epoch, quint32 request) noexcept;
+    // Called under the EXISTING sender mutex; clears flags, never identity.
+    quint32 takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept;
+#ifdef NEREUS_BUILD_TESTS
+    friend struct CwxSenderMailboxTestAccess;
+    RemoteRequestObserverForTest m_remoteRequestObserverForTest;
+    RemoteMailboxBeforeCasObserverForTest m_remoteMailboxBeforeCasObserverForTest;
+#endif
+
+    std::atomic<quint32> m_acceptedRemoteEpoch{0};
+    quint32 m_elementEpoch{0};
+    quint32 m_repeatEpoch{0};
+    quint32 m_heldEpoch{0};
+    bool m_remotePaused{false};
+    bool m_resumePrepared{false};
+    TimePoint m_pausedAt{};
+    bool m_restartLetter{false};
+    std::deque<Element> m_letterRestart;
+    bool m_letterInProgress{false};
+    // A coalesced semaphore permit closes predicate->park lost-notify gaps.
+    // Request producers take no mutex. Existing thread/clock/priorities stay.
+    std::binary_semaphore m_interrupt{0};
+    std::atomic_flag m_interruptPending = ATOMIC_FLAG_INIT;
     Clock m_clock;
     Sleeper m_sleeper;
     RequestGate m_gate;

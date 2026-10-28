@@ -3625,6 +3625,9 @@ An enum property lists the values its domain allows.
 | 51 | `rfHeldReason` | `utf8` | outbound |  |
 | 52 | `rfHoldSerial` | `i64` | outbound |  |
 | 53 | `rfLastHoldMs` | `i64` | outbound |  |
+| 54 | `remoteCwDeviceId` | `utf8` | outbound | remoteCw 2 only |
+| 55 | `remoteCwEpoch` | `i64` | outbound | remoteCw 2 only |
+| 56 | `remoteCwActive` | `bool` | outbound | remoteCw 2 only |
 
 **TunerModel** (21 properties)
 
@@ -9327,8 +9330,11 @@ transmit unheld "Take transmit on this device first.". A carrier action
 
 ### 18.10 CW (`cw.*`)
 
-R-CW-48, R-CW-49 (`remoteCwVersion` 1, for a peer that declared
-`remoteCw` 1). The Core's CWX sender sends CW for the device that holds
+R-CW-48, R-CW-49 (`remoteCwVersion` 2, negotiated down to 1 for a
+peer that declared `remoteCw` 1). Remote on-air starts (`cw.send`,
+`cw.memory`, and `cw.key {down:true}`) require version 2. Version 1
+continues to support owner-scoped Stop/key-up; its preceding capability
+and property ordinals remain unchanged. The Core's CWX sender sends CW for the device that holds
 transmit, through the Core's own keying gate: the radio's CW key while the
 sender runs for the holder is the holder's key, as VOX is (section 18.6).
 
@@ -9348,7 +9354,10 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   what the sender runs for this device, never another device's CW or the
   station's own.
 - A refusal carries `refusalCode` and `refusalFix` in its `values`, as
-  section 18.3 says; an accepted answer has no values.
+  section 18.3 says. A version-2 accepted start/append returns `cwEpoch`
+  (`i64`, 1 through UINT32_MAX) and `cwActive` (`bool`). An append keeps
+  its activity epoch; a replacement uses a fresh one. Stop/refusal invents
+  no new activity epoch.
 - The window sends each request three times under one id (section 18.6);
   every copy gets the first answer and the sender acts once. The same id
   with other bytes is refused "The Core could not read this request.".
@@ -9357,6 +9366,26 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   and another device taking transmit end it too.
 - The Core does not send the sender's progress: a remote window marks no
   sent or current characters.
+- Version-2 peers receive the atomic `txState` activity tuple at ordinals
+  54–56: canonical device-id hex, epoch, active. Completion/Stop retains the
+  retired device and epoch with active false. These fields are absent from
+  version-1 schemas/updates. Delayed old reports/results cannot revive or
+  retire a newer lease.
+- Every active remote CW source, including MOX-off QSK and repeat gaps,
+  sends one `tx.keepalive` sequence every 100 ms on every open path. JSON
+  adds optional `cwEpoch` (`i64`, UInt32 range); binary kind 2 is exactly
+  17 bytes: kind at0, sequence BE64 at1, key epoch BE32 at9, CW epoch BE32
+  at13. Existing kind1/13-byte records remain unchanged. Current CW epoch
+  is required for a receipt to refresh a CW-bearing watch/guard; generic
+  audio, old epochs and duplicate copies cannot refresh it.
+- Link silence holds after more than400 ms and cuts after more than3000 ms,
+  independently of the main event loop and sender checkpoint mutex. Hold
+  freezes content/repeat timing and computer sidetone; valid recovery
+  restarts only an unfinished letter. Original held-Key expiry continues.
+  Physical radio dot/dash rising edges observed during Link/Guard hold
+  invalidate the remote epoch before queued model recovery. Status latency
+  and installed-HL2 CW2 isolated RING observability remain separate hardware
+  acceptance requirements; these packets cannot backdate an unreported press.
 
 ## 19. The rendezvous
 

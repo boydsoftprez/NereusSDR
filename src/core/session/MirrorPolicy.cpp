@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22 - RX meter stamps: SliceModel meterReadingNs Outbound, gated
 //                 on rxMeterStamps (rxMeterStampsVersion 1). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1238,6 +1240,9 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitState", "rfHeldReason", MirrorDirection::Outbound },
     { "TransmitState", "rfHoldSerial", MirrorDirection::Outbound },
     { "TransmitState", "rfLastHoldMs", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwDeviceId", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwEpoch", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwActive", MirrorDirection::Outbound },
 
     // Normal PS3 configuration is distinct from operational arming/actions.
     { "PureSignalSettings", "autoCalEnabled", MirrorDirection::Bidirectional },

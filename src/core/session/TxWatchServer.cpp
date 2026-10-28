@@ -275,20 +275,22 @@ void TxWatchServer::onBinary(SessionTransport* auxiliary, const QByteArray& mess
     socket->tokens = std::min<double>(kBurstFrames,
                                      socket->tokens + elapsed * (kFramesPerSecond / 1000.0));
     socket->refilledMs = time;
-    if (socket->tokens < 1.0 || message.size() != RemoteTxWatchdog::kChannelKeepaliveBytes) {
+    if (socket->tokens < 1.0 || (message.size() != RemoteTxWatchdog::kChannelKeepaliveBytes
+        && message.size() != 17)) {
         retireSocket(auxiliary, true);
         return;
     }
     socket->tokens -= 1.0;
-    quint64 sequence = 0;
-    quint32 epoch = 0;
-    if (!RemoteTxWatchdog::readChannelKeepalive(message, &sequence, &epoch)) {
+    TxKeepalive value;
+    if (!RemoteTxWatchdog::readChannelKeepalive(message, &value)
+        || (value.cwEpoch != 0 && (!m_v2Allowed || !m_v2Allowed(binding->primary)))) {
         retireSocket(auxiliary, true);
         return;
     }
     const QByteArray deviceId = binding->deviceId;
     const Deliver deliver = m_deliver;
-    deliver(deviceId, sequence, epoch);
+    if (m_deliverV2) { m_deliverV2(deviceId, value); }
+    else { deliver(deviceId, value.sequence, value.epoch); }
 }
 
 void TxWatchServer::retireSocket(SessionTransport* auxiliary, bool close)

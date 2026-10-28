@@ -189,6 +189,64 @@ class TestRemoteTransmitClient : public QObject {
     Q_OBJECT
 
 private slots:
+    void cwLeaseUsesAllPathsAndStopFencesDelayedAnswer()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setCwAvailable(true);
+        std::vector<TxKeepalive> session, channel, auxiliary;
+        client.setSessionCwKeepalive([&](const TxKeepalive& value) { session.push_back(value); return true; });
+        client.setChannelCwKeepalive([&](const TxKeepalive& value) { channel.push_back(value); return true; });
+        client.setAuxiliaryCwKeepalive([&](const TxKeepalive& value) { auxiliary.push_back(value); return true; });
+        const quint32 id = client.sendCwText(QStringLiteral("CQ"));
+        QVERIFY(id != 0);
+        QVERIFY(client.keepaliveRunning());
+        client.commandFinished(id, "cw.send", true, {},
+            {{0, "cwEpoch", MirrorWireKind::Int64, qint64{11}},
+             {1, "cwActive", MirrorWireKind::Bool, true}});
+        QCOMPARE(client.remoteCwEpoch(), 11u);
+        client.keepaliveTick();
+        QVERIFY(!session.empty());
+        QCOMPARE(session.back().cwEpoch, 11u);
+        QCOMPARE(channel.back().sequence, session.back().sequence);
+        QCOMPARE(auxiliary.back().sequence, session.back().sequence);
+        const quint32 delayed = client.sendCwMemory(1);
+        QVERIFY(client.stopCw() != 0);
+        client.commandFinished(delayed, "cw.memory", true, {},
+            {{0, "cwEpoch", MirrorWireKind::Int64, qint64{12}},
+             {1, "cwActive", MirrorWireKind::Bool, true}});
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+        QVERIFY(!client.keepaliveRunning());
+    }
+
+    void completionBeforeDelayedCwAnswerCannotReopenLease()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true); client.setCwAvailable(true);
+        const quint32 id = client.sendCwText(QStringLiteral("E"));
+        client.setRemoteCwActivity(11, false); // natural completion overtakes answer
+        client.commandFinished(id, "cw.send", true, {},
+            {{0, "cwEpoch", MirrorWireKind::Int64, qint64{11}},
+             {1, "cwActive", MirrorWireKind::Bool, true}});
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+        QVERIFY(!client.keepaliveRunning());
+    }
+
+    void oldCoreStillAllowsCwStopAndKeyUp()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setCwAvailable(false);
+        client.setCwReleaseAvailable(true);
+        QCOMPARE(client.sendCwText(QStringLiteral("E")), 0u);
+        QVERIFY(client.stopCw() != 0);
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.setCwKey(true), 0u);
+    }
+
     void micSourcePendingRefusedAndMalformedAckCannotKeyPreviousInput()
     {
         Recorder core;

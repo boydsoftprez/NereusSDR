@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 37 (R-IOS-13), with
 //               AI-assisted implementation via Anthropic Claude Code.
@@ -86,6 +88,27 @@ bool RemoteTxWatchdog::isHeld(const QByteArray& deviceId) const
     return it != m_devices.cend() && it.value().held;
 }
 
+void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch)
+{
+    if (deviceId.isEmpty() || (active && cwEpoch == 0)) {
+        return;
+    }
+    auto it = m_devices.find(deviceId);
+    if (it == m_devices.end()) {
+        if (!active) {
+            return;
+        }
+        Watch watch;
+        watch.lastMs = now();
+        it = m_devices.insert(deviceId, watch);
+    }
+    it->cwActive = active;
+    it->cwEpoch = active ? cwEpoch : 0;
+    // update retains sequence/receipt/late-turn/hold origins for surviving
+    // sources. CW replacement/append never grants a fresh silence budget.
+    update(deviceId, false, false, 0, false, false);
+}
+
 void RemoteTxWatchdog::setKeyed(const QByteArray& deviceId, bool keyed, quint32 epoch)
 {
     update(deviceId, keyed, true, epoch, false, false);
@@ -114,12 +137,12 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     }
     // Hold then cut: only a key's RF is held, so a key that ended ends its
     // hold (KeyEnded), with no stop, whether or not VOX armed still watches.
-    const bool holdEnds = watch.held && !watch.keyed;
+    const bool holdEnds = watch.held && !watch.keyed && !watch.cwActive;
     const qint64 holdLengthMs = holdEnds ? now() - watch.heldSinceMs : 0;
     if (holdEnds) {
         watch.held = false;
     }
-    if (!watch.keyed && !watch.voxArmed) {
+    if (!watch.keyed && !watch.voxArmed && !watch.cwActive) {
         if (wasWatched) {
             m_devices.erase(it);
             qCDebug(lcDsp) << "Transmit watchdog: no longer watching" << deviceId.toHex().constData();
@@ -147,10 +170,21 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
 bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, quint32 epoch,
                                  Path path, qint64 ageMs)
 {
+    return keepalive(deviceId, TxKeepalive{sequence, epoch, 0}, path, ageMs);
+}
+
+bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, const TxKeepalive& value,
+                                 Path path, qint64 ageMs)
+{
+    const quint64 sequence = value.sequence;
+    const quint32 epoch = value.epoch;
     Q_UNUSED(path);
     auto it = m_devices.find(deviceId);
     if (it == m_devices.end()) {
         // Nothing watched: a keepalive before the key, or after its end.
+        return false;
+    }
+    if (it->cwActive && (value.cwEpoch == 0 || value.cwEpoch != it->cwEpoch)) {
         return false;
     }
     Watch& watch = it.value();
@@ -262,7 +296,7 @@ void RemoteTxWatchdog::onTimer()
             } else {
                 quiet.append(it.key());
             }
-        } else if (watch.keyed && !watch.held && silentMs > kLinkHoldMs) {
+        } else if ((watch.keyed || watch.cwActive) && !watch.held && silentMs > kLinkHoldMs) {
             if (canTurn && !watch.lateHoldTurnGiven) {
                 watch.lateHoldTurnGiven = true;    // judged at the next check
             } else {
@@ -296,7 +330,7 @@ void RemoteTxWatchdog::startHold(const QByteArray& deviceId, qint64 at)
 {
     auto it = m_devices.find(deviceId);
     // A stop or a hold hook may already have ended the watch or its key.
-    if (it == m_devices.end() || !it.value().keyed || it.value().held) {
+    if (it == m_devices.end() || (!it.value().keyed && !it.value().cwActive) || it.value().held) {
         return;
     }
     it.value().held = true;
@@ -390,7 +424,7 @@ void RemoteTxWatchdog::reschedule()
         // hold's bound.
         const Watch& watch = it.value();
         qint64 dueMs = 0;
-        if (watch.keyed && !watch.held) {
+        if ((watch.keyed || watch.cwActive) && !watch.held) {
             dueMs = watch.lastMs + kLinkHoldMs + 1;
         } else {
             dueMs = watch.lastMs + kLinkCutMs + 1;
@@ -443,6 +477,43 @@ bool RemoteTxWatchdog::readChannelKeepalive(const QByteArray& message, quint64* 
     }
     if (epoch) {
         *epoch = e;
+    }
+    return true;
+}
+
+// Nereus CW v2 extension; the old kind 1 record remains unchanged.
+QByteArray RemoteTxWatchdog::channelKeepalive(const TxKeepalive& value)
+{
+    QByteArray message = channelKeepalive(value.sequence, value.epoch);
+    if (value.cwEpoch != 0) {
+        message[0] = char(2);
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            message.append(char((value.cwEpoch >> shift) & 0xffu));
+        }
+    }
+    return message;
+}
+
+bool RemoteTxWatchdog::readChannelKeepalive(const QByteArray& message, TxKeepalive* value)
+{
+    TxKeepalive decoded;
+    if (message.size() == 17 && quint8(message.at(0)) == 2) {
+        QByteArray legacy = message.left(kChannelKeepaliveBytes);
+        legacy[0] = char(kChannelKeepaliveKind);
+        if (!readChannelKeepalive(legacy, &decoded.sequence, &decoded.epoch)) {
+            return false;
+        }
+        for (int i = 13; i < 17; ++i) {
+            decoded.cwEpoch = (decoded.cwEpoch << 8) | quint8(message.at(i));
+        }
+        if (decoded.cwEpoch == 0) {
+            return false;
+        }
+    } else if (!readChannelKeepalive(message, &decoded.sequence, &decoded.epoch)) {
+        return false;
+    }
+    if (value != nullptr) {
+        *value = decoded;
     }
     return true;
 }

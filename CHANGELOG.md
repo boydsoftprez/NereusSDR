@@ -13,6 +13,100 @@ clients; the RX meter timing needs a 2026.10.2 Core and desktop. The phone app
 has its own version number. Older Cores, windows and phone apps still connect
 to each other as before.
 
+### CW transmit and remote transmit recovery
+
+- CW transmit supports the radio's key input, CWX typed text and memories,
+  CAT/TCI and serial key lines. The radio generates and shapes CW; Off, Semi
+  and supported QSK use the Core's ordinary transmit checks. The desktop and
+  phone expose the Core's CW controls and QSK availability.
+  ([#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+- Remote CW has its own activity lifetime, including QSK with MOX off. A
+  brief network interruption holds RF and pauses the computer sidetone and
+  queued message; recovery restarts the unfinished letter. A prolonged loss,
+  Stop or session end cancels that activity. A delayed answer or keepalive
+  from an old activity cannot restart a stopped message.
+  ([#668](https://github.com/boydsoftprez/NereusSDR/pull/668),
+  [#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+- Update the Core and the desktop or phone client together to start remote
+  CW. Older clients retain Stop and key release. The regular session,
+  transmit channel and auxiliary watch paths share the same keepalive
+  identity wherever those paths are available. The session keepalive is
+  sent with the transmit-channel copy.
+  ([#652](https://github.com/boydsoftprez/NereusSDR/pull/652))
+- CW receive shift, pitch, filters and display alignment now put the dial at
+  the carrier frequency. Saved CW frequencies retain their numbers and may
+  need one retune after updating.
+  ([#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+
+### Roundtable and the final release integrations
+
+- Roundtable shows who hears the station speaking on a frequency, with each
+  listener's S-meter reading, distance and tuning offset. It works on every
+  mode, on the desktop, iPhone and iPad, and the public Roundtable page.
+  Sharing starts only after the operator answers the first question, and one
+  switch hides the station. The website's `/roundtable` address redirects to
+  the public page while its protocol and conformance files retain their paths.
+  ([#657](https://github.com/boydsoftprez/NereusSDR/pull/657),
+  [#659](https://github.com/boydsoftprez/NereusSDR/pull/659))
+- Container items gain the remaining Thetis-derived options, controls and
+  copy/paste behavior. Settings survive reload, RX and TX sections receive
+  transmit state, and text containing `%` is saved intact. A history graph
+  keeps its own duration; an empty image path stays empty. The unavailable
+  ADC maximum bar stays unavailable on every load path. A refused save now
+  explains why and reload can recover the saved configuration.
+  ([#664](https://github.com/boydsoftprez/NereusSDR/pull/664),
+  [#666](https://github.com/boydsoftprez/NereusSDR/pull/666),
+  [#669](https://github.com/boydsoftprez/NereusSDR/pull/669),
+  [#671](https://github.com/boydsoftprez/NereusSDR/pull/671),
+  [#672](https://github.com/boydsoftprez/NereusSDR/pull/672),
+  [#677](https://github.com/boydsoftprez/NereusSDR/pull/677),
+  [#683](https://github.com/boydsoftprez/NereusSDR/pull/683))
+- Moving a slice to another receiver stream applies its new sample rate in
+  the same transition, removing a separate 27 ms gap. BIN no longer silences
+  the right ear while noise reduction is running.
+  ([#654](https://github.com/boydsoftprez/NereusSDR/pull/654),
+  [#661](https://github.com/boydsoftprez/NereusSDR/pull/661))
+- A remote audio stream restart no longer drops samples on the way to TCI
+  applications. Samples are carried through the restart instead.
+  ([#687](https://github.com/boydsoftprez/NereusSDR/pull/687))
+- A remote desktop window and the phone recover wanted audio after the Core
+  temporarily answers MediaNotReady, without requiring the operator to turn
+  audio off and on. Retry timing tests follow the actual scheduling decision,
+  including healthy resets, rather than infer it from late delivery.
+  ([#693](https://github.com/boydsoftprez/NereusSDR/pull/693),
+  [#694](https://github.com/boydsoftprez/NereusSDR/pull/694),
+  [#695](https://github.com/boydsoftprez/NereusSDR/pull/695))
+- The phone and iPad expose the desktop's Display controls. Waterfall rows
+  arrive on a steady clock, and the 3D view follows the desktop's appearance
+  and movement. Ordered background intake keeps control replies and media
+  barriers moving without losing or reordering session events.
+  ([#653](https://github.com/boydsoftprez/NereusSDR/pull/653),
+  [#674](https://github.com/boydsoftprez/NereusSDR/pull/674))
+- The tuner gives transmit back when its own front-panel TUNE cycle ends. A
+  station key pressed during the loan keeps transmit and cancels give-back.
+  ([#670](https://github.com/boydsoftprez/NereusSDR/pull/670))
+- A CAT TX received while the station is returning to receive waits for that
+  transition to finish. Stop All TX, a stopped channel or a lost session
+  cancels the waiting request, so it cannot key afterwards.
+  ([#681](https://github.com/boydsoftprez/NereusSDR/pull/681))
+- PureSignal's ATT-on-TX force-31 behavior follows PS-A rather than the wider
+  PureSignal enabled state. A Single Cal with PS-A off starts with the
+  required attenuation, and a forced value is stored in the band's TX ATT.
+  Lifting a run-cal pause also starts Auto-cal when Auto-cal is requested.
+  ([#662](https://github.com/boydsoftprez/NereusSDR/pull/662),
+  [#682](https://github.com/boydsoftprez/NereusSDR/pull/682))
+- The IMD view shows the measured tone separation, and its waterfall correction
+  marks use the workspace colors.
+  ([#665](https://github.com/boydsoftprez/NereusSDR/pull/665))
+- The Anvelina PRO III filter and relay fixes include its DX open-collector
+  outputs. The idle-input-2 Slice B filter correction also covers the seven
+  radio models that use the same second high-pass filter.
+  ([#684](https://github.com/boydsoftprez/NereusSDR/pull/684))
+- A timed-out WDSP channel drain waits for the flush it already requested.
+  Rapid unkey/rekey can no longer leave a running channel bypassed and hang
+  its worker. The fix applies to the shared receive/transmit channel lifecycle.
+  ([#689](https://github.com/boydsoftprez/NereusSDR/pull/689))
+
 ### Remote display: waterfall rows that stand alone
 
 - A remote window, the iPhone and iPad app, and a 2026.10.2 Core now send the

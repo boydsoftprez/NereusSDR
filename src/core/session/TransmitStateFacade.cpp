@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 39 (D14, R-IOS-13,
 //               R-IOS-21), with AI-assisted implementation via Anthropic
@@ -578,6 +580,18 @@ bool TransmitState::recordStop(const QByteArray& reason, const QString& text,
     return true;
 }
 
+void TransmitState::setRemoteCwActivity(const QByteArray& deviceId, quint32 epoch, bool active)
+{
+    const QString device = QString::fromLatin1(deviceId.toHex());
+    if (m_remoteCwDeviceId == device && m_remoteCwEpoch == epoch && m_remoteCwActive == active) {
+        return;
+    }
+    m_remoteCwDeviceId = device;
+    m_remoteCwEpoch = epoch;
+    m_remoteCwActive = active;
+    emit remoteCwChanged();
+}
+
 void TransmitState::setRfHold(bool held, const QString& reason)
 {
     if (held) {
@@ -780,6 +794,21 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
             emit adcRawChanged();
         }
         return true;
+    } else if (propertyName == "remoteCwDeviceId" || propertyName == "remoteCwEpoch"
+               || propertyName == "remoteCwActive") {
+        bool changed = false;
+        if (propertyName == "remoteCwDeviceId") {
+            changed = m_remoteCwDeviceId != value.toString();
+            m_remoteCwDeviceId = value.toString();
+        } else if (propertyName == "remoteCwEpoch") {
+            changed = m_remoteCwEpoch != value.toLongLong();
+            m_remoteCwEpoch = value.toLongLong();
+        } else {
+            changed = m_remoteCwActive != value.toBool();
+            m_remoteCwActive = value.toBool();
+        }
+        if (changed) { emit remoteCwChanged(); }
+        return true;
     } else if (propertyName == "rfHeld" || propertyName == "rfHeldReason"
                || propertyName == "rfHoldSerial" || propertyName == "rfLastHoldMs") {
         // Remote transmit hold then cut: the Core's hold, as it sends it.
@@ -856,6 +885,12 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
 
 void TransmitState::clearStationValues()
 {
+    if (m_remoteCwEpoch != 0 || m_remoteCwActive || !m_remoteCwDeviceId.isEmpty()) {
+        m_remoteCwEpoch = 0;
+        m_remoteCwDeviceId.clear();
+        m_remoteCwActive = false;
+        emit remoteCwChanged();
+    }
     const bool state = m_keyed || m_tuning || m_twoTone || m_txSliceId != -1
         || !m_keyedByName.isEmpty() || !m_keyedByKind.isEmpty() || !m_keyedTrigger.isEmpty()
         || m_keyedSinceMs != 0 || m_txEnding;

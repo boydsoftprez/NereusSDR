@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Final fix wave F14: macOS time-constraint policy on the
 //               sender thread only, with the existing QoS as fallback.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -176,6 +180,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "core/CwxSender.h"
+#include "core/safety/RemoteCwSafetyState.h"
 
 #include "core/CwKeyLine.h"
 #include "core/LogCategories.h"
@@ -582,6 +587,339 @@ CwxSender::CwxSender(Clock clock, Sleeper sleeper, QObject* parent)
     m_thread = std::thread([this] { run(); });
 }
 
+// NereusSDR-original mailbox installation, binding, publication and drain.
+// Matching drains preserve binding and clear only pending request flags.
+// The existing worker consumes requests against accepted content identity.
+void CwxSender::setRemoteSafetyState(std::shared_ptr<RemoteCwSafetyState> state)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    m_remoteSafetyState = std::move(state);
+    // Installation occurs with all producers detached, never guard traffic.
+    m_remoteRequests.store(0, std::memory_order_release);
+}
+
+void CwxSender::bindRemoteActivity(quint32 epoch)
+{
+    if (epoch == 0 || !m_remoteSafetyState) {
+        return;
+    }
+    const RemoteCwSafetySnapshot safety = m_remoteSafetyState->snapshot();
+    if (safety.epoch != epoch || !safety.valid || safety.invalidated) {
+        return;
+    }
+    quint64 word = m_remoteRequests.load(std::memory_order_acquire);
+    const quint64 bound = quint64{epoch} << kRemoteEpochShift;
+    // The caller serializes new bindings and finishes old remote intent.
+    // An idempotent bind must not erase already-published current requests.
+    while (static_cast<quint32>(word >> kRemoteEpochShift) != epoch) {
+        if (m_remoteRequests.compare_exchange_weak(word, bound, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            return;
+        }
+    }
+}
+
+void CwxSender::requestRemotePause(quint32 epoch) noexcept
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteRequestObserverForTest) {
+        m_remoteRequestObserverForTest(RemoteRequestKindForTest::Pause, epoch);
+    }
+#endif
+    publishRemoteRequest(epoch, kRemotePauseRequest);
+}
+
+void CwxSender::requestRemoteCancel(quint32 epoch) noexcept
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteRequestObserverForTest) {
+        m_remoteRequestObserverForTest(RemoteRequestKindForTest::Cancel, epoch);
+    }
+#endif
+    publishRemoteRequest(epoch, kRemoteCancelRequest);
+}
+
+void CwxSender::publishRemoteRequest(quint32 epoch, quint32 request) noexcept
+{
+    if (epoch == 0 || (request != kRemotePauseRequest && request != kRemoteCancelRequest)) {
+        return;
+    }
+    quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    if (static_cast<quint32>(candidate >> kRemoteEpochShift) != epoch) {
+        return;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteMailboxBeforeCasObserverForTest) {
+        m_remoteMailboxBeforeCasObserverForTest(request == kRemoteCancelRequest
+            ? RemoteMailboxCasKindForTest::Cancel : RemoteMailboxCasKindForTest::Pause,
+            epoch, candidate);
+    }
+#endif
+    const quint64 pendingMask = quint64{kRemotePauseRequest} | quint64{kRemoteCancelRequest};
+    while (static_cast<quint32>(candidate >> kRemoteEpochShift) == epoch) {
+        // Cancellation wins over a prior or later pause for this binding.
+        // Shared safety may already be invalidated when its cancel arrives.
+        const quint64 pending = request == kRemoteCancelRequest
+                || (candidate & quint64{kRemoteCancelRequest}) != 0
+            ? quint64{kRemoteCancelRequest} : quint64{kRemotePauseRequest};
+        const quint64 published = (candidate & ~pendingMask) | pending;
+        if (m_remoteRequests.compare_exchange_weak(candidate, published, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            wakeWorker();
+            return;
+        }
+        // A failed CAS updates candidate, never the request's captured epoch.
+    }
+}
+
+quint32 CwxSender::takeRemoteRequestsLocked(quint32 expectedEpoch) noexcept
+{
+    quint64 candidate = m_remoteRequests.load(std::memory_order_acquire);
+    if (expectedEpoch == 0
+        || static_cast<quint32>(candidate >> kRemoteEpochShift) != expectedEpoch) {
+        return 0;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    if (m_remoteMailboxBeforeCasObserverForTest) {
+        m_remoteMailboxBeforeCasObserverForTest(RemoteMailboxCasKindForTest::Consume,
+                                               expectedEpoch, candidate);
+    }
+#endif
+    const quint64 pendingMask = quint64{kRemotePauseRequest} | quint64{kRemoteCancelRequest};
+    while (static_cast<quint32>(candidate >> kRemoteEpochShift) == expectedEpoch) {
+        const quint32 requests = static_cast<quint32>(candidate & pendingMask);
+        if (requests == 0) { return 0; }
+        const quint64 drained = candidate & ~pendingMask;
+        if (m_remoteRequests.compare_exchange_weak(candidate, drained, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire)) {
+            return requests;
+        }
+        // Retry the ORIGINAL captured epoch; never drain a successor's word.
+    }
+    return 0;
+}
+
+bool CwxSender::remoteMayKeyLocked(quint32 epoch) const
+{
+    if (epoch == 0) {
+        return true;
+    }
+    if (!m_remoteSafetyState) {
+        return false;
+    }
+    const RemoteCwSafetySnapshot state = m_remoteSafetyState->snapshot();
+    return state.epoch == epoch && state.valid && !state.invalidated && state.holdMask == 0;
+}
+
+bool CwxSender::pauseRemoteLocked(quint32 epoch)
+{
+    if (epoch == 0 || m_acceptedRemoteEpoch.load(std::memory_order_acquire) != epoch) {
+        return false;
+    }
+    if (!m_remotePaused) {
+        m_remotePaused = true;
+        m_resumePrepared = false;
+        m_pausedAt = m_clock();
+        // Only an unfinished parsed letter is rewound. Its effective speed
+        // and origin came from the accepted FIFO, not mutable memory text.
+        if (m_elementEpoch == epoch && m_letterInProgress && !m_letterRestart.empty()) {
+            // Replace the unfinished suffix; do not append it behind a
+            // second copy of the complete letter. Its first character was
+            // already reported and removed from queuedCharacters.
+            while (!m_queue.empty() && !m_queue.front().firstOfChar) {
+                m_queue.pop_front();
+            }
+            for (Element& element : m_letterRestart) {
+                element.replayOfChar = true;
+            }
+            m_queue.insert(m_queue.begin(), m_letterRestart.begin(), m_letterRestart.end());
+            m_restartLetter = true;
+            m_letterInProgress = false;
+            m_letterRestart.clear();
+            m_newptt = 0;
+        }
+        if (m_elementEpoch == epoch || m_heldEpoch == epoch) {
+            setKeyLocked(false);
+            // QSK may drop the host CWX PTT; no synthetic PC PTT is added.
+            setPttLocked(false);
+        }
+    }
+    return true;
+}
+
+bool CwxSender::pauseRemoteActivity(quint32 epoch)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    return pauseRemoteLocked(epoch);
+}
+
+bool CwxSender::prepareRemoteResume(quint32 epoch)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_remotePaused || m_acceptedRemoteEpoch.load(std::memory_order_acquire) != epoch
+        || !m_remoteSafetyState) {
+        return false;
+    }
+    const quint32 pending = takeRemoteRequestsLocked(epoch);
+    if ((pending & kRemoteCancelRequest) != 0) {
+        cancelRemoteLocked(epoch);
+        return false;
+    }
+    const RemoteCwSafetySnapshot state = m_remoteSafetyState->snapshot();
+    if (state.epoch != epoch || !state.valid || state.invalidated
+        || (m_heldEpoch == epoch && m_clock() >= m_keyDeadline)) {
+        return false;
+    }
+    setKeyLocked(false);
+    m_resumePrepared = true;
+    return true;
+}
+
+bool CwxSender::resumeRemoteActivity(quint32 epoch)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_remotePaused || !m_resumePrepared || !remoteMayKeyLocked(epoch)
+        || m_acceptedRemoteEpoch.load(std::memory_order_acquire) != epoch) {
+        return false;
+    }
+    // Preserve remaining separator/repeat/hang duration. Safety and the
+    // original held gesture expiry are deliberately NOT moved.
+    if (m_restartLetter) {
+        m_nextTick = m_clock();
+        m_restartLetter = false;
+    } else {
+        m_nextTick += m_clock() - m_pausedAt;
+    }
+    m_remotePaused = false;
+    m_resumePrepared = false;
+    if (m_heldEpoch == epoch && m_keyHeld) {
+        if (m_clock() >= m_keyDeadline) {
+            cancelRemoteLocked(epoch);
+            return false;
+        }
+        setPttLocked(true);
+        setKeyLocked(true);
+    }
+    wakeWorker();
+    return true;
+}
+
+void CwxSender::finishRemoteLocked(quint32 epoch)
+{
+    quint32 expected = epoch;
+    if (epoch == 0 || !m_acceptedRemoteEpoch.compare_exchange_strong(expected, 0,
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        return;
+    }
+    m_remotePaused = false;
+    m_resumePrepared = false;
+    m_letterRestart.clear();
+    m_letterInProgress = false;
+    m_restartLetter = false;
+    QMetaObject::invokeMethod(this, [this, epoch]() { emit remoteActivityEnded(epoch); },
+                              Qt::QueuedConnection);
+}
+
+void CwxSender::cancelRemoteLocked(quint32 epoch)
+{
+    if (epoch == 0 || m_acceptedRemoteEpoch.load(std::memory_order_acquire) != epoch) {
+        return;
+    }
+    m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(),
+        [epoch](const Element& element) { return element.remoteEpoch == epoch; }), m_queue.end());
+    if (m_repeatEpoch == epoch) {
+        m_repeatEpoch = 0;
+        m_repeatText.clear();
+        m_repeatMarker = false;
+        m_pause = 0;
+    }
+    if (m_heldEpoch == epoch) {
+        releaseKeyHeldLocked();
+        m_heldEpoch = 0;
+    }
+    if (m_elementEpoch == epoch) {
+        setKeyLocked(false);
+        setPttLocked(false);
+        m_elementEpoch = 0;
+        m_ttx = 0;
+        m_newptt = 0;
+    }
+    int characters = 0;
+    for (const Element& element : m_queue) {
+        if (element.firstOfChar && !element.replayOfChar) {
+            ++characters;
+        }
+    }
+    m_queuedChars.store(characters, std::memory_order_release);
+    finishRemoteLocked(epoch);
+    finishIfIdleLocked();
+}
+
+void CwxSender::cancelRemoteActivity(quint32 epoch)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    cancelRemoteLocked(epoch);
+    wakeWorker();
+}
+
+void CwxSender::consumeRemoteRequestsLocked()
+{
+    if (m_acceptedRemoteEpoch.load(std::memory_order_acquire) == 0) {
+        return; // An atomic reservation never adopts ordinary local content.
+    }
+    const quint32 bound = static_cast<quint32>(m_remoteRequests.load(std::memory_order_acquire) >> kRemoteEpochShift);
+    const quint32 pending = takeRemoteRequestsLocked(bound);
+    if ((pending & kRemoteCancelRequest) != 0) {
+        cancelRemoteLocked(bound);
+    } else if ((pending & kRemotePauseRequest) != 0) {
+        pauseRemoteLocked(bound);
+    }
+    const quint32 accepted = m_acceptedRemoteEpoch.load(std::memory_order_acquire);
+    if (accepted != 0 && m_remoteSafetyState) {
+        const RemoteCwSafetySnapshot state = m_remoteSafetyState->snapshot();
+        if (state.epoch != accepted || !state.valid || state.invalidated) {
+            cancelRemoteLocked(accepted);
+        } else if (state.holdMask != 0) {
+            pauseRemoteLocked(accepted);
+        }
+    }
+}
+
+void CwxSender::wakeWorker() noexcept
+{
+    m_wake.store(true, std::memory_order_release);
+    if (!m_interruptPending.test_and_set(std::memory_order_acq_rel)) {
+        m_interrupt.release();
+    }
+    m_cv.notify_all();
+}
+
+void CwxSender::parkWorker(TimePoint until, bool timed)
+{
+    if (timed) {
+        if (!m_interrupt.try_acquire_until(until)) {
+            return;
+        }
+    } else {
+        m_interrupt.acquire();
+    }
+    // Clear before inspecting the mailbox/content again. A publisher before
+    // this clear is included in that inspection; one after owns a permit.
+    m_wake.store(true, std::memory_order_release);
+    m_interruptPending.clear(std::memory_order_release);
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void CwxSender::setRemoteRequestObserverForTest(RemoteRequestObserverForTest observer)
+{
+    m_remoteRequestObserverForTest = std::move(observer);
+}
+void CwxSender::setRemoteMailboxBeforeCasObserverForTest(RemoteMailboxBeforeCasObserverForTest observer)
+{
+    m_remoteMailboxBeforeCasObserverForTest = std::move(observer);
+}
+#endif
+
 CwxSender::~CwxSender()
 {
     {
@@ -590,7 +928,7 @@ CwxSender::~CwxSender()
         m_quit = true;
         m_wake.store(true, std::memory_order_release);
     }
-    m_cv.notify_all();
+    wakeWorker();
     if (m_thread.joinable()) {
         m_thread.join();
     }
@@ -623,13 +961,15 @@ void CwxSender::run()
 
     std::unique_lock<std::mutex> lock(m_mutex);
     while (!m_quit) {
-        if (!m_ticking && !m_keyHeld) {
-            m_cv.wait(lock, [this] { return m_quit || m_ticking || m_keyHeld; });
+        consumeRemoteRequestsLocked();
+        if ((!m_ticking && !m_keyHeld) || (m_remotePaused && m_heldEpoch == 0)) {
+            lock.unlock();
+            parkWorker({}, false);
+            lock.lock();
             continue;
         }
         const TimePoint deadline = m_keyHeld ? m_keyDeadline : m_nextTick;
         if (m_clock() < deadline) {
-            m_wake.store(false, std::memory_order_release);
             lock.unlock();
             m_sleeper(deadline);
             lock.lock();
@@ -657,15 +997,12 @@ void CwxSender::run()
 void CwxSender::preciseSleepUntil(TimePoint until)
 {
     using std::chrono::steady_clock;
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        const TimePoint coarse = until - kCoarseMargin;
-        if (steady_clock::now() < coarse) {
-            m_cv.wait_until(lock, coarse, [this] {
-                return m_quit || m_wake.load(std::memory_order_acquire);
-            });
-        }
-        if (m_quit) {
+    m_wake.store(false, std::memory_order_release);
+    const TimePoint coarse = until - kCoarseMargin;
+    if (steady_clock::now() < coarse) {
+        parkWorker(coarse, true);
+        if (m_wake.load(std::memory_order_acquire)
+            || (m_remoteRequests.load(std::memory_order_acquire) & quint64{3}) != 0) {
             return;
         }
     }
@@ -744,11 +1081,38 @@ void CwxSender::tickLocked()
             if (m_queue.empty()) {
                 break;
             }
+            if (m_queue.front().firstOfChar) {
+                m_letterRestart.clear();
+                for (const Element& letterElement : m_queue) {
+                    if (!m_letterRestart.empty() && letterElement.firstOfChar) {
+                        break;
+                    }
+                    m_letterRestart.push_back(letterElement);
+                }
+            }
             const Element data = m_queue.front();
             m_queue.pop_front();
+            m_elementEpoch = data.remoteEpoch;
+            if (!remoteMayKeyLocked(m_elementEpoch)) {
+                m_queue.push_front(data);
+                pauseRemoteLocked(m_elementEpoch);
+                return;
+            }
+            // A mark remains unfinished through its last down element,
+            // and an internal gap remains part of the same letter. The
+            // first up element following its final mark completes it.
+            m_letterInProgress = data.code == kElKeyDown;
+            for (const Element& following : m_queue) {
+                if (following.firstOfChar) {
+                    break;
+                }
+                if (following.code == kElKeyDown) {
+                    m_letterInProgress = true;
+                }
+            }
             m_currentDelta = data.speedDelta;
             const int elTel = currentElementMsLocked();
-            if (data.firstOfChar) {
+            if (data.firstOfChar && !data.replayOfChar) {
                 m_queuedChars.fetch_sub(1, std::memory_order_acq_rel);
                 const int index = data.charIndex;
                 QMetaObject::invokeMethod(this, [this, index]() { emit characterStarted(index); },
@@ -843,6 +1207,9 @@ bool CwxSender::reloadRepeatLocked()
     int characters = 0;
     bool loops = false;
     m_queue = elementsForMemory(m_repeatText, m_speedWpm, &characters, &loops);
+    for (Element& element : m_queue) {
+        element.remoteEpoch = m_repeatEpoch;
+    }
     m_repeatMarker = loops;
     m_queuedChars.store(characters, std::memory_order_release);
     return true;
@@ -853,6 +1220,7 @@ void CwxSender::finishIfIdleLocked()
     if (!m_queue.empty() || m_key || m_ptt || m_pause > 0 || m_newptt > 0 || m_ttx > 0) {
         return;
     }
+    finishRemoteLocked(m_acceptedRemoteEpoch.load(std::memory_order_acquire));
     m_ticking = false;
     m_queuedChars.store(0, std::memory_order_release);
     if (m_messageQueued) {
@@ -874,7 +1242,7 @@ void CwxSender::startTickingLocked()
     m_nextTick = m_clock();
     setSendingLocked(true);
     m_wake.store(true, std::memory_order_release);
-    m_cv.notify_all();
+    wakeWorker();
 }
 
 void CwxSender::setSendingLocked(bool on)
@@ -890,6 +1258,11 @@ void CwxSender::setSendingLocked(bool on)
 // the key line wakes the Protocol 2 high priority send itself.
 void CwxSender::abortLocked()
 {
+    //[2.10.3]MW0LGE swap [original inline comment from cwx.cs:314]
+    finishRemoteLocked(m_acceptedRemoteEpoch.load(std::memory_order_acquire));
+    m_elementEpoch = 0;
+    m_repeatEpoch = 0;
+    m_heldEpoch = 0;
     m_queue.clear();
     m_repeatText.clear();
     m_repeatMarker = false;
@@ -939,7 +1312,9 @@ void CwxSender::applyLineLocked()
 {
     // R-CW-39: the computer sidetone follows the sender's own key, ahead of
     // the line's break-in or MOX rule and whether or not a line is set.
-    const bool keyed = m_key || m_handKey;
+    const quint32 origin = m_keyHeld ? m_heldEpoch : m_elementEpoch;
+    const bool safe = (origin == 0 || !m_remotePaused) && remoteMayKeyLocked(origin);
+    const bool keyed = (m_key && safe) || m_handKey;
     if (keyed != m_listenedKey) {
         m_listenedKey = keyed;
         if (m_keyListener) {
@@ -950,8 +1325,8 @@ void CwxSender::applyLineLocked()
     // message CWX PTT, Off without MOX sends neither the key nor HL2 PTT.
     // The computer sidetone above follows the logical key independently.
     const bool allowed = m_breakIn || m_mox;
-    const bool key = (m_key || m_handKey) && allowed;
-    const bool ptt = m_hl2 && m_ptt && allowed;
+    const bool key = ((m_key && safe) || m_handKey) && allowed;
+    const bool ptt = m_hl2 && m_ptt && allowed && safe;
     if (!m_line) {
         m_lineKey = false;
         m_linePtt = false;
@@ -982,6 +1357,9 @@ void CwxSender::setKeyHeldStateLocked(bool held)
 
 void CwxSender::releaseKeyHeldLocked()
 {
+    const quint32 ended = m_heldEpoch;
+    m_heldEpoch = 0;
+    finishRemoteLocked(ended);
     setKeyHeldStateLocked(false);
     setKeyLocked(false);
     setPttLocked(false);
@@ -1159,6 +1537,38 @@ void CwxSender::setRequestGate(RequestGate gate)
 
 bool CwxSender::sendText(const QString& text)
 {
+    return sendTextWithEpoch(text, 0, {});
+}
+
+bool CwxSender::sendRemoteText(quint32 epoch, const QString& text, RemoteAdmission admit)
+{
+    return epoch != 0 && sendTextWithEpoch(text, epoch, admit);
+}
+
+bool CwxSender::admitRemoteLocked(quint32 epoch, const RemoteAdmission& admit, bool replace)
+{
+    if (epoch == 0) {
+        return true;
+    }
+    if (!admit || !m_remoteSafetyState) {
+        return false;
+    }
+    const quint32 previous = m_acceptedRemoteEpoch.load(std::memory_order_acquire);
+    if (!admit()) { return false; }
+    const RemoteCwSafetySnapshot admitted = m_remoteSafetyState->snapshot();
+    if (admitted.epoch != epoch || !admitted.valid || admitted.invalidated) {
+        return false;
+    }
+    if (previous != 0 && (replace || previous != epoch)) {
+        cancelRemoteLocked(previous);
+    }
+    m_acceptedRemoteEpoch.store(epoch, std::memory_order_release);
+    if (admitted.holdMask != 0) { pauseRemoteLocked(epoch); }
+    return true;
+}
+
+bool CwxSender::sendTextWithEpoch(const QString& text, quint32 epoch, const RemoteAdmission& admit)
+{
     const QString words = gateWords();
     if (!words.isEmpty()) {
         emit refused(words);
@@ -1171,6 +1581,12 @@ bool CwxSender::sendText(const QString& text)
         lock.unlock();
         emit refused(QString::fromLatin1(kCwxNothingToSendText));
         return false;
+    }
+    if (!admitRemoteLocked(epoch, admit, false)) {
+        return false;
+    }
+    for (Element& element : elements) {
+        element.remoteEpoch = epoch;
     }
     if (m_keyHeld) {
         releaseKeyHeldLocked();
@@ -1192,6 +1608,16 @@ bool CwxSender::sendText(const QString& text)
 }
 
 bool CwxSender::sendMemory(int number)
+{
+    return sendMemoryWithEpoch(number, 0, {});
+}
+
+bool CwxSender::sendRemoteMemory(quint32 epoch, int number, RemoteAdmission admit)
+{
+    return epoch != 0 && sendMemoryWithEpoch(number, epoch, admit);
+}
+
+bool CwxSender::sendMemoryWithEpoch(int number, quint32 epoch, const RemoteAdmission& admit)
 {
     if (number < 1 || number > kMemoryCount) {
         emit refused(QString::fromLatin1(kCwxNoSuchMemoryText).arg(number));
@@ -1222,9 +1648,23 @@ bool CwxSender::sendMemory(int number)
     }
     // From Thetis cwx.cs:2354-2387 [v2.10.3.15] (queue_start): what is being
     // sent stops (quit), then the message loads.
+    if (epoch != 0 && !admitRemoteLocked(epoch, admit, true)) {
+        return false;
+    }
+    // Retire local engine state without retiring the newly admitted epoch.
+    const quint32 accepted = epoch != 0
+        ? m_acceptedRemoteEpoch.exchange(0, std::memory_order_acq_rel) : 0;
     abortLocked();
+    m_acceptedRemoteEpoch.store(accepted, std::memory_order_release);
+    for (Element& element : elements) {
+        element.remoteEpoch = epoch;
+    }
+    m_repeatEpoch = epoch;
     m_queue = std::move(elements);
     m_repeatText = text;
+    for (Element& element : m_queue) {
+        element.remoteEpoch = m_repeatEpoch;
+    }
     m_repeatMarker = loops;
     m_queuedChars.store(characters, std::memory_order_release);
     m_messageQueued = true;
@@ -1253,13 +1693,42 @@ void CwxSender::stop()
         setSendingLocked(false);
         m_wake.store(true, std::memory_order_release);
     }
-    m_cv.notify_all();
+    wakeWorker();
 }
 
 // The Key: held while the operator holds it, dropped kKeyWatchdogMs after
 // the last press with no release (the TCI rule, R-CW-32). From Thetis
 // cwx.cs:1689-1719 [v2.10.3.15] (KeyAction): what is being sent stops, then
 // PTT and the key go on together. Thetis's Key toggles and drops after 60 s.
+bool CwxSender::holdRemoteKey(quint32 epoch, RemoteAdmission admit)
+{
+    const QString words = gateWords();
+    if (epoch == 0 || !words.isEmpty()) {
+        if (!words.isEmpty()) {
+            emit refused(words);
+        }
+        return false;
+    }
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    if (!admitRemoteLocked(epoch, admit, true)) {
+        return false;
+    }
+    m_queue.clear();
+    m_repeatText.clear();
+    m_repeatEpoch = 0;
+    m_ticking = false;
+    m_heldEpoch = epoch;
+    m_elementEpoch = epoch;
+    setKeyHeldStateLocked(true);
+    m_keyPressedAt = m_clock();
+    m_keyDeadline = m_keyPressedAt + std::chrono::milliseconds(kKeyWatchdogMs);
+    setPttLocked(true);
+    setKeyLocked(true);
+    setSendingLocked(true);
+    wakeWorker();
+    return true;
+}
+
 void CwxSender::setKeyHeld(bool down)
 {
     if (!down) {
@@ -1267,7 +1736,7 @@ void CwxSender::setKeyHeld(bool down)
         if (m_keyHeld) {
             releaseKeyHeldLocked();
             m_wake.store(true, std::memory_order_release);
-            m_cv.notify_all();
+            wakeWorker();
         }
         return;
     }
@@ -1293,6 +1762,8 @@ void CwxSender::setKeyHeld(bool down)
                                               Qt::QueuedConnection);
                 }
             }
+            m_heldEpoch = 0;
+            m_elementEpoch = 0;
             setKeyHeldStateLocked(true);
             m_keyPressedAt = m_clock();
             setPttLocked(true);
@@ -1302,7 +1773,7 @@ void CwxSender::setKeyHeld(bool down)
         m_keyDeadline = m_clock() + std::chrono::milliseconds(kKeyWatchdogMs);
         m_wake.store(true, std::memory_order_release);
     }
-    m_cv.notify_all();
+    wakeWorker();
 }
 
 // From Thetis TCIServer.cs:9050-9064 [v2.10.3.15] (scheduleKeyerReleaseLocked):
@@ -1325,7 +1796,7 @@ void CwxSender::releaseKeyAfter(int msAfterPress)
         }
         m_wake.store(true, std::memory_order_release);
     }
-    m_cv.notify_all();
+    wakeWorker();
 }
 
 // R-CW-36: the serial straight-key line. Thetis writes NetworkIO.SetCWX from
@@ -1386,7 +1857,7 @@ void CwxSender::setKeyLine(std::shared_ptr<CwKeyLine> line)
         m_linePtt = false;
         m_wake.store(true, std::memory_order_release);
     }
-    m_cv.notify_all();
+    wakeWorker();
 }
 
 void CwxSender::setHl2(bool hl2)

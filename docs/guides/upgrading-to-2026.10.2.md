@@ -25,6 +25,20 @@ Core and updated desktop or phone clients:
 
 Older Cores, windows and phone apps still connect to each other.
 
+Remote CW start needs the updated Core and an updated desktop or phone client.
+An older client can still stop CW and release its key. The Core now tracks a
+remote CW message independently of MOX and microphone PTT, including supported
+QSK. A brief link interruption pauses the message and computer sidetone;
+recovery starts the unfinished letter again. Stop, session loss or a prolonged
+dropout cancels the message, so a late response cannot restart it.
+
+CW receive shift and display alignment now put the dial at the carrier
+frequency. Saved CW frequencies keep their numerical values; check a known CW
+signal and retune once if needed after updating. Radio-side key and paddle
+behavior depends on the firmware and wiring. Physical paddle takeover has not
+been verified on the installed Hermes Lite 2 variant; client and packet tests
+do not establish that physical-input observation.
+
 ## Check before you transmit
 
 - **TUNE uses only the drive source chosen in Setup.** Open **File >

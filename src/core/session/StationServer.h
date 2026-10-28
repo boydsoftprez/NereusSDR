@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // =================================================================
 // src/core/session/StationServer.h  (NereusSDR)
 // =================================================================
@@ -189,6 +190,8 @@
 //   2026-10-24: Roundtable plan Task 11 fix round: a pending post keeps
 //               its connection's clientId. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: TunerLoan: the tuner's own front-panel TUNE gives transmit
 //               and the flag back when its cycle ends. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -1650,7 +1653,7 @@ public:
     /// CW transmit (R-CW-49): 1: cw.send, cw.memory, cw.stop and cw.key
     /// from the device that holds transmit, on the Core's CWX sender, for a
     /// peer at minor 11 whose hello declared remoteTx 1 and remoteCw 1.
-    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 1; }
+    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 2; }
     /// Task 35: keying from a remote device; null without a Local model.
     RemoteKeying* remoteKeying() const { return m_remoteKeying.get(); }
     /// Task 37 (R-IOS-13; remote design section 12.1): the transmit
@@ -1668,7 +1671,7 @@ public:
     /// session `mediaEpoch` calls on its transport's own thread for each
     /// "tx" channel message, at its receipt. It holds the guard weakly and
     /// does nothing once the guard is gone. Empty without a guard.
-    std::function<void(std::chrono::steady_clock::time_point)>
+    std::function<void(const QByteArray&, std::chrono::steady_clock::time_point)>
     txChannelReceiptHook(quint64 mediaEpoch) const;
     /// Remote transmit cut off the main thread (main thread): the guard cut
     /// transmit for media session `mediaEpoch` under arm `armSerial` after
@@ -2388,6 +2391,9 @@ private:
     // counted for `deviceId`, `ageUs` after its receipt, also moves the
     // guard's last-heard when the guard is armed for that device.
     void noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs);
+    void noteCwKeepalive(const QByteArray& deviceId, const TxKeepalive& value, qint64 ageUs);
+    bool deviceHasCwV2(const QByteArray& deviceId) const;
+    void recoverRemoteCw(quint32 epoch);
     // Remote transmit cut off the main thread, one turn after the cut's
     // post: while that arm is current and its device still keyed and
     // watched, the watchdog trips it (its stop and its record, once); a key
@@ -3229,6 +3235,8 @@ private:
     std::shared_ptr<RemoteTxCutGuard> m_txCutGuard;
     QByteArray m_txCutGuardDevice;
     quint32 m_txCutGuardKeyEpoch = 0;
+    quint32 m_txCutGuardCwEpoch = 0;
+    QByteArray m_watchedCwDevice;
     quint64 m_txCutGuardMediaEpoch = 0;
     std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> m_lastTxChannelReceipt =
         std::make_shared<std::atomic<std::chrono::steady_clock::rep>>(0);

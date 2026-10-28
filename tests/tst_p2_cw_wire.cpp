@@ -41,6 +41,7 @@
 #include <thread>
 
 #include "core/P2RadioConnection.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "core/RadioConnection.h"
 #include "fakes/P2FakeRadio.h"
 
@@ -129,6 +130,49 @@ CwWireState keyerOn()
 class TestP2CwWire : public QObject {
     Q_OBJECT
 private slots:
+    void finishedPhysicalTakeoverRestoresLocalKeyerWithoutSettingsWrite()
+    {
+        P2FakeRadio fake;
+        QVERIFY(fake.start());
+        P2RadioConnection connection;
+        configureConnection(connection, fake);
+        QVERIFY(establish(connection, fake));
+        connection.setCwWireState(keyerOn());
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.txPackets(), 5) & 0x82, 0x82, kPacketWaitMs);
+        connection.remoteCwSafetyState()->begin(11);
+        connection.cwKeyLine()->setCwx(true);
+        QVERIFY(connection.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.txPackets(), 5) & 0x82, 0, kPacketWaitMs);
+        QVERIFY(connection.remoteCwSafetyState()->invalidatePhysicalPress(11));
+        connection.cwKeyLine()->setCwx(false); // retire matching remote intent first
+        connection.finishRemoteCw(11);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.txPackets(), 5) & 0x82, 0x82, kPacketWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 0, kPacketWaitMs);
+        connection.cwKeyLine()->setDot(true); // normal local key works after cleanup
+        flushKeyChanges(connection);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 2, kPacketWaitMs);
+    }
+
+    void remoteHoldPromptsKeyLowAndRestoresCapturedIntent()
+    {
+        P2FakeRadio fake;
+        QVERIFY(fake.start());
+        P2RadioConnection connection;
+        configureConnection(connection, fake);
+        QVERIFY(establish(connection, fake));
+        connection.setCwWireState(keyerOn());
+        connection.cwKeyLine()->setCwx(true);
+        flushKeyChanges(connection);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 1, kPacketWaitMs);
+        connection.remoteCwSafetyState()->begin(11);
+        QVERIFY(connection.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 0, kPacketWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.txPackets(), 5) & 0x82, 0, kPacketWaitMs);
+        QVERIFY(!connection.transmitCut());
+        QVERIFY(connection.setRemoteCwHold(11, TxChannel::RfHold::Link, false));
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 1, kPacketWaitMs);
+    }
+
     void setCwWireStateSendsCmdTxOnce()
     {
         P2FakeRadio fake;

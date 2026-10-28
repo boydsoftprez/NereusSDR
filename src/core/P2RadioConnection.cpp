@@ -51,6 +51,8 @@
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15 - The transmit cut: setMox(true) is refused while it is
 //                 set, and the high-priority PTT bit (codec and legacy) and
 //                 the TX I/Q frames read it as unkeyed. J.J. Boyd (KG4VCF),
@@ -1843,6 +1845,13 @@ void P2RadioConnection::onCwKeyLineChanged()
     if (m_running && m_socket) {
         sendCmdHighPriority();
     }
+}
+
+void P2RadioConnection::applyRemoteRfHold()
+{
+    syncCwComposeState();
+    sendCmdTx();
+    sendCmdHighPriority();
 }
 
 void P2RadioConnection::applyTransmitCut()
@@ -4460,7 +4469,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2PttOut   = wireMox() ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
     // CW transmit (2026-10-26): the key bits read 0 while the transmit is
     // cut, as the PTT bit does.
-    const bool cut = transmitCut();
+    const bool cut = cwOutputSuppressed();
     ctx.p2Cwx      = cut ? 0 : m_tx[0].cwx;
     ctx.p2Dot      = cut ? 0 : m_tx[0].dot;
     ctx.p2Dash     = cut ? 0 : m_tx[0].dash;
@@ -4893,7 +4902,8 @@ void P2RadioConnection::composeCmdHighPriorityLegacy(char buf[kBufLen]) const
     buf[4] = static_cast<char>((wireMox() ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
 
     // From Thetis network.c:931-933
-    buf[5] = (m_tx[0].dash << 2 | m_tx[0].dot << 1 | m_tx[0].cwx) & 0x7;
+    buf[5] = cwOutputSuppressed() ? 0
+        : (m_tx[0].dash << 2 | m_tx[0].dot << 1 | m_tx[0].cwx) & 0x7;
 
     // From Thetis network.c:936-1005
     // RX frequencies — 4 bytes each, big-endian phase words.
@@ -5059,6 +5069,7 @@ QByteArray P2RadioConnection::buildCmdHighPriorityPacket()
     // TAPR openHPSDR Ethernet Protocol v4.4, High Priority Packet p34 [@e7c6584].
     writeBE32(buf, 0, kCommandSequence);
     composeCmdHighPriority(buf);
+    if (cwOutputSuppressed()) { buf[5] = 0; } // late captured-context fence
     QByteArray pkt(buf, sizeof(buf));
     return pkt;
 }
@@ -5112,6 +5123,7 @@ QByteArray P2RadioConnection::buildCmdTxPacket()
     // TAPR openHPSDR Ethernet Protocol v4.4, DUC Specific Packet p29 [@e7c6584].
     writeBE32(buf, 0, kCommandSequence);
     composeCmdTx(buf);
+    if (cwOutputSuppressed()) { buf[5] = static_cast<char>(quint8(buf[5]) & ~kCwCutModeBits); }
     QByteArray pkt(buf, sizeof(buf));
     return pkt;
 }

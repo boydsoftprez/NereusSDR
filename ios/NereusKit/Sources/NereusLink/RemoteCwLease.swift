@@ -107,10 +107,12 @@ public final class RemoteCwLease {
         guard tuple.deviceId == thisDeviceId else {
             // A successor owner retires our content, including its pending
             // results. Its tuple can never become this phone's CW lease.
-            if tuple.active, let epoch, tuple.epoch > epoch {
-                stop()
-                retiredThrough = max(retiredThrough, tuple.epoch)
-            }
+            // Core epochs are global: even before our first result,
+            // another owner's accepted epoch retires any older answer.
+            // A completed foreign activity may be the first tuple seen.
+            // Keep pending requests eligible for a truly later epoch.
+            retiredThrough = max(retiredThrough, tuple.epoch)
+            if let epoch, tuple.epoch > epoch { stop() }
             return
         }
         if tuple.active {

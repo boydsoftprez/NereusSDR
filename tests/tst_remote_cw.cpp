@@ -27,6 +27,10 @@
 #include "core/CwTypes.h"
 #include "core/CwxSender.h"
 #include "core/safety/TxRefusal.h"
+#include "core/safety/RemoteTxCutGuard.h"
+#include "core/safety/RemoteTxWatchdog.h"
+#include "core/safety/RemoteCwSafetyState.h"
+#include "core/MoxController.h"
 
 #include <QEvent>
 #include <QPointer>
@@ -135,7 +139,7 @@ private:
 };
 
 const QHash<QByteArray, int> kCwPeer{{"deviceAuth", 1}, {"sessionHolder", 1},
-                                     {"remoteTx", 1}, {"remoteCw", 1}, {"cwSettings", 1}};
+                                     {"remoteTx", 1}, {"remoteCw", 2}, {"cwSettings", 1}};
 
 const QString kOlderApp = QStringLiteral("Update this app to send CW through this Core.");
 const QString kCwSettingsWrite = QStringLiteral("Update this app to change the CW settings on this Core.");
@@ -263,11 +267,175 @@ private slots:
         LoopbackTransport* older = rig.core.signIn(b, kTransmitter);
         QVERIFY(admitted(cw));
         QVERIFY(admitted(older));
-        QCOMPARE(capability(cw->received(), QStringLiteral("remoteCwVersion")), std::optional<qint64>(1));
+        QCOMPARE(capability(cw->received(), QStringLiteral("remoteCwVersion")), std::optional<qint64>(2));
         const QStringList names = capabilityNames(cw);
         QCOMPARE(names.indexOf(QStringLiteral("remoteCwVersion")),
                  names.indexOf(QStringLiteral("txReadingsVersion")) + 1);
         QVERIFY(!capability(older->received(), QStringLiteral("remoteCwVersion")).has_value());
+    }
+
+    void qskWithoutMoxArmsWatchBeforeFirstKey()
+    {
+        CwCore rig(true);
+        Device phone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(phone);
+        LoopbackTransport* app = rig.core.signIn(phone, kCwPeer);
+        QVERIFY(admitted(app));
+        QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
+        std::atomic<bool> armedAtFirstKey{false};
+        rig.conn.cwKeyLine()->setOnChange([&]() {
+            if (rig.conn.cwKeyLine()->cwx()) {
+                armedAtFirstKey.store(rig.core.server->txCutGuard()->isJudging()
+                    && rig.core.server->txWatchdog()->isWatching(phone.key.fingerprint()));
+            }
+        });
+        QVERIFY(rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("ET"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY(armedAtFirstKey.load());
+        QVERIFY(!rig.core.model->isTransmitting());
+        const auto activity = rig.core.model->remoteCwActivity();
+        QVERIFY(activity.epoch != 0);
+        QCOMPARE(activity.deviceId, phone.key.fingerprint());
+        QVERIFY(rig.core.invoke(app, "cw.stop").value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(rig.core.model->remoteCwActivity().epoch, 0u);
+        QVERIFY(!rig.core.server->txWatchdog()->isWatching(phone.key.fingerprint()));
+        rig.conn.cwKeyLine()->setOnChange({});
+    }
+
+    void appendRetainsEpochAndReplacementRetainsGuardBudget()
+    {
+        CwCore rig(true);
+        Device phone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(phone);
+        LoopbackTransport* app = rig.core.signIn(phone, kCwPeer);
+        QVERIFY(admitted(app));
+        QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
+        rig.core.server->txCutGuard()->useControlledClockForTest(RemoteTxCutGuard::Clock::time_point{});
+        QVERIFY(rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("ET"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        const quint32 first = rig.core.model->remoteCwActivity().epoch;
+        const quint64 arm = rig.core.server->txCutGuard()->armSerial();
+        QVERIFY(rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("EE"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(rig.core.model->remoteCwActivity().epoch, first);
+        rig.core.server->txCutGuard()->advanceClockForTest(std::chrono::milliseconds(200));
+        rig.core.now = 200;
+        rig.core.model->transmitModel().setCwxMemory1(QStringLiteral("T"));
+        QVERIFY(rig.core.invoke(app, "cw.memory", {int64("number", 1)})
+                    .value(QStringLiteral("accepted")).toBool());
+        QVERIFY(rig.core.model->remoteCwActivity().epoch > first);
+        QCOMPARE(rig.core.server->txCutGuard()->armSerial(), arm);
+        rig.core.server->txCutGuard()->advanceClockForTest(std::chrono::milliseconds(201));
+        QTRY_VERIFY(rig.conn.cwOutputSuppressed()); // original0→401 budget, not replacement200→601
+        QVERIFY(rig.core.invoke(app, "cw.stop").value(QStringLiteral("accepted")).toBool());
+    }
+
+    void watchdogHoldsQskAndRecoversAfterMicKeyClearedLinkMetadata()
+    {
+        CwCore rig(true);
+        Device phone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(phone);
+        LoopbackTransport* app = rig.core.signIn(phone, kCwPeer);
+        QVERIFY(admitted(app));
+        QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
+        auto* guard = rig.core.server->txCutGuard();
+        const auto start = RemoteTxCutGuard::Clock::time_point{};
+        guard->useControlledClockForTest(start);
+        rig.core.model->moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        const QJsonObject key = rig.core.invoke(app, "tx.key",
+            {utf8("trigger", QStringLiteral("screen"))});
+        QVERIFY2(key.value(QStringLiteral("accepted")).toBool(),
+                 qPrintable(QString::fromUtf8(QJsonDocument(key).toJson())));
+        QTRY_VERIFY(rig.core.model->moxController()->isMox());
+        QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", true)})
+                    .value(QStringLiteral("accepted")).toBool());
+        const quint32 epoch = rig.core.model->remoteCwActivity().epoch;
+        QVERIFY(epoch != 0);
+        guard->advanceClockForTest(std::chrono::milliseconds(401));
+        QTRY_VERIFY(guard->isHolding());
+        rig.core.now = 401;
+        rig.core.server->txWatchdog()->onTimer();
+        rig.core.server->txWatchdog()->onTimer(); // existing one late turn
+        QVERIFY(rig.core.server->txWatchdog()->isHeld(phone.key.fingerprint()));
+        QVERIFY((rig.conn.remoteCwSafetyState()->snapshot().holdMask
+                 & quint32(TxChannel::RfHold::Link)) != 0);
+        // Ending the microphone/MOX key clears its UI/RF Link metadata,
+        // while the independent CW lifetime and checkpoint remain held.
+        QVERIFY(rig.core.invoke(app, "tx.unkey",
+                    {int64("epoch", rig.core.model->keyedBy().epoch)})
+                    .value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY(!rig.core.model->moxController()->isMox());
+        QVERIFY(rig.cwx()->isKeyHeld());
+        // Exercise the real guard-layer media identity/receipt API here;
+        // transport authentication is outside this ordering regression.
+        guard->arm(7, 0, epoch);
+        const TxKeepalive value{1, 1, epoch};
+        std::thread receipt([&]() {
+            guard->heardKeepaliveOffMain(7, value, start + std::chrono::milliseconds(401));
+        });
+        receipt.join();
+        QTRY_VERIFY(!guard->isHolding()); // queued recovery runs before main watchdog receipt
+        QVERIFY(rig.conn.cwOutputSuppressed());
+        QVERIFY(rig.core.server->txWatchdog()->keepalive(phone.key.fingerprint(), value,
+                    RemoteTxWatchdog::Path::Session));
+        QTRY_VERIFY(!rig.conn.cwOutputSuppressed());
+        QVERIFY(rig.conn.cwKeyLine()->cwx());
+        QVERIFY(rig.core.invoke(app, "cw.stop").value(QStringLiteral("accepted")).toBool());
+    }
+
+    void endedMicrophoneStillCutsAtTenSecondsWithCwPresent()
+    {
+        CwCore rig(true);
+        Device phone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(phone);
+        LoopbackTransport* app = rig.core.signIn(phone, kCwPeer);
+        QVERIFY(admitted(app));
+        QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
+        rig.core.server->txCutGuard()->useControlledClockForTest(RemoteTxCutGuard::Clock::time_point{});
+        rig.core.model->moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        const QJsonObject key = rig.core.invoke(app, "tx.key",
+            {utf8("trigger", QStringLiteral("screen"))});
+        QVERIFY2(key.value(QStringLiteral("accepted")).toBool(),
+                 qPrintable(QString::fromUtf8(QJsonDocument(key).toJson())));
+        QTRY_VERIFY(rig.core.model->moxController()->isMox());
+        QVERIFY(rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("CQ CQ CQ CQ"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        const quint32 epoch = rig.core.model->remoteCwActivity().epoch;
+        rig.core.now = 100;
+        rig.core.server->remoteMicLineEnded(phone.key.fingerprint(), 100, false);
+        QVERIFY(rig.core.server->endedMicLinePendingForTest());
+        quint64 sequence = 0;
+        const auto step = [&](qint64 at) {
+            rig.core.now = at;
+            rig.core.server->txWatchdog()->keepalive(phone.key.fingerprint(),
+                TxKeepalive{++sequence, 1, epoch}, RemoteTxWatchdog::Path::Session);
+            rig.core.server->judgeEndedMicLineForTest();
+        };
+        for (qint64 at = 200; at < 10000; at += 100) { step(at); }
+        step(9999);
+        QVERIFY(rig.core.model->moxController()->isMox());
+        QVERIFY(!rig.core.model->isRemoteRfHeld()); // CW is exempt from the250ms mic hold
+        step(10000);
+        QTRY_VERIFY(!rig.core.model->moxController()->isMox());
+        QVERIFY(!rig.core.server->endedMicLinePendingForTest());
+    }
+
+    void legacyStartRefusedButStopAndKeyUpStillAccepted()
+    {
+        CwCore rig;
+        Device phone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(phone);
+        auto oldFeatures = kCwPeer;
+        oldFeatures["remoteCw"] = 1;
+        LoopbackTransport* app = rig.core.signIn(phone, oldFeatures);
+        QVERIFY(admitted(app));
+        QVERIFY(rig.core.invoke(app, "tx.take").value(QStringLiteral("accepted")).toBool());
+        QVERIFY(!rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("E"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        QVERIFY(rig.core.invoke(app, "cw.stop").value(QStringLiteral("accepted")).toBool());
+        QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", false)})
+                    .value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(capability(app->received(), QStringLiteral("remoteCwVersion")), std::optional<qint64>(1));
     }
 
     // The holder's "CQ" is queued in the Core's sender, for that device.
@@ -565,12 +733,14 @@ private slots:
         for (const auto& [verb, args] : QList<QPair<QByteArray, QList<MirrorUpdate>>>{
                  {"cw.send", {utf8("text", QStringLiteral("CQ"))}},
                  {"cw.memory", {int64("number", 1)}},
-                 {"cw.stop", {}},
                  {"cw.key", {boolArg("down", true)}}}) {
             const QJsonObject result = rig.core.invoke(app, verb, args);
             QVERIFY2(!result.value(QStringLiteral("accepted")).toBool(), verb.constData());
             QCOMPARE(result.value(QStringLiteral("reason")).toString(), kOlderApp);
         }
+        QVERIFY(rig.core.invoke(app, "cw.stop").value(QStringLiteral("accepted")).toBool());
+        QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", false)})
+                    .value(QStringLiteral("accepted")).toBool());
         QVERIFY(!rig.cwx()->isSending());
         QVERIFY(!rig.cwx()->isKeyHeld());
     }

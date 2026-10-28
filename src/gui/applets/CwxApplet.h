@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-18 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -76,6 +78,7 @@ public:
     // A remote window (until its Core can take CWX requests) greys Send,
     // Stop, Key, the memories' send and KB to CW with `reason`.
     void setSendPermitted(bool permitted, const QString& reason = QString());
+    void setReleasePermitted(bool permitted) { m_releasePermitted = permitted; applyPermissions(); }
     // The CWX settings (speed, repeat, memory texts) need the Core's
     // transmit settings; greyed with `reason` when they are not there.
     void setCwxSettingsPermitted(bool permitted, const QString& reason = QString());
@@ -177,6 +180,7 @@ private:
     bool m_sending{false};
     bool m_editingText{false};  // the applet itself is setting the text
 
+    bool m_releasePermitted{false};
     bool m_sendPermitted{true};
     QString m_sendReason;
     bool m_settingsPermitted{true};

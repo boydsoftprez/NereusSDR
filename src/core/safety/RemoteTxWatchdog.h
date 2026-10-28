@@ -92,6 +92,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 37 (R-IOS-13), with
 //               AI-assisted implementation via Anthropic Claude Code.
@@ -134,6 +136,7 @@
 
 #include <functional>
 
+#include "core/safety/TxKeepalive.h"
 #include "core/NereusCoreExport.h"
 #include "core/session/media/RemoteMicReceiver.h"
 
@@ -243,6 +246,7 @@ public:
     /// still is).
     void released(const QByteArray& deviceId) { setKeyed(deviceId, false); }
 
+    void setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch);
     bool isWatching(const QByteArray& deviceId) const;
     bool isWatchingAny() const { return !m_devices.isEmpty(); }
     /// Hold then cut: `deviceId`'s quiet link holds its RF silent now.
@@ -255,6 +259,8 @@ public:
     /// `ageMs` (TX mic thread): how long it waited at the Core since its
     /// receipt off the network; it is heard then.
     bool keepalive(const QByteArray& deviceId, quint64 sequence, quint32 epoch, Path path,
+                   qint64 ageMs = 0);
+    bool keepalive(const QByteArray& deviceId, const TxKeepalive& value, Path path,
                    qint64 ageMs = 0);
     /// The device's session ended: a watched device stops at once, and a
     /// hold ends after the stop.
@@ -287,6 +293,9 @@ public:
     static bool readChannelKeepalive(const QByteArray& message, quint64* sequence,
                                      quint32* epoch);
 
+    static QByteArray channelKeepalive(const TxKeepalive& value);
+    static bool readChannelKeepalive(const QByteArray& message, TxKeepalive* value);
+
 signals:
     /// The link to `deviceId` went quiet (or closed) and the Core stopped,
     /// `silentMs` after the last keepalive that counted (or the watch's
@@ -304,6 +313,8 @@ signals:
 
 private:
     struct Watch {
+        bool cwActive{false};
+        quint32 cwEpoch{0};
         bool keyed{false};
         bool voxArmed{false};
         /// The epoch keepalives may not be older than (0: any).

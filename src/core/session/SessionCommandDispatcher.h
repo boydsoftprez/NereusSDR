@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // =================================================================
 // src/core/session/SessionCommandDispatcher.h  (NereusSDR)
 // =================================================================
@@ -85,6 +86,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send,
 //                                    cw.memory, cw.stop and cw.key, read
 //                                    here and answered by the Core's
@@ -476,6 +479,7 @@ public:
         /// refused stationReceiveOnly.
         std::function<void(const QByteArray& requester, quint64 sequence, quint32 epoch)>
             keepalive;
+        std::function<void(const QByteArray&, const TxKeepalive&)> keepaliveV2;
         /// Fix wave M2 (ruling 8.5): a release of the transmission (the
         /// PureSignal two-tone test off) from `requester`: empty when it may
         /// (it holds transmit, or nobody does), or the refusal naming the

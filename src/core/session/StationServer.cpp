@@ -32,6 +32,8 @@
 //               high-pass switches. J.J. Boyd (KG4VCF), AI-assisted: Claude
 //               Code. Version 14 also names OC Outputs' Anvelina DX
 //               Outputs ("ocDx" reload).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: The keying gate notes the tuner's own TUNE (noteTunerLoan)
 //               and the cycle's end gives transmit back (returnTunerLoan).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2846,6 +2848,15 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::TxWatch, 0, watched);
             }
         }, this);
+    m_txWatchServer->setKeepaliveV2(
+        [this](SessionTransport* primary) {
+            return peerDeclares(primary, QByteArrayLiteral("remoteCw"), 2);
+        },
+        [this](const QByteArray& device, const TxKeepalive& value) {
+            if (m_txWatchdog && m_txWatchdog->keepalive(device, value, RemoteTxWatchdog::Path::Auxiliary)) {
+                noteCwKeepalive(device, value, 0);
+            }
+        });
     // iPhone app Task 71 (R-IOS-02): who holds a place, and the mirrored
     // `connectedDevices` object that shows it.
     m_deviceSessions = std::make_unique<DeviceSessionRegistry>();
@@ -3325,6 +3336,12 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     recordTransmitStop(TransmitState::kStopLinkLost, message);
                     m_radioModel->stopAllTx(message);
                 }
+                if (m_radioModel && m_radioModel->remoteCwActivity().deviceId == deviceId) {
+                    const quint32 epoch = m_radioModel->remoteCwActivity().epoch;
+                    m_radioModel->transmitCutLine()->cut(epoch);
+                    m_radioModel->cancelRemoteCw(epoch);
+                    m_radioModel->catchUpTransmitCut(message);
+                }
                 disarmVoxArmedBy(deviceId, m_watchdogVoxOffWhy != nullptr
                                                ? m_watchdogVoxOffWhy
                                                : "its link went quiet");
@@ -3391,10 +3408,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         {
             const std::shared_ptr<TxCutTarget> target = m_txCutTarget;
             m_txCutGuard = std::make_shared<RemoteTxCutGuard>(
-                [target](quint64 mediaEpoch, quint64 armSerial, qint64 silentMs) {
+                [target](quint64 mediaEpoch, quint64 armSerial, quint32 cwEpoch, qint64 silentMs) {
                     const std::lock_guard<std::mutex> lock(target->mutex);
                     if (target->line) {
-                        target->line->cut();
+                        if (cwEpoch != 0) { target->line->cut(cwEpoch); }
+                        else { target->line->cut(); }
                     }
                     StationServer* const server = target->server;
                     if (server != nullptr) {
@@ -3402,7 +3420,20 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                         // when this object goes is dropped with it.
                         QMetaObject::invokeMethod(
                             server,
-                            [server, mediaEpoch, armSerial, silentMs]() {
+                            [server, mediaEpoch, armSerial, cwEpoch, silentMs]() {
+                                if (cwEpoch != 0) {
+                                    if (!server->m_radioModel || !server->m_txCutGuard
+                                        || server->m_txCutGuard->armSerial() != armSerial
+                                        || server->m_radioModel->remoteCwActivity().epoch != cwEpoch) { return; }
+                                    const auto activity = server->m_radioModel->remoteCwActivity();
+                                    if (server->m_txWatchdog) {
+                                        server->m_txWatchdog->tripQuiet(activity.deviceId, silentMs);
+                                    }
+                                    server->m_radioModel->cancelRemoteCw(cwEpoch);
+                                    server->m_radioModel->catchUpTransmitCut(
+                                        RemoteTxWatchdog::stopMessage(server->deviceNameForStop(activity.deviceId)));
+                                    return;
+                                }
                                 server->onTransmitCutOffMain(mediaEpoch, armSerial, silentMs);
                             },
                             Qt::QueuedConnection);
@@ -3412,15 +3443,20 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // deadline the guard holds RF silent through the same line
                 // (the TX channel's Guard bit only) and releases it on a
                 // receipt, a disarm, a new arm or after its cut.
-                [target](bool held) {
+                [target](quint64, quint32 cwEpoch, bool held) {
                     const std::lock_guard<std::mutex> lock(target->mutex);
                     if (target->line) {
-                        target->line->hold(held);
+                        if (cwEpoch != 0) { target->line->hold(cwEpoch, held); }
+                        else { target->line->hold(held); }
                     }
                 });
         }
         connect(m_radioModel, &RadioModel::keyedByChanged, this,
                 &StationServer::followKeyedForWatchdog);
+        connect(m_radioModel, &RadioModel::remoteCwActivityChanged, this,
+                &StationServer::followKeyedForWatchdog);
+        connect(m_radioModel, &RadioModel::remoteCwRecoveryRequested, this,
+                &StationServer::recoverRemoteCw);
 
         // Task 37 (remote design section 12.3): a keyed device's microphone
         // line starving on a live link, per transmit mode.
@@ -3514,6 +3550,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     m_transmitState->setClock([this]() { return m_deviceSessions->now(); });
     if (m_radioModel && m_radioModel->role() == RadioModel::Role::Local) {
         m_transmitState->bind(m_radioModel);
+        connect(m_radioModel, &RadioModel::remoteCwActivityChanged, this, [this]() {
+            const auto activity = m_radioModel->remoteCwActivity();
+            if (activity.epoch != 0) {
+                m_transmitState->setRemoteCwActivity(activity.deviceId, activity.epoch, true);
+            } else {
+                m_transmitState->setRemoteCwActivity(
+                    QByteArray::fromHex(m_transmitState->remoteCwDeviceId().toLatin1()),
+                    quint32(m_transmitState->remoteCwEpoch()), false);
+            }
+        });
     }
     // iPhone app plan Task 25 (R-IOS-18): the `vax` object, over the Core's
     // own audio engine, saving a device's writes where its applet does.
@@ -4582,6 +4628,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                     waitUs.value_or(0) / 1000, watched);
             }
         };
+        access.keepaliveV2 = [this](const QByteArray& requester, const TxKeepalive& value) {
+            if (m_txWatchdog && (value.cwEpoch == 0 || deviceHasCwV2(requester))) {
+                // Control logging lane: logged after, as it was watched,
+                // with its wait since the control link received it.
+                const bool watched = m_txWatchdog->isWatching(requester);
+                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
+                    ? m_dispatchingTransport->deliveringMessageWaitUs()
+                    : std::nullopt;
+                if (m_txWatchdog->keepalive(requester, value,
+                                            RemoteTxWatchdog::Path::Session)) {
+                    noteCwKeepalive(requester, value, 0);
+                }
+                controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
+                                    waitUs.value_or(0) / 1000, watched);
+            }
+        };
         // Task 77 (ruling 7.7): the transmitter's own settings are the
         // holder's while transmit is held.
         // On the air, ruling 7.4's words come first. A receive-only Core
@@ -4660,21 +4722,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     }
                 }
                 if (refusal.isEmpty()) {
-                    const auto start = [&request](CwxSender& sender) {
+                    const auto start = [&request](CwxSender& sender, quint32 epoch,
+                                                  const std::function<bool()>& admit) {
                         switch (request.kind) {
                         case Kind::Send:
-                            return sender.sendText(request.text);
+                            return sender.sendRemoteText(epoch, request.text, admit);
                         case Kind::Memory:
-                            return sender.sendMemory(request.number);
+                            return sender.sendRemoteMemory(epoch, request.number, admit);
                         case Kind::Key:
-                            sender.setKeyHeld(true);
-                            return sender.isKeyHeld();
+                            return sender.holdRemoteKey(epoch, admit);
                         case Kind::Stop:
                             break;
                         }
                         return false;
                     };
-                    refusal = m_radioModel->requestCwxFor(requester, start);
+                    refusal = m_radioModel->requestRemoteCwxFor(
+                        requester, request.kind != Kind::Send, start);
                 }
             } else {
                 // A release (cw.stop, cw.key up) is always taken: it ends
@@ -4689,6 +4752,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             }
             QList<MirrorUpdate> values;
+            if (refusal.isEmpty() && engages) {
+                const auto activity = m_radioModel->remoteCwActivity();
+                values.append({0, "cwEpoch", MirrorWireKind::Int64, qint64(activity.epoch)});
+                values.append({1, "cwActive", MirrorWireKind::Bool, activity.epoch != 0});
+            }
             if (!refusal.isEmpty()) {
                 values.append({0, "refusalCode", MirrorWireKind::Utf8, QString::fromUtf8(refusal.code)});
                 values.append({0, "refusalFix", MirrorWireKind::Utf8, QString::fromUtf8(refusal.fix)});
@@ -6761,17 +6829,38 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 TxRefusals::appCannotTransmit().text, {}));
             break;
         }
+        if (message.commandVerb == "tx.keepalive"
+            && !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)) {
+            bool unnegotiated = false;
+            for (const MirrorUpdate& argument : message.arguments) {
+                if (argument.name == "cwEpoch" && argument.value.toLongLong() != 0) {
+                    unnegotiated = true;
+                }
+            }
+            if (unnegotiated) {
+                send(transport, SessionMessages::commandResult(message.commandVerb,
+                    message.commandId, false, QStringLiteral("The Core could not read this request."), {}));
+                break;
+            }
+        }
         // CW transmit (R-CW-48): the cw.* verbs came with remoteCwVersion 1,
         // for a peer at minor 11 whose hello declared remoteTx and remoteCw.
-        if ((message.commandVerb == "cw.send" || message.commandVerb == "cw.memory"
-             || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key")
+        {
+        bool cwStarts = message.commandVerb == "cw.send" || message.commandVerb == "cw.memory";
+        if (message.commandVerb == "cw.key") {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if (argument.name == "down" && argument.value.toBool()) { cwStarts = true; }
+            }
+        }
+        if (cwStarts
             && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
                 || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
-                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 1))) {
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2))) {
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,
                 QStringLiteral("Update this app to send CW through this Core."), {}));
             break;
+        }
         }
         // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA profile verbs, to a
         // peer that declared paProfiles, gated as the desktop's own PA
@@ -10716,6 +10805,13 @@ bool StationServer::fitPeerOnlyProperties(SessionTransport* transport,
             }
         }
     }
+    if (isTxStateMessage(message) && !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)) {
+        const auto cwTuple = [](const QByteArray& name) {
+            return name == "remoteCwDeviceId" || name == "remoteCwEpoch" || name == "remoteCwActive";
+        };
+        message.fields.removeIf([&](const SessionSchemaField& field) { return cwTuple(field.name); });
+        message.updates.removeIf([&](const MirrorUpdate& update) { return cwTuple(update.name); });
+    }
     for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
         const QByteArray feature(entry.feature);
         const bool peerGetsIt = entry.deviceKeyOnly ? peerGetsCoreAddresses(transport)
@@ -11119,29 +11215,33 @@ void StationServer::followKeyedForWatchdog()
         m_txWatchdog->setKeyed(keyedBy.deviceId, true,
                                keyedBy.trigger == QByteArrayLiteral("vox") ? 0 : keyedBy.epoch);
     }
-    // Remote transmit cut off the main thread: the guard is armed for the
-    // remote key on the air, with that device's media session (0 without
-    // one: then it never judges), and armed afresh for each new key; no
-    // remote key disarms it. A media replacement mid-key keeps the
-    // session's epoch (DaemonMediaController::handleReplace hands the
-    // replacement peer m_epoch), so the guard keeps hearing it. A media
-    // session that starts after the key re-arms nothing until the key
-    // changes: the guard then never judges this key (epoch 0) or judges
-    // the older session's, which fails safe (a cut, never a missed cut);
-    // the watchdog still watches the key.
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (!m_watchedCwDevice.isEmpty() && m_watchedCwDevice != activity.deviceId) {
+        m_txWatchdog->setCwActive(m_watchedCwDevice, false, 0);
+    }
+    m_watchedCwDevice = activity.epoch != 0 ? activity.deviceId : QByteArray();
+    if (activity.epoch != 0) {
+        m_txWatchdog->setCwActive(activity.deviceId, true, activity.epoch);
+    }
+    const QByteArray guardedDevice = activity.epoch != 0 ? activity.deviceId
+        : remoteKey ? keyedBy.deviceId : QByteArray();
     if (m_txCutGuard) {
-        if (remoteKey) {
-            const quint64 mediaEpoch = mediaEpochOfDevice(keyedBy.deviceId);
-            if (keyedBy.deviceId != m_txCutGuardDevice || keyedBy.epoch != m_txCutGuardKeyEpoch
-                || mediaEpoch != m_txCutGuardMediaEpoch) {
-                m_txCutGuardDevice = keyedBy.deviceId;
-                m_txCutGuardKeyEpoch = keyedBy.epoch;
+        if (!guardedDevice.isEmpty()) {
+            const quint64 mediaEpoch = mediaEpochOfDevice(guardedDevice);
+            const quint32 keyEpoch = remoteKey ? keyedBy.epoch : 0;
+            if (guardedDevice != m_txCutGuardDevice || keyEpoch != m_txCutGuardKeyEpoch
+                || mediaEpoch != m_txCutGuardMediaEpoch || activity.epoch != m_txCutGuardCwEpoch) {
+                if (guardedDevice != m_txCutGuardDevice) { m_txCutGuard->disarm(); }
+                m_txCutGuardDevice = guardedDevice;
+                m_txCutGuardKeyEpoch = keyEpoch;
                 m_txCutGuardMediaEpoch = mediaEpoch;
-                m_txCutGuard->arm(mediaEpoch);
+                m_txCutGuardCwEpoch = activity.epoch;
+                m_txCutGuard->arm(mediaEpoch, keyEpoch, activity.epoch);
             }
         } else if (!m_txCutGuardDevice.isEmpty()) {
             m_txCutGuardDevice.clear();
             m_txCutGuardKeyEpoch = 0;
+            m_txCutGuardCwEpoch = 0;
             m_txCutGuardMediaEpoch = 0;
             m_txCutGuard->disarm();
         }
@@ -11189,6 +11289,33 @@ quint64 StationServer::mediaEpochOfDevice(const QByteArray& deviceId) const
     return newest;
 }
 
+bool StationServer::deviceHasCwV2(const QByteArray& deviceId) const
+{
+    for (auto peer = m_peers.cbegin(); peer != m_peers.cend(); ++peer) {
+        if (peer->authenticated && peer->sessionDeviceId == deviceId
+            && peerDeclares(peer.key(), QByteArrayLiteral("remoteCw"), 2)) { return true; }
+    }
+    return false;
+}
+
+void StationServer::noteCwKeepalive(const QByteArray& deviceId, const TxKeepalive& value, qint64 ageUs)
+{
+    if (m_txCutGuard && deviceId == m_txCutGuardDevice) {
+        m_txCutGuard->heardKeepaliveOnMain(value, RemoteTxCutGuard::Clock::now()
+            - std::chrono::microseconds(std::max<qint64>(0, ageUs)));
+    }
+}
+
+void StationServer::recoverRemoteCw(quint32 epoch)
+{
+    if (!m_radioModel || !m_txWatchdog || !m_txCutGuard || m_txCutGuard->isHolding()) { return; }
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (activity.epoch != epoch || !deviceHasCwV2(activity.deviceId)
+        || !m_transmitHolder || !m_transmitHolder->isHeldBy(activity.deviceId)
+        || !m_txWatchdog->isWatching(activity.deviceId) || m_txWatchdog->isHeld(activity.deviceId)) { return; }
+    m_radioModel->resumeRemoteCw(epoch);
+}
+
 void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs)
 {
     if (!m_txCutGuard || deviceId.isEmpty() || deviceId != m_txCutGuardDevice) {
@@ -11198,7 +11325,7 @@ void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 
                               - std::chrono::microseconds(std::max<qint64>(0, ageUs)));
 }
 
-std::function<void(std::chrono::steady_clock::time_point)>
+std::function<void(const QByteArray&, std::chrono::steady_clock::time_point)>
 StationServer::txChannelReceiptHook(quint64 mediaEpoch) const
 {
     if (!m_txCutGuard) {
@@ -11207,10 +11334,19 @@ StationServer::txChannelReceiptHook(quint64 mediaEpoch) const
     const std::weak_ptr<RemoteTxCutGuard> weak = m_txCutGuard;
     const std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> stamp =
         m_lastTxChannelReceipt;
-    return [weak, stamp, mediaEpoch](std::chrono::steady_clock::time_point receivedAt) {
+    const QByteArray device = mediaSessionDevice(mediaEpoch);
+    const bool cwV2 = deviceHasCwV2(device);
+    return [weak, stamp, mediaEpoch, cwV2](const QByteArray& message,
+                                         std::chrono::steady_clock::time_point receivedAt) {
         stamp->store(receivedAt.time_since_epoch().count(), std::memory_order_relaxed);
         if (const std::shared_ptr<RemoteTxCutGuard> guard = weak.lock()) {
-            guard->heardOffMain(mediaEpoch, receivedAt);
+            TxKeepalive value;
+            if (RemoteTxWatchdog::readChannelKeepalive(message, &value)
+                && (value.cwEpoch == 0 || cwV2)) {
+                guard->heardKeepaliveOffMain(mediaEpoch, value, receivedAt);
+            } else {
+                guard->heardOffMain(mediaEpoch, receivedAt); // legacy no-CW arms only
+            }
         }
     };
 }
@@ -11321,20 +11457,19 @@ QString StationServer::deviceNameForStop(const QByteArray& deviceId) const
 void StationServer::txChannelMessage(quint64 mediaEpoch, const QByteArray& message,
                                      qint64 heldUs)
 {
-    quint64 sequence = 0;
-    quint32 epoch = 0;
-    if (!m_txWatchdog || !RemoteTxWatchdog::readChannelKeepalive(message, &sequence, &epoch)) {
+    TxKeepalive value;
+    if (!m_txWatchdog || !RemoteTxWatchdog::readChannelKeepalive(message, &value)) {
         return;
     }
     const QByteArray deviceId = mediaSessionDevice(mediaEpoch);
-    if (deviceId.isEmpty()) {
+    if (deviceId.isEmpty() || (value.cwEpoch != 0 && !deviceHasCwV2(deviceId))) {
         return;
     }
     // Control logging lane: logged after, as it was watched.
     const bool watched = m_txWatchdog->isWatching(deviceId);
-    if (m_txWatchdog->keepalive(deviceId, sequence, epoch, RemoteTxWatchdog::Path::TxChannel,
+    if (m_txWatchdog->keepalive(deviceId, value, RemoteTxWatchdog::Path::TxChannel,
                                 std::max<qint64>(0, heldUs) / 1000)) {
-        noteKeepaliveForCutGuard(deviceId, std::max<qint64>(0, heldUs));
+        noteCwKeepalive(deviceId, value, std::max<qint64>(0, heldUs));
     }
     controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::MediaTx,
                         std::max<qint64>(0, heldUs) / 1000, watched);
@@ -11543,6 +11678,13 @@ void StationServer::onWatchdogHold(const QByteArray& deviceId, bool held)
         // The release is onWatchdogHoldEnded's: it knows how the hold ended.
         return;
     }
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (activity.deviceId == deviceId && activity.epoch != 0) {
+        m_radioModel->pauseRemoteCw(activity.epoch);
+        m_linkRfBitDevice = deviceId;
+        m_linkRfBitEpoch = activity.epoch;
+        return;
+    }
     const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
     if (keyedBy.deviceId != deviceId || !m_radioModel->isTransmitting()) {
         // Not the key on the air: nothing of its to hold.
@@ -11577,8 +11719,16 @@ void StationServer::onWatchdogHoldEnded(const QByteArray& deviceId, qint64 lengt
     if (published) {
         m_linkRfHold = {};
     }
-    if (!keyEnded && m_linkRfBitDevice == deviceId) {
-        clearLinkRfBit();
+    if (!keyEnded) {
+        // A guard-only QSK hold or MOX ending can leave no published Link
+        // metadata. The actual matching CW lifetime still needs recovery
+        // after the main watchdog accepts the receipt.
+        const auto activity = m_radioModel ? m_radioModel->remoteCwActivity()
+            : RadioModel::RemoteCwActivity{};
+        if (activity.deviceId == deviceId && activity.epoch != 0) {
+            recoverRemoteCw(activity.epoch);
+        }
+        if (m_linkRfBitDevice == deviceId) { clearLinkRfBit(); }
     }
     if (!published) {
         return;
@@ -15101,7 +15251,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
                 // declared remoteCw 1, right after the readings.
                 if (peerDeclares(transport, QByteArrayLiteral("remoteCw"), 1)) {
                     caps.remoteCwEntry = true;
-                    caps.remoteCwVersion = remoteCwVersion();
+                    caps.remoteCwVersion = peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)
+                        ? remoteCwVersion() : 1;
                 }
             }
             const HardwareProfile& profile = m_radioModel->hardwareProfile();

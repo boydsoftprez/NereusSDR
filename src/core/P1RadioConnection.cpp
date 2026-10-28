@@ -23,6 +23,8 @@
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -2732,13 +2734,18 @@ void P1RadioConnection::setCwWireState(const CwWireState& s)
 CwWireState P1RadioConnection::wireCwState() const noexcept
 {
     CwWireState cw = m_cwWire;
-    if (transmitCut()) {
+    if (cwOutputSuppressed()) {
         // The transmit cut reads as the keyer off, as wireMox() reads the
         // MOX bit unkeyed.
         cw.enable = false;
         cw.breakIn = false;
     }
     return cw;
+}
+
+void P1RadioConnection::applyRemoteRfHold()
+{
+    m_forceBank13Next = true;
 }
 
 void P1RadioConnection::applyTransmitCut()
@@ -2817,7 +2824,18 @@ void P1RadioConnection::applyCwKeyOverlay(quint8* frame) const noexcept
         return;
     }
     const CwWireState cw = wireCwState();
-    if (!cw.enable || transmitCut()) {
+    if (cwOutputSuppressed()) {
+        // The already-composed TX words may predate this hold. Zero them
+        // at the late CW seam too; waiting for bank13/WDSP is insufficient.
+        for (const int zone : kZoneOffsets) {
+            for (int i = 0; i < kSamplesPerZone; ++i) {
+                quint8* iq = frame + zone + i * kTxIqBytesPerSample + 4;
+                std::fill_n(iq, 4, quint8{0});
+            }
+        }
+        return;
+    }
+    if (!cw.enable) {
         return;
     }
     const bool hl2 = isHl2();

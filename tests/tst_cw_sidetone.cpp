@@ -217,6 +217,24 @@ class TstCwSidetone : public QObject {
 private slots:
     void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
 
+    void remoteHoldSilencesAnOldKeyListenerUntilResume()
+    {
+        CwSidetone st;
+        configured(st);
+        st.setKey(true);
+        QVERIFY(!render(st, 1024).empty());
+        st.setRemoteHeld(true);
+        st.setKey(true); // late old listener store must not sustain tone
+        const std::vector<float> held = render(st, 1024);
+        for (size_t i = size_t(kEdge * 2 + 2); i < held.size(); ++i) {
+            QCOMPARE(held[i], 0.0f);
+        }
+        st.setKey(false);
+        st.setRemoteHeld(false);
+        const std::vector<float> low = render(st, 1024);
+        for (float sample : low) { QCOMPARE(sample, 0.0f); }
+    }
+
     // ── The generator ───────────────────────────────────────────────────
 
     void notRunningRendersFalseAndWritesNothing()

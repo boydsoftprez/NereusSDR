@@ -128,4 +128,42 @@ import LinkSessionTestSupport
         #expect(await !ptt.snapshot.keepaliveRunning)
     }
 
+    @MainActor @Test(arguments: [false, true])
+    func foreignSuccessorBeforeFirstResultCannotCreatePhantomHeartbeat(foreignActive: Bool) async {
+        let wire = Wire()
+        let clock = ManualLinkClock()
+        let ptt = PttController(commands: wire, clock: clock)
+        await ptt.linkChanged(up: true)
+        let lease = RemoteCwLease()
+        var admissions: [Task<Void, Never>] = []
+        lease.onActivity = { activity in
+            admissions.append(Task {
+                await ptt.setRemoteCwActivity(epoch: activity.epoch, session: activity.session,
+                                             authority: activity.authority)
+            })
+        }
+        lease.reset(session: await ptt.sessionGeneration)
+        let delayed = lease.begin()
+        for admission in admissions { await admission.value }
+        #expect(await ptt.snapshot.keepaliveRunning)
+        lease.observe(.init(deviceId: "bb", epoch: 12, active: foreignActive), thisDeviceId: "aa")
+        lease.complete(delayed, acceptedEpoch: 11, active: true)
+        for admission in admissions { await admission.value }
+        #expect(lease.epoch == nil)
+        #expect(await !ptt.snapshot.keepaliveRunning)
+        let retiredCount = await wire.records.count
+        await clock.advance(by: 300)
+        #expect(await wire.records.count == retiredCount)
+        #expect(await wire.records.allSatisfy { $0.cw == 0 })
+        // The watermark rejects old ownership, not a legitimate successor.
+        let successor = lease.begin()
+        lease.complete(successor, acceptedEpoch: 13, active: true)
+        for admission in admissions { await admission.value }
+        #expect(lease.epoch == 13)
+        #expect(await wire.records.last?.cw == 13)
+        #expect(await ptt.snapshot.keepaliveRunning)
+        lease.stop()
+        for admission in admissions { await admission.value }
+    }
+
 }

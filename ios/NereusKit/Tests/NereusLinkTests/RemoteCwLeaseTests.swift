@@ -87,6 +87,27 @@ import Testing
         #expect(lease.epoch == nil)
     }
 
+    @Test(arguments: [Int64(11), Int64(13)], [false, true])
+    func foreignSuccessorBeforeFirstResultRetiresOnlyOlderAcceptedEpochs(acceptedEpoch: Int64, foreignActive: Bool) {
+        let lease = RemoteCwLease()
+        let request = lease.begin()
+        lease.observe(.init(deviceId: "bb", epoch: 12, active: foreignActive), thisDeviceId: "aa")
+        lease.complete(request, acceptedEpoch: acceptedEpoch, active: true)
+        #expect(lease.epoch == (acceptedEpoch > 12 ? acceptedEpoch : nil))
+        #expect(lease.hasActivity == (acceptedEpoch > 12))
+    }
+
+    @Test func invalidForeignTupleCannotInventARetirementWatermark() {
+        let lease = RemoteCwLease()
+        let request = lease.begin()
+        lease.observe(nil, thisDeviceId: "aa")
+        lease.observe(.init(deviceId: "", epoch: 12, active: false), thisDeviceId: "aa")
+        lease.observe(.init(deviceId: "bb", epoch: 0, active: true), thisDeviceId: "aa")
+        lease.observe(.init(deviceId: "bb", epoch: Int64(UInt32.max) + 1, active: false), thisDeviceId: "aa")
+        lease.complete(request, acceptedEpoch: 11, active: true)
+        #expect(lease.epoch == 11)
+    }
+
     @Test(arguments: [Int64(-1), 0, Int64(UInt32.max) + 1])
     func malformedAcceptedEpochCannotCreateLiveness(epoch: Int64) {
         let lease = RemoteCwLease()

@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
 //                 makeStreamEventSink() takes the bus's generation, and
 //                 m_lastBusGeneration hands each one out once.
@@ -1530,6 +1532,7 @@ public:
     void setCwSidetonePitchHz(double hz) { m_cwSidetone.setPitchHz(hz); }
     double cwSidetonePitchHz() const { return m_cwSidetone.pitchHz(); }
     void setCwSidetoneKey(bool down) { m_cwSidetone.setKey(down); }
+    void setCwSidetoneRemoteHeld(bool held) noexcept { m_cwSidetone.setRemoteHeld(held); }
     bool cwSidetoneKeyed() const { return m_cwSidetone.isKeyed(); }
     bool txMonitorLocal() const { return m_txMonitorLocal.load(std::memory_order_acquire); }
     TxMonitorOutput txMonitorOutput() const

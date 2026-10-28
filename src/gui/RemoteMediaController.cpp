@@ -14,6 +14,8 @@
 //               existing restart backoff, and cancel that retry when a
 //               newer context supersedes it. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -2465,9 +2467,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // (unordered, never retransmitted) while it is open; otherwise the
         // transmit client sends it on the session.
         const QPointer<RemoteMediaController> self(this);
-        transmit->setChannelKeepalive([self](quint64 sequence, quint32 epoch) {
+        transmit->setChannelCwKeepalive([self](const TxKeepalive& value) {
             return self && self->d->peer && self->d->peer->isReady()
-                && self->d->peer->sendTx(RemoteTxWatchdog::channelKeepalive(sequence, epoch));
+                && self->d->peer->sendTx(RemoteTxWatchdog::channelKeepalive(value));
         });
     }
     // ClientAudio can also be VAX. Follow the local source separately,
@@ -2712,7 +2714,7 @@ RemoteMediaController::~RemoteMediaController()
         // RX meter stamps: readings apply on arrival again.
         d->client->setRxMeterHoldClock({}, {});
         if (RemoteTransmitClient* transmit = d->client->remoteTransmit()) {
-            transmit->setChannelKeepalive({});
+            transmit->setChannelCwKeepalive({});
         }
     }
     stop();

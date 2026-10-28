@@ -16,6 +16,8 @@
 // fake connections' own, and the fake connections send nothing.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Propose actual atomic mailbox behavioral RED cases for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: F7 review correction: stop the model during a controlled
 //               Off/no-MOX post-message hang without a stop announcement.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -55,6 +57,7 @@
 #include "core/CwKeyLine.h"
 #include "core/CwTypes.h"
 #include "core/CwxSender.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "core/MoxController.h"
 #include "core/RadioConnection.h"
 #include "models/CwKeyerController.h"
@@ -66,7 +69,71 @@ using namespace NereusSDR;
 using namespace std::chrono_literals;
 using SteadyTime = std::chrono::steady_clock::time_point;
 
+#ifdef NEREUS_BUILD_TESTS
+namespace NereusSDR {
+// Read-only mailbox observation; take() calls the REAL production helper
+// under its actual mutex. No test writes/seeds mailbox or remote content.
+struct CwxSenderMailboxTestAccess {
+    static quint64 word(const CwxSender& sender)
+    {
+        return sender.m_remoteRequests.load(std::memory_order_acquire);
+    }
+    static quint32 epoch(const CwxSender& sender) { return quint32(word(sender) >> 32); }
+    static quint32 pending(const CwxSender& sender) { return quint32(word(sender) & 3u); }
+    static bool wake(const CwxSender& sender) { return sender.m_wake.load(std::memory_order_acquire); }
+    static quint32 take(CwxSender& sender, quint32 expectedEpoch)
+    {
+        const std::lock_guard<std::mutex> lock(sender.m_mutex);
+        return sender.takeRemoteRequestsLocked(expectedEpoch);
+    }
+};
+} // namespace NereusSDR
+#endif
+
 namespace {
+
+#ifdef NEREUS_BUILD_TESTS
+// Harness wait bounds are synchronization watchdogs, not RF policy timers.
+struct MailboxLatch {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered{false};
+    bool released{false};
+    std::atomic<quint64> candidate{0};
+    void enterAndWait()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        entered = true;
+        cv.notify_all();
+        cv.wait(lock, [this]() { return released; });
+    }
+    bool waitEntered()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, 2s, [this]() { return entered; });
+    }
+    void release()
+    {
+        { const std::lock_guard<std::mutex> lock(mutex); released = true; }
+        cv.notify_all();
+    }
+};
+struct HeldSenderMutex {
+    CwxSender& sender;
+    std::shared_ptr<MailboxLatch> latch{std::make_shared<MailboxLatch>()};
+    std::thread thread;
+    explicit HeldSenderMutex(CwxSender& value) : sender(value), thread([this]() {
+        sender.setKeyListener([latch = latch](bool) { latch->enterAndWait(); });
+    }) {}
+    void release()
+    {
+        latch->release();
+        if (thread.joinable()) { thread.join(); }
+        sender.setKeyListener({});
+    }
+    ~HeldSenderMutex() { release(); }
+};
+#endif
 
 // ── The injected clock and sleeper ─────────────────────────────────────────
 // The sleeper moves the clock to the deadline at once. A hook may act
@@ -397,6 +464,321 @@ private slots:
         RealtimeTestLoad::printLoadAverageIfFailed();
         AppSettings::instance().clear();
     }
+
+#ifdef NEREUS_BUILD_TESTS
+    void remoteMailboxPublicationWhileActualSenderMutexHeld_data()
+    {
+        QTest::addColumn<int>("sequence");
+        QTest::addColumn<quint32>("expectedFlags");
+        QTest::newRow("pause") << 0 << quint32{1};
+        QTest::newRow("cancel") << 1 << quint32{2};
+        QTest::newRow("cancel-after-invalidate") << 2 << quint32{2};
+        QTest::newRow("pause-then-cancel") << 3 << quint32{2};
+        QTest::newRow("cancel-then-pause") << 4 << quint32{2};
+    }
+    void remoteMailboxPublicationWhileActualSenderMutexHeld()
+    {
+        QFETCH(int, sequence);
+        QFETCH(quint32, expectedFlags);
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(11);
+        QVERIFY(safety->snapshot().valid); // prerequisite, never RED
+        sender.setRemoteSafetyState(safety);
+        sender.bindRemoteActivity(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 11u); // setup
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 0u); // setup
+        QVERIFY(!CwxSenderMailboxTestAccess::wake(sender)); // no inherited wake
+        struct EntryProbe {
+            std::atomic<unsigned> entries{0};
+            std::atomic<quint32> epoch{0};
+        };
+        const auto entry = std::make_shared<EntryProbe>();
+        sender.setRemoteRequestObserverForTest([entry](CwxSender::RemoteRequestKindForTest,
+                                                      quint32 epoch) noexcept {
+            entry->epoch.store(epoch);
+            entry->entries.fetch_add(1);
+        });
+        if (sequence == 2) { QVERIFY(safety->invalidate(11)); }
+        HeldSenderMutex held(sender);
+        QVERIFY2(held.latch->waitEntered(), "fixture failed to hold real sender mutex");
+        const auto done = std::make_shared<MailboxLatch>();
+        std::thread requester([&]() {
+            if (sequence == 0) { sender.requestRemotePause(11); }
+            else if (sequence == 1 || sequence == 2) { sender.requestRemoteCancel(11); }
+            else if (sequence == 3) {
+                sender.requestRemotePause(11); sender.requestRemoteCancel(11);
+            } else {
+                sender.requestRemoteCancel(11); sender.requestRemotePause(11);
+            }
+            { const std::lock_guard<std::mutex> lock(done->mutex); done->entered = true; }
+            done->cv.notify_all();
+        });
+        const bool returnedWhileHeld = done->waitEntered();
+        const quint64 publishedWhileHeld = CwxSenderMailboxTestAccess::word(sender);
+        const bool wakeWhileHeld = CwxSenderMailboxTestAccess::wake(sender);
+        held.release();
+        requester.join();
+        QVERIFY2(returnedWhileHeld, "request required sender mutex/main progress");
+        QCOMPARE(entry->entries.load(), sequence < 3 ? 1u : 2u); // ENTRY control only
+        QCOMPARE(entry->epoch.load(), 11u); // ENTRY control only
+        QCOMPARE(quint32(publishedWhileHeld >> 32), 11u);
+        QCOMPARE(quint32(publishedWhileHeld & 3u), expectedFlags); // REAL publication RED
+        QVERIFY(wakeWhileHeld); // publication wake is not consumption
+    }
+
+    void remoteBindAndPublicationDoNotWaitForSenderMutex()
+    {
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(11);
+        QVERIFY(safety->snapshot().valid);
+        sender.setRemoteSafetyState(safety); // installation OUTSIDE stall
+        HeldSenderMutex held(sender);
+        QVERIFY2(held.latch->waitEntered(), "fixture failed to hold real sender mutex");
+        const auto done = std::make_shared<MailboxLatch>();
+        std::thread binder([&]() {
+            sender.bindRemoteActivity(11); sender.requestRemotePause(11);
+            { const std::lock_guard<std::mutex> lock(done->mutex); done->entered = true; }
+            done->cv.notify_all();
+        });
+        const bool returnedWhileHeld = done->waitEntered();
+        const quint64 word = CwxSenderMailboxTestAccess::word(sender);
+        held.release(); binder.join();
+        QVERIFY2(returnedWhileHeld, "binding/publication waited for sender mutex");
+        QCOMPARE(quint32(word >> 32), 11u); // atomic binding control
+        QCOMPARE(quint32(word & 3u), 1u); // REAL publication RED
+    }
+
+    void remoteStaleRequestsAfterBindTwelvePreserveTwelve()
+    {
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(12);
+        QVERIFY(safety->snapshot().valid);
+        sender.setRemoteSafetyState(safety); sender.bindRemoteActivity(12);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 12u);
+        sender.requestRemoteCancel(12);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u); // publication prerequisite
+        sender.requestRemotePause(11); sender.requestRemoteCancel(11);
+        sender.cancelRemoteActivity(11); // actual public cancellation entry
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 12u);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u); // stale behavior
+        sender.bindRemoteActivity(12);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u); // idempotent bind
+    }
+
+    void remoteCapturedElevenCannotPublishOverTwelve()
+    {
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(11);
+        QVERIFY(safety->snapshot().valid);
+        sender.setRemoteSafetyState(safety); sender.bindRemoteActivity(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 11u);
+        const auto barrier = std::make_shared<MailboxLatch>();
+        sender.setRemoteMailboxBeforeCasObserverForTest([barrier](
+            CwxSender::RemoteMailboxCasKindForTest kind, quint32 epoch, quint64 candidate) {
+            if (kind == CwxSender::RemoteMailboxCasKindForTest::Pause && epoch == 11) {
+                barrier->candidate.store(candidate);
+                barrier->enterAndWait();
+            }
+        });
+        std::thread old([&]() { sender.requestRemotePause(11); });
+        const bool entered = barrier->waitEntered();
+        if (entered) {
+            safety->finish(11); safety->begin(12); sender.bindRemoteActivity(12);
+            sender.requestRemoteCancel(12);
+        }
+        const quint64 beforeRelease = CwxSenderMailboxTestAccess::word(sender);
+        barrier->release(); old.join();
+        QVERIFY2(entered, "missing actual candidate-read checkpoint; not RED");
+        QCOMPARE(quint32(barrier->candidate.load() >> 32), 11u);
+        QCOMPARE(quint32(beforeRelease >> 32), 12u);
+        QCOMPARE(quint32(beforeRelease & 3u), 2u); // publication prerequisite
+        QCOMPARE(CwxSenderMailboxTestAccess::word(sender), beforeRelease); // stale CAS behavior
+    }
+
+    void remoteTakeRetainsBindingAndAllowsLaterCancel()
+    {
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(11);
+        QVERIFY(safety->snapshot().valid);
+        sender.setRemoteSafetyState(safety); sender.bindRemoteActivity(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 11u);
+        sender.requestRemotePause(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite
+        QCOMPARE(CwxSenderMailboxTestAccess::take(sender, 11), 1u); // consumption RED wave
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 11u);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 0u);
+        QVERIFY(safety->invalidate(11));
+        sender.requestRemoteCancel(11); // invalidated shared value still bound
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 2u);
+        QCOMPARE(CwxSenderMailboxTestAccess::take(sender, 11), 2u);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(sender), 11u);
+    }
+
+    void remoteStaleTakeCannotClearTwelve()
+    {
+        CwxSender sender;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(11);
+        QVERIFY(safety->snapshot().valid);
+        sender.setRemoteSafetyState(safety); sender.bindRemoteActivity(11);
+        sender.requestRemotePause(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::pending(sender), 1u); // prerequisite
+        const auto barrier = std::make_shared<MailboxLatch>();
+        sender.setRemoteMailboxBeforeCasObserverForTest([barrier](
+            CwxSender::RemoteMailboxCasKindForTest kind, quint32 epoch, quint64 candidate) {
+            if (kind == CwxSender::RemoteMailboxCasKindForTest::Consume && epoch == 11) {
+                barrier->candidate.store(candidate);
+                barrier->enterAndWait();
+            }
+        });
+        quint32 taken = 0;
+        std::thread consumer([&]() { taken = CwxSenderMailboxTestAccess::take(sender, 11); });
+        const bool entered = barrier->waitEntered();
+        if (entered) {
+            safety->finish(11); safety->begin(12); sender.bindRemoteActivity(12);
+            sender.requestRemoteCancel(12); // must not need consumer's mutex
+        }
+        const quint64 twelve = CwxSenderMailboxTestAccess::word(sender);
+        barrier->release(); consumer.join();
+        QVERIFY2(entered, "missing actual consumption checkpoint; not RED");
+        QCOMPARE(quint32(barrier->candidate.load() >> 32), 11u);
+        QCOMPARE(quint32(twelve >> 32), 12u);
+        QCOMPARE(quint32(twelve & 3u), 2u); // prerequisite
+        QCOMPARE(taken, 0u); // stale consumption may not apply11
+        QCOMPARE(CwxSenderMailboxTestAccess::word(sender), twelve);
+    }
+
+    // Real accepted FIFO content, observed through its actual key line.
+    void remoteHoldRestartsOnlyUnfinishedLetter()
+    {
+        Bench b;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        b.sender->setRemoteSafetyState(safety);
+        QSignalSpy starts(b.sender.get(), &CwxSender::characterStarted);
+        b.time.freezeBefore(b.time.start + 300ms); // E complete; first T mark at240
+        QVERIFY(b.sender->sendRemoteText(11, QStringLiteral("ET"), [&]() {
+            safety->begin(11); b.sender->bindRemoteActivity(11); return true;
+        }));
+        QTRY_VERIFY(b.time.frozenBefore(b.time.start + 300ms));
+        QVERIFY(b.line->cwx());
+        QVERIFY(safety->setHold(11, TxChannel::RfHold::Link));
+        QVERIFY(b.sender->pauseRemoteActivity(11));
+        QVERIFY(!b.line->cwx());
+        b.time.set(b.time.now() + 1s);
+        QVERIFY(b.sender->prepareRemoteResume(11));
+        QVERIFY(safety->clearHold(11, TxChannel::RfHold::Link));
+        QVERIFY(b.sender->resumeRemoteActivity(11));
+        b.time.thaw();
+        QTRY_VERIFY(b.idle());
+        pump();
+        QCOMPARE(starts.count(), 2); // replay is not another accepted character
+        const auto edges = b.rec.keyEdges();
+        QCOMPARE(edges.size(), size_t{6});
+        QCOMPARE(edges[0].first, qint64{0});
+        QCOMPARE(edges[1].first, qint64{60});
+        QVERIFY(edges[4].second);
+        QVERIFY(!edges[5].second);
+        QCOMPARE(edges[5].first - edges[4].first, qint64{180});
+    }
+
+    void completedRemoteOwnerCannotReleaseNewLocalContent()
+    {
+        FakeTime time;
+        Rig rig(&time);
+        time.freeze();
+        const QByteArray device("retired-window");
+        QVERIFY(rig.model.requestRemoteCwxFor(device, false,
+            [](CwxSender& sender, quint32 epoch, const std::function<bool()>& admit) {
+                return sender.sendRemoteText(epoch, QStringLiteral("E"), admit);
+            }).isEmpty());
+        QCOMPARE(rig.model.cwxSendingFor(), device);
+        rig.cwx()->stop(); // ended callback intentionally remains queued
+        QVERIFY(rig.cwx()->sendText(QStringLiteral("ET"))); // actual local0 FIFO
+        const int queued = rig.cwx()->queuedCharacters();
+        QVERIFY(queued > 0);
+        QVERIFY(rig.model.cwxSendingFor().isEmpty());
+        QVERIFY(!rig.model.cwxActiveFor(device));
+        rig.model.stopCwxFor(device); // old session/Stop scope
+        QVERIFY(rig.cwx()->isSending());
+        QCOMPARE(rig.cwx()->queuedCharacters(), queued);
+    }
+
+    void remoteRejectedReplacementPreservesAcceptedContent()
+    {
+        Bench b;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        b.sender->setRemoteSafetyState(safety);
+        b.time.freeze();
+        QVERIFY(b.sender->sendRemoteText(11, QStringLiteral("EE"), [&]() {
+            safety->begin(11); b.sender->bindRemoteActivity(11); return true;
+        }));
+        QTRY_COMPARE(b.sender->queuedCharacters(), 1);
+        b.sender->setMemories({QStringLiteral("T")});
+        const int queued = b.sender->queuedCharacters();
+        QVERIFY(!b.sender->sendRemoteMemory(12, 1, []() { return false; }));
+        QCOMPARE(b.sender->acceptedRemoteEpoch(), 11u);
+        QCOMPARE(safety->snapshot().epoch, 11u);
+        QCOMPARE(b.sender->queuedCharacters(), queued);
+        QVERIFY(b.line->cwx());
+        QVERIFY(b.sender->isSending());
+    }
+
+    void remoteStopWhilePausedCannotResume()
+    {
+        Bench b;
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        b.sender->setRemoteSafetyState(safety);
+        b.time.freeze();
+        QVERIFY(b.sender->sendRemoteText(11, QStringLiteral("TT"), [&]() {
+            safety->begin(11); b.sender->bindRemoteActivity(11); return true;
+        }));
+        QTRY_VERIFY(b.line->cwx());
+        QVERIFY(safety->setHold(11, TxChannel::RfHold::Link));
+        QVERIFY(b.sender->pauseRemoteActivity(11));
+        b.sender->stop();
+        QVERIFY(!b.sender->prepareRemoteResume(11));
+        QVERIFY(!b.sender->resumeRemoteActivity(11));
+        QCOMPARE(b.sender->acceptedRemoteEpoch(), 0u);
+        QVERIFY(!b.line->cwx());
+    }
+
+    void remoteUnboundRequestsDoNotAdoptLocalWork()
+    {
+        Bench b;
+        b.time.freeze();
+        QVERIFY(b.sender->sendText(QStringLiteral("EE"))); // ACTUAL local work
+        QTRY_COMPARE(b.sender->queuedCharacters(), 1); // first element, then frozen
+        const int queued = b.sender->queuedCharacters();
+        QVERIFY(queued > 0);
+        b.sender->requestRemotePause(11); b.sender->requestRemoteCancel(11);
+        QCOMPARE(CwxSenderMailboxTestAccess::word(*b.sender), quint64{0});
+        QCOMPARE(b.sender->queuedCharacters(), queued);
+        QVERIFY(b.sender->isSending());
+    }
+
+    void remoteBareBindingAndOldCancelLeaveLocalQueueAlone()
+    {
+        Bench b;
+        b.time.freeze();
+        QVERIFY(b.sender->sendText(QStringLiteral("EE")));
+        QTRY_COMPARE(b.sender->queuedCharacters(), 1); // first element, then frozen
+        const int queued = b.sender->queuedCharacters();
+        QVERIFY(queued > 0);
+        const auto safety = std::make_shared<RemoteCwSafetyState>();
+        safety->begin(12);
+        QVERIFY(safety->snapshot().valid);
+        b.sender->setRemoteSafetyState(safety); b.sender->bindRemoteActivity(12);
+        QCOMPARE(CwxSenderMailboxTestAccess::epoch(*b.sender), 12u);
+        b.sender->cancelRemoteActivity(11);
+        QCOMPARE(b.sender->queuedCharacters(), queued);
+        QVERIFY(b.sender->isSending());
+    }
+#endif
 
     // ── Element times ──────────────────────────────────────────────────────
     void elementTimeIs1200OverWpm()

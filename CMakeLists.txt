@@ -1252,6 +1252,7 @@ set(CORE_SOURCES
     src/core/safety/TransmitHolder.cpp
     src/core/safety/RemoteTxWatchdog.cpp
     src/core/safety/RemoteTxCutGuard.cpp
+    src/core/safety/RemoteCwSafetyState.cpp
     src/core/safety/TransmitCutLine.cpp
     src/core/safety/StarvationPolicy.cpp
     src/core/safety/safety_constants.cpp

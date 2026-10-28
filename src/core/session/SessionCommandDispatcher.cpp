@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send {text},
 //                                    cw.memory {number}, cw.stop {} and
 //                                    cw.key {down} (remoteCwVersion 1),
@@ -1009,7 +1011,7 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // iPhone app plan Task 37 (R-IOS-13): the transmit watchdog's
         // keepalive, every 100 ms while the device is keyed or has VOX
         // armed. Sent once each (a lost one is overtaken by the next).
-        {"tx.keepalive", {arg("sequence", kInt), arg("epoch", kInt)}, "remoteTxVersion", 1,
+        {"tx.keepalive", {arg("sequence", kInt), arg("epoch", kInt), optionalArg("cwEpoch", kInt)}, "remoteTxVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // iPhone app plan Task 77 (R-IOS-02, R-IOS-03; rulings 8.4, 8.6,
         // 8.7): take transmit without keying; and the Tuner Genius
@@ -2136,7 +2138,16 @@ void SessionCommandDispatcher::handleTxKeepalive(const SessionMessage& invoke)
     QVariant rawEpoch;
     bool sequenceOk = false;
     bool epochOk = false;
-    bool readable = hasExactlyArguments(invoke.arguments, {"sequence", "epoch"})
+    QVariant rawCwEpoch;
+    const bool hasCwEpoch = findArgument(invoke.arguments, "cwEpoch", &rawCwEpoch);
+    bool cwEpochOk = !hasCwEpoch;
+    const qlonglong cwEpoch = hasCwEpoch ? rawCwEpoch.toLongLong(&cwEpochOk) : 0;
+    bool readable = (hasCwEpoch
+        ? hasExactlyArguments(invoke.arguments, {"sequence", "epoch", "cwEpoch"})
+        : hasExactlyArguments(invoke.arguments, {"sequence", "epoch"}))
+        && (!hasCwEpoch || hasWireKind(invoke.arguments, "cwEpoch", MirrorWireKind::Int64))
+        && cwEpochOk && cwEpoch >= 0
+        && cwEpoch <= static_cast<qlonglong>(std::numeric_limits<quint32>::max())
         && hasWireKind(invoke.arguments, "sequence", MirrorWireKind::Int64)
         && hasWireKind(invoke.arguments, "epoch", MirrorWireKind::Int64)
         && findArgument(invoke.arguments, "sequence", &rawSequence)
@@ -2150,12 +2161,16 @@ void SessionCommandDispatcher::handleTxKeepalive(const SessionMessage& invoke)
                    QStringLiteral("The Core could not read this request."), {});
         return;
     }
-    if (!m_transmitAccess.keepalive) {
+    if (!m_transmitAccess.keepalive && !m_transmitAccess.keepaliveV2) {
         emitRefusal(invoke.commandVerb, invoke.commandId, TxRefusals::stationReceiveOnly());
         return;
     }
-    m_transmitAccess.keepalive(m_requester, static_cast<quint64>(sequence),
-                               static_cast<quint32>(epoch));
+    if (m_transmitAccess.keepaliveV2) {
+        m_transmitAccess.keepaliveV2(m_requester,
+            {static_cast<quint64>(sequence), static_cast<quint32>(epoch), static_cast<quint32>(cwEpoch)});
+    } else if (cwEpoch == 0) {
+        m_transmitAccess.keepalive(m_requester, static_cast<quint64>(sequence), static_cast<quint32>(epoch));
+    }
     // Answered accepted whether or not it counted (a keepalive while
     // nothing is watched, a copy, an older epoch): it changes nothing then.
     emitResult(invoke.commandVerb, invoke.commandId, true, QString(), {});

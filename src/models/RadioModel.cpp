@@ -74,6 +74,8 @@
 //                queued (m_ocTuneHold), reproducing Thetis's unkey before
 //                _tuning clears; the connection no longer holds it (J.J.
 //                Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27 - F3: constructor-only CWX sender injection for controlled
 //                test time, preserving default creation and normal wiring.
 //                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -1918,6 +1920,7 @@ mw0lge@grange-lane.co.uk
 #include "models/PureSignalSettings.h"
 #include "models/CwKeyerController.h"
 #include "core/CwxSender.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "core/CwSerialKeyInput.h"
 #include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
@@ -5489,6 +5492,8 @@ RadioModel::~RadioModel()
     // The serial key reader first: its straight key keys through the
     // sender.
     m_cwSerialKey.reset();
+    // Detach retained sender/callback targets before sender lifetime ends.
+    m_transmitCutLine->setRemoteCwTargets(nullptr, {}, {});
     m_cwxSender.reset();
     m_cwKeyerController.reset();
     // The transmit cut line may outlive this model (RemoteTxCutGuard holds
@@ -33448,6 +33453,10 @@ void RadioModel::pushCwWireState(const CwWireState& state)
 
 void RadioModel::onCwRadioKeyStatus(bool dot, bool dash, bool keyOut)
 {
+    if (m_connection && m_remoteCwActivity.epoch != 0
+        && m_connection->remoteCwSafetyState()->snapshot().invalidated) {
+        cancelRemoteCw(m_remoteCwActivity.epoch);
+    }
     if (!m_cwKeyerController) {
         return;
     }
@@ -33511,12 +33520,14 @@ void RadioModel::wireCwxSender()
             const QString text = m_cwKeyerController->refusal().text;
             return text.isEmpty() ? QString::fromLatin1(safety::kCwGateNotCwText) : text;
         }
-        // Taken (unless there is nothing to send): the sender now runs for
-        // this device.
-        m_cwxSendingFor = m_cwxRequestDevice;
         return QString();
     });
 
+    connect(cwx, &CwxSender::remoteActivityEnded, this, [this](quint32 epoch) {
+        if (m_remoteCwActivity.epoch == epoch) {
+            cancelRemoteCw(epoch);
+        }
+    });
     TransmitModel& tm = m_transmitModel;
     const auto pushRepeat = [cwx, &tm]() { cwx->setRepeat(tm.cwxRepeat(), tm.cwxRepeatDelayS()); };
     const auto pushMemories = [cwx, &tm]() {
@@ -33558,7 +33569,7 @@ void RadioModel::wireCwxSender()
     // Another device taking transmit aborts. R-CW-49: another than the one
     // the sender runs for, a remote device included.
     connect(this, &RadioModel::transmitHolderChanged, cwx, [this, cwx]() {
-        if (!cwxHolderRefusal(m_cwxSendingFor).isEmpty()) {
+        if (!cwxHolderRefusal(cwxSendingFor()).isEmpty()) {
             cwx->stop();
         }
     });
@@ -33597,6 +33608,7 @@ TxRefusal RadioModel::requestCwxFor(const QByteArray& device,
     m_cwxRequestDevice.clear();
     disconnect(heard);
     if (taken && words.isEmpty()) {
+        m_cwxSendingFor = device;
         return {};
     }
     if (words.isEmpty()) {
@@ -33615,15 +33627,140 @@ TxRefusal RadioModel::requestCwxFor(const QByteArray& device,
     return TxRefusal{QByteArray(TxRefusals::kNotReady), words, QByteArray()};
 }
 
+bool RadioModel::remoteCwActivityMatches(const QByteArray& device, quint32 epoch) const
+{
+    return epoch != 0 && m_remoteCwActivity.epoch == epoch
+        && m_remoteCwActivity.deviceId == device;
+}
+
+TxRefusal RadioModel::requestRemoteCwxFor(const QByteArray& device, bool replacement,
+    const std::function<bool(CwxSender&, quint32, const std::function<bool()>&)>& request)
+{
+    if (device.isEmpty() || !request || !m_cwxSender || !m_connection) {
+        return TxRefusals::notReady();
+    }
+    const bool append = !replacement && m_remoteCwActivity.deviceId == device
+        && m_remoteCwActivity.epoch != 0
+        && m_cwxSender->acceptedRemoteEpoch() == m_remoteCwActivity.epoch;
+    if (!append && m_nextRemoteCwEpoch == std::numeric_limits<quint32>::max()) {
+        return TxRefusals::notReady(); // Never reuse an activity identity.
+    }
+    const quint32 epoch = append ? m_remoteCwActivity.epoch : m_nextRemoteCwEpoch + 1;
+    const auto admit = [this, device, epoch, append]() {
+        if (!m_connection || m_connection->transmitCut()
+            || !cwxHolderRefusal(device).isEmpty()) {
+            return false;
+        }
+        if (append) {
+            const RemoteCwSafetySnapshot state = m_connection->remoteCwSafetyState()->snapshot();
+            return state.epoch == epoch && state.valid && !state.invalidated;
+        }
+        const auto safety = m_connection->remoteCwSafetyState();
+        const quint32 previous = m_remoteCwActivity.epoch;
+        // The sender holds its content mutex and has already parsed/gated
+        // this request. Clear old host intent before retiring its fence;
+        // it cannot write another element until this commit returns.
+        if (previous != 0) {
+            safety->invalidate(previous);
+            m_connection->cwKeyLine()->setCwx(false);
+            m_connection->cwKeyLine()->setCwxPtt(false);
+            m_connection->finishRemoteCw(previous);
+        }
+        m_remoteCwActivity = {device, epoch};
+        m_nextRemoteCwEpoch = epoch;
+        // The content mutex still fences every caller/worker key write.
+        // Establish the prospective shared identity first, so an old guard
+        // deadline cannot fall into an unbound interval. Reconcile/arm
+        // clocks synchronously before this callback permits first output.
+        if (!m_transmitCutLine->beginRemoteCw(epoch)) {
+            m_remoteCwActivity = {};
+            emit remoteCwActivityChanged();
+            return false;
+        }
+        emit remoteCwActivityChanged();
+        const RemoteCwSafetySnapshot admitted = safety->snapshot();
+        return !m_connection->transmitCut() && admitted.epoch == epoch
+            && admitted.valid && !admitted.invalidated;
+    };
+    const TxRefusal result = requestCwxFor(device, [&](CwxSender& sender) {
+        return request(sender, epoch, admit);
+    });
+    if (!result.isEmpty() && m_remoteCwActivity.epoch == epoch
+        && m_cwxSender->acceptedRemoteEpoch() != epoch) {
+        cancelRemoteCw(epoch);
+    }
+    return result;
+}
+
+bool RadioModel::pauseRemoteCw(quint32 epoch)
+{
+    if (epoch == 0 || m_remoteCwActivity.epoch != epoch || !m_connection || !m_cwxSender) {
+        return false;
+    }
+    if (!m_connection->setRemoteCwHold(epoch, TxChannel::RfHold::Link, true)) {
+        return false;
+    }
+    setRemoteRfHold(TxChannel::RfHold::Link, true);
+    if (m_audioEngine) { m_audioEngine->setCwSidetoneRemoteHeld(true); }
+    m_cwxSender->requestRemotePause(epoch);
+    return true;
+}
+
+bool RadioModel::resumeRemoteCw(quint32 epoch)
+{
+    if (epoch == 0 || m_remoteCwActivity.epoch != epoch || !m_connection || !m_cwxSender
+        || m_connection->transmitCut() || !cwxHolderRefusal(m_remoteCwActivity.deviceId).isEmpty()) {
+        return false;
+    }
+    // Main recovery cannot race a pending worker pause: prepare explicitly
+    // checkpoints under its content mutex while the wire is still masked.
+    if (!m_cwxSender->pauseRemoteActivity(epoch) || !m_cwxSender->prepareRemoteResume(epoch)) {
+        return false;
+    }
+    if (!m_connection->setRemoteCwHold(epoch, TxChannel::RfHold::Link, false)
+        || !m_connection->setRemoteCwHold(epoch, TxChannel::RfHold::Guard, false)
+        || !m_cwxSender->resumeRemoteActivity(epoch)) {
+        return false;
+    }
+    if (m_txChannel) { m_txChannel->setRfHold(TxChannel::RfHold::Guard, false); }
+    if (m_audioEngine) { m_audioEngine->setCwSidetoneRemoteHeld(false); }
+    return true;
+}
+
+void RadioModel::cancelRemoteCw(quint32 epoch)
+{
+    if (epoch == 0 || m_remoteCwActivity.epoch != epoch) { return; }
+    const auto safety = m_connection ? m_connection->remoteCwSafetyState() : nullptr;
+    if (safety) { safety->invalidate(epoch); }
+    if (m_cwxSender) { m_cwxSender->cancelRemoteActivity(epoch); }
+    if (safety) { m_connection->finishRemoteCw(epoch); }
+    m_remoteCwActivity = {};
+    if (!isTransmitting()) {
+        setRemoteRfHold(TxChannel::RfHold::Link, false);
+        setRemoteRfHold(TxChannel::RfHold::Guard, false);
+    }
+    if (m_audioEngine) { m_audioEngine->setCwSidetoneRemoteHeld(false); }
+    emit remoteCwActivityChanged();
+}
+
+QByteArray RadioModel::cwxSendingFor() const
+{
+    return m_cwxSender && m_remoteCwActivity.epoch != 0
+        && m_cwxSender->acceptedRemoteEpoch() == m_remoteCwActivity.epoch
+        ? m_remoteCwActivity.deviceId : QByteArray();
+}
+
 bool RadioModel::cwxActiveFor(const QByteArray& device) const
 {
-    return m_cwxSender && !device.isEmpty() && m_cwxSendingFor == device
+    return !device.isEmpty() && cwxSendingFor() == device
         && (m_cwxSender->isSending() || m_cwxSender->isKeyHeld());
 }
 
 void RadioModel::stopCwxFor(const QByteArray& device)
 {
-    if (cwxActiveFor(device)) {
+    if (m_remoteCwActivity.deviceId == device && m_remoteCwActivity.epoch != 0) {
+        cancelRemoteCw(m_remoteCwActivity.epoch);
+    } else if (cwxActiveFor(device)) {
         m_cwxSender->stop();
     }
 }
@@ -33686,7 +33823,10 @@ void RadioModel::syncCwxKeyLine()
     if (!m_cwxSender) {
         return;
     }
+    m_transmitCutLine->setRemoteCwTargets(nullptr, {}, {});
+    if (m_remoteCwActivity.epoch != 0) { cancelRemoteCw(m_remoteCwActivity.epoch); }
     if (m_connection == nullptr) {
+        m_cwxSender->setRemoteSafetyState(nullptr);
         m_cwxSender->stop();
         m_cwxSender->setKeyLine(nullptr);
         return;
@@ -33694,6 +33834,16 @@ void RadioModel::syncCwxKeyLine()
     const HPSDRHW board = m_lastRadioInfo.boardType;
     m_cwxSender->setHl2(board == HPSDRHW::HermesLite || board == HPSDRHW::HermesLiteRxOnly);
     m_cwxSender->setKeyLine(m_connection->cwKeyLine());
+    m_cwxSender->setRemoteSafetyState(m_connection->remoteCwSafetyState());
+    m_transmitCutLine->setRemoteCwTargets(m_cwxSender.get(),
+        [engine = m_audioEngine](bool held) {
+            if (engine) { engine->setCwSidetoneRemoteHeld(held); }
+        },
+        [this](quint32 epoch) {
+            QMetaObject::invokeMethod(this, [this, epoch]() {
+                emit remoteCwRecoveryRequested(epoch);
+            }, Qt::QueuedConnection);
+        });
 }
 
 // ---------------------------------------------------------------------------

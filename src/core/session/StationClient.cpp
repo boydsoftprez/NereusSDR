@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): declares remoteCw 1 and
 //               cwSettings 1, routes the cw.* results to the remote
 //               transmit client and remoteCwAvailable. J.J. Boyd (KG4VCF),
@@ -1008,7 +1010,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
     // CW transmit (R-CW-48): the cw.* verbs (remoteCwVersion) and the CW
     // settings on `transmit` (transmitSettingsVersion 16).
-    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("cwSettings"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("waveform"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
@@ -1173,7 +1175,22 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         if (!sourceSelf) { return; }
         if (m_radioModel) { emit m_radioModel->remoteMicSourceStateChanged(); }
     });
-    m_remoteTransmit->setSessionKeepalive([this](quint64 sequence, quint32 epoch) {
+    connect(m_transmitState, &TransmitState::remoteCwChanged, this, [this]() {
+        QMetaObject::invokeMethod(this, [this]() {
+        const QString self = thisDeviceWireId();
+        if (m_transmitState->remoteCwDeviceId() == self) {
+            m_remoteTransmit->setRemoteCwActivity(quint32(m_transmitState->remoteCwEpoch()),
+                                                  m_transmitState->remoteCwActive());
+        } else if (m_transmitState->remoteCwActive()
+                   && m_transmitState->remoteCwEpoch() > m_remoteTransmit->remoteCwEpoch()) {
+            m_remoteTransmit->setRemoteCwActivity(m_remoteTransmit->remoteCwEpoch(), false);
+            m_remoteTransmit->setRemoteCwActivity(quint32(m_transmitState->remoteCwEpoch()), false);
+        }
+        }, Qt::QueuedConnection); // all fields of this mirror batch land together
+    });
+    m_remoteTransmit->setSessionCwKeepalive([this](const TxKeepalive& value) {
+        const quint64 sequence = value.sequence;
+        const quint32 epoch = value.epoch;
         if (!remoteTransmitAvailable()) {
             return false;
         }
@@ -1181,15 +1198,18 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         if (m_nextCommandId == 0) {
             ++m_nextCommandId;
         }
-        send(SessionMessages::commandInvoke(
-            QByteArrayLiteral("tx.keepalive"), id,
-            {MirrorUpdate{0, QByteArrayLiteral("sequence"), MirrorWireKind::Int64,
+        QList<MirrorUpdate> arguments{
+            MirrorUpdate{0, QByteArrayLiteral("sequence"), MirrorWireKind::Int64,
                           QVariant(static_cast<qint64>(sequence))},
              MirrorUpdate{0, QByteArrayLiteral("epoch"), MirrorWireKind::Int64,
-                          QVariant(static_cast<qint64>(epoch))}}));
+                          QVariant(static_cast<qint64>(epoch))}};
+        if (value.cwEpoch != 0) {
+            arguments.append({2, "cwEpoch", MirrorWireKind::Int64, qint64(value.cwEpoch)});
+        }
+        send(SessionMessages::commandInvoke(QByteArrayLiteral("tx.keepalive"), id, arguments));
         return true;
     });
-    m_remoteTransmit->setAuxiliaryKeepalive([this](quint64 sequence, quint32 epoch) {
+    m_remoteTransmit->setAuxiliaryCwKeepalive([this](const TxKeepalive& value) {
         TxWatchClient* watch = m_directWatch.data();
         if (!transmitWatchReady() || watch == nullptr
             || watch->generation() != m_directWatchGeneration) {
@@ -1197,7 +1217,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         }
         const QPointer<StationClient> self(this);
         const quint32 sessionEpoch = m_sessionEpoch;
-        const bool sent = watch->sendKeepalive(sequence, epoch);
+        const bool sent = watch->sendKeepalive(value);
         return self && self->m_sessionEpoch == sessionEpoch
             && self->m_directWatch == watch && self->transmitWatchReady() && sent;
     });
@@ -7884,7 +7904,7 @@ bool StationClient::remoteTransmitAvailable() const
 
 bool StationClient::remoteCwAvailable() const
 {
-    return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 1;
+    return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 2;
 }
 
 bool StationClient::directWatchReady() const
@@ -8344,6 +8364,7 @@ void StationClient::refreshRemoteTransmit()
     if (m_remoteTransmit != nullptr) {
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
         m_remoteTransmit->setCwAvailable(remoteCwAvailable());
+        m_remoteTransmit->setCwReleaseAvailable(m_capabilities.remoteCwVersion >= 1);
         m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }

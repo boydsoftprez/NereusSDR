@@ -11,6 +11,8 @@
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -1268,6 +1270,7 @@ private:
     // The transmit cut (2026-10-15) and CW (2026-10-26): the default unkey,
     // then bank 13 next so the radio's keyer is off within one frame.
     void applyTransmitCut() override;
+    void applyRemoteRfHold() override;
     // Link-loss latch (TX safety, whole-branch review 2026-09-30, fix
     // round 1). Set when the watchdog declares a link lost while keyed, and
     // at a reconnect attempt that found a key made during the outage. While

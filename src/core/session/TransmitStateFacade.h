@@ -87,6 +87,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 39 (D14, R-IOS-13,
 //               R-IOS-21), with AI-assisted implementation via Anthropic
@@ -231,6 +233,9 @@ class NEREUS_CORE_EXPORT TransmitState final : public QObject {
     Q_PROPERTY(QString rfHeldReason READ rfHeldReason NOTIFY holdChanged)
     Q_PROPERTY(quint64 rfHoldSerial READ rfHoldSerial NOTIFY holdChanged)
     Q_PROPERTY(qint64 rfLastHoldMs READ rfLastHoldMs NOTIFY holdChanged)
+    Q_PROPERTY(QString remoteCwDeviceId READ remoteCwDeviceId NOTIFY remoteCwChanged)
+    Q_PROPERTY(qint64 remoteCwEpoch READ remoteCwEpoch NOTIFY remoteCwChanged)
+    Q_PROPERTY(bool remoteCwActive READ remoteCwActive NOTIFY remoteCwChanged)
 
 public:
     // The rfHeldReason values.
@@ -327,6 +332,10 @@ public:
     double forwardRawPowerWatts() const { return m_forwardRawPowerWatts; }
     double forwardAdcVolts() const { return m_forwardAdcVolts; }
     double reflectedAdcVolts() const { return m_reflectedAdcVolts; }
+    QString remoteCwDeviceId() const { return m_remoteCwDeviceId; }
+    qint64 remoteCwEpoch() const { return m_remoteCwEpoch; }
+    bool remoteCwActive() const { return m_remoteCwActive; }
+    void setRemoteCwActivity(const QByteArray& deviceId, quint32 epoch, bool active);
     bool rfHeld() const { return m_rfHeld; }
     QString rfHeldReason() const { return m_rfHeldReason; }
     quint64 rfHoldSerial() const { return m_rfHoldSerial; }
@@ -406,6 +415,7 @@ public:
     void clearStationValues();
 
 signals:
+    void remoteCwChanged();
     /// keyed, tuning, twoTone, txSliceId, keyedBy*, keyedSinceMs, txEnding.
     void stateChanged();
     void timeOutChanged();
@@ -466,6 +476,9 @@ private:
     qint64 m_stationKeyedForSeconds{0};
     // Remote transmit hold then cut: the keyer's RF hold, and when the one
     // on now began (this object's clock).
+    QString m_remoteCwDeviceId;
+    qint64 m_remoteCwEpoch{0};
+    bool m_remoteCwActive{false};
     bool m_rfHeld{false};
     QString m_rfHeldReason;
     quint64 m_rfHoldSerial{0};

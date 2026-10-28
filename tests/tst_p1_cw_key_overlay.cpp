@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "core/P1RadioConnection.h"
+#include "core/safety/RemoteCwSafetyState.h"
 
 using namespace NereusSDR;
 
@@ -120,6 +121,46 @@ CwWireState cwOn(bool breakIn = false)
 class TestP1CwKeyOverlay : public QObject {
     Q_OBJECT
 private slots:
+    void observedPhysicalEdgeInvalidatesOnlyNetworkHeldActivity()
+    {
+        class ObservableConnection : public P1RadioConnection {
+        public:
+            using RadioConnection::publishRadioKeyStatus;
+        } conn;
+        conn.publishRadioKeyStatus(true, false, false); // already down before hold
+        const auto safety = conn.remoteCwSafetyState();
+        safety->begin(11);
+        QVERIFY(conn.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        conn.publishRadioKeyStatus(true, false, false);
+        QVERIFY(safety->snapshot().valid);
+        conn.publishRadioKeyStatus(false, false, false);
+        conn.publishRadioKeyStatus(false, true, false);
+        QVERIFY(safety->snapshot().invalidated);
+        QVERIFY(!safety->clearHold(11, TxChannel::RfHold::Link));
+        safety->finish(11);
+        safety->begin(12);
+        QVERIFY(conn.setRemoteCwHold(12, TxChannel::RfHold::Mic, true));
+        conn.publishRadioKeyStatus(true, false, false);
+        QVERIFY(safety->snapshot().valid); // mic-only is not network takeover
+    }
+
+    void remoteCwHoldMasksHostKeysWithoutChangingMox()
+    {
+        P1RadioConnection conn;
+        setUp(conn, HPSDRHW::Hermes);
+        Ep2Seam seam(conn);
+        conn.setCwWireState(cwOn());
+        conn.cwKeyLine()->setCwx(true);
+        QVERIFY(allIqWordsAre(seam.next(), 0x0001));
+        conn.remoteCwSafetyState()->begin(11);
+        QVERIFY(conn.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        QVERIFY(allIqWordsAre(seam.next(), 0x0000));
+        QCOMPARE(int(quint8(conn.captureBank13ForTest()[1])), 0);
+        QVERIFY(!conn.transmitCut());
+        QVERIFY(conn.setRemoteCwHold(11, TxChannel::RfHold::Link, false));
+        QVERIFY(allIqWordsAre(seam.next(), 0x0001));
+    }
+
     // Key bits 5 (dot and CWX) replace every I and Q word, TX samples
     // queued or not. On the HL2 break-in is on, so its store rule keeps CWX.
     void enableOneKeyFiveFillsEveryIqWord_data()

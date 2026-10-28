@@ -50,6 +50,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
@@ -92,6 +94,18 @@ public:
     // thread under the same mutex, to release a hold.
     using HoldFn = std::function<void(bool held)>;
 
+    using CwHoldFn = std::function<void(quint64 armSerial, quint32 cwEpoch, bool held)>;
+    using CwCutFn = std::function<void(quint64 mediaEpoch, quint64 armSerial,
+                                      quint32 cwEpoch, qint64 silentMs)>;
+    RemoteTxCutGuard(CwCutFn cut, CwHoldFn hold);
+    quint64 arm(quint64 mediaEpoch, quint32 keyEpoch, quint32 cwEpoch);
+    bool heardKeepaliveOffMain(quint64 mediaEpoch, const TxKeepalive& value, Clock::time_point at);
+    bool heardKeepaliveOnMain(const TxKeepalive& value, Clock::time_point at);
+#ifdef NEREUS_BUILD_TESTS
+    void useControlledClockForTest(Clock::time_point start);
+    void advanceClockForTest(std::chrono::milliseconds elapsed);
+#endif
+
     static constexpr qint64 kHoldMs = RemoteTxWatchdog::kLinkHoldMs;
     static constexpr qint64 kCutMs = RemoteTxWatchdog::kLinkCutMs;
 
@@ -114,6 +128,18 @@ private:
     // With m_mutex held: HoldFn(false) if holding.
     void releaseHoldLocked();
 
+    Clock::time_point nowLocked() const;
+    void waitUntilLocked(std::unique_lock<std::mutex>& lock, Clock::time_point until);
+    bool heardKeepaliveLocked(const TxKeepalive& value, Clock::time_point at);
+    const CwCutFn m_cwCut;
+    const CwHoldFn m_cwHold;
+    quint32 m_keyEpoch{0};
+    quint32 m_cwEpoch{0};
+    quint64 m_lastSequence{0};
+#ifdef NEREUS_BUILD_TESTS
+    bool m_controlledClock{false};
+    Clock::time_point m_controlledNow{};
+#endif
     const CutFn m_cut;
     const HoldFn m_hold;
 
@@ -124,6 +150,7 @@ private:
     bool m_stop{false};
     quint64 m_epoch{0};
     Clock::time_point m_lastHeard{};
+    Clock::time_point m_heldSince{};
     // Written under m_mutex; read without it by isJudging(), isHolding()
     // and armSerial().
     std::atomic<bool> m_judging{false};

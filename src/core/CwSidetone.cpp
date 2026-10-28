@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, the computer sidetone (R-CW-39, R-CW-51):
 //               reimplemented in C++20 for NereusSDR from sidetone.c and
 //               sidetone.h, lock-free for the audio drain. J.J. Boyd
@@ -255,7 +257,8 @@ bool CwSidetone::render(float* out, int frames)
     oscInit();
     for (int i = 0; i < frames; i++)
     {
-        const bool key = m_key.load(std::memory_order_acquire);
+        const bool key = m_key.load(std::memory_order_acquire)
+            && !m_remoteHeld.load(std::memory_order_acquire);
         osc();
         switch (m_state)
         {

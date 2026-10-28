@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // =================================================================
 // src/core/session/RemoteTransmitClient.h  (NereusSDR)
 // =================================================================
@@ -45,6 +46,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
 //                (R-IOS-13, R-R3-42). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -147,6 +150,13 @@ public:
 
     // ---- Task 37: the keepalive ----
     /// Sends one keepalive; true when it went.
+    using CwKeepaliveSender = std::function<bool(const TxKeepalive&)>;
+    void setSessionCwKeepalive(CwKeepaliveSender sender) { m_sessionCwKeepalive = std::move(sender); }
+    void setChannelCwKeepalive(CwKeepaliveSender sender) { m_channelCwKeepalive = std::move(sender); }
+    void setAuxiliaryCwKeepalive(CwKeepaliveSender sender) { m_auxiliaryCwKeepalive = std::move(sender); }
+    quint32 remoteCwEpoch() const { return m_cwEpoch; }
+    void setRemoteCwActivity(quint32 epoch, bool active);
+    void setCwReleaseAvailable(bool available) { m_cwReleaseAvailable = available; }
     using KeepaliveSender = std::function<bool(quint64 sequence, quint32 epoch)>;
     /// How often a keepalive goes (RemoteTxWatchdog::kKeepaliveIntervalMs).
     static constexpr int kKeepaliveIntervalMs = 100;
@@ -218,7 +228,7 @@ public:
 
     // ---- CW transmit (R-CW-48): the Core's CWX sender ----
     /// The Core told this window remoteCwVersion 1 or later.
-    void setCwAvailable(bool available) { m_cwAvailable = available; }
+    void setCwAvailable(bool available) { m_cwAvailable = available; m_cwReleaseAvailable = available; }
     /// The cw.* verbs can go now (remote transmit and remoteCwVersion).
     bool cwAvailable() const { return m_available && m_cwAvailable; }
     /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
@@ -309,6 +319,7 @@ private:
         Kind kind;
         QByteArray verb;
         bool releaseIntent;
+        quint64 cwGeneration{0};
     };
 
     quint32 send(const QByteArray& verb, const QList<MirrorUpdate>& arguments, Kind kind,
@@ -330,6 +341,14 @@ private:
     Sender m_sender;
     bool m_available{false};
     bool m_cwAvailable{false};
+    bool m_cwReleaseAvailable{false};
+    bool m_cwPending{false};
+    quint32 m_cwEpoch{0};
+    quint32 m_cwRetiredEpoch{0};
+    quint64 m_cwGeneration{0};
+    CwKeepaliveSender m_sessionCwKeepalive;
+    CwKeepaliveSender m_channelCwKeepalive;
+    CwKeepaliveSender m_auxiliaryCwKeepalive;
     Key m_screen;
     Key m_program;
     std::function<void(const Answer&)> m_programAnswer;
