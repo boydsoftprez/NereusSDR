@@ -173,6 +173,9 @@ public final class BandRenderer {
     private var waterfallReferenceHz: Double = 0
     private var waterfallGeneration: UInt64?
     private var uploadedLines: UInt64 = 0
+    /// Row selection belongs to the frame in flight, like its vertex buffers. Never overwrite GPU-owned mapping.
+    private var waterfallMapBuffers: [(any MTLBuffer)?] = Array(repeating: nil, count: BandRenderer.framesInFlight)
+    private var waterfallMapRows: [UInt32] = []
     private var paletteTexture: (any MTLTexture)?
     private var paletteDrawn: StationCatalog.Palette??
     /// The phone's own gradient last drawn, nil while a catalogue palette is.
@@ -455,7 +458,8 @@ public final class BandRenderer {
             drawBackground(settings, rect: layout.spectrum, encoder: encoder, viewport: viewport)
         }
         drawWaterfall(history, rect: layout.waterfall, view: BandCoverage(centerHz: overlays.centerHz, spanHz: overlays.spanHz),
-                      lookBack: overlays.lookBackLines, encoder: encoder, viewport: viewport)
+                      lookBack: overlays.lookBackLines, axis: overlays.waterfallTimeAxis, periodMs: settings.waterfallPeriodMs,
+                      scale: Double(overlays.scale), encoder: encoder, viewport: viewport)
         if let (overlay, stackGeometry) = stacked, let stack {
             drawStack(stack, overlay: overlay, geometry: stackGeometry, settings: settings, markers: overlays.markers,
                       view: BandCoverage(centerHz: overlays.centerHz, spanHz: overlays.spanHz), scale: overlays.scale,
@@ -1455,10 +1459,26 @@ public final class BandRenderer {
 
     /// Draws the waterfall `lookBack` lines back from the newest (0, live).
     private func drawWaterfall(_ history: WaterfallHistory, rect: CGRect, view: BandCoverage, lookBack: Int = 0,
-                               encoder: any MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+                               axis: WaterfallTimeAxis?, periodMs: Int, scale: Double, encoder: any MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
         guard rect.width > 0, rect.height > 0, let lines = waterfallTexture ?? paletteTexture,
               let palette = paletteTexture, let coverages = coverageTexture ?? paletteTexture else {
             return
+        }
+        let height = max(1, Int(ceil(rect.height)))
+        let effectiveAxis = history.hasPresentationTimeline ? (axis ?? history.presentationTime(age: lookBack).map { WaterfallTimeAxis(topTime: $0, periodMs: periodMs) }) : nil
+        if let effectiveAxis {
+            effectiveAxis.fillAges(history: history, heightPixels: height, scale: scale, into: &waterfallMapRows)
+        } else {
+            if waterfallMapRows.count != height { waterfallMapRows = Array(repeating: WaterfallTimeAxis.blank, count: height) }
+            for y in waterfallMapRows.indices { waterfallMapRows[y] = UInt32(y + max(0, lookBack)) }
+        }
+        let bytes = height * MemoryLayout<UInt32>.stride
+        if (waterfallMapBuffers[ring]?.length ?? 0) < bytes {
+            waterfallMapBuffers[ring] = device.makeBuffer(length: bytes, options: .storageModeShared)
+        }
+        guard let map = waterfallMapBuffers[ring] else { return }
+        waterfallMapRows.withUnsafeBytes { raw in
+            if let base = raw.baseAddress { map.contents().copyMemory(from: base, byteCount: raw.count) }
         }
         var rectUniforms = RectUniforms(rect: Self.vector(rect), viewport: viewport)
         let hasLines = waterfallTexture != nil
@@ -1471,6 +1491,7 @@ public final class BandRenderer {
         encoder.setRenderPipelineState(waterfallPipeline)
         encoder.setVertexBytes(&rectUniforms, length: MemoryLayout<RectUniforms>.stride, index: 0)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WaterfallUniforms>.stride, index: 0)
+        encoder.setFragmentBuffer(map, offset: 0, index: 1)
         encoder.setFragmentTexture(lines, index: 0)
         encoder.setFragmentTexture(palette, index: 1)
         encoder.setFragmentTexture(coverages, index: 2)

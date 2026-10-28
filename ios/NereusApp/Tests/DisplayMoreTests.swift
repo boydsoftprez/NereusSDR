@@ -91,7 +91,13 @@ struct DisplayMoreTests {
         #expect(band.state.history.capacity == min(tallest + band.settings.rewindLines,
                                                    BandDisplaySettings.waterfallRowsLimit))
         #expect(band.state.history.capacity <= BandDisplaySettings.waterfallRowsLimit)
-        feed(band, lines: visible + 200)
+        var arrival = 1000.0
+        band.lineClock = { arrival }
+        for sequence in 1...(visible + 200) {
+            arrival += 1.0 / 30
+            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence))))
+        }
+        _ = band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
         let display = rig.main.display
         #expect(display.lookBackSeconds == 0)
         #expect(DisplaySheetModel.lookBackText(0) == "Live")
@@ -103,12 +109,15 @@ struct DisplayMoreTests {
         #expect(band.lookBackLines == 90)
         #expect(DisplaySheetModel.lookBackText(display.lookBackSeconds) == "-0:03")
         // Ten more lines: still on the same ones, ten further back.
-        feed(band, lines: 10, from: visible + 201)
+        for sequence in (visible + 201)...(visible + 210) {
+            arrival += 1.0 / 30
+            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence))))
+        }
         #expect(band.lookBackLines == 100)
         #expect(band.overlays(scale: 3).lookBackLines == 100)
         // Never past what it holds less a screen.
         display.setLookBack(seconds: 10_000)
-        #expect(band.lookBackLines == band.state.history.count - visible)
+        #expect(abs(display.lookBackSeconds - band.mostLookBackSeconds) <= 1.0 / 30 + 0.00001)
         display.goLive()
         #expect(band.lookBackLines == 0)
         #expect(BandReadouts.liveText == "LIVE")
@@ -125,7 +134,12 @@ struct DisplayMoreTests {
         band.receive(.context(try #require(TuningShotTests.context(centreHz: 7_236_400))))
         let size = CGSize(width: 1206, height: 1500)
         _ = band.prepareToDraw(size: size, scale: 3)
-        feed(band, lines: 120)
+        var arrival = 1000.0
+        band.lineClock = { arrival }
+        for sequence in 1...120 {
+            arrival += 1.0 / 30
+            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence))))
+        }
         // Sized once for the tallest waterfall the split allows, and the lines kept for looking back.
         var lowest = band.settings
         lowest.currentSpectrumSharePercent = BandDisplaySettings.spectrumShareRange.lowerBound
@@ -139,7 +153,12 @@ struct DisplayMoreTests {
             #expect(band.state.history.capacity == capacity, "at \(percent)%")
             #expect(band.state.history.layoutGeneration == generation, "at \(percent)%")
             #expect(band.state.history.count == 120)
-            #expect(band.visibleLines == BandLayout(size: size, scale: 3, settings: band.settings).waterfallLines)
+            let axis = try #require(band.waterfallTimeAxis)
+            let oldestVisible = try #require(band.state.history.presentationTime(age: band.visibleLines - 1))
+            let oldestHeld = try #require(band.state.history.presentationTime(age: band.state.history.count - 1))
+            let span = Double(BandLayout(size: size, scale: 3, settings: band.settings).waterfallPoints)
+                * Double(band.settings.waterfallPeriodMs) / 1000
+            #expect(abs(axis.topTime - oldestVisible - min(span, axis.topTime - oldestHeld)) <= 1.0 / 60 + 0.00001)
         }
     }
 

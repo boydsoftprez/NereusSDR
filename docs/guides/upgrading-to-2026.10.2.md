@@ -69,6 +69,18 @@ do not establish that physical-input observation.
 
 ## What else you will notice
 
+- **Phone waterfall speed.** The selected update period now controls visible
+  2D scrolling in logical screen points. A saved 10 ms period will look much
+  faster than the earlier one-physical-pixel-per-received-row behavior,
+  especially on a Retina screen. The received display frame rate still
+  controls how often new RF observations arrive; the phone preserves those
+  rows and their timestamps rather than requesting extra FFT work. Pause and
+  rewind retain the actual history timing when the Core changes frame rate.
+- **Start Roundtable from the phone.** Open **Tools > Roundtable** and use
+  **Start** or **Stop** beside its connection state. The Core owns this
+  connection. On first use, choose **Stay hidden** or **Go live** in the
+  existing public-visibility prompt; starting the connection does not make
+  that choice for you.
 - **Tuning on the pan.** You can grab a receiver anywhere inside its
   passband, or near its center line, and drag it. Dragging a VFO flag sideways
   tunes its slice. Two-finger trackpad tuning no longer coasts after your

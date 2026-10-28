@@ -57,6 +57,18 @@ Use **Pass**, **Fail**, **Skip** or **N/A** in each cell. Add device, Core and f
 
 ## Phone follow-up
 
+In the 2D waterfall, compare the same signal feature at 10 ms and 100 ms:
+the 10 ms setting should scroll roughly ten times faster. This is a visible
+time scale, while the Core's accepted FPS determines new RF observations.
+Pause should hold the picture; after a normal display-rate change, rewind
+should still reach the older history with its original time labels. Record
+the accepted FPS, phone model and whether the result repeats.
+
+Open **Tools > Roundtable**, start and stop the Core's connection there,
+and check that the phone follows its reported state. If the first-run
+visibility prompt appears, make the intended choice explicitly; a connection
+start alone must not answer it. Skip public participation if it is not wanted.
+
 Check the workspace look and Display settings, slice flags, S-meter Peak/Average/Max Bin availability, and normal setup controls. Change a display option, leave and return: the selected value remains visible. Tune a signal under normal display activity and listen for responsive audio; record an audible delay or backlog rather than estimating a pass. Check 3D rows at the usual viewing rate and look for repeated rows, ridges or stutter. If the Core reports audio unavailable, note whether the current wanted audio recovers after it becomes ready. Record device, app build, Core and connection used.
 
 ## Hardware and operator-controlled transmit, only when applicable

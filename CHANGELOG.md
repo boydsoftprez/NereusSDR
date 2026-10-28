@@ -82,6 +82,14 @@ to each other as before.
   barriers moving without losing or reordering session events.
   ([#653](https://github.com/boydsoftprez/NereusSDR/pull/653),
   [#674](https://github.com/boydsoftprez/NereusSDR/pull/674))
+- The phone's 2D waterfall scrolls at the selected period in logical screen
+  points, correcting the slow Retina movement caused by advancing one
+  physical pixel per received row. Its time axis retains the received rows
+  and their timing across display-rate changes, pause and history rewind;
+  it does not ask the Core to generate more FFT frames.
+- **Tools > Roundtable** on the phone now has the Core's Start/Stop control.
+  The existing first-run visibility choice is available there, so starting
+  Roundtable no longer requires opening a desktop client.
 - The tuner gives transmit back when its own front-panel TUNE cycle ends. A
   station key pressed during the loan keeps transmit and cancels give-back.
   ([#670](https://github.com/boydsoftprez/NereusSDR/pull/670))

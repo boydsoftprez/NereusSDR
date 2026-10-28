@@ -68,7 +68,7 @@ fragment float4 bandLabelFragment(RectOut in [[stage_in]],
     return labels.sample(nearest, in.uv);
 }
 
-// The waterfall: one stored line per pixel row, newest at the top, each a
+// The waterfall: original stored rows selected by the logical-time axis, each a
 // palette position the history coloured when the line arrived.
 
 struct WaterfallUniforms {
@@ -83,10 +83,11 @@ struct WaterfallUniforms {
 
 fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
                                       constant WaterfallUniforms &uniforms [[buffer(0)]],
+                                      device const uint *rowAges [[buffer(1)]],
                                       texture2d<float, access::read> lines [[texture(0)]],
                                       texture2d<float> palette [[texture(1)]],
                                       texture2d<float, access::read> coverages [[texture(2)]]) {
-    uint age = uint(max(0.0, floor(in.position.y - uniforms.rect.y))) + uint(uniforms.view.z);
+    uint age = rowAges[uint(max(0.0, floor(in.position.y - uniforms.rect.y)))];
     if (uniforms.count == 0 || uniforms.columns == 0 || age >= uniforms.count) {
         return float4(uniforms.background.rgb * uniforms.background.a, uniforms.background.a);
     }
