@@ -32,6 +32,14 @@
 //               high-pass switches. J.J. Boyd (KG4VCF), AI-assisted: Claude
 //               Code. Version 14 also names OC Outputs' Anvelina DX
 //               Outputs ("ocDx" reload).
+//   2026-10-26: The keying gate notes the tuner's own TUNE (noteTunerLoan)
+//               and the cycle's end gives transmit back (returnTunerLoan).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 670 fix wave: every cycle's end rechecks the tuner's
+//               loan; a real station key (requestAccepted) drops it, a
+//               gate question does not (JJ, "Option 1 the station keeps
+//               transmit"). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -2823,7 +2831,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         && m_radioModel->moxController() != nullptr) {
         MoxController* mox = m_radioModel->moxController();
         // Rulings 8.8 and 8.13: every key, local or remote, asks here first.
-        mox->setKeyingGate([this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
+        const auto answerKey = [this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
             if (!keyer.isStation()) {
                 // A remote key: the session's own gate first (remote_transmit,
                 // its hello, its pairing, its snapshot).
@@ -3007,6 +3015,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                 ? TxRefusals::radioOnAir()
                                 : TxRefusals::noTransmitSlice()};
                 }
+                // TGXL tune lane (JJ, 2026-10-26): where the tuner's TUNE
+                // moved the flag, so it goes back when the cycle ends.
+                if (keyer.tunerPress && m_tunerLoan) {
+                    m_tunerLoan->flagMovedTo = moveTo;
+                }
             }
             // Fix wave 2, Important 2: a take whose key never starts (a
             // TUNE or two-tone refused after the gate) is released.
@@ -3015,7 +3028,43 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 watchUnstartedTake(m_transmitHolder->epoch());
             }
             return answer;
+        };
+        mox->setKeyingGate([this, answerKey](PttMode source,
+                                             const KeyerIdentity& keyer) -> KeyingAnswer {
+            // TGXL tune lane (JJ, 2026-10-26): the tuner's own front-panel
+            // TUNE borrows transmit and the flag for its cycle, and gives
+            // them back when the cycle ends (returnTunerLoan).
+            if (keyer.isStation() && keyer.tunerPress) {
+                noteTunerLoan();
+            }
+            return answerKey(source, keyer);
         });
+        // TGXL tune lane (JJ, 2026-10-26, "Option 1 the station keeps
+        // transmit"). Fix wave (PR 670, I2): a real key at the station
+        // during the tune (its MOX, two-tone; anything but the tuner's own
+        // press) is the station's own: what the tune took stays. Seen where
+        // the key is accepted, not at the gate: during the carrier a station
+        // key never asks the gate, and a gate question that keys nothing
+        // (TCI's program refusal check) is not a key.
+        connect(mox, &MoxController::requestAccepted, this,
+                [this](const KeyerIdentity& requester, quint64, bool requestedOn) {
+                    if (m_tunerLoan && requestedOn && requester.isStation()
+                        && !requester.tunerPress) {
+                        dropTunerLoanForStationKey();
+                    }
+                });
+        // A PTT pressed during the tune keys nothing while TUN is up; one
+        // held when the tune ends is read there (returnTunerLoan).
+        // TGXL tune lane: a tuner cycle has ended. Fix wave (PR 670, I1):
+        // every cycle's end, a device's included, rechecks the loan; the
+        // first end after the press is its own cycle's.
+        connect(m_radioModel, &RadioModel::tgxlAutotuneEnded, this,
+                [this](const QByteArray&, const QString&) {
+                    if (m_tunerLoan) {
+                        m_tunerLoan->cycleEnded = true;
+                        returnTunerLoan();
+                    }
+                });
         // iPhone app plan Task 77 fix wave, I1 (ruling 8.9): the radio's
         // PTT press asks the gate while another device holds transmit,
         // whatever that device's key (TUNE, two-tone, a tuner autotune,
