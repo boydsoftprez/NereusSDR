@@ -271,6 +271,11 @@
 //               lastAdmitTook() and tunerTakeFinished(). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-26: txToRxRemainingMaxMs, the longest the TX to RX walk can
+//               still run on its own phase bounds, and isTxToRxPhaseTimed,
+//               whether a phase timer is still running, for a CAT TX held
+//               during it; stallTxToRxWalkForTest. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -612,6 +617,9 @@ public:
     void setTxDrainTimeoutMsForTest(int ms);
     // FOR TESTING ONLY: the end-of-over tail's bound (kEndOfOverTailMaxMs).
     void setEndOfOverTailMaxMsForTest(int ms);
+    // FOR TESTING ONLY: stops the TX to RX walk's phase timers without
+    // advancing it, so the walk stalls in its current state.
+    void stallTxToRxWalkForTest();
 
     // ── RADE end-of-over callsigns: the end-of-over tail ─────────────────────
     //
@@ -677,6 +685,23 @@ public:
     // The bound of the wait running now (or of the last one): the ring's
     // length rounded up to a whole millisecond.
     int sendRingWaitCeilingMs() const noexcept { return m_sendRingCeilingMs; }
+
+    // txToRxRemainingMaxMs: the longest the TX to RX walk running now can
+    // still take before it reaches Rx, as the sum of its remaining phases'
+    // own bounds: the end-of-over tail (when one runs), the TX channel's
+    // drain wait (when awaited), the send ring's wait (the ceiling of a
+    // wait running now, or the ring's length for one still to come),
+    // mox_delay/key_up_delay and ptt_out_delay. The phase running now
+    // counts in full. Each bound is its timer's interval, so the test
+    // seams above change it too. 0 outside TxToRxInFlight and
+    // TxToRxFlush.
+    int txToRxRemainingMaxMs() const;
+    // isTxToRxPhaseTimed: the walk back to receive is in TxToRxInFlight or
+    // TxToRxFlush and one of its phase timers (end-of-over tail, TX drain
+    // bound, send ring ceiling, mox_delay/key_up_delay, ptt_out_delay) is
+    // running, so the walk will move on by itself. False for a walk that
+    // has stalled there, and outside those states. Read-only.
+    bool isTxToRxPhaseTimed() const;
 
     // ── Task 33: StopAllTx's _stop_all_tx latch ──────────────────────────────
     //
