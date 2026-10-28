@@ -136,3 +136,21 @@ are revisited with the measurements.
 
 - [ ] **Step 1:** Shared host sampler and governor with tests.
 - [ ] **Step 2:** Core wiring, capability, app state; run the commands; commit.
+
+
+## 2026-10-28 maintainer decision: adaptation is opt-in
+
+The earlier default-on decision above is superseded for 2026.10.2. On Zeph,
+NNR operation repeatedly triggered 10 fps display grants while the process
+used about 15% of total machine CPU. Receiver wall-time occupancy, rather
+than Windows whole-machine CPU, drove these cuts. The maintainer chose
+normal operation at the requested display rate and optional automatic
+adaptation for constrained hosts, rather than further threshold tuning.
+
+`display_adaptive` now defaults to `off` in both daemon and desktop Core
+hosting. Missing or invalid values use `off`; explicit `on` retains the
+existing governor. Existing configurations containing `on` remain opted in;
+change them to `off` and restart the Core to adopt normal operation. Explicit
+measured display budgets, connection/device limits, bounded queues and DSP
+thread priority remain in force. NNR's separate model protection is unchanged.
+The sample configuration documents the opt-in setting.

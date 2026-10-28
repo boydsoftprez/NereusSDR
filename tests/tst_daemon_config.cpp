@@ -1,7 +1,11 @@
+// 2026-10-28: Verify opt-in CPU display adaptation and normal display limits.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 // tests/tst_daemon_config.cpp  (NereusSDR)
 // =================================================================
 // no-port-check: NereusSDR-original test infrastructure.
+// 2026-10-28: CPU display adaptation defaults off; explicit opt-in retained.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //
 // R1 Task 9: DaemonConfig parses nereusd's own "key = value" config file
 // (default /etc/nereusd.conf, overridable with --config). Test bodies are
@@ -448,19 +452,19 @@ private slots:
         QCOMPARE(c.threadPlacement, expected);
     }
 
-    // R-R3-08/37/40: display_adaptive is on (the default) or off; any other
-    // value logs one warning and keeps on.
+    // R-R3-08/37/40: display_adaptive is off by default or explicitly on; any other
+    // value logs one warning and falls back to off.
     void displayAdaptiveAcceptsOnOrOff_data()
     {
         QTest::addColumn<QByteArray>("text");
         QTest::addColumn<bool>("expected");
         QTest::addColumn<bool>("warns");
-        QTest::newRow("missing") << QByteArray("slice_count = 1\n") << true << false;
+        QTest::newRow("missing") << QByteArray("slice_count = 1\n") << false << false;
         QTest::newRow("on") << QByteArray("display_adaptive = on\n") << true << false;
         QTest::newRow("off") << QByteArray("display_adaptive = off\n") << false << false;
-        QTest::newRow("words") << QByteArray("display_adaptive = auto\n") << true << true;
-        QTest::newRow("off-then-bad")
-            << QByteArray("display_adaptive = off\ndisplay_adaptive = yes\n") << true << true;
+        QTest::newRow("words") << QByteArray("display_adaptive = auto\n") << false << true;
+        QTest::newRow("on-then-bad")
+            << QByteArray("display_adaptive = on\ndisplay_adaptive = yes\n") << false << true;
     }
 
     void displayAdaptiveAcceptsOnOrOff()
@@ -474,14 +478,14 @@ private slots:
         f.flush();
         if (warns) {
             QTest::ignoreMessage(QtWarningMsg,
-                QRegularExpression(QStringLiteral("display_adaptive must be on or off, keeping on")));
+                QRegularExpression(QStringLiteral("display_adaptive must be on or off, keeping off")));
         }
         QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
         QString err;
         const DaemonConfig c = DaemonConfig::fromFile(f.fileName(), &err);
         QVERIFY2(err.isEmpty(), qPrintable(err));
         QCOMPARE(c.displayAdaptive, expected);
-        QCOMPARE(DaemonConfig::defaults().displayAdaptive, true);
+        QCOMPARE(DaemonConfig::defaults().displayAdaptive, false);
     }
 
     // R-R3-23: lossless audio is allowed unless the file says deny. Any

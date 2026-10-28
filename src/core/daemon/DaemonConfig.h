@@ -71,6 +71,9 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+// 2026-10-28: CPU display adaptation defaults off; explicit opt-in retained.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include <QHostAddress>
 #include <QString>
 #include <QStringList>
@@ -253,14 +256,13 @@ struct DaemonConfig {
     // keeps auto. Feeds startDaemonThreadPlacement() in server_main.cpp.
     bool    threadPlacement {true};
 
-    // R-R3-08/37/40: display_adaptive = on (default) lets the Core lower
-    // spectrum quality, background pans first, while its computer is busy,
-    // and restore it when there is room again (DisplayLoadGovernor, owned by
-    // DaemonApp). With it on, the Core always advertises a display budget:
-    // the configured pair below, or a ceiling computed for eight pans at
-    // their largest plus PureSignal. off keeps today's behaviour exactly.
-    // Anything else logs one warning and keeps on.
-    bool    displayAdaptive {true};
+    // Automatic CPU-based display adaptation is opt-in (2026-10-28).
+    // display_adaptive = on lets the Core lower spectrum quality while busy
+    // and restore it when there is room again (DisplayLoadGovernor).
+    // off (default) honors app requests within explicit display/connection
+    // limits, without creating a CPU-based ceiling. NNR protection is separate.
+    // An invalid value logs one warning and falls back to off.
+    bool    displayAdaptive {false};
 
     // R-R3-23: whether a GUI may switch this Core's audio to the lossless
     // profile (uncompressed 16-bit stereo, about 1.54 Mbit/s of audio, for
