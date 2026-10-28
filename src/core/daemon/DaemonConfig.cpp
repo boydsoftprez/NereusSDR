@@ -20,6 +20,9 @@
 // Code.
 // =================================================================
 
+// 2026-10-28: CPU display adaptation defaults off; explicit opt-in retained.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "DaemonConfig.h"
 
 #include "core/AppSettings.h"
@@ -156,9 +159,9 @@ DaemonConfig DaemonConfig::fromFile(const QString& path, QString* errorOut)
             } else if (value == QLatin1String("off")) {
                 cfg.displayAdaptive = false;
             } else {
-                cfg.displayAdaptive = true;
+                cfg.displayAdaptive = false;
                 qCWarning(lcApp) << "nereusd.conf" << path << "line" << lineNo
-                                  << "display_adaptive must be on or off, keeping on:"
+                                  << "display_adaptive must be on or off, keeping off:"
                                   << value;
             }
         } else if (key == QLatin1String("audio_lossless")) {

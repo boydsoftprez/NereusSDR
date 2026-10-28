@@ -1,5 +1,7 @@
 #pragma once
 // no-port-check: NereusSDR-original. Task 48, step 1.
+// 2026-10-28: CPU display adaptation defaults off; explicit opt-in retained.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Shared station hosting around a borrowed RadioModel.
 
 #include "core/daemon/DisplayLoadInputs.h"
@@ -63,7 +65,7 @@ struct StationHostOptions {
     QList<quint16> linkMajors;
     int audioBitrate {48000};
     bool audioLosslessAllowed {true};
-    bool displayAdaptive {true};
+    bool displayAdaptive {false};
     std::optional<DisplayBudgetLimits> displayBudgetLimits;
     QStringList rendezvousServers;
     bool relayAllowed {true};

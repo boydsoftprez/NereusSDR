@@ -62,6 +62,7 @@ private slots:
         QVERIFY(unowned >= 0 && foreign >= 0);
         model.sliceOwnership()->setOwner(foreign, QByteArray("peer"));
         StationHostOptions options = listenerOptions();
+        QVERIFY(!options.displayAdaptive); // desktop hosting also defaults to requested rates
         options.settings = &settings;
         options.securityDirectory = directory.path();
         options.hostingDevice = StationHostOptions::HostingDevice{

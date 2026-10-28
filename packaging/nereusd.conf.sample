@@ -174,12 +174,13 @@ audio_bitrate = 48000
 # permits it. Any other value is ignored with a warning.
 thread_placement = auto
 
-# Whether the Core lowers spectrum quality when its computer is busy, so
-# audio and receivers keep priority. on (the default) slows, then coarsens,
-# background pans first and the active pan last, tells each app why, and
-# restores quality when there is room again. off leaves spectrum quality to
-# the display limits below. Any other value is ignored with a warning.
-display_adaptive = on
+# Automatic CPU-based display adaptation is off by default. Normal operation
+# honors each app's requested display rate within connection/device limits
+# and any explicit display limits below. To opt in on a constrained Core,
+# set on: the Core slows/coarsens background pans first, the active pan last,
+# and restores quality when there is room again. Invalid values fall back
+# to off with a warning. This does not change NNR's processing protection.
+display_adaptive = off
 
 # Lossless audio for digital modes: allow (default) or deny. With allow, a GUI
 # may ask for uncompressed 16-bit stereo audio instead of Opus, about
