@@ -5,6 +5,8 @@
 // 2026-10-26: CW transmit, the CWX page's model: cw.send, cw.memory and
 //   cw.stop at remoteCwVersion 1 (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted
 //   via Claude Code.
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Foundation
 import NereusLink
@@ -18,16 +20,17 @@ import os
 /// Each request goes three times under one id, as the desktop's remote
 /// window sends it, and the Core acts once.
 ///
-/// A Core without `remoteCwVersion` 1 (at the agreed minor 11) leaves every
-/// control shown and greyed with the reason. The Core refuses a send while
-/// another device holds transmit, or while nobody does, in its own words;
+/// A Core without `remoteCwVersion` 2 (at the agreed minor 11) leaves start
+/// controls greyed with the reason; connected v1 retains Stop. The Core
+/// refuses a send while another device holds transmit, or while nobody
+/// does, in its own words;
 /// those show on the page, with Take transmit when the Core offers it.
 @MainActor
 final class CwxModel: ObservableObject {
     // MARK: The link
 
     static let capability = "remoteCwVersion"
-    static let version: Int64 = 1
+    static let version: Int64 = 2
     static let minor: UInt16 = 11
     static let sendVerb = "cw.send"
     static let memoryVerb = "cw.memory"
@@ -53,19 +56,32 @@ final class CwxModel: ObservableObject {
 
     /// The text to send, as typed.
     @Published var text = ""
-    /// Why Send, the memories and Stop cannot be used now; nil when they can.
+    /// Why Send and the memories cannot be used now; nil when they can.
     @Published private(set) var reason: String?
+    /// Stop stays available on a connected v1 Core, including while held.
+    @Published private(set) var stopReason: String?
     /// Each memory's text, as the Core sends it; nil where it sends none.
     @Published private(set) var memories: [String?] = Array(repeating: nil, count: 8)
     /// The Core's words for the last request it refused, with its code and fix.
     @Published private(set) var refusal: TxRefusalInfo?
 
+    private let lease: RemoteCwLease
+    private var requestRevision = 0
+    #if DEBUG
+    private var sendOperationsForTesting: [Task<Void, Never>] = []
+    private var resultOperationsForTesting: [Task<Void, Never>] = []
+    func settleForTesting() async {
+        for task in sendOperationsForTesting { await task.value }
+        for task in resultOperationsForTesting { await task.value }
+    }
+    #endif
     private let mirror: MirrorStore
     private let commands: CommandClient?
     private var watch: ToolMirrorWatch?
     private static let logger = Logger(subsystem: "NereusSDR", category: "tools.cwx")
 
-    init(mirror: MirrorStore, commands: CommandClient?) {
+    init(mirror: MirrorStore, commands: CommandClient?, lease: RemoteCwLease? = nil) {
+        self.lease = lease ?? RemoteCwLease()
         self.mirror = mirror
         self.commands = commands
         let watch = ToolMirrorWatch(mirror: mirror) { [weak self] in self?.refresh() }
@@ -81,6 +97,10 @@ final class CwxModel: ObservableObject {
     func refresh() {
         let transmit = watch?.object(TransmitModel.transmitKey)
         let connected = mirror.isSnapshotComplete && !mirror.isStale
+        let nextStopReason: String? = !connected ? Self.notConnectedReason
+            : (mirror.agreedMinor ?? 0) < Self.minor || mirror.capabilityVersion(Self.capability) < 1
+                ? Self.olderCoreReason : nil
+        if stopReason != nextStopReason { stopReason = nextStopReason }
         let nextReason: String? = !connected ? Self.notConnectedReason : !offered ? Self.olderCoreReason : nil
         if reason != nextReason {
             reason = nextReason
@@ -125,9 +145,8 @@ final class CwxModel: ObservableObject {
 
     /// Ends what the Core's sender runs for this phone and clears it.
     func stop() {
-        guard reason == nil else {
-            return
-        }
+        guard stopReason == nil else { return }
+        lease.stop()
         invoke(Self.stopVerb, [])
     }
 
@@ -141,16 +160,50 @@ final class CwxModel: ObservableObject {
             refusal = TxRefusalInfo(reason: Self.noAnswerText)
             return
         }
-        Task { [weak self] in
-            do {
-                let result = try await commands.invoke(verb, arguments: arguments, copies: Self.copies,
-                                                       timeout: Self.timeout)
-                self?.note(result)
-            } catch {
-                Self.logger.info("A CWX request had no answer from the Core")
-                self?.refusal = TxRefusalInfo(reason: Self.noAnswerText)
+        requestRevision += 1
+        let revision = requestRevision
+        let lease = lease
+        let request = verb == Self.stopVerb ? nil : lease.begin()
+        let authority = request?.authority ?? lease.releaseAuthority
+        let operation = lease.enqueueSend { [weak self] in
+            let started = await commands.start(verb, arguments: arguments, copies: Self.copies,
+                                                timeout: Self.timeout, authority: authority)
+            await started.sent()
+            let resultOperation = Task { [weak self] in
+                do {
+                    let result = try await started.result()
+                    let current = request.map { lease.isCurrent($0) } ?? !authority.isRevoked
+                    if let request {
+                        lease.complete(request, acceptedEpoch: result.accepted ? Self.epoch(result) : nil,
+                                       active: result.accepted && Self.active(result) == true)
+                    }
+                    guard current, let self, self.requestRevision == revision else { return }
+                    self.note(result)
+                } catch {
+                    let current = request.map { lease.isCurrent($0) } ?? !authority.isRevoked
+                    if let request { lease.complete(request, acceptedEpoch: nil, active: false) }
+                    guard current, let self, self.requestRevision == revision else { return }
+                    Self.logger.info("A CWX request had no answer from the Core")
+                    self.refusal = TxRefusalInfo(reason: Self.noAnswerText)
+                }
             }
+            #if DEBUG
+            self?.resultOperationsForTesting.append(resultOperation)
+            #endif
         }
+        #if DEBUG
+        sendOperationsForTesting.append(operation)
+        #endif
+    }
+
+    private static func epoch(_ result: CommandResult) -> Int64? {
+        if case .int(let value)? = result.values["cwEpoch"] { return value }
+        return nil
+    }
+
+    private static func active(_ result: CommandResult) -> Bool? {
+        if case .bool(let value)? = result.values["cwActive"] { return value }
+        return nil
     }
 
     private func note(_ result: CommandResult) {

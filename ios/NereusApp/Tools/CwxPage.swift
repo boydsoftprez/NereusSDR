@@ -42,10 +42,10 @@ struct CwxPage: View {
                         }
                         .accessibilityHint(model.sendReason ?? "")
                         .accessibilityIdentifier("cwx.send")
-                        PanelButton(label: "Stop", lit: false, style: .red, disabled: model.reason != nil) {
+                        PanelButton(label: "Stop", lit: false, style: .red, disabled: model.stopReason != nil) {
                             model.stop()
                         }
-                        .accessibilityHint(model.reason ?? "")
+                        .accessibilityHint(model.stopReason ?? "")
                         .accessibilityIdentifier("cwx.stop")
                     }
                 }

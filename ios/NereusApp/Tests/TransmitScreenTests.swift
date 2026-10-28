@@ -428,6 +428,180 @@ struct TransmitScreenTests {
         #expect(SharingChip.note(reason: .coreBusy, holder: nil) == "The Core is busy. The devices share it.")
     }
 
+    // MARK: The Core's RF hold
+
+    /// The hold's four properties (TransmitState ordinals 50 to 53), in
+    /// the order the Core sends them: the serial before the length.
+    static func hold(held: Bool, reason: String = "", serial: Int64, lastMs: Int64) -> [LinkMessage.PropertyEntry] {
+        [
+            .init(ordinal: 50, name: "rfHeld", value: .bool(held)),
+            .init(ordinal: 51, name: "rfHeldReason", value: .utf8(reason)),
+            .init(ordinal: 52, name: "rfHoldSerial", value: .i64(serial)),
+            .init(ordinal: 53, name: "rfLastHoldMs", value: .i64(lastMs)),
+        ]
+    }
+
+    @Test("a Core that sends none of the hold reads unheld, and the keyed pill reads TX")
+    func olderCoreIsUnheld() async throws {
+        let (model, _) = try await connected()
+        let transmit = model.main.transmit
+        #expect(!transmit.report.rfHeld)
+        #expect(transmit.report.rfHeldReason.isEmpty)
+        #expect(transmit.report.rfHoldSerial == 0)
+        #expect(transmit.report.rfLastHoldMs == 0)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        #expect(!transmit.holdShown)
+        #expect(TxPill.title(held: transmit.holdShown, seconds: 4) == "TX 0:04")
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("keyed and held: the pill reads Held with its reason, PTT stays keyed and Stop still ends the key")
+    func heldWhileKeyed() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        await station.deliver(Self.txStateDelta([.init(ordinal: 0, name: "keyed", value: .bool(true))]
+            + Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShown })
+        #expect(transmit.holdShownReason == "link")
+        #expect(TxPill.title(held: transmit.holdShown, seconds: 12) == "Held 0:12")
+        #expect(TxPill.spoken(held: true, reason: "link", seconds: 12)
+                == "Transmitting, RF held while the link is quiet, 0:12")
+        // The key is still on: the PTT keeps its keyed look and its words.
+        #expect(transmit.ptt.state.isKeyed)
+        #expect(PttButton.look(transmit.ptt) == .keyed)
+        #expect(PttButton.words(transmit.ptt, clock: "0:12") == PttButton.Words(label: "TX", sub: "0:12"))
+
+        await station.deliver(Self.txStateDelta(Self.hold(held: true, reason: "mic", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShownReason == "mic" })
+        #expect(transmit.holdShown)
+        #expect(TxPill.spoken(held: true, reason: "mic", seconds: 3)
+                == "Transmitting, RF held while no microphone audio arrives, 0:03")
+
+        // Stop on the pill ends the key while it is held.
+        transmit.stopAll()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        #expect(!station.keyed)
+        #expect(station.messages.compactMap(Self.invoke).contains { $0.verb == "tx.unkey" })
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        await model.disconnect()
+    }
+
+    @Test("a hold seen live shows nothing once it ends")
+    func seenHoldEnds() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        await station.deliver(Self.txStateDelta(Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        #expect(await settle(seconds: 30) { transmit.holdShown })
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 1, lastMs: 2600)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 1 })
+        #expect(!transmit.holdShown)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("a hold the phone never saw held: one delta, serial before length, shows Held for its length, then TX")
+    func unseenHoldShowsForItsLength() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        let sent = ContinuousClock.now
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 1, lastMs: 2000)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 1 })
+        // Read whole: the length that came after the serial is the one shown.
+        #expect(transmit.holdShown)
+        #expect(transmit.holdShownReason.isEmpty)
+        #expect(TxPill.spoken(held: true, reason: transmit.holdShownReason, seconds: 5)
+                == "Transmitting, RF held for a moment, 0:05")
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        #expect(ContinuousClock.now - sent >= .milliseconds(1980))
+        #expect(transmit.ptt.state.isKeyed)
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("a hold serial that goes down is no hold ended; the next one up shows")
+    func holdSerialGoesDown() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        // Unkeyed, the count reaches 5 and nothing shows.
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 5, lastMs: 2500)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 5 })
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state.isKeyed })
+        #expect(!transmit.holdShown)
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 2, lastMs: 900)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 2 })
+        #expect(!transmit.holdShown)
+        await station.deliver(Self.txStateDelta(Self.hold(held: false, serial: 3, lastMs: 2000)))
+        #expect(await settle(seconds: 30) { transmit.report.rfHoldSerial == 3 })
+        #expect(transmit.holdShown)
+        #expect(await settle(seconds: 30) { !transmit.holdShown })
+        transmit.tapPtt()
+        #expect(await settle(seconds: 30) { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("the whole v2 CW tuple drives CW-only liveness and stale completion cannot end its successor")
+    func cwTupleIsReadWholeAndIndependentOfMox() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.hello(.init(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(.init(properties: [
+            .init(name: "remoteTxVersion", value: .i64(2)),
+            .init(name: "txPermitted", value: .bool(true)),
+            .init(name: "remoteCwVersion", value: .i64(2)),
+        ])))
+        mirror.apply(.authResult(.init(accepted: true, reason: "", retryable: false)))
+        mirror.apply(.objectCreate(.init(key: "txState", className: "TransmitState", properties: [
+            .init(ordinal: 0, name: "keyed", value: .bool(false)),
+        ])))
+        mirror.apply(.snapshotComplete)
+        let slices = BandSlicesModel(store: mirror, commands: nil)
+        let transmit = TransmitModel(mirror: mirror, commands: nil, slices: slices, subscriber: nil,
+                                     platform: platform.platform)
+        transmit.thisDeviceId = Self.thisDeviceId
+        await transmit.sessionChanged(.ready, owner: 1)
+        let request = transmit.remoteCwLease.begin()
+        // The report precedes the command result; read owner/epoch/activity
+        // together after the delta, independently of keyed and RF hold.
+        mirror.apply(Self.txStateDelta([
+            .init(ordinal: 54, name: "remoteCwDeviceId", value: .utf8(Self.thisDeviceId)),
+            .init(ordinal: 55, name: "remoteCwEpoch", value: .i64(72)),
+            .init(ordinal: 56, name: "remoteCwActive", value: .bool(true)),
+        ] + Self.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        transmit.refresh()
+        #expect(transmit.report.remoteCw?.epoch == 72)
+        #expect(transmit.report.remoteCw?.deviceId == Self.thisDeviceId)
+        #expect(transmit.report.remoteCw?.active == true && transmit.remoteCwLease.epoch == 72)
+        #expect(!transmit.report.keyed && transmit.report.rfHeld)
+        transmit.remoteCwLease.complete(request, acceptedEpoch: 72, active: true)
+        #expect(await settle(seconds: 30) { transmit.ptt.keepaliveRunning })
+        #expect(!transmit.ptt.microphoneWanted && !transmit.ptt.transmitting)
+        mirror.apply(Self.txStateDelta([
+            .init(ordinal: 55, name: "remoteCwEpoch", value: .i64(71)),
+            .init(ordinal: 56, name: "remoteCwActive", value: .bool(false)),
+        ]))
+        transmit.refresh()
+        #expect(transmit.remoteCwLease.epoch == 72)
+        // Microphone loss leaves independent CW alive; the operator's
+        // all-content stop retires it synchronously.
+        await transmit.stopEverythingHere(.microphoneLost)
+        #expect(transmit.remoteCwLease.epoch == 72)
+        await transmit.stopEverythingHere(.unkeyButton)
+        #expect(transmit.remoteCwLease.epoch == nil)
+        #expect(await settle(seconds: 30) { !transmit.ptt.keepaliveRunning })
+        await transmit.sessionChanged(.idle, owner: 1)
+    }
+
     // MARK: Pictures
 
     @Test("listening and keyed, the TX panel, transmit held elsewhere and the time-out, upright and sideways")

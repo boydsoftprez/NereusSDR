@@ -1593,7 +1593,7 @@ struct ToolsPagesTests {
 
     @Test("CWX sends the text, a memory and Stop as the Core's CW verbs, three copies under one id, and keys nothing")
     func cwxSendsTheVerbs() async throws {
-        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 1, key: "transmit",
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
                                                       className: "TransmitModel", values: [
             .init(ordinal: 0, name: "cwxMemory1", value: .utf8("CQ CQ DE KG4VCF")),
             .init(ordinal: 1, name: "cwxMemory2", value: .utf8("")),
@@ -1632,7 +1632,7 @@ struct ToolsPagesTests {
 
     @Test("CWX shows the Core's refusal in its words, with its fix")
     func cwxShowsTheRefusal() async throws {
-        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 1, key: "transmit",
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
                                                       className: "TransmitModel", values: [])
         let cwx = CwxModel(mirror: store, commands: commands)
         cwx.text = "CQ"
@@ -1665,6 +1665,65 @@ struct ToolsPagesTests {
         await Task.yield()
         #expect(outbox.invokes(CwxModel.sendVerb).isEmpty && outbox.invokes(CwxModel.memoryVerb).isEmpty
                 && outbox.invokes(CwxModel.stopVerb).isEmpty)
+    }
+
+    @Test("v1 keeps Stop available while v2 is required for Send and memories")
+    func cwxV1CanStopButCannotStart() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 1, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let cwx = CwxModel(mirror: store, commands: commands)
+        cwx.text = "CQ"
+        #expect(cwx.sendReason == CwxModel.olderCoreReason)
+        #expect(cwx.memoryReason(1) == CwxModel.olderCoreReason)
+        #expect(cwx.stopReason == nil)
+        cwx.send()
+        cwx.sendMemory(1)
+        cwx.stop()
+        #expect(await settle { outbox.invokes(CwxModel.stopVerb).count == CwxModel.copies })
+        #expect(outbox.invokes(CwxModel.sendVerb).isEmpty && outbox.invokes(CwxModel.memoryVerb).isEmpty)
+        #expect(await accept(commands, outbox, CwxModel.stopVerb))
+    }
+
+    @Test("Stop retires a pending CW send before a delayed accepted result can recreate it")
+    func cwxStopRetiresDelayedAcceptedSend() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let lease = RemoteCwLease()
+        let cwx = CwxModel(mirror: store, commands: commands, lease: lease)
+        cwx.text = "CQ"
+        cwx.send()
+        #expect(await settle { outbox.invokes(CwxModel.sendVerb).count == CwxModel.copies })
+        let send = try #require(outbox.invokes(CwxModel.sendVerb).first)
+        cwx.stop()
+        #expect(await settle { outbox.invokes(CwxModel.stopVerb).count == CwxModel.copies })
+        await commands.receive(.commandResult(LinkMessage.CommandResult(
+            verb: CwxModel.sendVerb, id: send.id, accepted: true, reason: "", affected: [], values: [
+                .init(name: "cwEpoch", value: .i64(24)), .init(name: "cwActive", value: .bool(true)),
+            ])))
+        #expect(await accept(commands, outbox, CwxModel.stopVerb))
+        await cwx.settleForTesting()
+        #expect(lease.epoch == nil)
+        lease.observe(.init(deviceId: "aa", epoch: 24, active: true), thisDeviceId: "aa")
+        #expect(lease.epoch == nil)
+    }
+
+    @Test("accepted CW result establishes the exact epoch on the shared phone lease")
+    func cwxAcceptedResultEstablishesLease() async throws {
+        let (store, commands, outbox) = await handFed(CwxModel.capability, version: 2, key: "transmit",
+                                                    className: "TransmitModel", values: [])
+        let lease = RemoteCwLease()
+        let cwx = CwxModel(mirror: store, commands: commands, lease: lease)
+        cwx.text = "CQ"
+        cwx.send()
+        #expect(await settle { outbox.invokes(CwxModel.sendVerb).count == CwxModel.copies })
+        let send = try #require(outbox.invokes(CwxModel.sendVerb).first)
+        await commands.receive(.commandResult(LinkMessage.CommandResult(
+            verb: CwxModel.sendVerb, id: send.id, accepted: true, reason: "", affected: [], values: [
+                .init(name: "cwEpoch", value: .i64(25)), .init(name: "cwActive", value: .bool(true)),
+            ])))
+        #expect(await settle { lease.epoch == 25 })
+        lease.observe(.init(deviceId: "aa", epoch: 25, active: false), thisDeviceId: "aa")
+        #expect(lease.epoch == nil)
     }
 
     // MARK: Helpers

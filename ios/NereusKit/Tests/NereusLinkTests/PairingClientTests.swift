@@ -81,7 +81,7 @@ import Testing
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 1, "remoteCw": 1, "cwSettings": 1])
+                                  "roundtable": 1, "remoteCw": 2, "cwSettings": 1])
         guard case .pairStart(let start)? = await core.transport.nextSent() else {
             Issue.record("the app's second message is not pair.start")
             throw PairingError.ended(reason: nil)

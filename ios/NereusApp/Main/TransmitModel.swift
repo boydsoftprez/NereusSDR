@@ -16,6 +16,8 @@
 //             reason (cwQskUnavailableReason), a later fallback said once,
 //             and VOX, LEV, EQ, CFC and the TX filter greyed in CW as on the
 //             desktop. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Combine
 import Foundation
@@ -79,6 +81,12 @@ final class TransmitModel: ObservableObject {
     @Published private(set) var compressionDb: Double?
     /// How long the key on now has been on, as the Core counts it.
     @Published private(set) var keyedForSeconds: Int64 = 0
+    /// The TX pill reads "Held": the Core holds RF off for this phone's key,
+    /// or did for a moment it never saw (spec section 5.3).
+    @Published private(set) var holdShown = false
+    /// Why, while the Core says it holds RF (`link` or `mic`); empty for a
+    /// hold shown after it ended, whose reason the Core no longer sends.
+    @Published private(set) var holdShownReason = ""
     /// Whole seconds before the Core's transmit time-out stops the key now
     /// on, -1 when none applies (`txState.timeOutRemainingSeconds`); the
     /// opened island counts it down (R-IOS-21).
@@ -542,6 +550,9 @@ final class TransmitModel: ObservableObject {
         }
     }
 
+    /// Shared across CWX page lifetimes; reports and Stop fence one CW lease.
+    let remoteCwLease = RemoteCwLease()
+    private var remoteCwSession = 0
     private let mirror: MirrorStore
     private let settings: SettingsProxyClient?
     private let commands: CommandClient?
@@ -600,6 +611,11 @@ final class TransmitModel: ObservableObject {
     /// two-tone. The lock-screen card reads it (I16); the settings gate
     /// reads `coreOnAir`, the desktop's rule (I1).
     private var txStateOnAir = false
+    /// When "Held" shows (TransmitStateReport.HoldDisplay), the `txState`
+    /// object it reads, and the end of an after-hold display.
+    private var holdDisplay = TransmitStateReport.HoldDisplay()
+    private var holdObject: ObjectIdentifier?
+    private var holdTimer: Task<Void, Never>?
     /// Asks the media connection for the transmit monitor's route; set by
     /// the app, nil where there is no media connection (screen tests).
     var monitorRouteSender: (@Sendable (MonitorRoute) async -> Void)?
@@ -637,19 +653,32 @@ final class TransmitModel: ObservableObject {
         } else {
             startMicrophone = { .started }
         }
-        // The keepalive rides the media connection's "tx" channel while it is open.
+        // Legacy TX prefers media; CW v2 fans the same record to both open paths.
         var keepaliveOnMedia: (@Sendable (Int64, Int64) -> Bool)?
+        var keepaliveOnMediaV2: (@Sendable (Int64, Int64, Int64) -> Bool)?
         if let uplink {
             keepaliveOnMedia = { sequence, epoch in uplink.sendKeepalive(sequence: sequence, epoch: epoch) }
+            keepaliveOnMediaV2 = { sequence, epoch, cwEpoch in
+                uplink.sendKeepalive(sequence: sequence, epoch: epoch, cwEpoch: cwEpoch)
+            }
         }
         if let controller {
             self.controller = controller
         } else if let commands {
-            self.controller = PttController(commands: TransmitCommandClient(commands: commands,
-                                                                            keepaliveOnMedia: keepaliveOnMedia),
-                                            startMicrophone: startMicrophone)
+            let adapter = TransmitCommandClient(commands: commands, keepaliveOnMedia: keepaliveOnMedia,
+                keepaliveOnMediaV2: keepaliveOnMediaV2,
+                remoteCwV2: { await MainActor.run { mirror.capabilityVersion("remoteCwVersion") >= 2 } })
+            self.controller = PttController(commands: adapter, startMicrophone: startMicrophone)
         } else {
             self.controller = PttController(commands: NoTransmitCommands(), startMicrophone: startMicrophone)
+        }
+        remoteCwLease.onActivity = { [weak self] activity in
+            guard let self else { return }
+            let controller = self.controller
+            Task {
+                await controller.setRemoteCwActivity(epoch: activity.epoch, session: activity.session,
+                                                     authority: activity.authority)
+            }
         }
         let snapshots = self.controller.snapshots
         pump = Task { [weak self] in
@@ -766,6 +795,7 @@ final class TransmitModel: ObservableObject {
     func sessionChanged(_ state: StationSession.State, owner: UInt64) async {
         let up = state == .ready
         if microphoneOwner != owner || !up {
+            remoteCwLease.stop()
             localStopAuthority.revoke()
             localStopAuthority = CommandSendPermit()
             microphoneOwner = owner
@@ -774,6 +804,11 @@ final class TransmitModel: ObservableObject {
         }
         await controller.logicalSessionChanged(owner)
         await controller.linkChanged(up: up)
+        let cwSession = await controller.sessionGeneration
+        if remoteCwSession != cwSession {
+            remoteCwSession = cwSession
+            remoteCwLease.reset(session: cwSession)
+        }
         if !up {
             // The link went: a hold's press ends with it, and never keys again by itself.
             releaseHeldPtt()
@@ -975,10 +1010,28 @@ final class TransmitModel: ObservableObject {
 
     /// Stop, on the TX pill: everything of this phone's that is on ends.
     func stopAll() {
+        stopRemoteCw()
         let controller = controller
         let owner = microphoneOwner
         let authority = CommandSendPermit(parents: [localStopAuthority])
         Task { await controller.stopAll(owner: owner, authority: authority) }
+    }
+
+    /// Retire locally before the asynchronous command can borrow another
+    /// session. Mic-only loss deliberately does not call this all-content off.
+    @discardableResult
+    private func stopRemoteCw() -> Task<Void, Never>? {
+        let wanted = remoteCwLease.hasActivity
+        remoteCwLease.stop()
+        guard wanted, let commands, mirror.capabilityVersion("remoteCwVersion") >= 1 else { return nil }
+        let authority = remoteCwLease.releaseAuthority
+        let finish = platform.backgroundWork("Stop sending CW")
+        return remoteCwLease.enqueueSend {
+            defer { finish() }
+            let started = await commands.start("cw.stop", arguments: [], copies: CwxModel.copies,
+                                                timeout: CwxModel.timeout, authority: authority)
+            await started.sent()
+        }
     }
 
     /// Clears the refusal or stop the band shows.
@@ -1637,9 +1690,11 @@ final class TransmitModel: ObservableObject {
     }
 
     private func queueLocalStop(_ cause: StopCause, intent: LocalStopIntent, microphoneLoss: String? = nil) {
+        let cwStop = cause == .microphoneLost ? nil : stopRemoteCw()
         let operation = Task { [weak self] in
             guard let self else { return }
             await self.completeLocalStop(cause, intent: intent, microphoneLoss: microphoneLoss)
+            await cwStop?.value
         }
         #if DEBUG
         lastLocalStopOperationForTesting = operation
@@ -1647,7 +1702,9 @@ final class TransmitModel: ObservableObject {
     }
 
     func stopEverythingHere(_ cause: StopCause) async {
+        let cwStop = cause == .microphoneLost ? nil : stopRemoteCw()
         await completeLocalStop(cause, intent: beginLocalStop())
+        await cwStop?.value
     }
 
     private func completeLocalStop(_ cause: StopCause, intent: LocalStopIntent, microphoneLoss: String? = nil) async {
@@ -1963,6 +2020,43 @@ final class TransmitModel: ObservableObject {
         }
     }
 
+    /// Reads the whole report once its delta has applied (a refresh runs
+    /// after the mirror merges a delta), so a hold's serial and its length
+    /// are read together. Another `txState` object, or none, starts the
+    /// count again.
+    private func observeHold(_ state: MirrorObject?) {
+        let object = state.map(ObjectIdentifier.init)
+        if object != holdObject {
+            holdObject = object
+            holdDisplay.reset()
+        }
+        let keyed = ptt.transmitting
+        if state != nil {
+            holdDisplay.observe(report, keyed: keyed, now: .now)
+        } else {
+            holdDisplay.reset()
+        }
+        showHold()
+    }
+
+    private func showHold() {
+        let keyed = ptt.transmitting
+        let shown = holdDisplay.showsHeld(report, keyed: keyed, now: .now)
+        set(\.holdShown, shown)
+        set(\.holdShownReason, shown && report.rfHeld ? report.rfHeldReason : "")
+        holdTimer?.cancel()
+        holdTimer = nil
+        if shown, !report.rfHeld, let until = holdDisplay.afterHoldUntil {
+            holdTimer = Task { @MainActor [weak self] in
+                try? await Task.sleep(until: until, clock: .continuous)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.showHold()
+            }
+        }
+    }
+
     private func watch(_ key: String) -> MirrorObject? {
         let object = mirror.object(key)
         let id = object.map(ObjectIdentifier.init)
@@ -2021,6 +2115,16 @@ final class TransmitModel: ObservableObject {
             next.holderEpoch = state["holderEpoch"].whole ?? 0
             next.holderAway = state["holderAway"].flag ?? false
             next.holderTransferring = state["holderTransferring"].flag ?? false
+            if mirror.capabilityVersion("remoteCwVersion") >= 2 {
+                next.remoteCw = .init(deviceId: state["remoteCwDeviceId"].text,
+                                      epoch: state["remoteCwEpoch"].whole,
+                                      active: state["remoteCwActive"].flag)
+            }
+            // An older Core sends none of the hold: unheld.
+            next.rfHeld = state["rfHeld"].flag ?? false
+            next.rfHeldReason = state["rfHeldReason"].text ?? ""
+            next.rfHoldSerial = UInt64(max(state["rfHoldSerial"].whole ?? 0, 0))
+            next.rfLastHoldMs = state["rfLastHoldMs"].whole ?? 0
             set(\.forwardWatts, state["forwardPowerWatts"].number ?? 0)
             set(\.swr, state["swr"].number ?? 1)
             set(\.micLevelDb, state["micLevelDb"].number ?? -400)
@@ -2034,6 +2138,9 @@ final class TransmitModel: ObservableObject {
         txStateOnAir = next.keyed || state?["tuning"].flag == true || state?["twoTone"].flag == true
         if next != report {
             report = next
+            if mirror.isSnapshotComplete && !mirror.isStale {
+                remoteCwLease.observe(next.remoteCw, thisDeviceId: thisDeviceId)
+            }
             updateTransmittingHere()
             if state != nil {
                 let controller = controller
@@ -2045,6 +2152,7 @@ final class TransmitModel: ObservableObject {
             }
         }
         updateTransmittingHere()
+        observeHold(state)
         if state != nil {
             let holder = (next.holderEpoch, next.holderAway)
             if let last = lastHolder, last != holder {

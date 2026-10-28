@@ -189,7 +189,7 @@ import Testing
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 1, "remoteCw": 1, "cwSettings": 1])
+                                  "roundtable": 1, "remoteCw": 2, "cwSettings": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

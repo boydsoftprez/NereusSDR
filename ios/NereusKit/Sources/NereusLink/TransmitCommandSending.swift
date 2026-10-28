@@ -1,5 +1,8 @@
 // NereusSDR for iOS: how the PTT reaches the Core: the keying verbs and the keepalive
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Foundation
 
@@ -54,17 +57,24 @@ public final class TransmitHeartbeatGate: @unchecked Sendable {
     private var open = false
     private var retired = false
 
-    public init() {}
+    private let authorities: [CommandSendPermit]
+
+    public init(authorities: [CommandSendPermit] = []) { self.authorities = authorities }
 
     public func setOpen(_ value: Bool) { lock.withLock { open = value && !retired } }
     public func retire() { lock.withLock { retired = true; open = false } }
-    public var isOpen: Bool { lock.withLock { open } }
+    public var isOpen: Bool { lock.withLock { open && !authorities.contains { $0.isRevoked } } }
 
     public func handoff(_ send: () throws -> Bool) rethrows -> Bool {
         try lock.withLock {
             guard open else { return false }
-            return try send()
+            return try handoffAuthority(0, send)
         }
+    }
+
+    private func handoffAuthority(_ index: Int, _ send: () throws -> Bool) rethrows -> Bool {
+        guard index < authorities.count else { return try send() }
+        return try authorities[index].handoff { try handoffAuthority(index + 1, send) }
     }
 }
 
@@ -81,6 +91,10 @@ public protocol TransmitCommandSending: Sendable {
     /// Sends `tx.keepalive {sequence, epoch}` once, without waiting for its
     /// answer (section 18.7).
     func sendKeepalive(sequence: Int64, epoch: Int64) async
+    /// CW v2 carries the same record to every open heartbeat path.
+    func sendKeepalive(sequence: Int64, epoch: Int64, cwEpoch: Int64,
+                       gate: TransmitHeartbeatGate,
+                       stillAllowed: @escaping @Sendable () async -> Bool) async
     /// Rechecks the controller's fence after any suspension before handoff.
     func sendKeepalive(sequence: Int64, epoch: Int64,
                        gate: TransmitHeartbeatGate,
@@ -88,6 +102,12 @@ public protocol TransmitCommandSending: Sendable {
 }
 
 public extension TransmitCommandSending {
+    func sendKeepalive(sequence: Int64, epoch: Int64, cwEpoch: Int64,
+                       gate: TransmitHeartbeatGate,
+                       stillAllowed: @escaping @Sendable () async -> Bool) async {
+        await sendKeepalive(sequence: sequence, epoch: epoch, gate: gate, stillAllowed: stillAllowed)
+    }
+
     /// Compatibility for in-memory conformers. A transport implementation must
     /// carry authority to its final synchronous handoff, as TransmitCommandClient does.
     func send(_ verb: TransmitVerb, copies: Int, authority: CommandSendPermit) async -> TransmitPending {

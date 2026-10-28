@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the PTT's state machine: keying, releasing, the keepalive and what the Core says of transmit
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Foundation
 import os
@@ -201,6 +204,37 @@ public actor PttController {
     private var generation = 0
     /// The key's epoch, once its answer came.
     private var keyEpoch: Int64?
+    private var remoteCwEpoch: Int64?
+    private var remoteCwAuthority: CommandSendPermit?
+    private var remoteCwRevision = 0
+
+    public var sessionGeneration: Int { session }
+
+    /// nil retires CW; zero keeps only a pending eligible request alive.
+    public func setRemoteCwActivity(epoch: Int64?, session expected: Int) async {
+        await setRemoteCwActivity(epoch: epoch, session: expected, authority: CommandSendPermit())
+    }
+
+    public func setRemoteCwActivity(epoch: Int64?, session expected: Int,
+                                    authority: CommandSendPermit) async {
+        guard expected == session, linkUp, !authority.isRevoked,
+              epoch == nil || (epoch! >= 0 && epoch! <= Int64(UInt32.max)) else { return }
+        let changedEpoch = epoch != remoteCwEpoch
+        remoteCwEpoch = epoch
+        remoteCwAuthority = authority
+        remoteCwRevision += 1
+        // Retire captured old tuples even when the surviving microphone keeps
+        // the same timer/grid. The new gate is tied to this CW admission.
+        heartbeatGate.retire()
+        heartbeatGate = TransmitHeartbeatGate(authorities: epoch == nil ? [] : [authority])
+        changed()
+        // Pending starts send immediately with CW epoch zero; acceptance
+        // sends again with the exact server epoch on the same sequence/grid.
+        if changedEpoch, epoch != nil {
+            await sendHeartbeat(keepaliveToken)
+        }
+    }
+
     /// The radio was seen on the air for this key.
     private var sawKeyed = false
     /// A stop the Core reported while the key's answer was on its way.
@@ -523,6 +557,9 @@ public actor PttController {
         heartbeatGate.retire()
         heartbeatGate = TransmitHeartbeatGate()
         session += 1
+        remoteCwEpoch = nil
+        remoteCwAuthority = nil
+        remoteCwRevision += 1
         generation += 1
         graceTimer?.cancel()
         graceTimer = nil
@@ -567,6 +604,9 @@ public actor PttController {
         heartbeatGate.retire()
         heartbeatGate = TransmitHeartbeatGate()
         session += 1
+        remoteCwEpoch = nil
+        remoteCwAuthority = nil
+        remoteCwRevision += 1
         generation += 1
         linkUp = false
         keepaliveTimer?.cancel()
@@ -1057,7 +1097,9 @@ public actor PttController {
     /// The epoch the keepalive carries: the key's, or 4294967295 while its
     /// answer has not come and for VOX alone.
     private var keepaliveEpoch: Int64 {
-        snapshot.state.isKeyed ? keyEpoch ?? Self.unansweredEpoch : Self.unansweredEpoch
+        // CW-only liveness must not renew a microphone key being released.
+        if remoteCwWanted, !keyKeepaliveWanted { return 0 }
+        return snapshot.state.isKeyed ? keyEpoch ?? Self.unansweredEpoch : Self.unansweredEpoch
     }
 
     private var microphoneWanted: Bool {
@@ -1072,7 +1114,15 @@ public actor PttController {
         }
     }
 
+    private var remoteCwWanted: Bool {
+        remoteCwEpoch != nil && remoteCwAuthority?.isRevoked == false
+    }
+
     private var keepaliveWanted: Bool {
+        linkUp && (remoteCwWanted || keyKeepaliveWanted)
+    }
+
+    private var keyKeepaliveWanted: Bool {
         guard linkUp, unresolvedOffs.isEmpty, !failedOff else {
             return false
         }
@@ -1089,6 +1139,10 @@ public actor PttController {
         if !wanted {
             heartbeatGate.retire()
             heartbeatGate = TransmitHeartbeatGate()
+        }
+        if wanted, !heartbeatGate.isOpen {
+            heartbeatGate.retire()
+            heartbeatGate = TransmitHeartbeatGate(authorities: remoteCwWanted ? [remoteCwAuthority!] : [])
         }
         heartbeatGate.setOpen(wanted)
         if wanted, keepaliveTimer == nil {
@@ -1121,17 +1175,24 @@ public actor PttController {
             return
         }
         scheduleKeepalive(token)
+        await sendHeartbeat(token)
+    }
+
+    private func sendHeartbeat(_ token: Int) async {
+        guard keepaliveWanted else { return }
         sequence += 1
         let currentSession = session
+        let cwRevision = remoteCwRevision
         await commands.sendKeepalive(sequence: sequence, epoch: keepaliveEpoch,
+                                     cwEpoch: remoteCwWanted ? remoteCwEpoch ?? 0 : 0,
                                      gate: heartbeatGate) { [weak self] in
             guard let self else { return false }
-            return await self.keepaliveAllowed(token: token, session: currentSession)
+            return await self.keepaliveAllowed(token: token, session: currentSession, cwRevision: cwRevision)
         }
     }
 
-    private func keepaliveAllowed(token: Int, session expected: Int) -> Bool {
-        token == keepaliveToken && expected == session && keepaliveWanted
+    private func keepaliveAllowed(token: Int, session expected: Int, cwRevision: Int) -> Bool {
+        token == keepaliveToken && expected == session && cwRevision == remoteCwRevision && keepaliveWanted
     }
 
     private func registerOff() -> Int {

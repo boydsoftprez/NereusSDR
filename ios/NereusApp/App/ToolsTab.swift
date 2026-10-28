@@ -304,7 +304,7 @@ struct ToolsTab: View {
                 DiversityPage(model: $0)
             }
         case .cwx:
-            ToolScreen(model: CwxModel(mirror: app.mirror, commands: app.commands)) {
+            ToolScreen(model: CwxModel(mirror: app.mirror, commands: app.commands, lease: app.main.transmit.remoteCwLease)) {
                 CwxPage(model: $0, take: app.main.take)
             }
         case .tciServer:
