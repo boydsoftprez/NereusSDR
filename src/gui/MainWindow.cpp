@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Left and Right move the active pan's flag by its tune
+//               step, from the application key filter, unless a text
+//               field has the keyboard. macOS marks those keys as keypad
+//               keys. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - Text overlay slice tokens: refreshContainerMeter gives
 //                 each text overlay the VfoSliceState of every open slice
 //                 (the VFO display's feed, sliceStateFor), none for an
@@ -9309,6 +9313,10 @@ void MainWindow::buildUI()
         m_containerManager->onSliceOpenChanged(existing->sliceIndex(), true);
     }
     installEventFilter(this);
+    // Left and Right are delivered to whichever child has focus. The pan
+    // is a native Metal view and often is not that child, so the window
+    // watches every key and moves the active flag itself.
+    qApp->installEventFilter(this);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
         // While every change is refused the notice that stays up says so,
         // and what to do; a toast on top would repeat it.
@@ -17747,6 +17755,41 @@ void MainWindow::bindRemoteCwx()
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Left and Right move the active flag. A text field keeps the keys.
+    // macOS sets KeypadModifier on the arrow keys, so that bit is ignored.
+    if (event->type() == QEvent::KeyPress && m_panStack && m_radioModel
+        && QApplication::activePopupWidget() == nullptr) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const Qt::KeyboardModifiers mods = key->modifiers() & ~Qt::KeypadModifier;
+        if ((key->key() == Qt::Key_Left || key->key() == Qt::Key_Right)
+            && mods == Qt::NoModifier) {
+            bool typing = false;
+            for (QWidget* w = QApplication::focusWidget(); w; w = w->parentWidget()) {
+                if (qobject_cast<QLineEdit*>(w) || qobject_cast<QAbstractSpinBox*>(w)
+                    || qobject_cast<QComboBox*>(w) || qobject_cast<QPlainTextEdit*>(w)
+                    || qobject_cast<QTextEdit*>(w)) {
+                    typing = true;
+                    break;
+                }
+            }
+            if (!typing) {
+                SliceModel* slice = activeSliceForWindow();
+                QString panId = slice ? windowPanFor(slice) : QString();
+                if (panId.isEmpty()) {
+                    panId = m_panStack->activePanId();
+                }
+                PanadapterApplet* pan = m_panStack->panadapter(panId);
+                if (!pan) {
+                    pan = m_panStack->panadapter(m_panStack->activePanId());
+                }
+                if (SpectrumWidget* spectrum = pan ? pan->spectrumWidget() : nullptr) {
+                    spectrum->stepActiveFlag(key->key() == Qt::Key_Right ? 1 : -1);
+                    return true;
+                }
+            }
+        }
+    }
+
     // Container Settings' Minimizes: floating containers follow this
     // window's minimize and restore.
     if (watched == this && event->type() == QEvent::WindowStateChange && m_containerManager

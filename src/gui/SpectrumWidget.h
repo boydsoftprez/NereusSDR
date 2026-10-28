@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-10-28  J.J. Boyd (KG4VCF), AI-assisted via xAI Grok: Left and
+//                 Right move the pan's active flag by its tune step
+//                 (keyPressEvent, flagForArrowTune). A click on the pan
+//                 or a flag gives the pan the keyboard.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //                 overlayTargetBlend(), the GPU overlay's premultiplied
 //                 blend, so a test can composite as the GPU path does.
@@ -2353,6 +2357,9 @@ public:
     // ---- Tuning step ----
     void setStepSize(int hz) { m_stepHz = hz; }
     int  stepSize() const { return m_stepHz; }
+    /// Move this pan's active flag by `direction` tune steps. Negative is
+    /// down in frequency. A locked, listened, or transmit view does not move.
+    void stepActiveFlag(int direction);
 
     // ---- VFO flag widgets (AetherSDR pattern) ----
     VfoWidget* addVfoWidget(int sliceIndex);
@@ -3287,6 +3294,7 @@ protected:
     /// ignored elsewhere so PanadapterApplet still gets the pan menu.
     void contextMenuEvent(QContextMenuEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
 private:
@@ -4989,6 +4997,9 @@ private:
     ReceiverDrag m_receiverDrag;
     bool m_flagDragActive{false};
     void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz, int pressX);
+    /// The flag Left and Right tune: the active slice's flag on this pan,
+    /// else the front flag, else the only flag.
+    VfoWidget* flagForArrowTune() const;
     void moveReceiverDrag(int mx, const QRect& specRect);
 
     // Wheel and trackpad steps for every wheel branch (2026-10-18).
