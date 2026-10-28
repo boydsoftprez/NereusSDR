@@ -33,8 +33,8 @@ jobs:
         test -z "$(git status --porcelain)"
         shasum -a 256 \
           ios/NereusApp/App/AppModel.swift \
-  ios/NereusApp/Band/BandSlicesModel.swift \
-  ios/NereusApp/Main/MainScreenModel.swift \
+          ios/NereusApp/Band/BandSlicesModel.swift \
+          ios/NereusApp/Main/MainScreenModel.swift \
           ios/NereusApp/App/SessionEventLanes.swift \
           ios/NereusApp/Tests/SessionEventLanesTests.swift \
           ios/NereusKit/Sources/NereusMedia/MediaControlClient.swift \
