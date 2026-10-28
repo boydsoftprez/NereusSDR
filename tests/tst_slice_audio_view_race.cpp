@@ -26,6 +26,9 @@
 //                                    changes listen levels (run under TSan)
 //
 // Modification history (NereusSDR):
+//   2026-10-28 - Count output without retaining unbounded PCM in this race
+//                harness. All churn/data-feed assertions are unchanged.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-29 - Slice control plan Task 6: the AF level in the view and the
 //                listen churn stress. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -77,10 +80,32 @@ struct FeederStop {
     }
 };
 
+// This harness observes routing and concurrent slice membership, not PCM
+// contents. Its unpaced stress feeder must not retain every output block
+// in FakeAudioBus's growable capture buffer.
+class CountingAudioBus final : public FakeAudioBus {
+public:
+    using FakeAudioBus::FakeAudioBus;
+
+    qint64 push(const char* data, qint64 bytes) override
+    {
+        if (!isOpen() || data == nullptr || bytes <= 0) {
+            return 0;
+        }
+        m_pushCount.fetch_add(1, std::memory_order_relaxed);
+        return bytes;
+    }
+
+    int pushCount() const { return m_pushCount.load(std::memory_order_relaxed); }
+
+private:
+    std::atomic<int> m_pushCount{0};
+};
+
 struct Harness {
     std::unique_ptr<RadioModel> radio;
     AudioEngine* engine{nullptr};
-    FakeAudioBus* speakers{nullptr};
+    CountingAudioBus* speakers{nullptr};
 };
 
 Harness makeHarness()
@@ -88,7 +113,7 @@ Harness makeHarness()
     Harness h;
     h.radio = std::make_unique<RadioModel>();
     h.engine = h.radio->audioEngine();
-    auto speakers = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
+    auto speakers = std::make_unique<CountingAudioBus>(QStringLiteral("FakeSpeakers"));
     AudioFormat fmt;
     fmt.sampleRate = 48000;
     fmt.channels = 2;
@@ -125,6 +150,7 @@ private slots:
         QCOMPARE(h.speakers->pushCount(), pushes);
         h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
         QCOMPARE(h.speakers->pushCount(), pushes + 1);
+        QVERIFY(h.speakers->buffer().isEmpty()); // successful output retains no PCM
     }
 
     void audioViewFollowsTheSlice()
