@@ -229,7 +229,7 @@ public struct BandLineDraws: Equatable, Sendable {
         if stacked {
             return (dirty || flowing) && cadence.take(at: now, interval: interval, frame: frame)
         }
-        return linesPut > 0 || dirty
+        return linesPut > 0 || dirty || flowing
     }
 
     /// The link woke: the next frame draws.

@@ -6,6 +6,7 @@ import CoreGraphics
 import Foundation
 import NereusBand
 import NereusMedia
+import QuartzCore
 @testable import NereusSDR
 import SwiftUI
 import Testing
@@ -36,6 +37,115 @@ struct BandRowClockTests {
         band.receive(.context(try #require(BandFlagShotTests.context())))
         _ = band.prepareToDraw(size: CGSize(width: 400, height: 800), scale: 1)
         return band
+    }
+
+    @Test("10 ms moves 100 logical points per second on screen at any received cadence", arguments: [10, 30, 60])
+    func visualTimeScaleOnScreen(fps: Int) async throws {
+        let band = try Self.band(stacked: false)
+        band.settings.waterfallPeriodMs = 10
+        band.receive(.context(try #require(BandFlagShotTests.context(fps: fps))))
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 874))
+        window.rootViewController = ShotHosting.host(BandView(model: band).ignoresSafeArea())
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let ready = try await ShotWait.requireBandLaidOut(band, in: window)
+        let origin = CACurrentMediaTime() + 1
+        var now = origin
+        band.lineClock = { now }
+        let traces = BandFlagShotTests.traces(width: 128, lines: fps * 8,
+            low: BandFlagShotTests.centre - BandFlagShotTests.span / 2, stations: BandFlagShotTests.stations)
+        var next = 1
+        var before: Double?
+        for tick in 0...480 {
+            let displayTime = origin + Double(tick) / 60
+            while next <= fps * 8 && origin + Double(next) / Double(fps) <= displayTime + 1e-8 {
+                now = origin + Double(next) / Double(fps)
+                let line = traces[next - 1]
+                band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
+                    encoderSequence: UInt32(next), producerTimestamp: UInt64(next) * UInt64(1_000_000_000 / fps),
+                    isKeyframe: next == 1, waterfallAdvance: true, minDbm: -160, maxDbm: 0,
+                    traceDbm: line, waterfallDbm: line, wideDbm: [])))
+                next += 1
+            }
+            now = displayTime
+            band.advanceLines(at: now, frameSeconds: Self.frame)
+            if tick == 420 { before = band.waterfallTimeAxis?.topTime }
+        }
+        #expect(band.pacingLines)
+        let after = try #require(band.waterfallTimeAxis)
+        #expect(abs(after.topTime - (try #require(before)) - 1) < 0.00001)
+        #expect(band.state.history.linesAppended <= UInt64(fps * 8))
+        #expect(band.state.history.linesAppended + UInt64(band.state.linesWaiting) == UInt64(fps * 8))
+        for scale in [1.0, 3.0] {
+            _ = band.prepareToDraw(size: CGSize(width: 402 * scale, height: 874 * scale), scale: scale)
+            let axis = try #require(band.overlays(scale: scale).waterfallTimeAxis)
+            let old = WaterfallTimeAxis(topTime: axis.topTime - 1, periodMs: 10)
+            let age = min(fps, band.state.history.count - 1)
+            let distance = try #require(axis.yPoints(age: age, history: band.state.history))
+                - #require(old.yPoints(age: age, history: band.state.history))
+            #expect(abs(distance - 100) < 0.00001)
+        }
+        // Holding freezes the visual head even when the display link advances.
+        band.paused = true
+        let frozen = band.waterfallTimeAxis
+        now += 1
+        band.advanceLines(at: now, frameSeconds: Self.frame)
+        #expect(band.waterfallTimeAxis == frozen)
+        band.paused = false
+        band.lookBack(lines: 10, visibleLines: 1)
+        let anchor = band.waterfallTimeAxis?.topTime
+        let rowTime = band.topLineTime
+        // A later Core FPS changes only future periods, never this older anchor.
+        band.receive(.context(try #require(BandFlagShotTests.context(fps: fps == 10 ? 30 : 10))))
+        now += 0.1
+        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(next))))
+        band.advanceLines(at: now + 0.2, frameSeconds: Self.frame)
+        #expect(band.waterfallTimeAxis?.topTime == anchor)
+        #expect(band.topLineTime == rowTime)
+        if fps == 30, let directory = ProcessInfo.processInfo.environment["NEREUS_BAND_SHOTS"], !directory.isEmpty {
+            // The same hosted fixture supplies a review image, with no product-only screenshot hooks.
+            band.goLive()
+            band.settings.waterfallStopOnTx = true
+            band.keyed = true
+            try await ShotWait.requireBandShown(band, in: window, after: ready)
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let data = try #require(image.pngData())
+            try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("waterfall-10ms-30fps.png"))
+        }
+    }
+
+    @Test("rewind reaches old low-FPS history through a newer high-FPS viewport")
+    func mixedRateRewindReachesOlderHistory() throws {
+        let band = try Self.band(stacked: false)
+        band.settings.waterfallPeriodMs = 10
+        var now = 1000.0
+        band.lineClock = { now }
+        band.receive(.context(try #require(BandFlagShotTests.context(fps: 10))))
+        for sequence in 0..<100 {
+            now = 1000 + Double(sequence) / 10
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence + 1))))
+        }
+        band.receive(.context(try #require(BandFlagShotTests.context(fps: 60))))
+        for sequence in 0..<300 {
+            now = 1010 + Double(sequence) / 60
+            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence + 101))))
+        }
+        _ = band.prepareToDraw(size: CGSize(width: 400, height: 800), scale: 1)
+        #expect(band.state.history.count == 400)
+        #expect(band.mostLookBackSeconds >= 10)
+        band.lookBack(seconds: 10)
+        #expect(band.lookBackLines >= 349 && band.lookBackLines <= 351)
+        #expect(abs(band.lookBackElapsedSeconds - 10) <= 0.1)
+        let anchor = band.waterfallTimeAxis?.topTime
+        now += 1.0 / 60
+        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: 401)))
+        #expect(band.waterfallTimeAxis?.topTime == anchor)
+        // A line-based drag must reach the same timed destination, too.
+        band.goLive()
+        band.lookBack(lines: 351, visibleLines: band.visibleLines)
+        #expect(band.lookBackLines == 351)
     }
 
     @Test("the model's lines go in every second frame, and the 3D glide reads the clock")
@@ -99,6 +209,8 @@ struct BandRowClockTests {
             band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence))))
             band.advanceLines(at: now, frameSeconds: Self.frame)
         }
+        // A short viewport leaves older observations available for rewind.
+        _ = band.prepareToDraw(size: CGSize(width: 400, height: 40), scale: 1)
         band.lookBack(lines: 10, visibleLines: 5)
         #expect(band.lookBackLines == 10)
         let before = band.state.history.linesAppended

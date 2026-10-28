@@ -292,12 +292,13 @@ public struct BandState: Equatable, Sendable {
         /// When it was committed: on the steady clock, and in seconds since
         /// 1970 for the waterfall's time readout.
         let arrivedAt: Double
+        let period: Double
         let arrivedWall: Double
     }
 
     /// One line into the waterfall and, with 3D chosen, the stack's fold.
     private mutating func put(_ line: WaitingLine, at steadyNow: Double) {
-        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall)
+        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.arrivedAt, presentationPeriod: line.period)
         foldIntoStack(line.frame, coverage: line.coverage, wide: line.wide, transmitting: line.transmitting)
         if tracesLines {
             putLines.append(PutLine(sequence: line.frame.encoderSequence, arrivedAt: line.arrivedAt,
@@ -429,7 +430,7 @@ public struct BandState: Equatable, Sendable {
                 .adjusted(by: levelAdjustment)
             waitingLines.append(WaitingLine(frame: waiting, line: waterfall, levels: levels, coverage: coverage,
                 wide: wideContexts[waiting.contextGeneration], transmitting: transmittingWaterfall,
-                arrivedAt: steady, arrivedWall: clock()))
+                arrivedAt: steady, period: linePeriodSeconds, arrivedWall: clock()))
             while waitingLines.count > Self.mostLinesWaiting {
                 put(waitingLines.removeFirst(), at: steady)
             }
@@ -450,7 +451,7 @@ public struct BandState: Equatable, Sendable {
                 waterfallDbm: waterfall, wideDbm: waiting.wideDbm)
             let added = history.append(frame: painted, extras: pendingExtras, manualLevels: manualLevels,
                                        coverage: coverage, adjustment: levelAdjustment, phoneLevels: phoneSetsLevels,
-                                       time: now)
+                                       time: now, presentationTime: steady, presentationPeriod: linePeriodSeconds)
             foldIntoStack(waiting, coverage: coverage, wide: wideContexts[waiting.contextGeneration],
                           transmitting: transmittingWaterfall)
             if added && tracesLines {

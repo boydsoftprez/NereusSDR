@@ -503,10 +503,10 @@ final class DisplaySheetModel: ObservableObject {
 
     /// Look back: the seconds the waterfall is looked back from its newest
     /// line, 0 while live, up to what it holds less one screen.
-    var lookBackSeconds: Double { Double(band.lookBackLines) * band.secondsPerLine }
+    var lookBackSeconds: Double { band.lookBackElapsedSeconds }
 
     var lookBackRange: StationCatalog.Range {
-        let most = Double(max(0, band.state.history.count - band.visibleLines)) * band.secondsPerLine
+        let most = band.mostLookBackSeconds
         return StationCatalog.Range(min: 0, max: max(most.rounded(.down), 0), step: 1)
     }
 
@@ -514,7 +514,7 @@ final class DisplaySheetModel: ObservableObject {
         guard seconds.isFinite else {
             return
         }
-        band.lookBack(lines: Int((max(0, seconds) / band.secondsPerLine).rounded()), visibleLines: band.visibleLines)
+        band.lookBack(seconds: max(0, seconds))
         changed()
     }
 

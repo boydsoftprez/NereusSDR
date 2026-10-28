@@ -32,6 +32,7 @@ final class BandModel: ObservableObject {
     var endpointId: UInt32? {
         didSet {
             if endpointId != oldValue {
+                if oldValue != nil { freezeWaterfall() }
                 flushLines()
                 lastBinGrant = nil
                 gridTracker.retireClarityFloor()
@@ -459,7 +460,14 @@ final class BandModel: ObservableObject {
         }
     }
     /// The display is suspended for want of room: the frozen band shows paused.
-    @Published var paused = false
+    @Published var paused = false {
+        didSet {
+            if paused { freezeWaterfall() }
+            else if !state.waterfallHeld { frozenWaterfallTop = nil }
+        }
+    }
+    private var frozenWaterfallTop: Double?
+    private var lastWaterfallTop: Double?
     /// The endpoint width to ask for: the view's width in pixels.
     @Published private(set) var requestedPixels = 1
     /// The endpoint context's centre and span: what the Core's frames cover.
@@ -614,6 +622,7 @@ final class BandModel: ObservableObject {
     /// The settings the band's state follows between frames.
     private func applyToState() {
         if keyed && settings.waterfallStopOnTx && !state.waterfallHeld {
+            freezeWaterfall()
             // The lines from before the hold go in before it.
             flushLines()
         }
@@ -623,7 +632,9 @@ final class BandModel: ObservableObject {
         // Manual/Scale and TX use local values, never a stale prior Core pair.
         state.phoneSetsLevels = drawn.waterfallLevelMode == .scale
             || drawn.waterfallLevelMode == .manual || transmitOverlay
-        state.waterfallHeld = keyed && settings.waterfallStopOnTx
+        let held = keyed && settings.waterfallStopOnTx
+        if state.waterfallHeld && !held && !paused { frozenWaterfallTop = nil }
+        state.waterfallHeld = held
         state.peakHoldDelayMs = settings.peakHold ? settings.peakHoldDelayMs : nil
         // The rows are kept while 3D is chosen on a Core that offers it.
         state.waterfallBlanking = settings.waterfallBlanking
@@ -663,7 +674,15 @@ final class BandModel: ObservableObject {
     /// Looks back `lines` lines at the waterfall (0 goes back to live),
     /// within what it holds less one screen.
     func lookBack(lines: Int, visibleLines: Int) {
-        let most = max(0, state.history.count - visibleLines)
+        let most: Int
+        if state.history.hasPresentationTimeline,
+           let oldest = state.history.presentationTime(age: state.history.count - 1),
+           let newest = state.history.presentationTime(age: 0) {
+            let axis = WaterfallTimeAxis(topTime: newest, periodMs: settings.waterfallPeriodMs)
+            most = axis.nearestAge(at: min(newest, oldest + visibleWaterfallSeconds), history: state.history) ?? 0
+        } else {
+            most = max(0, state.history.count - visibleLines)
+        }
         let next = min(max(0, lines), most)
         if next != lookBackLines {
             lookBackLines = next
@@ -684,7 +703,60 @@ final class BandModel: ObservableObject {
     }
 
     /// When the waterfall's top line arrived (the newest while live).
-    var topLineTime: Double? { state.history.time(age: lookBackLines) }
+    var topLineTime: Double? {
+        let age = waterfallTimeAxis.flatMap { $0.age(at: $0.topTime, history: state.history) } ?? lookBackLines
+        return state.history.time(age: age)
+    }
+
+    /// Requested milliseconds per logical point, separately from the Core's actual RF row period.
+    var waterfallTimeAxis: WaterfallTimeAxis? {
+        let history = state.history
+        guard history.hasPresentationTimeline else { return nil }
+        let top: Double?
+        if lookBackLines > 0 { top = history.presentationTime(age: lookBackLines) }
+        else if let frozenWaterfallTop { top = frozenWaterfallTop }
+        else {
+            let phase = state.pacingLines && state.rowClock.anchored ? state.rowClock.progress : 1
+            let proposed = WaterfallTimeAxis.liveTop(history: history, progress: phase)
+            if let proposed {
+                let next = max(lastWaterfallTop ?? proposed, proposed)
+                lastWaterfallTop = next
+                top = next
+            } else { top = nil }
+        }
+        return top.map { WaterfallTimeAxis(topTime: $0, periodMs: settings.waterfallPeriodMs) }
+    }
+
+    private func freezeWaterfall() {
+        if frozenWaterfallTop == nil { frozenWaterfallTop = waterfallTimeAxis?.topTime }
+    }
+
+    var lookBackElapsedSeconds: Double {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0),
+              let anchor = state.history.presentationTime(age: lookBackLines) else {
+            return Double(lookBackLines) * secondsPerLine
+        }
+        return max(0, newest - anchor)
+    }
+
+    private var visibleWaterfallSeconds = 0.0
+    var mostLookBackSeconds: Double {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0),
+              let oldest = state.history.presentationTime(age: state.history.count - 1) else {
+            return Double(max(0, state.history.count - visibleLines)) * secondsPerLine
+        }
+        return max(0, newest - oldest - visibleWaterfallSeconds)
+    }
+
+    func lookBack(seconds: Double) {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0) else {
+            lookBack(lines: Int((seconds / secondsPerLine).rounded()), visibleLines: visibleLines)
+            return
+        }
+        let target = newest - min(max(seconds, 0), mostLookBackSeconds)
+        let axis = WaterfallTimeAxis(topTime: newest, periodMs: settings.waterfallPeriodMs)
+        lookBack(lines: axis.nearestAge(at: target, history: state.history) ?? 0, visibleLines: visibleLines)
+    }
 
     private func countFrame() {
         let now = clock()
@@ -752,6 +824,7 @@ final class BandModel: ObservableObject {
             }
             changed()
         case .mediaState(.closed), .mediaState(.failed):
+            freezeWaterfall()
             flushLines()
             state.discardPending()
             if binWidthHz != nil {
@@ -780,6 +853,7 @@ final class BandModel: ObservableObject {
                 // none: never drawn, so the band holds its last picture.
                 return
             }
+            if !paused && !state.waterfallHeld { frozenWaterfallTop = nil }
             notePacing()
             let lines = state.history.linesAppended
             state.receive(frame: frame, manualLevels: drawnSettings.phoneLevels, at: lineClock())
@@ -893,6 +967,7 @@ final class BandModel: ObservableObject {
                                     markers: markers, frameCoverage: state.frameCoverage)
         overlays.peakHold = state.peakHold
         overlays.lookBackLines = lookBackLines
+        overlays.waterfallTimeAxis = waterfallTimeAxis
         if drawsStack {
             overlays.stacked = StackedTraceOverlay(noiseFloorDbm: stackFloorDbm, glide: stackGlide(at: clock()),
                                                    availableSpanFactor: wideSpanFactorNow)
@@ -944,7 +1019,11 @@ final class BandModel: ObservableObject {
     func prepareToDraw(size: CGSize, scale: CGFloat) -> BandState {
         let layout = BandLayout(size: size, scale: scale, settings: shownSettings)
         state.resizeWaterfall(lines: Self.waterfallCapacity(size: size, scale: scale, settings: shownSettings))
-        visibleLines = layout.waterfallLines
+        visibleWaterfallSeconds = Double(layout.waterfallPoints) * Double(settings.waterfallPeriodMs) / 1000
+        if let axis = waterfallTimeAxis,
+           let bottom = axis.nearestAge(at: axis.topTime - visibleWaterfallSeconds, history: state.history) {
+            visibleLines = max(1, bottom - lookBackLines + 1)
+        } else { visibleLines = layout.waterfallLines }
         state.noteVisibleWaterfall(layout)
         state.commit(manualLevels: drawnSettings.phoneLevels, at: lineClock())
         moveMarks()
@@ -1087,6 +1166,8 @@ final class BandModel: ObservableObject {
 
     /// Starts over: a new session or a new endpoint.
     func reset() {
+        frozenWaterfallTop = nil
+        lastWaterfallTop = nil
         state.clear()
         stackFloorDbm = nil
         contextRevisions.removeAll()
