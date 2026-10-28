@@ -71,6 +71,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Split cumulative local/remote-hold fixture work into
+//               independent ctest entries, retaining every case/deadline.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 39 (D14, R-IOS-13,
 //               R-IOS-21), with AI-assisted implementation via Anthropic
@@ -124,6 +127,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "TestFunctionGroups.h"
 
 #include <QElapsedTimer>
 #include <QScopeGuard>
@@ -2109,5 +2113,33 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TstTransmitStateFacade)
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    TstTransmitStateFacade test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // The full binary made continuous progress through45 cases before
+    // ctest's120s aggregate limit on Linux. Each whole function (including
+    // all data rows) belongs to one entry; future functions default to rest.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_TRANSMIT_STATE_GROUP",
+        {{QStringLiteral("remote_holds"),
+          {QStringLiteral("aLinkHoldNeitherRestartsNorPausesTheTimeOut"),
+           QStringLiteral("aStarvedMicrophoneIsTheStarvationsStopWithItsReason"),
+           QStringLiteral("aQuietLinkHoldsTheKeyersRfAndKeepalivesEndIt"),
+           QStringLiteral("aStarvedMicrophoneHoldsUntilAudioReturns"),
+           QStringLiteral("aLinkAndAMicrophoneHoldAtOnceReadLinkAndEndTogether"),
+           QStringLiteral("moxReachingReceiveEndsAHold"),
+           QStringLiteral("aHoldForADeviceThatIsNotTheKeyerPublishesNothing"),
+           QStringLiteral("tuneOrTwoToneStartingReleasesAMicrophoneHold"),
+           QStringLiteral("aMicrophoneLineEndingMidKeyIsNoAudio"),
+           QStringLiteral("aNewLineDeliveringReleasesTheHoldAndCancelsTheCut"),
+           QStringLiteral("aNewLineThatNeverDeliversMovesNothing"),
+           QStringLiteral("aMicrophoneHoldWithNoRemoteKeyOnTheAirIsDeclined"),
+           QStringLiteral("aNewKeyEndsTheOldKeysMicrophoneHold"),
+           QStringLiteral("aPlainUnkeyIsNoMidKeyLineEnd"),
+           QStringLiteral("aModeChangeWhileStarvedJudgesTheHoldAgain"),
+           QStringLiteral("theReceiveClearForgetsAHoldItDidNotPublish")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_transmit_state_facade.moc"

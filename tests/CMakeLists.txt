@@ -10059,6 +10059,11 @@ nereus_add_test(tst_tx_meter_pump)
 nereus_add_test(tst_transmit_state_facade
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Continuous progress through45 cases exceeded the aggregate120s limit
+# in Linux CI. Retain the limit and every assertion; isolate whole remote
+# hold functions through TestFunctionGroups, like tst_station_session.
+nereus_split_test(tst_transmit_state_facade
+    ENV NEREUS_TRANSMIT_STATE_GROUP GROUPS remote_holds)
 # iPhone app Task 73 (R-IOS-02): whose each slice is (owners, held for,
 # adoption, each owner's active slice and the station-level one), and each
 # device's closed slices kept for its return.

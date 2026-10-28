@@ -172,6 +172,15 @@ public:
         const std::lock_guard<std::mutex> lock(m_mutex);
         return m_frozen && m_sleepingUntil == until;
     }
+    // Observe the sleeper's actual parked state without pumping Qt's
+    // queued callbacks or assuming freeze() already stopped its first tick.
+    bool waitUntilFrozen()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, 2s, [this]() {
+            return m_frozen && m_sleepingUntil.has_value();
+        });
+    }
     void thaw()
     {
         {
@@ -190,6 +199,7 @@ public:
                 m_frozen = true;
             }
             m_sleepingUntil = until;
+            m_cv.notify_all();
             m_cv.wait(lock, [this] { return !m_frozen; });
             m_sleepingUntil.reset();
         }
@@ -699,6 +709,10 @@ private slots:
         QCOMPARE(rig.model.cwxSendingFor(), device);
         rig.cwx()->stop(); // ended callback intentionally remains queued
         QVERIFY(rig.cwx()->sendText(QStringLiteral("ET"))); // actual local0 FIFO
+        // The first element may legitimately start before the frozen
+        // sleeper is reached. Park before taking the exact FIFO snapshot;
+        // waiting on the CV leaves the old ended callback queued.
+        QVERIFY2(time.waitUntilFrozen(), "sender did not reach the frozen sleeper");
         const int queued = rig.cwx()->queuedCharacters();
         QVERIFY(queued > 0);
         QVERIFY(rig.model.cwxSendingFor().isEmpty());
