@@ -1,3 +1,4 @@
+// NereusSDR for iOS: waterfall time-axis projection and readout tests
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 import Foundation
 import Testing
