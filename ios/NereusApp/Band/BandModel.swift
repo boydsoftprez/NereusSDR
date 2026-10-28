@@ -1,5 +1,7 @@
 // NereusSDR for iOS: one pan's band as the screens see it: the Core's display events in, what to draw out
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   carry the accepted waterfall frame divider for capture-row continuity.
 
 import Combine
 import Foundation
@@ -795,6 +797,7 @@ final class BandModel: ObservableObject {
             wideSpanFactorNow = context.spanHz > 0 ? max(1, context.wideSpanHz / context.spanHz) : 1
             contextFps = context.fps
             contextFramesPerLine = context.framesPerLine
+            state.lineFramesPerRow = context.framesPerLine
             // The row clock runs at the Core's line period, and only once it has said.
             let linePeriod = context.fps > 0 && context.framesPerLine > 0
                 ? Double(context.framesPerLine) / Double(context.fps) : 0

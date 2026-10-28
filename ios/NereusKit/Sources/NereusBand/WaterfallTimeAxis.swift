@@ -1,6 +1,8 @@
 // NereusSDR for iOS: the waterfall's visual time axis, independent of received RF row cadence
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-28.
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   use proven adjacent capture continuity without masking real capture gaps.
 
 import Foundation
 
@@ -48,6 +50,17 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
     private func valid(age: Int, at time: Double, history: WaterfallHistory) -> Bool {
         guard let here = history.presentationTime(age: age) else { return false }
         if let period = history.presentationPeriod(age: age) {
+            let neighbor = time < here ? age + 1 : age - 1
+            if history.presentationTime(age: neighbor) != nil {
+                // Consecutive advancing captures may land either side of a
+                // nominal slot on the Core's FFT sample grid. Their midpoint
+                // cells meet; no observation or captured timestamp is added.
+                if history.presentationContinuous(age: min(age, neighbor)) { return true }
+                // At a cadence transition the slower adjacent period owns
+                // this shared boundary. Larger actual capture gaps stay empty.
+                let boundaryPeriod = max(period, history.presentationPeriod(age: neighbor) ?? period)
+                return abs(time - here) <= boundaryPeriod / 2 + 0.000000001
+            }
             return abs(time - here) <= period / 2 + 0.000000001
         }
         let half = history.presentationTime(age: age - 1).map { max(0, $0 - here) / 2 } ?? secondsPerPoint / 2
