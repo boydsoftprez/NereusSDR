@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original accepted-value and ordering integration tests.
+// 2026-10-29 - Recreated Core receivers explicitly restore saved state;
+// preserve independently accepted receiver settings across restart.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -393,8 +396,11 @@ private slots:
             station.setBoardForTest(info.boardType);
             station.setLastRadioInfoForTest(info);
             station.setConnectionStateForTest(ConnectionState::Connected);
-            const int aId = station.addSlice();
-            const int bId = station.addSlice();
+            // The second epoch recreates startup receivers, as the daemon
+            // top-up does; an operator's fresh +RX deliberately inherits NR.
+            const bool restoringStartup = epoch == 1;
+            const int aId = station.addSlice(QString(), restoringStartup);
+            const int bId = station.addSlice(QString(), restoringStartup);
             QVERIFY(aId >= 0 && bId >= 0 && aId != bId);
             auto* coreA = station.sliceById(aId);
             auto* coreB = station.sliceById(bId);
@@ -438,6 +444,8 @@ private slots:
                 // no debounce timer or dialog close is needed to keep the edit.
                 station.flushPendingSettingsSave();
                 QVERIFY(station.settingsSaveError().isEmpty());
+                QCOMPARE(settings.value(coreB->nnrSettingsPrefix() + "NnrAlpha").toDouble(), 2.25);
+                QCOMPARE(settings.value(coreB->nnrSettingsPrefix() + "NnrReleaseMs").toDouble(), 83.5);
             } else {
                 QCOMPARE(coreA->nnrAlpha(), 1.75);
                 QCOMPARE(coreB->nnrAlpha(), 2.25);

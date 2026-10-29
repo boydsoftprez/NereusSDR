@@ -40,6 +40,9 @@
 // QCoreApplication, matching every other RadioModel-constructing test.
 //
 // Modification history (NereusSDR):
+//   2026-10-29: cover legacy startup top-up restoring independent saved
+//               receiver NR, tuning and DDC rate. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-09-20: cover DaemonApp's RadioModel teardown state relay,
 //               by J.J. Boyd (KG4VCF), with AI-assisted implementation
 //               via OpenAI Codex.
@@ -465,6 +468,76 @@ private slots:
         const SliceOwnership* ownership = app.m_radioModel->sliceOwnership();
         QCOMPARE(ownership->unowned(), (QList<int>{0, 1}));
         app.stop();
+    }
+
+    void configuredStartupRestoresEachSavedReceiversIndependentState()
+    {
+        AppSettings& settings = AppSettings::instance();
+        const QByteArray previous = settings.exportLocalXml();
+        QVERIFY(!previous.isEmpty());
+        const auto restoreSettings = qScopeGuard([&settings, previous] {
+            settings.importLocalXml(previous);
+            settings.save();
+        });
+        settings.clear();
+        const QString mac = QStringLiteral("AA:BB:CC:DD:EE:97");
+        settings.setLastConnected(mac);
+        {
+            SliceModel savedA;
+            savedA.setSliceIndex(0);
+            savedA.setSettingsRadioIdentity(mac);
+            savedA.setFrequency(14200000.0);
+            savedA.setDspMode(DSPMode::USB);
+            savedA.setNnrAlpha(1.75);
+            savedA.setActiveNr(NrSlot::Off);
+            savedA.saveToSettings(Band::Band20m);
+            SliceModel savedB;
+            savedB.setSliceIndex(1);
+            savedB.setSettingsRadioIdentity(mac);
+            savedB.setFrequency(7100000.0);
+            savedB.setDspMode(DSPMode::LSB);
+            savedB.setNnrAlpha(2.25);
+            savedB.setNnrReleaseMs(83.5);
+            savedB.setActiveNr(NrSlot::NNR);
+            savedB.setSampleRateHz(384000);
+            savedB.saveToSettings(Band::Band40m);
+        }
+        QVERIFY(settings.save());
+        settings.clear();
+        settings.load();
+        QCOMPARE(ReceiveLayoutStore::load(settings, mac).state,
+                 ReceiveLayoutStore::LoadState::Missing);
+
+        DaemonConfig cfg = testCoreConfig();
+        cfg.sliceCount = 2;
+        cfg.sampleRateHz = 192000;
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::Saturn, mac);
+        QVERIFY(app.start(cfg));
+        QCOMPARE(app.sliceCount(), 2);
+        auto* a = app.m_radioModel->sliceById(0);
+        auto* b = app.m_radioModel->sliceById(1);
+        QVERIFY(a && b);
+        QCOMPARE(a->nnrAlpha(), 1.75);
+        QCOMPARE(b->nnrAlpha(), 2.25);
+        QCOMPARE(b->nnrReleaseMs(), 83.5);
+        QCOMPARE(a->activeNr(), NrSlot::Off);
+        QCOMPARE(b->activeNr(), NrSlot::NNR);
+        QCOMPARE(a->frequency(), 14200000.0);
+        QCOMPARE(b->frequency(), 7100000.0);
+        QCOMPARE(b->dspMode(), DSPMode::LSB);
+        QVERIFY(app.m_radioModel->waitForReceiveLaneForTest());
+        QCOMPARE(b->sampleRateHz(), 384000);
+        QCOMPARE(app.m_radioModel->streamSampleRateHzForTest(b->streamIndex()), 384000);
+        QCOMPARE(app.m_radioModel->streamSampleRateHzForTest(a->streamIndex()), 192000);
+        app.stop();
+        settings.clear();
+        settings.load();
+        const QString prefix = QStringLiteral("hardware/%1/slices/1/nnr/")
+                                   .arg(AppSettings::normalizedRadioMac(mac));
+        QCOMPARE(settings.value(prefix + "NnrAlpha").toDouble(), 2.25);
+        QCOMPARE(settings.value(prefix + "NnrReleaseMs").toDouble(), 83.5);
+        QCOMPARE(settings.value(prefix + "NrActive").toInt(), static_cast<int>(NrSlot::NNR));
     }
 
     void createsConfiguredSliceCount()
