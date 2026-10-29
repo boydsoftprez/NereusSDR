@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28  J.J. Boyd (KG4VCF), AI-assisted via xAI Grok: Left and
+//                 Right, while the pan has the keyboard, move its active
+//                 flag by that flag's tune step. A click on the pan or a
+//                 flag focuses the pan. Locked, listened, and transmit
+//                 views do not move, as a drag of the flag does not.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 the GPU overlay pipeline composites its premultiplied
 //                 textures with a source factor of One, not SrcAlpha
@@ -682,6 +687,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFile>
@@ -825,6 +831,9 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
 
     setCursor(Qt::CrossCursor);
     setMouseTracking(true);
+    // A click focuses the pan so Left and Right can move its flag. The
+    // mouse overlay has no focus of its own; mousePressEvent takes it.
+    setFocusPolicy(Qt::ClickFocus);
 
     // QRhiWidget on macOS Metal does not deliver mouseMoveEvent without button press.
     // Workaround: a transparent QWidget overlay that receives mouse tracking events
@@ -13288,6 +13297,19 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
         case QEvent::Hide:
             markOverlayDirty();
             break;
+        case QEvent::MouseButtonPress:
+            // The flag takes the press for its drag. The pan still wants
+            // the keyboard, so the next Left or Right moves a flag.
+            setFocus(Qt::MouseFocusReason);
+            break;
+        case QEvent::KeyPress: {
+            auto* key = static_cast<QKeyEvent*>(ev);
+            if (key->key() == Qt::Key_Left || key->key() == Qt::Key_Right) {
+                keyPressEvent(key);
+                return true;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -13744,6 +13766,63 @@ SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
     return ReceiverGrab{};
 }
 
+VfoWidget* SpectrumWidget::flagForArrowTune() const
+{
+    VfoWidget* active = nullptr;
+    VfoWidget* front = nullptr;
+    VfoWidget* sole = nullptr;
+    int shown = 0;
+    for (auto it = m_vfoWidgets.cbegin(); it != m_vfoWidgets.cend(); ++it) {
+        VfoWidget* flag = it.value();
+        if (!flag) {
+            continue;
+        }
+        ++shown;
+        sole = flag;
+        if (flag->isActiveSlice()) {
+            active = flag;
+        }
+        if (flag->sliceIndex() == m_frontSliceIndex) {
+            front = flag;
+        }
+    }
+    if (active) {
+        return active;
+    }
+    if (front) {
+        return front;
+    }
+    return shown == 1 ? sole : nullptr;
+}
+
+void SpectrumWidget::stepActiveFlag(int direction)
+{
+    // Withheld while this pan shows transmit, and on a locked or listened
+    // flag, as a drag of the flag is (moveReceiverDrag).
+    VfoWidget* flag = flagForArrowTune();
+    if (!flag || m_moxOverlay || flag->isLocked() || flag->isListening()) {
+        return;
+    }
+    const int step = std::max(1, flag->stepHz());
+    const double hz = std::clamp(flag->frequency() + static_cast<double>(direction) * step,
+                                  100000.0, 61440000.0);
+    flag->tuneFromDrag(hz);
+}
+
+void SpectrumWidget::keyPressEvent(QKeyEvent* event)
+{
+    // macOS reports the arrow keys with KeypadModifier set. Treating that
+    // as "no modifiers" is what lets Left and Right move the flag.
+    const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
+    if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)
+        && mods == Qt::NoModifier) {
+        stepActiveFlag(event->key() == Qt::Key_Right ? 1 : -1);
+        event->accept();
+        return;
+    }
+    SpectrumBaseClass::keyPressEvent(event);
+}
+
 void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz,
                                        int pressX)
 {
@@ -13810,6 +13889,9 @@ void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
 
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
+    // The overlay forwards the press here and does not take focus itself.
+    setFocus(Qt::MouseFocusReason);
+
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
     // MainWindow to open the ConnectionPanel instead.
     if (m_connState != ConnectionState::Connected
