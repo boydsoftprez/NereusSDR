@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28 - A digit's wheel takes one step per mouse notch, or per
+//                 about 15 px of trackpad travel, through
+//                 WheelStepAccumulator. J.J. Boyd (KG4VCF), AI-assisted
+//                 via xAI Grok.
 //   2026-10-26 - Clicks, wheel, keys and screens by slice: the hit box
 //                 table, digit stepping and typed digits, the long press
 //                 (band stack, filter menu, tune step screen), the BAND,
@@ -74,6 +78,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/WheelStepAccumulator.h"
 #include "BandGroups.h"
 #include "core/WdspTypes.h"
 #include "models/Band.h"
@@ -394,6 +399,8 @@ private:
     QColor m_syncColour{0x32, 0xcd, 0x32};         // LimeGreen
     QColor m_backColour{0x0a, 0x0a, 0x18};
     bool m_showBandText{false};
+    // One digit step per mouse notch, or per about 15 px of trackpad travel.
+    WheelStepAccumulator m_wheelSteps;
 };
 
 // New VFO items (makeEntry) take Thetis's VFO display: the clsVfoDisplay
