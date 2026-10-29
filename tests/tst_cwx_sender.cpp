@@ -16,6 +16,9 @@
 // fake connections' own, and the fake connections send nothing.
 //
 // Modification history (NereusSDR):
+//   2026-10-29: Preallocate wall-clock edge recording and report the
+//               sender's actual Linux scheduling policy after timing.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Propose actual atomic mailbox behavioral RED cases for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: F7 review correction: stop the model during a controlled
@@ -48,6 +51,10 @@
 
 #if !defined(Q_OS_WIN)
 #include <stdlib.h>
+#endif
+#if defined(Q_OS_LINUX)
+#include <pthread.h>
+#include <sched.h>
 #endif
 
 #include "OperatorWording.h"
@@ -1254,13 +1261,28 @@ private slots:
     void testAt30KeysEachEdgeWithinTwoMs()
     {
         const double loadBefore = loadAverage1();
+        const auto expected = expectedEdges(QStringLiteral("TEST"), 40);
         auto line = std::make_shared<CwKeyLine>();
         std::mutex m;
         std::vector<std::pair<SteadyTime, bool>> edges;
+        edges.reserve(expected.size());
+#if defined(Q_OS_LINUX)
+        int senderPolicy = -1;
+        sched_param senderParameters{};
+        int senderPolicyResult = -1;
+#endif
         line->setOnChange([&]() {
             const SteadyTime t = std::chrono::steady_clock::now();
             const std::lock_guard<std::mutex> lock(m);
             edges.emplace_back(t, line->cwx());
+#if defined(Q_OS_LINUX)
+            // Timestamp first; query once on the actual sender thread and
+            // print only after the timed run, including on a failed edge.
+            if (edges.size() == 1) {
+                senderPolicyResult = pthread_getschedparam(pthread_self(), &senderPolicy,
+                                                           &senderParameters);
+            }
+#endif
         });
         CwxSender sender;
         sender.setKeyLine(line);
@@ -1273,7 +1295,10 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!sender.isSending(), 5000);
         sender.setKeyLine(nullptr);
 
-        const auto expected = expectedEdges(QStringLiteral("TEST"), 40);
+#if defined(Q_OS_LINUX)
+        qInfo("CWX real-time: sender pthread_getschedparam=%d policy=%d priority=%d",
+              senderPolicyResult, senderPolicy, senderParameters.sched_priority);
+#endif
         // The PTT delay leads the first key by whole elements, as Thetis:
         // 50 / 40 is one element at 30 WPM.
         constexpr qint64 kLeadMs = (CwxSender::kPttDelayMs / 40) * 40;
