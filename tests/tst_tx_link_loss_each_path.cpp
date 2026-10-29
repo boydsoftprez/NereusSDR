@@ -44,6 +44,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-28: Run microphone-starvation cases in a separate test process
+//               so their real-time waits do not exhaust the aggregate
+//               120 s limit. Every case and timing assertion is retained.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original test for NereusSDR by J.J. Boyd (KG4VCF), iPhone
 //               app plan Task 37 (R-IOS-13), with AI-assisted
 //               implementation via Anthropic Claude Code.
@@ -138,7 +142,9 @@
 
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "RealtimeTestLoad.h"
+#include "TestFunctionGroups.h"
 
+#include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
@@ -1892,5 +1898,17 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestTxLinkLossEachPath)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    TestTxLinkLossEachPath test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // Whole functions keep every data row together; future functions join
+    // rest. Both entries retain the real-time checks and 120 s limit.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_TX_LINK_LOSS_GROUP",
+        {{QStringLiteral("starvation"),
+          {QStringLiteral("starvationOnALiveLinkHoldsAmThenCutsEveryMode")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_tx_link_loss_each_path.moc"
