@@ -91,6 +91,7 @@ import NereusMedia
         let layout = history.layoutGeneration
         history.resize(capacity: 2)
         #expect(history.count == 2)
+        #expect(history.linesAppended == 4)
         #expect(Array(history.line(age: 0) ?? []) == [0, 0])
         #expect(Array(history.line(age: 1) ?? []) == [255, 255])
         #expect(history.layoutGeneration != layout)

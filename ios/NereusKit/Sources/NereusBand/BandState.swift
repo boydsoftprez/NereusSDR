@@ -165,9 +165,8 @@ public struct BandState: Equatable, Sendable {
             frameLock.reset()
         }
     }
-    /// Accepted frames per advancing waterfall row, from the endpoint context.
-    public var lineFramesPerRow = 1
     private var captureTimeline = CaptureTimeline()
+    private var breakBeforeNextLine = false
 
     /// Sender nanoseconds are never compared with the phone's clock. Only
     /// checked integer deltas are translated onto the first local anchor.
@@ -176,27 +175,18 @@ public struct BandState: Equatable, Sendable {
         private var localAnchor = 0.0
         private var lastStamp: UInt64?
         private var lastTime: Double?
-        private var lastRow: Row?
-        private struct Row: Equatable, Sendable {
-            let generation: UInt32
-            let sequence: UInt32
-            let framesPerRow: Int
-            let period: Double
-        }
 
         mutating func reset() {
             anchor = nil
             lastStamp = nil
-            lastRow = nil
         }
 
-        mutating func observe(_ frame: DisplayFrame, period: Double, framesPerRow: Int,
-                              at local: Double) -> (time: Double?, continuous: Bool) {
+        mutating func observe(_ frame: DisplayFrame, at local: Double) -> Double? {
             let stamp = frame.producerTimestamp
             guard stamp > 0, local.isFinite,
                   lastStamp.map({ stamp > $0 }) ?? true else {
                 reset()
-                return (nil, false)
+                return nil
             }
             if anchor == nil {
                 anchor = stamp
@@ -205,28 +195,11 @@ public struct BandState: Equatable, Sendable {
             let time = localAnchor + Double(stamp - anchor!) / 1_000_000_000
             guard time.isFinite, lastTime.map({ time > $0 }) ?? true else {
                 reset()
-                return (nil, false)
-            }
-            // SpectrumEndpoint chooses source FFT frames nearest its output
-            // slots. Quantized sample hops can straddle a nominal interval;
-            // do not call that a lost row. This is a bounded presentation
-            // heuristic, not proof that no RF samples were lost upstream.
-            // An entire extra row interval, an absent advancing sequence or
-            // a changed context/cadence keeps the nominal gap coverage.
-            var continuous = false
-            if let previous = lastRow, let lastStamp, period.isFinite, period > 0,
-               previous.period.isFinite, previous.period > 0,
-               framesPerRow > 0, framesPerRow <= Int(UInt32.max),
-               previous.framesPerRow == framesPerRow,
-               previous.generation == frame.contextGeneration,
-               frame.encoderSequence &- previous.sequence == UInt32(framesPerRow) {
-                continuous = Double(stamp - lastStamp) / 1_000_000_000 < 2 * max(period, previous.period)
+                return nil
             }
             lastStamp = stamp
             lastTime = time
-            lastRow = Row(generation: frame.contextGeneration, sequence: frame.encoderSequence,
-                          framesPerRow: framesPerRow, period: period)
-            return (time, continuous)
+            return time
         }
     }
     /// The clock the waiting lines go in by.
@@ -360,7 +333,7 @@ public struct BandState: Equatable, Sendable {
         /// 1970 for the waterfall's time readout.
         let arrivedAt: Double
         let captureTime: Double?
-        let captureContinuous: Bool
+        let breakBefore: Bool
         let period: Double
         let arrivedWall: Double
     }
@@ -369,7 +342,7 @@ public struct BandState: Equatable, Sendable {
     private mutating func put(_ line: WaitingLine, at steadyNow: Double) {
         // NaN explicitly preserves unknown capture metadata: nil would use
         // append's legacy wall-time fallback and invent a geometry clock.
-        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.captureTime ?? .nan, presentationPeriod: line.period, presentationContinuous: line.captureContinuous)
+        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.captureTime ?? .nan, presentationPeriod: line.period, presentationBreakBefore: line.breakBefore)
         foldIntoStack(line.frame, coverage: line.coverage, wide: line.wide, transmitting: line.transmitting)
         if tracesLines {
             putLines.append(PutLine(sequence: line.frame.encoderSequence, arrivedAt: line.arrivedAt,
@@ -422,8 +395,7 @@ public struct BandState: Equatable, Sendable {
             && lhs.waitingLines == rhs.waitingLines && lhs.lastAdvanceNs == rhs.lastAdvanceNs
             && lhs.linesSinceStackRow == rhs.linesSinceStackRow && lhs.tracesLines == rhs.tracesLines
             && lhs.putLines == rhs.putLines
-            && lhs.captureTimeline == rhs.captureTimeline
-            && lhs.lineFramesPerRow == rhs.lineFramesPerRow
+            && lhs.captureTimeline == rhs.captureTimeline && lhs.breakBeforeNextLine == rhs.breakBeforeNextLine
     }
 
     /// The latest contexts' coverage, by context generation.
@@ -488,9 +460,10 @@ public struct BandState: Equatable, Sendable {
             return
         }
         let coverage = contexts[waiting.contextGeneration]
-        let capture = waiting.waterfallAdvance && !waiting.waterfallDbm.isEmpty && !waterfallHeld
-            ? captureTimeline.observe(waiting, period: linePeriodSeconds, framesPerRow: lineFramesPerRow, at: steady)
-            : (time: nil as Double?, continuous: false)
+        let addsCapture = waiting.waterfallAdvance && !waiting.waterfallDbm.isEmpty && !waterfallHeld
+        let captureTime = addsCapture ? captureTimeline.observe(waiting, at: steady) : nil
+        let breakBefore = addsCapture && breakBeforeNextLine
+        if addsCapture { breakBeforeNextLine = false }
         if waterfallHeld {
             // The line is dropped, but the Core's levels are still noted.
             history.append(frame: waiting, extras: pendingExtras, manualLevels: manualLevels, coverage: coverage,
@@ -506,7 +479,7 @@ public struct BandState: Equatable, Sendable {
                 .adjusted(by: levelAdjustment)
             waitingLines.append(WaitingLine(frame: waiting, line: waterfall, levels: levels, coverage: coverage,
                 wide: wideContexts[waiting.contextGeneration], transmitting: transmittingWaterfall,
-                arrivedAt: steady, captureTime: capture.time, captureContinuous: capture.continuous,
+                arrivedAt: steady, captureTime: captureTime, breakBefore: breakBefore,
                 period: linePeriodSeconds, arrivedWall: clock()))
             while waitingLines.count > Self.mostLinesWaiting {
                 put(waitingLines.removeFirst(), at: steady)
@@ -528,8 +501,8 @@ public struct BandState: Equatable, Sendable {
                 waterfallDbm: waterfall, wideDbm: waiting.wideDbm)
             let added = history.append(frame: painted, extras: pendingExtras, manualLevels: manualLevels,
                                        coverage: coverage, adjustment: levelAdjustment, phoneLevels: phoneSetsLevels,
-                                       time: now, presentationTime: capture.time ?? .nan, presentationPeriod: linePeriodSeconds,
-                                       presentationContinuous: capture.continuous)
+                                       time: now, presentationTime: captureTime ?? .nan, presentationPeriod: linePeriodSeconds,
+                                       presentationBreakBefore: breakBefore)
             foldIntoStack(waiting, coverage: coverage, wide: wideContexts[waiting.contextGeneration],
                           transmitting: transmittingWaterfall)
             if added && tracesLines {
@@ -554,6 +527,13 @@ public struct BandState: Equatable, Sendable {
         pending = nil
         pendingExtras = nil
         captureTimeline.reset()
+        noteInterruption()
+    }
+
+    /// Marks a known missing stretch before the next committed waterfall
+    /// observation. Ordinary view/context changes never call this.
+    public mutating func noteInterruption() {
+        breakBeforeNextLine = true
     }
 
     /// The classic peak hold after `frame`: each sample's highest level,
@@ -611,6 +591,7 @@ public struct BandState: Equatable, Sendable {
         putLines.removeAll()
         history.clear()
         captureTimeline = CaptureTimeline()
+        breakBeforeNextLine = false
         blanker.reset()
         stackFold.clear()
         stack.clear()

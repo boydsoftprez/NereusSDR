@@ -84,15 +84,6 @@ struct WaterfallUniforms {
     float4 view;         // the view's low edge from the rows' reference, its span (Hz); z the lines looked back; w 1 when rows carry coverage
 };
 
-// Same 16-byte element as WaterfallTimeAxis.Sample. Texture row addresses
-// are computed independently: filtering raw ring y would cross its seam.
-struct WaterfallSample {
-    uint age;
-    uint neighborAge;
-    float neighborWeight;
-    uint reserved;
-};
-
 static bool waterfallRowColour(uint age, float viewAcross,
                                 constant WaterfallUniforms &uniforms,
                                 texture2d<float, access::read> lines,
@@ -140,23 +131,18 @@ static bool waterfallRowColour(uint age, float viewAcross,
 
 fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
                                       constant WaterfallUniforms &uniforms [[buffer(0)]],
-                                      device const WaterfallSample *samples [[buffer(1)]],
+                                      device const uint *ages [[buffer(1)]],
                                       texture2d<float, access::read> lines [[texture(0)]],
                                       texture2d<float> palette [[texture(1)]],
                                       texture2d<float, access::read> coverages [[texture(2)]]) {
-    WaterfallSample sample = samples[uint(max(0.0, floor(in.position.y - uniforms.rect.y)))];
+    uint age = ages[uint(max(0.0, floor(in.position.y - uniforms.rect.y)))];
     float across = (in.position.x - uniforms.rect.x) / uniforms.rect.z;
     float4 primary;
-    if (!waterfallRowColour(sample.age, across, uniforms, lines, palette, coverages, primary)) {
+    if (!waterfallRowColour(age, across, uniforms, lines, palette, coverages, primary)) {
         return float4(uniforms.background.rgb * uniforms.background.a, uniforms.background.a);
     }
-    float4 neighbor;
-    if (sample.neighborWeight > 0.0 && sample.neighborAge != sample.age
-        && waterfallRowColour(sample.neighborAge, across, uniforms, lines, palette, coverages, neighbor)) {
-        return mix(primary, neighbor, sample.neighborWeight);
-    }
-    // An uncovered neighbor cannot fade valid data into background, and an
-    // uncovered primary above cannot borrow data into its empty frequencies.
+    // Time cells select one real capture. Mixing different moments softens
+    // narrow time features; only magnified bins within this row interpolate.
     return primary;
 }
 

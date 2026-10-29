@@ -39,6 +39,60 @@ struct BandRowClockTests {
         return band
     }
 
+    private static func capture(sequence: UInt32, stamp: UInt64) -> DisplayFrame {
+        DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: sequence,
+                     producerTimestamp: stamp, isKeyframe: sequence == 1, waterfallAdvance: true,
+                     minDbm: -160, maxDbm: 0, traceDbm: [-80], waterfallDbm: [-90], wideDbm: [])
+    }
+
+    @Test("a resize and pending resumed commit bind the first real row after many lifetime appends")
+    func resizeAndResumeInOneDraw() throws {
+        var settings = BandDisplaySettings.desktopDefaults
+        settings.rewindSeconds = 0
+        let band = BandModel(settings: settings)
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        _ = band.prepareToDraw(size: CGSize(width: 100, height: 100), scale: 1)
+        let rows = band.state.history.capacity * 2 + 3
+        for index in 1...rows {
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(index), stamp: UInt64(index) * 33_333_333)))
+        }
+        band.markAway("Sound only")
+        band.gates = MediaFeatureGates(agreedMinor: 11) { _ in 1 }
+        #expect(band.state.expectsExtras)
+        band.receive(.displayFrame(Self.capture(sequence: UInt32(rows + 1), stamp: UInt64(rows + 1) * 33_333_333)))
+        #expect(band.awayMarks.first?.pending == true)
+        _ = band.prepareToDraw(size: CGSize(width: 100, height: 60), scale: 1)
+        #expect(band.state.history.linesAppended == UInt64(rows + 1))
+        #expect(band.awayMarks.first?.pending == false)
+        #expect(band.awayMarks.first?.linesSince == 0)
+        band.receive(.displayFrame(Self.capture(sequence: UInt32(rows + 2), stamp: UInt64(rows + 2) * 33_333_333)))
+        _ = band.prepareToDraw(size: CGSize(width: 100, height: 60), scale: 1)
+        #expect(band.awayMarks.first?.linesSince == 1)
+    }
+
+    @Test("a pending notice expires when its first resumed row is evicted by one paced batch")
+    func aLargeResumeBatchDoesNotReanchorTheNotice() throws {
+        var settings = BandDisplaySettings.desktopDefaults
+        settings.rewindSeconds = 0
+        let band = BandModel(settings: settings)
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        _ = band.prepareToDraw(size: CGSize(width: 100, height: 10), scale: 1)
+        let capacity = band.state.history.capacity
+        try #require(capacity < BandState.mostLinesWaiting)
+        band.receive(.displayFrame(Self.capture(sequence: 1, stamp: 1_000_000_000)))
+        band.markAway("Sound only")
+        let driver = Driver()
+        band.lineDriver = driver
+        for index in 0...capacity {
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(index + 2), stamp: 1_033_333_333 + UInt64(index) * 33_333_333)))
+        }
+        #expect(band.awayMarks.first?.pending == true)
+        band.lineDriver = nil // flush the whole committed batch at once
+        #expect(band.awayMarks.isEmpty)
+    }
+
     @Test("10 ms moves 100 logical points per second on screen at any received cadence", arguments: [10, 30, 60])
     func visualTimeScaleOnScreen(fps: Int) async throws {
         let band = try Self.band(stacked: false)
@@ -98,7 +152,7 @@ struct BandRowClockTests {
         // A later Core FPS changes only future periods, never this older anchor.
         band.receive(.context(try #require(BandFlagShotTests.context(fps: fps == 10 ? 30 : 10))))
         now += 0.1
-        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(next))))
+        band.receive(.displayFrame(Self.capture(sequence: UInt32(next), stamp: 8_100_000_000)))
         band.advanceLines(at: now + 0.2, frameSeconds: Self.frame)
         #expect(band.waterfallTimeAxis?.topTime == anchor)
         #expect(band.topLineTime == rowTime)
@@ -125,12 +179,12 @@ struct BandRowClockTests {
         band.receive(.context(try #require(BandFlagShotTests.context(fps: 10))))
         for sequence in 0..<100 {
             now = 1000 + Double(sequence) / 10
-            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence + 1))))
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(sequence + 1), stamp: UInt64(sequence + 1) * 100_000_000)))
         }
         band.receive(.context(try #require(BandFlagShotTests.context(fps: 60))))
         for sequence in 0..<300 {
             now = 1010 + Double(sequence) / 60
-            band.receive(.displayFrame(BandFixturesForApp.frame(sequence: UInt32(sequence + 101))))
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(sequence + 101), stamp: 10_100_000_000 + UInt64(sequence) * 16_666_667)))
         }
         _ = band.prepareToDraw(size: CGSize(width: 400, height: 800), scale: 1)
         #expect(band.state.history.count == 400)
@@ -140,7 +194,7 @@ struct BandRowClockTests {
         #expect(abs(band.lookBackElapsedSeconds - 10) <= 0.1)
         let anchor = band.waterfallTimeAxis?.topTime
         now += 1.0 / 60
-        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: 401)))
+        band.receive(.displayFrame(Self.capture(sequence: 401, stamp: 15_100_000_000)))
         #expect(band.waterfallTimeAxis?.topTime == anchor)
         // A line-based drag must reach the same timed destination, too.
         band.goLive()

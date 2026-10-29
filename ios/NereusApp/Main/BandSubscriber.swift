@@ -115,6 +115,15 @@ final class BandSubscriber: ObservableObject {
     /// refused, for its receiver's window type, coverage, the budget or
     /// the endpoint limit); nil while the Core holds it or nothing was asked.
     @Published private(set) var displayRefusal: String?
+    /// Words belong to the target that failed, within one media lifetime.
+    private struct RefusalOwner {
+        let lifetime: UInt64
+        let endpointId: UInt32
+        let revision: UInt32
+        let sliceId: Int
+    }
+    private var refusalOwner: RefusalOwner?
+    private var mediaLifetime: UInt64 = 0
     /// The pan closed: it asks for nothing and lets its endpoint go.
     private(set) var closed = false
     /// Told when ``session`` changes, so the other pans follow Pan 1's.
@@ -165,7 +174,12 @@ final class BandSubscriber: ObservableObject {
         var panKey: String? = nil
         /// Sent as the ask for what the band wants.
         var ask = false
+        /// Local order also distinguishes an old unsubscribe from a new
+        /// endpoint with the same wire revision, and survives wire wrap.
+        var order: UInt64 = 0
     }
+    private var operationOrder: UInt64 = 0
+    private var acceptedOrder: UInt64 = 0
 
     private var mediaUp = false
     /// The endpoint the band subscribes on; nil until the next subscribe
@@ -292,20 +306,18 @@ final class BandSubscriber: ObservableObject {
             settle(result)
 
         case .rejected(let rejection):
-            guard !rejection.refusesWholePeer, rejection.endpointId == endpointId,
-                  case .endpoint(let held) = requested else {
-                return
-            }
-            // Without the budget wire the Core refused the request outright.
-            refused = Self.normalised(held)
-            setRefusal(rejection.reason)
-            requested = .none
-            accepted = .none
-            acceptedPanKey = nil
-            acceptedCharge = .init()
-            // Another pan's slice the phone jumped to: back to its own band, with the Core's words.
-            slices.displayRefused(sliceId: held.sliceId, reason: rejection.reason)
+            guard !gates.displayBudget, !rejection.refusesWholePeer,
+                  case .endpoint(let wanted) = requested,
+                  wanted.endpointId == rejection.endpointId, wanted.revision == rejection.revision else { return }
+            // Legacy operations are accepted provisionally by begin(). A
+            // rejection still retires only that exact current target.
+            _ = retireAccepted(endpointId: rejection.endpointId, revision: rejection.revision,
+                               reason: rejection.reason)
             queueReplan()
+        case .context(let context):
+            guard mediaUp, case .endpoint(let wanted) = requested,
+                  wanted.endpointId == context.endpointId, wanted.revision == context.revision else { return }
+            clearRefusal(resolvedBy: wanted)
         default:
             break
         }
@@ -350,6 +362,7 @@ final class BandSubscriber: ObservableObject {
 
     /// Settles what to ask for now and sends what the order allows.
     func replan() {
+        reconcileRefusal()
         noteSharing()
         if closed {
             // A closed pan asks for nothing; its endpoint goes.
@@ -820,8 +833,12 @@ final class BandSubscriber: ObservableObject {
 
     /// Records an operation: on the budget wire it waits for its result,
     /// with the deadline running; without it the Core is taken to hold it.
-    private func begin(_ operation: Operation, byResult: Bool) {
+    private func begin(_ sent: Operation, byResult: Bool) {
+        operationOrder &+= 1
+        var operation = sent
+        operation.order = operationOrder
         guard byResult else {
+            acceptedOrder = operation.order
             accepted = operation.holding
             acceptedPanKey = operation.panKey
             acceptedCharge = operation.charge
@@ -864,6 +881,14 @@ final class BandSubscriber: ObservableObject {
         guard let index = outstanding.firstIndex(where: {
             $0.endpointId == result.endpointId && $0.revision == result.revision
         }) else {
+            // Core may retire an already accepted endpoint after its slice
+            // leaves. There need not be an operation waiting for this result.
+            if !result.accepted, result.acceptedRevision == 0,
+               retireAccepted(endpointId: result.endpointId, revision: result.revision, reason: result.reason) {
+                shared.note(result)
+                noteClaim()
+                queueReplan()
+            }
             return
         }
         let operation = outstanding.remove(at: index)
@@ -874,29 +899,42 @@ final class BandSubscriber: ObservableObject {
             asking = false
         }
         if result.accepted {
-            accepted = operation.holding
-            acceptedPanKey = operation.panKey
-            acceptedCharge = operation.charge
-            if case .endpoint = operation.holding {
-                setRefusal(nil)
+            if operation.order >= acceptedOrder {
+                acceptedOrder = operation.order
+                accepted = operation.holding
+                acceptedPanKey = operation.panKey
+                acceptedCharge = operation.charge
+                if case .endpoint(let held) = operation.holding {
+                    clearRefusal(resolvedBy: held)
+                }
             }
         } else {
-            if case .endpoint(let sent) = operation.holding {
+            if case .endpoint(let sent) = operation.holding, isCurrentRequest(sent) {
                 refused = Self.normalised(sent)
             }
-            if !operation.ask, result.acceptedRevision == 0, case .endpoint(let sent) = operation.holding {
+            if !operation.ask, result.acceptedRevision == 0, case .endpoint(let sent) = operation.holding,
+               isCurrentRequest(sent) {
                 // Nothing held for another pan's slice the phone jumped to:
                 // back to its own band, with the Core's words (JJ's ruling 3).
                 slices.displayRefused(sliceId: sent.sliceId, reason: result.reason)
             }
             if result.acceptedRevision == 0 {
-                accepted = .none
-                acceptedPanKey = nil
-                acceptedCharge = .init()
-                if case .endpoint = operation.holding {
+                // Do not retire a newer acceptance, or replace a newer
+                // outstanding request with the failed operation's words.
+                if operation.order >= acceptedOrder {
+                    if case .none = accepted {
+                        acceptedOrder = operation.order
+                    } else if case .endpoint(let held) = accepted,
+                              held.endpointId == operation.endpointId {
+                        acceptedOrder = operation.order
+                        accepted = .none
+                        acceptedPanKey = nil
+                        acceptedCharge = .init()
+                    }
+                }
+                if case .endpoint(let sent) = operation.holding, isCurrentRequest(sent) {
                     refusedEndpoint = operation.endpointId
-                    // Nothing held: the pan says why, in the Core's words.
-                    setRefusal(result.reason)
+                    setRefusal(result.reason, for: sent)
                 }
             }
             // The newest request stands only if it is still waiting.
@@ -916,6 +954,7 @@ final class BandSubscriber: ObservableObject {
     /// A new media connection, or none: nothing is held, and the next
     /// subscribe takes a new ID.
     private func startOver() {
+        mediaLifetime &+= 1
         lastBinPlan = nil
         lastActive = nil
         // Each media session starts by asking for what the band wants.
@@ -927,6 +966,8 @@ final class BandSubscriber: ObservableObject {
         deadlineTask?.cancel()
         deadlineTask = nil
         outstanding.removeAll()
+        operationOrder = 0
+        acceptedOrder = 0
         accepted = .none
         acceptedPanKey = nil
         acceptedCharge = .init()
@@ -964,12 +1005,72 @@ final class BandSubscriber: ObservableObject {
         shared.claim(closed && holdsNothing ? .init() : claim, by: ObjectIdentifier(self))
     }
 
-    /// The Core's words for a refused display, or nil to clear them; a
-    /// refusal without words gets the phone's words for any refused request.
-    private func setRefusal(_ reason: String?) {
-        let next = reason.map { $0.isEmpty ? BandSlicesModel.refusedText : $0 }
-        if displayRefusal != next {
-            displayRefusal = next
+    /// Whether an event proves something about the current requested tuple.
+    private func isCurrentRequest(_ subscription: DisplaySubscription) -> Bool {
+        guard mediaUp, case .endpoint(let wanted) = requested else { return false }
+        return wanted.endpointId == subscription.endpointId && wanted.revision == subscription.revision
+            && wanted.sliceId == subscription.sliceId
+    }
+
+    /// Release only the exact accepted holding. A newer request may already
+    /// be waiting on this endpoint when the former slice's retirement arrives.
+    @discardableResult
+    private func retireAccepted(endpointId id: UInt32, revision: UInt32, reason: String) -> Bool {
+        guard mediaUp, case .endpoint(let held) = accepted,
+              held.endpointId == id, held.revision == revision else { return false }
+        let current = isCurrentRequest(held)
+        if current {
+            refused = Self.normalised(held)
+            setRefusal(reason, for: held)
+            requested = .none
+            if endpointId == id {
+                endpointId = nil
+                if band.endpointId == id { band.endpointId = nil }
+            }
+        }
+        accepted = .none
+        acceptedPanKey = nil
+        acceptedCharge = .init()
+        if refusedEndpoint == id { refusedEndpoint = nil }
+        if current, slices.active?.id == held.sliceId {
+            slices.displayRefused(sliceId: held.sliceId, reason: reason)
+        }
+        noteClaim()
+        return true
+    }
+
+    /// Reconcile after the mirror settles, regardless of whether its slice
+    /// removal arrived before or after the matching media retirement.
+    private func reconcileRefusal() {
+        guard let owner = refusalOwner else { return }
+        if closed || owner.lifetime != mediaLifetime || slices.active?.id != owner.sliceId
+            || !slices.entries.contains(where: { $0.id == owner.sliceId }) {
+            if refused?.sliceId == owner.sliceId { refused = nil }
+            setRefusal(nil)
+        }
+    }
+
+    /// A current successful request resolves only the same target's older
+    /// failure. Stale contexts/results cannot erase a newer failure.
+    private func clearRefusal(resolvedBy subscription: DisplaySubscription) {
+        guard isCurrentRequest(subscription), let owner = refusalOwner,
+              owner.lifetime == mediaLifetime, owner.sliceId == subscription.sliceId,
+              owner.endpointId < subscription.endpointId
+                || (owner.endpointId == subscription.endpointId && owner.revision <= subscription.revision) else { return }
+        setRefusal(nil)
+    }
+
+    /// The Core's words, scoped to the requested slice/endpoint/revision.
+    private func setRefusal(_ reason: String?, for subscription: DisplaySubscription? = nil) {
+        if let reason {
+            guard let subscription, isCurrentRequest(subscription), slices.active?.id == subscription.sliceId else { return }
+            refusalOwner = RefusalOwner(lifetime: mediaLifetime, endpointId: subscription.endpointId,
+                                        revision: subscription.revision, sliceId: subscription.sliceId)
+            let next = reason.isEmpty ? BandSlicesModel.refusedText : reason
+            if displayRefusal != next { displayRefusal = next }
+        } else {
+            refusalOwner = nil
+            if displayRefusal != nil { displayRefusal = nil }
         }
     }
 

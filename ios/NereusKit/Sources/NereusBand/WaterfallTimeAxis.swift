@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-28.
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
-//   use proven adjacent capture continuity without masking real capture gaps.
-// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
-//   neighboring continuous observations supply presentation-only colour weights.
+//   separate ordinary nearest capture cells from explicit lifecycle gaps.
 
 import Foundation
 
@@ -14,21 +12,6 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
     public var secondsPerPoint: Double
     public static let blank = UInt32.max
 
-    /// Matches WaterfallSample in Band.metal: four 32-bit fields, 16-byte
-    /// stride. Ages address original rows, never texture-space ring neighbors.
-    struct Sample: Equatable, Sendable {
-        var age: UInt32
-        var neighborAge: UInt32
-        var neighborWeight: Float
-        private var reserved: UInt32 = 0
-
-        init(age: UInt32, neighborAge: UInt32? = nil, neighborWeight: Float = 0) {
-            self.age = age
-            self.neighborAge = neighborAge ?? age
-            self.neighborWeight = neighborWeight
-        }
-    }
-
     public init(topTime: Double, periodMs: Int) {
         self.topTime = topTime
         secondsPerPoint = Double(max(1, periodMs)) / 1000
@@ -37,6 +20,7 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
     /// The live view lags one real observation, gliding only between known times. Starvation never invents future data.
     public static func liveTop(history: WaterfallHistory, progress: Double) -> Double? {
         guard history.hasPresentationTimeline, let newest = history.presentationTime(age: 0) else { return nil }
+        if history.presentationBreakBefore(age: 0) { return newest }
         guard let previous = history.presentationTime(age: 1), previous <= newest else { return newest }
         return previous + (newest - previous) * min(max(progress.isFinite ? progress : 1, 0), 1)
     }
@@ -69,12 +53,10 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
         if let period = history.presentationPeriod(age: age) {
             let neighbor = time < here ? age + 1 : age - 1
             if history.presentationTime(age: neighbor) != nil {
-                // Consecutive advancing captures may land either side of a
-                // nominal slot on the Core's FFT sample grid. Their midpoint
-                // cells meet; no observation or captured timestamp is added.
-                if history.presentationContinuous(age: min(age, neighbor)) { return true }
-                // At a cadence transition the slower adjacent period owns
-                // this shared boundary. Larger actual capture gaps stay empty.
+                // A failure to prove encoder continuity is not a missing
+                // observation. Ordinary nearest-time cells always meet.
+                // Only an explicit lifecycle interruption leaves empty time.
+                if !history.presentationBreakBefore(age: min(age, neighbor)) { return true }
                 let boundaryPeriod = max(period, history.presentationPeriod(age: neighbor) ?? period)
                 return abs(time - here) <= boundaryPeriod / 2 + 0.000000001
             }
@@ -111,42 +93,4 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
         }
     }
 
-    /// Presentation interpolation keeps the nearest real observation as
-    /// primary. It blends only toward a known continuous capture neighbor;
-    /// gaps, history edges and unknown timestamps retain nearest selection.
-    func fillSamples(history: WaterfallHistory, heightPixels: Int, scale: Double, into rows: inout [Sample]) {
-        let height = max(0, heightPixels)
-        if rows.count != height { rows = Array(repeating: Sample(age: Self.blank), count: height) }
-        guard scale.isFinite, scale > 0, topTime.isFinite, secondsPerPoint.isFinite, secondsPerPoint > 0 else {
-            for y in rows.indices { rows[y] = Sample(age: Self.blank) }
-            return
-        }
-        guard history.hasPresentationTimeline else {
-            for y in rows.indices { rows[y] = Sample(age: y < history.count ? UInt32(y) : Self.blank) }
-            return
-        }
-        var age = 0
-        for y in rows.indices {
-            let time = topTime - (Double(y) + 0.5) / scale * secondsPerPoint
-            while age + 1 < history.count {
-                guard let newer = history.presentationTime(age: age), let older = history.presentationTime(age: age + 1),
-                      older <= newer else { break }
-                if time >= older + (newer - older) / 2 { break }
-                age += 1
-            }
-            guard valid(age: age, at: time, history: history), let here = history.presentationTime(age: age) else {
-                rows[y] = Sample(age: Self.blank)
-                continue
-            }
-            rows[y] = Sample(age: UInt32(age))
-            let neighbor = time < here ? age + 1 : age - 1
-            if let there = history.presentationTime(age: neighbor), there != here,
-               history.presentationContinuous(age: min(age, neighbor)) {
-                let weight = (time - here) / (there - here)
-                if weight >= 0, weight <= 1 {
-                    rows[y] = Sample(age: UInt32(age), neighborAge: UInt32(neighbor), neighborWeight: Float(weight))
-                }
-            }
-        }
-    }
 }

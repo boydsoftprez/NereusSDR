@@ -91,7 +91,7 @@ import Testing
         // observation gap, not the local arrival times of delayed packets.
         var history = WaterfallHistory(capacity: 4)
         history.append(line: [-50], levels: levels, time: 1000, presentationTime: 10, presentationPeriod: 0.1)
-        history.append(line: [-50], levels: levels, time: 1001, presentationTime: 11, presentationPeriod: 0.1)
+        history.append(line: [-50], levels: levels, time: 1001, presentationTime: 11, presentationPeriod: 0.1, presentationBreakBefore: true)
         let axis = WaterfallTimeAxis(topTime: 11, periodMs: 10)
         #expect(axis.age(at: 10.5, history: history) == nil)
         #expect(axis.age(at: 11.5, history: history) == nil)

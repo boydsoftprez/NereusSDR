@@ -65,7 +65,7 @@ struct BandRedrawTests {
         }
         #expect(marks == 10)
         #expect(screens <= 1)
-        #expect(band.awayMarks.first?.linesSince == 10)
+        #expect(band.awayMarks.first?.linesSince == 9)
         _ = watches
     }
 }

@@ -1,7 +1,7 @@
 // NereusSDR for iOS: the waterfall's painted lines, newest first, each coloured against its own levels
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
-//   keep capture-domain coordinates and adjacent-row continuity through the ring/remaps.
+//   keep capture coordinates and explicit lifecycle breaks through the ring/remaps.
 
 import Foundation
 import NereusMedia
@@ -132,10 +132,10 @@ public struct WaterfallHistory: Equatable, Sendable {
     private var times: [Double] = []
     /// Capture-derived coordinates for geometry; wall arrivals remain the readout truth.
     private var presentationTimes: [Double?] = []
-    /// The accepted row interval, so missing packets leave a real gap instead of stretching an observation across it.
+    /// The accepted row interval bounds each side of an explicitly recorded interruption.
     private var presentationPeriods: [Double?] = []
-    /// This row and the preceding older row are consecutive advancing observations.
-    private var presentationContinuities: [Bool] = []
+    /// An explicit media/endpoint/away interruption precedes this row.
+    private var presentationBreaks: [Bool] = []
     private var storage: [UInt8] = []
     /// Where the next line goes.
     private var head = 0
@@ -155,7 +155,7 @@ public struct WaterfallHistory: Equatable, Sendable {
     @discardableResult
     public mutating func append(frame: DisplayFrame, extras: DisplayExtras?, manualLevels: Levels,
                                 coverage: BandCoverage? = nil, adjustment: Adjustment = .none,
-                                phoneLevels: Bool = false, time: Double = 0, presentationTime: Double? = nil, presentationPeriod: Double? = nil, presentationContinuous: Bool = false, addsLine: Bool = true) -> Bool {
+                                phoneLevels: Bool = false, time: Double = 0, presentationTime: Double? = nil, presentationPeriod: Double? = nil, presentationBreakBefore: Bool = false, addsLine: Bool = true) -> Bool {
         if let extras, Self.belongs(extras, to: frame), let levels = extras.waterfallLevels {
             heldLevels = Levels(lowDbm: levels.lowDbm, highDbm: levels.highDbm)
         }
@@ -163,7 +163,7 @@ public struct WaterfallHistory: Equatable, Sendable {
             return false
         }
         let levels = phoneLevels ? manualLevels : (heldLevels ?? manualLevels)
-        append(line: frame.waterfallDbm, levels: levels.adjusted(by: adjustment), coverage: coverage, time: time, presentationTime: presentationTime, presentationPeriod: presentationPeriod, presentationContinuous: presentationContinuous)
+        append(line: frame.waterfallDbm, levels: levels.adjusted(by: adjustment), coverage: coverage, time: time, presentationTime: presentationTime, presentationPeriod: presentationPeriod, presentationBreakBefore: presentationBreakBefore)
         return true
     }
 
@@ -173,7 +173,7 @@ public struct WaterfallHistory: Equatable, Sendable {
     /// held lines to the new width, keeping the history and the frequencies
     /// each line covers.
     public mutating func append(line dbm: [Float], levels: Levels, coverage: BandCoverage? = nil,
-                                time: Double = 0, presentationTime: Double? = nil, presentationPeriod: Double? = nil, presentationContinuous: Bool = false) {
+                                time: Double = 0, presentationTime: Double? = nil, presentationPeriod: Double? = nil, presentationBreakBefore: Bool = false) {
         guard !dbm.isEmpty else {
             return
         }
@@ -192,7 +192,7 @@ public struct WaterfallHistory: Equatable, Sendable {
             presentationTimes[head] = time > 0 && time.isFinite ? time : nil
         }
         presentationPeriods[head] = presentationPeriod.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        presentationContinuities[head] = presentationContinuous
+        presentationBreaks[head] = presentationBreakBefore
         head = (head + 1) % capacity
         count = min(count + 1, capacity)
         linesAppended &+= 1
@@ -231,9 +231,9 @@ public struct WaterfallHistory: Equatable, Sendable {
         return presentationPeriods[storageRow(age: age)]
     }
 
-    public func presentationContinuous(age: Int) -> Bool {
+    public func presentationBreakBefore(age: Int) -> Bool {
         guard age >= 0, age + 1 < count else { return false }
-        return presentationContinuities[storageRow(age: age)]
+        return presentationBreaks[storageRow(age: age)]
     }
 
     /// The line `age` lines old (0 the newest), or nil past the held ones.
@@ -277,27 +277,30 @@ public struct WaterfallHistory: Equatable, Sendable {
         guard newCapacity != capacity else {
             return
         }
+        let appended = linesAppended
         let kept = min(count, newCapacity)
         var lines: [(ArraySlice<UInt8>, BandCoverage?, Double, Double?, Double?, Bool)] = []
         for age in stride(from: kept - 1, through: 0, by: -1) {
             if let line = line(age: age) {
                 let row = storageRow(age: age)
-                lines.append((line, coverages[row], times[row], presentationTimes[row], presentationPeriods[row], presentationContinuities[row]))
+                lines.append((line, coverages[row], times[row], presentationTimes[row], presentationPeriods[row], presentationBreaks[row]))
             }
         }
         capacity = newCapacity
         restart()
-        for (line, coverage, time, presentationTime, presentationPeriod, continuous) in lines {
+        for (line, coverage, time, presentationTime, presentationPeriod, breakBefore) in lines {
             storage.replaceSubrange((head * columns)..<((head + 1) * columns), with: line)
             coverages[head] = coverage
             times[head] = time
             presentationTimes[head] = presentationTime
             presentationPeriods[head] = presentationPeriod
-            presentationContinuities[head] = continuous
+            presentationBreaks[head] = breakBefore
             head = (head + 1) % capacity
             count += 1
         }
-        linesAppended = UInt64(count)
+        // Layout changes retain the lifetime append counter. Consumers
+        // may resize and commit a real row in the same draw.
+        linesAppended = appended
     }
 
     /// Re-maps every held line to `newColumns` samples. Each new sample
@@ -409,7 +412,7 @@ public struct WaterfallHistory: Equatable, Sendable {
         times = [Double](repeating: 0, count: capacity)
         presentationTimes = [Double?](repeating: nil, count: capacity)
         presentationPeriods = [Double?](repeating: nil, count: capacity)
-        presentationContinuities = [Bool](repeating: false, count: capacity)
+        presentationBreaks = [Bool](repeating: false, count: capacity)
         head = 0
         count = 0
         linesAppended = 0

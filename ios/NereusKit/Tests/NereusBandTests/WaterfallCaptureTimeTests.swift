@@ -62,15 +62,45 @@ import Testing
         }
     }
 
-    @Test func actualCaptureGapRemainsBlankDespitePromptCommits() throws {
+    @Test func timestampSpacingAloneDoesNotDeclareAnInterruption() throws {
         var state = state()
         state.receive(frame: frame(9_000_000_000), manualLevels: levels, at: 1000)
         state.receive(frame: frame(9_150_000_000, sequence: 2), manualLevels: levels, at: 1000.01)
         let axis = WaterfallTimeAxis(topTime: try #require(state.history.presentationTime(age: 0)), periodMs: 10)
         #expect(abs(axis.topTime - 1000.15) < 0.0000001)
-        #expect(axis.age(at: 1000.075, history: state.history) == nil)
+        #expect(axis.age(at: 1000.075, history: state.history) != nil)
         #expect(axis.age(at: 1000.15, history: state.history) == 0)
         #expect(axis.age(at: 1000, history: state.history) == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func explicitInterruptionStartsAtTheNextCommittedWaterfallRow(paced: Bool) throws {
+        var state = state()
+        state.pacesLines = paced
+        state.expectsExtras = true
+        state.receive(frame: frame(1_000_000_000), manualLevels: levels, at: 1000)
+        state.commit(manualLevels: levels, at: 1000)
+        state.flushLines(at: 1000)
+        state.noteInterruption()
+        state.receive(frame: frame(1_010_000_000, sequence: 2, advance: false), manualLevels: levels, at: 1000.01)
+        state.commit(manualLevels: levels, at: 1000.01)
+        #expect(state.history.count == 1)
+        let resumed = frame(1_150_000_000, sequence: 3)
+        state.receive(frame: resumed, manualLevels: levels, at: 1000.02)
+        state.receive(extras: BandFixtures.extras(for: resumed), manualLevels: levels, at: 1000.03)
+        state.flushLines(at: 1000.04)
+        #expect(state.history.presentationBreakBefore(age: 0))
+        state.resizeWaterfall(lines: 8)
+        let axis = WaterfallTimeAxis(topTime: try #require(state.history.presentationTime(age: 0)), periodMs: 10)
+        #expect(axis.age(at: 1000.075, history: state.history) == nil)
+        #expect(WaterfallTimeAxis.liveTop(history: state.history, progress: 0) == axis.topTime)
+        state.receive(frame: frame(1_183_333_333, sequence: 4), manualLevels: levels, at: 1000.05)
+        state.commit(manualLevels: levels, at: 1000.05)
+        state.flushLines(at: 1000.06)
+        #expect(!state.history.presentationBreakBefore(age: 0))
+        #expect(state.history.presentationBreakBefore(age: 1))
+        state.clear()
+        #expect(state.history.count == 0)
     }
 
     @Test func quantizedFFTSlotsDoNotBecomeThinBlackBands() throws {
@@ -91,7 +121,7 @@ import Testing
         }
     }
 
-    @Test func aMissingAdvancingSequenceKeepsItsGap() {
+    @Test func missingEncoderSequenceDoesNotDeclareAnInterruption() {
         var state = state()
         state.receive(frame: frame(1_000_000_000, sequence: 10), manualLevels: levels, at: 1000)
         // A released partial frame without its waterfall must not establish
@@ -100,13 +130,30 @@ import Testing
         state.receive(frame: frame(1_037_333_333, sequence: 12), manualLevels: levels, at: 1000.02)
         let axis = WaterfallTimeAxis(topTime: 1000.037333333, periodMs: 10)
         #expect(state.history.count == 2)
-        #expect(axis.age(at: 1000.0186666665, history: state.history) == nil)
+        #expect(axis.age(at: 1000.0186666665, history: state.history) != nil)
+    }
+
+    @Test func repeatedPanContextsAndSequenceResetsDoNotPaintThinBands() throws {
+        var state = state()
+        let stamps: [UInt64] = [1_000_000_000, 1_037_333_333, 1_069_333_333, 1_106_666_666, 1_144_000_000]
+        for (index, stamp) in stamps.enumerated() {
+            let generation = UInt32(index + 1)
+            state.note(context: generation, coverage: BandCoverage(centerHz: 7_100_000 + Double(index * 100), spanHz: 48_000))
+            state.receive(frame: frame(stamp, sequence: 0, generation: generation), manualLevels: levels, at: 1000 + Double(index) / 30)
+        }
+        state.resizeWaterfall(lines: 8)
+        let axis = WaterfallTimeAxis(topTime: try #require(state.history.presentationTime(age: 0)), periodMs: 10)
+        for scale in [1.0, 2.0, 3.0] {
+            var rows: [UInt32] = []
+            axis.fillAges(history: state.history, heightPixels: Int(14 * scale), scale: scale, into: &rows)
+            #expect(rows.allSatisfy { $0 < 5 })
+
+        }
     }
 
     @Test func frameDividerAndSequenceWrapRespectWaterfallParts() {
         var state = state()
         state.linePeriodSeconds = 0.1
-        state.lineFramesPerRow = 3
         state.receive(frame: frame(1_000_000_000, sequence: UInt32.max - 1), manualLevels: levels, at: 1000)
         state.receive(frame: frame(1_033_000_000, sequence: UInt32.max, advance: false), manualLevels: levels, at: 1000.01)
         state.receive(frame: frame(1_066_000_000, sequence: 0, advance: false), manualLevels: levels, at: 1000.02)

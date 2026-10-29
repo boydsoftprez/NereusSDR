@@ -80,19 +80,20 @@ import Testing
         #expect(projected.pixel(50, top).r < 5)
     }
 
-    @Test func continuousCaptureColoursBlendVerticallyAtEveryDisplayScale() throws {
+    @Test func contrastedCapturesKeepCrispColoursAtEveryDisplayScale() throws {
         for scale in [1.0, 3.0] {
             let target = try Offscreen(width: 400, height: 600)
             let renderer = try BandRenderer(device: target.device)
             var history = WaterfallHistory(capacity: 2)
             history.append(line: [-100], levels: levels, presentationTime: 1000, presentationPeriod: 0.1)
-            history.append(line: [0], levels: levels, presentationTime: 1000.1, presentationPeriod: 0.1,
-                           presentationContinuous: true)
+            history.append(line: [0], levels: levels, presentationTime: 1000.1, presentationPeriod: 0.1)
             let image = try target.render(renderer, frame: nil, history: history, extras: nil, overlays: overlays(scale: scale))
             let top = Int(BandRendererTests.layout(settings(), scale: scale).waterfall.minY)
             let middle = image.pixel(200, top + Int(5 * scale))
-            #expect((90...170).contains(middle.r) && (90...170).contains(middle.b))
+            #expect(middle.r > 250 && middle.b < 5)
             #expect(middle.g < 5)
+            let newer = image.pixel(200, top + Int(2 * scale))
+            #expect(newer.b > 250 && newer.r < 5)
             #expect(history.count == 2 && history.linesAppended == 2)
             #expect(WaterfallTimeAxis(topTime: 1000.1, periodMs: 10).age(at: 1000.045, history: history) == 1)
         }
@@ -103,14 +104,14 @@ import Testing
         let renderer = try BandRenderer(device: target.device)
         var history = WaterfallHistory(capacity: 2)
         history.append(line: [-100], levels: levels, presentationTime: 1000, presentationPeriod: 1 / 30)
-        history.append(line: [0], levels: levels, presentationTime: 1000.15, presentationPeriod: 1 / 30)
+        history.append(line: [0], levels: levels, presentationTime: 1000.15, presentationPeriod: 1 / 30, presentationBreakBefore: true)
         let image = try target.render(renderer, frame: nil, history: history, extras: nil, overlays: overlays())
         let top = Int(BandRendererTests.layout(settings()).waterfall.minY)
         #expect(image.grey(200, top + 7).isNear(BandRendererTests.backgroundGrey, tolerance: 2))
         #expect(image.grey(200, top + 20).isNear(BandRendererTests.backgroundGrey, tolerance: 2))
     }
 
-    @Test func invalidNeighbourCoverageDoesNotFadeValidDataOrFillTheEmptyEdge() throws {
+    @Test func selectedRowKeepsItsOwnFrequencyCoverage() throws {
         let target = try Offscreen(width: 400, height: 600)
         let renderer = try BandRenderer(device: target.device)
         var history = WaterfallHistory(capacity: 2)
@@ -119,16 +120,16 @@ import Testing
                        presentationTime: 1000, presentationPeriod: 0.1)
         history.append(line: [0], levels: levels,
                        coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000),
-                       presentationTime: 1000.1, presentationPeriod: 0.1, presentationContinuous: true)
+                       presentationTime: 1000.1, presentationPeriod: 0.1)
         let image = try target.render(renderer, frame: nil, history: history, extras: nil, overlays: overlays())
         let top = Int(BandRendererTests.layout(settings()).waterfall.minY)
         #expect(image.pixel(300, top + 2).b > 250)
         #expect(image.grey(300, top + 7).isNear(BandRendererTests.backgroundGrey, tolerance: 2))
         let overlap = image.pixel(100, top + 5)
-        #expect((90...170).contains(overlap.r) && (90...170).contains(overlap.b))
+        #expect(overlap.r > 250 && overlap.b < 5)
     }
 
-    @Test func eachTemporalNeighbourProjectsItsOwnBinFrequencies() throws {
+    @Test func eachSelectedCaptureProjectsItsOwnBinFrequencies() throws {
         let target = try Offscreen(width: 400, height: 600)
         let renderer = try BandRenderer(device: target.device)
         var history = WaterfallHistory(capacity: 2)
@@ -137,15 +138,16 @@ import Testing
                        presentationTime: 1000, presentationPeriod: 0.1)
         history.append(line: [-100, 0], levels: levels,
                        coverage: BandCoverage(centerHz: 7_200_000, spanHz: 40_000),
-                       presentationTime: 1000.1, presentationPeriod: 0.1, presentationContinuous: true)
+                       presentationTime: 1000.1, presentationPeriod: 0.1)
         let image = try target.render(renderer, frame: nil, history: history, extras: nil, overlays: overlays())
         let top = Int(BandRendererTests.layout(settings()).waterfall.minY)
-        // At 7.200 MHz the older row is at its blue bin centre while the
-        // newer one is between red and blue. A shared bin coordinate would
-        // incorrectly give equal red and blue for both rows.
-        let colour = image.pixel(199, top + 4)
-        #expect((50...90).contains(colour.r) && (165...210).contains(colour.b))
-        #expect(colour.g < 5)
+        // Each selected capture independently maps the current frequency
+        // into its own retained coverage before horizontal magnification.
+        let newer = image.pixel(199, top + 2)
+        let older = image.pixel(199, top + 7)
+        #expect((90...170).contains(newer.r) && (90...170).contains(newer.b))
+        #expect(older.b > 250 && older.r < 5)
+
     }
 
     @Test func inFlightSamplingSurvivesRingWrapAndRewind() throws {
@@ -154,15 +156,13 @@ import Testing
         let renderer = try BandRenderer(device: first.device)
         var history = WaterfallHistory(capacity: 2)
         history.append(line: [-100], levels: levels, presentationTime: 1000, presentationPeriod: 0.1)
-        history.append(line: [0], levels: levels, presentationTime: 1000.1, presentationPeriod: 0.1,
-                       presentationContinuous: true)
+        history.append(line: [0], levels: levels, presentationTime: 1000.1, presentationPeriod: 0.1)
         let gate = try #require(first.device.makeSharedEvent())
         renderer.commandBufferMade = { $0.encodeWaitForEvent(gate, value: 1) }
         let held = try #require(renderer.draw(frame: nil, history: history, extras: nil,
                                               overlays: overlays(), into: first.texture))
         renderer.commandBufferMade = nil
-        history.append(line: [-100], levels: levels, presentationTime: 1000.2, presentationPeriod: 0.1,
-                       presentationContinuous: true)
+        history.append(line: [-100], levels: levels, presentationTime: 1000.2, presentationPeriod: 0.1)
         var rewind = try overlays()
         rewind.lookBackLines = 1
         let next = try #require(renderer.draw(frame: nil, history: history, extras: nil,
@@ -172,7 +172,7 @@ import Testing
         next.waitUntilCompleted()
         let top = Int(BandRendererTests.layout(settings()).waterfall.minY)
         let before = try first.read().pixel(200, top + 2)
-        #expect((40...90).contains(before.r) && (165...215).contains(before.b))
+        #expect(before.b > 250 && before.r < 5)
         #expect(try second.read().pixel(200, top + 2).b > 250)
     }
 }
